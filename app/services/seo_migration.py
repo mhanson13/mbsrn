@@ -246,6 +246,9 @@ _DEPLOY_DISPATCH_SERVICE_REASON_RUNTIME_UNAVAILABLE = "runtime_unavailable"
 _DEPLOY_DISPATCH_SERVICE_REASON_TARGET_CONFIG_INVALID = "target_configuration_invalid"
 _DEPLOY_DISPATCH_SERVICE_REASON_TARGET_DISABLED = "target_disabled"
 _DEPLOY_DISPATCH_SERVICE_REASON_TARGET_METADATA_MISSING = "target_metadata_missing"
+_DEPLOY_DISPATCH_SERVICE_REASON_MISSING_CLUSTER_NAME = "missing_cluster_name"
+_DEPLOY_DISPATCH_SERVICE_REASON_MISSING_CLUSTER_LOCATION = "missing_cluster_location"
+_DEPLOY_DISPATCH_SERVICE_REASON_MISSING_GCP_PROJECT_ID = "missing_gcp_project_id"
 _DEPLOY_WORKFLOW_MODE_SITE_REPO_TEMPLATE_V1 = "site_repo_template_v1"
 _DEPLOY_TARGET_ENVIRONMENT_SOURCE_ADMIN = "admin_config"
 _DEPLOY_DEFAULT_TARGET_ENVIRONMENT_KEY = "gke_prod"
@@ -10960,6 +10963,9 @@ def _normalize_dispatch_service_reason_code(value: object) -> str | None:
         _DEPLOY_DISPATCH_SERVICE_REASON_TARGET_CONFIG_INVALID,
         _DEPLOY_DISPATCH_SERVICE_REASON_TARGET_DISABLED,
         _DEPLOY_DISPATCH_SERVICE_REASON_TARGET_METADATA_MISSING,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MISSING_CLUSTER_NAME,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MISSING_CLUSTER_LOCATION,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MISSING_GCP_PROJECT_ID,
     }:
         return normalized_lower
     if normalized_lower in {
@@ -11426,6 +11432,12 @@ def _derive_dispatch_service_reason_code(
         "publisher_not_configured",
     }:
         return _DEPLOY_DISPATCH_SERVICE_REASON_RUNTIME_UNAVAILABLE
+    if runtime_reason in {
+        _DEPLOY_DISPATCH_SERVICE_REASON_MISSING_CLUSTER_NAME,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MISSING_CLUSTER_LOCATION,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MISSING_GCP_PROJECT_ID,
+    }:
+        return runtime_reason
     if not target_valid:
         return _DEPLOY_DISPATCH_SERVICE_REASON_TARGET_CONFIG_INVALID
     if not target_enabled:
@@ -11462,6 +11474,18 @@ def _derive_deploy_failure_remediation_hint(
     normalized_dispatch_reason = _normalize_dispatch_service_reason_code(dispatch_service_reason_code)
     workflow_exists_bool = bool(workflow_exists) if isinstance(workflow_exists, bool) else None
 
+    if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MISSING_CLUSTER_NAME:
+        return (
+            "Deploy target is missing Kubernetes cluster name configuration "
+            "(KUBERNETES_CLUSTER_NAME variable/secret)."
+        )
+    if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MISSING_CLUSTER_LOCATION:
+        return (
+            "Deploy target is missing Kubernetes cluster location configuration "
+            "(KUBERNETES_CLUSTER_LOCATION variable/secret)."
+        )
+    if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MISSING_GCP_PROJECT_ID:
+        return "Deploy target is missing GCP project configuration (GCP_PROJECT_ID variable/secret)."
     if (
         normalized_reason == _DEPLOY_TARGET_REASON_WORKFLOW_NOT_DISPATCHABLE
         and normalized_stage == "workflow_lookup"

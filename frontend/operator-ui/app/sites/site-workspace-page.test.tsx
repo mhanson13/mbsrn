@@ -525,6 +525,76 @@ describe("site migration workflow route", () => {
     );
   });
 
+  it("surfaces managed GKE missing-config guidance across deploy readiness and diagnostics", async () => {
+    const user = userEvent.setup();
+    const summary = buildMigrationWorkspaceSummary({
+      deploy_readiness: {
+        ready: false,
+        reasons: ["Deploy target is not enabled."],
+        dispatch_service_reason_code: "missing_cluster_location",
+        last_failure_reason: "workflow_not_dispatchable",
+        last_failure_remediation_hint: "Selected workflow exists but is not dispatchable for this deploy target.",
+        target: {
+          enabled: true,
+          repo_owner: "mhanson13",
+          repo_name: "tnmfire",
+          workflow_id: "deploy-tnmfire-www-prod.yml",
+          ref: "main",
+        },
+      },
+      context_summary: {
+        ...buildMigrationWorkspaceSummary().context_summary,
+        migration_diagnostics: {
+          last_deploy_failure_dispatch_service_reason_code: "missing_cluster_location",
+        },
+      },
+    });
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(summary);
+    mockFetchMigrationPublishHistory.mockResolvedValueOnce({ items: [], total: 0 });
+    mockFetchMigrationDeployHistory.mockResolvedValueOnce({
+      items: [
+        {
+          timestamp: "2026-04-18T18:41:00Z",
+          status: "failed",
+          artifact_version_id: "artifact-v7",
+          failure_reason: "workflow_not_dispatchable",
+          failure_stage: "workflow_lookup",
+          dispatch_service_reason_code: "missing_cluster_location",
+          failure_remediation_hint: "Selected workflow exists but is not dispatchable for this deploy target.",
+        },
+      ],
+      total: 1,
+    });
+
+    render(<SiteMigrationWorkflowPage />);
+
+    const deployReadinessCard = await screen.findByTestId("migration-deploy-readiness");
+    expect(within(deployReadinessCard).getByTestId("migration-managed-gke-config-guidance-readiness")).toHaveTextContent(
+      "Set KUBERNETES_CLUSTER_LOCATION in repo vars/secrets.",
+    );
+    expect(within(deployReadinessCard).getByTestId("migration-managed-gke-config-source-readiness")).toHaveTextContent(
+      "Managed deploy reads vars first, then secrets.",
+    );
+    expect(deployReadinessCard).not.toHaveTextContent(
+      "Remediation hint: Selected workflow exists but is not dispatchable for this deploy target.",
+    );
+
+    await user.click(await screen.findByText("Show detailed migration failure diagnostics"));
+
+    const deployDiagnostics = screen.getByTestId("migration-deploy-diagnostics");
+    expect(
+      within(deployDiagnostics).getByTestId("migration-managed-gke-config-guidance-diagnostics"),
+    ).toHaveTextContent("Set KUBERNETES_CLUSTER_LOCATION in repo vars/secrets.");
+    expect(
+      within(deployDiagnostics).getByTestId("migration-managed-gke-config-source-diagnostics"),
+    ).toHaveTextContent("Managed deploy reads vars first, then secrets.");
+
+    await user.click(screen.getByText("Show deploy history"));
+    const deployHistory = screen.getByTestId("migration-deploy-history");
+    expect(deployHistory).toHaveTextContent("Set KUBERNETES_CLUSTER_LOCATION in repo vars/secrets.");
+    expect(deployHistory).not.toHaveTextContent("Selected workflow exists but is not dispatchable for this deploy target.");
+  });
+
   it("updates selected draft diagnostics context when artifact selection changes", async () => {
     const user = userEvent.setup();
     const artifactOne = buildMigrationArtifactVersion({ id: "artifact-v1", version: 1 });

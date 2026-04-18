@@ -923,7 +923,30 @@ Deploy behavior:
   - `KUBERNETES_CLUSTER_NAME`
   - `KUBERNETES_CLUSTER_LOCATION`
   - `GCP_PROJECT_ID`
-  - optional workflow pre-check fails fast with `Missing GCP_DEPLOY_KEY secret` when absent
+  - managed workflow resolves GKE inputs with variable-first fallback:
+    - `GKE_CLUSTER_NAME = vars.KUBERNETES_CLUSTER_NAME || secrets.KUBERNETES_CLUSTER_NAME`
+    - `GKE_CLUSTER_LOCATION = vars.KUBERNETES_CLUSTER_LOCATION || secrets.KUBERNETES_CLUSTER_LOCATION`
+    - `GKE_PROJECT_ID = vars.GCP_PROJECT_ID || secrets.GCP_PROJECT_ID`
+  - workflow pre-checks fail fast before `get-gke-credentials`:
+    - `Missing GCP_DEPLOY_KEY secret`
+    - `Missing KUBERNETES_CLUSTER_NAME variable/secret`
+    - `Missing KUBERNETES_CLUSTER_LOCATION variable/secret`
+    - `Missing GCP_PROJECT_ID variable/secret`
+  - deploy readiness can now surface explicit configuration reasons:
+    - `dispatch_service_reason_code=missing_cluster_name`
+    - `dispatch_service_reason_code=missing_cluster_location`
+    - `dispatch_service_reason_code=missing_gcp_project_id`
+  - migration workspace deploy readiness/diagnostics now surface concise operator guidance for these cases:
+    - `missing_cluster_name` -> set `KUBERNETES_CLUSTER_NAME` in repo vars/secrets
+    - `missing_cluster_location` -> set `KUBERNETES_CLUSTER_LOCATION` in repo vars/secrets
+    - `missing_gcp_project_id` -> set `GCP_PROJECT_ID` in repo vars/secrets
+  - configuration source expectation is explicit in UI copy:
+    - managed deploy reads GitHub Actions vars first, then secrets
+  - troubleshooting precedence:
+    - treat `missing_cluster_*` / `missing_gcp_project_id` as repository configuration blockers first, even if generic deploy failure summaries are also present
+    - correct repo vars/secrets and retry deploy from the workspace before escalating to runtime workflow troubleshooting
+    - GitHub Actions run/job logs become the primary source only after readiness no longer reports missing repo configuration
+  - after applying missing config values, retry deploy from the migration workspace (no workflow template change required)
 - hybrid deploy-secret propagation (bridge model):
   - MBSRN runtime is the source of truth for `GCP_DEPLOY_KEY`.
   - publish can propagate `GCP_DEPLOY_KEY` into target repo Actions secrets so managed site-repo workflows can execute deploy.

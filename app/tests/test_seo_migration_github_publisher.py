@@ -130,6 +130,17 @@ def _managed_workflow_verify_response(
     )
 
 
+def _gke_environment_config_present_responses() -> list[object]:
+    return [
+        _FakeHTTPResponse(status=200, body=json.dumps({"name": "KUBERNETES_CLUSTER_NAME"})),
+        _FakeHTTPResponse(status=200, body=json.dumps({"name": "KUBERNETES_CLUSTER_NAME"})),
+        _FakeHTTPResponse(status=200, body=json.dumps({"name": "KUBERNETES_CLUSTER_LOCATION"})),
+        _FakeHTTPResponse(status=200, body=json.dumps({"name": "KUBERNETES_CLUSTER_LOCATION"})),
+        _FakeHTTPResponse(status=200, body=json.dumps({"name": "GCP_PROJECT_ID"})),
+        _FakeHTTPResponse(status=200, body=json.dumps({"name": "GCP_PROJECT_ID"})),
+    ]
+
+
 def _managed_provisioning_responses(*, missing_verify_path: str | None = None) -> list[object]:
     responses: list[object] = [
         _FakeHTTPResponse(status=200, body=json.dumps({"default_branch": "main"})),
@@ -876,6 +887,7 @@ def test_check_deploy_target_readiness_reports_aligned_namespace_for_managed_tem
                 status=200,
                 body=json.dumps({"sha": "sha-ingress", "encoding": "base64", "content": namespaced_manifest}),
             ),
+            *_gke_environment_config_present_responses(),
         ],
         calls,
     )
@@ -893,7 +905,7 @@ def test_check_deploy_target_readiness_reports_aligned_namespace_for_managed_tem
     assert readiness.manifest_namespace_aligned is True
     assert readiness.dispatch_service_availability is True
     assert readiness.dispatch_service_reason_code == "available"
-    assert len(calls) == 8
+    assert len(calls) == 11
 
 
 def test_check_deploy_target_readiness_reports_misaligned_namespace_for_managed_template(monkeypatch) -> None:
@@ -962,6 +974,7 @@ def test_check_deploy_target_readiness_reports_misaligned_namespace_for_managed_
                 status=200,
                 body=json.dumps({"sha": "sha-ingress", "encoding": "base64", "content": namespaced_manifest_wrong}),
             ),
+            *_gke_environment_config_present_responses(),
         ],
         calls,
     )
@@ -977,7 +990,103 @@ def test_check_deploy_target_readiness_reports_misaligned_namespace_for_managed_
     assert readiness.manifest_namespace_aligned is False
     assert readiness.dispatch_service_availability is False
     assert readiness.dispatch_service_reason_code == "target_configuration_invalid"
-    assert len(calls) == 8
+    assert len(calls) == 11
+
+
+def test_check_deploy_target_readiness_flags_missing_cluster_name_configuration(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    managed_workflow = _encode_workflow_yaml(
+        (
+            "# mbsrn-managed-template:site_repo_template_v1\n"
+            "name: Managed Deploy\n"
+            "on:\n"
+            "  workflow_dispatch:\n"
+            "jobs:\n"
+            "  deploy:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    env:\n"
+            "      K8S_NAMESPACE: tnmfire\n"
+            "    steps:\n"
+            "      - uses: google-github-actions/auth@v2\n"
+            "      - uses: google-github-actions/get-gke-credentials@v2\n"
+            "      - run: kubectl apply -n \"$K8S_NAMESPACE\" -f k8s/deployment.yaml\n"
+        )
+    )
+    namespace_manifest = _encode_workflow_yaml(
+        (
+            "# mbsrn-managed-manifest:site_repo_template_v1\n"
+            "apiVersion: v1\n"
+            "kind: Namespace\n"
+            "metadata:\n"
+            "  name: tnmfire\n"
+        )
+    )
+    namespaced_manifest = _encode_workflow_yaml(
+        (
+            "# mbsrn-managed-manifest:site_repo_template_v1\n"
+            "apiVersion: apps/v1\n"
+            "kind: Deployment\n"
+            "metadata:\n"
+            "  name: site-web\n"
+            "  namespace: tnmfire\n"
+        )
+    )
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _FakeHTTPResponse(status=200, body="{}"),
+            _FakeHTTPResponse(status=200, body="{}"),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "wfsha", "encoding": "base64", "content": managed_workflow}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"state": "active", "path": ".github/workflows/deploy-tnmfire-www-prod.yml"}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-namespace", "encoding": "base64", "content": namespace_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-deployment", "encoding": "base64", "content": namespaced_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-service", "encoding": "base64", "content": namespaced_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-ingress", "encoding": "base64", "content": namespaced_manifest}),
+            ),
+            _http_error(
+                "https://api.github.com/repos/mhanson13/tnmfire/actions/variables/KUBERNETES_CLUSTER_NAME",
+                status_code=404,
+                message="Not Found",
+            ),
+            _FakeHTTPResponse(status=200, body=json.dumps({"name": "KUBERNETES_CLUSTER_LOCATION"})),
+            _FakeHTTPResponse(status=200, body=json.dumps({"name": "GCP_PROJECT_ID"})),
+            _http_error(
+                "https://api.github.com/repos/mhanson13/tnmfire/actions/secrets/KUBERNETES_CLUSTER_NAME",
+                status_code=404,
+                message="Not Found",
+            ),
+        ],
+        calls,
+    )
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    readiness = publisher.check_deploy_target_readiness(
+        target=_dispatch_target(),
+        allow_ref_repair=False,
+        allow_workflow_repair=False,
+        dry_run=False,
+    )
+    assert readiness.workflow_dispatch_ready is True
+    assert readiness.dispatch_service_availability is False
+    assert readiness.dispatch_service_reason_code == "missing_cluster_name"
+    assert readiness.workflow_conformance_status == "conformant"
+    assert len(calls) == 12
 
 
 def test_dispatch_deploy_classifies_token_not_authorized(monkeypatch) -> None:
@@ -1374,16 +1483,27 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "Apply managed manifests" in workflow_yaml
     assert "Verify rollout" in workflow_yaml
     assert "Verify service and ingress" in workflow_yaml
-    assert "project_id: ${{ secrets.GCP_PROJECT_ID }}" in workflow_yaml
+    assert "project_id: ${{ env.GKE_PROJECT_ID }}" in workflow_yaml
     assert "Validate GCP credentials" in workflow_yaml
     assert "Missing GCP_DEPLOY_KEY secret" in workflow_yaml
+    assert "Validate GKE environment config" in workflow_yaml
+    assert "Missing KUBERNETES_CLUSTER_NAME variable/secret" in workflow_yaml
+    assert "Missing KUBERNETES_CLUSTER_LOCATION variable/secret" in workflow_yaml
+    assert "Missing GCP_PROJECT_ID variable/secret" in workflow_yaml
     assert "credentials_json: ${{ secrets.GCP_DEPLOY_KEY }}" in workflow_yaml
     assert "create_credentials_file: true" in workflow_yaml
     assert "export_environment_variables: true" in workflow_yaml
     assert "workload_identity_provider:" not in workflow_yaml
     assert "service_account:" not in workflow_yaml
-    assert "cluster_name: ${{ secrets.KUBERNETES_CLUSTER_NAME }}" in workflow_yaml
-    assert "location: ${{ secrets.KUBERNETES_CLUSTER_LOCATION }}" in workflow_yaml
+    assert "GKE_CLUSTER_NAME: ${{ vars.KUBERNETES_CLUSTER_NAME || secrets.KUBERNETES_CLUSTER_NAME }}" in workflow_yaml
+    assert (
+        "GKE_CLUSTER_LOCATION: ${{ vars.KUBERNETES_CLUSTER_LOCATION || secrets.KUBERNETES_CLUSTER_LOCATION }}"
+        in workflow_yaml
+    )
+    assert "GKE_PROJECT_ID: ${{ vars.GCP_PROJECT_ID || secrets.GCP_PROJECT_ID }}" in workflow_yaml
+    assert "cluster_name: ${{ env.GKE_CLUSTER_NAME }}" in workflow_yaml
+    assert "location: ${{ env.GKE_CLUSTER_LOCATION }}" in workflow_yaml
+    assert "project_id: ${{ env.GKE_PROJECT_ID }}" in workflow_yaml
     assert "outputs:" in workflow_yaml
     assert "live_url: ${{ steps.resolve_live_url.outputs.live_url }}" in workflow_yaml
     assert "resolved_live_url: ${{ steps.resolve_live_url.outputs.resolved_live_url }}" in workflow_yaml
@@ -1649,6 +1769,7 @@ def test_publish_upgrade_and_readiness_validate_same_workflow_path_and_ref(monke
             _managed_file_verify_response(sha="manifest-r-2", marker="mbsrn-managed-manifest:site_repo_template_v1"),
             _managed_file_verify_response(sha="manifest-r-3", marker="mbsrn-managed-manifest:site_repo_template_v1"),
             _managed_file_verify_response(sha="manifest-r-4", marker="mbsrn-managed-manifest:site_repo_template_v1"),
+            *_gke_environment_config_present_responses(),
         ]
     )
     _install_urlopen_stub(monkeypatch, queue, calls)
@@ -1959,6 +2080,7 @@ def test_check_deploy_target_readiness_flags_missing_expected_resource_quota_man
                 status_code=404,
                 message="Not Found",
             ),
+            *_gke_environment_config_present_responses(),
         ],
         calls,
     )

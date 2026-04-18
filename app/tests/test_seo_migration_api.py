@@ -36,6 +36,7 @@ from app.integrations.seo_migration_github_publisher import (
     SEOMigrationGitHubPublishTarget,
     SEOMigrationGitHubPublisher,
     SEOMigrationGitHubPublisherError,
+    SEOMigrationGitHubTargetReadinessResult,
     SEOMigrationGitHubWorkflowProvisionResult,
 )
 from app.models.business import Business
@@ -97,6 +98,7 @@ class _StubMigrationGitHubPublisher(SEOMigrationGitHubPublisher):
         refresh_workflow_run_status: str | None = None,
         refresh_workflow_run_conclusion: str | None = None,
         refresh_workflow_output: dict[str, str] | None = None,
+        deploy_target_dispatch_service_reason_code: str | None = None,
     ) -> None:
         self.fail_publish = fail_publish
         self.fail_deploy = fail_deploy
@@ -108,6 +110,9 @@ class _StubMigrationGitHubPublisher(SEOMigrationGitHubPublisher):
         self.refresh_workflow_run_status = refresh_workflow_run_status
         self.refresh_workflow_run_conclusion = refresh_workflow_run_conclusion
         self.refresh_workflow_output = dict(refresh_workflow_output or {})
+        self.deploy_target_dispatch_service_reason_code = (
+            (deploy_target_dispatch_service_reason_code or "").strip().lower() or None
+        )
         self.publish_calls: list[tuple[SEOMigrationGitHubPublishTarget, list[SEOMigrationGitHubPublishFile], bool]] = []
         self.deploy_calls: list[tuple[SEOMigrationGitHubDeployTarget, bool]] = []
         self.refresh_calls: list[tuple[SEOMigrationGitHubDeployTarget, int, str | None]] = []
@@ -179,6 +184,12 @@ class _StubMigrationGitHubPublisher(SEOMigrationGitHubPublisher):
         dry_run: bool,
     ) -> SEOMigrationGitHubDeployResult:
         self.deploy_calls.append((target, dry_run))
+        if self.deploy_target_dispatch_service_reason_code and not dry_run:
+            raise SEOMigrationGitHubPublisherError(
+                code="workflow_not_dispatchable",
+                safe_message="Simulated deploy target configuration is missing required GKE environment values.",
+                stage="workflow_lookup",
+            )
         if self.fail_deploy:
             raise SEOMigrationGitHubPublisherError(
                 code="github_request_failed",
@@ -264,6 +275,43 @@ class _StubMigrationGitHubPublisher(SEOMigrationGitHubPublisher):
             deploy_workflow_mode=deploy_workflow_mode,
             target_environment_key=target_environment_key,
             target_environment_source=target_environment_source,
+        )
+
+    def check_deploy_target_readiness(
+        self,
+        *,
+        target: SEOMigrationGitHubDeployTarget,
+        allow_ref_repair: bool = False,
+        allow_workflow_repair: bool = False,
+        dry_run: bool = False,
+        remediation_mode: str = "none",
+        namespace_isolation_defaults: dict[str, object] | None = None,
+    ) -> SEOMigrationGitHubTargetReadinessResult:
+        del allow_ref_repair, allow_workflow_repair, dry_run, namespace_isolation_defaults
+        dispatch_reason = self.deploy_target_dispatch_service_reason_code or "available"
+        dispatch_available = dispatch_reason == "available"
+        return SEOMigrationGitHubTargetReadinessResult(
+            repo_owner=target.repo_owner,
+            repo_name=target.repo_name,
+            requested_ref=target.ref,
+            resolved_ref=target.ref,
+            ref_source="requested",
+            workflow_id=target.workflow_id,
+            workflow_path=f".github/workflows/{target.workflow_id}",
+            repo_exists=True,
+            ref_exists=True,
+            workflow_exists=True,
+            workflow_dispatch_ready=dispatch_available,
+            workflow_dispatch_supported=True,
+            workflow_trigger_types=("workflow_dispatch",),
+            dispatch_service_availability=dispatch_available,
+            dispatch_service_reason_code=dispatch_reason,
+            dispatch_identifier_type="workflow_id",
+            remediation_mode=remediation_mode.strip() or "none",
+            workflow_conformance_checked=True,
+            workflow_conformance_status="conformant",
+            workflow_conformance_reasons=(),
+            workflow_conformance_evidence_summary="stub_conformant",
         )
 
 
@@ -2156,3 +2204,86 @@ def test_migration_summary_diagnostics_contract_tracks_publish_and_deploy_state_
     assert deploy_readiness.get("last_failure_category") == "deploy_error"
     assert deploy_readiness.get("last_failure_message") == "Simulated deploy failure."
     assert "last_failure_remediation_hint" in deploy_readiness
+
+
+def test_migration_summary_surfaces_missing_managed_gke_config_reason_and_remediation(db_session) -> None:
+    business_id = "11111111-1111-1111-1111-111111111111"
+    site_id = "22222222-2222-2222-2222-222222222222"
+    _seed_business_and_site(db_session, business_id=business_id, site_id=site_id)
+    client = _make_client(
+        db_session,
+        business_id=business_id,
+        github_publisher=_StubMigrationGitHubPublisher(
+            deploy_target_dispatch_service_reason_code="missing_cluster_name"
+        ),
+    )
+
+    workspace_response = client.put(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/workspace",
+        json={
+            "source_url": "https://legacy.example",
+            "publish_config": {
+                "enabled": True,
+                "repo_owner": "acme",
+                "repo_name": "tnmfire-site",
+                "branch": "main",
+            },
+            "deploy_config": {
+                "enabled": True,
+                "workflow_id": "deploy-www-prod.yml",
+                "ref": "main",
+            },
+        },
+    )
+    assert workspace_response.status_code == 200
+    _prepare_workspace_for_draft_generation(client, business_id=business_id, site_id=site_id)
+
+    generate_response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/generate-draft-artifacts",
+        json={"force_new_version": True},
+    )
+    assert generate_response.status_code == 201
+    artifact_id = generate_response.json()["id"]
+
+    approve_response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/artifact-versions/{artifact_id}/approve",
+        json={"approval_notes": "Approved"},
+    )
+    assert approve_response.status_code == 200
+
+    publish_response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/publish",
+        json={
+            "artifact_version_id": artifact_id,
+            "dry_run": False,
+        },
+    )
+    assert publish_response.status_code == 200
+
+    deploy_response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/deploy",
+        json={
+            "artifact_version_id": artifact_id,
+            "dry_run": False,
+        },
+    )
+    assert deploy_response.status_code == 422
+
+    summary_response = client.get(f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/summary")
+    assert summary_response.status_code == 200
+    payload = summary_response.json()
+
+    deploy_readiness = payload.get("deploy_readiness") or {}
+    diagnostics = payload.get("context_summary", {}).get("migration_diagnostics") or {}
+
+    assert deploy_readiness.get("last_failure_reason") == "workflow_not_dispatchable"
+    assert deploy_readiness.get("last_failure_dispatch_service_reason_code") == "missing_cluster_name"
+    assert (
+        deploy_readiness.get("last_failure_remediation_hint")
+        == "Deploy target is missing Kubernetes cluster name configuration (KUBERNETES_CLUSTER_NAME variable/secret)."
+    )
+    assert diagnostics.get("last_deploy_failure_dispatch_service_reason_code") == "missing_cluster_name"
+    assert (
+        diagnostics.get("last_deploy_failure_remediation_hint")
+        == "Deploy target is missing Kubernetes cluster name configuration (KUBERNETES_CLUSTER_NAME variable/secret)."
+    )

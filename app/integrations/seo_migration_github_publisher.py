@@ -646,6 +646,18 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 dry_run=False,
                 remediation_mode="none",
             )
+            if (
+                readiness_result.dispatch_service_availability is False
+                and readiness_result.dispatch_service_reason_code in _DEPLOY_GKE_CONFIG_MISSING_REASON_PRIORITY
+            ):
+                raise SEOMigrationGitHubPublisherError(
+                    code="workflow_not_dispatchable",
+                    safe_message=(
+                        "Managed deploy target is missing required GKE environment configuration "
+                        "(cluster_name/location/project_id)."
+                    ),
+                    stage="workflow_lookup",
+                )
             self._dispatch_workflow_request(
                 target=target,
                 preflight_ref_verified=bool(readiness_result.ref_exists),
@@ -1280,6 +1292,125 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             return None
         return payload
 
+    def _actions_variable_present(
+        self,
+        *,
+        repo_owner: str,
+        repo_name: str,
+        variable_name: str,
+    ) -> bool:
+        payload = self._request_json(
+            method="GET",
+            path=(
+                f"/repos/{urllib.parse.quote(repo_owner)}/{urllib.parse.quote(repo_name)}"
+                f"/actions/variables/{urllib.parse.quote(variable_name, safe='')}"
+            ),
+            expected_statuses=(200,),
+            allow_404=True,
+            status_error_map={
+                401: (
+                    "token_not_authorized",
+                    "GitHub token is not authorized for deploy operations.",
+                ),
+                403: (
+                    "token_not_authorized",
+                    "GitHub token is not authorized for deploy operations.",
+                ),
+            },
+            error_stage="workflow_lookup",
+        )
+        return isinstance(payload, dict)
+
+    def _actions_secret_present(
+        self,
+        *,
+        repo_owner: str,
+        repo_name: str,
+        secret_name: str,
+    ) -> bool:
+        payload = self._request_json(
+            method="GET",
+            path=(
+                f"/repos/{urllib.parse.quote(repo_owner)}/{urllib.parse.quote(repo_name)}"
+                f"/actions/secrets/{urllib.parse.quote(secret_name, safe='')}"
+            ),
+            expected_statuses=(200,),
+            allow_404=True,
+            status_error_map={
+                401: (
+                    "token_not_authorized",
+                    "GitHub token is not authorized for deploy operations.",
+                ),
+                403: (
+                    "token_not_authorized",
+                    "GitHub token is not authorized for deploy operations.",
+                ),
+            },
+            error_stage="workflow_lookup",
+        )
+        return isinstance(payload, dict)
+
+    def _validate_managed_gke_environment_config(
+        self,
+        *,
+        repo_owner: str,
+        repo_name: str,
+    ) -> tuple[str | None, list[str], dict[str, bool]]:
+        presence = {
+            "cluster_name_variable_present": self._actions_variable_present(
+                repo_owner=repo_owner,
+                repo_name=repo_name,
+                variable_name=_GKE_ENV_CLUSTER_NAME,
+            ),
+            "cluster_location_variable_present": self._actions_variable_present(
+                repo_owner=repo_owner,
+                repo_name=repo_name,
+                variable_name=_GKE_ENV_CLUSTER_LOCATION,
+            ),
+            "project_id_variable_present": self._actions_variable_present(
+                repo_owner=repo_owner,
+                repo_name=repo_name,
+                variable_name=_GKE_ENV_PROJECT_ID,
+            ),
+            "cluster_name_secret_present": False,
+            "cluster_location_secret_present": False,
+            "project_id_secret_present": False,
+        }
+        if not presence["cluster_name_variable_present"]:
+            presence["cluster_name_secret_present"] = self._actions_secret_present(
+                repo_owner=repo_owner,
+                repo_name=repo_name,
+                secret_name=_GKE_ENV_CLUSTER_NAME,
+            )
+        if not presence["cluster_location_variable_present"]:
+            presence["cluster_location_secret_present"] = self._actions_secret_present(
+                repo_owner=repo_owner,
+                repo_name=repo_name,
+                secret_name=_GKE_ENV_CLUSTER_LOCATION,
+            )
+        if not presence["project_id_variable_present"]:
+            presence["project_id_secret_present"] = self._actions_secret_present(
+                repo_owner=repo_owner,
+                repo_name=repo_name,
+                secret_name=_GKE_ENV_PROJECT_ID,
+            )
+
+        missing_reason_codes: list[str] = []
+        if not (presence["cluster_name_variable_present"] or presence["cluster_name_secret_present"]):
+            missing_reason_codes.append(_DEPLOY_DISPATCH_SERVICE_REASON_MISSING_CLUSTER_NAME)
+        if not (presence["cluster_location_variable_present"] or presence["cluster_location_secret_present"]):
+            missing_reason_codes.append(_DEPLOY_DISPATCH_SERVICE_REASON_MISSING_CLUSTER_LOCATION)
+        if not (presence["project_id_variable_present"] or presence["project_id_secret_present"]):
+            missing_reason_codes.append(_DEPLOY_DISPATCH_SERVICE_REASON_MISSING_GCP_PROJECT_ID)
+
+        prioritized_reason_code: str | None = None
+        for candidate in _DEPLOY_GKE_CONFIG_MISSING_REASON_PRIORITY:
+            if candidate in missing_reason_codes:
+                prioritized_reason_code = candidate
+                break
+
+        return prioritized_reason_code, missing_reason_codes, presence
+
     def _evaluate_manifest_namespace_alignment(
         self,
         *,
@@ -1875,9 +2006,39 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             managed_namespace_policies_aligned = None
         dispatch_service_availability = True
         dispatch_service_reason_code = "available"
+        gke_config_missing_reason_codes: list[str] = []
+        gke_config_presence: dict[str, bool] = {}
+        gke_config_reason_code: str | None = None
+        if managed_workflow:
+            (
+                gke_config_reason_code,
+                gke_config_missing_reason_codes,
+                gke_config_presence,
+            ) = self._validate_managed_gke_environment_config(
+                repo_owner=target.repo_owner,
+                repo_name=target.repo_name,
+            )
+            _emit_structured_publisher_log(
+                payload={
+                    "event": "seo_migration_deploy_gke_environment_config",
+                    "repo_owner": target.repo_owner,
+                    "repo_name": target.repo_name,
+                    "requested_ref": target.ref,
+                    "workflow_id": target.workflow_id,
+                    "workflow_path": workflow_path,
+                    "gke_config_reason_code": gke_config_reason_code,
+                    "gke_config_missing_reason_codes": gke_config_missing_reason_codes,
+                    **gke_config_presence,
+                },
+                fallback_message="seo_migration_deploy_gke_environment_config",
+                level=logging.INFO,
+            )
         if managed_workflow and namespace_model_status == _NAMESPACE_MODEL_STATUS_MISALIGNED:
             dispatch_service_availability = False
             dispatch_service_reason_code = "target_configuration_invalid"
+        if managed_workflow and gke_config_reason_code is not None:
+            dispatch_service_availability = False
+            dispatch_service_reason_code = gke_config_reason_code
         return SEOMigrationGitHubTargetReadinessResult(
             repo_owner=target.repo_owner,
             repo_name=target.repo_name,
@@ -2361,6 +2522,18 @@ _MBSRN_MANAGED_MANIFEST_PATHS: tuple[str, ...] = (
 _NAMESPACE_MODEL_STATUS_ALIGNED = "aligned"
 _NAMESPACE_MODEL_STATUS_MISALIGNED = "misaligned"
 _NAMESPACE_MODEL_STATUS_UNKNOWN = "unknown"
+
+_GKE_ENV_PROJECT_ID = "GCP_PROJECT_ID"
+_GKE_ENV_CLUSTER_NAME = "KUBERNETES_CLUSTER_NAME"
+_GKE_ENV_CLUSTER_LOCATION = "KUBERNETES_CLUSTER_LOCATION"
+_DEPLOY_DISPATCH_SERVICE_REASON_MISSING_CLUSTER_NAME = "missing_cluster_name"
+_DEPLOY_DISPATCH_SERVICE_REASON_MISSING_CLUSTER_LOCATION = "missing_cluster_location"
+_DEPLOY_DISPATCH_SERVICE_REASON_MISSING_GCP_PROJECT_ID = "missing_gcp_project_id"
+_DEPLOY_GKE_CONFIG_MISSING_REASON_PRIORITY: tuple[str, ...] = (
+    _DEPLOY_DISPATCH_SERVICE_REASON_MISSING_CLUSTER_NAME,
+    _DEPLOY_DISPATCH_SERVICE_REASON_MISSING_CLUSTER_LOCATION,
+    _DEPLOY_DISPATCH_SERVICE_REASON_MISSING_GCP_PROJECT_ID,
+)
 _DEFAULT_NAMESPACE_ISOLATION_DEFAULTS = {
     "resource_quota": {
         "enabled": False,
@@ -2571,6 +2744,9 @@ def _render_managed_deploy_workflow_yaml(
         f"      MBSRN_TARGET_ENVIRONMENT_KEY: {normalized_environment_key}\n"
         f"      MBSRN_TARGET_ENVIRONMENT_SOURCE: {normalized_environment_source}\n"
         f"      MBSRN_SITE_IDENTITY: {normalized_site_fragment}\n"
+        f"      GKE_CLUSTER_NAME: ${{{{ vars.{_GKE_ENV_CLUSTER_NAME} || secrets.{_GKE_ENV_CLUSTER_NAME} }}}}\n"
+        f"      GKE_CLUSTER_LOCATION: ${{{{ vars.{_GKE_ENV_CLUSTER_LOCATION} || secrets.{_GKE_ENV_CLUSTER_LOCATION} }}}}\n"
+        f"      GKE_PROJECT_ID: ${{{{ vars.{_GKE_ENV_PROJECT_ID} || secrets.{_GKE_ENV_PROJECT_ID} }}}}\n"
         "    steps:\n"
         "      - name: Checkout repository\n"
         "        uses: actions/checkout@v4\n"
@@ -2578,6 +2754,20 @@ def _render_managed_deploy_workflow_yaml(
         "        run: |\n"
         "          if [ -z \"${{ secrets.GCP_DEPLOY_KEY }}\" ]; then\n"
         "            echo \"Missing GCP_DEPLOY_KEY secret\"\n"
+        "            exit 1\n"
+        "          fi\n"
+        "      - name: Validate GKE environment config\n"
+        "        run: |\n"
+        "          if [ -z \"$GKE_CLUSTER_NAME\" ]; then\n"
+        "            echo \"Missing KUBERNETES_CLUSTER_NAME variable/secret\"\n"
+        "            exit 1\n"
+        "          fi\n"
+        "          if [ -z \"$GKE_CLUSTER_LOCATION\" ]; then\n"
+        "            echo \"Missing KUBERNETES_CLUSTER_LOCATION variable/secret\"\n"
+        "            exit 1\n"
+        "          fi\n"
+        "          if [ -z \"$GKE_PROJECT_ID\" ]; then\n"
+        "            echo \"Missing GCP_PROJECT_ID variable/secret\"\n"
         "            exit 1\n"
         "          fi\n"
         "      - name: Authenticate to GCP\n"
@@ -2589,9 +2779,9 @@ def _render_managed_deploy_workflow_yaml(
         "      - name: Get GKE credentials\n"
         "        uses: google-github-actions/get-gke-credentials@v2\n"
         "        with:\n"
-        "          cluster_name: ${{ secrets.KUBERNETES_CLUSTER_NAME }}\n"
-        "          location: ${{ secrets.KUBERNETES_CLUSTER_LOCATION }}\n"
-        "          project_id: ${{ secrets.GCP_PROJECT_ID }}\n"
+        "          cluster_name: ${{ env.GKE_CLUSTER_NAME }}\n"
+        "          location: ${{ env.GKE_CLUSTER_LOCATION }}\n"
+        "          project_id: ${{ env.GKE_PROJECT_ID }}\n"
         "      - name: Ensure namespace exists\n"
         "        run: kubectl apply -f k8s/namespace.yaml\n"
         "      - name: Apply managed manifests\n"

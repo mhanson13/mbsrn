@@ -556,6 +556,23 @@ function toWorkflowRemediationOutcomeGuidance(value: string | null): string | nu
   return null;
 }
 
+function toManagedGkeConfigGuidance(value: string | null): string | null {
+  const normalized = (value || "").trim().toLowerCase();
+  if (!normalized) {
+    return null;
+  }
+  if (normalized === "missing_cluster_name") {
+    return "Set KUBERNETES_CLUSTER_NAME in repo vars/secrets.";
+  }
+  if (normalized === "missing_cluster_location") {
+    return "Set KUBERNETES_CLUSTER_LOCATION in repo vars/secrets.";
+  }
+  if (normalized === "missing_gcp_project_id") {
+    return "Set GCP_PROJECT_ID in repo vars/secrets.";
+  }
+  return null;
+}
+
 function parseStringNumberMap(value: unknown): Record<string, number> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return {};
@@ -2095,6 +2112,8 @@ export function MigrationWorkspacePanel({
     asStringOrNull(migrationDiagnostics.last_deploy_failure_dispatch_service_reason_code) ||
     asStringOrNull(deployReadiness.dispatch_service_reason_code);
   const dispatchServiceReasonCode = dispatchServiceReasonCodeFromSelected || dispatchServiceReasonCodeFromSummary;
+  const managedGkeConfigGuidance = toManagedGkeConfigGuidance(dispatchServiceReasonCode);
+  const showManagedGkeConfigSourceHint = managedGkeConfigGuidance !== null;
   const workflowConformanceChecked =
     asBooleanOrNull(selectedDeployHistoryRecord.workflow_conformance_checked) ??
     asBooleanOrNull(deployReadiness.workflow_conformance_checked);
@@ -2260,6 +2279,7 @@ export function MigrationWorkspacePanel({
     asStringOrNull(migrationDiagnostics.last_deploy_failure_remediation_hint);
   const deployFailureRemediationHint =
     deployFailureRemediationHintFromSelected || deployFailureRemediationHintFromSummary;
+  const deployFailureRemediationHintDisplay = managedGkeConfigGuidance ? null : deployFailureRemediationHint;
   const deployDiagnosticsUsingSummaryFallback =
     hasSelectedDeployAttempt &&
     ((!deployFailureCategoryFromSelected && !!deployFailureCategoryFromSummary) ||
@@ -4043,8 +4063,18 @@ export function MigrationWorkspacePanel({
               <span className="hint warning">Last failure stage: {formatDispatchStageLabel(deployFailureStage)}</span>
             ) : null}
             {deployFailureMessage ? <span className="hint warning">{deployFailureMessage}</span> : null}
-            {deployFailureRemediationHint ? (
-              <span className="hint warning">Remediation hint: {deployFailureRemediationHint}</span>
+            {deployFailureRemediationHintDisplay ? (
+              <span className="hint warning">Remediation hint: {deployFailureRemediationHintDisplay}</span>
+            ) : null}
+            {managedGkeConfigGuidance ? (
+              <span className="hint warning" data-testid="migration-managed-gke-config-guidance-readiness">
+                {managedGkeConfigGuidance}
+              </span>
+            ) : null}
+            {showManagedGkeConfigSourceHint ? (
+              <span className="hint muted" data-testid="migration-managed-gke-config-source-readiness">
+                Managed deploy reads vars first, then secrets.
+              </span>
             ) : null}
             {deployRunFailureReasonCode ? (
               <span className="hint warning">
@@ -4262,6 +4292,9 @@ export function MigrationWorkspacePanel({
                       const failureReason = asStringOrNull(record.failure_reason);
                       const failureStage = asStringOrNull(record.failure_stage);
                       const remediationHint = asStringOrNull(record.failure_remediation_hint);
+                      const dispatchServiceReasonCode = asStringOrNull(record.dispatch_service_reason_code);
+                      const managedGkeConfigGuidanceHint = toManagedGkeConfigGuidance(dispatchServiceReasonCode);
+                      const remediationHintDisplay = managedGkeConfigGuidanceHint || remediationHint;
                       return (
                         <li key={`deploy-history-${index}`}>
                           {asString(record.timestamp) || "n/a"} - {status} - artifact{" "}
@@ -4273,8 +4306,8 @@ export function MigrationWorkspacePanel({
                               {failureReason ? formatReasonCodeLabel(failureReason) : "unknown"})
                             </span>
                           ) : null}
-                          {status.toLowerCase() === "failed" && remediationHint ? (
-                            <span className="hint warning"> - {remediationHint}</span>
+                          {status.toLowerCase() === "failed" && remediationHintDisplay ? (
+                            <span className="hint warning"> - {remediationHintDisplay}</span>
                           ) : null}
                         </li>
                       );
@@ -4367,6 +4400,16 @@ export function MigrationWorkspacePanel({
                 <span className="hint">
                   Dispatch service reason: {formatReasonCodeLabel(dispatchServiceReasonCode)}
                 </span>
+                {managedGkeConfigGuidance ? (
+                  <span className="hint warning" data-testid="migration-managed-gke-config-guidance-diagnostics">
+                    {managedGkeConfigGuidance}
+                  </span>
+                ) : null}
+                {showManagedGkeConfigSourceHint ? (
+                  <span className="hint muted" data-testid="migration-managed-gke-config-source-diagnostics">
+                    Managed deploy reads vars first, then secrets.
+                  </span>
+                ) : null}
                 <span className="hint">Dispatch ref sent: {dispatchRefSent || "Not available"}</span>
                 <span className="hint">
                   Workflow input keys (configured):{" "}
@@ -4422,8 +4465,8 @@ export function MigrationWorkspacePanel({
                   <span className="hint warning">Workflow contract advisory: {workflowContractAdvisory}</span>
                 ) : null}
                 {deployFailureMessage ? <span className="hint warning">{deployFailureMessage}</span> : null}
-                {deployFailureRemediationHint ? (
-                  <span className="hint warning">Remediation hint: {deployFailureRemediationHint}</span>
+                {deployFailureRemediationHintDisplay ? (
+                  <span className="hint warning">Remediation hint: {deployFailureRemediationHintDisplay}</span>
                 ) : null}
               </div>
             </div>

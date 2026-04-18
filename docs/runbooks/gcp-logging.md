@@ -721,11 +721,20 @@ Managed workflow deploy evidence notes:
   - `deployed_url`
 - If rollout succeeds but ingress status has no concrete endpoint, workflow fails and no explicit live URL evidence is emitted.
 
-Managed real-deploy prerequisites (GitHub Actions secrets):
+Managed real-deploy prerequisites (GitHub Actions vars/secrets):
 - `GCP_DEPLOY_KEY` (full JSON service account key with Kubernetes Engine Admin-equivalent scoped access to the target cluster/project)
 - `KUBERNETES_CLUSTER_NAME`
 - `KUBERNETES_CLUSTER_LOCATION`
 - `GCP_PROJECT_ID`
+
+Managed workflow input mapping (rendered centrally by MBSRN):
+- `cluster_name: ${{ env.GKE_CLUSTER_NAME }}`
+- `location: ${{ env.GKE_CLUSTER_LOCATION }}`
+- `project_id: ${{ env.GKE_PROJECT_ID }}`
+- where:
+  - `GKE_CLUSTER_NAME = vars.KUBERNETES_CLUSTER_NAME || secrets.KUBERNETES_CLUSTER_NAME`
+  - `GKE_CLUSTER_LOCATION = vars.KUBERNETES_CLUSTER_LOCATION || secrets.KUBERNETES_CLUSTER_LOCATION`
+  - `GKE_PROJECT_ID = vars.GCP_PROJECT_ID || secrets.GCP_PROJECT_ID`
 
 Required credential note:
 - `google-github-actions/auth@v2` uses:
@@ -733,6 +742,14 @@ Required credential note:
   - `create_credentials_file: true`
   - `export_environment_variables: true`
 - workflow includes a fast-fail pre-check step that exits with `Missing GCP_DEPLOY_KEY secret` if absent.
+- workflow includes `Validate GKE environment config` pre-check and fails early for:
+  - `Missing KUBERNETES_CLUSTER_NAME variable/secret`
+  - `Missing KUBERNETES_CLUSTER_LOCATION variable/secret`
+  - `Missing GCP_PROJECT_ID variable/secret`
+- deploy readiness diagnostics can surface missing managed GKE config before dispatch via:
+  - `dispatch_service_reason_code=missing_cluster_name`
+  - `dispatch_service_reason_code=missing_cluster_location`
+  - `dispatch_service_reason_code=missing_gcp_project_id`
 
 Post-dispatch workflow run failure diagnostics:
 - `workflow_run_failure_reason_code`
