@@ -16,6 +16,17 @@ def test_classify_cloudsql_instance_preflight_runnable() -> None:
     assert classification.detail is None
 
 
+def test_classify_cloudsql_instance_preflight_runnable_mixed_case_state() -> None:
+    classification = classify_cloudsql_instance_inspection(
+        describe_exit_code=0,
+        instance_state="rUnNaBlE",
+        stderr_text="",
+    )
+
+    assert classification.reason_code is None
+    assert classification.retryable is False
+
+
 def test_classify_cloudsql_instance_preflight_non_runnable_state() -> None:
     classification = classify_cloudsql_instance_inspection(
         describe_exit_code=0,
@@ -26,6 +37,18 @@ def test_classify_cloudsql_instance_preflight_non_runnable_state() -> None:
     assert classification.reason_code == "cloudsql_instance_invalid_state"
     assert classification.retryable is True
     assert classification.detail == "state_stopped"
+
+
+def test_classify_cloudsql_instance_preflight_unexpected_state_output() -> None:
+    classification = classify_cloudsql_instance_inspection(
+        describe_exit_code=0,
+        instance_state="?? bad-state ??",
+        stderr_text="",
+    )
+
+    assert classification.reason_code == "cloudsql_instance_invalid_state"
+    assert classification.retryable is True
+    assert classification.detail == "state_unexpected_output"
 
 
 def test_classify_cloudsql_instance_preflight_permission_denied() -> None:
@@ -39,6 +62,19 @@ def test_classify_cloudsql_instance_preflight_permission_denied() -> None:
     assert classification.retryable is False
     assert classification.detail == "permission_denied"
     assert classification.stderr_summary is not None
+
+
+def test_classify_cloudsql_instance_preflight_nonzero_without_stderr() -> None:
+    classification = classify_cloudsql_instance_inspection(
+        describe_exit_code=1,
+        instance_state="",
+        stderr_text=None,
+    )
+
+    assert classification.reason_code == "cloudsql_instance_inspection_failed"
+    assert classification.retryable is True
+    assert classification.detail == "empty_error_output"
+    assert classification.stderr_summary is None
 
 
 def test_classify_cloudsql_instance_preflight_not_found() -> None:
@@ -63,3 +99,17 @@ def test_classify_cloudsql_instance_preflight_empty_output() -> None:
     assert classification.reason_code == "cloudsql_instance_inspection_failed"
     assert classification.retryable is True
     assert classification.detail == "empty_state_output"
+
+
+def test_classify_cloudsql_instance_preflight_sanitizes_stderr_summary() -> None:
+    classification = classify_cloudsql_instance_inspection(
+        describe_exit_code=1,
+        instance_state="",
+        stderr_text=(
+            "ERROR token=/home/runner/work/_temp/creds.json "
+            "for project:region:instance permission denied"
+        ),
+    )
+
+    assert classification.reason_code == "cloudsql_instance_inspection_failed"
+    assert classification.stderr_summary == "sensitive content redacted"

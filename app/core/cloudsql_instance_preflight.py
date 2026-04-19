@@ -5,6 +5,15 @@ import re
 
 
 _MAX_STDERR_SUMMARY_LENGTH = 220
+_SENSITIVE_TOKEN_PATTERN = re.compile(
+    r"(?i)\b(password|token|secret|authorization|private[_-]?key|client[_-]?email|database_url)\b"
+)
+_CREDENTIAL_PATH_PATTERN = re.compile(r"(?i)(?:[A-Za-z]:\\|/)[^\s\"']+\.json")
+_CLOUDSQL_CONNECTION_NAME_PATTERN = re.compile(
+    r"\b[a-z][a-z0-9-]{1,62}:[a-z][a-z0-9-]{1,62}:[a-z][a-z0-9-]{1,62}\b",
+    re.IGNORECASE,
+)
+_VALID_STATE_PATTERN = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
 
 
 @dataclass(frozen=True)
@@ -21,9 +30,22 @@ def _sanitize_stderr_summary(stderr_text: str | None) -> str | None:
     if not normalized:
         return None
     collapsed = re.sub(r"\s+", " ", normalized)
+    collapsed = _CREDENTIAL_PATH_PATTERN.sub("[path]", collapsed)
+    collapsed = _CLOUDSQL_CONNECTION_NAME_PATTERN.sub("[instance-connection-name]", collapsed)
+    if _SENSITIVE_TOKEN_PATTERN.search(collapsed):
+        return "sensitive content redacted"
     if len(collapsed) <= _MAX_STDERR_SUMMARY_LENGTH:
         return collapsed
     return f"{collapsed[:_MAX_STDERR_SUMMARY_LENGTH - 1]}..."
+
+
+def _normalize_instance_state(value: str | None) -> str:
+    candidate = str(value or "").strip().upper()
+    if not candidate:
+        return ""
+    if _VALID_STATE_PATTERN.fullmatch(candidate):
+        return candidate
+    return "UNEXPECTED_OUTPUT"
 
 
 def _classify_inspection_failure_detail(stderr_text: str | None) -> str:
@@ -53,7 +75,7 @@ def classify_cloudsql_instance_inspection(
     instance_state: str | None,
     stderr_text: str | None,
 ) -> CloudSQLInstanceInspectionClassification:
-    state = str(instance_state or "").strip().upper()
+    state = _normalize_instance_state(instance_state)
     stderr_summary = _sanitize_stderr_summary(stderr_text)
 
     if describe_exit_code == 0 and state == "RUNNABLE":
