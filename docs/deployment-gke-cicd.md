@@ -231,6 +231,9 @@ Database URL safety contract:
 - Production-authoritative deploy path (`.github/workflows/deploy-prod.yml` + `k8s/*`) sources
   `DATABASE_URL` from GitHub secret `DATABASE_URL`.
 - `deploy-prod.yml` enforces `DB_CONNECTION_MODE=direct` and treats any other mode as invalid.
+- GitHub Actions config requirement for production:
+  - repo variable `DB_CONNECTION_MODE` must be unset (workflow default remains `direct`) or explicitly `direct`
+  - `cloudsql_proxy` in `deploy-prod.yml` is an invalid configuration and will fail fast with `production_db_mode_invalid`
 - Cloud SQL instance inspection is not part of the `deploy-prod.yml` path.
 - Deploy creates/updates Kubernetes secret `mbsrn-api-auth` with key `DATABASE_URL`.
 - API runtime consumes `DATABASE_URL` only via:
@@ -247,12 +250,14 @@ Database URL safety contract:
   - `DB_CONNECTION_MODE` is not `direct` (`production_db_mode_invalid`)
   - rendered API manifest does not wire `DATABASE_URL` via `secretKeyRef`
   - rendered API manifest contains a literal `DATABASE_URL` value
-- Accepted production `DATABASE_URL` forms include:
-  - standard remote hostname:
-    - `postgresql+psycopg://user:pass@db.example.com:5432/dbname`
-    - `postgresql://user:pass@db.example.com:5432/dbname`
-  - socket-style/cloud-native (effective target comes from query host/socket path):
-    - `postgresql://user:pass@/dbname?host=/cloudsql/<project>:<region>:<instance>`
+- Accepted production `DATABASE_URL` forms for `deploy-prod.yml` direct mode include non-loopback host targets such as:
+  - in-cluster service DNS:
+    - `postgresql+psycopg://<user>:<password>@<postgres-service>.<namespace>.svc.cluster.local:5432/<database>`
+  - managed/external Postgres endpoint:
+    - `postgresql://<user>:<password>@<managed-postgres-hostname>:5432/<database>`
+- Rejected in `deploy-prod.yml` direct mode:
+  - localhost/loopback targets (`localhost`, `127.0.0.1`, `::1`)
+  - Cloud SQL proxy localhost assumptions
 - `deploy-prod.yml` validates the effective connection target host/socket path and rejects loopback.
 
 ### Shared DATABASE_URL Validation Policy (Both Deploy Workflows)
@@ -295,12 +300,22 @@ validate the production DB path in this order:
    - `APP_ENV=production`
    - `DB_CONNECTION_MODE=direct`
 2. `DATABASE_URL` must resolve to a non-loopback target for direct mode.
+   - If validation reports `target_kind=loopback_host`, update the production `DATABASE_URL` value to a non-loopback service/hostname.
 3. Confirm `mbsrn-api-auth` has `DATABASE_URL` and rendered manifests wire it by `secretKeyRef`.
 4. If `production_db_mode_invalid` appears, correct the repo variable `DB_CONNECTION_MODE` to `direct`.
+   - deploy logs now include a warning line with the received mode and source classification (`repo_variable` vs `workflow_default_direct`).
 5. Confirm API startup diagnostics show sanitized DB target and mode:
    - `app_env`, `db_connection_mode`, host/port classification.
 
 The API startup check retry path for proxy-backed localhost mode applies only to optional `DB_CONNECTION_MODE=cloudsql_proxy` deployments (for example, a consciously configured `deploy-gke.yml` path). It is not the standard `deploy-prod.yml` production contract.
+
+### Where To Update Production `DATABASE_URL`
+- Source of truth for `deploy-prod.yml`: GitHub Actions **repo secret** `DATABASE_URL`.
+- Flow:
+  1. update GitHub repo secret `DATABASE_URL` to the intended non-loopback production endpoint value
+  2. run `deploy-prod.yml`
+  3. workflow writes secret value into Kubernetes secret `mbsrn-api-auth` key `DATABASE_URL`
+  4. API + migration jobs consume `mbsrn-api-auth.DATABASE_URL` via `secretKeyRef`
 
 ### Legacy Optional Cloud SQL Proxy Diagnostic Path
 Use this sequence only when a deployment is intentionally configured for `DB_CONNECTION_MODE=cloudsql_proxy` and API startup still fails after retry budget exhaustion.

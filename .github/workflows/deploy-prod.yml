@@ -44,6 +44,7 @@ env:
   APP_SESSION_ISSUER: mbsrn-console
   APP_SESSION_AUDIENCE: mbsrn-api
   DB_CONNECTION_MODE: ${{ vars.DB_CONNECTION_MODE || 'direct' }}
+  DB_CONNECTION_MODE_SOURCE: ${{ vars.DB_CONNECTION_MODE != '' && 'repo_variable' || 'workflow_default_direct' }}
   AI_PROVIDER_NAME: ${{ vars.AI_PROVIDER_NAME || 'openai' }}
   AI_MODEL_NAME: ${{ vars.AI_MODEL_NAME || 'gpt-4o-mini' }}
   AI_TIMEOUT_VALUE: ${{ vars.AI_TIMEOUT_VALUE || '30' }}
@@ -154,14 +155,17 @@ jobs:
             exit 1
           fi
 
+          db_mode_source="${DB_CONNECTION_MODE_SOURCE:-unknown}"
           normalized_db_connection_mode="$(echo "${DB_CONNECTION_MODE:-direct}" | tr '[:upper:]' '[:lower:]' | xargs)"
           if [[ -z "${normalized_db_connection_mode}" ]]; then
             normalized_db_connection_mode="direct"
           fi
+          echo "::warning::Received DB_CONNECTION_MODE from workflow environment: ${normalized_db_connection_mode} (source=${db_mode_source})"
+
           if [[ "${normalized_db_connection_mode}" != "direct" ]]; then
             echo "deploy_runtime_reason_code=production_db_mode_invalid"
-            echo "deploy_runtime_reason_message=deploy-prod requires DB_CONNECTION_MODE=direct for cloud-native production Postgres."
-            echo "Production deploy DB mode mismatch: DB_CONNECTION_MODE=${normalized_db_connection_mode}; expected direct." >&2
+            echo "deploy_runtime_reason_message=deploy-prod requires DB_CONNECTION_MODE=direct for cloud-native production Postgres (source=${db_mode_source})."
+            echo "Production deploy DB mode mismatch: DB_CONNECTION_MODE=${normalized_db_connection_mode}; expected direct (source=${db_mode_source})." >&2
             exit 1
           fi
 

@@ -765,6 +765,7 @@ Common stage-aware interpretations:
 - `service_ingress_verification_failed` / `ingress_verify`: service or ingress verification failed.
 - `ingress_endpoint_not_ready` / `ingress_evidence`: deployment ran but ingress endpoint did not become available before workflow evidence timeout.
 - `production_db_mode_invalid` / `manifest_apply`: production deploy DB mode is not aligned to the direct cloud-native Postgres contract (`DB_CONNECTION_MODE` must be `direct` for `deploy-prod.yml`).
+- `Invalid production DATABASE_URL: localhost/loopback target is not allowed for deploy-prod` / `manifest_apply`: production `DATABASE_URL` still resolves to loopback while running direct mode. Update the GitHub repo `DATABASE_URL` secret to a non-loopback cluster/service hostname or managed Postgres endpoint, then redeploy.
 - `cloudsql_instance_inspection_failed` / `manifest_apply`: Cloud SQL preflight could not inspect instance state (for example permission denied, not found/project mismatch, API unavailable, or empty describe output). This is expected only on intentionally proxy-backed paths.
 - `cloudsql_instance_invalid_state` / `manifest_apply`: Cloud SQL proxy hit `invalidState` while fetching ephemeral certs during migration job startup. This is expected only on intentionally proxy-backed paths.
 - `cloudsql_proxy_ephemeral_cert_failed` / `manifest_apply`: Cloud SQL proxy could not fetch ephemeral certs.

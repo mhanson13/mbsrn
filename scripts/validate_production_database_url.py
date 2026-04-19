@@ -139,7 +139,10 @@ def analyze_database_url(database_url: str, *, db_connection_mode: str) -> tuple
             return True, "DATABASE_URL accepted for production deploy.", diagnostics
         return (
             False,
-            "Invalid production DATABASE_URL: localhost/loopback target is not allowed for deploy-prod.",
+            (
+                "Invalid production DATABASE_URL: localhost/loopback target is not allowed for deploy-prod. "
+                "Use a non-loopback cluster/service hostname or managed Postgres endpoint."
+            ),
             diagnostics,
         )
 
@@ -190,7 +193,10 @@ def analyze_database_url(database_url: str, *, db_connection_mode: str) -> tuple
     if is_loopback:
         return (
             False,
-            "Invalid production DATABASE_URL: localhost/loopback target is not allowed for deploy-prod.",
+            (
+                "Invalid production DATABASE_URL: localhost/loopback target is not allowed for deploy-prod. "
+                "Use a non-loopback cluster/service hostname or managed Postgres endpoint."
+            ),
             diagnostics,
         )
     return True, "DATABASE_URL accepted for production deploy.", diagnostics
