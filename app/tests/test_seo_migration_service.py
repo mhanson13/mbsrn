@@ -3463,6 +3463,79 @@ def test_refresh_deploy_status_records_run_failure_classification(db_session) ->
     )
 
 
+def test_refresh_deploy_status_records_cloudsql_proxy_invalid_state_hint(db_session) -> None:
+    publisher = _RecordingGitHubPublisher(
+        deploy_workflow_run_id=998878,
+        deploy_workflow_run_status="in_progress",
+        deploy_workflow_run_conclusion=None,
+        refresh_workflow_run_id=998878,
+        refresh_workflow_run_status="completed",
+        refresh_workflow_run_conclusion="failure",
+        refresh_workflow_run_failure_reason_code="cloudsql_instance_invalid_state",
+        refresh_workflow_run_failure_stage="manifest_apply",
+        refresh_workflow_run_failure_step="Run Alembic migrations (pre-rollout gate)",
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+    _configure_deploy_target(service, business_id=business_id, site_id=site_id)
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes=None,
+        principal_id="principal-1",
+    )
+    service.publish_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        commit_message=None,
+        analytics_measurement_id=None,
+        principal_id="principal-1",
+    )
+    service.deploy_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        principal_id="principal-1",
+    )
+
+    refresh_result = service.refresh_deploy_run_status(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        principal_id="principal-1",
+    )
+    assert refresh_result.result.get("workflow_run_failure_reason_code") == "cloudsql_instance_invalid_state"
+    assert refresh_result.result.get("workflow_run_failure_stage") == "manifest_apply"
+    assert refresh_result.result.get("workflow_run_failure_step") == "Run Alembic migrations (pre-rollout gate)"
+    assert refresh_result.result.get("workflow_run_failure_hint") == (
+        "Cloud SQL proxy could not fetch an ephemeral certificate because the instance reported invalidState. "
+        "Confirm Cloud SQL instance state is RUNNABLE and retry deploy."
+    )
+
+    summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
+    deploy_readiness = summary.deploy_readiness or {}
+    assert deploy_readiness.get("last_workflow_run_failure_reason_code") == "cloudsql_instance_invalid_state"
+    assert deploy_readiness.get("last_workflow_run_failure_hint") == (
+        "Cloud SQL proxy could not fetch an ephemeral certificate because the instance reported invalidState. "
+        "Confirm Cloud SQL instance state is RUNNABLE and retry deploy."
+    )
+
+
 def test_refresh_deploy_status_is_noop_without_workflow_run_metadata(db_session, caplog) -> None:
     caplog.set_level("INFO", logger="app.services.seo_migration")
     publisher = _RecordingGitHubPublisher()

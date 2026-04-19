@@ -1030,6 +1030,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         )
         jobs_payload = jobs_response.get("jobs") if isinstance(jobs_response, dict) else None
         failed_step_name: str | None = None
+        failed_job_id: int | None = None
         if isinstance(jobs_payload, list):
             for job_item in jobs_payload:
                 if not isinstance(job_item, dict):
@@ -1037,6 +1038,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 job_conclusion = (_coerce_string(job_item.get("conclusion")) or "").strip().lower()
                 if job_conclusion in {"", "success"}:
                     continue
+                failed_job_id = _coerce_int(job_item.get("id"))
                 steps_payload = job_item.get("steps")
                 if isinstance(steps_payload, list):
                     for step_item in steps_payload:
@@ -1057,7 +1059,138 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             failed_step_name=failed_step_name,
             run_conclusion=run_conclusion,
         )
+        if reason_code == "workflow_run_failed" and failed_job_id is not None:
+            cloudsql_reason_code, cloudsql_failure_stage = self._classify_cloudsql_proxy_failure_from_job_logs(
+                target=target,
+                job_id=failed_job_id,
+            )
+            if cloudsql_reason_code:
+                reason_code = cloudsql_reason_code
+                if cloudsql_failure_stage:
+                    failure_stage = cloudsql_failure_stage
         return reason_code, failure_stage, failed_step_name
+
+    def _classify_cloudsql_proxy_failure_from_job_logs(
+        self,
+        *,
+        target: SEOMigrationGitHubDeployTarget,
+        job_id: int,
+    ) -> tuple[str | None, str | None]:
+        if job_id <= 0:
+            return None, None
+        logs_text = self._request_text(
+            method="GET",
+            path=(
+                f"/repos/{urllib.parse.quote(target.repo_owner)}/{urllib.parse.quote(target.repo_name)}"
+                f"/actions/jobs/{job_id}/logs"
+            ),
+            expected_statuses=(200,),
+            allow_404=True,
+            status_error_map={
+                401: (
+                    "token_not_authorized",
+                    "GitHub token is not authorized for deploy operations.",
+                ),
+                403: (
+                    "token_not_authorized",
+                    "GitHub token is not authorized for deploy operations.",
+                ),
+            },
+            error_stage="workflow_result_lookup",
+        )
+        return _classify_cloudsql_proxy_failure_from_log_text(logs_text)
+
+    def _request_text(
+        self,
+        *,
+        method: str,
+        path: str,
+        expected_statuses: tuple[int, ...] = (200,),
+        allow_404: bool = False,
+        status_error_map: dict[int, tuple[str, str]] | None = None,
+        error_stage: str | None = None,
+    ) -> str | None:
+        headers = {
+            "Accept": "application/vnd.github+json",
+            "Authorization": f"Bearer {self.token}",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "User-Agent": "MBSRN-MigrationPublisher/1.0",
+        }
+        request = urllib.request.Request(
+            url=f"{self.api_base_url}{path}",
+            data=None,
+            method=method,
+            headers=headers,
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
+                status_code = int(getattr(response, "status", 0) or 0)
+                if status_code not in expected_statuses:
+                    raise SEOMigrationGitHubPublisherError(
+                        code="github_unexpected_status",
+                        safe_message="GitHub operation returned an unexpected status code.",
+                        status_code=status_code,
+                        stage=error_stage,
+                    )
+                response_body = response.read().decode("utf-8", errors="replace")
+                return response_body if response_body else None
+        except urllib.error.HTTPError as exc:
+            status_code = int(getattr(exc, "code", 0) or 0)
+            if allow_404 and status_code == 404:
+                return None
+            if status_error_map and status_code in status_error_map:
+                code, safe_message = status_error_map[status_code]
+                raise SEOMigrationGitHubPublisherError(
+                    code=code,
+                    safe_message=safe_message,
+                    status_code=status_code,
+                    stage=error_stage,
+                ) from exc
+            if status_code in {401, 403}:
+                raise SEOMigrationGitHubPublisherError(
+                    code="github_auth_failed",
+                    safe_message="GitHub publish/deploy authentication failed.",
+                    status_code=status_code,
+                    stage=error_stage,
+                ) from exc
+            if status_code == 404:
+                raise SEOMigrationGitHubPublisherError(
+                    code="github_target_not_found",
+                    safe_message="GitHub repository or workflow target was not found.",
+                    status_code=status_code,
+                    stage=error_stage,
+                ) from exc
+            if status_code in {408, 429, 500, 502, 503, 504}:
+                raise SEOMigrationGitHubPublisherError(
+                    code="github_temporal_failure",
+                    safe_message="GitHub publish/deploy request failed temporarily.",
+                    status_code=status_code,
+                    stage=error_stage,
+                ) from exc
+            raise SEOMigrationGitHubPublisherError(
+                code="github_request_failed",
+                safe_message="GitHub publish/deploy request failed.",
+                status_code=status_code,
+                stage=error_stage,
+            ) from exc
+        except (TimeoutError, socket.timeout) as exc:
+            raise SEOMigrationGitHubPublisherError(
+                code="github_timeout",
+                safe_message="GitHub publish/deploy request timed out.",
+                stage=error_stage,
+            ) from exc
+        except urllib.error.URLError as exc:
+            if isinstance(exc.reason, TimeoutError) or isinstance(exc.reason, socket.timeout):
+                raise SEOMigrationGitHubPublisherError(
+                    code="github_timeout",
+                    safe_message="GitHub publish/deploy request timed out.",
+                    stage=error_stage,
+                ) from exc
+            raise SEOMigrationGitHubPublisherError(
+                code="github_network_error",
+                safe_message="GitHub publish/deploy network request failed.",
+                stage=error_stage,
+            ) from exc
 
     def _ensure_repo_exists(self, *, repo_owner: str, repo_name: str) -> None:
         self._request_json(
@@ -3160,6 +3293,32 @@ def _classify_workflow_run_failure(
     if conclusion == "timed_out":
         return "workflow_run_timed_out", "workflow_execution"
     return "workflow_run_failed", "workflow_execution"
+
+
+def _classify_cloudsql_proxy_failure_from_log_text(
+    log_text: str | None,
+) -> tuple[str | None, str | None]:
+    normalized = (str(log_text or "")).strip().lower()
+    if not normalized:
+        return None, None
+    has_invalid_state = "invalidstate" in normalized
+    has_ephemeral_cert_failure = "fetch ephemeral cert failed" in normalized
+    has_proxy_marker = "cloud-sql-proxy" in normalized or "cloud sql proxy" in normalized
+    has_connection_failure = (
+        "connection closed unexpectedly" in normalized
+        or "connection reset by peer" in normalized
+        or "connection refused" in normalized
+        or "dial tcp 127.0.0.1:5432" in normalized
+        or "dial tcp localhost:5432" in normalized
+    )
+
+    if has_invalid_state and has_ephemeral_cert_failure:
+        return "cloudsql_instance_invalid_state", "manifest_apply"
+    if has_ephemeral_cert_failure:
+        return "cloudsql_proxy_ephemeral_cert_failed", "manifest_apply"
+    if has_proxy_marker and has_connection_failure:
+        return "cloudsql_proxy_connection_failed", "manifest_apply"
+    return None, None
 
 
 _WORKFLOW_CONFORMANCE_STATUS_CONFORMANT = "conformant"

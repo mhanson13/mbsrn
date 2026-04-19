@@ -764,6 +764,18 @@ Common stage-aware interpretations:
 - `rollout_verification_failed` / `rollout_verify`: deployment rollout timed out/failed.
 - `service_ingress_verification_failed` / `ingress_verify`: service or ingress verification failed.
 - `ingress_endpoint_not_ready` / `ingress_evidence`: deployment ran but ingress endpoint did not become available before workflow evidence timeout.
+- `cloudsql_instance_invalid_state` / `manifest_apply`: Cloud SQL proxy hit `invalidState` while fetching ephemeral certs during migration job startup; inspect Cloud SQL instance state and retry after it returns to `RUNNABLE`.
+- `cloudsql_proxy_ephemeral_cert_failed` / `manifest_apply`: Cloud SQL proxy could not fetch ephemeral certs; verify Workload Identity/service-account permissions and instance availability.
+- `cloudsql_proxy_connection_failed` / `manifest_apply`: migration app container lost localhost DB connection through proxy; inspect both migration and `cloud-sql-proxy` container logs.
+
+Cloud SQL migration startup contract checks (deploy-prod workflow):
+- `CLOUD_SQL_INSTANCE_CONNECTION_NAME` must resolve to `<project>:<region>:<instance>`.
+- migration jobs must run with:
+  - `DB_CONNECTION_MODE=cloudsql_proxy`
+  - `DATABASE_URL` from `mbsrn-api-auth.DATABASE_URL`
+  - proxy sidecar env `CLOUD_SQL_INSTANCE_CONNECTION_NAME` from `mbsrn-api-auth.CLOUD_SQL_INSTANCE_CONNECTION_NAME`
+- deploy now performs a short Cloud SQL instance preflight and classifies non-`RUNNABLE` state as `cloudsql_instance_invalid_state`.
+- migration job execution retries transient proxy startup failures (for example ephemeral-cert invalidState) with bounded attempts before failing hard.
 
 5. **Dispatch succeeds but deployment still does not reach GKE**
    - Signals:

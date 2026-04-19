@@ -972,6 +972,11 @@ Deploy behavior:
   - `workflow_run_failure_step`
   - `workflow_run_failure_hint`
   - examples include `gcp_auth_failed`, `gke_credentials_failed`, `kubectl_apply_failed`, `rollout_verification_failed`, `service_ingress_verification_failed`, and `ingress_endpoint_not_ready`
+  - Cloud SQL migration-startup failures are surfaced distinctly when run logs contain known proxy signatures:
+    - `cloudsql_instance_invalid_state`
+    - `cloudsql_proxy_ephemeral_cert_failed`
+    - `cloudsql_proxy_connection_failed`
+  - `cloudsql_instance_invalid_state` indicates the instance was not ready to issue ephemeral certs; verify instance state is `RUNNABLE` and retry deploy.
 
 Current deployment model is reused via workflow dispatch conventions; platform deployment architecture is not redesigned by this feature.
 

@@ -233,6 +233,44 @@ jobs:
             --region "${GCP_REGION}" \
             --format='value(name)' > /dev/null
 
+      - name: Preflight Cloud SQL instance state
+        shell: bash
+        env:
+          CLOUD_SQL_INSTANCE_CONNECTION_NAME: ${{ secrets.CLOUD_SQL_INSTANCE_CONNECTION_NAME }}
+        run: |
+          set -euo pipefail
+
+          connection_name="${CLOUD_SQL_INSTANCE_CONNECTION_NAME:-}"
+          IFS=':' read -r cloudsql_project cloudsql_region cloudsql_instance <<< "${connection_name}"
+          if [[ -z "${cloudsql_project}" || -z "${cloudsql_region}" || -z "${cloudsql_instance}" ]]; then
+            echo "deploy_runtime_reason_code=cloudsql_proxy_connection_failed"
+            echo "CLOUD_SQL_INSTANCE_CONNECTION_NAME must be <project>:<region>:<instance>." >&2
+            exit 1
+          fi
+
+          instance_state=""
+          for attempt in 1 2 3; do
+            instance_state="$(
+              gcloud sql instances describe "${cloudsql_instance}" \
+                --project "${cloudsql_project}" \
+                --format='value(state)' 2>/dev/null || true
+            )"
+            if [[ "${instance_state}" == "RUNNABLE" ]]; then
+              echo "Cloud SQL preflight: instance ${connection_name} state is RUNNABLE."
+              break
+            fi
+            if [[ "${attempt}" -lt 3 ]]; then
+              echo "::warning::cloudsql_instance_invalid_state preflight attempt=${attempt} state=${instance_state:-unknown}; retrying in 15s."
+              sleep 15
+            fi
+          done
+
+          if [[ "${instance_state}" != "RUNNABLE" ]]; then
+            echo "deploy_runtime_reason_code=cloudsql_instance_invalid_state"
+            echo "Cloud SQL instance ${connection_name} state=${instance_state:-unknown}; expected RUNNABLE before migrations." >&2
+            exit 1
+          fi
+
       - name: Configure Docker auth for Artifact Registry
         shell: bash
         run: |
@@ -532,25 +570,88 @@ jobs:
           kubectl apply -n "${K8S_NAMESPACE}" -f "${RENDER_DIR}/redis-service.yaml"
           kubectl apply -n "${K8S_NAMESPACE}" -f "${RENDER_DIR}/redis-deployment.yaml"
 
+          run_migration_job_with_cloudsql_retry() {
+            local migration_job_name="$1"
+            local manifest_path="$2"
+            local app_container_name="$3"
+            local max_attempts=3
+            local attempt=1
+            local classified_reason_code=""
+            local classified_reason_message=""
+            local classified_retryable="false"
+
+            while [[ "${attempt}" -le "${max_attempts}" ]]; do
+              kubectl delete job "${migration_job_name}" -n "${K8S_NAMESPACE}" --ignore-not-found=true
+              kubectl wait --for=delete "job/${migration_job_name}" -n "${K8S_NAMESPACE}" --timeout=120s || true
+              kubectl apply -n "${K8S_NAMESPACE}" -f "${manifest_path}"
+
+              if kubectl wait --for=condition=complete "job/${migration_job_name}" -n "${K8S_NAMESPACE}" --timeout=600s; then
+                echo "Migration job ${migration_job_name} completed on attempt ${attempt}."
+                return 0
+              fi
+
+              app_log_file="$(mktemp)"
+              proxy_log_file="$(mktemp)"
+              kubectl logs -n "${K8S_NAMESPACE}" "job/${migration_job_name}" -c "${app_container_name}" --tail=300 > "${app_log_file}" 2>/dev/null || true
+              kubectl logs -n "${K8S_NAMESPACE}" "job/${migration_job_name}" -c cloud-sql-proxy --tail=300 > "${proxy_log_file}" 2>/dev/null || true
+
+              cat "${app_log_file}" || true
+              cat "${proxy_log_file}" || true
+
+              classified_reason_code="$(
+                python scripts/classify_cloudsql_proxy_failure.py \
+                  --proxy-log-file "${proxy_log_file}" \
+                  --app-log-file "${app_log_file}" \
+                  --field reason_code
+              )"
+              classified_reason_message="$(
+                python scripts/classify_cloudsql_proxy_failure.py \
+                  --proxy-log-file "${proxy_log_file}" \
+                  --app-log-file "${app_log_file}" \
+                  --field message
+              )"
+              classified_retryable="$(
+                python scripts/classify_cloudsql_proxy_failure.py \
+                  --proxy-log-file "${proxy_log_file}" \
+                  --app-log-file "${app_log_file}" \
+                  --field retryable
+              )"
+
+              if [[ -n "${classified_reason_code}" ]]; then
+                echo "deploy_runtime_reason_code=${classified_reason_code}"
+              fi
+              if [[ -n "${classified_reason_message}" ]]; then
+                echo "deploy_runtime_reason_message=${classified_reason_message}"
+              fi
+              if [[ "${classified_retryable}" == "true" && "${attempt}" -lt "${max_attempts}" ]]; then
+                echo "::warning::${classified_reason_code:-cloudsql_proxy_connection_failed} attempt=${attempt}/${max_attempts}; retrying migration job in 20s."
+                rm -f "${app_log_file}" "${proxy_log_file}"
+                sleep 20
+                attempt=$((attempt + 1))
+                continue
+              fi
+
+              kubectl describe -n "${K8S_NAMESPACE}" job "${migration_job_name}" || true
+              rm -f "${app_log_file}" "${proxy_log_file}"
+              return 1
+            done
+
+            return 1
+          }
+
           if [[ "${DB_ALIGNMENT_MODE}" == "baseline_existing" ]]; then
-            kubectl delete job mbsrn-api-migrate-baseline -n "${K8S_NAMESPACE}" --ignore-not-found=true
-            kubectl wait --for=delete job/mbsrn-api-migrate-baseline -n "${K8S_NAMESPACE}" --timeout=120s || true
-            kubectl apply -n "${K8S_NAMESPACE}" -f "${RENDER_DIR}/api-migration-baseline-job.yaml"
-            if ! kubectl wait --for=condition=complete job/mbsrn-api-migrate-baseline -n "${K8S_NAMESPACE}" --timeout=600s; then
-              kubectl logs -n "${K8S_NAMESPACE}" job/mbsrn-api-migrate-baseline -c align --tail=200 || true
-              kubectl logs -n "${K8S_NAMESPACE}" job/mbsrn-api-migrate-baseline -c cloud-sql-proxy --tail=200 || true
-              kubectl describe -n "${K8S_NAMESPACE}" job mbsrn-api-migrate-baseline || true
+            if ! run_migration_job_with_cloudsql_retry \
+              "mbsrn-api-migrate-baseline" \
+              "${RENDER_DIR}/api-migration-baseline-job.yaml" \
+              "align"; then
               exit 1
             fi
           fi
 
-          kubectl delete job mbsrn-api-migrate -n "${K8S_NAMESPACE}" --ignore-not-found=true
-          kubectl wait --for=delete job/mbsrn-api-migrate -n "${K8S_NAMESPACE}" --timeout=120s || true
-          kubectl apply -n "${K8S_NAMESPACE}" -f "${RENDER_DIR}/api-migration-job.yaml"
-          if ! kubectl wait --for=condition=complete job/mbsrn-api-migrate -n "${K8S_NAMESPACE}" --timeout=600s; then
-            kubectl logs -n "${K8S_NAMESPACE}" job/mbsrn-api-migrate -c migrate --tail=200 || true
-            kubectl logs -n "${K8S_NAMESPACE}" job/mbsrn-api-migrate -c cloud-sql-proxy --tail=200 || true
-            kubectl describe -n "${K8S_NAMESPACE}" job mbsrn-api-migrate || true
+          if ! run_migration_job_with_cloudsql_retry \
+            "mbsrn-api-migrate" \
+            "${RENDER_DIR}/api-migration-job.yaml" \
+            "migrate"; then
             exit 1
           fi
 
