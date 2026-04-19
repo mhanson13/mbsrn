@@ -232,6 +232,7 @@ _DEPLOY_RUN_FAILURE_REASON_ROLLOUT = "rollout_verification_failed"
 _DEPLOY_RUN_FAILURE_REASON_INGRESS_VERIFY = "service_ingress_verification_failed"
 _DEPLOY_RUN_FAILURE_REASON_INGRESS_EVIDENCE = "ingress_endpoint_not_ready"
 _DEPLOY_RUN_FAILURE_REASON_CLOUDSQL_INVALID_STATE = "cloudsql_instance_invalid_state"
+_DEPLOY_RUN_FAILURE_REASON_CLOUDSQL_INSPECTION_FAILED = "cloudsql_instance_inspection_failed"
 _DEPLOY_RUN_FAILURE_REASON_CLOUDSQL_EPHEMERAL_CERT = "cloudsql_proxy_ephemeral_cert_failed"
 _DEPLOY_RUN_FAILURE_REASON_CLOUDSQL_CONNECTION = "cloudsql_proxy_connection_failed"
 _DEPLOY_RUN_FAILURE_REASON_CANCELLED = "workflow_run_cancelled"
@@ -10928,6 +10929,7 @@ def _normalize_workflow_run_failure_reason_code(value: object) -> str | None:
         _DEPLOY_RUN_FAILURE_REASON_INGRESS_VERIFY,
         _DEPLOY_RUN_FAILURE_REASON_INGRESS_EVIDENCE,
         _DEPLOY_RUN_FAILURE_REASON_CLOUDSQL_INVALID_STATE,
+        _DEPLOY_RUN_FAILURE_REASON_CLOUDSQL_INSPECTION_FAILED,
         _DEPLOY_RUN_FAILURE_REASON_CLOUDSQL_EPHEMERAL_CERT,
         _DEPLOY_RUN_FAILURE_REASON_CLOUDSQL_CONNECTION,
         _DEPLOY_RUN_FAILURE_REASON_CANCELLED,
@@ -11537,6 +11539,11 @@ def _derive_workflow_run_failure_hint(
         return (
             "Cloud SQL proxy could not fetch an ephemeral certificate because the instance reported invalidState. "
             "Confirm Cloud SQL instance state is RUNNABLE and retry deploy."
+        )
+    if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_CLOUDSQL_INSPECTION_FAILED:
+        return (
+            "Cloud SQL instance inspection failed before migration startup. "
+            "Verify instance name/project/permissions and retry deploy."
         )
     if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_CLOUDSQL_EPHEMERAL_CERT:
         return (

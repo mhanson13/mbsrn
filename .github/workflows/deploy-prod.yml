@@ -249,25 +249,87 @@ jobs:
           fi
 
           instance_state=""
+          preflight_passed="false"
           for attempt in 1 2 3; do
-            instance_state="$(
-              gcloud sql instances describe "${cloudsql_instance}" \
-                --project "${cloudsql_project}" \
-                --format='value(state)' 2>/dev/null || true
+            describe_stdout_file="$(mktemp)"
+            describe_stderr_file="$(mktemp)"
+            describe_exit_code=0
+            gcloud sql instances describe "${cloudsql_instance}" \
+              --project "${cloudsql_project}" \
+              --format='value(state)' > "${describe_stdout_file}" 2> "${describe_stderr_file}" || describe_exit_code=$?
+            instance_state="$(tr -d '\r' < "${describe_stdout_file}" | head -n1 | xargs)"
+            reason_code="$(
+              python scripts/classify_cloudsql_instance_preflight.py \
+                --exit-code "${describe_exit_code}" \
+                --state "${instance_state}" \
+                --stderr-file "${describe_stderr_file}" \
+                --field reason_code
             )"
-            if [[ "${instance_state}" == "RUNNABLE" ]]; then
-              echo "Cloud SQL preflight: instance ${connection_name} state is RUNNABLE."
+            reason_message="$(
+              python scripts/classify_cloudsql_instance_preflight.py \
+                --exit-code "${describe_exit_code}" \
+                --state "${instance_state}" \
+                --stderr-file "${describe_stderr_file}" \
+                --field message
+            )"
+            reason_retryable="$(
+              python scripts/classify_cloudsql_instance_preflight.py \
+                --exit-code "${describe_exit_code}" \
+                --state "${instance_state}" \
+                --stderr-file "${describe_stderr_file}" \
+                --field retryable
+            )"
+            reason_detail="$(
+              python scripts/classify_cloudsql_instance_preflight.py \
+                --exit-code "${describe_exit_code}" \
+                --state "${instance_state}" \
+                --stderr-file "${describe_stderr_file}" \
+                --field detail
+            )"
+            reason_stderr_summary="$(
+              python scripts/classify_cloudsql_instance_preflight.py \
+                --exit-code "${describe_exit_code}" \
+                --state "${instance_state}" \
+                --stderr-file "${describe_stderr_file}" \
+                --field stderr_summary
+            )"
+            rm -f "${describe_stdout_file}" "${describe_stderr_file}"
+
+            if [[ -z "${reason_code}" ]]; then
+              echo "Cloud SQL preflight: instance state is RUNNABLE."
+              preflight_passed="true"
               break
             fi
-            if [[ "${attempt}" -lt 3 ]]; then
-              echo "::warning::cloudsql_instance_invalid_state preflight attempt=${attempt} state=${instance_state:-unknown}; retrying in 15s."
-              sleep 15
+
+            summary_suffix=""
+            if [[ -n "${reason_stderr_summary}" ]]; then
+              summary_suffix="; stderr=${reason_stderr_summary}"
             fi
+            describe_failed="false"
+            if [[ "${describe_exit_code}" -ne 0 ]]; then
+              describe_failed="true"
+            fi
+
+            echo "::warning::${reason_code} preflight attempt=${attempt}/3 describe_failed=${describe_failed} state=${instance_state:-unknown} detail=${reason_detail:-none}${summary_suffix}"
+            if [[ "${attempt}" -lt 3 && "${reason_retryable}" == "true" ]]; then
+              sleep 15
+              continue
+            fi
+
+            echo "deploy_runtime_reason_code=${reason_code}"
+            if [[ -n "${reason_message}" ]]; then
+              echo "deploy_runtime_reason_message=${reason_message}"
+              echo "${reason_message}" >&2
+            fi
+            if [[ -n "${reason_stderr_summary}" ]]; then
+              echo "Cloud SQL preflight stderr summary: ${reason_stderr_summary}" >&2
+            fi
+            exit 1
           done
 
-          if [[ "${instance_state}" != "RUNNABLE" ]]; then
-            echo "deploy_runtime_reason_code=cloudsql_instance_invalid_state"
-            echo "Cloud SQL instance ${connection_name} state=${instance_state:-unknown}; expected RUNNABLE before migrations." >&2
+          if [[ "${preflight_passed}" != "true" ]]; then
+            echo "deploy_runtime_reason_code=cloudsql_instance_inspection_failed"
+            echo "Cloud SQL preflight did not confirm RUNNABLE state before migrations." >&2
             exit 1
           fi
 

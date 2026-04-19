@@ -3301,6 +3301,10 @@ def _classify_cloudsql_proxy_failure_from_log_text(
     normalized = (str(log_text or "")).strip().lower()
     if not normalized:
         return None, None
+    if "deploy_runtime_reason_code=cloudsql_instance_inspection_failed" in normalized:
+        return "cloudsql_instance_inspection_failed", "manifest_apply"
+    if "deploy_runtime_reason_code=cloudsql_instance_invalid_state" in normalized:
+        return "cloudsql_instance_invalid_state", "manifest_apply"
     has_invalid_state = "invalidstate" in normalized
     has_ephemeral_cert_failure = "fetch ephemeral cert failed" in normalized
     has_proxy_marker = "cloud-sql-proxy" in normalized or "cloud sql proxy" in normalized

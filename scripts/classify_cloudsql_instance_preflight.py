@@ -9,7 +9,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from app.core.cloudsql_proxy_failure import classify_cloudsql_proxy_failure
+from app.core.cloudsql_instance_preflight import classify_cloudsql_instance_inspection
 
 
 def _read_optional_text(path_value: str | None) -> str | None:
@@ -26,13 +26,14 @@ def _read_optional_text(path_value: str | None) -> str | None:
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Classify Cloud SQL proxy migration startup failures from log snippets.",
+        description="Classify Cloud SQL instance preflight outcomes from gcloud describe output.",
     )
-    parser.add_argument("--proxy-log-file", default=None)
-    parser.add_argument("--app-log-file", default=None)
+    parser.add_argument("--exit-code", type=int, required=True)
+    parser.add_argument("--state", default=None)
+    parser.add_argument("--stderr-file", default=None)
     parser.add_argument(
         "--field",
-        choices=("json", "reason_code", "message", "retryable"),
+        choices=("json", "reason_code", "message", "retryable", "detail", "stderr_summary"),
         default="json",
         help="Output a single field or full JSON payload.",
     )
@@ -42,12 +43,10 @@ def _build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     parser = _build_parser()
     args = parser.parse_args()
-
-    proxy_log_text = _read_optional_text(args.proxy_log_file)
-    app_log_text = _read_optional_text(args.app_log_file)
-    classification = classify_cloudsql_proxy_failure(
-        proxy_log_text=proxy_log_text,
-        app_log_text=app_log_text,
+    classification = classify_cloudsql_instance_inspection(
+        describe_exit_code=args.exit_code,
+        instance_state=args.state,
+        stderr_text=_read_optional_text(args.stderr_file),
     )
 
     if args.field == "reason_code":
@@ -59,6 +58,12 @@ def main() -> int:
     if args.field == "retryable":
         print("true" if classification.retryable else "false")
         return 0
+    if args.field == "detail":
+        print(classification.detail or "")
+        return 0
+    if args.field == "stderr_summary":
+        print(classification.stderr_summary or "")
+        return 0
 
     print(
         json.dumps(
@@ -66,6 +71,8 @@ def main() -> int:
                 "reason_code": classification.reason_code,
                 "message": classification.message,
                 "retryable": classification.retryable,
+                "detail": classification.detail,
+                "stderr_summary": classification.stderr_summary,
             },
             ensure_ascii=True,
             sort_keys=True,

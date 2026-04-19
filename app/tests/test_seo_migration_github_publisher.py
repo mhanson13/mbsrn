@@ -1426,6 +1426,82 @@ def test_dispatch_deploy_classifies_cloudsql_invalid_state_from_job_logs(monkeyp
     assert any("/actions/jobs/99123/logs" in call[1] for call in calls)
 
 
+def test_dispatch_deploy_classifies_cloudsql_inspection_failed_from_job_logs(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    created_at = utc_now().isoformat()
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _FakeHTTPResponse(status=200, body="{}"),
+            _FakeHTTPResponse(status=200, body="{}"),
+            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "wfsha"})),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps(
+                    {
+                        "state": "active",
+                        "path": ".github/workflows/deploy-tnmfire-www-prod.yml",
+                    }
+                ),
+            ),
+            _FakeHTTPResponse(status=204),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps(
+                    {
+                        "workflow_runs": [
+                            {
+                                "id": 99002,
+                                "status": "completed",
+                                "conclusion": "failure",
+                                "event": "workflow_dispatch",
+                                "head_branch": "main",
+                                "created_at": created_at,
+                            }
+                        ]
+                    }
+                ),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps(
+                    {
+                        "jobs": [
+                            {
+                                "id": 99124,
+                                "name": "deploy",
+                                "conclusion": "failure",
+                                "steps": [
+                                    {"name": "Checkout repository", "conclusion": "success"},
+                                    {"name": "Preflight Cloud SQL instance state", "conclusion": "failure"},
+                                ],
+                            }
+                        ]
+                    }
+                ),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=(
+                    "::warning::cloudsql_instance_inspection_failed preflight attempt=1/3 "
+                    "describe_failed=true state=unknown detail=permission_denied\n"
+                    "deploy_runtime_reason_code=cloudsql_instance_inspection_failed\n"
+                ),
+            ),
+        ],
+        calls,
+    )
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    result = publisher.dispatch_deploy(target=_dispatch_target(), dry_run=False)
+    assert result.workflow_run_id == 99002
+    assert result.workflow_run_status == "completed"
+    assert result.workflow_run_conclusion == "failure"
+    assert result.workflow_run_failure_reason_code == "cloudsql_instance_inspection_failed"
+    assert result.workflow_run_failure_stage == "manifest_apply"
+    assert result.workflow_run_failure_step == "Preflight Cloud SQL instance state"
+    assert any("/actions/jobs/99124/logs" in call[1] for call in calls)
+
+
 def test_refresh_deploy_run_status_classifies_failed_run_step(monkeypatch) -> None:
     calls: list[tuple[str, str]] = []
     _install_urlopen_stub(
