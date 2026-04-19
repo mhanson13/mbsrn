@@ -10,29 +10,6 @@ spec:
     spec:
       serviceAccountName: mbsrn-api
       restartPolicy: Never
-      initContainers:
-        - name: cloud-sql-proxy
-          image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2
-          restartPolicy: Always
-          args:
-            - "--structured-logs"
-            - "--port=5432"
-            - "$(CLOUD_SQL_INSTANCE_CONNECTION_NAME)"
-          env:
-            - name: CLOUD_SQL_INSTANCE_CONNECTION_NAME
-              valueFrom:
-                secretKeyRef:
-                  name: mbsrn-api-auth
-                  key: CLOUD_SQL_INSTANCE_CONNECTION_NAME
-          resources:
-            requests:
-              cpu: __DEPLOY_PROXY_CPU_REQUEST__
-              memory: __DEPLOY_PROXY_MEMORY_REQUEST__
-              ephemeral-storage: __DEPLOY_PROXY_EPHEMERAL_STORAGE_REQUEST__
-            limits:
-              cpu: __DEPLOY_PROXY_CPU_LIMIT__
-              memory: __DEPLOY_PROXY_MEMORY_LIMIT__
-              ephemeral-storage: __DEPLOY_PROXY_EPHEMERAL_STORAGE_LIMIT__
       containers:
         - name: migrate
           image: __API_IMAGE__
@@ -41,7 +18,7 @@ spec:
             - name: APP_ENV
               value: production
             - name: DB_CONNECTION_MODE
-              value: cloudsql_proxy
+              value: direct
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:

@@ -100,7 +100,7 @@ This produces OCI-compatible images suitable for containerd on GKE.
   - push-to-main/workflow-dispatch production rollout path using `k8s/` manifests
   - includes explicit Redis apply for `mbsrn-redis` prior to API rollout
   - preflight `DATABASE_URL` validation via `scripts/validate_production_database_url.py`
-    using `DB_CONNECTION_MODE=cloudsql_proxy`
+    using `DB_CONNECTION_MODE=direct` (cloud-native Postgres production contract)
 
 - `deploy-www-prod.yml`
   - push-to-main/workflow-dispatch production rollout path for public website only
@@ -185,6 +185,18 @@ Kubernetes Secret handles sensitive values including:
 
 `mbsrn-secrets` is required by both API/UI Deployments and migration Job (`envFrom.secretRef`).
 
+Environment DB mode matrix:
+- local/dev/test/ci (`APP_ENV` local-like):
+  - local Postgres is allowed
+  - localhost `DATABASE_URL` fallback is allowed
+- production via `.github/workflows/deploy-prod.yml`:
+  - `DB_CONNECTION_MODE=direct` is required
+  - cloud-native Postgres target is required (non-loopback)
+  - Cloud SQL preflight is not part of this branch
+- optional proxy-backed deployments (non-default):
+  - `DB_CONNECTION_MODE=cloudsql_proxy`
+  - Cloud SQL-specific preflight/diagnostics can apply
+
 Database URL safety contract:
 - `APP_ENV` is the sole authority for localhost database safety checks.
 - Localhost (`localhost`, `127.0.0.1`, `::1`) is allowed only when `APP_ENV` is one of:
@@ -199,13 +211,13 @@ Database URL safety contract:
   - `::1`
 - Production localhost exception is narrow and explicit:
   - localhost/loopback `DATABASE_URL` is allowed only when `DB_CONNECTION_MODE=cloudsql_proxy`
-  - this is intended for the current in-pod Cloud SQL proxy sidecar model
+  - this is intended only for optional proxy-backed paths, not `deploy-prod.yml`
 - Unknown or unset `APP_ENV` values reject localhost targets and require an explicit non-localhost `DATABASE_URL`.
 - API startup performs a bounded connectivity check:
   - default mode: single `SELECT 1` attempt, then fail fast
   - `APP_ENV=production` + `DB_CONNECTION_MODE=cloudsql_proxy` + localhost target:
     bounded retry window (15 attempts, 1s delay) before failing
-  - this reduces false startup crashes when the Cloud SQL proxy sidecar is still initializing
+  - this retry path is for optional proxy-backed runtime only
 - Startup logs emit sanitized DB target only (no credentials):
   - `Database target resolved: host=<host>, port=<port>`
 - Schema readiness expectation is resolved from Alembic head at runtime (current repo head: `0039_competitor_domain_verification_status`).
@@ -218,20 +230,21 @@ Database URL safety contract:
 ### Production DATABASE_URL Source Of Truth (`deploy-prod.yml` path)
 - Production-authoritative deploy path (`.github/workflows/deploy-prod.yml` + `k8s/*`) sources
   `DATABASE_URL` from GitHub secret `DATABASE_URL`.
-- The same deploy path sets `DB_CONNECTION_MODE=cloudsql_proxy` for preflight validation parity with runtime.
+- `deploy-prod.yml` enforces `DB_CONNECTION_MODE=direct` and treats any other mode as invalid.
+- Cloud SQL instance inspection is not part of the `deploy-prod.yml` path.
 - Deploy creates/updates Kubernetes secret `mbsrn-api-auth` with key `DATABASE_URL`.
 - API runtime consumes `DATABASE_URL` only via:
   - `k8s/api-deployment.yaml` -> `env.valueFrom.secretKeyRef(name=mbsrn-api-auth,key=DATABASE_URL)`
-- Proxy-mode production runtime wiring is explicit in manifests:
+- Production runtime wiring in manifests is explicit:
   - `APP_ENV=production`
-  - `DB_CONNECTION_MODE=cloudsql_proxy`
+  - `DB_CONNECTION_MODE=direct`
   - `DATABASE_URL` from `mbsrn-api-auth.DATABASE_URL`
 - Migration and retention jobs consume the same secret/key wiring:
   - `k8s/api-migration-job.yaml`
   - `k8s/api-migration-baseline-job.yaml`
   - `k8s/api-seo-competitor-profile-retention-cronjob.yaml`
 - `deploy-prod.yml` fails fast when:
-  - GitHub secret `DATABASE_URL` resolves to localhost/loopback and `DB_CONNECTION_MODE` is not `cloudsql_proxy`
+  - `DB_CONNECTION_MODE` is not `direct` (`production_db_mode_invalid`)
   - rendered API manifest does not wire `DATABASE_URL` via `secretKeyRef`
   - rendered API manifest contains a literal `DATABASE_URL` value
 - Accepted production `DATABASE_URL` forms include:
@@ -240,9 +253,7 @@ Database URL safety contract:
     - `postgresql://user:pass@db.example.com:5432/dbname`
   - socket-style/cloud-native (effective target comes from query host/socket path):
     - `postgresql://user:pass@/dbname?host=/cloudsql/<project>:<region>:<instance>`
-- `deploy-prod.yml` validates the effective connection target host/socket path and applies the same rule as runtime:
-  - loopback allowed only with `DB_CONNECTION_MODE=cloudsql_proxy`
-  - otherwise loopback rejected
+- `deploy-prod.yml` validates the effective connection target host/socket path and rejects loopback.
 
 ### Shared DATABASE_URL Validation Policy (Both Deploy Workflows)
 - Both `.github/workflows/deploy-prod.yml` and `.github/workflows/deploy-gke.yml`
@@ -253,6 +264,7 @@ Database URL safety contract:
   - remote host allowed
   - socket-style cloud-native URL forms allowed
   - unknown `DB_CONNECTION_MODE` rejected
+- `deploy-prod.yml` enforces `DB_CONNECTION_MODE=direct` to keep production on cloud-native Postgres.
 - Recommended `deploy-gke.yml` default is `DB_CONNECTION_MODE=direct`; set `cloudsql_proxy`
   only when that deployment path is intentionally proxy-backed.
 
@@ -271,7 +283,7 @@ On `mbsrn-api` rollout failure, `deploy-prod.yml` now emits safe diagnostics (no
   - loopback detection result
   - final accept/reject result
 
-### Quick Triage: `127.0.0.1:5432 connection refused` On API Startup
+### Quick Triage: Production DB Mode Mismatch
 If API startup fails with:
 
 - `Startup database connectivity check failed`
@@ -279,20 +291,19 @@ If API startup fails with:
 
 validate the production DB path in this order:
 
-1. Runtime mode must be proxy-backed production:
+1. `deploy-prod.yml` must run with:
    - `APP_ENV=production`
-   - `DB_CONNECTION_MODE=cloudsql_proxy`
-2. `DATABASE_URL` must resolve to loopback (`127.0.0.1` / `localhost`) only for this proxy-backed mode.
-3. `CLOUD_SQL_INSTANCE_CONNECTION_NAME` must be present in secret `mbsrn-api-auth` and wired into the `cloud-sql-proxy` sidecar env.
-4. Confirm sidecar health/logs:
-   - `kubectl -n <namespace> logs deployment/mbsrn-api -c cloud-sql-proxy --tail=200`
-5. Confirm API startup diagnostics show sanitized DB target and retry path:
-   - `app_env`, `db_connection_mode`, host/port, retry budget, and retry outcome.
+   - `DB_CONNECTION_MODE=direct`
+2. `DATABASE_URL` must resolve to a non-loopback target for direct mode.
+3. Confirm `mbsrn-api-auth` has `DATABASE_URL` and rendered manifests wire it by `secretKeyRef`.
+4. If `production_db_mode_invalid` appears, correct the repo variable `DB_CONNECTION_MODE` to `direct`.
+5. Confirm API startup diagnostics show sanitized DB target and mode:
+   - `app_env`, `db_connection_mode`, host/port classification.
 
-The API startup check intentionally retries in proxy-backed production mode to tolerate sidecar cold starts. If the retry budget is exhausted, treat this as proxy wiring/readiness failure rather than a local-dev fallback path.
+The API startup check retry path for proxy-backed localhost mode applies only to optional `DB_CONNECTION_MODE=cloudsql_proxy` deployments (for example, a consciously configured `deploy-gke.yml` path). It is not the standard `deploy-prod.yml` production contract.
 
-### Proxy Not Listening Diagnostic Path (Authoritative Sequence)
-Use this sequence when API startup still fails after retry budget exhaustion and the failure is confirmed as **not timing-related**.
+### Legacy Optional Cloud SQL Proxy Diagnostic Path
+Use this sequence only when a deployment is intentionally configured for `DB_CONNECTION_MODE=cloudsql_proxy` and API startup still fails after retry budget exhaustion.
 
 1. Inspect sidecar logs directly:
 

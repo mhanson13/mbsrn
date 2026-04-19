@@ -30,7 +30,7 @@ spec:
             - name: APP_ENV
               value: production
             - name: DB_CONNECTION_MODE
-              value: cloudsql_proxy
+              value: direct
             - name: SESSION_STATE_BACKEND
               value: redis
             - name: SESSION_STATE_ALLOW_INMEMORY_FALLBACK
@@ -120,7 +120,7 @@ spec:
             httpGet:
               path: /healthz
               port: 8000
-            # App startup can include bounded DB/proxy readiness retries.
+            # App startup can include bounded DB readiness retries.
             # Allow a conservative warm-up window before readiness/liveness.
             periodSeconds: 5
             failureThreshold: 24
@@ -136,24 +136,3 @@ spec:
               port: 8000
             initialDelaySeconds: 15
             periodSeconds: 20
-        - name: cloud-sql-proxy
-          image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2
-          args:
-            - "--structured-logs"
-            - "--port=5432"
-            - "$(CLOUD_SQL_INSTANCE_CONNECTION_NAME)"
-          env:
-            - name: CLOUD_SQL_INSTANCE_CONNECTION_NAME
-              valueFrom:
-                secretKeyRef:
-                  name: mbsrn-api-auth
-                  key: CLOUD_SQL_INSTANCE_CONNECTION_NAME
-          resources:
-            requests:
-              cpu: "100m"
-              memory: "128Mi"
-              ephemeral-storage: "256Mi"
-            limits:
-              cpu: "250m"
-              memory: "256Mi"
-              ephemeral-storage: "512Mi"

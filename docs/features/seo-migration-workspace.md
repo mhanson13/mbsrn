@@ -979,6 +979,7 @@ Deploy behavior:
     - `cloudsql_proxy_connection_failed`
   - `cloudsql_instance_inspection_failed` indicates Cloud SQL instance inspection itself failed (for example permission denied, instance/project mismatch, API unavailable, or empty describe output); verify Cloud SQL identity/permissions/API access before retry.
   - `cloudsql_instance_invalid_state` indicates the instance was not ready to issue ephemeral certs; verify instance state is `RUNNABLE` and retry deploy.
+  - these Cloud SQL-specific codes are expected only for workflows intentionally configured for `DB_CONNECTION_MODE=cloudsql_proxy`; direct cloud-native Postgres workflows should not enter Cloud SQL preflight.
 
 Current deployment model is reused via workflow dispatch conventions; platform deployment architecture is not redesigned by this feature.
 
