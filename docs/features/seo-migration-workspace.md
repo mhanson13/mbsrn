@@ -928,7 +928,7 @@ Deploy behavior:
     - `GKE_CLUSTER_NAME = <admin managed_gke_cluster_name>` when present, otherwise `vars.KUBERNETES_CLUSTER_NAME || secrets.KUBERNETES_CLUSTER_NAME`
     - `GKE_CLUSTER_LOCATION = <admin managed_gke_cluster_location>` when present, otherwise `vars.KUBERNETES_CLUSTER_LOCATION || secrets.KUBERNETES_CLUSTER_LOCATION`
     - `GKE_PROJECT_ID = <admin managed_gke_project_id>` when present, otherwise `vars.GCP_PROJECT_ID || secrets.GCP_PROJECT_ID`
-  - workflow pre-checks fail fast before `get-gke-credentials`:
+  - workflow pre-checks fail fast before `get-gke-credentials` (legacy fallback checks when admin values are absent):
     - `Missing GCP_DEPLOY_KEY secret`
     - `Missing KUBERNETES_CLUSTER_NAME variable/secret`
     - `Missing KUBERNETES_CLUSTER_LOCATION variable/secret`

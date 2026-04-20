@@ -104,6 +104,10 @@ class GitHubPublishConfigService:
         target_environment_source = _TARGET_ENVIRONMENT_SOURCE_ADMIN
         enabled = bool(payload.enabled)
         existing = self.repository.get_singleton()
+        payload_fields_set = getattr(payload, "model_fields_set", set()) or set()
+        managed_cluster_name_provided = "managed_gke_cluster_name" in payload_fields_set
+        managed_cluster_location_provided = "managed_gke_cluster_location" in payload_fields_set
+        managed_project_id_provided = "managed_gke_project_id" in payload_fields_set
         managed_gke_cluster_name = (
             str(payload.managed_gke_cluster_name or "").strip().lower() or None
         )
@@ -113,15 +117,15 @@ class GitHubPublishConfigService:
         managed_gke_project_id = (
             str(payload.managed_gke_project_id or "").strip().lower() or None
         )
-        if payload.managed_gke_cluster_name is None and existing is not None:
+        if not managed_cluster_name_provided and existing is not None:
             managed_gke_cluster_name = (
                 str(getattr(existing, "managed_gke_cluster_name", "") or "").strip().lower() or None
             )
-        if payload.managed_gke_cluster_location is None and existing is not None:
+        if not managed_cluster_location_provided and existing is not None:
             managed_gke_cluster_location = (
                 str(getattr(existing, "managed_gke_cluster_location", "") or "").strip().lower() or None
             )
-        if payload.managed_gke_project_id is None and existing is not None:
+        if not managed_project_id_provided and existing is not None:
             managed_gke_project_id = (
                 str(getattr(existing, "managed_gke_project_id", "") or "").strip().lower() or None
             )

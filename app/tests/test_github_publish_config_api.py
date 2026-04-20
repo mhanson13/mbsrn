@@ -185,6 +185,49 @@ def test_put_github_publish_config_persists_and_reads_back(db_session, seeded_bu
     assert fetched["enabled"] is True
 
 
+def test_put_github_publish_config_allows_clearing_managed_gke_fields_with_blank_values(
+    db_session,
+    seeded_business,
+) -> None:
+    client = _make_client(db_session, business_id=seeded_business.id)
+
+    seed_response = client.put(
+        "/api/admin/github-publish-config",
+        json={
+            "owner": "mhanson13",
+            "default_branch": "main",
+            "base_path": "/site",
+            "deploy_workflow_mode": "site_repo_template_v1",
+            "target_environment_key": "gke_prod",
+            "managed_gke_cluster_name": "mbsrn-cluster",
+            "managed_gke_cluster_location": "us-central1",
+            "managed_gke_project_id": "mbsrn-prod",
+            "enabled": True,
+        },
+    )
+    assert seed_response.status_code == 200
+
+    clear_response = client.put(
+        "/api/admin/github-publish-config",
+        json={
+            "owner": "mhanson13",
+            "default_branch": "main",
+            "base_path": "/site",
+            "deploy_workflow_mode": "site_repo_template_v1",
+            "target_environment_key": "gke_prod",
+            "managed_gke_cluster_name": "   ",
+            "managed_gke_cluster_location": "",
+            "managed_gke_project_id": " ",
+            "enabled": True,
+        },
+    )
+    assert clear_response.status_code == 200
+    cleared = clear_response.json()
+    assert cleared["managed_gke_cluster_name"] is None
+    assert cleared["managed_gke_cluster_location"] is None
+    assert cleared["managed_gke_project_id"] is None
+
+
 def test_put_github_publish_config_rejects_invalid_namespace_isolation_defaults(
     db_session,
     seeded_business,

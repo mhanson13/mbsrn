@@ -721,7 +721,7 @@ Managed workflow deploy evidence notes:
   - `deployed_url`
 - If rollout succeeds but ingress status has no concrete endpoint, workflow fails and no explicit live URL evidence is emitted.
 
-Managed real-deploy prerequisites (GitHub Actions vars/secrets):
+Managed real-deploy prerequisites:
 - Admin-managed GKE target values in MBSRN GitHub publish config:
   - `managed_gke_cluster_name`
   - `managed_gke_cluster_location`
@@ -743,7 +743,7 @@ Required credential note:
   - `create_credentials_file: true`
   - `export_environment_variables: true`
 - workflow includes a fast-fail pre-check step that exits with `Missing GCP_DEPLOY_KEY secret` if absent.
-- workflow includes `Validate GKE environment config` pre-check and fails early for:
+- workflow includes `Validate GKE environment config` pre-check and fails early for legacy fallback variable/secret gaps when admin-managed values are not set:
   - `Missing KUBERNETES_CLUSTER_NAME variable/secret`
   - `Missing KUBERNETES_CLUSTER_LOCATION variable/secret`
   - `Missing GCP_PROJECT_ID variable/secret`
