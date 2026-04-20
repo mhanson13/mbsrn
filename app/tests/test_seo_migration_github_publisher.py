@@ -1528,6 +1528,300 @@ def test_dispatch_deploy_classifies_token_not_authorized(monkeypatch) -> None:
     assert len(calls) == 1
 
 
+def test_dispatch_deploy_uses_admin_managed_gke_config_for_readiness_and_dispatch(
+    monkeypatch,
+    caplog,
+) -> None:
+    calls: list[tuple[str, str]] = []
+    managed_workflow = _encode_workflow_yaml(
+        (
+            "# mbsrn-managed-template:site_repo_template_v1\n"
+            "name: Managed Deploy\n"
+            "on:\n"
+            "  workflow_dispatch:\n"
+            "jobs:\n"
+            "  deploy:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    env:\n"
+            "      K8S_NAMESPACE: tnmfire\n"
+            "    steps:\n"
+            "      - uses: google-github-actions/auth@v2\n"
+            "      - uses: google-github-actions/get-gke-credentials@v2\n"
+            "      - run: kubectl apply -n \"$K8S_NAMESPACE\" -f k8s/deployment.yaml\n"
+        )
+    )
+    namespace_manifest = _encode_workflow_yaml(
+        (
+            "# mbsrn-managed-manifest:site_repo_template_v1\n"
+            "apiVersion: v1\n"
+            "kind: Namespace\n"
+            "metadata:\n"
+            "  name: tnmfire\n"
+        )
+    )
+    namespaced_manifest = _encode_workflow_yaml(
+        (
+            "# mbsrn-managed-manifest:site_repo_template_v1\n"
+            "apiVersion: apps/v1\n"
+            "kind: Deployment\n"
+            "metadata:\n"
+            "  name: site-web\n"
+            "  namespace: tnmfire\n"
+        )
+    )
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _FakeHTTPResponse(status=200, body="{}"),
+            _FakeHTTPResponse(status=200, body="{}"),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "wfsha", "encoding": "base64", "content": managed_workflow}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"state": "active", "path": ".github/workflows/deploy-tnmfire-www-prod.yml"}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-namespace", "encoding": "base64", "content": namespace_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-deployment", "encoding": "base64", "content": namespaced_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-service", "encoding": "base64", "content": namespaced_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-ingress", "encoding": "base64", "content": namespaced_manifest}),
+            ),
+            _FakeHTTPResponse(status=204),
+            _FakeHTTPResponse(status=200, body=json.dumps({"workflow_runs": []})),
+            _FakeHTTPResponse(status=200, body=json.dumps([])),
+            _FakeHTTPResponse(status=200, body=json.dumps([])),
+        ],
+        calls,
+    )
+    caplog.set_level("INFO", logger="app.integrations.seo_migration_github_publisher")
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    result = publisher.dispatch_deploy(
+        target=_dispatch_target(),
+        dry_run=False,
+        managed_gke_config={
+            "cluster_name": "mbsrn-cluster",
+            "cluster_location": "us-central1",
+            "project_id": "mbsrn-prod",
+        },
+    )
+
+    assert result.workflow_run_id is None
+    assert all(
+        not (method == "GET" and ("/actions/variables/" in url or "/actions/secrets/" in url))
+        for method, url in calls
+    )
+    readiness_logs = [
+        record
+        for record in caplog.records
+        if isinstance(record.msg, str)
+        and '"event": "seo_migration_dispatch_managed_gke_config_presence"' in record.msg
+    ]
+    assert readiness_logs
+    assert '"effective_cluster_name_present": true' in readiness_logs[-1].msg
+    assert '"effective_cluster_location_present": true' in readiness_logs[-1].msg
+    assert '"effective_project_id_present": true' in readiness_logs[-1].msg
+
+
+def test_dispatch_deploy_blocks_when_gke_config_missing_in_admin_and_repo_fallback(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    managed_workflow = _encode_workflow_yaml(
+        (
+            "# mbsrn-managed-template:site_repo_template_v1\n"
+            "name: Managed Deploy\n"
+            "on:\n"
+            "  workflow_dispatch:\n"
+            "jobs:\n"
+            "  deploy:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    env:\n"
+            "      K8S_NAMESPACE: tnmfire\n"
+            "    steps:\n"
+            "      - uses: google-github-actions/auth@v2\n"
+            "      - uses: google-github-actions/get-gke-credentials@v2\n"
+            "      - run: kubectl apply -n \"$K8S_NAMESPACE\" -f k8s/deployment.yaml\n"
+        )
+    )
+    namespace_manifest = _encode_workflow_yaml(
+        (
+            "# mbsrn-managed-manifest:site_repo_template_v1\n"
+            "apiVersion: v1\n"
+            "kind: Namespace\n"
+            "metadata:\n"
+            "  name: tnmfire\n"
+        )
+    )
+    namespaced_manifest = _encode_workflow_yaml(
+        (
+            "# mbsrn-managed-manifest:site_repo_template_v1\n"
+            "apiVersion: apps/v1\n"
+            "kind: Deployment\n"
+            "metadata:\n"
+            "  name: site-web\n"
+            "  namespace: tnmfire\n"
+        )
+    )
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _FakeHTTPResponse(status=200, body="{}"),
+            _FakeHTTPResponse(status=200, body="{}"),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "wfsha", "encoding": "base64", "content": managed_workflow}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"state": "active", "path": ".github/workflows/deploy-tnmfire-www-prod.yml"}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-namespace", "encoding": "base64", "content": namespace_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-deployment", "encoding": "base64", "content": namespaced_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-service", "encoding": "base64", "content": namespaced_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-ingress", "encoding": "base64", "content": namespaced_manifest}),
+            ),
+            _http_error(
+                "https://api.github.com/repos/mhanson13/tnmfire/actions/variables/KUBERNETES_CLUSTER_NAME",
+                status_code=404,
+                message="Not Found",
+            ),
+            _http_error(
+                "https://api.github.com/repos/mhanson13/tnmfire/actions/secrets/KUBERNETES_CLUSTER_NAME",
+                status_code=404,
+                message="Not Found",
+            ),
+        ],
+        calls,
+    )
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    with pytest.raises(SEOMigrationGitHubPublisherError) as exc_info:
+        publisher.dispatch_deploy(
+            target=_dispatch_target(),
+            dry_run=False,
+            managed_gke_config={
+                "cluster_name": None,
+                "cluster_location": "us-central1",
+                "project_id": "mbsrn-prod",
+            },
+        )
+    assert exc_info.value.code == "workflow_not_dispatchable"
+    assert exc_info.value.stage == "workflow_lookup"
+    assert any("/actions/variables/KUBERNETES_CLUSTER_NAME" in url for _, url in calls)
+    assert any("/actions/secrets/KUBERNETES_CLUSTER_NAME" in url for _, url in calls)
+    assert not any("/actions/variables/KUBERNETES_CLUSTER_LOCATION" in url for _, url in calls)
+    assert not any("/actions/variables/GCP_PROJECT_ID" in url for _, url in calls)
+    assert not any(method == "POST" and url.endswith("/dispatches") for method, url in calls)
+
+
+def test_dispatch_deploy_uses_repo_fallback_when_admin_managed_gke_config_missing(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    managed_workflow = _encode_workflow_yaml(
+        (
+            "# mbsrn-managed-template:site_repo_template_v1\n"
+            "name: Managed Deploy\n"
+            "on:\n"
+            "  workflow_dispatch:\n"
+            "jobs:\n"
+            "  deploy:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    env:\n"
+            "      K8S_NAMESPACE: tnmfire\n"
+            "    steps:\n"
+            "      - uses: google-github-actions/auth@v2\n"
+            "      - uses: google-github-actions/get-gke-credentials@v2\n"
+            "      - run: kubectl apply -n \"$K8S_NAMESPACE\" -f k8s/deployment.yaml\n"
+        )
+    )
+    namespace_manifest = _encode_workflow_yaml(
+        (
+            "# mbsrn-managed-manifest:site_repo_template_v1\n"
+            "apiVersion: v1\n"
+            "kind: Namespace\n"
+            "metadata:\n"
+            "  name: tnmfire\n"
+        )
+    )
+    namespaced_manifest = _encode_workflow_yaml(
+        (
+            "# mbsrn-managed-manifest:site_repo_template_v1\n"
+            "apiVersion: apps/v1\n"
+            "kind: Deployment\n"
+            "metadata:\n"
+            "  name: site-web\n"
+            "  namespace: tnmfire\n"
+        )
+    )
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _FakeHTTPResponse(status=200, body="{}"),
+            _FakeHTTPResponse(status=200, body="{}"),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "wfsha", "encoding": "base64", "content": managed_workflow}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"state": "active", "path": ".github/workflows/deploy-tnmfire-www-prod.yml"}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-namespace", "encoding": "base64", "content": namespace_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-deployment", "encoding": "base64", "content": namespaced_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-service", "encoding": "base64", "content": namespaced_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-ingress", "encoding": "base64", "content": namespaced_manifest}),
+            ),
+            _FakeHTTPResponse(status=200, body=json.dumps({"name": "KUBERNETES_CLUSTER_NAME"})),
+            _FakeHTTPResponse(status=200, body=json.dumps({"name": "KUBERNETES_CLUSTER_LOCATION"})),
+            _FakeHTTPResponse(status=200, body=json.dumps({"name": "GCP_PROJECT_ID"})),
+            _FakeHTTPResponse(status=204),
+            _FakeHTTPResponse(status=200, body=json.dumps({"workflow_runs": []})),
+            _FakeHTTPResponse(status=200, body=json.dumps([])),
+            _FakeHTTPResponse(status=200, body=json.dumps([])),
+        ],
+        calls,
+    )
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    result = publisher.dispatch_deploy(
+        target=_dispatch_target(),
+        dry_run=False,
+        managed_gke_config=None,
+    )
+    assert result.workflow_run_id is None
+    assert any("/actions/variables/KUBERNETES_CLUSTER_NAME" in url for _, url in calls)
+    assert any(method == "POST" and url.endswith("/dispatches") for method, url in calls)
+
+
 def test_dispatch_deploy_captures_workflow_output_live_url_from_completion_metadata(monkeypatch) -> None:
     calls: list[tuple[str, str]] = []
     created_at = utc_now().isoformat()

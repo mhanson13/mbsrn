@@ -208,6 +208,7 @@ class SEOMigrationGitHubPublisher:
         *,
         target: SEOMigrationGitHubDeployTarget,
         dry_run: bool,
+        managed_gke_config: dict[str, object] | None = None,
     ) -> SEOMigrationGitHubDeployResult:
         raise NotImplementedError
 
@@ -342,8 +343,9 @@ class MisconfiguredSEOMigrationGitHubPublisher(SEOMigrationGitHubPublisher):
         *,
         target: SEOMigrationGitHubDeployTarget,
         dry_run: bool,
+        managed_gke_config: dict[str, object] | None = None,
     ) -> SEOMigrationGitHubDeployResult:
-        del target, dry_run
+        del target, dry_run, managed_gke_config
         raise SEOMigrationGitHubPublisherError(
             code=self.reason_code,
             safe_message=self.safe_message,
@@ -634,6 +636,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         *,
         target: SEOMigrationGitHubDeployTarget,
         dry_run: bool,
+        managed_gke_config: dict[str, object] | None = None,
     ) -> SEOMigrationGitHubDeployResult:
         dispatched_at = utc_now().isoformat()
         workflow_output: dict[str, str] | None = None
@@ -651,6 +654,41 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 allow_workflow_repair=False,
                 dry_run=False,
                 remediation_mode="none",
+                managed_gke_config=managed_gke_config,
+            )
+            readiness_gke_details = (
+                readiness_result.managed_gke_config_details
+                if isinstance(readiness_result.managed_gke_config_details, dict)
+                else {}
+            )
+            _emit_structured_publisher_log(
+                payload={
+                    "event": "seo_migration_dispatch_managed_gke_config_presence",
+                    "repo_owner": target.repo_owner,
+                    "repo_name": target.repo_name,
+                    "ref": target.ref,
+                    "workflow_id": target.workflow_id,
+                    "effective_cluster_name_present": bool(
+                        readiness_gke_details.get("effective_cluster_name_present")
+                    ),
+                    "effective_cluster_location_present": bool(
+                        readiness_gke_details.get("effective_cluster_location_present")
+                    ),
+                    "effective_project_id_present": bool(
+                        readiness_gke_details.get("effective_project_id_present")
+                    ),
+                    "gke_config_resolution_source": _coerce_string(
+                        readiness_gke_details.get("gke_config_resolution_source")
+                    ),
+                    "dispatch_service_availability": bool(readiness_result.dispatch_service_availability),
+                    "dispatch_service_reason_code": readiness_result.dispatch_service_reason_code,
+                },
+                fallback_message="seo_migration_dispatch_managed_gke_config_presence",
+                level=(
+                    logging.INFO
+                    if readiness_result.dispatch_service_availability
+                    else logging.WARNING
+                ),
             )
             if (
                 readiness_result.dispatch_service_availability is False
@@ -1593,6 +1631,9 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             variable_present=presence["project_id_variable_present"],
             secret_present=presence["project_id_secret_present"],
         )
+        resolution_details["effective_cluster_name_present"] = bool(cluster_name_resolved)
+        resolution_details["effective_cluster_location_present"] = bool(cluster_location_resolved)
+        resolution_details["effective_project_id_present"] = bool(project_id_resolved)
 
         missing_reason_codes: list[str] = []
         if not cluster_name_resolved:

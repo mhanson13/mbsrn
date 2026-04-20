@@ -937,6 +937,7 @@ Deploy behavior:
     - `dispatch_service_reason_code=missing_cluster_name`
     - `dispatch_service_reason_code=missing_cluster_location`
     - `dispatch_service_reason_code=missing_gcp_project_id`
+  - readiness and dispatch now share the same managed GKE config resolution path so deploy cannot report `dispatch_service_availability=available` and then fail later with missing cluster/location/project for the same target tuple.
   - migration workspace deploy readiness/diagnostics now surface concise operator guidance for these cases:
     - `missing_cluster_name` -> set managed GKE cluster name in MBSRN admin deployment settings
     - `missing_cluster_location` -> set managed GKE cluster location in MBSRN admin deployment settings

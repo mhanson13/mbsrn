@@ -271,6 +271,7 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
             tuple[SEOMigrationGitHubPublishTarget, list[SEOMigrationGitHubPublishFile], str, bool]
         ] = []
         self.deploy_calls: list[tuple[SEOMigrationGitHubDeployTarget, bool]] = []
+        self.deploy_managed_gke_configs: list[dict[str, object] | None] = []
         self.refresh_calls: list[tuple[SEOMigrationGitHubDeployTarget, int, str | None]] = []
         self.lookup_calls: list[tuple[SEOMigrationGitHubDeployTarget, str | None]] = []
         self.secret_upsert_calls: list[tuple[str, str, str, str]] = []
@@ -346,7 +347,9 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         *,
         target: SEOMigrationGitHubDeployTarget,
         dry_run: bool,
+        managed_gke_config: dict[str, object] | None = None,
     ) -> SEOMigrationGitHubDeployResult:
+        self.deploy_managed_gke_configs.append(dict(managed_gke_config or {}) or None)
         self.deploy_calls.append((target, dry_run))
         if self.fail_deploy:
             raise SEOMigrationGitHubPublisherError(

@@ -2133,6 +2133,7 @@ class SEOMigrationService:
                 ref=deploy_target["ref"],
                 inputs=deploy_inputs,
             )
+            managed_gke_config_for_dispatch = _normalize_json_dict(workflow_resolution.get("managed_gke_config"))
             if not dry_run:
                 target_readiness = self.github_publisher.check_deploy_target_readiness(
                     target=deploy_target_for_dispatch,
@@ -2140,7 +2141,7 @@ class SEOMigrationService:
                     allow_workflow_repair=False,
                     dry_run=False,
                     remediation_mode="none",
-                    managed_gke_config=_normalize_json_dict(workflow_resolution.get("managed_gke_config")),
+                    managed_gke_config=managed_gke_config_for_dispatch,
                     namespace_isolation_defaults=namespace_isolation_defaults,
                 )
                 requested_ref = target_readiness.requested_ref
@@ -2346,6 +2347,7 @@ class SEOMigrationService:
             deploy_result = self.github_publisher.dispatch_deploy(
                 target=deploy_target_for_dispatch,
                 dry_run=dry_run,
+                managed_gke_config=managed_gke_config_for_dispatch,
             )
             dispatch_attempted = not dry_run
             dispatch_result_stage = "workflow_dispatch" if not dry_run else "dry_run"

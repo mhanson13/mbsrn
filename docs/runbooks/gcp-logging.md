@@ -753,6 +753,12 @@ Required credential note:
   - `dispatch_service_reason_code=missing_cluster_name`
   - `dispatch_service_reason_code=missing_cluster_location`
   - `dispatch_service_reason_code=missing_gcp_project_id`
+- dispatch emits `event=seo_migration_dispatch_managed_gke_config_presence` with:
+  - `effective_cluster_name_present`
+  - `effective_cluster_location_present`
+  - `effective_project_id_present`
+  - `gke_config_resolution_source`
+  to confirm the same effective managed GKE config view used by readiness is also used at dispatch time.
 - ownership/remediation interpretation:
   - `missing_cluster_*` / `missing_gcp_project_id`:
     admin-owned managed target configuration blockers (fix MBSRN admin deployment settings first; repo vars/secrets are legacy fallback only)

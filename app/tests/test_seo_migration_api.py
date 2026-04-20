@@ -198,7 +198,9 @@ class _StubMigrationGitHubPublisher(SEOMigrationGitHubPublisher):
         *,
         target: SEOMigrationGitHubDeployTarget,
         dry_run: bool,
+        managed_gke_config: dict[str, object] | None = None,
     ) -> SEOMigrationGitHubDeployResult:
+        del managed_gke_config
         self.deploy_calls.append((target, dry_run))
         if self.deploy_target_dispatch_service_reason_code and not dry_run:
             raise SEOMigrationGitHubPublisherError(
