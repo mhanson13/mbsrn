@@ -6656,6 +6656,65 @@ def test_deploy_readiness_blocks_when_managed_gke_environment_config_is_missing(
     assert deploy_prereqs.get("dispatch_service_reason_code") == dispatch_reason_code
 
 
+def test_deploy_readiness_prioritizes_managed_gke_blocker_when_secret_propagation_runtime_credential_missing(
+    db_session,
+) -> None:
+    publisher = _RecordingGitHubPublisher(
+        readiness_dispatch_service_availability=False,
+        readiness_dispatch_service_reason_code="missing_cluster_name",
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+        deploy_secret_gcp_key=None,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+    _configure_deploy_target(
+        service,
+        business_id=business_id,
+        site_id=site_id,
+        workflow_id="deploy-tnmfire-www-prod.yml",
+    )
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes=None,
+        principal_id="principal-1",
+    )
+    publish_result = service.publish_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        commit_message=None,
+        analytics_measurement_id=None,
+        principal_id="principal-1",
+    )
+    assert publish_result.result.get("deploy_secret_propagation_attempted") is False
+    assert publish_result.result.get("deploy_secret_propagation_status") == "failed"
+    assert publish_result.result.get("deploy_secret_propagation_reason") == "runtime_credential_missing"
+
+    summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
+    publish_readiness = summary.publish_readiness or {}
+    assert publish_readiness.get("last_deploy_secret_propagation_reason") == "runtime_credential_missing"
+
+    deploy_readiness = summary.deploy_readiness or {}
+    assert deploy_readiness.get("ready") is False
+    assert deploy_readiness.get("dispatch_service_reason_code") == "missing_cluster_name"
+    deploy_reasons = [str(item).lower() for item in deploy_readiness.get("reasons", [])]
+    assert any("managed deploy target is missing kubernetes cluster name configuration" in item for item in deploy_reasons)
+    assert "deploy_configuration_missing" in (deploy_readiness.get("blocker_codes") or [])
+
+
 def test_runtime_publisher_readiness_log_includes_reason_code(db_session, caplog) -> None:
     service = _build_service(
         db_session,
