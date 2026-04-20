@@ -9965,6 +9965,7 @@ class SEOMigrationService:
         target_valid = False
         workflow_identifier: str | None = None
         dispatch_identifier_type = "workflow_id"
+        target_readiness: SEOMigrationGitHubTargetReadinessResult | None = None
         effective_publish_config, admin_prerequisites, admin_reasons = self._build_effective_publish_config(
             workspace_publish_config=workspace.publish_config_json,
             require_admin=True,
@@ -10081,6 +10082,105 @@ class SEOMigrationService:
             target_enabled=bool(target_summary.get("enabled")),
             dispatch_service_availability=dispatch_service_availability,
         )
+        if dispatch_service_availability:
+            namespace_isolation_defaults = normalize_namespace_isolation_defaults(
+                _normalize_json_dict(workflow_resolution.get("namespace_isolation_defaults"))
+            )
+            workflow_identifier_for_readiness = _normalize_string(
+                target_summary.get("workflow_identifier_used"),
+                max_length=160,
+            ) or _normalize_string(target_summary.get("workflow_id"), max_length=160)
+            if workflow_identifier_for_readiness:
+                deploy_target_for_readiness = SEOMigrationGitHubDeployTarget(
+                    repo_owner=str(target_summary.get("repo_owner") or "").strip(),
+                    repo_name=str(target_summary.get("repo_name") or "").strip(),
+                    workflow_id=workflow_identifier_for_readiness,
+                    ref=str(target_summary.get("ref") or "").strip(),
+                    inputs={},
+                )
+                try:
+                    target_readiness = self.github_publisher.check_deploy_target_readiness(
+                        target=deploy_target_for_readiness,
+                        allow_ref_repair=False,
+                        allow_workflow_repair=False,
+                        dry_run=False,
+                        remediation_mode="none",
+                        namespace_isolation_defaults=namespace_isolation_defaults,
+                    )
+                except SEOMigrationGitHubPublisherError as exc:
+                    dispatch_service_availability = False
+                    dispatch_service_reason_code = _derive_dispatch_service_reason_code(
+                        runtime_reason_code=str(runtime_diagnostics.get("reason_code") or ""),
+                        target_valid=target_valid,
+                        target_enabled=bool(target_summary.get("enabled")),
+                        dispatch_service_availability=False,
+                        failure_reason_code=_normalize_deploy_failure_reason_code(exc.code),
+                        failure_stage=_normalize_deploy_failure_stage(exc.stage),
+                    )
+                    self._emit_structured_service_log(
+                        payload={
+                            "event": "seo_migration_deploy_readiness_target_check_failed",
+                            "business_id": workspace.business_id,
+                            "site_id": workspace.site_id,
+                            "workspace_id": workspace.id,
+                            "repo_owner": deploy_target_for_readiness.repo_owner,
+                            "repo_name": deploy_target_for_readiness.repo_name,
+                            "requested_ref": deploy_target_for_readiness.ref,
+                            "workflow_id": deploy_target_for_readiness.workflow_id,
+                            "failure_reason_code": _normalize_deploy_failure_reason_code(exc.code),
+                            "failure_stage": _normalize_deploy_failure_stage(exc.stage),
+                            "dispatch_service_reason_code": dispatch_service_reason_code,
+                        },
+                        fallback_message="seo_migration_deploy_readiness_target_check_failed",
+                        level=logging.INFO,
+                    )
+                else:
+                    dispatch_service_availability = bool(target_readiness.dispatch_service_availability)
+                    dispatch_service_reason_code = _normalize_dispatch_service_reason_code(
+                        target_readiness.dispatch_service_reason_code
+                    ) or dispatch_service_reason_code
+                    dispatch_identifier_type = _normalize_string(
+                        target_readiness.dispatch_identifier_type,
+                        max_length=80,
+                    ) or dispatch_identifier_type
+                    target_summary.update(
+                        {
+                            "repo_exists": target_readiness.repo_exists,
+                            "ref_exists": target_readiness.ref_exists,
+                            "workflow_exists": target_readiness.workflow_exists,
+                            "workflow_dispatch_ready": target_readiness.workflow_dispatch_ready,
+                            "workflow_dispatch_supported": target_readiness.workflow_dispatch_supported,
+                            "workflow_trigger_types": list(target_readiness.workflow_trigger_types or ()),
+                            "dispatch_service_availability": target_readiness.dispatch_service_availability,
+                            "dispatch_service_reason_code": target_readiness.dispatch_service_reason_code,
+                            "dispatch_identifier_type": target_readiness.dispatch_identifier_type,
+                            "workflow_conformance_checked": target_readiness.workflow_conformance_checked,
+                            "workflow_conformance_status": target_readiness.workflow_conformance_status,
+                            "workflow_conformance_reasons": list(target_readiness.workflow_conformance_reasons or ()),
+                            "workflow_conformance_evidence_summary": target_readiness.workflow_conformance_evidence_summary,
+                            "kubernetes_namespace": target_readiness.kubernetes_namespace,
+                            "namespace_source": target_readiness.namespace_source,
+                            "namespace_model_status": target_readiness.namespace_model_status,
+                            "workflow_namespace_aligned": target_readiness.workflow_namespace_aligned,
+                            "manifest_namespace_aligned": target_readiness.manifest_namespace_aligned,
+                            "managed_resource_quota_expected": target_readiness.managed_resource_quota_expected,
+                            "managed_resource_quota_present": target_readiness.managed_resource_quota_present,
+                            "managed_limit_range_expected": target_readiness.managed_limit_range_expected,
+                            "managed_limit_range_present": target_readiness.managed_limit_range_present,
+                            "managed_network_policy_expected": target_readiness.managed_network_policy_expected,
+                            "managed_network_policy_present": target_readiness.managed_network_policy_present,
+                            "managed_namespace_policies_aligned": target_readiness.managed_namespace_policies_aligned,
+                        }
+                    )
+
+        managed_gke_dispatch_message = _derive_managed_gke_dispatch_readiness_message(
+            dispatch_service_reason_code=dispatch_service_reason_code
+        )
+        if managed_gke_dispatch_message:
+            reasons.append(managed_gke_dispatch_message)
+            blocker_codes.append(_DEPLOY_BLOCKER_CONFIGURATION_MISSING)
+        blocker_codes = _dedupe_strings(blocker_codes)
+        reasons = _dedupe_strings(reasons)
         latest_traceability = self._derive_latest_deploy_traceability(
             history=workspace.deploy_history_json,
             artifact_version_id=artifact.id if artifact is not None else None,
@@ -10351,6 +10451,19 @@ class SEOMigrationService:
                 action="deploy",
                 blocker_codes=blocker_codes,
             )
+        workflow_dispatch_supported = (
+            bool(latest_traceability.get("workflow_dispatch_supported"))
+            if isinstance(latest_traceability.get("workflow_dispatch_supported"), bool)
+            else (
+                bool(target_summary.get("workflow_dispatch_supported"))
+                if isinstance(target_summary.get("workflow_dispatch_supported"), bool)
+                else None
+            )
+        )
+        workflow_trigger_types = _normalize_workflow_trigger_types_for_summary(
+            latest_traceability.get("workflow_trigger_types")
+        ) or _normalize_workflow_trigger_types_for_summary(target_summary.get("workflow_trigger_types"))
+
         return {
             "ready": not reasons,
             "reasons": reasons,
@@ -10365,8 +10478,8 @@ class SEOMigrationService:
             "workflow_file_path": workflow_file_path,
             "workflow_name": workflow_name,
             "dispatch_identifier_type": dispatch_identifier_type,
-            "workflow_dispatch_supported": latest_traceability.get("workflow_dispatch_supported"),
-            "workflow_trigger_types": latest_traceability.get("workflow_trigger_types") or [],
+            "workflow_dispatch_supported": workflow_dispatch_supported,
+            "workflow_trigger_types": workflow_trigger_types,
             "dispatch_service_availability": dispatch_service_availability,
             "dispatch_service_reason_code": dispatch_service_reason_code,
             "workflow_conformance_checked": workflow_conformance_checked,
@@ -11468,6 +11581,26 @@ def _derive_dispatch_service_reason_code(
     if normalized_failure_stage in {"repo_lookup", "ref_lookup", "workflow_lookup"}:
         return _DEPLOY_DISPATCH_SERVICE_REASON_TARGET_METADATA_MISSING
     return _DEPLOY_DISPATCH_SERVICE_REASON_RUNTIME_UNAVAILABLE
+
+
+def _derive_managed_gke_dispatch_readiness_message(*, dispatch_service_reason_code: object) -> str | None:
+    normalized_dispatch_reason = _normalize_dispatch_service_reason_code(dispatch_service_reason_code)
+    if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MISSING_CLUSTER_NAME:
+        return (
+            "Admin action required: managed deploy target is missing Kubernetes cluster name configuration "
+            "(KUBERNETES_CLUSTER_NAME variable/secret)."
+        )
+    if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MISSING_CLUSTER_LOCATION:
+        return (
+            "Admin action required: managed deploy target is missing Kubernetes cluster location configuration "
+            "(KUBERNETES_CLUSTER_LOCATION variable/secret)."
+        )
+    if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MISSING_GCP_PROJECT_ID:
+        return (
+            "Admin action required: managed deploy target is missing GCP project configuration "
+            "(GCP_PROJECT_ID variable/secret)."
+        )
+    return None
 
 
 def _derive_deploy_failure_remediation_hint(

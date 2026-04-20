@@ -946,6 +946,14 @@ Deploy behavior:
     - treat `missing_cluster_*` / `missing_gcp_project_id` as repository configuration blockers first, even if generic deploy failure summaries are also present
     - correct repo vars/secrets and retry deploy from the workspace before escalating to runtime workflow troubleshooting
     - GitHub Actions run/job logs become the primary source only after readiness no longer reports missing repo configuration
+  - blocker ownership model:
+    - `missing_cluster_name`, `missing_cluster_location`, `missing_gcp_project_id`:
+      admin-owned managed target configuration blockers (repo vars/secrets for managed deploy target)
+    - `runtime_credential_missing` with `secret_name=GCP_DEPLOY_KEY`:
+      admin/runtime credential-source blocker for deploy-secret propagation (separate from managed cluster vars)
+    - `duplicate_request`:
+      operator-visible concurrency/history blocker; does not replace configuration ownership blockers
+  - readiness normalization now prefers managed GKE configuration blockers before dispatch so deploy does not appear dispatchable when required cluster config is incomplete
   - after applying missing config values, retry deploy from the migration workspace (no workflow template change required)
 - hybrid deploy-secret propagation (bridge model):
   - MBSRN runtime is the source of truth for `GCP_DEPLOY_KEY`.

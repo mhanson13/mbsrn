@@ -2260,6 +2260,16 @@ def test_migration_summary_surfaces_missing_managed_gke_config_reason_and_remedi
     )
     assert publish_response.status_code == 200
 
+    pre_deploy_summary_response = client.get(f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/summary")
+    assert pre_deploy_summary_response.status_code == 200
+    pre_deploy_payload = pre_deploy_summary_response.json()
+    pre_deploy_readiness = pre_deploy_payload.get("deploy_readiness") or {}
+    assert pre_deploy_readiness.get("ready") is False
+    assert pre_deploy_readiness.get("dispatch_service_reason_code") == "missing_cluster_name"
+    pre_deploy_reasons = [str(item).lower() for item in pre_deploy_readiness.get("reasons") or []]
+    assert any("managed deploy target is missing kubernetes cluster name configuration" in item for item in pre_deploy_reasons)
+    assert "deploy_configuration_missing" in (pre_deploy_readiness.get("blocker_codes") or [])
+
     deploy_response = client.post(
         f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/deploy",
         json={
@@ -2276,14 +2286,19 @@ def test_migration_summary_surfaces_missing_managed_gke_config_reason_and_remedi
     deploy_readiness = payload.get("deploy_readiness") or {}
     diagnostics = payload.get("context_summary", {}).get("migration_diagnostics") or {}
 
-    assert deploy_readiness.get("last_failure_reason") == "workflow_not_dispatchable"
-    assert deploy_readiness.get("last_failure_dispatch_service_reason_code") == "missing_cluster_name"
-    assert (
-        deploy_readiness.get("last_failure_remediation_hint")
-        == "Deploy target is missing Kubernetes cluster name configuration (KUBERNETES_CLUSTER_NAME variable/secret)."
-    )
-    assert diagnostics.get("last_deploy_failure_dispatch_service_reason_code") == "missing_cluster_name"
-    assert (
-        diagnostics.get("last_deploy_failure_remediation_hint")
-        == "Deploy target is missing Kubernetes cluster name configuration (KUBERNETES_CLUSTER_NAME variable/secret)."
-    )
+    assert deploy_readiness.get("dispatch_service_reason_code") == "missing_cluster_name"
+    assert deploy_readiness.get("ready") is False
+    deploy_reasons = [str(item).lower() for item in deploy_readiness.get("reasons") or []]
+    assert any("managed deploy target is missing kubernetes cluster name configuration" in item for item in deploy_reasons)
+    if deploy_readiness.get("last_failure_reason") is not None:
+        assert deploy_readiness.get("last_failure_reason") == "workflow_not_dispatchable"
+        assert deploy_readiness.get("last_failure_dispatch_service_reason_code") == "missing_cluster_name"
+        assert (
+            deploy_readiness.get("last_failure_remediation_hint")
+            == "Deploy target is missing Kubernetes cluster name configuration (KUBERNETES_CLUSTER_NAME variable/secret)."
+        )
+        assert diagnostics.get("last_deploy_failure_dispatch_service_reason_code") == "missing_cluster_name"
+        assert (
+            diagnostics.get("last_deploy_failure_remediation_hint")
+            == "Deploy target is missing Kubernetes cluster name configuration (KUBERNETES_CLUSTER_NAME variable/secret)."
+        )

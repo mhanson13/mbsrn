@@ -750,6 +750,16 @@ Required credential note:
   - `dispatch_service_reason_code=missing_cluster_name`
   - `dispatch_service_reason_code=missing_cluster_location`
   - `dispatch_service_reason_code=missing_gcp_project_id`
+- ownership/remediation interpretation:
+  - `missing_cluster_*` / `missing_gcp_project_id`:
+    admin-owned managed target configuration blockers (fix repo vars/secrets first)
+  - `runtime_credential_missing` with `secret_name=GCP_DEPLOY_KEY`:
+    deploy-secret propagation credential-source blocker (separate from cluster var configuration)
+  - `duplicate_request`:
+    active/stale concurrency blocker for the selected deploy tuple, not a replacement for config blockers
+- readiness precedence:
+  - when `missing_cluster_*`/`missing_gcp_project_id` is present, treat that as the authoritative blocker before dispatch/workflow troubleshooting
+  - only move to GitHub workflow runtime diagnostics after readiness reports configuration blockers cleared
 
 Post-dispatch workflow run failure diagnostics:
 - `workflow_run_failure_reason_code`

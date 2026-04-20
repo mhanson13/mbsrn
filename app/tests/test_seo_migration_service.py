@@ -6582,6 +6582,80 @@ def test_runtime_credential_missing_reason_is_exposed_in_publish_readiness(db_se
     assert any("credential is unavailable" in reason for reason in publish_reasons)
 
 
+@pytest.mark.parametrize(
+    ("dispatch_reason_code", "expected_reason_snippet"),
+    [
+        (
+            "missing_cluster_name",
+            "managed deploy target is missing kubernetes cluster name configuration",
+        ),
+        (
+            "missing_cluster_location",
+            "managed deploy target is missing kubernetes cluster location configuration",
+        ),
+        (
+            "missing_gcp_project_id",
+            "managed deploy target is missing gcp project configuration",
+        ),
+    ],
+)
+def test_deploy_readiness_blocks_when_managed_gke_environment_config_is_missing(
+    db_session,
+    dispatch_reason_code: str,
+    expected_reason_snippet: str,
+) -> None:
+    publisher = _RecordingGitHubPublisher(
+        readiness_dispatch_service_availability=False,
+        readiness_dispatch_service_reason_code=dispatch_reason_code,
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+    _configure_deploy_target(
+        service,
+        business_id=business_id,
+        site_id=site_id,
+        workflow_id="deploy-tnmfire-www-prod.yml",
+    )
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes=None,
+        principal_id="principal-1",
+    )
+    service.publish_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        commit_message=None,
+        analytics_measurement_id=None,
+        principal_id="principal-1",
+    )
+
+    summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
+    deploy_readiness = summary.deploy_readiness or {}
+    assert deploy_readiness.get("ready") is False
+    assert deploy_readiness.get("dispatch_service_reason_code") == dispatch_reason_code
+    deploy_reasons = [str(item).lower() for item in deploy_readiness.get("reasons", [])]
+    assert any(expected_reason_snippet in item for item in deploy_reasons)
+    assert "deploy_configuration_missing" in (deploy_readiness.get("blocker_codes") or [])
+    deploy_prereqs = deploy_readiness.get("config_prerequisites") or {}
+    assert deploy_prereqs.get("target_config_valid") is True
+    assert deploy_prereqs.get("dispatch_service_reason_code") == dispatch_reason_code
+
+
 def test_runtime_publisher_readiness_log_includes_reason_code(db_session, caplog) -> None:
     service = _build_service(
         db_session,
