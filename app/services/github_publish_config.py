@@ -7,6 +7,7 @@ import re
 from sqlalchemy.orm import Session
 
 from app.core.time import utc_now
+from app.core.token_cipher import FernetTokenCipher, TokenCipherError
 from app.models.github_publish_config import GitHubPublishConfig
 from app.repositories.github_publish_config_repository import GitHubPublishConfigRepository
 from pydantic import ValidationError
@@ -38,6 +39,10 @@ class GitHubPublishConfigValidationError(ValueError):
     pass
 
 
+class GitHubPublishConfigSecretError(ValueError):
+    pass
+
+
 def _normalize_base_path(value: object) -> str:
     normalized = str(value or "/").strip() or "/"
     normalized = normalized.replace("\\", "/")
@@ -56,9 +61,11 @@ class GitHubPublishConfigService:
         *,
         session: Session,
         repository: GitHubPublishConfigRepository,
+        managed_secret_cipher: FernetTokenCipher | None = None,
     ) -> None:
         self.session = session
         self.repository = repository
+        self.managed_secret_cipher = managed_secret_cipher
 
     def get(self) -> GitHubPublishConfig:
         existing = self.repository.get_singleton()
@@ -74,9 +81,43 @@ class GitHubPublishConfigService:
             managed_gke_cluster_name=None,
             managed_gke_cluster_location=None,
             managed_gke_project_id=None,
+            managed_gcp_deploy_key_encrypted=None,
+            managed_gcp_deploy_key_key_version=None,
+            managed_gcp_deploy_key_updated_at=None,
             namespace_isolation_defaults_json=dict(_DEFAULT_NAMESPACE_ISOLATION_DEFAULTS),
             enabled=False,
         )
+
+    @staticmethod
+    def _managed_secret_configured(config: GitHubPublishConfig | None) -> bool:
+        if config is None:
+            return False
+        encrypted = str(getattr(config, "managed_gcp_deploy_key_encrypted", "") or "").strip()
+        key_version = str(getattr(config, "managed_gcp_deploy_key_key_version", "") or "").strip()
+        return bool(encrypted and key_version)
+
+    def get_managed_gcp_deploy_key_status(self) -> dict[str, object]:
+        config = self.get()
+        return {
+            "configured": self._managed_secret_configured(config),
+            "updated_at": getattr(config, "managed_gcp_deploy_key_updated_at", None),
+            "source": "admin_managed_secret",
+        }
+
+    def get_managed_gcp_deploy_key_value(self) -> str | None:
+        config = self.get()
+        encrypted = str(getattr(config, "managed_gcp_deploy_key_encrypted", "") or "").strip()
+        key_version = str(getattr(config, "managed_gcp_deploy_key_key_version", "") or "").strip()
+        if not encrypted and not key_version:
+            return None
+        if not encrypted or not key_version:
+            raise GitHubPublishConfigSecretError("Managed deploy secret metadata is incomplete.")
+        if self.managed_secret_cipher is None:
+            raise GitHubPublishConfigSecretError("Managed deploy secret encryption is not configured.")
+        try:
+            return self.managed_secret_cipher.decrypt(encrypted, key_version=key_version)
+        except TokenCipherError as exc:
+            raise GitHubPublishConfigSecretError("Managed deploy secret could not be decrypted.") from exc
 
     @staticmethod
     def _emit_structured_log(*, payload: dict[str, object], fallback_message: str, level: int) -> None:
@@ -108,6 +149,8 @@ class GitHubPublishConfigService:
         managed_cluster_name_provided = "managed_gke_cluster_name" in payload_fields_set
         managed_cluster_location_provided = "managed_gke_cluster_location" in payload_fields_set
         managed_project_id_provided = "managed_gke_project_id" in payload_fields_set
+        managed_gcp_deploy_key_value_provided = "managed_gcp_deploy_key_value" in payload_fields_set
+        managed_gcp_deploy_key_clear_requested = bool(payload.managed_gcp_deploy_key_clear)
         managed_gke_cluster_name = (
             str(payload.managed_gke_cluster_name or "").strip().lower() or None
         )
@@ -128,6 +171,15 @@ class GitHubPublishConfigService:
         if not managed_project_id_provided and existing is not None:
             managed_gke_project_id = (
                 str(getattr(existing, "managed_gke_project_id", "") or "").strip().lower() or None
+            )
+        managed_gcp_deploy_key_value = payload.managed_gcp_deploy_key_value
+        if managed_gcp_deploy_key_clear_requested and managed_gcp_deploy_key_value:
+            raise GitHubPublishConfigValidationError(
+                "Managed deploy key cannot be set and cleared in the same request."
+            )
+        if managed_gcp_deploy_key_value_provided and managed_gcp_deploy_key_value is None:
+            raise GitHubPublishConfigValidationError(
+                "Managed deploy key value is empty. Provide a value or use clear."
             )
         raw_namespace_defaults = payload.namespace_isolation_defaults
         if raw_namespace_defaults is None and existing is not None:
@@ -215,6 +267,7 @@ class GitHubPublishConfigService:
             "managed_gke_project_id": (
                 existing.managed_gke_project_id if existing is not None else None
             ),
+            "managed_gcp_deploy_key_configured": self._managed_secret_configured(existing),
             "namespace_isolation_defaults": (
                 normalize_namespace_isolation_defaults(
                     existing.namespace_isolation_defaults_json if existing is not None else None
@@ -222,6 +275,30 @@ class GitHubPublishConfigService:
             ),
             "enabled": bool(existing.enabled) if existing is not None else False,
         }
+        managed_gcp_deploy_key_encrypted = (
+            str(getattr(existing, "managed_gcp_deploy_key_encrypted", "") or "").strip() if existing else ""
+        ) or None
+        managed_gcp_deploy_key_key_version = (
+            str(getattr(existing, "managed_gcp_deploy_key_key_version", "") or "").strip() if existing else ""
+        ) or None
+        managed_gcp_deploy_key_updated_at = (
+            getattr(existing, "managed_gcp_deploy_key_updated_at", None) if existing is not None else None
+        )
+        if managed_gcp_deploy_key_clear_requested:
+            managed_gcp_deploy_key_encrypted = None
+            managed_gcp_deploy_key_key_version = None
+            managed_gcp_deploy_key_updated_at = utc_now()
+        elif managed_gcp_deploy_key_value:
+            if self.managed_secret_cipher is None:
+                raise GitHubPublishConfigValidationError(
+                    "Managed deploy secret encryption is not configured in this runtime."
+                )
+            try:
+                managed_gcp_deploy_key_encrypted = self.managed_secret_cipher.encrypt(managed_gcp_deploy_key_value)
+            except TokenCipherError as exc:
+                raise GitHubPublishConfigValidationError("Managed deploy secret could not be encrypted.") from exc
+            managed_gcp_deploy_key_key_version = self.managed_secret_cipher.active_key_version
+            managed_gcp_deploy_key_updated_at = utc_now()
         updated_values = {
             "owner": owner,
             "default_branch": default_branch,
@@ -232,6 +309,9 @@ class GitHubPublishConfigService:
             "managed_gke_cluster_name": managed_gke_cluster_name,
             "managed_gke_cluster_location": managed_gke_cluster_location,
             "managed_gke_project_id": managed_gke_project_id,
+            "managed_gcp_deploy_key_configured": bool(
+                managed_gcp_deploy_key_encrypted and managed_gcp_deploy_key_key_version
+            ),
             "namespace_isolation_defaults": namespace_isolation_defaults,
             "enabled": enabled,
         }
@@ -247,6 +327,9 @@ class GitHubPublishConfigService:
                 managed_gke_cluster_name=managed_gke_cluster_name,
                 managed_gke_cluster_location=managed_gke_cluster_location,
                 managed_gke_project_id=managed_gke_project_id,
+                managed_gcp_deploy_key_encrypted=managed_gcp_deploy_key_encrypted,
+                managed_gcp_deploy_key_key_version=managed_gcp_deploy_key_key_version,
+                managed_gcp_deploy_key_updated_at=managed_gcp_deploy_key_updated_at,
                 namespace_isolation_defaults_json=namespace_isolation_defaults,
                 enabled=enabled,
             )
@@ -260,6 +343,9 @@ class GitHubPublishConfigService:
             existing.managed_gke_cluster_name = managed_gke_cluster_name
             existing.managed_gke_cluster_location = managed_gke_cluster_location
             existing.managed_gke_project_id = managed_gke_project_id
+            existing.managed_gcp_deploy_key_encrypted = managed_gcp_deploy_key_encrypted
+            existing.managed_gcp_deploy_key_key_version = managed_gcp_deploy_key_key_version
+            existing.managed_gcp_deploy_key_updated_at = managed_gcp_deploy_key_updated_at
             existing.namespace_isolation_defaults_json = namespace_isolation_defaults
             existing.enabled = enabled
         self.repository.save(existing)
@@ -277,6 +363,7 @@ class GitHubPublishConfigService:
                 "managed_gke_cluster_name",
                 "managed_gke_cluster_location",
                 "managed_gke_project_id",
+                "managed_gcp_deploy_key_configured",
                 "namespace_isolation_defaults",
                 "enabled",
             )
@@ -308,6 +395,12 @@ class GitHubPublishConfigService:
                     "managed_gke_cluster_name": existing.managed_gke_cluster_name,
                     "managed_gke_cluster_location": existing.managed_gke_cluster_location,
                     "managed_gke_project_id": existing.managed_gke_project_id,
+                    "managed_gcp_deploy_key_configured": self._managed_secret_configured(existing),
+                    "managed_gcp_deploy_key_updated_at": (
+                        existing.managed_gcp_deploy_key_updated_at.isoformat()
+                        if existing.managed_gcp_deploy_key_updated_at is not None
+                        else None
+                    ),
                     "namespace_isolation_defaults": normalize_namespace_isolation_defaults(
                         existing.namespace_isolation_defaults_json
                     ).model_dump(mode="json"),

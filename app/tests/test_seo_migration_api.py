@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import os
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.core.time import utc_now
+from app.core.config import get_settings
 from app.api.deps import (
     TenantContext,
     get_db,
@@ -53,6 +56,19 @@ from app.services.seo_migration_ingest import (
     SEOMigrationIngestResult,
     SEOMigrationSourceIngestError,
 )
+
+
+@pytest.fixture(autouse=True)
+def _ensure_test_gcp_deploy_key(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv(
+        "GCP_DEPLOY_KEY",
+        os.getenv("GCP_DEPLOY_KEY", '{"type":"service_account","project_id":"test-project"}'),
+    )
+    get_settings.cache_clear()
+    try:
+        yield
+    finally:
+        get_settings.cache_clear()
 
 
 class _StubMigrationIngestService:

@@ -40,6 +40,11 @@ def _to_github_publish_config_read(config) -> GitHubPublishConfigRead:  # noqa: 
         managed_gke_cluster_name=(getattr(config, "managed_gke_cluster_name", None) or None),
         managed_gke_cluster_location=(getattr(config, "managed_gke_cluster_location", None) or None),
         managed_gke_project_id=(getattr(config, "managed_gke_project_id", None) or None),
+        managed_gcp_deploy_key_configured=bool(
+            str(getattr(config, "managed_gcp_deploy_key_encrypted", "") or "").strip()
+            and str(getattr(config, "managed_gcp_deploy_key_key_version", "") or "").strip()
+        ),
+        managed_gcp_deploy_key_updated_at=getattr(config, "managed_gcp_deploy_key_updated_at", None),
         namespace_isolation_defaults=normalize_namespace_isolation_defaults(
             getattr(config, "namespace_isolation_defaults_json", None)
         ),

@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 from app.api.deps import TenantContext, get_db, get_tenant_context
 from app.api.routes.admin_github_publish_config import router as admin_github_publish_config_router
+from app.core.config import get_settings
 from app.models.principal import Principal, PrincipalRole
 
 
@@ -69,6 +70,8 @@ def test_get_github_publish_config_returns_defaults_when_unset(db_session, seede
     assert payload["managed_gke_cluster_name"] is None
     assert payload["managed_gke_cluster_location"] is None
     assert payload["managed_gke_project_id"] is None
+    assert payload["managed_gcp_deploy_key_configured"] is False
+    assert payload["managed_gcp_deploy_key_updated_at"] is None
     assert payload["namespace_isolation_defaults"] == {
         "resource_quota": {
             "enabled": False,
@@ -159,6 +162,8 @@ def test_put_github_publish_config_persists_and_reads_back(db_session, seeded_bu
     assert updated["managed_gke_cluster_name"] == "mbsrn-cluster"
     assert updated["managed_gke_cluster_location"] == "us-central1"
     assert updated["managed_gke_project_id"] == "mbsrn-prod"
+    assert updated["managed_gcp_deploy_key_configured"] is False
+    assert updated["managed_gcp_deploy_key_updated_at"] is None
     assert updated["namespace_isolation_defaults"]["resource_quota"]["enabled"] is True
     assert updated["namespace_isolation_defaults"]["resource_quota"]["requests_cpu"] == "1200m"
     assert updated["namespace_isolation_defaults"]["limit_range"]["enabled"] is True
@@ -181,8 +186,114 @@ def test_put_github_publish_config_persists_and_reads_back(db_session, seeded_bu
     assert fetched["managed_gke_cluster_name"] == "mbsrn-cluster"
     assert fetched["managed_gke_cluster_location"] == "us-central1"
     assert fetched["managed_gke_project_id"] == "mbsrn-prod"
+    assert fetched["managed_gcp_deploy_key_configured"] is False
+    assert fetched["managed_gcp_deploy_key_updated_at"] is None
     assert fetched["namespace_isolation_defaults"] == updated["namespace_isolation_defaults"]
     assert fetched["enabled"] is True
+
+
+def test_put_github_publish_config_sets_managed_gcp_deploy_key_status_without_exposing_value(
+    db_session,
+    seeded_business,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("APP_SESSION_SECRET", "test-app-session-secret-for-managed-deploy")
+    get_settings.cache_clear()
+    try:
+        client = _make_client(db_session, business_id=seeded_business.id)
+        payload = '{"type":"service_account","project_id":"mbsrn-prod"}'
+
+        update_response = client.put(
+            "/api/admin/github-publish-config",
+            json={
+                "owner": "mhanson13",
+                "default_branch": "main",
+                "base_path": "/",
+                "managed_gcp_deploy_key_value": payload,
+                "enabled": True,
+            },
+        )
+
+        assert update_response.status_code == 200
+        updated = update_response.json()
+        assert updated["managed_gcp_deploy_key_configured"] is True
+        assert updated["managed_gcp_deploy_key_updated_at"] is not None
+        assert "managed_gcp_deploy_key_value" not in updated
+
+        get_response = client.get("/api/admin/github-publish-config")
+        assert get_response.status_code == 200
+        fetched = get_response.json()
+        assert fetched["managed_gcp_deploy_key_configured"] is True
+        assert fetched["managed_gcp_deploy_key_updated_at"] is not None
+        assert "managed_gcp_deploy_key_value" not in fetched
+    finally:
+        get_settings.cache_clear()
+
+
+def test_put_github_publish_config_clears_managed_gcp_deploy_key(
+    db_session,
+    seeded_business,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("APP_SESSION_SECRET", "test-app-session-secret-for-managed-deploy")
+    get_settings.cache_clear()
+    try:
+        client = _make_client(db_session, business_id=seeded_business.id)
+        seed_response = client.put(
+            "/api/admin/github-publish-config",
+            json={
+                "owner": "mhanson13",
+                "default_branch": "main",
+                "base_path": "/",
+                "managed_gcp_deploy_key_value": '{"type":"service_account","project_id":"mbsrn-prod"}',
+                "enabled": True,
+            },
+        )
+        assert seed_response.status_code == 200
+        assert seed_response.json()["managed_gcp_deploy_key_configured"] is True
+
+        clear_response = client.put(
+            "/api/admin/github-publish-config",
+            json={
+                "owner": "mhanson13",
+                "default_branch": "main",
+                "base_path": "/",
+                "managed_gcp_deploy_key_clear": True,
+                "enabled": True,
+            },
+        )
+        assert clear_response.status_code == 200
+        cleared = clear_response.json()
+        assert cleared["managed_gcp_deploy_key_configured"] is False
+        assert cleared["managed_gcp_deploy_key_updated_at"] is not None
+    finally:
+        get_settings.cache_clear()
+
+
+def test_put_github_publish_config_rejects_setting_and_clearing_managed_key_together(
+    db_session,
+    seeded_business,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("APP_SESSION_SECRET", "test-app-session-secret-for-managed-deploy")
+    get_settings.cache_clear()
+    try:
+        client = _make_client(db_session, business_id=seeded_business.id)
+        response = client.put(
+            "/api/admin/github-publish-config",
+            json={
+                "owner": "mhanson13",
+                "default_branch": "main",
+                "base_path": "/",
+                "managed_gcp_deploy_key_value": '{"type":"service_account","project_id":"mbsrn-prod"}',
+                "managed_gcp_deploy_key_clear": True,
+                "enabled": True,
+            },
+        )
+        assert response.status_code == 422
+        assert "cannot be set and cleared" in str(response.json().get("detail", "")).lower()
+    finally:
+        get_settings.cache_clear()
 
 
 def test_put_github_publish_config_allows_clearing_managed_gke_fields_with_blank_values(

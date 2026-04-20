@@ -32,6 +32,7 @@ import type {
   BusinessSettings,
   GCPLogEntry,
   GitHubPublishConfig,
+  GitHubPublishConfigUpdateRequest,
   GitHubNamespaceIsolationDefaults,
   GitHubNamespaceLimitRangeDefaults,
   GitHubNamespaceNetworkPolicyDefaults,
@@ -958,6 +959,10 @@ function applyGitHubPublishConfigInputs(
     setManagedGkeClusterName: (value: string) => void;
     setManagedGkeClusterLocation: (value: string) => void;
     setManagedGkeProjectId: (value: string) => void;
+    setManagedDeployKeyConfigured: (value: boolean) => void;
+    setManagedDeployKeyUpdatedAt: (value: string | null) => void;
+    clearManagedDeployKeyInput: () => void;
+    setManagedDeployKeyClear: (value: boolean) => void;
     setNamespaceIsolationDefaults: (value: GitHubNamespaceIsolationDefaults) => void;
     setEnabled: (value: boolean) => void;
   },
@@ -970,6 +975,10 @@ function applyGitHubPublishConfigInputs(
   setters.setManagedGkeClusterName(config.managed_gke_cluster_name || "");
   setters.setManagedGkeClusterLocation(config.managed_gke_cluster_location || "");
   setters.setManagedGkeProjectId(config.managed_gke_project_id || "");
+  setters.setManagedDeployKeyConfigured(Boolean(config.managed_gcp_deploy_key_configured));
+  setters.setManagedDeployKeyUpdatedAt(config.managed_gcp_deploy_key_updated_at || null);
+  setters.clearManagedDeployKeyInput();
+  setters.setManagedDeployKeyClear(false);
   setters.setNamespaceIsolationDefaults(normalizeNamespaceIsolationDefaults(config.namespace_isolation_defaults));
   setters.setEnabled(Boolean(config.enabled));
 }
@@ -1063,6 +1072,12 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
   const [githubPublishManagedGkeClusterLocationInput, setGitHubPublishManagedGkeClusterLocationInput] =
     useState("");
   const [githubPublishManagedGkeProjectIdInput, setGitHubPublishManagedGkeProjectIdInput] = useState("");
+  const [githubPublishManagedDeployKeyInput, setGitHubPublishManagedDeployKeyInput] = useState("");
+  const [githubPublishManagedDeployKeyClear, setGitHubPublishManagedDeployKeyClear] = useState(false);
+  const [githubPublishManagedDeployKeyConfigured, setGitHubPublishManagedDeployKeyConfigured] = useState(false);
+  const [githubPublishManagedDeployKeyUpdatedAt, setGitHubPublishManagedDeployKeyUpdatedAt] = useState<string | null>(
+    null,
+  );
   const [githubNamespaceIsolationDefaults, setGitHubNamespaceIsolationDefaults] = useState<GitHubNamespaceIsolationDefaults>(
     DEFAULT_NAMESPACE_ISOLATION_DEFAULTS,
   );
@@ -1281,6 +1296,10 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
             setManagedGkeClusterName: setGitHubPublishManagedGkeClusterNameInput,
             setManagedGkeClusterLocation: setGitHubPublishManagedGkeClusterLocationInput,
             setManagedGkeProjectId: setGitHubPublishManagedGkeProjectIdInput,
+            setManagedDeployKeyConfigured: setGitHubPublishManagedDeployKeyConfigured,
+            setManagedDeployKeyUpdatedAt: setGitHubPublishManagedDeployKeyUpdatedAt,
+            clearManagedDeployKeyInput: () => setGitHubPublishManagedDeployKeyInput(""),
+            setManagedDeployKeyClear: setGitHubPublishManagedDeployKeyClear,
             setNamespaceIsolationDefaults: setGitHubNamespaceIsolationDefaults,
             setEnabled: setGitHubPublishEnabled,
           });
@@ -1719,7 +1738,8 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
 
     setGitHubPublishConfigSubmitting(true);
     try {
-      const updated = await updateGitHubPublishConfig(context.token, {
+      const managedDeployKeyValue = githubPublishManagedDeployKeyInput.trim();
+      const payload: GitHubPublishConfigUpdateRequest = {
         owner: validation.owner || "",
         default_branch: validation.defaultBranch,
         base_path: validation.basePath,
@@ -1730,7 +1750,14 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
         managed_gke_project_id: validation.managedGkeProjectId,
         namespace_isolation_defaults: normalizeNamespaceIsolationDefaults(githubNamespaceIsolationDefaults),
         enabled: githubPublishEnabled,
-      });
+      };
+      if (managedDeployKeyValue) {
+        payload.managed_gcp_deploy_key_value = managedDeployKeyValue;
+      }
+      if (githubPublishManagedDeployKeyClear) {
+        payload.managed_gcp_deploy_key_clear = true;
+      }
+      const updated = await updateGitHubPublishConfig(context.token, payload);
       applyGitHubPublishConfigInputs(updated, {
         setOwner: setGitHubPublishOwnerInput,
         setDefaultBranch: setGitHubPublishDefaultBranchInput,
@@ -1740,6 +1767,10 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
         setManagedGkeClusterName: setGitHubPublishManagedGkeClusterNameInput,
         setManagedGkeClusterLocation: setGitHubPublishManagedGkeClusterLocationInput,
         setManagedGkeProjectId: setGitHubPublishManagedGkeProjectIdInput,
+        setManagedDeployKeyConfigured: setGitHubPublishManagedDeployKeyConfigured,
+        setManagedDeployKeyUpdatedAt: setGitHubPublishManagedDeployKeyUpdatedAt,
+        clearManagedDeployKeyInput: () => setGitHubPublishManagedDeployKeyInput(""),
+        setManagedDeployKeyClear: setGitHubPublishManagedDeployKeyClear,
         setNamespaceIsolationDefaults: setGitHubNamespaceIsolationDefaults,
         setEnabled: setGitHubPublishEnabled,
       });
@@ -2772,6 +2803,40 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
             {githubPublishValidation.managedGkeProjectIdError ? (
               <p className="hint error">{githubPublishValidation.managedGkeProjectIdError}</p>
             ) : null}
+            <label htmlFor="github-publish-managed-gcp-deploy-key">
+              Managed Deploy Secret (GCP_DEPLOY_KEY)
+            </label>
+            <textarea
+              id="github-publish-managed-gcp-deploy-key"
+              rows={3}
+              value={githubPublishManagedDeployKeyInput}
+              onChange={(event) => setGitHubPublishManagedDeployKeyInput(event.target.value)}
+              disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
+              placeholder="Paste service-account JSON to set or rotate (write-only)"
+              autoComplete="off"
+              spellCheck={false}
+            />
+            <label htmlFor="github-publish-managed-gcp-deploy-key-clear" className="checkbox-chip">
+              <input
+                id="github-publish-managed-gcp-deploy-key-clear"
+                type="checkbox"
+                checked={githubPublishManagedDeployKeyClear}
+                onChange={(event) => setGitHubPublishManagedDeployKeyClear(event.target.checked)}
+                disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
+              />
+              Clear managed deploy secret on save
+            </label>
+            <p className="hint muted">
+              In-house managed secret for managed deploy targets. The value is never returned after save.
+            </p>
+            <WorkspaceMetadataGrid>
+              <WorkspaceMetadataItem label="Managed deploy secret configured">
+                <span>{githubPublishManagedDeployKeyConfigured ? "Yes" : "No"}</span>
+              </WorkspaceMetadataItem>
+              <WorkspaceMetadataItem label="Managed deploy secret updated">
+                <span>{githubPublishManagedDeployKeyUpdatedAt || "Never"}</span>
+              </WorkspaceMetadataItem>
+            </WorkspaceMetadataGrid>
 
             <div className="panel panel-compact stack-tight">
               <strong>Namespace ResourceQuota defaults</strong>
@@ -3054,7 +3119,7 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
               Enable migration GitHub publish target
             </label>
             <p className="hint muted">
-              This stores target metadata only. GitHub credentials remain environment-managed and are never saved here.
+              Managed GKE target metadata and managed deploy secret status are admin-owned here. Secret values are write-only and never returned.
             </p>
             <div className="panel panel-compact stack-tight" data-testid="github-publish-effective-preview">
               <p className="hint muted">
@@ -3084,6 +3149,9 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                 </WorkspaceMetadataItem>
                 <WorkspaceMetadataItem label="Managed GCP project">
                   <code>{githubPublishValidation.managedGkeProjectId || "Not configured"}</code>
+                </WorkspaceMetadataItem>
+                <WorkspaceMetadataItem label="Managed deploy secret">
+                  <span>{githubPublishManagedDeployKeyConfigured ? "Configured" : "Missing"}</span>
                 </WorkspaceMetadataItem>
                 <WorkspaceMetadataItem label="Target environment source">
                   <code>admin_config</code>

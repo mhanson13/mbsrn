@@ -42,6 +42,8 @@ class GitHubPublishConfigRead(BaseModel):
     managed_gke_cluster_name: str | None = None
     managed_gke_cluster_location: str | None = None
     managed_gke_project_id: str | None = None
+    managed_gcp_deploy_key_configured: bool = False
+    managed_gcp_deploy_key_updated_at: datetime | None = None
     namespace_isolation_defaults: "GitHubNamespaceIsolationDefaults"
     enabled: bool = False
     created_at: datetime | None = None
@@ -58,6 +60,8 @@ class GitHubPublishConfigUpdateRequest(BaseModel):
     managed_gke_cluster_name: str | None = Field(default=None, max_length=120)
     managed_gke_cluster_location: str | None = Field(default=None, max_length=120)
     managed_gke_project_id: str | None = Field(default=None, max_length=120)
+    managed_gcp_deploy_key_value: str | None = Field(default=None, max_length=20000)
+    managed_gcp_deploy_key_clear: bool = False
     namespace_isolation_defaults: "GitHubNamespaceIsolationDefaults | None" = None
     enabled: bool = False
 
@@ -110,6 +114,14 @@ class GitHubPublishConfigUpdateRequest(BaseModel):
     def _normalize_managed_gke_project_id(cls, value: object) -> str | None:
         normalized = _normalize_optional_text(value, max_length=120)
         return normalized.lower() if normalized else None
+
+    @field_validator("managed_gcp_deploy_key_value", mode="before")
+    @classmethod
+    def _normalize_managed_gcp_deploy_key_value(cls, value: object) -> str | None:
+        if value is None:
+            return None
+        normalized = str(value).strip()
+        return normalized or None
 
 
 _VALID_CPU_PATTERN = r"^(?:[1-9]\d*m|[1-9]\d*(?:\.\d+)?)$"

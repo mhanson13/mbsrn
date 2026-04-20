@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import JSON, Boolean, DateTime, Integer, String
+from sqlalchemy import JSON, Boolean, DateTime, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.time import utc_now
@@ -41,6 +41,18 @@ class GitHubPublishConfig(Base):
     )
     managed_gke_project_id: Mapped[str | None] = mapped_column(
         String(120),
+        nullable=True,
+    )
+    managed_gcp_deploy_key_encrypted: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
+    managed_gcp_deploy_key_key_version: Mapped[str | None] = mapped_column(
+        String(32),
+        nullable=True,
+    )
+    managed_gcp_deploy_key_updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
         nullable=True,
     )
     namespace_isolation_defaults_json: Mapped[dict[str, object]] = mapped_column(

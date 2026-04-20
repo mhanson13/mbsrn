@@ -12,7 +12,7 @@ from app.core.config import get_settings
 from app.core.rate_limit import RateLimiter, get_rate_limiter
 from app.core.session_state import get_session_state_store
 from app.core.session_token import AppSessionTokenError, AppSessionTokenService
-from app.core.token_cipher import FernetTokenCipher
+from app.core.token_cipher import FernetTokenCipher, TokenCipherError
 from app.db.session import SessionLocal, get_db_session
 from app.integrations import (
     DevEmailProvider,
@@ -398,9 +398,25 @@ def get_github_publish_config_service(
     db: Session = Depends(get_db),
     github_publish_config_repository: GitHubPublishConfigRepository = Depends(get_github_publish_config_repository),
 ) -> GitHubPublishConfigService:
+    settings = get_settings()
+    managed_secret_cipher: FernetTokenCipher | None = None
+    keyring = settings.google_oauth_token_encryption_keys
+    if keyring:
+        try:
+            managed_secret_cipher = FernetTokenCipher(
+                active_key_version=settings.google_oauth_token_encryption_key_version,
+                keyring=keyring,
+            )
+        except (ValueError, TokenCipherError):
+            logger.warning(
+                "github_publish_config_secret_cipher_unavailable active_key_version=%s key_count=%s",
+                settings.google_oauth_token_encryption_key_version,
+                len(keyring),
+            )
     return GitHubPublishConfigService(
         session=db,
         repository=github_publish_config_repository,
+        managed_secret_cipher=managed_secret_cipher,
     )
 
 

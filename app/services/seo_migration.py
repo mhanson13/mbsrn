@@ -55,7 +55,7 @@ from app.services.ai_response_contract_evaluator import (
     evaluate_migration_artifact_response,
 )
 from app.services.ai_model_settings import resolve_ai_model_name
-from app.services.github_publish_config import GitHubPublishConfigService
+from app.services.github_publish_config import GitHubPublishConfigSecretError, GitHubPublishConfigService
 from app.services.seo_migration_context import SEOMigrationContextAssembler
 from app.services.seo_migration_artifact_quality import evaluate_migration_artifact_quality
 from app.services.seo_migration_ingest import SEOMigrationSourceIngestError, SEOMigrationSourceIngestService
@@ -218,6 +218,8 @@ _DEPLOY_SECRET_PROPAGATION_STATUS_CREATED = "created"
 _DEPLOY_SECRET_PROPAGATION_STATUS_UPDATED = "updated"
 _DEPLOY_SECRET_PROPAGATION_STATUS_SKIPPED_GUARDRAIL = "skipped_guardrail"
 _DEPLOY_SECRET_PROPAGATION_STATUS_FAILED = "failed"
+_DEPLOY_SECRET_SOURCE_ADMIN_MANAGED = "admin_managed_secret"
+_DEPLOY_SECRET_SOURCE_RUNTIME_FALLBACK = "runtime_env_fallback"
 _DEPLOY_TARGET_REASON_REPO_NOT_FOUND = "repo_not_found"
 _DEPLOY_TARGET_REASON_WORKFLOW_NOT_FOUND = "workflow_not_found"
 _DEPLOY_TARGET_REASON_REF_INVALID = "branch_not_found_or_ref_invalid"
@@ -1043,6 +1045,7 @@ class SEOMigrationService:
         deploy_secret_propagation_attempted = False
         deploy_secret_propagation_status = _DEPLOY_SECRET_PROPAGATION_STATUS_NOT_ATTEMPTED
         deploy_secret_propagation_reason: str | None = None
+        deploy_secret_propagation_source: str | None = None
         workflow_provisioning_verified = False
         workflow_resolution_for_provision: dict[str, object] | None = None
         expected_publish_url: str | None = None
@@ -1247,6 +1250,7 @@ class SEOMigrationService:
                     deploy_secret_propagation_attempted,
                     deploy_secret_propagation_status,
                     deploy_secret_propagation_reason,
+                    deploy_secret_propagation_source,
                 ) = self._attempt_deploy_secret_propagation(
                     business_id=business_id,
                     site_id=site_id,
@@ -1296,6 +1300,7 @@ class SEOMigrationService:
                             "deploy_secret_propagation_attempted": deploy_secret_propagation_attempted,
                             "deploy_secret_propagation_status": deploy_secret_propagation_status,
                             "deploy_secret_propagation_reason": deploy_secret_propagation_reason,
+                            "deploy_secret_propagation_source": deploy_secret_propagation_source,
                         },
                         failure_category="duplicate_request",
                         failure_reason=failure_message,
@@ -1470,6 +1475,7 @@ class SEOMigrationService:
                     "deploy_secret_propagation_attempted": deploy_secret_propagation_attempted,
                     "deploy_secret_propagation_status": deploy_secret_propagation_status,
                     "deploy_secret_propagation_reason": deploy_secret_propagation_reason,
+                    "deploy_secret_propagation_source": deploy_secret_propagation_source,
                     "failure_reason": _normalize_string(exc.code, max_length=80),
                     "failure_category": failure_category,
                     "error": exc.safe_message,
@@ -1500,6 +1506,7 @@ class SEOMigrationService:
                     "deploy_secret_propagation_attempted": deploy_secret_propagation_attempted,
                     "deploy_secret_propagation_status": deploy_secret_propagation_status,
                     "deploy_secret_propagation_reason": deploy_secret_propagation_reason,
+                    "deploy_secret_propagation_source": deploy_secret_propagation_source,
                     "kubernetes_namespace": (
                         deploy_workflow_provision_result.kubernetes_namespace
                         if deploy_workflow_provision_result is not None
@@ -1586,6 +1593,7 @@ class SEOMigrationService:
             "deploy_secret_propagation_attempted": deploy_secret_propagation_attempted,
             "deploy_secret_propagation_status": deploy_secret_propagation_status,
             "deploy_secret_propagation_reason": deploy_secret_propagation_reason,
+            "deploy_secret_propagation_source": deploy_secret_propagation_source,
             "workflow_provisioning_verified": workflow_provisioning_verified,
             "deploy_workflow_mode": deploy_workflow_mode,
             "target_environment_key": target_environment_key,
@@ -1691,6 +1699,7 @@ class SEOMigrationService:
                 "deploy_secret_propagation_attempted": deploy_secret_propagation_attempted,
                 "deploy_secret_propagation_status": deploy_secret_propagation_status,
                 "deploy_secret_propagation_reason": deploy_secret_propagation_reason,
+                "deploy_secret_propagation_source": deploy_secret_propagation_source,
                 "workflow_provisioning_verified": workflow_provisioning_verified,
                 "deploy_workflow_mode": deploy_workflow_mode,
                 "target_environment_key": target_environment_key,
@@ -5834,6 +5843,9 @@ class SEOMigrationService:
             "last_deploy_secret_propagation_reason": publish_diagnostics.get(
                 "last_deploy_secret_propagation_reason"
             ),
+            "last_deploy_secret_propagation_source": publish_diagnostics.get(
+                "last_deploy_secret_propagation_source"
+            ),
         }
         deploy_readiness = {
             **deploy_readiness,
@@ -5885,6 +5897,9 @@ class SEOMigrationService:
                 ),
                 "last_publish_deploy_secret_propagation_reason": publish_diagnostics.get(
                     "last_deploy_secret_propagation_reason"
+                ),
+                "last_publish_deploy_secret_propagation_source": publish_diagnostics.get(
+                    "last_deploy_secret_propagation_source"
                 ),
                 "last_deploy_status": deploy_diagnostics.get("last_status"),
                 "last_deploy_failure_category": deploy_diagnostics.get("last_failure_category"),
@@ -8105,6 +8120,7 @@ class SEOMigrationService:
         status: str,
         reason: str | None = None,
         action: str | None = None,
+        secret_source: str | None = None,
     ) -> None:
         payload: dict[str, object] = {
             "event": "seo_migration_deploy_secret_propagation",
@@ -8128,6 +8144,9 @@ class SEOMigrationService:
         normalized_action = _normalize_string(action, max_length=40)
         if normalized_action:
             payload["action"] = normalized_action
+        normalized_secret_source = _normalize_string(secret_source, max_length=80)
+        if normalized_secret_source:
+            payload["secret_source"] = normalized_secret_source
         level = logging.INFO if payload.get("status") != _DEPLOY_SECRET_PROPAGATION_STATUS_FAILED else logging.WARNING
         self._emit_structured_service_log(
             payload=payload,
@@ -8149,7 +8168,10 @@ class SEOMigrationService:
         publish_target: dict[str, object],
         deploy_target: dict[str, object] | None,
         admin_prerequisites: dict[str, bool],
-    ) -> tuple[bool, str, str | None]:
+    ) -> tuple[bool, str, str | None, str | None]:
+        deploy_secret_value, deploy_secret_source, deploy_secret_resolution_reason = (
+            self._resolve_deploy_secret_for_propagation()
+        )
         normalized_owner = _normalize_string(workflow_owner, max_length=120) or ""
         normalized_repo = _normalize_string(workflow_repo, max_length=120) or ""
         normalized_ref = _normalize_string(workflow_ref, max_length=120) or ""
@@ -8186,15 +8208,17 @@ class SEOMigrationService:
                 attempted=False,
                 status=_DEPLOY_SECRET_PROPAGATION_STATUS_SKIPPED_GUARDRAIL,
                 reason=guardrail_reason,
+                secret_source=deploy_secret_source,
             )
             return (
                 False,
                 _DEPLOY_SECRET_PROPAGATION_STATUS_SKIPPED_GUARDRAIL,
                 guardrail_reason,
+                deploy_secret_source,
             )
 
-        if not self.deploy_secret_gcp_key:
-            reason = _GITHUB_PUBLISHER_REASON_RUNTIME_CREDENTIAL_MISSING
+        if not deploy_secret_value:
+            reason = deploy_secret_resolution_reason or _GITHUB_PUBLISHER_REASON_RUNTIME_CREDENTIAL_MISSING
             self._log_deploy_secret_propagation(
                 business_id=business_id,
                 site_id=site_id,
@@ -8207,11 +8231,13 @@ class SEOMigrationService:
                 attempted=False,
                 status=_DEPLOY_SECRET_PROPAGATION_STATUS_FAILED,
                 reason=reason,
+                secret_source=deploy_secret_source,
             )
             return (
                 False,
                 _DEPLOY_SECRET_PROPAGATION_STATUS_FAILED,
                 reason,
+                deploy_secret_source,
             )
 
         try:
@@ -8220,7 +8246,7 @@ class SEOMigrationService:
                     repo_owner=normalized_owner,
                     repo_name=normalized_repo,
                     secret_name=_DEPLOY_SECRET_NAME_GCP_DEPLOY_KEY,
-                    secret_value=self.deploy_secret_gcp_key,
+                    secret_value=deploy_secret_value,
                 )
             )
             normalized_action = (
@@ -8243,11 +8269,13 @@ class SEOMigrationService:
                 attempted=True,
                 status=status,
                 action=normalized_action or status,
+                secret_source=deploy_secret_source,
             )
             return (
                 True,
                 status,
                 None,
+                deploy_secret_source,
             )
         except SEOMigrationGitHubPublisherError as exc:
             normalized_reason = _normalize_string(exc.code, max_length=120) or "secret_propagation_failed"
@@ -8263,12 +8291,50 @@ class SEOMigrationService:
                 attempted=True,
                 status=_DEPLOY_SECRET_PROPAGATION_STATUS_FAILED,
                 reason=normalized_reason,
+                secret_source=deploy_secret_source,
             )
             return (
                 True,
                 _DEPLOY_SECRET_PROPAGATION_STATUS_FAILED,
                 normalized_reason,
+                deploy_secret_source,
             )
+
+    def _resolve_deploy_secret_for_propagation(self) -> tuple[str | None, str | None, str | None]:
+        admin_managed_status = (
+            self.github_publish_config_service.get_managed_gcp_deploy_key_status()
+            if self.github_publish_config_service is not None
+            else {}
+        )
+        admin_secret_configured = bool(admin_managed_status.get("configured"))
+        if admin_secret_configured and self.github_publish_config_service is not None:
+            try:
+                admin_secret_value = self.github_publish_config_service.get_managed_gcp_deploy_key_value()
+            except GitHubPublishConfigSecretError:
+                return (
+                    None,
+                    _DEPLOY_SECRET_SOURCE_ADMIN_MANAGED,
+                    _GITHUB_PUBLISHER_REASON_RUNTIME_CONFIG_INVALID,
+                )
+            if admin_secret_value:
+                return (
+                    admin_secret_value,
+                    _DEPLOY_SECRET_SOURCE_ADMIN_MANAGED,
+                    None,
+                )
+
+        runtime_fallback_secret = (self.deploy_secret_gcp_key or "").strip()
+        if runtime_fallback_secret:
+            return (
+                runtime_fallback_secret,
+                _DEPLOY_SECRET_SOURCE_RUNTIME_FALLBACK,
+                None,
+            )
+        return (
+            None,
+            _DEPLOY_SECRET_SOURCE_ADMIN_MANAGED if self.github_publish_config_service is not None else None,
+            _GITHUB_PUBLISHER_REASON_RUNTIME_CREDENTIAL_MISSING,
+        )
 
     def _log_target_readiness_check(
         self,
@@ -9398,6 +9464,7 @@ class SEOMigrationService:
         last_deploy_secret_propagation_attempted: bool | None = None
         last_deploy_secret_propagation_status: str | None = None
         last_deploy_secret_propagation_reason: str | None = None
+        last_deploy_secret_propagation_source: str | None = None
         for item in reversed(normalized_history):
             if str(item.get("action") or "").strip().lower() != target_action:
                 continue
@@ -9421,6 +9488,10 @@ class SEOMigrationService:
                 )
                 last_deploy_secret_propagation_reason = _normalize_string(
                     item.get("deploy_secret_propagation_reason"),
+                    max_length=120,
+                )
+                last_deploy_secret_propagation_source = _normalize_string(
+                    item.get("deploy_secret_propagation_source"),
                     max_length=120,
                 )
             status_lower = str(item.get("status") or "").strip().lower()
@@ -9459,6 +9530,7 @@ class SEOMigrationService:
             "last_deploy_secret_propagation_attempted": last_deploy_secret_propagation_attempted,
             "last_deploy_secret_propagation_status": last_deploy_secret_propagation_status,
             "last_deploy_secret_propagation_reason": last_deploy_secret_propagation_reason,
+            "last_deploy_secret_propagation_source": last_deploy_secret_propagation_source,
         }
 
     @staticmethod
@@ -10002,6 +10074,9 @@ class SEOMigrationService:
         workflow_identifier: str | None = None
         dispatch_identifier_type = "workflow_id"
         target_readiness: SEOMigrationGitHubTargetReadinessResult | None = None
+        managed_deploy_secret_available: bool | None = None
+        managed_deploy_secret_source: str | None = None
+        managed_deploy_secret_reason: str | None = None
         effective_publish_config, admin_prerequisites, admin_reasons = self._build_effective_publish_config(
             workspace_publish_config=workspace.publish_config_json,
             require_admin=True,
@@ -10102,6 +10177,28 @@ class SEOMigrationService:
                 workspace=workspace,
                 admin_prerequisites=admin_prerequisites,
             )
+        (
+            deploy_secret_for_propagation,
+            managed_deploy_secret_source,
+            managed_deploy_secret_reason,
+        ) = self._resolve_deploy_secret_for_propagation()
+        managed_deploy_secret_available = bool(deploy_secret_for_propagation)
+        target_summary["managed_deploy_secret_available"] = managed_deploy_secret_available
+        target_summary["managed_deploy_secret_source"] = managed_deploy_secret_source
+        if managed_deploy_secret_reason:
+            target_summary["managed_deploy_secret_reason"] = managed_deploy_secret_reason
+        if (
+            target_valid
+            and _normalize_string(target_summary.get("deploy_workflow_mode"), max_length=60)
+            == _DEPLOY_WORKFLOW_MODE_SITE_REPO_TEMPLATE_V1
+            and not managed_deploy_secret_available
+        ):
+            reasons.append(
+                _derive_managed_deploy_secret_readiness_message(
+                    reason_code=managed_deploy_secret_reason,
+                )
+            )
+            blocker_codes.append(_DEPLOY_BLOCKER_CONFIGURATION_MISSING)
         if not workspace.last_published_artifact_version_id:
             reasons.append("A published artifact is required before deploy.")
             blocker_codes.append(_DEPLOY_BLOCKER_PUBLISHED_ARTIFACT_MISSING)
@@ -10593,6 +10690,9 @@ class SEOMigrationService:
                 "deploy_runtime_available": bool(runtime_diagnostics.get("configured")),
                 "dispatch_service_availability": dispatch_service_availability,
                 "dispatch_service_reason_code": dispatch_service_reason_code,
+                "managed_deploy_secret_available": managed_deploy_secret_available,
+                "managed_deploy_secret_source": managed_deploy_secret_source,
+                "managed_deploy_secret_reason": managed_deploy_secret_reason,
                 "target_config_valid": target_valid,
                 "target_enabled": bool(target_summary.get("enabled")),
                 **admin_prerequisites,
@@ -11641,6 +11741,19 @@ def _derive_managed_gke_dispatch_readiness_message(*, dispatch_service_reason_co
             "configuration. Update MBSRN admin deployment settings."
         )
     return None
+
+
+def _derive_managed_deploy_secret_readiness_message(*, reason_code: object) -> str:
+    normalized_reason = _normalize_string(reason_code, max_length=80)
+    if normalized_reason == _GITHUB_PUBLISHER_REASON_RUNTIME_CONFIG_INVALID:
+        return (
+            "Admin action required: managed deploy secret GCP_DEPLOY_KEY is configured but unreadable. "
+            "Rotate it in MBSRN admin deployment settings."
+        )
+    return (
+        "Admin action required: managed deploy secret GCP_DEPLOY_KEY is missing. "
+        "Configure it in MBSRN admin deployment settings."
+    )
 
 
 def _derive_deploy_failure_remediation_hint(

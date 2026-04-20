@@ -957,8 +957,10 @@ Deploy behavior:
   - readiness normalization now prefers managed GKE configuration blockers before dispatch so deploy does not appear dispatchable when required cluster config is incomplete
   - after applying missing config values, retry deploy from the migration workspace (no workflow template change required)
 - hybrid deploy-secret propagation (bridge model):
-  - MBSRN runtime is the source of truth for `GCP_DEPLOY_KEY`.
-  - publish can propagate `GCP_DEPLOY_KEY` into target repo Actions secrets so managed site-repo workflows can execute deploy.
+  - `GCP_DEPLOY_KEY` is admin-owned and managed through MBSRN admin GitHub publish configuration.
+  - admin UI/API treat secret material as write-only; status metadata only (`configured`, `updated_at`) is returned after save.
+  - publish resolves deploy secret from the admin-managed source first and can propagate `GCP_DEPLOY_KEY` into target repo Actions secrets so managed site-repo workflows can execute deploy.
+  - runtime env fallback is retained only for controlled legacy compatibility paths and is surfaced explicitly in diagnostics.
   - propagation is guardrailed and allowed only when all conditions pass:
     - deploy target is enabled for the workspace
     - admin publish target is configured and enabled
@@ -966,6 +968,7 @@ Deploy behavior:
     - managed deploy tuple aligns to the publish/deploy tuple being provisioned (`owner/repo/ref`)
   - if guardrails fail, propagation is skipped with explicit status/reason (`skipped_guardrail`).
   - if propagation write fails, artifact publish history still records publish outcome while exposing deploy-secret propagation failure for follow-up.
+  - deploy diagnostics include `deploy_secret_propagation_source` (`admin_managed_secret` or `runtime_env_fallback`) for ownership clarity.
   - secret contents are never returned in API payloads, logs, or UI surfaces.
   - this is intentionally a bridge model and can later be replaced by centralized deploy execution or OIDC-based federation.
 - explicit deploy evidence contract for live URL confirmation:

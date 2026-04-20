@@ -4334,6 +4334,7 @@ def test_publish_propagates_deploy_secret_for_approved_managed_target(db_session
     assert publish_result.result.get("deploy_secret_propagation_attempted") is True
     assert publish_result.result.get("deploy_secret_propagation_status") == "created"
     assert publish_result.result.get("deploy_secret_propagation_reason") is None
+    assert publish_result.result.get("deploy_secret_propagation_source") == "runtime_env_fallback"
 
 
 def test_publish_skips_deploy_secret_propagation_for_unapproved_target_owner(db_session) -> None:
@@ -4386,6 +4387,7 @@ def test_publish_skips_deploy_secret_propagation_for_unapproved_target_owner(db_
     assert publish_result.result.get("deploy_secret_propagation_attempted") is False
     assert publish_result.result.get("deploy_secret_propagation_status") == "skipped_guardrail"
     assert publish_result.result.get("deploy_secret_propagation_reason") == "repo_owner_not_approved"
+    assert publish_result.result.get("deploy_secret_propagation_source") == "runtime_env_fallback"
 
 
 def test_publish_surfaces_deploy_secret_propagation_failure_without_blocking_publish(db_session) -> None:
@@ -4436,9 +4438,63 @@ def test_publish_surfaces_deploy_secret_propagation_failure_without_blocking_pub
     assert publish_result.result.get("deploy_secret_propagation_attempted") is True
     assert publish_result.result.get("deploy_secret_propagation_status") == "failed"
     assert publish_result.result.get("deploy_secret_propagation_reason") == "token_not_authorized"
+    assert publish_result.result.get("deploy_secret_propagation_source") == "runtime_env_fallback"
     summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
     assert summary.publish_readiness.get("last_deploy_secret_propagation_status") == "failed"
     assert summary.publish_readiness.get("last_deploy_secret_propagation_reason") == "token_not_authorized"
+    assert summary.publish_readiness.get("last_deploy_secret_propagation_source") == "runtime_env_fallback"
+
+
+def test_publish_uses_admin_managed_deploy_secret_as_primary_source(db_session) -> None:
+    publisher = _RecordingGitHubPublisher(existing_workflow=True)
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+        deploy_secret_gcp_key='{"type":"service_account","project_id":"runtime-fallback"}',
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+    _configure_deploy_target(
+        service,
+        business_id=business_id,
+        site_id=site_id,
+        workflow_id="deploy-tnmfire-www-prod.yml",
+    )
+    service.github_publish_config_service.get_managed_gcp_deploy_key_status = lambda: {
+        "configured": True,
+        "updated_at": None,
+        "source": "admin_managed_secret",
+    }
+    service.github_publish_config_service.get_managed_gcp_deploy_key_value = lambda: (
+        '{"type":"service_account","project_id":"admin-managed"}'
+    )
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes=None,
+        principal_id="principal-1",
+    )
+    publish_result = service.publish_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        commit_message=None,
+        analytics_measurement_id=None,
+        principal_id="principal-1",
+    )
+    assert len(publisher.secret_upsert_calls) == 1
+    secret_call = publisher.secret_upsert_calls[0]
+    assert secret_call[3] == '{"type":"service_account","project_id":"admin-managed"}'
+    assert publish_result.result.get("deploy_secret_propagation_source") == "admin_managed_secret"
 
 
 def test_publish_duplicate_repairs_missing_workflow_without_republishing_artifact(db_session) -> None:

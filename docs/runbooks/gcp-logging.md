@@ -726,7 +726,9 @@ Managed real-deploy prerequisites:
   - `managed_gke_cluster_name`
   - `managed_gke_cluster_location`
   - `managed_gke_project_id`
-- `GCP_DEPLOY_KEY` (full JSON service account key with Kubernetes Engine Admin-equivalent scoped access to the target cluster/project)
+- Admin-managed deploy secret in MBSRN GitHub publish config:
+  - `GCP_DEPLOY_KEY` (full JSON service account key with Kubernetes Engine Admin-equivalent scoped access to the target cluster/project)
+  - write-only in admin UI/API; reads return status metadata only (`configured`, `updated_at`)
 
 Managed workflow input mapping (rendered centrally by MBSRN):
 - `cluster_name: ${{ env.GKE_CLUSTER_NAME }}`
@@ -755,12 +757,20 @@ Required credential note:
   - `missing_cluster_*` / `missing_gcp_project_id`:
     admin-owned managed target configuration blockers (fix MBSRN admin deployment settings first; repo vars/secrets are legacy fallback only)
   - `runtime_credential_missing` with `secret_name=GCP_DEPLOY_KEY`:
-    deploy-secret propagation credential-source blocker (separate from cluster var configuration)
+    admin-owned managed deploy secret blocker (configure/rotate secret in MBSRN Admin first, then republish to propagate)
   - `duplicate_request`:
     active/stale concurrency blocker for the selected deploy tuple, not a replacement for config blockers
 - readiness precedence:
   - when `missing_cluster_*`/`missing_gcp_project_id` is present, treat that as the authoritative blocker before dispatch/workflow troubleshooting
   - only move to GitHub workflow runtime diagnostics after readiness reports managed target configuration blockers cleared
+
+Deploy-secret propagation diagnostics:
+- publish/deploy diagnostics include:
+  - `deploy_secret_propagation_attempted`
+  - `deploy_secret_propagation_status`
+  - `deploy_secret_propagation_reason`
+  - `deploy_secret_propagation_source` (`admin_managed_secret` or `runtime_env_fallback`)
+- expected managed-path behavior is `deploy_secret_propagation_source=admin_managed_secret`; `runtime_env_fallback` should be treated as compatibility mode and remediated to admin-managed secret configuration.
 
 Post-dispatch workflow run failure diagnostics:
 - `workflow_run_failure_reason_code`

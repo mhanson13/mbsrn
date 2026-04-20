@@ -129,6 +129,8 @@ export interface GitHubPublishConfig {
   managed_gke_cluster_name?: string | null;
   managed_gke_cluster_location?: string | null;
   managed_gke_project_id?: string | null;
+  managed_gcp_deploy_key_configured?: boolean;
+  managed_gcp_deploy_key_updated_at?: string | null;
   namespace_isolation_defaults: GitHubNamespaceIsolationDefaults;
   enabled: boolean;
   created_at?: string | null;
@@ -181,6 +183,8 @@ export interface GitHubPublishConfigUpdateRequest {
   managed_gke_cluster_name?: string | null;
   managed_gke_cluster_location?: string | null;
   managed_gke_project_id?: string | null;
+  managed_gcp_deploy_key_value?: string | null;
+  managed_gcp_deploy_key_clear?: boolean;
   namespace_isolation_defaults?: GitHubNamespaceIsolationDefaults | null;
   enabled: boolean;
 }
