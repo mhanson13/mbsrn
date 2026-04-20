@@ -20,6 +20,9 @@ _VALID_OWNER_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{0,38}$")
 _VALID_BRANCH_PATTERN = re.compile(r"^[A-Za-z0-9._/-]{1,120}$")
 _VALID_BASE_PATH_PATTERN = re.compile(r"^/[A-Za-z0-9._/-]{0,159}$")
 _VALID_TARGET_ENVIRONMENT_KEY_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,79}$")
+_VALID_GKE_CLUSTER_NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{0,118}$")
+_VALID_GKE_CLUSTER_LOCATION_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{0,118}$")
+_VALID_GCP_PROJECT_ID_PATTERN = re.compile(r"^[a-z][a-z0-9-]{4,28}[a-z0-9]$")
 _DEFAULT_DEPLOY_WORKFLOW_MODE = "site_repo_template_v1"
 _DEFAULT_TARGET_ENVIRONMENT_KEY = "gke_prod"
 _TARGET_ENVIRONMENT_SOURCE_ADMIN = "admin_config"
@@ -68,6 +71,9 @@ class GitHubPublishConfigService:
             deploy_workflow_mode=_DEFAULT_DEPLOY_WORKFLOW_MODE,
             target_environment_key=_DEFAULT_TARGET_ENVIRONMENT_KEY,
             target_environment_source=_TARGET_ENVIRONMENT_SOURCE_ADMIN,
+            managed_gke_cluster_name=None,
+            managed_gke_cluster_location=None,
+            managed_gke_project_id=None,
             namespace_isolation_defaults_json=dict(_DEFAULT_NAMESPACE_ISOLATION_DEFAULTS),
             enabled=False,
         )
@@ -98,6 +104,27 @@ class GitHubPublishConfigService:
         target_environment_source = _TARGET_ENVIRONMENT_SOURCE_ADMIN
         enabled = bool(payload.enabled)
         existing = self.repository.get_singleton()
+        managed_gke_cluster_name = (
+            str(payload.managed_gke_cluster_name or "").strip().lower() or None
+        )
+        managed_gke_cluster_location = (
+            str(payload.managed_gke_cluster_location or "").strip().lower() or None
+        )
+        managed_gke_project_id = (
+            str(payload.managed_gke_project_id or "").strip().lower() or None
+        )
+        if payload.managed_gke_cluster_name is None and existing is not None:
+            managed_gke_cluster_name = (
+                str(getattr(existing, "managed_gke_cluster_name", "") or "").strip().lower() or None
+            )
+        if payload.managed_gke_cluster_location is None and existing is not None:
+            managed_gke_cluster_location = (
+                str(getattr(existing, "managed_gke_cluster_location", "") or "").strip().lower() or None
+            )
+        if payload.managed_gke_project_id is None and existing is not None:
+            managed_gke_project_id = (
+                str(getattr(existing, "managed_gke_project_id", "") or "").strip().lower() or None
+            )
         raw_namespace_defaults = payload.namespace_isolation_defaults
         if raw_namespace_defaults is None and existing is not None:
             raw_namespace_defaults = existing.namespace_isolation_defaults_json
@@ -147,6 +174,20 @@ class GitHubPublishConfigService:
             raise GitHubPublishConfigValidationError(
                 "Target environment key is invalid. Use lowercase letters, numbers, '-' or '_'."
             )
+        if managed_gke_cluster_name and not _VALID_GKE_CLUSTER_NAME_PATTERN.fullmatch(managed_gke_cluster_name):
+            raise GitHubPublishConfigValidationError(
+                "Managed GKE cluster name is invalid. Use lowercase letters, numbers, and '-'."
+            )
+        if managed_gke_cluster_location and not _VALID_GKE_CLUSTER_LOCATION_PATTERN.fullmatch(
+            managed_gke_cluster_location
+        ):
+            raise GitHubPublishConfigValidationError(
+                "Managed GKE cluster location is invalid. Use lowercase letters, numbers, and '-'."
+            )
+        if managed_gke_project_id and not _VALID_GCP_PROJECT_ID_PATTERN.fullmatch(managed_gke_project_id):
+            raise GitHubPublishConfigValidationError(
+                "Managed GKE project id is invalid. Use a valid Google Cloud project id."
+            )
 
         previous_values = {
             "owner": (existing.repository if existing is not None else ""),
@@ -160,6 +201,15 @@ class GitHubPublishConfigService:
             ),
             "target_environment_source": (
                 existing.target_environment_source if existing is not None else _TARGET_ENVIRONMENT_SOURCE_ADMIN
+            ),
+            "managed_gke_cluster_name": (
+                existing.managed_gke_cluster_name if existing is not None else None
+            ),
+            "managed_gke_cluster_location": (
+                existing.managed_gke_cluster_location if existing is not None else None
+            ),
+            "managed_gke_project_id": (
+                existing.managed_gke_project_id if existing is not None else None
             ),
             "namespace_isolation_defaults": (
                 normalize_namespace_isolation_defaults(
@@ -175,6 +225,9 @@ class GitHubPublishConfigService:
             "deploy_workflow_mode": deploy_workflow_mode,
             "target_environment_key": target_environment_key,
             "target_environment_source": target_environment_source,
+            "managed_gke_cluster_name": managed_gke_cluster_name,
+            "managed_gke_cluster_location": managed_gke_cluster_location,
+            "managed_gke_project_id": managed_gke_project_id,
             "namespace_isolation_defaults": namespace_isolation_defaults,
             "enabled": enabled,
         }
@@ -187,6 +240,9 @@ class GitHubPublishConfigService:
                 deploy_workflow_mode=deploy_workflow_mode,
                 target_environment_key=target_environment_key,
                 target_environment_source=target_environment_source,
+                managed_gke_cluster_name=managed_gke_cluster_name,
+                managed_gke_cluster_location=managed_gke_cluster_location,
+                managed_gke_project_id=managed_gke_project_id,
                 namespace_isolation_defaults_json=namespace_isolation_defaults,
                 enabled=enabled,
             )
@@ -197,6 +253,9 @@ class GitHubPublishConfigService:
             existing.deploy_workflow_mode = deploy_workflow_mode
             existing.target_environment_key = target_environment_key
             existing.target_environment_source = target_environment_source
+            existing.managed_gke_cluster_name = managed_gke_cluster_name
+            existing.managed_gke_cluster_location = managed_gke_cluster_location
+            existing.managed_gke_project_id = managed_gke_project_id
             existing.namespace_isolation_defaults_json = namespace_isolation_defaults
             existing.enabled = enabled
         self.repository.save(existing)
@@ -211,6 +270,9 @@ class GitHubPublishConfigService:
                 "deploy_workflow_mode",
                 "target_environment_key",
                 "target_environment_source",
+                "managed_gke_cluster_name",
+                "managed_gke_cluster_location",
+                "managed_gke_project_id",
                 "namespace_isolation_defaults",
                 "enabled",
             )
@@ -239,6 +301,9 @@ class GitHubPublishConfigService:
                     "deploy_workflow_mode": existing.deploy_workflow_mode,
                     "target_environment_key": existing.target_environment_key,
                     "target_environment_source": existing.target_environment_source,
+                    "managed_gke_cluster_name": existing.managed_gke_cluster_name,
+                    "managed_gke_cluster_location": existing.managed_gke_cluster_location,
+                    "managed_gke_project_id": existing.managed_gke_project_id,
                     "namespace_isolation_defaults": normalize_namespace_isolation_defaults(
                         existing.namespace_isolation_defaults_json
                     ).model_dump(mode="json"),

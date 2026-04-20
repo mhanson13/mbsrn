@@ -37,6 +37,9 @@ def _to_github_publish_config_read(config) -> GitHubPublishConfigRead:  # noqa: 
         ),
         target_environment_key=(getattr(config, "target_environment_key", "gke_prod") or "gke_prod"),
         target_environment_source=(getattr(config, "target_environment_source", "admin_config") or "admin_config"),
+        managed_gke_cluster_name=(getattr(config, "managed_gke_cluster_name", None) or None),
+        managed_gke_cluster_location=(getattr(config, "managed_gke_cluster_location", None) or None),
+        managed_gke_project_id=(getattr(config, "managed_gke_project_id", None) or None),
         namespace_isolation_defaults=normalize_namespace_isolation_defaults(
             getattr(config, "namespace_isolation_defaults_json", None)
         ),

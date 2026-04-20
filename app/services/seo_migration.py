@@ -1157,6 +1157,7 @@ class SEOMigrationService:
                     deploy_workflow_mode=deploy_workflow_mode,
                     target_environment_key=target_environment_key,
                     target_environment_source=target_environment_source,
+                    managed_gke_config=_normalize_json_dict(admin_deploy_metadata.get("managed_gke_config")),
                     namespace_isolation_defaults=admin_deploy_metadata.get("namespace_isolation_defaults"),
                     site_id=site.id,
                 )
@@ -2130,6 +2131,7 @@ class SEOMigrationService:
                     allow_workflow_repair=False,
                     dry_run=False,
                     remediation_mode="none",
+                    managed_gke_config=_normalize_json_dict(workflow_resolution.get("managed_gke_config")),
                     namespace_isolation_defaults=namespace_isolation_defaults,
                 )
                 requested_ref = target_readiness.requested_ref
@@ -8462,12 +8464,18 @@ class SEOMigrationService:
         deploy_workflow_mode = _DEPLOY_WORKFLOW_MODE_SITE_REPO_TEMPLATE_V1
         target_environment_key = _DEPLOY_DEFAULT_TARGET_ENVIRONMENT_KEY
         target_environment_source = _DEPLOY_TARGET_ENVIRONMENT_SOURCE_ADMIN
+        managed_gke_cluster_name: str | None = None
+        managed_gke_cluster_location: str | None = None
+        managed_gke_project_id: str | None = None
         namespace_isolation_defaults = normalize_namespace_isolation_defaults(None).model_dump(mode="json")
         if self.github_publish_config_service is None:
             return {
                 "deploy_workflow_mode": deploy_workflow_mode,
                 "target_environment_key": target_environment_key,
                 "target_environment_source": target_environment_source,
+                "managed_gke_cluster_name": managed_gke_cluster_name,
+                "managed_gke_cluster_location": managed_gke_cluster_location,
+                "managed_gke_project_id": managed_gke_project_id,
                 "namespace_isolation_defaults": namespace_isolation_defaults,
             }
         admin_config = self.github_publish_config_service.get()
@@ -8489,6 +8497,18 @@ class SEOMigrationService:
         )
         if candidate_source:
             target_environment_source = candidate_source
+        managed_gke_cluster_name = _normalize_string(
+            getattr(admin_config, "managed_gke_cluster_name", None),
+            max_length=120,
+        )
+        managed_gke_cluster_location = _normalize_string(
+            getattr(admin_config, "managed_gke_cluster_location", None),
+            max_length=120,
+        )
+        managed_gke_project_id = _normalize_string(
+            getattr(admin_config, "managed_gke_project_id", None),
+            max_length=120,
+        )
         candidate_namespace_defaults = normalize_namespace_isolation_defaults(
             getattr(admin_config, "namespace_isolation_defaults_json", None)
         ).model_dump(mode="json")
@@ -8498,6 +8518,14 @@ class SEOMigrationService:
             "deploy_workflow_mode": deploy_workflow_mode,
             "target_environment_key": target_environment_key,
             "target_environment_source": target_environment_source,
+            "managed_gke_cluster_name": managed_gke_cluster_name,
+            "managed_gke_cluster_location": managed_gke_cluster_location,
+            "managed_gke_project_id": managed_gke_project_id,
+            "managed_gke_config": {
+                "cluster_name": managed_gke_cluster_name,
+                "cluster_location": managed_gke_cluster_location,
+                "project_id": managed_gke_project_id,
+            },
             "namespace_isolation_defaults": namespace_isolation_defaults,
         }
 
@@ -8599,6 +8627,9 @@ class SEOMigrationService:
             "deploy_workflow_mode": admin_deploy_metadata.get("deploy_workflow_mode"),
             "target_environment_key": admin_deploy_metadata.get("target_environment_key"),
             "target_environment_source": admin_deploy_metadata.get("target_environment_source"),
+            "managed_gke_cluster_name": admin_deploy_metadata.get("managed_gke_cluster_name"),
+            "managed_gke_cluster_location": admin_deploy_metadata.get("managed_gke_cluster_location"),
+            "managed_gke_project_id": admin_deploy_metadata.get("managed_gke_project_id"),
             "site_workflow_file_path": workflow_path,
             "kubernetes_namespace": kubernetes_namespace,
             "namespace_source": namespace_source,
@@ -8753,6 +8784,10 @@ class SEOMigrationService:
             "deploy_workflow_mode": admin_deploy_metadata.get("deploy_workflow_mode"),
             "target_environment_key": admin_deploy_metadata.get("target_environment_key"),
             "target_environment_source": admin_deploy_metadata.get("target_environment_source"),
+            "managed_gke_cluster_name": admin_deploy_metadata.get("managed_gke_cluster_name"),
+            "managed_gke_cluster_location": admin_deploy_metadata.get("managed_gke_cluster_location"),
+            "managed_gke_project_id": admin_deploy_metadata.get("managed_gke_project_id"),
+            "managed_gke_config": _normalize_json_dict(admin_deploy_metadata.get("managed_gke_config")),
             "namespace_isolation_defaults": _normalize_json_dict(
                 admin_deploy_metadata.get("namespace_isolation_defaults")
             ),
@@ -8797,6 +8832,7 @@ class SEOMigrationService:
                 allow_workflow_repair=False,
                 dry_run=False,
                 remediation_mode="none",
+                managed_gke_config=_normalize_json_dict(admin_deploy_metadata.get("managed_gke_config")),
                 namespace_isolation_defaults=_normalize_json_dict(
                     admin_deploy_metadata.get("namespace_isolation_defaults")
                 ),
@@ -10105,6 +10141,7 @@ class SEOMigrationService:
                         allow_workflow_repair=False,
                         dry_run=False,
                         remediation_mode="none",
+                        managed_gke_config=_normalize_json_dict(workflow_resolution.get("managed_gke_config")),
                         namespace_isolation_defaults=namespace_isolation_defaults,
                     )
                 except SEOMigrationGitHubPublisherError as exc:
@@ -10170,6 +10207,9 @@ class SEOMigrationService:
                             "managed_network_policy_expected": target_readiness.managed_network_policy_expected,
                             "managed_network_policy_present": target_readiness.managed_network_policy_present,
                             "managed_namespace_policies_aligned": target_readiness.managed_namespace_policies_aligned,
+                            "managed_gke_config_details": _normalize_json_dict(
+                                target_readiness.managed_gke_config_details
+                            ),
                         }
                     )
 
@@ -11587,18 +11627,18 @@ def _derive_managed_gke_dispatch_readiness_message(*, dispatch_service_reason_co
     normalized_dispatch_reason = _normalize_dispatch_service_reason_code(dispatch_service_reason_code)
     if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MISSING_CLUSTER_NAME:
         return (
-            "Admin action required: managed deploy target is missing Kubernetes cluster name configuration "
-            "(KUBERNETES_CLUSTER_NAME variable/secret)."
+            "Admin action required: managed deploy target is missing required admin GKE cluster name "
+            "configuration. Update MBSRN admin deployment settings."
         )
     if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MISSING_CLUSTER_LOCATION:
         return (
-            "Admin action required: managed deploy target is missing Kubernetes cluster location configuration "
-            "(KUBERNETES_CLUSTER_LOCATION variable/secret)."
+            "Admin action required: managed deploy target is missing required admin GKE cluster location "
+            "configuration. Update MBSRN admin deployment settings."
         )
     if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MISSING_GCP_PROJECT_ID:
         return (
-            "Admin action required: managed deploy target is missing GCP project configuration "
-            "(GCP_PROJECT_ID variable/secret)."
+            "Admin action required: managed deploy target is missing required admin GKE project id "
+            "configuration. Update MBSRN admin deployment settings."
         )
     return None
 
@@ -11617,16 +11657,19 @@ def _derive_deploy_failure_remediation_hint(
 
     if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MISSING_CLUSTER_NAME:
         return (
-            "Deploy target is missing Kubernetes cluster name configuration "
-            "(KUBERNETES_CLUSTER_NAME variable/secret)."
+            "Managed deploy target is missing required admin GKE cluster name configuration. "
+            "Update MBSRN admin deployment settings."
         )
     if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MISSING_CLUSTER_LOCATION:
         return (
-            "Deploy target is missing Kubernetes cluster location configuration "
-            "(KUBERNETES_CLUSTER_LOCATION variable/secret)."
+            "Managed deploy target is missing required admin GKE cluster location configuration. "
+            "Update MBSRN admin deployment settings."
         )
     if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MISSING_GCP_PROJECT_ID:
-        return "Deploy target is missing GCP project configuration (GCP_PROJECT_ID variable/secret)."
+        return (
+            "Managed deploy target is missing required admin GKE project id configuration. "
+            "Update MBSRN admin deployment settings."
+        )
     if (
         normalized_reason == _DEPLOY_TARGET_REASON_WORKFLOW_NOT_DISPATCHABLE
         and normalized_stage == "workflow_lookup"

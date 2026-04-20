@@ -31,6 +31,18 @@ class GitHubPublishConfig(Base):
         nullable=False,
         default="admin_config",
     )
+    managed_gke_cluster_name: Mapped[str | None] = mapped_column(
+        String(120),
+        nullable=True,
+    )
+    managed_gke_cluster_location: Mapped[str | None] = mapped_column(
+        String(120),
+        nullable=True,
+    )
+    managed_gke_project_id: Mapped[str | None] = mapped_column(
+        String(120),
+        nullable=True,
+    )
     namespace_isolation_defaults_json: Mapped[dict[str, object]] = mapped_column(
         JSON,
         nullable=False,

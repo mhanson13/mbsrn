@@ -160,6 +160,7 @@ class SEOMigrationGitHubTargetReadinessResult:
     managed_network_policy_expected: bool = False
     managed_network_policy_present: bool | None = None
     managed_namespace_policies_aligned: bool | None = None
+    managed_gke_config_details: dict[str, object] | None = None
 
 
 @dataclass(frozen=True)
@@ -239,6 +240,7 @@ class SEOMigrationGitHubPublisher:
         deploy_workflow_mode: str | None = None,
         target_environment_key: str | None = None,
         target_environment_source: str | None = None,
+        managed_gke_config: dict[str, object] | None = None,
         namespace_isolation_defaults: dict[str, object] | None = None,
         site_id: str | None = None,
     ) -> SEOMigrationGitHubWorkflowProvisionResult:
@@ -246,6 +248,7 @@ class SEOMigrationGitHubPublisher:
             deploy_workflow_mode,
             target_environment_key,
             target_environment_source,
+            managed_gke_config,
             namespace_isolation_defaults,
             site_id,
         )
@@ -271,9 +274,10 @@ class SEOMigrationGitHubPublisher:
         allow_workflow_repair: bool = False,
         dry_run: bool = False,
         remediation_mode: str = "none",
+        managed_gke_config: dict[str, object] | None = None,
         namespace_isolation_defaults: dict[str, object] | None = None,
     ) -> SEOMigrationGitHubTargetReadinessResult:
-        del allow_ref_repair, allow_workflow_repair, dry_run, namespace_isolation_defaults
+        del allow_ref_repair, allow_workflow_repair, dry_run, managed_gke_config, namespace_isolation_defaults
         workflow_path = _workflow_repo_path(target.workflow_id)
         return SEOMigrationGitHubTargetReadinessResult(
             repo_owner=target.repo_owner,
@@ -378,6 +382,7 @@ class MisconfiguredSEOMigrationGitHubPublisher(SEOMigrationGitHubPublisher):
         allow_workflow_repair: bool = False,
         dry_run: bool = False,
         remediation_mode: str = "none",
+        managed_gke_config: dict[str, object] | None = None,
         namespace_isolation_defaults: dict[str, object] | None = None,
     ) -> SEOMigrationGitHubTargetReadinessResult:
         del (
@@ -386,6 +391,7 @@ class MisconfiguredSEOMigrationGitHubPublisher(SEOMigrationGitHubPublisher):
             allow_workflow_repair,
             dry_run,
             remediation_mode,
+            managed_gke_config,
             namespace_isolation_defaults,
         )
         raise SEOMigrationGitHubPublisherError(
@@ -1488,52 +1494,112 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         *,
         repo_owner: str,
         repo_name: str,
-    ) -> tuple[str | None, list[str], dict[str, bool]]:
+        managed_gke_config: dict[str, object] | None = None,
+    ) -> tuple[str | None, list[str], dict[str, bool], dict[str, object]]:
+        normalized_managed_gke_config = _normalize_managed_gke_config(managed_gke_config)
+        admin_cluster_name_present = bool(normalized_managed_gke_config.get("cluster_name"))
+        admin_cluster_location_present = bool(normalized_managed_gke_config.get("cluster_location"))
+        admin_project_id_present = bool(normalized_managed_gke_config.get("project_id"))
         presence = {
-            "cluster_name_variable_present": self._actions_variable_present(
-                repo_owner=repo_owner,
-                repo_name=repo_name,
-                variable_name=_GKE_ENV_CLUSTER_NAME,
-            ),
-            "cluster_location_variable_present": self._actions_variable_present(
-                repo_owner=repo_owner,
-                repo_name=repo_name,
-                variable_name=_GKE_ENV_CLUSTER_LOCATION,
-            ),
-            "project_id_variable_present": self._actions_variable_present(
-                repo_owner=repo_owner,
-                repo_name=repo_name,
-                variable_name=_GKE_ENV_PROJECT_ID,
-            ),
+            "admin_cluster_name_present": admin_cluster_name_present,
+            "admin_cluster_location_present": admin_cluster_location_present,
+            "admin_project_id_present": admin_project_id_present,
+            "cluster_name_variable_present": False,
+            "cluster_location_variable_present": False,
+            "project_id_variable_present": False,
             "cluster_name_secret_present": False,
             "cluster_location_secret_present": False,
             "project_id_secret_present": False,
         }
-        if not presence["cluster_name_variable_present"]:
+        if not admin_cluster_name_present:
+            presence["cluster_name_variable_present"] = self._actions_variable_present(
+                repo_owner=repo_owner,
+                repo_name=repo_name,
+                variable_name=_GKE_ENV_CLUSTER_NAME,
+            )
+        if not admin_cluster_location_present:
+            presence["cluster_location_variable_present"] = self._actions_variable_present(
+                repo_owner=repo_owner,
+                repo_name=repo_name,
+                variable_name=_GKE_ENV_CLUSTER_LOCATION,
+            )
+        if not admin_project_id_present:
+            presence["project_id_variable_present"] = self._actions_variable_present(
+                repo_owner=repo_owner,
+                repo_name=repo_name,
+                variable_name=_GKE_ENV_PROJECT_ID,
+            )
+        if not admin_cluster_name_present and not presence["cluster_name_variable_present"]:
             presence["cluster_name_secret_present"] = self._actions_secret_present(
                 repo_owner=repo_owner,
                 repo_name=repo_name,
                 secret_name=_GKE_ENV_CLUSTER_NAME,
             )
-        if not presence["cluster_location_variable_present"]:
+        if not admin_cluster_location_present and not presence["cluster_location_variable_present"]:
             presence["cluster_location_secret_present"] = self._actions_secret_present(
                 repo_owner=repo_owner,
                 repo_name=repo_name,
                 secret_name=_GKE_ENV_CLUSTER_LOCATION,
             )
-        if not presence["project_id_variable_present"]:
+        if not admin_project_id_present and not presence["project_id_variable_present"]:
             presence["project_id_secret_present"] = self._actions_secret_present(
                 repo_owner=repo_owner,
                 repo_name=repo_name,
                 secret_name=_GKE_ENV_PROJECT_ID,
             )
 
+        resolution_details: dict[str, object] = {}
+
+        def _resolve_field(
+            *,
+            field_name: str,
+            admin_present: bool,
+            variable_present: bool,
+            secret_present: bool,
+        ) -> tuple[bool, list[str]]:
+            field_details: list[str] = []
+            if admin_present:
+                field_details.append(_GKE_CONFIG_DETAIL_RESOLVED_FROM_ADMIN_CONFIG)
+                resolution_details[f"{field_name}_resolution_source"] = _GKE_CONFIG_DETAIL_RESOLVED_FROM_ADMIN_CONFIG
+                resolution_details[f"{field_name}_resolution_details"] = list(field_details)
+                return True, field_details
+            field_details.append(_GKE_CONFIG_DETAIL_ADMIN_CONFIG_MISSING)
+            repo_present = variable_present or secret_present
+            if repo_present:
+                field_details.append(_GKE_CONFIG_DETAIL_RESOLVED_FROM_REPO_CONFIG)
+                resolution_details[f"{field_name}_resolution_source"] = _GKE_CONFIG_DETAIL_RESOLVED_FROM_REPO_CONFIG
+                resolution_details[f"{field_name}_resolution_details"] = list(field_details)
+                return True, field_details
+            field_details.append(_GKE_CONFIG_DETAIL_REPO_CONFIG_MISSING)
+            resolution_details[f"{field_name}_resolution_source"] = _GKE_CONFIG_DETAIL_ADMIN_CONFIG_MISSING
+            resolution_details[f"{field_name}_resolution_details"] = list(field_details)
+            return False, field_details
+
+        cluster_name_resolved, cluster_name_details = _resolve_field(
+            field_name="cluster_name",
+            admin_present=admin_cluster_name_present,
+            variable_present=presence["cluster_name_variable_present"],
+            secret_present=presence["cluster_name_secret_present"],
+        )
+        cluster_location_resolved, cluster_location_details = _resolve_field(
+            field_name="cluster_location",
+            admin_present=admin_cluster_location_present,
+            variable_present=presence["cluster_location_variable_present"],
+            secret_present=presence["cluster_location_secret_present"],
+        )
+        project_id_resolved, project_id_details = _resolve_field(
+            field_name="project_id",
+            admin_present=admin_project_id_present,
+            variable_present=presence["project_id_variable_present"],
+            secret_present=presence["project_id_secret_present"],
+        )
+
         missing_reason_codes: list[str] = []
-        if not (presence["cluster_name_variable_present"] or presence["cluster_name_secret_present"]):
+        if not cluster_name_resolved:
             missing_reason_codes.append(_DEPLOY_DISPATCH_SERVICE_REASON_MISSING_CLUSTER_NAME)
-        if not (presence["cluster_location_variable_present"] or presence["cluster_location_secret_present"]):
+        if not cluster_location_resolved:
             missing_reason_codes.append(_DEPLOY_DISPATCH_SERVICE_REASON_MISSING_CLUSTER_LOCATION)
-        if not (presence["project_id_variable_present"] or presence["project_id_secret_present"]):
+        if not project_id_resolved:
             missing_reason_codes.append(_DEPLOY_DISPATCH_SERVICE_REASON_MISSING_GCP_PROJECT_ID)
 
         prioritized_reason_code: str | None = None
@@ -1542,7 +1608,32 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 prioritized_reason_code = candidate
                 break
 
-        return prioritized_reason_code, missing_reason_codes, presence
+        per_field_details = [cluster_name_details, cluster_location_details, project_id_details]
+        flattened_details = [detail for details in per_field_details for detail in details]
+        deduped_details: list[str] = []
+        seen_details: set[str] = set()
+        for detail in flattened_details:
+            if detail in seen_details:
+                continue
+            seen_details.add(detail)
+            deduped_details.append(detail)
+        if all(
+            details == [_GKE_CONFIG_DETAIL_RESOLVED_FROM_ADMIN_CONFIG] for details in per_field_details
+        ):
+            resolution_source = _GKE_CONFIG_DETAIL_RESOLVED_FROM_ADMIN_CONFIG
+        elif any(_GKE_CONFIG_DETAIL_RESOLVED_FROM_REPO_CONFIG in details for details in per_field_details):
+            if any(_GKE_CONFIG_DETAIL_RESOLVED_FROM_ADMIN_CONFIG in details for details in per_field_details):
+                resolution_source = _GKE_CONFIG_SOURCE_MIXED
+            else:
+                resolution_source = _GKE_CONFIG_DETAIL_RESOLVED_FROM_REPO_CONFIG
+        elif prioritized_reason_code is not None:
+            resolution_source = _GKE_CONFIG_SOURCE_MISSING
+        else:
+            resolution_source = _GKE_CONFIG_SOURCE_UNKNOWN
+        resolution_details["gke_config_resolution_source"] = resolution_source
+        resolution_details["gke_config_resolution_details"] = deduped_details
+
+        return prioritized_reason_code, missing_reason_codes, presence, resolution_details
 
     def _evaluate_manifest_namespace_alignment(
         self,
@@ -1777,6 +1868,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         deploy_workflow_mode: str | None = None,
         target_environment_key: str | None = None,
         target_environment_source: str | None = None,
+        managed_gke_config: dict[str, object] | None = None,
         namespace_isolation_defaults: dict[str, object] | None = None,
         site_id: str | None = None,
     ) -> SEOMigrationGitHubWorkflowProvisionResult:
@@ -1789,6 +1881,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         normalized_workflow_mode = _normalize_deploy_workflow_mode(deploy_workflow_mode)
         normalized_target_environment_key = _normalize_target_environment_key(target_environment_key)
         normalized_target_environment_source = _normalize_target_environment_source(target_environment_source)
+        normalized_managed_gke_config = _normalize_managed_gke_config(managed_gke_config)
         normalized_namespace_isolation_defaults = _normalize_namespace_isolation_defaults(namespace_isolation_defaults)
         policy_expectations = _managed_policy_expectations(normalized_namespace_isolation_defaults)
         derived_namespace, namespace_source = derive_site_kubernetes_namespace(
@@ -1811,6 +1904,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             deploy_workflow_mode=normalized_workflow_mode,
             target_environment_key=normalized_target_environment_key,
             target_environment_source=normalized_target_environment_source,
+            managed_gke_config=normalized_managed_gke_config,
             kubernetes_namespace=derived_namespace,
             namespace_source=namespace_source,
             site_id=site_id,
@@ -2004,6 +2098,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         allow_workflow_repair: bool = False,
         dry_run: bool = False,
         remediation_mode: str = "none",
+        managed_gke_config: dict[str, object] | None = None,
         namespace_isolation_defaults: dict[str, object] | None = None,
     ) -> SEOMigrationGitHubTargetReadinessResult:
         workflow_path = _workflow_repo_path(target.workflow_id)
@@ -2142,14 +2237,17 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         gke_config_missing_reason_codes: list[str] = []
         gke_config_presence: dict[str, bool] = {}
         gke_config_reason_code: str | None = None
+        gke_config_details: dict[str, object] = {}
         if managed_workflow:
             (
                 gke_config_reason_code,
                 gke_config_missing_reason_codes,
                 gke_config_presence,
+                gke_config_details,
             ) = self._validate_managed_gke_environment_config(
                 repo_owner=target.repo_owner,
                 repo_name=target.repo_name,
+                managed_gke_config=managed_gke_config,
             )
             _emit_structured_publisher_log(
                 payload={
@@ -2161,6 +2259,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                     "workflow_path": workflow_path,
                     "gke_config_reason_code": gke_config_reason_code,
                     "gke_config_missing_reason_codes": gke_config_missing_reason_codes,
+                    **gke_config_details,
                     **gke_config_presence,
                 },
                 fallback_message="seo_migration_deploy_gke_environment_config",
@@ -2206,6 +2305,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             managed_network_policy_expected=bool(policy_expectations.get("network_policy_expected")),
             managed_network_policy_present=managed_network_policy_present,
             managed_namespace_policies_aligned=managed_namespace_policies_aligned,
+            managed_gke_config_details=(gke_config_details or None),
         )
 
     def _fetch_existing_sha(
@@ -2659,6 +2759,16 @@ _NAMESPACE_MODEL_STATUS_UNKNOWN = "unknown"
 _GKE_ENV_PROJECT_ID = "GCP_PROJECT_ID"
 _GKE_ENV_CLUSTER_NAME = "KUBERNETES_CLUSTER_NAME"
 _GKE_ENV_CLUSTER_LOCATION = "KUBERNETES_CLUSTER_LOCATION"
+_MANAGED_GKE_CONFIG_CLUSTER_NAME = "cluster_name"
+_MANAGED_GKE_CONFIG_CLUSTER_LOCATION = "cluster_location"
+_MANAGED_GKE_CONFIG_PROJECT_ID = "project_id"
+_GKE_CONFIG_DETAIL_ADMIN_CONFIG_MISSING = "admin_config_missing"
+_GKE_CONFIG_DETAIL_REPO_CONFIG_MISSING = "repo_config_missing"
+_GKE_CONFIG_DETAIL_RESOLVED_FROM_ADMIN_CONFIG = "resolved_from_admin_config"
+_GKE_CONFIG_DETAIL_RESOLVED_FROM_REPO_CONFIG = "resolved_from_repo_config"
+_GKE_CONFIG_SOURCE_MIXED = "mixed_admin_and_repo_config"
+_GKE_CONFIG_SOURCE_MISSING = "missing_config"
+_GKE_CONFIG_SOURCE_UNKNOWN = "unknown"
 _DEPLOY_DISPATCH_SERVICE_REASON_MISSING_CLUSTER_NAME = "missing_cluster_name"
 _DEPLOY_DISPATCH_SERVICE_REASON_MISSING_CLUSTER_LOCATION = "missing_cluster_location"
 _DEPLOY_DISPATCH_SERVICE_REASON_MISSING_GCP_PROJECT_ID = "missing_gcp_project_id"
@@ -2696,6 +2806,27 @@ _DEFAULT_NAMESPACE_ISOLATION_DEFAULTS = {
         "mode": "default_deny_ingress",
     },
 }
+
+
+def _normalize_managed_gke_config(value: object | None) -> dict[str, str | None]:
+    normalized: dict[str, str | None] = {
+        _MANAGED_GKE_CONFIG_CLUSTER_NAME: None,
+        _MANAGED_GKE_CONFIG_CLUSTER_LOCATION: None,
+        _MANAGED_GKE_CONFIG_PROJECT_ID: None,
+    }
+    if not isinstance(value, dict):
+        return normalized
+    cluster_name = (_coerce_string(value.get(_MANAGED_GKE_CONFIG_CLUSTER_NAME)) or "").strip().lower()
+    cluster_location = (_coerce_string(value.get(_MANAGED_GKE_CONFIG_CLUSTER_LOCATION)) or "").strip().lower()
+    project_id = (_coerce_string(value.get(_MANAGED_GKE_CONFIG_PROJECT_ID)) or "").strip().lower()
+    normalized[_MANAGED_GKE_CONFIG_CLUSTER_NAME] = cluster_name or None
+    normalized[_MANAGED_GKE_CONFIG_CLUSTER_LOCATION] = cluster_location or None
+    normalized[_MANAGED_GKE_CONFIG_PROJECT_ID] = project_id or None
+    return normalized
+
+
+def _yaml_quote_scalar(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
 
 
 def _safe_identifier_fragment(value: object, *, fallback: str, max_length: int = 80) -> str:
@@ -2831,6 +2962,7 @@ def _render_managed_deploy_workflow_yaml(
     deploy_workflow_mode: str,
     target_environment_key: str,
     target_environment_source: str,
+    managed_gke_config: dict[str, object] | None,
     kubernetes_namespace: str,
     namespace_source: str,
     site_id: str | None = None,
@@ -2845,6 +2977,25 @@ def _render_managed_deploy_workflow_yaml(
         max_length=60,
     )
     normalized_environment_source = _normalize_target_environment_source(target_environment_source)
+    normalized_managed_gke_config = _normalize_managed_gke_config(managed_gke_config)
+    cluster_name = normalized_managed_gke_config.get(_MANAGED_GKE_CONFIG_CLUSTER_NAME)
+    cluster_location = normalized_managed_gke_config.get(_MANAGED_GKE_CONFIG_CLUSTER_LOCATION)
+    project_id = normalized_managed_gke_config.get(_MANAGED_GKE_CONFIG_PROJECT_ID)
+    rendered_cluster_name = (
+        _yaml_quote_scalar(cluster_name)
+        if cluster_name
+        else f"${{{{ vars.{_GKE_ENV_CLUSTER_NAME} || secrets.{_GKE_ENV_CLUSTER_NAME} }}}}"
+    )
+    rendered_cluster_location = (
+        _yaml_quote_scalar(cluster_location)
+        if cluster_location
+        else f"${{{{ vars.{_GKE_ENV_CLUSTER_LOCATION} || secrets.{_GKE_ENV_CLUSTER_LOCATION} }}}}"
+    )
+    rendered_project_id = (
+        _yaml_quote_scalar(project_id)
+        if project_id
+        else f"${{{{ vars.{_GKE_ENV_PROJECT_ID} || secrets.{_GKE_ENV_PROJECT_ID} }}}}"
+    )
     normalized_repo_fragment = _safe_identifier_fragment(repo_name, fallback="site")
     normalized_site_fragment = _safe_identifier_fragment(site_id, fallback="workspace")
     normalized_namespace = _safe_identifier_fragment(kubernetes_namespace, fallback=normalized_repo_fragment, max_length=63)
@@ -2877,9 +3028,9 @@ def _render_managed_deploy_workflow_yaml(
         f"      MBSRN_TARGET_ENVIRONMENT_KEY: {normalized_environment_key}\n"
         f"      MBSRN_TARGET_ENVIRONMENT_SOURCE: {normalized_environment_source}\n"
         f"      MBSRN_SITE_IDENTITY: {normalized_site_fragment}\n"
-        f"      GKE_CLUSTER_NAME: ${{{{ vars.{_GKE_ENV_CLUSTER_NAME} || secrets.{_GKE_ENV_CLUSTER_NAME} }}}}\n"
-        f"      GKE_CLUSTER_LOCATION: ${{{{ vars.{_GKE_ENV_CLUSTER_LOCATION} || secrets.{_GKE_ENV_CLUSTER_LOCATION} }}}}\n"
-        f"      GKE_PROJECT_ID: ${{{{ vars.{_GKE_ENV_PROJECT_ID} || secrets.{_GKE_ENV_PROJECT_ID} }}}}\n"
+        f"      GKE_CLUSTER_NAME: {rendered_cluster_name}\n"
+        f"      GKE_CLUSTER_LOCATION: {rendered_cluster_location}\n"
+        f"      GKE_PROJECT_ID: {rendered_project_id}\n"
         "    steps:\n"
         "      - name: Checkout repository\n"
         "        uses: actions/checkout@v4\n"
@@ -2892,15 +3043,15 @@ def _render_managed_deploy_workflow_yaml(
         "      - name: Validate GKE environment config\n"
         "        run: |\n"
         "          if [ -z \"$GKE_CLUSTER_NAME\" ]; then\n"
-        "            echo \"Missing KUBERNETES_CLUSTER_NAME variable/secret\"\n"
+        "            echo \"Missing managed GKE cluster name (admin config or legacy repo fallback).\"\n"
         "            exit 1\n"
         "          fi\n"
         "          if [ -z \"$GKE_CLUSTER_LOCATION\" ]; then\n"
-        "            echo \"Missing KUBERNETES_CLUSTER_LOCATION variable/secret\"\n"
+        "            echo \"Missing managed GKE cluster location (admin config or legacy repo fallback).\"\n"
         "            exit 1\n"
         "          fi\n"
         "          if [ -z \"$GKE_PROJECT_ID\" ]; then\n"
-        "            echo \"Missing GCP_PROJECT_ID variable/secret\"\n"
+        "            echo \"Missing managed GKE project id (admin config or legacy repo fallback).\"\n"
         "            exit 1\n"
         "          fi\n"
         "      - name: Authenticate to GCP\n"

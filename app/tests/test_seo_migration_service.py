@@ -442,6 +442,7 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         deploy_workflow_mode: str | None = None,
         target_environment_key: str | None = None,
         target_environment_source: str | None = None,
+        managed_gke_config: dict[str, object] | None = None,
         namespace_isolation_defaults: dict[str, object] | None = None,
         site_id: str | None = None,
     ) -> SEOMigrationGitHubWorkflowProvisionResult:
@@ -455,6 +456,7 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
                 deploy_workflow_mode,
                 target_environment_key,
                 target_environment_source,
+                managed_gke_config,
                 namespace_isolation_defaults,
                 site_id,
             )
@@ -502,10 +504,11 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         allow_ref_repair: bool = False,
         allow_workflow_repair: bool = False,
         dry_run: bool = False,
+        managed_gke_config: dict[str, object] | None = None,
         namespace_isolation_defaults: dict[str, object] | None = None,
         remediation_mode: str = "none",
     ) -> SEOMigrationGitHubTargetReadinessResult:
-        del allow_ref_repair, allow_workflow_repair, dry_run, namespace_isolation_defaults
+        del allow_ref_repair, allow_workflow_repair, dry_run, managed_gke_config, namespace_isolation_defaults
         workflow_path = (
             target.workflow_id
             if str(target.workflow_id or "").startswith(".github/workflows/")
@@ -3838,7 +3841,8 @@ def test_publish_provisions_missing_deploy_workflow_once(db_session, caplog) -> 
         "admin_config",
     )
     assert isinstance(workflow_call[8], dict)
-    assert workflow_call[9] == site_id
+    assert isinstance(workflow_call[9], dict)
+    assert workflow_call[10] == site_id
     assert result.result.get("deploy_workflow_provisioned") is True
     assert result.result.get("deploy_workflow_id") == "deploy-tnmfire-www-prod.yml"
     assert result.result.get("deploy_workflow_path") == ".github/workflows/deploy-tnmfire-www-prod.yml"
@@ -3975,7 +3979,8 @@ def test_publish_does_not_overwrite_existing_deploy_workflow(db_session, caplog)
         "admin_config",
     )
     assert isinstance(workflow_call[8], dict)
-    assert workflow_call[9] == site_id
+    assert isinstance(workflow_call[9], dict)
+    assert workflow_call[10] == site_id
     assert result.result.get("deploy_workflow_provisioned") is False
     provision_logs = [
         record
@@ -6587,15 +6592,15 @@ def test_runtime_credential_missing_reason_is_exposed_in_publish_readiness(db_se
     [
         (
             "missing_cluster_name",
-            "managed deploy target is missing kubernetes cluster name configuration",
+            "managed deploy target is missing required admin gke cluster name configuration",
         ),
         (
             "missing_cluster_location",
-            "managed deploy target is missing kubernetes cluster location configuration",
+            "managed deploy target is missing required admin gke cluster location configuration",
         ),
         (
             "missing_gcp_project_id",
-            "managed deploy target is missing gcp project configuration",
+            "managed deploy target is missing required admin gke project id configuration",
         ),
     ],
 )
@@ -6711,7 +6716,10 @@ def test_deploy_readiness_prioritizes_managed_gke_blocker_when_secret_propagatio
     assert deploy_readiness.get("ready") is False
     assert deploy_readiness.get("dispatch_service_reason_code") == "missing_cluster_name"
     deploy_reasons = [str(item).lower() for item in deploy_readiness.get("reasons", [])]
-    assert any("managed deploy target is missing kubernetes cluster name configuration" in item for item in deploy_reasons)
+    assert any(
+        "managed deploy target is missing required admin gke cluster name configuration" in item
+        for item in deploy_reasons
+    )
     assert "deploy_configuration_missing" in (deploy_readiness.get("blocker_codes") or [])
 
 

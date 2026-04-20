@@ -39,6 +39,9 @@ class GitHubPublishConfigRead(BaseModel):
     deploy_workflow_mode: str = "site_repo_template_v1"
     target_environment_key: str = "gke_prod"
     target_environment_source: str = "admin_config"
+    managed_gke_cluster_name: str | None = None
+    managed_gke_cluster_location: str | None = None
+    managed_gke_project_id: str | None = None
     namespace_isolation_defaults: "GitHubNamespaceIsolationDefaults"
     enabled: bool = False
     created_at: datetime | None = None
@@ -52,6 +55,9 @@ class GitHubPublishConfigUpdateRequest(BaseModel):
     base_path: str | None = Field(default="/", max_length=160)
     deploy_workflow_mode: str | None = Field(default="site_repo_template_v1", max_length=60)
     target_environment_key: str | None = Field(default="gke_prod", max_length=80)
+    managed_gke_cluster_name: str | None = Field(default=None, max_length=120)
+    managed_gke_cluster_location: str | None = Field(default=None, max_length=120)
+    managed_gke_project_id: str | None = Field(default=None, max_length=120)
     namespace_isolation_defaults: "GitHubNamespaceIsolationDefaults | None" = None
     enabled: bool = False
 
@@ -85,6 +91,24 @@ class GitHubPublishConfigUpdateRequest(BaseModel):
     @classmethod
     def _normalize_target_environment_key(cls, value: object) -> str | None:
         normalized = _normalize_optional_text(value, max_length=80)
+        return normalized.lower() if normalized else None
+
+    @field_validator("managed_gke_cluster_name", mode="before")
+    @classmethod
+    def _normalize_managed_gke_cluster_name(cls, value: object) -> str | None:
+        normalized = _normalize_optional_text(value, max_length=120)
+        return normalized.lower() if normalized else None
+
+    @field_validator("managed_gke_cluster_location", mode="before")
+    @classmethod
+    def _normalize_managed_gke_cluster_location(cls, value: object) -> str | None:
+        normalized = _normalize_optional_text(value, max_length=120)
+        return normalized.lower() if normalized else None
+
+    @field_validator("managed_gke_project_id", mode="before")
+    @classmethod
+    def _normalize_managed_gke_project_id(cls, value: object) -> str | None:
+        normalized = _normalize_optional_text(value, max_length=120)
         return normalized.lower() if normalized else None
 
 

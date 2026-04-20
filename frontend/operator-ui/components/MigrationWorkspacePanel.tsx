@@ -562,13 +562,13 @@ function toManagedGkeConfigGuidance(value: string | null): string | null {
     return null;
   }
   if (normalized === "missing_cluster_name") {
-    return "Set KUBERNETES_CLUSTER_NAME in repo vars/secrets.";
+    return "Managed deploy target is missing required admin GKE cluster name configuration. Update admin deployment settings.";
   }
   if (normalized === "missing_cluster_location") {
-    return "Set KUBERNETES_CLUSTER_LOCATION in repo vars/secrets.";
+    return "Managed deploy target is missing required admin GKE cluster location configuration. Update admin deployment settings.";
   }
   if (normalized === "missing_gcp_project_id") {
-    return "Set GCP_PROJECT_ID in repo vars/secrets.";
+    return "Managed deploy target is missing required admin GKE project id configuration. Update admin deployment settings.";
   }
   return null;
 }
@@ -4073,7 +4073,7 @@ export function MigrationWorkspacePanel({
             ) : null}
             {showManagedGkeConfigSourceHint ? (
               <span className="hint muted" data-testid="migration-managed-gke-config-source-readiness">
-                Managed deploy reads vars first, then secrets.
+                Managed deploy resolves admin platform config first; repo vars/secrets are legacy fallback only.
               </span>
             ) : null}
             {deployRunFailureReasonCode ? (
@@ -4407,7 +4407,7 @@ export function MigrationWorkspacePanel({
                 ) : null}
                 {showManagedGkeConfigSourceHint ? (
                   <span className="hint muted" data-testid="migration-managed-gke-config-source-diagnostics">
-                    Managed deploy reads vars first, then secrets.
+                    Managed deploy resolves admin platform config first; repo vars/secrets are legacy fallback only.
                   </span>
                 ) : null}
                 <span className="hint">Dispatch ref sent: {dispatchRefSent || "Not available"}</span>

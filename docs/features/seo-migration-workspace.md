@@ -918,15 +918,16 @@ Deploy behavior:
   - apply managed manifests (`kubectl apply -f k8s/`)
   - verify rollout (`kubectl rollout status deployment/site-web --namespace <derived-namespace>`)
   - verify service/ingress presence
-- required GitHub Actions secret/variable contract for real deploy execution:
+- required managed deploy configuration contract for real deploy execution:
+  - admin-owned managed GKE settings in MBSRN GitHub publish configuration:
+    - `managed_gke_cluster_name`
+    - `managed_gke_cluster_location`
+    - `managed_gke_project_id`
   - `GCP_DEPLOY_KEY` (full JSON service account key with Kubernetes Engine Admin-equivalent scoped access to target cluster/project)
-  - `KUBERNETES_CLUSTER_NAME`
-  - `KUBERNETES_CLUSTER_LOCATION`
-  - `GCP_PROJECT_ID`
-  - managed workflow resolves GKE inputs with variable-first fallback:
-    - `GKE_CLUSTER_NAME = vars.KUBERNETES_CLUSTER_NAME || secrets.KUBERNETES_CLUSTER_NAME`
-    - `GKE_CLUSTER_LOCATION = vars.KUBERNETES_CLUSTER_LOCATION || secrets.KUBERNETES_CLUSTER_LOCATION`
-    - `GKE_PROJECT_ID = vars.GCP_PROJECT_ID || secrets.GCP_PROJECT_ID`
+  - managed workflow resolves GKE inputs from admin config first; repo vars/secrets are legacy fallback only:
+    - `GKE_CLUSTER_NAME = <admin managed_gke_cluster_name>` when present, otherwise `vars.KUBERNETES_CLUSTER_NAME || secrets.KUBERNETES_CLUSTER_NAME`
+    - `GKE_CLUSTER_LOCATION = <admin managed_gke_cluster_location>` when present, otherwise `vars.KUBERNETES_CLUSTER_LOCATION || secrets.KUBERNETES_CLUSTER_LOCATION`
+    - `GKE_PROJECT_ID = <admin managed_gke_project_id>` when present, otherwise `vars.GCP_PROJECT_ID || secrets.GCP_PROJECT_ID`
   - workflow pre-checks fail fast before `get-gke-credentials`:
     - `Missing GCP_DEPLOY_KEY secret`
     - `Missing KUBERNETES_CLUSTER_NAME variable/secret`
@@ -937,18 +938,18 @@ Deploy behavior:
     - `dispatch_service_reason_code=missing_cluster_location`
     - `dispatch_service_reason_code=missing_gcp_project_id`
   - migration workspace deploy readiness/diagnostics now surface concise operator guidance for these cases:
-    - `missing_cluster_name` -> set `KUBERNETES_CLUSTER_NAME` in repo vars/secrets
-    - `missing_cluster_location` -> set `KUBERNETES_CLUSTER_LOCATION` in repo vars/secrets
-    - `missing_gcp_project_id` -> set `GCP_PROJECT_ID` in repo vars/secrets
+    - `missing_cluster_name` -> set managed GKE cluster name in MBSRN admin deployment settings
+    - `missing_cluster_location` -> set managed GKE cluster location in MBSRN admin deployment settings
+    - `missing_gcp_project_id` -> set managed GCP project ID in MBSRN admin deployment settings
   - configuration source expectation is explicit in UI copy:
-    - managed deploy reads GitHub Actions vars first, then secrets
+    - managed deploy resolves admin platform config first; repo vars/secrets are legacy fallback only
   - troubleshooting precedence:
-    - treat `missing_cluster_*` / `missing_gcp_project_id` as repository configuration blockers first, even if generic deploy failure summaries are also present
-    - correct repo vars/secrets and retry deploy from the workspace before escalating to runtime workflow troubleshooting
-    - GitHub Actions run/job logs become the primary source only after readiness no longer reports missing repo configuration
+    - treat `missing_cluster_*` / `missing_gcp_project_id` as admin-owned managed target configuration blockers first, even if generic deploy failure summaries are also present
+    - correct admin deployment settings and retry deploy from the workspace before escalating to runtime workflow troubleshooting
+    - GitHub Actions run/job logs become the primary source only after readiness no longer reports missing managed target configuration
   - blocker ownership model:
     - `missing_cluster_name`, `missing_cluster_location`, `missing_gcp_project_id`:
-      admin-owned managed target configuration blockers (repo vars/secrets for managed deploy target)
+      admin-owned managed target configuration blockers (MBSRN admin configuration is source of truth; repo vars/secrets are legacy fallback only)
     - `runtime_credential_missing` with `secret_name=GCP_DEPLOY_KEY`:
       admin/runtime credential-source blocker for deploy-secret propagation (separate from managed cluster vars)
     - `duplicate_request`:

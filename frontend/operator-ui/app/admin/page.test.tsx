@@ -110,6 +110,9 @@ describe("admin route", () => {
       deploy_workflow_mode: "site_repo_template_v1",
       target_environment_key: "gke_prod",
       target_environment_source: "admin_config",
+      managed_gke_cluster_name: "mbsrn-cluster",
+      managed_gke_cluster_location: "us-central1",
+      managed_gke_project_id: "mbsrn-prod",
       namespace_isolation_defaults: {
         resource_quota: {
           enabled: false,
@@ -152,6 +155,9 @@ describe("admin route", () => {
       deploy_workflow_mode: "site_repo_template_v1",
       target_environment_key: "gke_prod",
       target_environment_source: "admin_config",
+      managed_gke_cluster_name: "mbsrn-cluster",
+      managed_gke_cluster_location: "us-central1",
+      managed_gke_project_id: "mbsrn-prod",
       namespace_isolation_defaults: {
         resource_quota: {
           enabled: true,
@@ -434,7 +440,7 @@ describe("admin route", () => {
   });
 
   it("loads and saves GitHub publish configuration in admin settings", async () => {
-    mockFetchGitHubPublishConfig.mockResolvedValueOnce({
+    mockFetchGitHubPublishConfig.mockResolvedValue({
       id: 1,
       owner: "mhanson13",
       repository: "mhanson13",
@@ -443,6 +449,9 @@ describe("admin route", () => {
       deploy_workflow_mode: "site_repo_template_v1",
       target_environment_key: "gke_prod",
       target_environment_source: "admin_config",
+      managed_gke_cluster_name: "mbsrn-cluster",
+      managed_gke_cluster_location: "us-central1",
+      managed_gke_project_id: "mbsrn-prod",
       namespace_isolation_defaults: {
         resource_quota: {
           enabled: false,
@@ -485,6 +494,9 @@ describe("admin route", () => {
       deploy_workflow_mode: "site_repo_template_v1",
       target_environment_key: "gke_prod_blue",
       target_environment_source: "admin_config",
+      managed_gke_cluster_name: "mbsrn-cluster-prod",
+      managed_gke_cluster_location: "us-central1-b",
+      managed_gke_project_id: "mbsrn-prod-2",
       namespace_isolation_defaults: {
         resource_quota: {
           enabled: true,
@@ -542,6 +554,12 @@ describe("admin route", () => {
     expect(deployWorkflowModeInput).toHaveValue("site_repo_template_v1");
     const targetEnvironmentKeyInput = screen.getByLabelText("Target Environment Key");
     expect(targetEnvironmentKeyInput).toHaveValue("gke_prod");
+    const managedGkeClusterNameInput = screen.getByLabelText("Managed GKE Cluster Name");
+    expect(managedGkeClusterNameInput).toHaveValue("mbsrn-cluster");
+    const managedGkeClusterLocationInput = screen.getByLabelText("Managed GKE Cluster Location");
+    expect(managedGkeClusterLocationInput).toHaveValue("us-central1");
+    const managedGkeProjectIdInput = screen.getByLabelText("Managed GCP Project ID");
+    expect(managedGkeProjectIdInput).toHaveValue("mbsrn-prod");
     const enabledToggle = screen.getByLabelText("Enable migration GitHub publish target");
     expect(enabledToggle).toBeChecked();
     const preview = screen.getByTestId("github-publish-effective-preview");
@@ -555,6 +573,9 @@ describe("admin route", () => {
     fireEvent.change(defaultBranchInput, { target: { value: "release" } });
     fireEvent.change(basePathInput, { target: { value: "site//content/" } });
     fireEvent.change(targetEnvironmentKeyInput, { target: { value: "gke_prod_blue" } });
+    fireEvent.change(managedGkeClusterNameInput, { target: { value: "mbsrn-cluster-prod" } });
+    fireEvent.change(managedGkeClusterLocationInput, { target: { value: "us-central1-b" } });
+    fireEvent.change(managedGkeProjectIdInput, { target: { value: "mbsrn-prod-2" } });
     fireEvent.click(screen.getByLabelText("Enable ResourceQuota for managed site namespaces"));
     fireEvent.change(screen.getByLabelText("Requests CPU"), { target: { value: "1200m" } });
     fireEvent.change(screen.getByLabelText("Requests Memory"), { target: { value: "2Gi" } });
@@ -577,6 +598,9 @@ describe("admin route", () => {
       base_path: "/site/content",
       deploy_workflow_mode: "site_repo_template_v1",
       target_environment_key: "gke_prod_blue",
+      managed_gke_cluster_name: "mbsrn-cluster-prod",
+      managed_gke_cluster_location: "us-central1-b",
+      managed_gke_project_id: "mbsrn-prod-2",
       namespace_isolation_defaults: {
         resource_quota: {
           enabled: true,

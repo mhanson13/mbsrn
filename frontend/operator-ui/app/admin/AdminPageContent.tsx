@@ -93,6 +93,9 @@ const GITHUB_BRANCH_PATTERN = /^[A-Za-z0-9._/-]{1,120}$/;
 const GITHUB_BASE_PATH_PATTERN = /^\/[A-Za-z0-9._/-]{0,159}$/;
 const GITHUB_TARGET_ENVIRONMENT_KEY_PATTERN = /^[a-z0-9][a-z0-9_-]{0,79}$/;
 const GITHUB_DEPLOY_WORKFLOW_MODE_OPTIONS = ["site_repo_template_v1"] as const;
+const GITHUB_GKE_CLUSTER_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,118}$/;
+const GITHUB_GKE_CLUSTER_LOCATION_PATTERN = /^[a-z0-9][a-z0-9-]{0,118}$/;
+const GITHUB_GKE_PROJECT_ID_PATTERN = /^[a-z][a-z0-9-]{4,28}[a-z0-9]$/;
 const GITHUB_NAMESPACE_CPU_PATTERN = /^(?:[1-9]\d*m|[1-9]\d*(?:\.\d+)?)$/;
 const GITHUB_NAMESPACE_MEMORY_PATTERN = /^(?:[1-9]\d*(?:Ei|Pi|Ti|Gi|Mi|Ki)|[1-9]\d*(?:\.\d+)?(?:E|P|T|G|M|K)i?)$/;
 const GITHUB_NAMESPACE_COUNT_PATTERN = /^\d{1,6}$/;
@@ -146,11 +149,17 @@ interface GitHubPublishConfigValidationResult {
   basePath: string;
   deployWorkflowMode: string;
   targetEnvironmentKey: string;
+  managedGkeClusterName: string | null;
+  managedGkeClusterLocation: string | null;
+  managedGkeProjectId: string | null;
   ownerError: string | null;
   defaultBranchError: string | null;
   basePathError: string | null;
   deployWorkflowModeError: string | null;
   targetEnvironmentKeyError: string | null;
+  managedGkeClusterNameError: string | null;
+  managedGkeClusterLocationError: string | null;
+  managedGkeProjectIdError: string | null;
   basePathWarning: string | null;
   namespaceIsolationErrors: string[];
   blockingError: string | null;
@@ -787,6 +796,9 @@ function validateGitHubPublishConfigInputs({
   basePathInput,
   deployWorkflowModeInput,
   targetEnvironmentKeyInput,
+  managedGkeClusterNameInput,
+  managedGkeClusterLocationInput,
+  managedGkeProjectIdInput,
   namespaceIsolationDefaults,
   enabled,
 }: {
@@ -795,6 +807,9 @@ function validateGitHubPublishConfigInputs({
   basePathInput: string;
   deployWorkflowModeInput: string;
   targetEnvironmentKeyInput: string;
+  managedGkeClusterNameInput: string;
+  managedGkeClusterLocationInput: string;
+  managedGkeProjectIdInput: string;
   namespaceIsolationDefaults: GitHubNamespaceIsolationDefaults;
   enabled: boolean;
 }): GitHubPublishConfigValidationResult {
@@ -805,12 +820,18 @@ function validateGitHubPublishConfigInputs({
   const deployWorkflowMode =
     deployWorkflowModeInput.trim().toLowerCase() || GITHUB_DEPLOY_WORKFLOW_MODE_OPTIONS[0];
   const targetEnvironmentKey = targetEnvironmentKeyInput.trim().toLowerCase() || "gke_prod";
+  const managedGkeClusterName = managedGkeClusterNameInput.trim().toLowerCase() || null;
+  const managedGkeClusterLocation = managedGkeClusterLocationInput.trim().toLowerCase() || null;
+  const managedGkeProjectId = managedGkeProjectIdInput.trim().toLowerCase() || null;
 
   let ownerError: string | null = null;
   let defaultBranchError: string | null = null;
   let basePathError: string | null = null;
   let deployWorkflowModeError: string | null = null;
   let targetEnvironmentKeyError: string | null = null;
+  let managedGkeClusterNameError: string | null = null;
+  let managedGkeClusterLocationError: string | null = null;
+  let managedGkeProjectIdError: string | null = null;
   let basePathWarning: string | null = null;
   const namespaceIsolationErrors = validateNamespaceIsolationDefaults(namespaceIsolationDefaults);
 
@@ -849,6 +870,21 @@ function validateGitHubPublishConfigInputs({
     targetEnvironmentKeyError =
       "Target environment key is invalid. Use lowercase letters, numbers, '-' or '_' only.";
   }
+  if (managedGkeClusterName && !GITHUB_GKE_CLUSTER_NAME_PATTERN.test(managedGkeClusterName)) {
+    managedGkeClusterNameError =
+      "Managed GKE cluster name is invalid. Use lowercase letters, numbers, and '-'.";
+  }
+  if (
+    managedGkeClusterLocation &&
+    !GITHUB_GKE_CLUSTER_LOCATION_PATTERN.test(managedGkeClusterLocation)
+  ) {
+    managedGkeClusterLocationError =
+      "Managed GKE cluster location is invalid. Use lowercase region/zone format (for example: us-central1).";
+  }
+  if (managedGkeProjectId && !GITHUB_GKE_PROJECT_ID_PATTERN.test(managedGkeProjectId)) {
+    managedGkeProjectIdError =
+      "Managed GCP project ID is invalid. Use lowercase letters, numbers, and '-'.";
+  }
 
   const blockingError =
     ownerError ||
@@ -856,6 +892,9 @@ function validateGitHubPublishConfigInputs({
     basePathError ||
     deployWorkflowModeError ||
     targetEnvironmentKeyError ||
+    managedGkeClusterNameError ||
+    managedGkeClusterLocationError ||
+    managedGkeProjectIdError ||
     namespaceIsolationErrors[0] ||
     null;
   return {
@@ -864,11 +903,17 @@ function validateGitHubPublishConfigInputs({
     basePath,
     deployWorkflowMode,
     targetEnvironmentKey,
+    managedGkeClusterName,
+    managedGkeClusterLocation,
+    managedGkeProjectId,
     ownerError,
     defaultBranchError,
     basePathError,
     deployWorkflowModeError,
     targetEnvironmentKeyError,
+    managedGkeClusterNameError,
+    managedGkeClusterLocationError,
+    managedGkeProjectIdError,
     basePathWarning,
     namespaceIsolationErrors,
     blockingError,
@@ -910,6 +955,9 @@ function applyGitHubPublishConfigInputs(
     setBasePath: (value: string) => void;
     setDeployWorkflowMode: (value: string) => void;
     setTargetEnvironmentKey: (value: string) => void;
+    setManagedGkeClusterName: (value: string) => void;
+    setManagedGkeClusterLocation: (value: string) => void;
+    setManagedGkeProjectId: (value: string) => void;
     setNamespaceIsolationDefaults: (value: GitHubNamespaceIsolationDefaults) => void;
     setEnabled: (value: boolean) => void;
   },
@@ -919,6 +967,9 @@ function applyGitHubPublishConfigInputs(
   setters.setBasePath(config.base_path || "/");
   setters.setDeployWorkflowMode(config.deploy_workflow_mode || "site_repo_template_v1");
   setters.setTargetEnvironmentKey(config.target_environment_key || "gke_prod");
+  setters.setManagedGkeClusterName(config.managed_gke_cluster_name || "");
+  setters.setManagedGkeClusterLocation(config.managed_gke_cluster_location || "");
+  setters.setManagedGkeProjectId(config.managed_gke_project_id || "");
   setters.setNamespaceIsolationDefaults(normalizeNamespaceIsolationDefaults(config.namespace_isolation_defaults));
   setters.setEnabled(Boolean(config.enabled));
 }
@@ -1008,6 +1059,10 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
   const [githubPublishTargetEnvironmentKeyInput, setGitHubPublishTargetEnvironmentKeyInput] = useState(
     "gke_prod",
   );
+  const [githubPublishManagedGkeClusterNameInput, setGitHubPublishManagedGkeClusterNameInput] = useState("");
+  const [githubPublishManagedGkeClusterLocationInput, setGitHubPublishManagedGkeClusterLocationInput] =
+    useState("");
+  const [githubPublishManagedGkeProjectIdInput, setGitHubPublishManagedGkeProjectIdInput] = useState("");
   const [githubNamespaceIsolationDefaults, setGitHubNamespaceIsolationDefaults] = useState<GitHubNamespaceIsolationDefaults>(
     DEFAULT_NAMESPACE_ISOLATION_DEFAULTS,
   );
@@ -1047,6 +1102,9 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
         basePathInput: githubPublishBasePathInput,
         deployWorkflowModeInput: githubPublishDeployWorkflowModeInput,
         targetEnvironmentKeyInput: githubPublishTargetEnvironmentKeyInput,
+        managedGkeClusterNameInput: githubPublishManagedGkeClusterNameInput,
+        managedGkeClusterLocationInput: githubPublishManagedGkeClusterLocationInput,
+        managedGkeProjectIdInput: githubPublishManagedGkeProjectIdInput,
         namespaceIsolationDefaults: githubNamespaceIsolationDefaults,
         enabled: githubPublishEnabled,
       }),
@@ -1055,6 +1113,9 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
         githubPublishDeployWorkflowModeInput,
         githubPublishDefaultBranchInput,
         githubPublishEnabled,
+        githubPublishManagedGkeClusterLocationInput,
+        githubPublishManagedGkeClusterNameInput,
+        githubPublishManagedGkeProjectIdInput,
         githubNamespaceIsolationDefaults,
         githubPublishOwnerInput,
         githubPublishTargetEnvironmentKeyInput,
@@ -1217,6 +1278,9 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
             setBasePath: setGitHubPublishBasePathInput,
             setDeployWorkflowMode: setGitHubPublishDeployWorkflowModeInput,
             setTargetEnvironmentKey: setGitHubPublishTargetEnvironmentKeyInput,
+            setManagedGkeClusterName: setGitHubPublishManagedGkeClusterNameInput,
+            setManagedGkeClusterLocation: setGitHubPublishManagedGkeClusterLocationInput,
+            setManagedGkeProjectId: setGitHubPublishManagedGkeProjectIdInput,
             setNamespaceIsolationDefaults: setGitHubNamespaceIsolationDefaults,
             setEnabled: setGitHubPublishEnabled,
           });
@@ -1642,6 +1706,9 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
       basePathInput: githubPublishBasePathInput,
       deployWorkflowModeInput: githubPublishDeployWorkflowModeInput,
       targetEnvironmentKeyInput: githubPublishTargetEnvironmentKeyInput,
+      managedGkeClusterNameInput: githubPublishManagedGkeClusterNameInput,
+      managedGkeClusterLocationInput: githubPublishManagedGkeClusterLocationInput,
+      managedGkeProjectIdInput: githubPublishManagedGkeProjectIdInput,
       namespaceIsolationDefaults: githubNamespaceIsolationDefaults,
       enabled: githubPublishEnabled,
     });
@@ -1658,6 +1725,9 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
         base_path: validation.basePath,
         deploy_workflow_mode: validation.deployWorkflowMode,
         target_environment_key: validation.targetEnvironmentKey,
+        managed_gke_cluster_name: validation.managedGkeClusterName,
+        managed_gke_cluster_location: validation.managedGkeClusterLocation,
+        managed_gke_project_id: validation.managedGkeProjectId,
         namespace_isolation_defaults: normalizeNamespaceIsolationDefaults(githubNamespaceIsolationDefaults),
         enabled: githubPublishEnabled,
       });
@@ -1667,6 +1737,9 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
         setBasePath: setGitHubPublishBasePathInput,
         setDeployWorkflowMode: setGitHubPublishDeployWorkflowModeInput,
         setTargetEnvironmentKey: setGitHubPublishTargetEnvironmentKeyInput,
+        setManagedGkeClusterName: setGitHubPublishManagedGkeClusterNameInput,
+        setManagedGkeClusterLocation: setGitHubPublishManagedGkeClusterLocationInput,
+        setManagedGkeProjectId: setGitHubPublishManagedGkeProjectIdInput,
         setNamespaceIsolationDefaults: setGitHubNamespaceIsolationDefaults,
         setEnabled: setGitHubPublishEnabled,
       });
@@ -2657,6 +2730,48 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
             {githubPublishValidation.targetEnvironmentKeyError ? (
               <p className="hint error">{githubPublishValidation.targetEnvironmentKeyError}</p>
             ) : null}
+            <p className="hint muted">
+              Managed GKE target fields below are admin-owned source of truth. Repo vars/secrets remain legacy fallback only.
+            </p>
+
+            <label htmlFor="github-publish-managed-gke-cluster-name">Managed GKE Cluster Name</label>
+            <input
+              id="github-publish-managed-gke-cluster-name"
+              type="text"
+              value={githubPublishManagedGkeClusterNameInput}
+              onChange={(event) => setGitHubPublishManagedGkeClusterNameInput(event.target.value)}
+              disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
+              placeholder="mbsrn-cluster"
+            />
+            {githubPublishValidation.managedGkeClusterNameError ? (
+              <p className="hint error">{githubPublishValidation.managedGkeClusterNameError}</p>
+            ) : null}
+
+            <label htmlFor="github-publish-managed-gke-cluster-location">Managed GKE Cluster Location</label>
+            <input
+              id="github-publish-managed-gke-cluster-location"
+              type="text"
+              value={githubPublishManagedGkeClusterLocationInput}
+              onChange={(event) => setGitHubPublishManagedGkeClusterLocationInput(event.target.value)}
+              disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
+              placeholder="us-central1"
+            />
+            {githubPublishValidation.managedGkeClusterLocationError ? (
+              <p className="hint error">{githubPublishValidation.managedGkeClusterLocationError}</p>
+            ) : null}
+
+            <label htmlFor="github-publish-managed-gke-project-id">Managed GCP Project ID</label>
+            <input
+              id="github-publish-managed-gke-project-id"
+              type="text"
+              value={githubPublishManagedGkeProjectIdInput}
+              onChange={(event) => setGitHubPublishManagedGkeProjectIdInput(event.target.value)}
+              disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
+              placeholder="mbsrn-prod"
+            />
+            {githubPublishValidation.managedGkeProjectIdError ? (
+              <p className="hint error">{githubPublishValidation.managedGkeProjectIdError}</p>
+            ) : null}
 
             <div className="panel panel-compact stack-tight">
               <strong>Namespace ResourceQuota defaults</strong>
@@ -2960,6 +3075,15 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                 </WorkspaceMetadataItem>
                 <WorkspaceMetadataItem label="Target environment key">
                   <code>{githubPublishValidation.targetEnvironmentKey}</code>
+                </WorkspaceMetadataItem>
+                <WorkspaceMetadataItem label="Managed GKE cluster">
+                  <code>{githubPublishValidation.managedGkeClusterName || "Not configured"}</code>
+                </WorkspaceMetadataItem>
+                <WorkspaceMetadataItem label="Managed GKE location">
+                  <code>{githubPublishValidation.managedGkeClusterLocation || "Not configured"}</code>
+                </WorkspaceMetadataItem>
+                <WorkspaceMetadataItem label="Managed GCP project">
+                  <code>{githubPublishValidation.managedGkeProjectId || "Not configured"}</code>
                 </WorkspaceMetadataItem>
                 <WorkspaceMetadataItem label="Target environment source">
                   <code>admin_config</code>

@@ -126,6 +126,9 @@ export interface GitHubPublishConfig {
   deploy_workflow_mode: string;
   target_environment_key: string;
   target_environment_source: string;
+  managed_gke_cluster_name?: string | null;
+  managed_gke_cluster_location?: string | null;
+  managed_gke_project_id?: string | null;
   namespace_isolation_defaults: GitHubNamespaceIsolationDefaults;
   enabled: boolean;
   created_at?: string | null;
@@ -175,6 +178,9 @@ export interface GitHubPublishConfigUpdateRequest {
   base_path?: string | null;
   deploy_workflow_mode?: string | null;
   target_environment_key?: string | null;
+  managed_gke_cluster_name?: string | null;
+  managed_gke_cluster_location?: string | null;
+  managed_gke_project_id?: string | null;
   namespace_isolation_defaults?: GitHubNamespaceIsolationDefaults | null;
   enabled: boolean;
 }

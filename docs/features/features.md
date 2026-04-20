@@ -271,6 +271,7 @@ It transforms a business's website and market context into structured insights a
 - Operator workspace keeps those values read-only and only exposes bounded deploy availability toggling plus staged deploy diagnostics.
 - Migration publish now provisions site-specific deploy workflows from an approved MBSRN-managed template mode and records the effective workflow path in publish history for deploy traceability.
 - Admin controls deploy template/environment mapping metadata (`deploy_workflow_mode`, `target_environment_key`, `target_environment_source`); operators can view the effective values read-only in workspace diagnostics.
+- For managed GKE targets, admin configuration is the primary source of required cluster settings (`managed_gke_cluster_name`, `managed_gke_cluster_location`, `managed_gke_project_id`); repo vars/secrets remain legacy fallback only.
 - Platform-managed deploy provisioning now enforces namespace-per-site isolation for managed GKE resources (`kubernetes_namespace`) with deterministic derivation from trusted target metadata and namespace alignment diagnostics (`namespace_model_status`, `workflow_namespace_aligned`, `manifest_namespace_aligned`).
 - Admin now controls namespace isolation defaults for managed site namespaces (structured, validated fields only):
   - ResourceQuota defaults

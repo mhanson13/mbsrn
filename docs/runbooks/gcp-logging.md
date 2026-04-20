@@ -722,19 +722,20 @@ Managed workflow deploy evidence notes:
 - If rollout succeeds but ingress status has no concrete endpoint, workflow fails and no explicit live URL evidence is emitted.
 
 Managed real-deploy prerequisites (GitHub Actions vars/secrets):
+- Admin-managed GKE target values in MBSRN GitHub publish config:
+  - `managed_gke_cluster_name`
+  - `managed_gke_cluster_location`
+  - `managed_gke_project_id`
 - `GCP_DEPLOY_KEY` (full JSON service account key with Kubernetes Engine Admin-equivalent scoped access to the target cluster/project)
-- `KUBERNETES_CLUSTER_NAME`
-- `KUBERNETES_CLUSTER_LOCATION`
-- `GCP_PROJECT_ID`
 
 Managed workflow input mapping (rendered centrally by MBSRN):
 - `cluster_name: ${{ env.GKE_CLUSTER_NAME }}`
 - `location: ${{ env.GKE_CLUSTER_LOCATION }}`
 - `project_id: ${{ env.GKE_PROJECT_ID }}`
 - where:
-  - `GKE_CLUSTER_NAME = vars.KUBERNETES_CLUSTER_NAME || secrets.KUBERNETES_CLUSTER_NAME`
-  - `GKE_CLUSTER_LOCATION = vars.KUBERNETES_CLUSTER_LOCATION || secrets.KUBERNETES_CLUSTER_LOCATION`
-  - `GKE_PROJECT_ID = vars.GCP_PROJECT_ID || secrets.GCP_PROJECT_ID`
+  - `GKE_CLUSTER_NAME` resolves from admin `managed_gke_cluster_name` first, then `vars.KUBERNETES_CLUSTER_NAME || secrets.KUBERNETES_CLUSTER_NAME` (legacy fallback)
+  - `GKE_CLUSTER_LOCATION` resolves from admin `managed_gke_cluster_location` first, then `vars.KUBERNETES_CLUSTER_LOCATION || secrets.KUBERNETES_CLUSTER_LOCATION` (legacy fallback)
+  - `GKE_PROJECT_ID` resolves from admin `managed_gke_project_id` first, then `vars.GCP_PROJECT_ID || secrets.GCP_PROJECT_ID` (legacy fallback)
 
 Required credential note:
 - `google-github-actions/auth@v2` uses:
@@ -752,14 +753,14 @@ Required credential note:
   - `dispatch_service_reason_code=missing_gcp_project_id`
 - ownership/remediation interpretation:
   - `missing_cluster_*` / `missing_gcp_project_id`:
-    admin-owned managed target configuration blockers (fix repo vars/secrets first)
+    admin-owned managed target configuration blockers (fix MBSRN admin deployment settings first; repo vars/secrets are legacy fallback only)
   - `runtime_credential_missing` with `secret_name=GCP_DEPLOY_KEY`:
     deploy-secret propagation credential-source blocker (separate from cluster var configuration)
   - `duplicate_request`:
     active/stale concurrency blocker for the selected deploy tuple, not a replacement for config blockers
 - readiness precedence:
   - when `missing_cluster_*`/`missing_gcp_project_id` is present, treat that as the authoritative blocker before dispatch/workflow troubleshooting
-  - only move to GitHub workflow runtime diagnostics after readiness reports configuration blockers cleared
+  - only move to GitHub workflow runtime diagnostics after readiness reports managed target configuration blockers cleared
 
 Post-dispatch workflow run failure diagnostics:
 - `workflow_run_failure_reason_code`

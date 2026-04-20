@@ -239,6 +239,7 @@ class _StubMigrationGitHubPublisher(SEOMigrationGitHubPublisher):
         deploy_workflow_mode: str | None = None,
         target_environment_key: str | None = None,
         target_environment_source: str | None = None,
+        managed_gke_config: dict[str, object] | None = None,
         namespace_isolation_defaults: dict[str, object] | None = None,
         site_id: str | None = None,
     ) -> SEOMigrationGitHubWorkflowProvisionResult:
@@ -252,6 +253,7 @@ class _StubMigrationGitHubPublisher(SEOMigrationGitHubPublisher):
                 deploy_workflow_mode,
                 target_environment_key,
                 target_environment_source,
+                managed_gke_config,
                 namespace_isolation_defaults,
                 site_id,
             )
@@ -285,9 +287,10 @@ class _StubMigrationGitHubPublisher(SEOMigrationGitHubPublisher):
         allow_workflow_repair: bool = False,
         dry_run: bool = False,
         remediation_mode: str = "none",
+        managed_gke_config: dict[str, object] | None = None,
         namespace_isolation_defaults: dict[str, object] | None = None,
     ) -> SEOMigrationGitHubTargetReadinessResult:
-        del allow_ref_repair, allow_workflow_repair, dry_run, namespace_isolation_defaults
+        del allow_ref_repair, allow_workflow_repair, dry_run, managed_gke_config, namespace_isolation_defaults
         dispatch_reason = self.deploy_target_dispatch_service_reason_code or "available"
         dispatch_available = dispatch_reason == "available"
         return SEOMigrationGitHubTargetReadinessResult(
@@ -2267,7 +2270,10 @@ def test_migration_summary_surfaces_missing_managed_gke_config_reason_and_remedi
     assert pre_deploy_readiness.get("ready") is False
     assert pre_deploy_readiness.get("dispatch_service_reason_code") == "missing_cluster_name"
     pre_deploy_reasons = [str(item).lower() for item in pre_deploy_readiness.get("reasons") or []]
-    assert any("managed deploy target is missing kubernetes cluster name configuration" in item for item in pre_deploy_reasons)
+    assert any(
+        "managed deploy target is missing required admin gke cluster name configuration" in item
+        for item in pre_deploy_reasons
+    )
     assert "deploy_configuration_missing" in (pre_deploy_readiness.get("blocker_codes") or [])
 
     deploy_response = client.post(
@@ -2289,16 +2295,19 @@ def test_migration_summary_surfaces_missing_managed_gke_config_reason_and_remedi
     assert deploy_readiness.get("dispatch_service_reason_code") == "missing_cluster_name"
     assert deploy_readiness.get("ready") is False
     deploy_reasons = [str(item).lower() for item in deploy_readiness.get("reasons") or []]
-    assert any("managed deploy target is missing kubernetes cluster name configuration" in item for item in deploy_reasons)
+    assert any(
+        "managed deploy target is missing required admin gke cluster name configuration" in item
+        for item in deploy_reasons
+    )
     if deploy_readiness.get("last_failure_reason") is not None:
         assert deploy_readiness.get("last_failure_reason") == "workflow_not_dispatchable"
         assert deploy_readiness.get("last_failure_dispatch_service_reason_code") == "missing_cluster_name"
         assert (
             deploy_readiness.get("last_failure_remediation_hint")
-            == "Deploy target is missing Kubernetes cluster name configuration (KUBERNETES_CLUSTER_NAME variable/secret)."
+            == "Managed deploy target is missing required admin GKE cluster name configuration. Update MBSRN admin deployment settings."
         )
         assert diagnostics.get("last_deploy_failure_dispatch_service_reason_code") == "missing_cluster_name"
         assert (
             diagnostics.get("last_deploy_failure_remediation_hint")
-            == "Deploy target is missing Kubernetes cluster name configuration (KUBERNETES_CLUSTER_NAME variable/secret)."
+            == "Managed deploy target is missing required admin GKE cluster name configuration. Update MBSRN admin deployment settings."
         )

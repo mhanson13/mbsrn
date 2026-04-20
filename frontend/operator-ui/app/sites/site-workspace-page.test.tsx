@@ -570,10 +570,10 @@ describe("site migration workflow route", () => {
 
     const deployReadinessCard = await screen.findByTestId("migration-deploy-readiness");
     expect(within(deployReadinessCard).getByTestId("migration-managed-gke-config-guidance-readiness")).toHaveTextContent(
-      "Set KUBERNETES_CLUSTER_LOCATION in repo vars/secrets.",
+      "Managed deploy target is missing required admin GKE cluster location configuration. Update admin deployment settings.",
     );
     expect(within(deployReadinessCard).getByTestId("migration-managed-gke-config-source-readiness")).toHaveTextContent(
-      "Managed deploy reads vars first, then secrets.",
+      "Managed deploy resolves admin platform config first; repo vars/secrets are legacy fallback only.",
     );
     expect(deployReadinessCard).not.toHaveTextContent(
       "Remediation hint: Selected workflow exists but is not dispatchable for this deploy target.",
@@ -584,14 +584,20 @@ describe("site migration workflow route", () => {
     const deployDiagnostics = screen.getByTestId("migration-deploy-diagnostics");
     expect(
       within(deployDiagnostics).getByTestId("migration-managed-gke-config-guidance-diagnostics"),
-    ).toHaveTextContent("Set KUBERNETES_CLUSTER_LOCATION in repo vars/secrets.");
+    ).toHaveTextContent(
+      "Managed deploy target is missing required admin GKE cluster location configuration. Update admin deployment settings.",
+    );
     expect(
       within(deployDiagnostics).getByTestId("migration-managed-gke-config-source-diagnostics"),
-    ).toHaveTextContent("Managed deploy reads vars first, then secrets.");
+    ).toHaveTextContent(
+      "Managed deploy resolves admin platform config first; repo vars/secrets are legacy fallback only.",
+    );
 
     await user.click(screen.getByText("Show deploy history"));
     const deployHistory = screen.getByTestId("migration-deploy-history");
-    expect(deployHistory).toHaveTextContent("Set KUBERNETES_CLUSTER_LOCATION in repo vars/secrets.");
+    expect(deployHistory).toHaveTextContent(
+      "Managed deploy target is missing required admin GKE cluster location configuration. Update admin deployment settings.",
+    );
     expect(deployHistory).not.toHaveTextContent("Selected workflow exists but is not dispatchable for this deploy target.");
   });
 
