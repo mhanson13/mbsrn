@@ -789,6 +789,19 @@ Common stage-aware interpretations:
 - `gke_credentials_failed` / `cluster_credentials`: `get-gke-credentials` step failed.
 - `kubectl_apply_failed` / `manifest_apply`: managed manifest apply failed.
 - `rollout_verification_failed` / `rollout_verify`: deployment rollout timed out/failed.
+  - managed workflow emits bounded namespace-scoped diagnostics on timeout:
+    - `kubectl get deployment site-web -n <namespace> -o wide`
+    - `kubectl get rs -n <namespace> -o wide`
+    - `kubectl get pods -n <namespace> -o wide`
+    - `kubectl describe deployment site-web -n <namespace>`
+    - `kubectl describe pods -n <namespace> -l app.kubernetes.io/name=site-web`
+    - tail logs for recent `site-web` pods (`--tail=200`)
+  - workflow output includes heuristic blocker hints when signatures are detected:
+    - image pull failure
+    - pod crash/startup failure
+    - probe failure
+    - config/secret reference failure
+    - scheduling/resource pressure
 - `service_ingress_verification_failed` / `ingress_verify`: service or ingress verification failed.
 - `ingress_endpoint_not_ready` / `ingress_evidence`: deployment ran but ingress endpoint did not become available before workflow evidence timeout.
 - `production_db_mode_invalid` / `manifest_apply`: production deploy DB mode is not aligned to the direct cloud-native Postgres contract (`DB_CONNECTION_MODE` must be `direct` for `deploy-prod.yml`).

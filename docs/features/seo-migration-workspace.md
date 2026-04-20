@@ -917,6 +917,7 @@ Deploy behavior:
   - apply namespace first (`kubectl apply -f k8s/namespace.yaml`)
   - apply managed manifests (`kubectl apply -f k8s/`)
   - verify rollout (`kubectl rollout status deployment/site-web --namespace <derived-namespace>`)
+  - if rollout times out, workflow emits bounded namespace-scoped diagnostics (`get deployment/rs/pods`, `describe deployment/pods`, recent `site-web` logs) plus concise likely-blocker hints (image pull, crash/probe, config/secret reference, scheduling/resource)
   - verify service/ingress presence
 - required managed deploy configuration contract for real deploy execution:
   - admin-owned managed GKE settings in MBSRN GitHub publish configuration:

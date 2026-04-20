@@ -2375,6 +2375,14 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "url: ${{ steps.resolve_live_url.outputs.resolved_live_url }}" in workflow_yaml
     assert "kubectl apply -f k8s/" in workflow_yaml
     assert "kubectl rollout status deployment/site-web" in workflow_yaml
+    assert "site-web rollout timed out in namespace $K8S_NAMESPACE; collecting bounded diagnostics." in workflow_yaml
+    assert "kubectl get rs --namespace \"$K8S_NAMESPACE\" -o wide || true" in workflow_yaml
+    assert "kubectl describe deployment site-web --namespace \"$K8S_NAMESPACE\" || true" in workflow_yaml
+    assert "kubectl describe pods --namespace \"$K8S_NAMESPACE\" -l app.kubernetes.io/name=site-web" in workflow_yaml
+    assert "Likely rollout blocker: image pull failure." in workflow_yaml
+    assert "Likely rollout blocker: readiness/liveness probe failure." in workflow_yaml
+    assert "Likely rollout blocker: config or secret reference failure." in workflow_yaml
+    assert "Likely rollout blocker: scheduling or resource availability issue." in workflow_yaml
     assert "Resolve live URL from ingress status" in workflow_yaml
     assert "kubectl get ingress site-web --namespace \"$K8S_NAMESPACE\"" in workflow_yaml
     assert "Unable to resolve live URL from ingress status for namespace $K8S_NAMESPACE." in workflow_yaml
