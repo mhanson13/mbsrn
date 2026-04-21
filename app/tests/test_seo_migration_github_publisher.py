@@ -2355,10 +2355,16 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert encoded_deployment_content
     deployment_yaml = base64.b64decode(encoded_deployment_content).decode("utf-8")
     assert "workflow_dispatch" in workflow_yaml
+    assert "permissions:" in workflow_yaml
+    assert "packages: read" in workflow_yaml
     assert "K8S_NAMESPACE: tnmfire" in workflow_yaml
     assert "Authenticate to GCP" in workflow_yaml
     assert "Get GKE credentials" in workflow_yaml
     assert "Ensure namespace exists" in workflow_yaml
+    assert "Ensure GHCR image pull secret" in workflow_yaml
+    assert "GHCR_PULL_USERNAME: ${{ github.actor }}" in workflow_yaml
+    assert "GHCR_PULL_TOKEN: ${{ github.token }}" in workflow_yaml
+    assert "kubectl create secret docker-registry mbsrn-ghcr-pull" in workflow_yaml
     assert "Apply managed manifests" in workflow_yaml
     assert "Verify rollout" in workflow_yaml
     assert "Verify service and ingress" in workflow_yaml
@@ -2398,6 +2404,7 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     )
     assert "kubectl describe pods --namespace \"$K8S_NAMESPACE\" -l app.kubernetes.io/name=site-web" in workflow_yaml
     assert "Likely rollout blocker: image pull failure." in workflow_yaml
+    assert "Likely rollout blocker: private registry authentication failure." in workflow_yaml
     assert "Likely rollout blocker: readiness/liveness probe failure." in workflow_yaml
     assert "Likely rollout blocker: config or secret reference failure." in workflow_yaml
     assert "Likely rollout blocker: namespace ResourceQuota rejection." in workflow_yaml
@@ -2410,6 +2417,8 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "echo \"live_url=$live_url\"" in workflow_yaml
     assert "echo \"deployed_url=$live_url\"" in workflow_yaml
     assert "resources:" in deployment_yaml
+    assert "imagePullSecrets:" in deployment_yaml
+    assert "name: mbsrn-ghcr-pull" in deployment_yaml
     assert "requests:" in deployment_yaml
     assert "cpu: 100m" in deployment_yaml
     assert "memory: 256Mi" in deployment_yaml

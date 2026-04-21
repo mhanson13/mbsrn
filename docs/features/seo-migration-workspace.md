@@ -916,9 +916,11 @@ Deploy behavior:
   - authenticate to GCP using repository secret JSON credentials (`google-github-actions/auth` with `credentials_json`)
   - fetch GKE credentials (`google-github-actions/get-gke-credentials`)
   - apply namespace first (`kubectl apply -f k8s/namespace.yaml`)
+  - provision namespace-scoped GHCR pull secret (`mbsrn-ghcr-pull`) from workflow token context before workload apply
   - apply managed manifests (`kubectl apply -f k8s/`)
   - verify rollout (`kubectl rollout status deployment/site-web --namespace <derived-namespace>`)
-  - if rollout times out, workflow emits bounded namespace-scoped diagnostics (`get deployment/rs/pods`, `describe deployment/pods`, recent `site-web` logs) plus concise likely-blocker hints (image pull, crash/probe, config/secret reference, scheduling/resource)
+  - managed `site-web` deployment template references `imagePullSecrets: [{name: mbsrn-ghcr-pull}]` for private GHCR pulls
+  - if rollout times out, workflow emits bounded namespace-scoped diagnostics (`get deployment/rs/pods`, `describe deployment/pods`, recent `site-web` logs) plus concise likely-blocker hints (image pull, private registry auth, crash/probe, config/secret reference, scheduling/resource)
   - verify service/ingress presence
 - required managed deploy configuration contract for real deploy execution:
   - admin-owned managed GKE settings in MBSRN GitHub publish configuration:

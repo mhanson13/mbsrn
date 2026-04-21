@@ -802,11 +802,18 @@ Common stage-aware interpretations:
     - tail logs for recent `site-web` pods (`--tail=200`)
   - workflow output includes heuristic blocker hints when signatures are detected:
     - image pull failure
+    - private registry authentication failure (`failed to fetch anonymous token`, `403 Forbidden`, `unauthorized`)
     - pod crash/startup failure
     - probe failure
     - config/secret reference failure
     - namespace ResourceQuota rejection (`FailedCreate`, `exceeded quota`, `requested` > `limited`)
     - scheduling/resource pressure
+  - if output includes private-registry auth signatures:
+    - confirm managed workflow step `Ensure GHCR image pull secret` succeeded
+    - confirm deployment pod template references `imagePullSecrets: [{name: mbsrn-ghcr-pull}]`
+    - confirm the namespace-scoped secret exists:
+      - `kubectl get secret mbsrn-ghcr-pull -n <namespace>`
+    - if managed workflow/template was recently updated, run a non-dry-run publish first so the target repo receives the latest workflow/manifests before retrying deploy
   - if output includes quota signatures such as `exceeded quota: site-resources` or `requested: requests.memory ... limited: requests.memory ...`:
     - inspect quota + workload requests in the same namespace:
       - `kubectl describe resourcequota site-resources -n <namespace>`
