@@ -1952,6 +1952,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             site_id=site_id,
         )
         manifest_file_payloads = _render_managed_gke_manifest_files(
+            repo_owner=repo_owner,
             repo_name=repo_name,
             target_environment_key=normalized_target_environment_key,
             target_environment_source=normalized_target_environment_source,
@@ -2780,6 +2781,7 @@ _MBSRN_MANAGED_RESOURCE_QUOTA_FILE_PATH = "k8s/resourcequota.yaml"
 _MBSRN_MANAGED_LIMIT_RANGE_FILE_PATH = "k8s/limitrange.yaml"
 _MBSRN_MANAGED_NETWORK_POLICY_FILE_PATH = "k8s/networkpolicy.yaml"
 _MBSRN_MANAGED_IMAGE_PULL_SECRET_NAME = "mbsrn-ghcr-pull"
+_MBSRN_MANAGED_SITE_WEB_IMAGE_REPO_NAME = "site-web"
 _MBSRN_MANAGED_CORE_MANIFEST_PATHS: tuple[str, ...] = (
     _MBSRN_MANAGED_NAMESPACE_FILE_PATH,
     _MBSRN_MANAGED_DEPLOYMENT_FILE_PATH,
@@ -3040,10 +3042,14 @@ def _render_managed_deploy_workflow_yaml(
         else f"${{{{ vars.{_GKE_ENV_PROJECT_ID} || secrets.{_GKE_ENV_PROJECT_ID} }}}}"
     )
     normalized_repo_fragment = _safe_identifier_fragment(repo_name, fallback="site")
+    normalized_repo_owner_fragment = _safe_identifier_fragment(repo_owner, fallback="mbsrn")
     normalized_site_fragment = _safe_identifier_fragment(site_id, fallback="workspace")
     normalized_namespace = _safe_identifier_fragment(kubernetes_namespace, fallback=normalized_repo_fragment, max_length=63)
     normalized_namespace_source = _safe_identifier_fragment(namespace_source, fallback="repo-name", max_length=40)
     normalized_name = f"MBSRN Deploy {normalized_repo_fragment}"
+    site_runtime_image_repository = (
+        f"ghcr.io/{normalized_repo_owner_fragment}/{_MBSRN_MANAGED_SITE_WEB_IMAGE_REPO_NAME}"
+    )
     return (
         f"# {_MBSRN_MANAGED_WORKFLOW_MARKER}\n"
         f"name: {normalized_name}\n"
@@ -3063,6 +3069,8 @@ def _render_managed_deploy_workflow_yaml(
         "      live_url: ${{ steps.resolve_live_url.outputs.live_url }}\n"
         "      resolved_live_url: ${{ steps.resolve_live_url.outputs.resolved_live_url }}\n"
         "      deployed_url: ${{ steps.resolve_live_url.outputs.deployed_url }}\n"
+        "      site_runtime_image_reference: ${{ steps.resolve_site_runtime_image.outputs.site_runtime_image_reference }}\n"
+        "      site_runtime_image_selection_mode: ${{ steps.resolve_site_runtime_image.outputs.site_runtime_image_selection_mode }}\n"
         "    environment:\n"
         f"      name: {normalized_environment_key}\n"
         "      url: ${{ steps.resolve_live_url.outputs.resolved_live_url }}\n"
@@ -3072,6 +3080,8 @@ def _render_managed_deploy_workflow_yaml(
         f"      MBSRN_TARGET_ENVIRONMENT_KEY: {normalized_environment_key}\n"
         f"      MBSRN_TARGET_ENVIRONMENT_SOURCE: {normalized_environment_source}\n"
         f"      MBSRN_SITE_IDENTITY: {normalized_site_fragment}\n"
+        f"      SITE_WEB_IMAGE_REPOSITORY: {site_runtime_image_repository}\n"
+        "      SITE_WEB_IMAGE_TAG: ${{ vars.MBSRN_SITE_WEB_IMAGE_TAG || vars.SITE_WEB_IMAGE_TAG || secrets.MBSRN_SITE_WEB_IMAGE_TAG || secrets.SITE_WEB_IMAGE_TAG || '' }}\n"
         f"      GKE_CLUSTER_NAME: {rendered_cluster_name}\n"
         f"      GKE_CLUSTER_LOCATION: {rendered_cluster_location}\n"
         f"      GKE_PROJECT_ID: {rendered_project_id}\n"
@@ -3132,6 +3142,38 @@ def _render_managed_deploy_workflow_yaml(
         "      - name: Apply managed manifests\n"
         "        run: |\n"
         "          kubectl apply -f k8s/\n"
+        "      - name: Resolve managed site runtime image\n"
+        "        id: resolve_site_runtime_image\n"
+        "        env:\n"
+        "          GHCR_PULL_USERNAME: ${{ github.actor }}\n"
+        "          GHCR_PULL_TOKEN: ${{ github.token }}\n"
+        "        run: |\n"
+        "          set -euo pipefail\n"
+        "          selected_mode=\"fallback_latest\"\n"
+        "          selected_image=\"${SITE_WEB_IMAGE_REPOSITORY}:latest\"\n"
+        "          normalized_tag=\"$(echo \"${SITE_WEB_IMAGE_TAG:-}\" | tr -d '[:space:]')\"\n"
+        "          if [ -n \"$normalized_tag\" ] && [ \"$normalized_tag\" != \"latest\" ]; then\n"
+        "            if echo \"$normalized_tag\" | grep -Eq '^[A-Fa-f0-9]{7,64}$'; then\n"
+        "              if [ -n \"${GHCR_PULL_USERNAME:-}\" ] && [ -n \"${GHCR_PULL_TOKEN:-}\" ]; then\n"
+        "                echo \"$GHCR_PULL_TOKEN\" | docker login ghcr.io -u \"$GHCR_PULL_USERNAME\" --password-stdin >/dev/null 2>&1 || true\n"
+        "              fi\n"
+        "              candidate_image=\"${SITE_WEB_IMAGE_REPOSITORY}:${normalized_tag}\"\n"
+        "              if docker manifest inspect \"$candidate_image\" >/dev/null 2>&1; then\n"
+        "                selected_image=\"$candidate_image\"\n"
+        "                selected_mode=\"immutable_sha\"\n"
+        "              else\n"
+        "                echo \"Configured SITE_WEB_IMAGE_TAG '$normalized_tag' is unavailable; falling back to latest.\"\n"
+        "              fi\n"
+        "            else\n"
+        "              echo \"Configured SITE_WEB_IMAGE_TAG '$normalized_tag' is not a SHA-like tag; falling back to latest.\"\n"
+        "            fi\n"
+        "          fi\n"
+        "          echo \"Managed site runtime image selected: ${selected_image} (mode=${selected_mode})\"\n"
+        "          kubectl set image deployment/site-web site-web=\"${selected_image}\" --namespace \"$K8S_NAMESPACE\"\n"
+        "          {\n"
+        "            echo \"site_runtime_image_reference=${selected_image}\"\n"
+        "            echo \"site_runtime_image_selection_mode=${selected_mode}\"\n"
+        "          } >> \"$GITHUB_OUTPUT\"\n"
         "      - name: Verify rollout\n"
         "        run: |\n"
         "          set -euo pipefail\n"
@@ -3151,6 +3193,9 @@ def _render_managed_deploy_workflow_yaml(
         "            fi\n"
         "            if grep -qiE 'failed to fetch anonymous token|403[[:space:]]+Forbidden|unauthorized|authentication required' \"$describe_pods_output\"; then\n"
         "              echo \"Likely rollout blocker: private registry authentication failure.\"\n"
+        "            fi\n"
+        "            if grep -qiE 'manifest unknown|name unknown|[Ii]magePullBackOff.*not found|[Ff]ailed to pull image.*not found|ghcr\\.io/.+:.*not found' \"$describe_pods_output\"; then\n"
+        "              echo \"Likely rollout blocker: container image not found in registry.\"\n"
         "            fi\n"
         "            if grep -qiE 'CrashLoopBackOff|Back-off restarting failed container|OOMKilled|Error:' \"$describe_pods_output\"; then\n"
         "              echo \"Likely rollout blocker: pod crash/failing container startup.\"\n"
@@ -3222,11 +3267,14 @@ def _render_managed_deploy_workflow_yaml(
         f'          echo "Target environment key: {normalized_environment_key}"\n'
         f'          echo "Target environment source: {normalized_environment_source}"\n'
         f'          echo "Site identity: {normalized_site_fragment}"\n'
+        "          echo \"Site runtime image: ${{ steps.resolve_site_runtime_image.outputs.site_runtime_image_reference }}\"\n"
+        "          echo \"Site runtime image selection mode: ${{ steps.resolve_site_runtime_image.outputs.site_runtime_image_selection_mode }}\"\n"
     )
 
 
 def _render_managed_gke_manifest_files(
     *,
+    repo_owner: str,
     repo_name: str,
     target_environment_key: str,
     target_environment_source: str,
@@ -3235,6 +3283,7 @@ def _render_managed_gke_manifest_files(
     namespace_isolation_defaults: dict[str, object] | None,
     site_id: str | None,
 ) -> dict[str, str]:
+    repo_owner_fragment = _safe_identifier_fragment(repo_owner, fallback="mbsrn", max_length=40)
     repo_fragment = _safe_identifier_fragment(repo_name, fallback="site", max_length=40)
     env_key = _safe_identifier_fragment(target_environment_key, fallback="gke-prod", max_length=40)
     env_source = _safe_identifier_fragment(target_environment_source, fallback="admin-config", max_length=40)
@@ -3261,6 +3310,7 @@ def _render_managed_gke_manifest_files(
         "  labels:\n"
         f"{labels}"
     )
+    image_repository = f"ghcr.io/{repo_owner_fragment}/site-web:latest"
     deployment_manifest = (
         f"# {_MBSRN_MANAGED_MANIFEST_MARKER}\n"
         "apiVersion: apps/v1\n"
@@ -3285,7 +3335,7 @@ def _render_managed_gke_manifest_files(
         f"        - name: {_MBSRN_MANAGED_IMAGE_PULL_SECRET_NAME}\n"
         "      containers:\n"
         "        - name: site-web\n"
-        "          image: ghcr.io/mbsrn/site-web:latest\n"
+        f"          image: {image_repository}\n"
         "          imagePullPolicy: IfNotPresent\n"
         "          ports:\n"
         "            - containerPort: 80\n"

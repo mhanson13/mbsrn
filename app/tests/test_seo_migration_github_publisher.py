@@ -2358,6 +2358,11 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "permissions:" in workflow_yaml
     assert "packages: read" in workflow_yaml
     assert "K8S_NAMESPACE: tnmfire" in workflow_yaml
+    assert "SITE_WEB_IMAGE_REPOSITORY: ghcr.io/mhanson13/site-web" in workflow_yaml
+    assert (
+        "SITE_WEB_IMAGE_TAG: ${{ vars.MBSRN_SITE_WEB_IMAGE_TAG || vars.SITE_WEB_IMAGE_TAG || secrets.MBSRN_SITE_WEB_IMAGE_TAG || secrets.SITE_WEB_IMAGE_TAG || '' }}"
+        in workflow_yaml
+    )
     assert "Authenticate to GCP" in workflow_yaml
     assert "Get GKE credentials" in workflow_yaml
     assert "Ensure namespace exists" in workflow_yaml
@@ -2366,6 +2371,14 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "GHCR_PULL_TOKEN: ${{ github.token }}" in workflow_yaml
     assert "kubectl create secret docker-registry mbsrn-ghcr-pull" in workflow_yaml
     assert "Apply managed manifests" in workflow_yaml
+    assert "Resolve managed site runtime image" in workflow_yaml
+    assert "selected_mode=\"fallback_latest\"" in workflow_yaml
+    assert "selected_image=\"${SITE_WEB_IMAGE_REPOSITORY}:latest\"" in workflow_yaml
+    assert "selected_mode=\"immutable_sha\"" in workflow_yaml
+    assert "docker manifest inspect \"$candidate_image\"" in workflow_yaml
+    assert "kubectl set image deployment/site-web site-web=\"${selected_image}\"" in workflow_yaml
+    assert "Managed site runtime image selected: ${selected_image} (mode=${selected_mode})" in workflow_yaml
+    assert "Configured SITE_WEB_IMAGE_TAG '$normalized_tag' is unavailable; falling back to latest." in workflow_yaml
     assert "Verify rollout" in workflow_yaml
     assert "Verify service and ingress" in workflow_yaml
     assert "project_id: ${{ env.GKE_PROJECT_ID }}" in workflow_yaml
@@ -2393,6 +2406,14 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "live_url: ${{ steps.resolve_live_url.outputs.live_url }}" in workflow_yaml
     assert "resolved_live_url: ${{ steps.resolve_live_url.outputs.resolved_live_url }}" in workflow_yaml
     assert "deployed_url: ${{ steps.resolve_live_url.outputs.deployed_url }}" in workflow_yaml
+    assert (
+        "site_runtime_image_reference: ${{ steps.resolve_site_runtime_image.outputs.site_runtime_image_reference }}"
+        in workflow_yaml
+    )
+    assert (
+        "site_runtime_image_selection_mode: ${{ steps.resolve_site_runtime_image.outputs.site_runtime_image_selection_mode }}"
+        in workflow_yaml
+    )
     assert "url: ${{ steps.resolve_live_url.outputs.resolved_live_url }}" in workflow_yaml
     assert "kubectl apply -f k8s/" in workflow_yaml
     assert "kubectl rollout status deployment/site-web" in workflow_yaml
@@ -2405,6 +2426,7 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "kubectl describe pods --namespace \"$K8S_NAMESPACE\" -l app.kubernetes.io/name=site-web" in workflow_yaml
     assert "Likely rollout blocker: image pull failure." in workflow_yaml
     assert "Likely rollout blocker: private registry authentication failure." in workflow_yaml
+    assert "Likely rollout blocker: container image not found in registry." in workflow_yaml
     assert "Likely rollout blocker: readiness/liveness probe failure." in workflow_yaml
     assert "Likely rollout blocker: config or secret reference failure." in workflow_yaml
     assert "Likely rollout blocker: namespace ResourceQuota rejection." in workflow_yaml
@@ -2416,7 +2438,16 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "echo \"resolved_live_url=$live_url\"" in workflow_yaml
     assert "echo \"live_url=$live_url\"" in workflow_yaml
     assert "echo \"deployed_url=$live_url\"" in workflow_yaml
+    assert (
+        "echo \"Site runtime image: ${{ steps.resolve_site_runtime_image.outputs.site_runtime_image_reference }}\""
+        in workflow_yaml
+    )
+    assert (
+        "echo \"Site runtime image selection mode: ${{ steps.resolve_site_runtime_image.outputs.site_runtime_image_selection_mode }}\""
+        in workflow_yaml
+    )
     assert "resources:" in deployment_yaml
+    assert "image: ghcr.io/mhanson13/site-web:latest" in deployment_yaml
     assert "imagePullSecrets:" in deployment_yaml
     assert "name: mbsrn-ghcr-pull" in deployment_yaml
     assert "requests:" in deployment_yaml

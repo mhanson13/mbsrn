@@ -803,6 +803,7 @@ Common stage-aware interpretations:
   - workflow output includes heuristic blocker hints when signatures are detected:
     - image pull failure
     - private registry authentication failure (`failed to fetch anonymous token`, `403 Forbidden`, `unauthorized`)
+    - container image not found in registry (`manifest unknown`, `name unknown`, `...: not found`)
     - pod crash/startup failure
     - probe failure
     - config/secret reference failure
@@ -814,6 +815,21 @@ Common stage-aware interpretations:
     - confirm the namespace-scoped secret exists:
       - `kubectl get secret mbsrn-ghcr-pull -n <namespace>`
     - if managed workflow/template was recently updated, run a non-dry-run publish first so the target repo receives the latest workflow/manifests before retrying deploy
+  - managed runtime image selection telemetry:
+    - workflow logs `Managed site runtime image selected: <image-ref> (mode=<mode>)`
+    - workflow outputs include:
+      - `site_runtime_image_reference`
+      - `site_runtime_image_selection_mode` (`immutable_sha` or `fallback_latest`)
+    - selection behavior:
+      - `immutable_sha` when configured SHA tag exists in GHCR
+      - `fallback_latest` when immutable SHA metadata is missing/invalid/unavailable
+  - if output includes `container image not found in registry`:
+    - confirm selected image exists (`site_runtime_image_reference`), or check fallback image:
+      - `docker pull ghcr.io/<target-repo-owner>/site-web:latest`
+    - confirm image publishing workflow succeeded recently:
+      - `.github/workflows/publish-site-web-image.yml`
+    - if SHA mode is intended, set `MBSRN_SITE_WEB_IMAGE_TAG`/`SITE_WEB_IMAGE_TAG` to a known published SHA and retry deploy
+    - if publish succeeds only with SHA tags, verify `latest` tag publication/retention policy before retrying deploy
   - if output includes quota signatures such as `exceeded quota: site-resources` or `requested: requests.memory ... limited: requests.memory ...`:
     - inspect quota + workload requests in the same namespace:
       - `kubectl describe resourcequota site-resources -n <namespace>`

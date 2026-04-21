@@ -920,6 +920,16 @@ Deploy behavior:
   - apply managed manifests (`kubectl apply -f k8s/`)
   - verify rollout (`kubectl rollout status deployment/site-web --namespace <derived-namespace>`)
   - managed `site-web` deployment template references `imagePullSecrets: [{name: mbsrn-ghcr-pull}]` for private GHCR pulls
+  - managed `site-web` runtime image repository is deterministic: `ghcr.io/<target-repo-owner>/site-web`
+  - deploy-time image selection order for managed site workloads:
+    1. immutable SHA tag from `MBSRN_SITE_WEB_IMAGE_TAG` / `SITE_WEB_IMAGE_TAG` (vars first, then secrets) when the tag exists in GHCR
+    2. safe fallback to `:latest`
+  - managed workflow emits and logs the selected runtime image metadata:
+    - `site_runtime_image_reference`
+    - `site_runtime_image_selection_mode` (`immutable_sha` or `fallback_latest`)
+  - platform CI publishes this runtime image contract on `main` for `frontend/www` changes (`publish-site-web-image.yml`) with tags:
+    - `ghcr.io/<owner>/site-web:latest`
+    - `ghcr.io/<owner>/site-web:<git-sha>`
   - if rollout times out, workflow emits bounded namespace-scoped diagnostics (`get deployment/rs/pods`, `describe deployment/pods`, recent `site-web` logs) plus concise likely-blocker hints (image pull, private registry auth, crash/probe, config/secret reference, scheduling/resource)
   - verify service/ingress presence
 - required managed deploy configuration contract for real deploy execution:
