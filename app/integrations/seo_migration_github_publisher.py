@@ -3188,19 +3188,36 @@ def _render_managed_deploy_workflow_yaml(
         "            describe_pods_output=\"$(mktemp)\"\n"
         "            kubectl describe pods --namespace \"$K8S_NAMESPACE\" -l app.kubernetes.io/name=site-web > \"$describe_pods_output\" 2>&1 || true\n"
         "            cat \"$describe_pods_output\"\n"
+        "            image_pull_detected=false\n"
         "            if grep -qiE 'ImagePullBackOff|ErrImagePull|pull access denied|manifest unknown|Failed to pull image' \"$describe_pods_output\"; then\n"
+        "              image_pull_detected=true\n"
         "              echo \"Likely rollout blocker: image pull failure.\"\n"
         "            fi\n"
         "            if grep -qiE 'failed to fetch anonymous token|403[[:space:]]+Forbidden|unauthorized|authentication required' \"$describe_pods_output\"; then\n"
+        "              image_pull_detected=true\n"
         "              echo \"Likely rollout blocker: private registry authentication failure.\"\n"
         "            fi\n"
         "            if grep -qiE 'manifest unknown|name unknown|[Ii]magePullBackOff.*not found|[Ff]ailed to pull image.*not found|ghcr\\.io/.+:.*not found' \"$describe_pods_output\"; then\n"
+        "              image_pull_detected=true\n"
         "              echo \"Likely rollout blocker: container image not found in registry.\"\n"
         "            fi\n"
-        "            if grep -qiE 'CrashLoopBackOff|Back-off restarting failed container|OOMKilled|Error:' \"$describe_pods_output\"; then\n"
+        "            container_started_evidence=false\n"
+        "            if grep -qiE 'Container ID:|Started:[[:space:]]+true|State:[[:space:]]+(Running|Terminated)' \"$describe_pods_output\"; then\n"
+        "              container_started_evidence=true\n"
+        "            fi\n"
+        "            crash_direct_evidence=false\n"
+        "            if grep -qiE 'CrashLoopBackOff|Back-off restarting failed container|OOMKilled|terminated with exit code|Last State:[[:space:]]+Terminated|Reason:[[:space:]]+Error' \"$describe_pods_output\"; then\n"
+        "              crash_direct_evidence=true\n"
+        "            fi\n"
+        "            probe_direct_evidence=false\n"
+        "            if grep -qiE 'Readiness probe failed|Liveness probe failed|Startup probe failed|Unhealthy|Probe errored' \"$describe_pods_output\"; then\n"
+        "              probe_direct_evidence=true\n"
+        "            fi\n"
+        "            # Suppress crash/probe hints when current describe evidence shows image-pull blockers.\n"
+        "            if [ \"$image_pull_detected\" = false ] && [ \"$container_started_evidence\" = true ] && [ \"$crash_direct_evidence\" = true ]; then\n"
         "              echo \"Likely rollout blocker: pod crash/failing container startup.\"\n"
         "            fi\n"
-        "            if grep -qiE 'Readiness probe failed|Liveness probe failed|Startup probe failed|Probe errored' \"$describe_pods_output\"; then\n"
+        "            if [ \"$image_pull_detected\" = false ] && [ \"$container_started_evidence\" = true ] && [ \"$probe_direct_evidence\" = true ]; then\n"
         "              echo \"Likely rollout blocker: readiness/liveness probe failure.\"\n"
         "            fi\n"
         "            if grep -qiE 'CreateContainerConfigError|CreateContainerError|secret \".*\" not found|configmap \".*\" not found' \"$describe_pods_output\"; then\n"
@@ -3638,6 +3655,70 @@ def _classify_cloudsql_proxy_failure_from_log_text(
     if has_proxy_marker and has_connection_failure:
         return "cloudsql_proxy_connection_failed", "manifest_apply"
     return None, None
+
+
+def _classify_rollout_blocker_hints_from_describe_outputs(
+    *,
+    deployment_describe_output: str | None,
+    pods_describe_output: str | None,
+) -> tuple[str, ...]:
+    """Classify rollout blocker hints from namespace-scoped describe output.
+
+    Keep this logic aligned with the managed deploy workflow shell diagnostics so
+    tests can validate precedence and avoid false-positive blocker hints.
+    """
+
+    deployment_text = str(deployment_describe_output or "")
+    pods_text = str(pods_describe_output or "")
+
+    def _has(pattern: str, *texts: str) -> bool:
+        return any(re.search(pattern, value, re.IGNORECASE) for value in texts if value)
+
+    hints: list[str] = []
+
+    image_pull_detected = False
+    if _has(r"ImagePullBackOff|ErrImagePull|pull access denied|manifest unknown|Failed to pull image", pods_text):
+        image_pull_detected = True
+        hints.append("image_pull_failure")
+    if _has(r"failed to fetch anonymous token|403\s+Forbidden|unauthorized|authentication required", pods_text):
+        image_pull_detected = True
+        hints.append("private_registry_auth_failure")
+    if _has(r"manifest unknown|name unknown|[Ii]magePullBackOff.*not found|[Ff]ailed to pull image.*not found|ghcr\.io/.+:.*not found", pods_text):
+        image_pull_detected = True
+        hints.append("container_image_not_found")
+
+    if _has(r"CreateContainerConfigError|CreateContainerError|secret \".*\" not found|configmap \".*\" not found", pods_text):
+        hints.append("config_or_secret_reference_failure")
+
+    if _has(
+        r"exceeded quota|FailedCreate|forbidden: exceeded quota|requested: requests\.(memory|cpu)|limited: requests\.(memory|cpu)|limited: limits\.",
+        deployment_text,
+        pods_text,
+    ):
+        hints.append("resource_quota_rejection")
+
+    if _has(r"FailedScheduling|Insufficient|didn.t match Pod.s node affinity|taint|node.s had", pods_text):
+        hints.append("scheduling_or_resource_issue")
+
+    container_started_evidence = _has(
+        r"Container ID:|Started:\s+true|State:\s+(Running|Terminated)",
+        pods_text,
+    )
+    crash_direct_evidence = _has(
+        r"CrashLoopBackOff|Back-off restarting failed container|OOMKilled|terminated with exit code|Last State:\s+Terminated|Reason:\s+Error",
+        pods_text,
+    )
+    probe_direct_evidence = _has(
+        r"Readiness probe failed|Liveness probe failed|Startup probe failed|Unhealthy|Probe errored",
+        pods_text,
+    )
+
+    if not image_pull_detected and container_started_evidence and crash_direct_evidence:
+        hints.append("pod_crash_or_startup_failure")
+    if not image_pull_detected and container_started_evidence and probe_direct_evidence:
+        hints.append("readiness_or_liveness_probe_failure")
+
+    return tuple(hints)
 
 
 _WORKFLOW_CONFORMANCE_STATUS_CONFORMANT = "conformant"

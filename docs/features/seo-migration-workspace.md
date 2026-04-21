@@ -935,6 +935,7 @@ Deploy behavior:
     - `ghcr.io/<owner>/site-web:latest`
     - `ghcr.io/<owner>/site-web:<git-sha>`
   - if rollout times out, workflow emits bounded namespace-scoped diagnostics (`get deployment/rs/pods`, `describe deployment/pods`, recent `site-web` logs) plus concise likely-blocker hints (image pull, private registry auth, crash/probe, config/secret reference, scheduling/resource)
+    - hint precedence is describe-event-first: image-pull blockers suppress crash/probe hints unless direct current describe evidence shows a started container failure
   - verify service/ingress presence
 - required managed deploy configuration contract for real deploy execution:
   - admin-owned managed GKE settings in MBSRN GitHub publish configuration:

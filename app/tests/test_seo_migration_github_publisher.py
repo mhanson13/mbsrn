@@ -13,6 +13,7 @@ from app.integrations.seo_migration_github_publisher import (
     GitHubSEOMigrationPublisher,
     SEOMigrationGitHubDeployTarget,
     SEOMigrationGitHubPublisherError,
+    _classify_rollout_blocker_hints_from_describe_outputs,
     derive_site_kubernetes_namespace,
 )
 
@@ -267,6 +268,84 @@ def test_derive_site_kubernetes_namespace_rejects_empty_source_values() -> None:
         derive_site_kubernetes_namespace(repo_name="   ", site_id=None)
     assert exc_info.value.code == "namespace_invalid"
     assert exc_info.value.stage == "workflow_provisioning"
+
+
+def test_classify_rollout_blockers_prioritizes_image_pull_not_found_without_crash_or_probe() -> None:
+    hints = _classify_rollout_blocker_hints_from_describe_outputs(
+        deployment_describe_output="",
+        pods_describe_output=(
+            "Warning  Failed     kubelet  Failed to pull image \"ghcr.io/mhanson13/site-web:latest\": not found\n"
+            "Warning  Failed     kubelet  Error: ErrImagePull\n"
+            "Warning  Failed     kubelet  Back-off pulling image\n"
+            "State: Waiting\nReason: ImagePullBackOff\n"
+        ),
+    )
+    assert "image_pull_failure" in hints
+    assert "container_image_not_found" in hints
+    assert "pod_crash_or_startup_failure" not in hints
+    assert "readiness_or_liveness_probe_failure" not in hints
+
+
+def test_classify_rollout_blockers_prioritizes_private_registry_auth_without_crash_hint() -> None:
+    hints = _classify_rollout_blocker_hints_from_describe_outputs(
+        deployment_describe_output="",
+        pods_describe_output=(
+            "Warning  Failed  kubelet  Failed to pull image \"ghcr.io/mhanson13/site-web:latest\": failed to fetch anonymous token: 403 Forbidden\n"
+            "Warning  Failed  kubelet  pull access denied\n"
+        ),
+    )
+    assert "image_pull_failure" in hints
+    assert "private_registry_auth_failure" in hints
+    assert "pod_crash_or_startup_failure" not in hints
+
+
+def test_classify_rollout_blockers_reports_real_crash_after_container_start() -> None:
+    hints = _classify_rollout_blocker_hints_from_describe_outputs(
+        deployment_describe_output="",
+        pods_describe_output=(
+            "Container ID:   containerd://abc123\n"
+            "Started:        true\n"
+            "State:          Terminated\n"
+            "Last State:     Terminated\n"
+            "Reason:         Error\n"
+            "Warning  BackOff  kubelet  Back-off restarting failed container\n"
+            "CrashLoopBackOff\n"
+        ),
+    )
+    assert "pod_crash_or_startup_failure" in hints
+    assert "image_pull_failure" not in hints
+    assert "private_registry_auth_failure" not in hints
+
+
+def test_classify_rollout_blockers_reports_probe_failure_only_with_started_container_evidence() -> None:
+    hints = _classify_rollout_blocker_hints_from_describe_outputs(
+        deployment_describe_output="",
+        pods_describe_output=(
+            "Container ID:   containerd://abc123\n"
+            "Started:        true\n"
+            "Warning  Unhealthy  kubelet  Readiness probe failed: Get http://10.0.0.2:3000/healthz: connection refused\n"
+        ),
+    )
+    assert "readiness_or_liveness_probe_failure" in hints
+    assert "image_pull_failure" not in hints
+
+
+def test_classify_rollout_blockers_suppresses_crash_probe_when_current_blocker_is_image_pull() -> None:
+    hints = _classify_rollout_blocker_hints_from_describe_outputs(
+        deployment_describe_output="",
+        pods_describe_output=(
+            "Warning  Failed   kubelet  Failed to pull image \"ghcr.io/mhanson13/site-web:latest\": manifest unknown\n"
+            "State: Waiting\nReason: ImagePullBackOff\n"
+            "Container ID:   containerd://oldpod\n"
+            "Started:        true\n"
+            "CrashLoopBackOff\n"
+            "Warning  Unhealthy  kubelet  Readiness probe failed\n"
+        ),
+    )
+    assert "image_pull_failure" in hints
+    assert "container_image_not_found" in hints
+    assert "pod_crash_or_startup_failure" not in hints
+    assert "readiness_or_liveness_probe_failure" not in hints
 
 
 def test_upsert_actions_secret_creates_secret_when_missing(monkeypatch) -> None:
@@ -2424,9 +2503,24 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
         in workflow_yaml
     )
     assert "kubectl describe pods --namespace \"$K8S_NAMESPACE\" -l app.kubernetes.io/name=site-web" in workflow_yaml
+    assert "image_pull_detected=false" in workflow_yaml
     assert "Likely rollout blocker: image pull failure." in workflow_yaml
     assert "Likely rollout blocker: private registry authentication failure." in workflow_yaml
     assert "Likely rollout blocker: container image not found in registry." in workflow_yaml
+    assert "container_started_evidence=false" in workflow_yaml
+    assert "crash_direct_evidence=false" in workflow_yaml
+    assert "probe_direct_evidence=false" in workflow_yaml
+    assert "Suppress crash/probe hints when current describe evidence shows image-pull blockers." in workflow_yaml
+    assert (
+        "if [ \"$image_pull_detected\" = false ] && [ \"$container_started_evidence\" = true ] && [ \"$crash_direct_evidence\" = true ]; then"
+        in workflow_yaml
+    )
+    assert (
+        "if [ \"$image_pull_detected\" = false ] && [ \"$container_started_evidence\" = true ] && [ \"$probe_direct_evidence\" = true ]; then"
+        in workflow_yaml
+    )
+    assert "terminated with exit code|Last State:[[:space:]]+Terminated|Reason:[[:space:]]+Error" in workflow_yaml
+    assert "CrashLoopBackOff|Back-off restarting failed container|OOMKilled|Error:" not in workflow_yaml
     assert "Likely rollout blocker: readiness/liveness probe failure." in workflow_yaml
     assert "Likely rollout blocker: config or secret reference failure." in workflow_yaml
     assert "Likely rollout blocker: namespace ResourceQuota rejection." in workflow_yaml

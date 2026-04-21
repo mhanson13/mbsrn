@@ -809,6 +809,10 @@ Common stage-aware interpretations:
     - config/secret reference failure
     - namespace ResourceQuota rejection (`FailedCreate`, `exceeded quota`, `requested` > `limited`)
     - scheduling/resource pressure
+  - blocker-hint precedence is describe-event-first:
+    - image pull signatures (`ImagePullBackOff`, `ErrImagePull`, pull denied/not found) are treated as primary for the current diagnostic pass
+    - when image pull blockers are detected, crash/probe hints are suppressed unless direct current describe evidence shows a started container failure
+    - recent pod logs are supplemental context only; primary blocker hints come from namespace-scoped `kubectl describe` evidence
   - if output includes private-registry auth signatures:
     - confirm managed workflow step `Ensure GHCR image pull secret` succeeded
     - confirm deployment pod template references `imagePullSecrets: [{name: mbsrn-ghcr-pull}]`
