@@ -3675,6 +3675,112 @@ def test_refresh_deploy_status_is_noop_without_workflow_run_metadata(db_session,
     assert any('"event": "no_run_observed_after_refresh"' in item for item in refresh_logs)
 
 
+def test_refresh_deploy_status_workflow_not_found_marks_tracking_lost_and_allows_retry(
+    db_session,
+    caplog,
+) -> None:
+    caplog.set_level("INFO", logger="app.services.seo_migration")
+    publisher = _RecordingGitHubPublisher(
+        deploy_workflow_run_id=998880,
+        deploy_workflow_run_status="in_progress",
+        deploy_workflow_run_conclusion=None,
+        fail_refresh=True,
+        refresh_error_code="workflow_not_found",
+        refresh_error_message="Simulated workflow run lookup failure.",
+        refresh_error_stage="workflow_run_lookup",
+        lookup_workflow_run_id=None,
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+    _configure_deploy_target(service, business_id=business_id, site_id=site_id)
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes=None,
+        principal_id="principal-1",
+    )
+    service.publish_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        commit_message=None,
+        analytics_measurement_id=None,
+        principal_id="principal-1",
+    )
+    first_deploy_result = service.deploy_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        principal_id="principal-1",
+    )
+    assert first_deploy_result.result.get("post_dispatch_state") == "workflow_run_in_progress"
+
+    refresh_result = service.refresh_deploy_run_status(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        principal_id="principal-1",
+    )
+    assert refresh_result.result.get("status") == "no_change"
+    assert refresh_result.result.get("no_change_reason") == "workflow_run_tracking_lost"
+    assert refresh_result.result.get("message") == (
+        "Deploy tracking lost (workflow run not found after dispatch). Retry deploy."
+    )
+    assert refresh_result.result.get("post_dispatch_state") == "workflow_run_failed"
+    assert refresh_result.result.get("workflow_run_failure_reason_code") == "workflow_run_tracking_lost"
+    assert refresh_result.result.get("workflow_run_failure_stage") == "workflow_execution"
+    assert refresh_result.result.get("workflow_run_failure_hint") == (
+        "Deploy tracking lost (workflow run not found after dispatch). Retry deploy."
+    )
+    assert refresh_result.result.get("workflow_run_lookup_attempted") is True
+    assert refresh_result.result.get("workflow_run_found") is False
+    assert refresh_result.result.get("workflow_job_failure_detected") is True
+    assert refresh_result.result.get("dispatch_verification_state") == "unverified_dispatch_no_run_observed"
+    assert len(publisher.refresh_calls) == 1
+    assert len(publisher.lookup_calls) == 1
+
+    workspace = service.get_workspace(business_id=business_id, site_id=site_id)
+    deploy_history = workspace.deploy_history_json or []
+    assert deploy_history
+    latest_entry = deploy_history[-1]
+    assert latest_entry.get("post_dispatch_state") == "workflow_run_failed"
+    assert latest_entry.get("workflow_run_failure_reason_code") == "workflow_run_tracking_lost"
+    assert latest_entry.get("workflow_run_failure_stage") == "workflow_execution"
+    assert latest_entry.get("workflow_run_lookup_attempted") is True
+    assert latest_entry.get("workflow_run_found") is False
+    assert latest_entry.get("workflow_job_failure_detected") is True
+
+    # Tracking-lost refresh should clear duplicate in-progress deadlocks so redeploy can proceed.
+    second_deploy_result = service.deploy_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        principal_id="principal-1",
+    )
+    assert second_deploy_result.result.get("status") == "deploy_requested"
+    assert second_deploy_result.result.get("post_dispatch_state") == "workflow_run_in_progress"
+    assert len(publisher.deploy_calls) == 2
+
+    refresh_logs = [record.msg for record in caplog.records if isinstance(record.msg, str)]
+    assert any('"event": "dispatch_attempted_without_run"' in item for item in refresh_logs)
+    assert any('"event": "downgrade_to_stale_unverified_dispatch"' in item for item in refresh_logs)
+
+
 def test_refresh_deploy_status_preserves_stronger_existing_confirmed_url(db_session) -> None:
     publisher = _RecordingGitHubPublisher(
         deploy_live_url="https://deploy-live.tnmfire.com",

@@ -554,6 +554,10 @@ Duplicate deploy blocking interpretation:
     - `dispatch_attempted_without_run`
     - `no_run_observed_after_refresh`
     - `downgrade_to_stale_unverified_dispatch`
+  - if refresh hits `failure_reason_code=workflow_not_found` after dispatch was attempted, control plane marks tracking as terminal/retryable with:
+    - `post_dispatch_state=workflow_run_failed`
+    - `workflow_run_failure_reason_code=workflow_run_tracking_lost`
+    - `no_change_reason=workflow_run_tracking_lost`
   - observe stale active-blocker reconciliation event:
     - `downgrade_to_stale_active_deploy_blocker`
 
@@ -849,6 +853,7 @@ Live URL confirmation guidance:
   - `workflow_run_metadata_missing`: deploy record exists but run id/status correlation is not available yet.
   - `deploy_record_missing`: no non-dry-run deploy history entry exists for the selected artifact.
   - `deploy_target_metadata_missing`: deploy target repo/workflow/ref metadata is incomplete for refresh lookup.
+  - `workflow_run_tracking_lost`: dispatch was recorded but workflow run evidence was not recoverable (`workflow_not_found`); control plane marks the prior attempt terminal so retry can proceed.
 
 Local-only validation note:
 

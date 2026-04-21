@@ -437,6 +437,11 @@ def test_dispatch_deploy_uses_workflow_file_path_identifier_when_provided(monkey
     assert result.workflow_id == ".github/workflows/deploy-tnmfire-www-prod.yml"
     assert any(call[1].endswith("/actions/workflows/deploy-tnmfire-www-prod.yml/dispatches") for call in calls)
     assert any(
+        "/actions/workflows/deploy-tnmfire-www-prod.yml/runs?event=workflow_dispatch&branch=main&per_page=10"
+        in call[1]
+        for call in calls
+    )
+    assert any(
         call[1].endswith("/actions/workflows/.github%2Fworkflows%2Fdeploy-tnmfire-www-prod.yml") for call in calls
     )
 

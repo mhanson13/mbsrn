@@ -927,13 +927,14 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             return None
         lower_bound = dispatched_dt - timedelta(minutes=2)
         upper_bound = dispatched_dt + timedelta(minutes=15)
+        lookup_identifier = normalize_workflow_dispatch_identifier_for_api(target.workflow_id) or target.workflow_id
 
         for attempt in range(3):
             runs_response = self._request_json(
                 method="GET",
                 path=(
                     f"/repos/{urllib.parse.quote(target.repo_owner)}/{urllib.parse.quote(target.repo_name)}"
-                    f"/actions/workflows/{urllib.parse.quote(target.workflow_id, safe='')}/runs"
+                    f"/actions/workflows/{urllib.parse.quote(lookup_identifier, safe='')}/runs"
                     f"?event=workflow_dispatch&branch={urllib.parse.quote(target.ref, safe='')}&per_page=10"
                 ),
                 expected_statuses=(200,),
