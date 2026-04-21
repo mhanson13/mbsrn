@@ -801,7 +801,13 @@ Common stage-aware interpretations:
     - pod crash/startup failure
     - probe failure
     - config/secret reference failure
+    - namespace ResourceQuota rejection (`FailedCreate`, `exceeded quota`, `requested` > `limited`)
     - scheduling/resource pressure
+  - if output includes quota signatures such as `exceeded quota: site-resources` or `requested: requests.memory ... limited: requests.memory ...`:
+    - inspect quota + workload requests in the same namespace:
+      - `kubectl describe resourcequota site-resources -n <namespace>`
+      - `kubectl get deployment site-web -n <namespace> -o yaml`
+    - remediate by aligning managed workload requests with namespace quota defaults (do not remove quota protections).
 - `service_ingress_verification_failed` / `ingress_verify`: service or ingress verification failed.
 - `ingress_endpoint_not_ready` / `ingress_evidence`: deployment ran but ingress endpoint did not become available before workflow evidence timeout.
 - `production_db_mode_invalid` / `manifest_apply`: production deploy DB mode is not aligned to the direct cloud-native Postgres contract (`DB_CONNECTION_MODE` must be `direct` for `deploy-prod.yml`).

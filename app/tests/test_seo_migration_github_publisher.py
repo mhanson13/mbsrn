@@ -2311,6 +2311,7 @@ def test_ensure_deploy_workflow_creates_missing_file_and_verifies_presence(monke
 def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> None:
     calls: list[tuple[str, str]] = []
     captured_put_payload: dict[str, object] = {}
+    captured_deployment_put_payload: dict[str, object] = {}
     queue = _managed_provisioning_responses()
 
     def _stub(request, timeout=None):
@@ -2322,6 +2323,12 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
             and request.data
         ):
             captured_put_payload.update(json.loads(request.data.decode("utf-8")))
+        if (
+            request.get_method() == "PUT"
+            and request.full_url.endswith("/contents/k8s/deployment.yaml")
+            and request.data
+        ):
+            captured_deployment_put_payload.update(json.loads(request.data.decode("utf-8")))
         next_item = queue.pop(0)
         if isinstance(next_item, Exception):
             raise next_item
@@ -2339,6 +2346,9 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     encoded_content = str(captured_put_payload.get("content") or "")
     assert encoded_content
     workflow_yaml = base64.b64decode(encoded_content).decode("utf-8")
+    encoded_deployment_content = str(captured_deployment_put_payload.get("content") or "")
+    assert encoded_deployment_content
+    deployment_yaml = base64.b64decode(encoded_deployment_content).decode("utf-8")
     assert "workflow_dispatch" in workflow_yaml
     assert "K8S_NAMESPACE: tnmfire" in workflow_yaml
     assert "Authenticate to GCP" in workflow_yaml
@@ -2377,11 +2387,15 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "kubectl rollout status deployment/site-web" in workflow_yaml
     assert "site-web rollout timed out in namespace $K8S_NAMESPACE; collecting bounded diagnostics." in workflow_yaml
     assert "kubectl get rs --namespace \"$K8S_NAMESPACE\" -o wide || true" in workflow_yaml
-    assert "kubectl describe deployment site-web --namespace \"$K8S_NAMESPACE\" || true" in workflow_yaml
+    assert (
+        "kubectl describe deployment site-web --namespace \"$K8S_NAMESPACE\" > \"$deployment_describe_output\" 2>&1 || true"
+        in workflow_yaml
+    )
     assert "kubectl describe pods --namespace \"$K8S_NAMESPACE\" -l app.kubernetes.io/name=site-web" in workflow_yaml
     assert "Likely rollout blocker: image pull failure." in workflow_yaml
     assert "Likely rollout blocker: readiness/liveness probe failure." in workflow_yaml
     assert "Likely rollout blocker: config or secret reference failure." in workflow_yaml
+    assert "Likely rollout blocker: namespace ResourceQuota rejection." in workflow_yaml
     assert "Likely rollout blocker: scheduling or resource availability issue." in workflow_yaml
     assert "Resolve live URL from ingress status" in workflow_yaml
     assert "kubectl get ingress site-web --namespace \"$K8S_NAMESPACE\"" in workflow_yaml
@@ -2390,6 +2404,13 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "echo \"resolved_live_url=$live_url\"" in workflow_yaml
     assert "echo \"live_url=$live_url\"" in workflow_yaml
     assert "echo \"deployed_url=$live_url\"" in workflow_yaml
+    assert "resources:" in deployment_yaml
+    assert "requests:" in deployment_yaml
+    assert "cpu: 100m" in deployment_yaml
+    assert "memory: 256Mi" in deployment_yaml
+    assert "limits:" in deployment_yaml
+    assert "cpu: 500m" in deployment_yaml
+    assert "memory: 512Mi" in deployment_yaml
     assert len(calls) == 18
 
 

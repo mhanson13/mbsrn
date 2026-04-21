@@ -986,6 +986,7 @@ Deploy behavior:
   - `workflow_run_failure_step`
   - `workflow_run_failure_hint`
   - examples include `gcp_auth_failed`, `gke_credentials_failed`, `kubectl_apply_failed`, `rollout_verification_failed`, `service_ingress_verification_failed`, and `ingress_endpoint_not_ready`
+  - rollout-time diagnostics now include explicit quota-rejection hints when Kubernetes reports `FailedCreate` / `exceeded quota` for `site-web` (for example `requested: requests.memory` greater than namespace `site-resources` limits)
   - Cloud SQL migration-startup failures are surfaced distinctly when run logs contain known proxy signatures:
     - `cloudsql_instance_inspection_failed`
     - `cloudsql_instance_invalid_state`
