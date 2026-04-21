@@ -818,6 +818,9 @@ Common stage-aware interpretations:
     - confirm deployment pod template references `imagePullSecrets: [{name: mbsrn-ghcr-pull}]`
     - confirm the namespace-scoped secret exists:
       - `kubectl get secret mbsrn-ghcr-pull -n <namespace>`
+    - confirm the selected runtime image is owner-scoped to the target repo owner:
+      - `site_runtime_image_reference` should match `ghcr.io/<target-repo-owner>/site-web:<tag>`
+      - owner mismatch can produce GHCR 403/unauthorized signals even when pull-secret wiring exists
     - if managed workflow/template was recently updated, run a non-dry-run publish first so the target repo receives the latest workflow/manifests before retrying deploy
   - managed runtime image selection telemetry:
     - workflow logs `Managed site runtime image selected: <image-ref> (mode=<mode>)`

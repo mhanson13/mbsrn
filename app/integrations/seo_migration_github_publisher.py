@@ -2899,6 +2899,17 @@ def derive_site_kubernetes_namespace(*, repo_name: object, site_id: object | Non
     )
 
 
+def _derive_site_runtime_image_repository(*, repo_owner: object) -> str:
+    owner_fragment = _safe_identifier_fragment(repo_owner, fallback="", max_length=80).strip("-")
+    if not owner_fragment:
+        raise SEOMigrationGitHubPublisherError(
+            code="runtime_image_repository_invalid",
+            safe_message="Managed site runtime image repository could not be derived from target repository owner.",
+            stage="workflow_provisioning",
+        )
+    return f"ghcr.io/{owner_fragment}/{_MBSRN_MANAGED_SITE_WEB_IMAGE_REPO_NAME}"
+
+
 def _coerce_bool(value: object, *, default: bool) -> bool:
     if isinstance(value, bool):
         return value
@@ -3042,14 +3053,11 @@ def _render_managed_deploy_workflow_yaml(
         else f"${{{{ vars.{_GKE_ENV_PROJECT_ID} || secrets.{_GKE_ENV_PROJECT_ID} }}}}"
     )
     normalized_repo_fragment = _safe_identifier_fragment(repo_name, fallback="site")
-    normalized_repo_owner_fragment = _safe_identifier_fragment(repo_owner, fallback="mbsrn")
+    site_runtime_image_repository = _derive_site_runtime_image_repository(repo_owner=repo_owner)
     normalized_site_fragment = _safe_identifier_fragment(site_id, fallback="workspace")
     normalized_namespace = _safe_identifier_fragment(kubernetes_namespace, fallback=normalized_repo_fragment, max_length=63)
     normalized_namespace_source = _safe_identifier_fragment(namespace_source, fallback="repo-name", max_length=40)
     normalized_name = f"MBSRN Deploy {normalized_repo_fragment}"
-    site_runtime_image_repository = (
-        f"ghcr.io/{normalized_repo_owner_fragment}/{_MBSRN_MANAGED_SITE_WEB_IMAGE_REPO_NAME}"
-    )
     return (
         f"# {_MBSRN_MANAGED_WORKFLOW_MARKER}\n"
         f"name: {normalized_name}\n"
@@ -3300,6 +3308,7 @@ def _render_managed_gke_manifest_files(
     namespace_isolation_defaults: dict[str, object] | None,
     site_id: str | None,
 ) -> dict[str, str]:
+    site_runtime_image_repository = _derive_site_runtime_image_repository(repo_owner=repo_owner)
     repo_owner_fragment = _safe_identifier_fragment(repo_owner, fallback="mbsrn", max_length=40)
     repo_fragment = _safe_identifier_fragment(repo_name, fallback="site", max_length=40)
     env_key = _safe_identifier_fragment(target_environment_key, fallback="gke-prod", max_length=40)
@@ -3327,7 +3336,7 @@ def _render_managed_gke_manifest_files(
         "  labels:\n"
         f"{labels}"
     )
-    image_repository = f"ghcr.io/{repo_owner_fragment}/site-web:latest"
+    image_repository = f"{site_runtime_image_repository}:latest"
     deployment_manifest = (
         f"# {_MBSRN_MANAGED_MANIFEST_MARKER}\n"
         "apiVersion: apps/v1\n"

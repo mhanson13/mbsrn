@@ -13,6 +13,7 @@ from app.integrations.seo_migration_github_publisher import (
     GitHubSEOMigrationPublisher,
     SEOMigrationGitHubDeployTarget,
     SEOMigrationGitHubPublisherError,
+    _derive_site_runtime_image_repository,
     _classify_rollout_blocker_hints_from_describe_outputs,
     derive_site_kubernetes_namespace,
 )
@@ -267,6 +268,20 @@ def test_derive_site_kubernetes_namespace_rejects_empty_source_values() -> None:
     with pytest.raises(SEOMigrationGitHubPublisherError) as exc_info:
         derive_site_kubernetes_namespace(repo_name="   ", site_id=None)
     assert exc_info.value.code == "namespace_invalid"
+    assert exc_info.value.stage == "workflow_provisioning"
+
+
+def test_derive_site_runtime_image_repository_uses_owner_scoped_path() -> None:
+    assert (
+        _derive_site_runtime_image_repository(repo_owner="mhanson13")
+        == "ghcr.io/mhanson13/site-web"
+    )
+
+
+def test_derive_site_runtime_image_repository_rejects_empty_owner_without_mbsrn_fallback() -> None:
+    with pytest.raises(SEOMigrationGitHubPublisherError) as exc_info:
+        _derive_site_runtime_image_repository(repo_owner="   ")
+    assert exc_info.value.code == "runtime_image_repository_invalid"
     assert exc_info.value.stage == "workflow_provisioning"
 
 
@@ -2438,6 +2453,7 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "packages: read" in workflow_yaml
     assert "K8S_NAMESPACE: tnmfire" in workflow_yaml
     assert "SITE_WEB_IMAGE_REPOSITORY: ghcr.io/mhanson13/site-web" in workflow_yaml
+    assert "ghcr.io/mbsrn/site-web" not in workflow_yaml
     assert (
         "SITE_WEB_IMAGE_TAG: ${{ vars.MBSRN_SITE_WEB_IMAGE_TAG || vars.SITE_WEB_IMAGE_TAG || secrets.MBSRN_SITE_WEB_IMAGE_TAG || secrets.SITE_WEB_IMAGE_TAG || '' }}"
         in workflow_yaml
@@ -2542,6 +2558,7 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     )
     assert "resources:" in deployment_yaml
     assert "image: ghcr.io/mhanson13/site-web:latest" in deployment_yaml
+    assert "ghcr.io/mbsrn/site-web" not in deployment_yaml
     assert "imagePullSecrets:" in deployment_yaml
     assert "name: mbsrn-ghcr-pull" in deployment_yaml
     assert "requests:" in deployment_yaml
