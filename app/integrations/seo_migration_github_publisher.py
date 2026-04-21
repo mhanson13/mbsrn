@@ -2777,6 +2777,7 @@ _MBSRN_MANAGED_NAMESPACE_FILE_PATH = "k8s/namespace.yaml"
 _MBSRN_MANAGED_DEPLOYMENT_FILE_PATH = "k8s/deployment.yaml"
 _MBSRN_MANAGED_SERVICE_FILE_PATH = "k8s/service.yaml"
 _MBSRN_MANAGED_INGRESS_FILE_PATH = "k8s/ingress.yaml"
+_MBSRN_MANAGED_FRONTEND_CONFIG_FILE_PATH = "k8s/frontendconfig.yaml"
 _MBSRN_MANAGED_RESOURCE_QUOTA_FILE_PATH = "k8s/resourcequota.yaml"
 _MBSRN_MANAGED_LIMIT_RANGE_FILE_PATH = "k8s/limitrange.yaml"
 _MBSRN_MANAGED_NETWORK_POLICY_FILE_PATH = "k8s/networkpolicy.yaml"
@@ -2787,6 +2788,7 @@ _MBSRN_MANAGED_CORE_MANIFEST_PATHS: tuple[str, ...] = (
     _MBSRN_MANAGED_DEPLOYMENT_FILE_PATH,
     _MBSRN_MANAGED_SERVICE_FILE_PATH,
     _MBSRN_MANAGED_INGRESS_FILE_PATH,
+    _MBSRN_MANAGED_FRONTEND_CONFIG_FILE_PATH,
 )
 _MBSRN_MANAGED_OPTIONAL_POLICY_MANIFEST_PATHS: tuple[str, ...] = (
     _MBSRN_MANAGED_RESOURCE_QUOTA_FILE_PATH,
@@ -3410,6 +3412,8 @@ def _render_managed_gke_manifest_files(
         f"  namespace: {namespace}\n"
         "  labels:\n"
         f"{labels}"
+        "  annotations:\n"
+        "    cloud.google.com/neg: '{\"ingress\": true}'\n"
         "spec:\n"
         "  selector:\n"
         "    app.kubernetes.io/name: site-web\n"
@@ -3428,6 +3432,9 @@ def _render_managed_gke_manifest_files(
         f"  namespace: {namespace}\n"
         "  labels:\n"
         f"{labels}"
+        "  annotations:\n"
+        "    kubernetes.io/ingress.class: gce\n"
+        "    networking.gke.io/v1beta1.FrontendConfig: site-web-frontend-config\n"
         "spec:\n"
         "  ingressClassName: gce\n"
         "  rules:\n"
@@ -3441,11 +3448,25 @@ def _render_managed_gke_manifest_files(
         "                port:\n"
         "                  number: 80\n"
     )
+    frontend_config_manifest = (
+        f"# {_MBSRN_MANAGED_MANIFEST_MARKER}\n"
+        "apiVersion: networking.gke.io/v1beta1\n"
+        "kind: FrontendConfig\n"
+        "metadata:\n"
+        "  name: site-web-frontend-config\n"
+        f"  namespace: {namespace}\n"
+        "  labels:\n"
+        f"{labels}"
+        "spec:\n"
+        "  redirectToHttps:\n"
+        "    enabled: true\n"
+    )
     manifests: dict[str, str] = {
         _MBSRN_MANAGED_NAMESPACE_FILE_PATH: namespace_manifest,
         _MBSRN_MANAGED_DEPLOYMENT_FILE_PATH: deployment_manifest,
         _MBSRN_MANAGED_SERVICE_FILE_PATH: service_manifest,
         _MBSRN_MANAGED_INGRESS_FILE_PATH: ingress_manifest,
+        _MBSRN_MANAGED_FRONTEND_CONFIG_FILE_PATH: frontend_config_manifest,
     }
     normalized_defaults = _normalize_namespace_isolation_defaults(namespace_isolation_defaults)
     resource_quota_defaults = normalized_defaults.get("resource_quota")
