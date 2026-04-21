@@ -550,6 +550,10 @@ Duplicate deploy blocking interpretation:
   - use `target.blocking_stale_reference_field`, `target.blocking_stale_reference_at`, `target.blocking_stale_age_seconds`, `target.blocking_stale_threshold_seconds`, `target.blocking_stale_evaluated`, `target.blocking_stale_is_stale`, and `target.blocking_treated_as_stale` to validate stale classification.
   - if blocker state is `dispatch_accepted_no_run` or `dispatch_unverified_no_run`, run **Refresh Deploy Status** and retry after status transitions to terminal/stale.
   - if blocker state is run-backed (`workflow_run_pending` / `workflow_run_in_progress` / `workflow_run_observed`) and stale fields show old activity with no recent refresh evidence, retry is expected to become available.
+  - stale duplicate blockers are reconciled to terminal failure before retry proceeds; check for:
+    - `event=stale_duplicate_blocker_reconciled`
+    - `workflow_run_failure_reason_code=workflow_reconciliation_timeout`
+    - `post_dispatch_state=workflow_run_failed`
   - observe unverified-dispatch reconciliation events:
     - `dispatch_attempted_without_run`
     - `no_run_observed_after_refresh`

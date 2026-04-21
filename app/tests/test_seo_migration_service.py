@@ -5156,6 +5156,8 @@ def test_deploy_retry_allowed_when_active_workflow_run_is_stale(
         None,
     )
     assert latest_deploy_item is not None
+    stale_trace_id = str(latest_deploy_item.get("deploy_trace_id") or "")
+    assert stale_trace_id
     latest_deploy_item["refreshed_at"] = None
     latest_deploy_item["dispatched_at"] = "2000-01-01T00:00:00+00:00"
     latest_deploy_item["occurred_at"] = "2000-01-01T00:00:00+00:00"
@@ -5172,8 +5174,25 @@ def test_deploy_retry_allowed_when_active_workflow_run_is_stale(
         principal_id="principal-1",
     )
     assert len(publisher.deploy_calls) == 2
+    workspace = service.get_workspace(business_id=business_id, site_id=site_id)
+    stale_entry = next(
+        (
+            item
+            for item in workspace.deploy_history_json or []
+            if str(item.get("deploy_trace_id") or "") == stale_trace_id
+        ),
+        None,
+    )
+    assert stale_entry is not None
+    assert stale_entry.get("post_dispatch_state") == "workflow_run_failed"
+    assert stale_entry.get("workflow_run_status") == "completed"
+    assert stale_entry.get("workflow_run_conclusion") == "failure"
+    assert stale_entry.get("workflow_run_failure_reason_code") == "workflow_reconciliation_timeout"
+    assert stale_entry.get("workflow_run_failure_stage") == "workflow_execution"
+    assert stale_entry.get("workflow_job_failure_detected") is True
     deploy_logs = [record.msg for record in caplog.records if isinstance(record.msg, str)]
     assert any('"event": "downgrade_to_stale_active_deploy_blocker"' in item for item in deploy_logs)
+    assert any('"event": "stale_duplicate_blocker_reconciled"' in item for item in deploy_logs)
 
 
 def test_deploy_duplicate_active_run_uses_most_recent_activity_timestamp(db_session) -> None:
@@ -5464,6 +5483,8 @@ def test_deploy_retry_allowed_when_no_run_record_is_stale(db_session, caplog) ->
         None,
     )
     assert stale_item is not None
+    stale_trace_id = str(stale_item.get("deploy_trace_id") or "")
+    assert stale_trace_id
     stale_item["dispatched_at"] = "2000-01-01T00:00:00+00:00"
     stale_item["occurred_at"] = "2000-01-01T00:00:00+00:00"
     stale_item["timestamp"] = "2000-01-01T00:00:00+00:00"
@@ -5492,8 +5513,25 @@ def test_deploy_retry_allowed_when_no_run_record_is_stale(db_session, caplog) ->
         principal_id="principal-1",
     )
     assert len(publisher.deploy_calls) == 2
+    workspace = service.get_workspace(business_id=business_id, site_id=site_id)
+    stale_entry = next(
+        (
+            item
+            for item in workspace.deploy_history_json or []
+            if str(item.get("deploy_trace_id") or "") == stale_trace_id
+        ),
+        None,
+    )
+    assert stale_entry is not None
+    assert stale_entry.get("post_dispatch_state") == "workflow_run_failed"
+    assert stale_entry.get("workflow_run_status") == "completed"
+    assert stale_entry.get("workflow_run_conclusion") == "failure"
+    assert stale_entry.get("workflow_run_failure_reason_code") == "workflow_reconciliation_timeout"
+    assert stale_entry.get("workflow_run_failure_stage") == "workflow_execution"
+    assert stale_entry.get("workflow_job_failure_detected") is True
     deploy_logs = [record.msg for record in caplog.records if isinstance(record.msg, str)]
     assert any('"event": "downgrade_to_stale_unverified_dispatch"' in item for item in deploy_logs)
+    assert any('"event": "stale_duplicate_blocker_reconciled"' in item for item in deploy_logs)
 
 
 def test_deploy_duplicate_no_run_uses_most_recent_activity_timestamp(db_session) -> None:

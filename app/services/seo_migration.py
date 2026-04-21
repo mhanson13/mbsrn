@@ -241,6 +241,7 @@ _DEPLOY_RUN_FAILURE_REASON_CANCELLED = "workflow_run_cancelled"
 _DEPLOY_RUN_FAILURE_REASON_TIMED_OUT = "workflow_run_timed_out"
 _DEPLOY_RUN_FAILURE_REASON_GENERIC = "workflow_run_failed"
 _DEPLOY_RUN_FAILURE_REASON_TRACKING_LOST = "workflow_run_tracking_lost"
+_DEPLOY_RUN_FAILURE_REASON_RECONCILIATION_TIMEOUT = "workflow_reconciliation_timeout"
 _DEPLOY_RUN_FAILURE_STAGE_GCP_AUTH = "gcp_auth"
 _DEPLOY_RUN_FAILURE_STAGE_CLUSTER_CREDENTIALS = "cluster_credentials"
 _DEPLOY_RUN_FAILURE_STAGE_MANIFEST_APPLY = "manifest_apply"
@@ -2000,53 +2001,89 @@ class SEOMigrationService:
                 now=utc_now(),
                 stale_after_seconds=stale_threshold_seconds,
             )
-            duplicate_stale_observability["blocking_treated_as_stale"] = False
-            failure_message = _build_active_duplicate_deploy_message(
-                post_dispatch_state=duplicate_post_dispatch_state,
-                dispatch_result_stage=duplicate_dispatch_result_stage,
-            )
-            self._log_control_plane_action(
-                action="deploy",
-                status="failed",
-                business_id=business_id,
-                site_id=site_id,
-                workspace_id=workspace.id,
-                artifact_version_id=artifact.id,
-                artifact_version=artifact.version,
-                principal_id=principal_id,
-                dry_run=dry_run,
-                target_summary={
-                    **deploy_target,
-                    "inputs": _normalize_history_inputs(deploy_inputs),
-                    "resolved_workflow_source": workflow_resolution.get("source"),
-                    "workflow_identifier": workflow_identifier,
-                    "deploy_trace_id": deploy_trace_id,
-                    "blocking_post_dispatch_state": duplicate_post_dispatch_state,
-                    "blocking_dispatch_result_stage": duplicate_dispatch_result_stage,
-                    "blocking_workflow_run_id": duplicate_workflow_run_id,
-                    "blocking_workflow_run_status": duplicate_workflow_run_status,
-                    "blocking_workflow_run_conclusion": duplicate_workflow_run_conclusion,
-                    "blocking_deploy_trace_id": duplicate_deploy_trace_id,
-                    "blocking_timestamp": _normalize_string(
-                        duplicate_active_record.get("timestamp"),
-                        max_length=64,
-                    ),
-                    "blocking_dispatched_at": _normalize_string(
-                        duplicate_active_record.get("dispatched_at"),
-                        max_length=64,
-                    ),
-                    "blocking_refreshed_at": _normalize_string(
-                        duplicate_active_record.get("refreshed_at"),
-                        max_length=64,
-                    ),
-                    **duplicate_stale_observability,
-                },
-                failure_category="duplicate_request",
-                failure_reason=failure_message,
-                duration_ms=self._duration_ms(started_at),
-                correlation_id=deploy_trace_id,
-            )
-            raise SEOMigrationValidationError(failure_message)
+            duplicate_is_stale = bool(duplicate_stale_observability.get("blocking_stale_is_stale"))
+            duplicate_stale_observability["blocking_treated_as_stale"] = duplicate_is_stale
+            if duplicate_is_stale:
+                self._emit_structured_service_log(
+                    payload={
+                        "event": "downgrade_to_stale_active_deploy_blocker",
+                        "business_id": business_id,
+                        "site_id": site_id,
+                        "workspace_id": workspace.id,
+                        "artifact_version_id": artifact.id,
+                        "artifact_version": artifact.version,
+                        "deploy_trace_id": deploy_trace_id,
+                        "blocking_deploy_trace_id": duplicate_deploy_trace_id,
+                        "repo_owner": deploy_target["repo_owner"],
+                        "repo_name": deploy_target["repo_name"],
+                        "workflow_id": deploy_target["workflow_id"],
+                        "ref": deploy_target["ref"],
+                        "blocking_post_dispatch_state": duplicate_post_dispatch_state,
+                        **duplicate_stale_observability,
+                    },
+                    fallback_message="downgrade_to_stale_active_deploy_blocker",
+                    level=logging.INFO,
+                )
+                self._reconcile_stale_duplicate_deploy_history_item(
+                    workspace=workspace,
+                    site=site,
+                    history_item=duplicate_active_record,
+                    principal_id=principal_id,
+                    failure_reason_code=_DEPLOY_RUN_FAILURE_REASON_RECONCILIATION_TIMEOUT,
+                    event_name="stale_duplicate_blocker_reconciled",
+                    business_id=business_id,
+                    site_id=site_id,
+                    artifact_version_id=artifact.id,
+                    artifact_version=artifact.version,
+                )
+                duplicate_active_record = None
+            if duplicate_active_record is not None:
+                failure_message = _build_active_duplicate_deploy_message(
+                    post_dispatch_state=duplicate_post_dispatch_state,
+                    dispatch_result_stage=duplicate_dispatch_result_stage,
+                )
+                self._log_control_plane_action(
+                    action="deploy",
+                    status="failed",
+                    business_id=business_id,
+                    site_id=site_id,
+                    workspace_id=workspace.id,
+                    artifact_version_id=artifact.id,
+                    artifact_version=artifact.version,
+                    principal_id=principal_id,
+                    dry_run=dry_run,
+                    target_summary={
+                        **deploy_target,
+                        "inputs": _normalize_history_inputs(deploy_inputs),
+                        "resolved_workflow_source": workflow_resolution.get("source"),
+                        "workflow_identifier": workflow_identifier,
+                        "deploy_trace_id": deploy_trace_id,
+                        "blocking_post_dispatch_state": duplicate_post_dispatch_state,
+                        "blocking_dispatch_result_stage": duplicate_dispatch_result_stage,
+                        "blocking_workflow_run_id": duplicate_workflow_run_id,
+                        "blocking_workflow_run_status": duplicate_workflow_run_status,
+                        "blocking_workflow_run_conclusion": duplicate_workflow_run_conclusion,
+                        "blocking_deploy_trace_id": duplicate_deploy_trace_id,
+                        "blocking_timestamp": _normalize_string(
+                            duplicate_active_record.get("timestamp"),
+                            max_length=64,
+                        ),
+                        "blocking_dispatched_at": _normalize_string(
+                            duplicate_active_record.get("dispatched_at"),
+                            max_length=64,
+                        ),
+                        "blocking_refreshed_at": _normalize_string(
+                            duplicate_active_record.get("refreshed_at"),
+                            max_length=64,
+                        ),
+                        **duplicate_stale_observability,
+                    },
+                    failure_category="duplicate_request",
+                    failure_reason=failure_message,
+                    duration_ms=self._duration_ms(started_at),
+                    correlation_id=deploy_trace_id,
+                )
+                raise SEOMigrationValidationError(failure_message)
         if stale_active_dispatch_record is not None:
             stale_reference_field, stale_reference_at = _resolve_deploy_history_activity_reference(
                 item=stale_active_dispatch_record
@@ -2088,6 +2125,18 @@ class SEOMigrationService:
                 fallback_message="downgrade_to_stale_active_deploy_blocker",
                 level=logging.INFO,
             )
+            self._reconcile_stale_duplicate_deploy_history_item(
+                workspace=workspace,
+                site=site,
+                history_item=stale_active_dispatch_record,
+                principal_id=principal_id,
+                failure_reason_code=_DEPLOY_RUN_FAILURE_REASON_RECONCILIATION_TIMEOUT,
+                event_name="stale_duplicate_blocker_reconciled",
+                business_id=business_id,
+                site_id=site_id,
+                artifact_version_id=artifact.id,
+                artifact_version=artifact.version,
+            )
         if stale_unverified_dispatch_record is not None:
             stale_reference_field, stale_reference_at = _resolve_deploy_history_activity_reference(
                 item=stale_unverified_dispatch_record
@@ -2124,6 +2173,18 @@ class SEOMigrationService:
                 },
                 fallback_message="downgrade_to_stale_unverified_dispatch",
                 level=logging.INFO,
+            )
+            self._reconcile_stale_duplicate_deploy_history_item(
+                workspace=workspace,
+                site=site,
+                history_item=stale_unverified_dispatch_record,
+                principal_id=principal_id,
+                failure_reason_code=_DEPLOY_RUN_FAILURE_REASON_RECONCILIATION_TIMEOUT,
+                event_name="stale_duplicate_blocker_reconciled",
+                business_id=business_id,
+                site_id=site_id,
+                artifact_version_id=artifact.id,
+                artifact_version=artifact.version,
             )
 
         try:
@@ -3621,6 +3682,149 @@ class SEOMigrationService:
             readiness=readiness,
             result=history_payload,
         )
+
+    def _reconcile_stale_duplicate_deploy_history_item(
+        self,
+        *,
+        workspace: SEOMigrationWorkspace,
+        site: Site,
+        history_item: dict[str, object],
+        principal_id: str | None,
+        failure_reason_code: str,
+        event_name: str,
+        business_id: str,
+        site_id: str,
+        artifact_version_id: str,
+        artifact_version: int,
+    ) -> dict[str, object] | None:
+        normalized_history = _normalize_history_list(workspace.deploy_history_json)
+        history_index = _find_duplicate_deploy_history_item_index(
+            history=normalized_history,
+            item=history_item,
+        )
+        if history_index is None:
+            return None
+
+        next_item = _normalize_json_dict(normalized_history[history_index])
+        dispatch_attempted = (
+            bool(next_item.get("dispatch_attempted"))
+            if isinstance(next_item.get("dispatch_attempted"), bool)
+            else _coerce_bool(next_item.get("dispatch_attempted"), default=False)
+        )
+        dispatch_result_stage = _normalize_string(next_item.get("dispatch_result_stage"), max_length=40)
+        workflow_run_id = _coerce_int(next_item.get("workflow_run_id"))
+        workflow_run_lookup_attempted = (
+            bool(next_item.get("workflow_run_lookup_attempted"))
+            if isinstance(next_item.get("workflow_run_lookup_attempted"), bool)
+            else None
+        )
+        workflow_run_found = (
+            bool(next_item.get("workflow_run_found"))
+            if isinstance(next_item.get("workflow_run_found"), bool)
+            else None
+        )
+        if workflow_run_id is None:
+            workflow_run_lookup_attempted = True
+            workflow_run_found = False
+        elif workflow_run_found is None:
+            workflow_run_found = True
+
+        refreshed_at = utc_now().isoformat()
+        failure_stage = _DEPLOY_RUN_FAILURE_STAGE_WORKFLOW_EXECUTION
+        post_dispatch_state = "workflow_run_failed"
+        failure_hint = _derive_workflow_run_failure_hint(
+            failure_reason=failure_reason_code,
+            post_dispatch_state=post_dispatch_state,
+        )
+        dispatch_verification_state = _derive_dispatch_verification_state(
+            dispatch_attempted=dispatch_attempted,
+            workflow_run_id=workflow_run_id,
+            workflow_run_lookup_attempted=workflow_run_lookup_attempted,
+            workflow_run_found=workflow_run_found,
+        )
+        (
+            deploy_evidence_contract_status,
+            deploy_evidence_contract_reasons,
+            workflow_contract_advisory,
+        ) = _derive_deploy_evidence_contract(
+            workflow_conformance_status=next_item.get("workflow_conformance_status"),
+            post_dispatch_state=post_dispatch_state,
+            resolved_live_url=next_item.get("resolved_live_url"),
+            url_source=next_item.get("url_source"),
+        )
+        post_conformance_stage = _derive_post_conformance_stage(
+            workflow_conformance_status=next_item.get("workflow_conformance_status"),
+            dispatch_attempted=dispatch_attempted,
+            dispatch_result_stage=dispatch_result_stage,
+            failure_stage=next_item.get("failure_stage"),
+            post_dispatch_state=post_dispatch_state,
+            workflow_run_lookup_attempted=workflow_run_lookup_attempted,
+            workflow_run_failure_stage=failure_stage,
+            deploy_evidence_contract_status=deploy_evidence_contract_status,
+        )
+        post_conformance_reason_text = _derive_post_conformance_reason_text(
+            post_conformance_stage=post_conformance_stage,
+            workflow_run_failure_reason_code=failure_reason_code,
+            workflow_run_failure_stage=failure_stage,
+            post_dispatch_state=post_dispatch_state,
+        )
+        post_conformance_remediation_message = _derive_post_conformance_remediation_message(
+            post_conformance_stage=post_conformance_stage
+        )
+
+        expected_updates: dict[str, object] = {
+            "workflow_run_lookup_attempted": workflow_run_lookup_attempted,
+            "workflow_run_found": workflow_run_found,
+            "dispatch_verification_state": dispatch_verification_state,
+            "workflow_run_status": "completed",
+            "workflow_run_conclusion": "failure",
+            "workflow_job_failure_detected": True,
+            "workflow_run_failure_reason_code": failure_reason_code,
+            "workflow_run_failure_stage": failure_stage,
+            "workflow_run_failure_step": None,
+            "workflow_run_failure_hint": failure_hint,
+            "post_dispatch_state": post_dispatch_state,
+            "deploy_evidence_contract_status": deploy_evidence_contract_status,
+            "deploy_evidence_contract_reasons": list(deploy_evidence_contract_reasons),
+            "workflow_contract_advisory": workflow_contract_advisory,
+            "post_conformance_stage": post_conformance_stage,
+            "post_conformance_reason_text": post_conformance_reason_text,
+            "post_conformance_remediation_message": post_conformance_remediation_message,
+            "refreshed_at": refreshed_at,
+        }
+        updated = False
+        for field_name, field_value in expected_updates.items():
+            if next_item.get(field_name) != field_value:
+                next_item[field_name] = field_value
+                updated = True
+        if not updated:
+            return next_item
+
+        normalized_history[history_index] = _normalize_json_dict(next_item)
+        workspace.deploy_history_json = normalized_history
+        workspace.updated_by_principal_id = principal_id
+        self._update_workspace_readiness_statuses(workspace=workspace, site=site)
+        self.seo_migration_repository.save_workspace(workspace)
+        self.session.commit()
+        self.session.refresh(workspace)
+        self._emit_structured_service_log(
+            payload={
+                "event": event_name,
+                "business_id": business_id,
+                "site_id": site_id,
+                "workspace_id": workspace.id,
+                "artifact_version_id": artifact_version_id,
+                "artifact_version": artifact_version,
+                "deploy_trace_id": _normalize_string(next_item.get("deploy_trace_id"), max_length=80),
+                "post_dispatch_state": post_dispatch_state,
+                "workflow_run_failure_reason_code": failure_reason_code,
+                "workflow_run_failure_stage": failure_stage,
+                "refreshed_at": refreshed_at,
+            },
+            fallback_message=event_name,
+            level=logging.INFO,
+        )
+        return next_item
 
     def refresh_deploy_run_status(
         self,
@@ -11394,6 +11598,7 @@ def _normalize_workflow_run_failure_reason_code(value: object) -> str | None:
         _DEPLOY_RUN_FAILURE_REASON_TIMED_OUT,
         _DEPLOY_RUN_FAILURE_REASON_GENERIC,
         _DEPLOY_RUN_FAILURE_REASON_TRACKING_LOST,
+        _DEPLOY_RUN_FAILURE_REASON_RECONCILIATION_TIMEOUT,
     }
     if normalized_lower in allowed:
         return normalized_lower
@@ -12058,6 +12263,11 @@ def _derive_workflow_run_failure_hint(
         return "Deploy workflow run failed before explicit live URL evidence was captured."
     if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_TRACKING_LOST:
         return "Deploy tracking lost (workflow run not found after dispatch). Retry deploy."
+    if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_RECONCILIATION_TIMEOUT:
+        return (
+            "Deploy tracking state became stale without recent workflow-run activity. "
+            "Prior attempt was reconciled as failed so deploy can be retried."
+        )
     normalized_post_state = _normalize_string(post_dispatch_state, max_length=80)
     if normalized_post_state == "workflow_run_succeeded_without_live_url":
         return "Workflow run succeeded but did not emit explicit live URL evidence."
@@ -12433,6 +12643,42 @@ def _find_active_duplicate_deploy_attempt(
     return None, stale_unverified_record, stale_active_record
 
 
+def _find_duplicate_deploy_history_item_index(
+    *,
+    history: list[dict[str, object]],
+    item: dict[str, object],
+) -> int | None:
+    target_trace = _normalize_string(item.get("deploy_trace_id"), max_length=80)
+    target_timestamp = _normalize_string(item.get("timestamp"), max_length=64)
+    target_dispatched_at = _normalize_string(item.get("dispatched_at"), max_length=64)
+    target_repo_owner = _normalize_string(item.get("repo_owner"), max_length=80)
+    target_repo_name = _normalize_string(item.get("repo_name"), max_length=120)
+    target_ref = _normalize_string(item.get("ref"), max_length=120)
+    target_artifact_version_id = _normalize_string(item.get("artifact_version_id"), max_length=80)
+
+    for index in range(len(history) - 1, -1, -1):
+        candidate = _normalize_json_dict(history[index])
+        if str(candidate.get("action") or "").strip().lower() != "deploy":
+            continue
+        if str(candidate.get("status") or "").strip().lower() != "deploy_requested":
+            continue
+        if target_trace:
+            candidate_trace = _normalize_string(candidate.get("deploy_trace_id"), max_length=80)
+            if candidate_trace == target_trace:
+                return index
+            continue
+        if (
+            _normalize_string(candidate.get("artifact_version_id"), max_length=80) == target_artifact_version_id
+            and _normalize_string(candidate.get("repo_owner"), max_length=80) == target_repo_owner
+            and _normalize_string(candidate.get("repo_name"), max_length=120) == target_repo_name
+            and _normalize_string(candidate.get("ref"), max_length=120) == target_ref
+            and _normalize_string(candidate.get("timestamp"), max_length=64) == target_timestamp
+            and _normalize_string(candidate.get("dispatched_at"), max_length=64) == target_dispatched_at
+        ):
+            return index
+    return None
+
+
 def _is_active_duplicate_deploy_history_entry(
     *,
     item: dict[str, object],
@@ -12699,7 +12945,7 @@ def _build_active_duplicate_deploy_message(
         )
     if normalized_state in {"workflow_run_pending", "workflow_run_in_progress"}:
         return (
-            "A deploy request for this artifact and target is already in progress. "
+            "A deploy request for this artifact and target is already in progress with active workflow run evidence. "
             "Refresh deploy status and retry after the prior attempt reaches a terminal state."
         )
     return (
