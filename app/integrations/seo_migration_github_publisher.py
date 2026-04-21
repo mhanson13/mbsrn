@@ -3369,7 +3369,7 @@ def _render_managed_gke_manifest_files(
         f"          image: {image_repository}\n"
         "          imagePullPolicy: IfNotPresent\n"
         "          ports:\n"
-        "            - containerPort: 80\n"
+        "            - containerPort: 8080\n"
         "          resources:\n"
         "            requests:\n"
         "              cpu: 100m\n"
@@ -3380,7 +3380,7 @@ def _render_managed_gke_manifest_files(
         "          readinessProbe:\n"
         "            httpGet:\n"
         "              path: /\n"
-        "              port: 80\n"
+        "              port: 8080\n"
         "            initialDelaySeconds: 5\n"
         "            periodSeconds: 10\n"
     )
@@ -3399,7 +3399,7 @@ def _render_managed_gke_manifest_files(
         "  ports:\n"
         "    - name: http\n"
         "      port: 80\n"
-        "      targetPort: 80\n"
+        "      targetPort: 8080\n"
         "  type: ClusterIP\n"
     )
     ingress_manifest = (

@@ -806,6 +806,7 @@ Common stage-aware interpretations:
     - container image not found in registry (`manifest unknown`, `name unknown`, `...: not found`)
     - pod crash/startup failure
     - probe failure
+      - if probe events show `connection refused`, confirm managed site runtime port wiring is aligned (`containerPort=8080`, probe port `8080`, service `targetPort=8080`)
     - config/secret reference failure
     - namespace ResourceQuota rejection (`FailedCreate`, `exceeded quota`, `requested` > `limited`)
     - scheduling/resource pressure

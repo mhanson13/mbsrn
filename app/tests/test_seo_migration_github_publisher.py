@@ -2411,6 +2411,7 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     calls: list[tuple[str, str]] = []
     captured_put_payload: dict[str, object] = {}
     captured_deployment_put_payload: dict[str, object] = {}
+    captured_service_put_payload: dict[str, object] = {}
     queue = _managed_provisioning_responses()
 
     def _stub(request, timeout=None):
@@ -2428,6 +2429,12 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
             and request.data
         ):
             captured_deployment_put_payload.update(json.loads(request.data.decode("utf-8")))
+        if (
+            request.get_method() == "PUT"
+            and request.full_url.endswith("/contents/k8s/service.yaml")
+            and request.data
+        ):
+            captured_service_put_payload.update(json.loads(request.data.decode("utf-8")))
         next_item = queue.pop(0)
         if isinstance(next_item, Exception):
             raise next_item
@@ -2448,6 +2455,9 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     encoded_deployment_content = str(captured_deployment_put_payload.get("content") or "")
     assert encoded_deployment_content
     deployment_yaml = base64.b64decode(encoded_deployment_content).decode("utf-8")
+    encoded_service_content = str(captured_service_put_payload.get("content") or "")
+    assert encoded_service_content
+    service_yaml = base64.b64decode(encoded_service_content).decode("utf-8")
     assert "workflow_dispatch" in workflow_yaml
     assert "permissions:" in workflow_yaml
     assert "packages: read" in workflow_yaml
@@ -2565,12 +2575,17 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "ghcr.io/mbsrn/site-web" not in deployment_yaml
     assert "imagePullSecrets:" in deployment_yaml
     assert "name: mbsrn-ghcr-pull" in deployment_yaml
+    assert "containerPort: 8080" in deployment_yaml
+    assert "readinessProbe:" in deployment_yaml
+    assert "port: 8080" in deployment_yaml
+    assert "\n            - containerPort: 80\n" not in deployment_yaml
     assert "requests:" in deployment_yaml
     assert "cpu: 100m" in deployment_yaml
     assert "memory: 256Mi" in deployment_yaml
     assert "limits:" in deployment_yaml
     assert "cpu: 500m" in deployment_yaml
     assert "memory: 512Mi" in deployment_yaml
+    assert "targetPort: 8080" in service_yaml
     assert len(calls) == 18
 
 
