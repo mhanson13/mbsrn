@@ -201,13 +201,26 @@ function WorkflowHeaderSiteSelector({ pathname }: { pathname: string }) {
   const searchParams = useSearchParams();
   const [scopeNotice, setScopeNotice] = useState<string | null>(null);
   const searchParamsString = searchParams?.toString() || "";
+  const requestedSiteIdFromPath = parseSiteIdFromSitePath(pathname);
   const authorizedSites = useMemo(
     () => contextSites.filter((site) => site.business_id === contextBusinessId),
     [contextBusinessId, contextSites],
   );
-  const selectedSite = authorizedSites.find((site) => site.id === contextSelectedSiteId) || null;
+  const selectedSite = useMemo(() => {
+    if (requestedSiteIdFromPath) {
+      const routeSite = authorizedSites.find((site) => site.id === requestedSiteIdFromPath);
+      if (routeSite) {
+        return routeSite;
+      }
+    }
+    return authorizedSites.find((site) => site.id === contextSelectedSiteId) || null;
+  }, [authorizedSites, contextSelectedSiteId, requestedSiteIdFromPath]);
   const effectiveSelectedSiteId = selectedSite?.id || authorizedSites[0]?.id || null;
-  const activeBusinessId = selectedSite?.business_id || contextBusinessId || "";
+  const effectiveSite = useMemo(
+    () => authorizedSites.find((site) => site.id === effectiveSelectedSiteId) || null,
+    [authorizedSites, effectiveSelectedSiteId],
+  );
+  const activeBusinessId = effectiveSite?.business_id || "";
   const contextWarning = contextScopeWarning || null;
 
   useEffect(() => {
@@ -233,7 +246,6 @@ function WorkflowHeaderSiteSelector({ pathname }: { pathname: string }) {
     }
 
     const authorizedSiteIds = new Set(authorizedSites.map((site) => site.id));
-    const requestedSiteIdFromPath = parseSiteIdFromSitePath(pathname);
     const currentParams = new URLSearchParams(searchParamsString);
     const requestedSiteIdFromQuery = (currentParams.get("site_id") || "").trim();
 
@@ -268,6 +280,7 @@ function WorkflowHeaderSiteSelector({ pathname }: { pathname: string }) {
     contextLoading,
     effectiveSelectedSiteId,
     pathname,
+    requestedSiteIdFromPath,
     router,
     searchParamsString,
   ]);
@@ -324,7 +337,7 @@ function WorkflowHeaderSiteSelector({ pathname }: { pathname: string }) {
         />
         <div className="topnav-context-meta" data-testid="topnav-context-identifiers">
           <span className="topnav-context-meta-item">
-            Site ID: <code>{selectedSite?.id || "—"}</code>
+            Site ID: <code>{effectiveSite?.id || "—"}</code>
           </span>
           <span className="topnav-context-meta-item">
             Business ID: <code>{activeBusinessId || "—"}</code>

@@ -361,6 +361,71 @@ describe("NavShell", () => {
     expect(screen.getByTestId("topnav-context-identifiers")).toHaveTextContent("Business ID: biz-1");
   });
 
+  it("prefers route-selected site context when header state is stale", async () => {
+    const setSelectedSiteId = jest.fn();
+    mockUsePathname.mockReturnValue("/sites/site-2");
+    mockUseAuth.mockReturnValue({
+      token: "token-1",
+      refreshToken: "refresh-1",
+      principal: {
+        business_id: "biz-1",
+        principal_id: "operator-1",
+        display_name: "Operator One",
+        role: "operator",
+        is_active: true,
+      },
+      clearSession: jest.fn(),
+    });
+    mockUseOperatorContext.mockReturnValue({
+      loading: false,
+      error: null,
+      scopeWarning: null,
+      token: "token-1",
+      businessId: "biz-1",
+      sites: [
+        {
+          id: "site-1",
+          business_id: "biz-1",
+          display_name: "Main Site",
+          base_url: "https://example.com/",
+          normalized_domain: "example.com",
+          is_active: true,
+          is_primary: true,
+          last_audit_run_id: null,
+          last_audit_status: null,
+          last_audit_completed_at: null,
+        },
+        {
+          id: "site-2",
+          business_id: "biz-1",
+          display_name: "Secondary Site",
+          base_url: "https://example.org/",
+          normalized_domain: "example.org",
+          is_active: true,
+          is_primary: false,
+          last_audit_run_id: null,
+          last_audit_status: null,
+          last_audit_completed_at: null,
+        },
+      ],
+      selectedSiteId: "site-1",
+      setSelectedSiteId,
+      refreshSites: jest.fn(),
+    });
+
+    render(
+      <NavShell>
+        <div>content</div>
+      </NavShell>,
+    );
+
+    expect(screen.getByTestId("topnav-context-identifiers")).toHaveTextContent("Site ID: site-2");
+    expect(screen.getByTestId("topnav-context-identifiers")).toHaveTextContent("Business ID: biz-1");
+    await waitFor(() => {
+      expect(setSelectedSiteId).toHaveBeenCalledWith("site-2");
+    });
+  });
+
   it("normalizes out-of-scope query site_id to the active authorized site", async () => {
     mockUsePathname.mockReturnValue("/recommendations");
     mockUseSearchParams.mockReturnValue(new URLSearchParams("status=open&site_id=site-999"));

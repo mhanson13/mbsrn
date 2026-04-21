@@ -54,6 +54,7 @@ Important operator cue:
 ## Operator UI Layout (Dashboard Pass)
 Operator UI now uses a tighter dashboard hierarchy for migration review without changing workflow behavior:
 - global header branding adds a left-aligned MBSRN logo anchor linked to `/dashboard`
+- global header context identifiers (`Site ID` and `Business ID`) are bound to the currently active site context; switching site context updates both values together and avoids stale/global fallback leakage
 - dedicated migration route starts with a compact summary band for:
   - migration state
   - next action
