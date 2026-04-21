@@ -924,6 +924,10 @@ Deploy behavior:
   - deploy-time image selection order for managed site workloads:
     1. immutable SHA tag from `MBSRN_SITE_WEB_IMAGE_TAG` / `SITE_WEB_IMAGE_TAG` (vars first, then secrets) when the tag exists in GHCR
     2. safe fallback to `:latest`
+  - controlled rollout pinning example:
+    - set `MBSRN_SITE_WEB_IMAGE_TAG=3f2c9e7d8a6b4c1e9f0a1234567890abcdef1234` (or legacy alias `SITE_WEB_IMAGE_TAG=...`) before deploy
+    - verify `site_runtime_image_selection_mode=immutable_sha`; if tag is missing/invalid/unavailable, mode falls back to `fallback_latest`
+    - see `docs/runbooks/gcp-logging.md` for the step-by-step operator procedure
   - managed workflow emits and logs the selected runtime image metadata:
     - `site_runtime_image_reference`
     - `site_runtime_image_selection_mode` (`immutable_sha` or `fallback_latest`)

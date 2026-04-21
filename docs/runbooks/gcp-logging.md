@@ -823,6 +823,31 @@ Common stage-aware interpretations:
     - selection behavior:
       - `immutable_sha` when configured SHA tag exists in GHCR
       - `fallback_latest` when immutable SHA metadata is missing/invalid/unavailable
+
+Controlled runtime image rollouts (managed site runtime image):
+- supported tag controls:
+  - `MBSRN_SITE_WEB_IMAGE_TAG` (preferred)
+  - `SITE_WEB_IMAGE_TAG` (legacy alias fallback)
+- copy/paste examples (SHA-like tags supported: 7-64 hex chars):
+  - `MBSRN_SITE_WEB_IMAGE_TAG=3f2c9e7d8a6b4c1e9f0a1234567890abcdef1234`
+  - `SITE_WEB_IMAGE_TAG=3f2c9e7d8a6b4c1e9f0a1234567890abcdef1234`
+- effective selection order:
+  1. configured SHA-like tag exists in GHCR -> `site_runtime_image_selection_mode=immutable_sha`
+  2. otherwise -> `site_runtime_image_selection_mode=fallback_latest` (`ghcr.io/<target-repo-owner>/site-web:latest`)
+- operator/admin procedure:
+  1. publish the runtime image (`.github/workflows/publish-site-web-image.yml`) so the SHA tag exists.
+  2. set `MBSRN_SITE_WEB_IMAGE_TAG` (or `SITE_WEB_IMAGE_TAG`) in the controlling GitHub Actions vars/secrets context.
+  3. republish or redeploy the managed site.
+  4. verify workflow outputs/logs:
+     - `site_runtime_image_reference`
+     - `site_runtime_image_selection_mode`
+  5. confirm controlled pinning by checking `site_runtime_image_selection_mode=immutable_sha`.
+- fallback interpretation:
+  - if configured tag is missing, invalid, or unavailable in GHCR, deploy intentionally falls back to `:latest` (`fallback_latest`).
+  - inspect workflow output `site_runtime_image_selection_mode` and runtime-image log line first before debugging rollout.
+- safety note:
+  - use immutable SHA pinning for controlled rollouts and staged production validation; `:latest` is backward-compatible but less deterministic.
+
   - if output includes `container image not found in registry`:
     - confirm selected image exists (`site_runtime_image_reference`), or check fallback image:
       - `docker pull ghcr.io/<target-repo-owner>/site-web:latest`
