@@ -2462,10 +2462,14 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "Get GKE credentials" in workflow_yaml
     assert "Ensure namespace exists" in workflow_yaml
     assert "Ensure GHCR image pull secret" in workflow_yaml
+    assert "Reset stale site-web deployment" in workflow_yaml
+    assert "Resetting deployment to eliminate stale image references." in workflow_yaml
+    assert "kubectl delete deployment site-web --namespace \"$K8S_NAMESPACE\" --ignore-not-found" in workflow_yaml
     assert "GHCR_PULL_USERNAME: ${{ github.actor }}" in workflow_yaml
     assert "GHCR_PULL_TOKEN: ${{ github.token }}" in workflow_yaml
     assert "kubectl create secret docker-registry mbsrn-ghcr-pull" in workflow_yaml
     assert "Apply managed manifests" in workflow_yaml
+    assert "kubectl apply -f k8s/deployment.yaml" in workflow_yaml
     assert "Resolve managed site runtime image" in workflow_yaml
     assert "selected_mode=\"fallback_latest\"" in workflow_yaml
     assert "selected_image=\"${SITE_WEB_IMAGE_REPOSITORY}:latest\"" in workflow_yaml

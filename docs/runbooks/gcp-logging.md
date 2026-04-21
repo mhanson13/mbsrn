@@ -862,6 +862,9 @@ Controlled runtime image rollouts (managed site runtime image):
       - `.github/workflows/publish-site-web-image.yml`
     - if SHA mode is intended, set `MBSRN_SITE_WEB_IMAGE_TAG`/`SITE_WEB_IMAGE_TAG` to a known published SHA and retry deploy
     - if publish succeeds only with SHA tags, verify `latest` tag publication/retention policy before retrying deploy
+    - if rollout repeatedly attempts the wrong/stale image, delete and recreate `site-web` to clear stale Deployment state:
+      - `kubectl delete deployment site-web -n <namespace> --ignore-not-found`
+      - `kubectl apply -f k8s/deployment.yaml`
   - if output includes quota signatures such as `exceeded quota: site-resources` or `requested: requests.memory ... limited: requests.memory ...`:
     - inspect quota + workload requests in the same namespace:
       - `kubectl describe resourcequota site-resources -n <namespace>`
