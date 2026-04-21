@@ -2556,8 +2556,19 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "Likely rollout blocker: namespace ResourceQuota rejection." in workflow_yaml
     assert "Likely rollout blocker: scheduling or resource availability issue." in workflow_yaml
     assert "Resolve live URL from ingress status" in workflow_yaml
+    assert "max_attempts=40" in workflow_yaml
+    assert "sleep_seconds=15" in workflow_yaml
+    assert "Waiting up to ${wait_seconds}s for ingress external address assignment in namespace $K8S_NAMESPACE." in workflow_yaml
     assert "kubectl get ingress site-web --namespace \"$K8S_NAMESPACE\"" in workflow_yaml
-    assert "Unable to resolve live URL from ingress status for namespace $K8S_NAMESPACE." in workflow_yaml
+    assert "Ingress created but external address is not assigned yet for namespace $K8S_NAMESPACE." in workflow_yaml
+    assert "Likely rollout blocker: ingress/load balancer provisioning still in progress." in workflow_yaml
+    assert "This may take several minutes on GKE." in workflow_yaml
+    assert "deploy_runtime_reason_code=ingress_address_pending" in workflow_yaml
+    assert "kubectl describe ingress site-web --namespace \"$K8S_NAMESPACE\" || true" in workflow_yaml
+    assert "kubectl get service site-web --namespace \"$K8S_NAMESPACE\" -o wide || true" in workflow_yaml
+    assert "kubectl get endpoints site-web --namespace \"$K8S_NAMESPACE\" -o wide || true" in workflow_yaml
+    assert "kubectl get managedcertificate --namespace \"$K8S_NAMESPACE\" || true" in workflow_yaml
+    assert "kubectl get frontendconfig --namespace \"$K8S_NAMESPACE\" || true" in workflow_yaml
     assert "exit 1" in workflow_yaml
     assert "echo \"resolved_live_url=$live_url\"" in workflow_yaml
     assert "echo \"live_url=$live_url\"" in workflow_yaml

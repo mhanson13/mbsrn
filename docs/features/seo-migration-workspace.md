@@ -994,17 +994,19 @@ Deploy behavior:
   - this is intentionally a bridge model and can later be replaced by centralized deploy execution or OIDC-based federation.
 - explicit deploy evidence contract for live URL confirmation:
   - workflow resolves URL from ingress status (`.status.loadBalancer.ingress[0].hostname|ip`)
+  - ingress address resolution uses a bounded wait loop (10-minute max: `40 x 15s`) because GKE load balancer provisioning can lag successful rollout
   - workflow emits all three output keys on success:
     - `live_url`
     - `resolved_live_url`
     - `deployed_url`
-  - no URL output is emitted when ingress status has no concrete endpoint; workflow fails instead
+  - no URL output is emitted when ingress status has no concrete endpoint; workflow fails after bounded wait and emits ingress-specific diagnostics (`get/describe ingress`, `get service`, `get endpoints`, optional `managedcertificate` / `frontendconfig`)
 - post-dispatch workflow run diagnostics now distinguish execution-stage failures:
   - `workflow_run_failure_reason_code`
   - `workflow_run_failure_stage`
   - `workflow_run_failure_step`
   - `workflow_run_failure_hint`
   - examples include `gcp_auth_failed`, `gke_credentials_failed`, `kubectl_apply_failed`, `rollout_verification_failed`, `service_ingress_verification_failed`, and `ingress_endpoint_not_ready`
+  - `ingress_endpoint_not_ready` indicates ingress exists but external hostname/IP evidence was not assigned before bounded timeout (workflow logs include `deploy_runtime_reason_code=ingress_address_pending` marker for troubleshooting)
   - rollout-time diagnostics now include explicit quota-rejection hints when Kubernetes reports `FailedCreate` / `exceeded quota` for `site-web` (for example `requested: requests.memory` greater than namespace `site-resources` limits)
   - Cloud SQL migration-startup failures are surfaced distinctly when run logs contain known proxy signatures:
     - `cloudsql_instance_inspection_failed`

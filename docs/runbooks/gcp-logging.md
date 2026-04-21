@@ -723,11 +723,19 @@ Explicit evidence troubleshooting quick guide:
 
 Managed workflow deploy evidence notes:
 - The managed GKE deploy workflow resolves live URL evidence from ingress status (`status.loadBalancer.ingress[0].hostname|ip`).
+- Ingress evidence uses a bounded wait loop (10-minute max: `40 x 15s`) to account for normal GKE load balancer provisioning lag.
 - On successful evidence capture, workflow outputs include:
   - `resolved_live_url`
   - `live_url`
   - `deployed_url`
-- If rollout succeeds but ingress status has no concrete endpoint, workflow fails and no explicit live URL evidence is emitted.
+- If rollout succeeds but ingress status still has no concrete endpoint after bounded wait, workflow fails and no explicit live URL evidence is emitted.
+- In that failure mode, inspect ingress-focused diagnostics emitted by the workflow step:
+  - `kubectl get ingress site-web -o wide`
+  - `kubectl describe ingress site-web`
+  - `kubectl get service site-web -o wide`
+  - `kubectl get endpoints site-web -o wide`
+  - optional checks: `kubectl get managedcertificate`, `kubectl get frontendconfig`
+- Workflow logs include troubleshooting marker `deploy_runtime_reason_code=ingress_address_pending` for this condition.
 
 Managed real-deploy prerequisites:
 - Admin-managed GKE target values in MBSRN GitHub publish config:
@@ -876,7 +884,7 @@ Controlled runtime image rollouts (managed site runtime image):
       - `kubectl get deployment site-web -n <namespace> -o yaml`
     - remediate by aligning managed workload requests with namespace quota defaults (do not remove quota protections).
 - `service_ingress_verification_failed` / `ingress_verify`: service or ingress verification failed.
-- `ingress_endpoint_not_ready` / `ingress_evidence`: deployment ran but ingress endpoint did not become available before workflow evidence timeout.
+- `ingress_endpoint_not_ready` / `ingress_evidence`: deployment ran but ingress endpoint did not become available before bounded workflow evidence timeout (ingress/load balancer provisioning still in progress is a common cause).
 - `production_db_mode_invalid` / `manifest_apply`: production deploy DB mode is not aligned to the direct cloud-native Postgres contract (`DB_CONNECTION_MODE` must be `direct` for `deploy-prod.yml`).
 - `Invalid production DATABASE_URL: localhost/loopback target is not allowed for deploy-prod` / `manifest_apply`: production `DATABASE_URL` still resolves to loopback while running direct mode. Update the GitHub repo `DATABASE_URL` secret to a non-loopback cluster/service hostname or managed Postgres endpoint, then redeploy.
 - `cloudsql_instance_inspection_failed` / `manifest_apply`: Cloud SQL preflight could not inspect instance state (for example permission denied, not found/project mismatch, API unavailable, or empty describe output). This is expected only on intentionally proxy-backed paths.
