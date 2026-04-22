@@ -183,6 +183,9 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         deploy_error_message: str | None = None,
         deploy_error_stage: str | None = None,
         fail_workflow_provision: bool = False,
+        workflow_provision_error_code: str | None = None,
+        workflow_provision_error_message: str | None = None,
+        workflow_provision_error_stage: str | None = None,
         existing_workflow: bool = False,
         existing_workflow_placeholder: bool = False,
         existing_workflow_custom: bool = False,
@@ -244,6 +247,9 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         self.deploy_error_message = deploy_error_message
         self.deploy_error_stage = deploy_error_stage
         self.fail_workflow_provision = fail_workflow_provision
+        self.workflow_provision_error_code = workflow_provision_error_code
+        self.workflow_provision_error_message = workflow_provision_error_message
+        self.workflow_provision_error_stage = workflow_provision_error_stage
         self.existing_workflow = existing_workflow
         self.existing_workflow_placeholder = existing_workflow_placeholder
         self.existing_workflow_custom = existing_workflow_custom
@@ -545,8 +551,9 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         )
         if self.fail_workflow_provision:
             raise SEOMigrationGitHubPublisherError(
-                code="workflow_provision_failed",
-                safe_message="Simulated workflow provisioning failure.",
+                code=self.workflow_provision_error_code or "workflow_provision_failed",
+                safe_message=self.workflow_provision_error_message or "Simulated workflow provisioning failure.",
+                stage=self.workflow_provision_error_stage,
             )
         provisioned = (not dry_run) and (not self.existing_workflow or self.existing_workflow_placeholder)
         managed_workflow_outcome: str | None = None
@@ -7629,6 +7636,92 @@ def test_publish_missing_repo_with_auto_create_enabled_creates_repo_and_continue
     assert publish_result.result.get("repository_auto_create_created") is True
     assert publish_result.result.get("repository_ensure_outcome") == "repo_created"
     assert publish_result.result.get("repo_ensure_outcome") == "created"
+
+
+@pytest.mark.parametrize(
+    ("provision_error_code", "expected_failure_category"),
+    (
+        ("github_workflow_write_not_authorized", "config_missing"),
+        ("github_contents_write_not_authorized", "config_missing"),
+        ("github_branch_not_found_or_uninitialized", "target_invalid"),
+        ("github_repo_state_invalid_for_bootstrap", "target_invalid"),
+    ),
+)
+def test_publish_new_repo_preserves_precise_workflow_provision_failure_code(
+    db_session,
+    caplog,
+    provision_error_code: str,
+    expected_failure_category: str,
+) -> None:
+    caplog.set_level("INFO", logger="app.services.seo_migration")
+    publisher = _RecordingGitHubPublisher(
+        existing_repository=False,
+        fail_workflow_provision=True,
+        workflow_provision_error_code=provision_error_code,
+        workflow_provision_error_message="Simulated workflow provisioning failure.",
+        workflow_provision_error_stage="workflow_provisioning",
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _set_admin_repo_auto_create_enabled(db_session, enabled=True)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes="Approved for publish",
+        principal_id="principal-1",
+    )
+
+    with pytest.raises(SEOMigrationValidationError, match="Simulated workflow provisioning failure"):
+        service.publish_artifact_version(
+            business_id=business_id,
+            site_id=site_id,
+            artifact_version_id=artifact.id,
+            dry_run=False,
+            commit_message="Publish migration",
+            analytics_measurement_id=None,
+            principal_id="principal-1",
+        )
+
+    assert publisher.ensure_repository_calls
+    assert any(call[2] is True and call[3] is True for call in publisher.ensure_repository_calls)
+    workspace = service.get_workspace(business_id=business_id, site_id=site_id)
+    publish_history = workspace.publish_history_json or []
+    assert publish_history
+    latest_history_item = publish_history[-1]
+    assert latest_history_item.get("status") == "failed"
+    assert latest_history_item.get("failure_reason") == provision_error_code
+    assert latest_history_item.get("repository_auto_create_created") is True
+    assert latest_history_item.get("repo_ensure_outcome") == "created"
+    assert latest_history_item.get("failure_reason") != "github_request_failed"
+
+    failed_action_logs = [
+        record.__dict__.get("json_fields")
+        for record in caplog.records
+        if isinstance(record.__dict__.get("json_fields"), dict)
+        and record.__dict__["json_fields"].get("event") == "seo_migration_control_plane_action"
+        and record.__dict__["json_fields"].get("action") == "publish"
+        and record.__dict__["json_fields"].get("status") == "failed"
+    ]
+    assert failed_action_logs
+    failed_payload = failed_action_logs[-1]
+    target_payload = failed_payload.get("target") or {}
+    assert failed_payload.get("failure_category") == expected_failure_category
+    assert target_payload.get("failure_reason_code") == provision_error_code
+    assert target_payload.get("failure_reason_code") != "github_request_failed"
+    assert target_payload.get("repository_auto_create_created") is True
+    assert target_payload.get("repo_ensure_outcome") == "created"
 
 
 def test_publish_readiness_reports_repo_auto_create_capability_for_missing_repo(db_session) -> None:

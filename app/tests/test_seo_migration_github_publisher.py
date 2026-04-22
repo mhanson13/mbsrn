@@ -2864,6 +2864,46 @@ def test_ensure_deploy_workflow_bootstraps_uninitialized_repo_branch(monkeypatch
     assert any(method == "POST" and url.endswith("/git/refs") for method, url in calls)
 
 
+def test_ensure_deploy_workflow_bootstraps_when_default_ref_lookup_returns_404(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    queue: list[object] = [
+        _FakeHTTPResponse(status=200, body=json.dumps({"default_branch": "main"})),
+        _http_error(
+            "https://api.github.com/repos/mhanson13/tnmfire/branches/main",
+            status_code=404,
+            message="Not Found",
+        ),
+        _FakeHTTPResponse(status=200, body=json.dumps({"default_branch": "main"})),
+        _http_error(
+            "https://api.github.com/repos/mhanson13/tnmfire/git/ref/heads/main",
+            status_code=404,
+            message="Reference does not exist",
+        ),
+        _FakeHTTPResponse(status=201, body=json.dumps({"sha": "blob-sha"})),
+        _FakeHTTPResponse(status=201, body=json.dumps({"sha": "tree-sha"})),
+        _FakeHTTPResponse(status=201, body=json.dumps({"sha": "commit-sha"})),
+        _FakeHTTPResponse(status=201, body="{}"),
+        _FakeHTTPResponse(status=200, body="{}"),
+    ]
+    queue.extend(_managed_provisioning_responses()[2:])
+    _install_urlopen_stub(monkeypatch, queue, calls)
+
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    result = publisher.ensure_deploy_workflow(
+        repo_owner="mhanson13",
+        repo_name="tnmfire",
+        branch="main",
+        workflow_id="deploy-tnmfire-www-prod.yml",
+        dry_run=False,
+    )
+
+    assert result.provisioned is True
+    assert any(method == "POST" and url.endswith("/git/blobs") for method, url in calls)
+    assert any(method == "POST" and url.endswith("/git/trees") for method, url in calls)
+    assert any(method == "POST" and url.endswith("/git/commits") for method, url in calls)
+    assert any(method == "POST" and url.endswith("/git/refs") for method, url in calls)
+
+
 def test_ensure_deploy_workflow_classifies_workflow_write_forbidden(monkeypatch, caplog) -> None:
     calls: list[tuple[str, str]] = []
     caplog.set_level("INFO", logger="app.integrations.seo_migration_github_publisher")
@@ -2985,6 +3025,36 @@ def test_ensure_deploy_workflow_classifies_contents_write_forbidden_on_manifest(
         )
 
     assert exc_info.value.code == "github_contents_write_not_authorized"
+    assert exc_info.value.stage == "workflow_provisioning"
+
+
+def test_ensure_deploy_workflow_classifies_generic_file_lookup_failure(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _FakeHTTPResponse(status=200, body=json.dumps({"default_branch": "main"})),
+            _FakeHTTPResponse(status=200, body="{}"),
+            _http_error(
+                "https://api.github.com/repos/mhanson13/tnmfire/contents/.github/workflows/deploy-tnmfire-www-prod.yml?ref=main",
+                status_code=422,
+                message="Validation Failed",
+            ),
+        ],
+        calls,
+    )
+
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    with pytest.raises(SEOMigrationGitHubPublisherError) as exc_info:
+        publisher.ensure_deploy_workflow(
+            repo_owner="mhanson13",
+            repo_name="tnmfire",
+            branch="main",
+            workflow_id="deploy-tnmfire-www-prod.yml",
+            dry_run=False,
+        )
+
+    assert exc_info.value.code == "github_workflow_provisioning_failed"
     assert exc_info.value.stage == "workflow_provisioning"
 
 

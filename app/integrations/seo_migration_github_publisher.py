@@ -2014,8 +2014,8 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                     "GitHub token is not authorized for deploy operations.",
                 ),
                 404: (
-                    "branch_not_found_or_ref_invalid",
-                    "GitHub deploy ref was not found or is invalid.",
+                    _GITHUB_REASON_BRANCH_UNINITIALIZED,
+                    "GitHub repository branch is missing or uninitialized for managed workflow provisioning.",
                 ),
                 409: (
                     _GITHUB_REASON_BRANCH_UNINITIALIZED,
@@ -3176,15 +3176,21 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         branch: str,
         path: str,
     ) -> dict[str, object] | None:
-        response_payload = self._request_json(
-            method="GET",
-            path=(
-                f"/repos/{urllib.parse.quote(repo_owner)}/{urllib.parse.quote(repo_name)}"
-                f"/contents/{urllib.parse.quote(path, safe='/')}?ref={urllib.parse.quote(branch, safe='')}"
-            ),
-            expected_statuses=(200,),
-            allow_404=True,
-        )
+        try:
+            response_payload = self._request_json(
+                method="GET",
+                path=(
+                    f"/repos/{urllib.parse.quote(repo_owner)}/{urllib.parse.quote(repo_name)}"
+                    f"/contents/{urllib.parse.quote(path, safe='/')}?ref={urllib.parse.quote(branch, safe='')}"
+                ),
+                expected_statuses=(200,),
+                allow_404=True,
+                error_stage="workflow_provisioning",
+            )
+        except SEOMigrationGitHubPublisherError as exc:
+            if exc.code == "github_request_failed":
+                raise self._classify_workflow_provisioning_request_failed(exc=exc) from exc
+            raise
         if isinstance(response_payload, dict):
             return response_payload
         return None
@@ -3381,6 +3387,9 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 "reference",
                 "repository is empty",
                 "no commit",
+                "no default branch",
+                "empty repository",
+                "uninitialized",
             )
             is_branch_state_error = exc.status_code == 409 or (
                 exc.status_code == 422
@@ -3436,6 +3445,45 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         del commit_sha
         return True, verified_sha, workflow_outcome
 
+    def _classify_workflow_provisioning_request_failed(
+        self,
+        *,
+        exc: SEOMigrationGitHubPublisherError,
+    ) -> SEOMigrationGitHubPublisherError:
+        provider_message = _sanitize_github_error_message(exc.provider_message)
+        provider_message_lower = (provider_message or "").lower()
+        branch_state_markers = (
+            "branch",
+            "ref",
+            "reference",
+            "repository is empty",
+            "empty repository",
+            "no commit",
+            "no default branch",
+            "uninitialized",
+        )
+        if exc.status_code == 409 or (
+            exc.status_code == 422
+            and (
+                not provider_message_lower
+                or any(marker in provider_message_lower for marker in branch_state_markers)
+            )
+        ):
+            return SEOMigrationGitHubPublisherError(
+                code=_GITHUB_REASON_BRANCH_UNINITIALIZED,
+                safe_message="GitHub repository branch is missing or uninitialized for managed workflow provisioning.",
+                status_code=exc.status_code,
+                stage=exc.stage or "workflow_provisioning",
+                provider_message=provider_message,
+            )
+        return SEOMigrationGitHubPublisherError(
+            code=_GITHUB_REASON_WORKFLOW_PROVISIONING_FAILED,
+            safe_message="GitHub managed workflow provisioning request failed.",
+            status_code=exc.status_code,
+            stage=exc.stage or "workflow_provisioning",
+            provider_message=provider_message,
+        )
+
     def _request_json(
         self,
         *,
@@ -3488,6 +3536,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 return None
         except urllib.error.HTTPError as exc:
             status_code = int(getattr(exc, "code", 0) or 0)
+            provider_message = _sanitize_github_error_message(self._extract_http_error_message(exc))
             if allow_404 and status_code == 404:
                 return None
             if status_error_map and status_code in status_error_map:
@@ -3497,6 +3546,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                     safe_message=safe_message,
                     status_code=status_code,
                     stage=error_stage,
+                    provider_message=provider_message,
                 ) from exc
             if status_code in {401, 403}:
                 raise SEOMigrationGitHubPublisherError(
@@ -3504,6 +3554,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                     safe_message="GitHub publish/deploy authentication failed.",
                     status_code=status_code,
                     stage=error_stage,
+                    provider_message=provider_message,
                 ) from exc
             if status_code == 404:
                 raise SEOMigrationGitHubPublisherError(
@@ -3511,6 +3562,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                     safe_message="GitHub repository or workflow target was not found.",
                     status_code=status_code,
                     stage=error_stage,
+                    provider_message=provider_message,
                 ) from exc
             if status_code in {408, 429, 500, 502, 503, 504}:
                 raise SEOMigrationGitHubPublisherError(
@@ -3518,12 +3570,14 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                     safe_message="GitHub publish/deploy request failed temporarily.",
                     status_code=status_code,
                     stage=error_stage,
+                    provider_message=provider_message,
                 ) from exc
             raise SEOMigrationGitHubPublisherError(
                 code="github_request_failed",
                 safe_message="GitHub publish/deploy request failed.",
                 status_code=status_code,
                 stage=error_stage,
+                provider_message=provider_message,
             ) from exc
         except json.JSONDecodeError as exc:
             raise SEOMigrationGitHubPublisherError(
