@@ -2794,6 +2794,7 @@ _MBSRN_MANAGED_SERVICE_FILE_PATH = "k8s/service.yaml"
 _MBSRN_MANAGED_INGRESS_FILE_PATH = "k8s/ingress.yaml"
 _MBSRN_MANAGED_CERTIFICATE_FILE_PATH = "k8s/managedcertificate.yaml"
 _MBSRN_MANAGED_FRONTEND_CONFIG_FILE_PATH = "k8s/frontendconfig.yaml"
+_MBSRN_MANAGED_BACKEND_CONFIG_FILE_PATH = "k8s/backendconfig.yaml"
 _MBSRN_MANAGED_RESOURCE_QUOTA_FILE_PATH = "k8s/resourcequota.yaml"
 _MBSRN_MANAGED_LIMIT_RANGE_FILE_PATH = "k8s/limitrange.yaml"
 _MBSRN_MANAGED_NETWORK_POLICY_FILE_PATH = "k8s/networkpolicy.yaml"
@@ -2808,6 +2809,7 @@ _MBSRN_MANAGED_CORE_MANIFEST_PATHS: tuple[str, ...] = (
     _MBSRN_MANAGED_INGRESS_FILE_PATH,
     _MBSRN_MANAGED_CERTIFICATE_FILE_PATH,
     _MBSRN_MANAGED_FRONTEND_CONFIG_FILE_PATH,
+    _MBSRN_MANAGED_BACKEND_CONFIG_FILE_PATH,
 )
 _MBSRN_MANAGED_OPTIONAL_POLICY_MANIFEST_PATHS: tuple[str, ...] = (
     _MBSRN_MANAGED_RESOURCE_QUOTA_FILE_PATH,
@@ -3459,6 +3461,7 @@ def _render_managed_gke_manifest_files(
         f"{labels}"
         "  annotations:\n"
         "    cloud.google.com/neg: '{\"ingress\": true}'\n"
+        "    cloud.google.com/backend-config: '{\"default\": \"site-web-backend-config\"}'\n"
         "spec:\n"
         "  selector:\n"
         "    app.kubernetes.io/name: site-web\n"
@@ -3521,6 +3524,25 @@ def _render_managed_gke_manifest_files(
         "  redirectToHttps:\n"
         "    enabled: true\n"
     )
+    backend_config_manifest = (
+        f"# {_MBSRN_MANAGED_MANIFEST_MARKER}\n"
+        "apiVersion: cloud.google.com/v1\n"
+        "kind: BackendConfig\n"
+        "metadata:\n"
+        "  name: site-web-backend-config\n"
+        f"  namespace: {namespace}\n"
+        "  labels:\n"
+        f"{labels}"
+        "spec:\n"
+        "  healthCheck:\n"
+        "    type: HTTP\n"
+        "    requestPath: /\n"
+        "    port: 8080\n"
+        "    checkIntervalSec: 10\n"
+        "    timeoutSec: 5\n"
+        "    healthyThreshold: 1\n"
+        "    unhealthyThreshold: 3\n"
+    )
     manifests: dict[str, str] = {
         _MBSRN_MANAGED_NAMESPACE_FILE_PATH: namespace_manifest,
         _MBSRN_MANAGED_DEPLOYMENT_FILE_PATH: deployment_manifest,
@@ -3528,6 +3550,7 @@ def _render_managed_gke_manifest_files(
         _MBSRN_MANAGED_INGRESS_FILE_PATH: ingress_manifest,
         _MBSRN_MANAGED_CERTIFICATE_FILE_PATH: managed_certificate_manifest,
         _MBSRN_MANAGED_FRONTEND_CONFIG_FILE_PATH: frontend_config_manifest,
+        _MBSRN_MANAGED_BACKEND_CONFIG_FILE_PATH: backend_config_manifest,
     }
     normalized_defaults = _normalize_namespace_isolation_defaults(namespace_isolation_defaults)
     resource_quota_defaults = normalized_defaults.get("resource_quota")

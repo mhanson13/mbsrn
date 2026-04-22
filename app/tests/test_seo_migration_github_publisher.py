@@ -157,6 +157,7 @@ def _managed_provisioning_responses(*, missing_verify_path: str | None = None) -
         "k8s/ingress.yaml",
         "k8s/managedcertificate.yaml",
         "k8s/frontendconfig.yaml",
+        "k8s/backendconfig.yaml",
     )
     for index, managed_path in enumerate(managed_paths, start=1):
         responses.append(
@@ -1003,6 +1004,10 @@ def test_check_deploy_target_readiness_reports_aligned_namespace_for_managed_tem
                     status=200,
                     body=json.dumps({"sha": "sha-frontendconfig", "encoding": "base64", "content": namespaced_manifest}),
                 ),
+                _FakeHTTPResponse(
+                    status=200,
+                    body=json.dumps({"sha": "sha-backendconfig", "encoding": "base64", "content": namespaced_manifest}),
+                ),
             *_gke_environment_config_present_responses(),
         ],
         calls,
@@ -1021,7 +1026,7 @@ def test_check_deploy_target_readiness_reports_aligned_namespace_for_managed_tem
     assert readiness.manifest_namespace_aligned is True
     assert readiness.dispatch_service_availability is True
     assert readiness.dispatch_service_reason_code == "available"
-    assert len(calls) == 13
+    assert len(calls) == 14
 
 
 def test_check_deploy_target_readiness_reports_misaligned_namespace_for_managed_template(monkeypatch) -> None:
@@ -1098,6 +1103,10 @@ def test_check_deploy_target_readiness_reports_misaligned_namespace_for_managed_
                     status=200,
                     body=json.dumps({"sha": "sha-frontendconfig", "encoding": "base64", "content": namespaced_manifest_wrong}),
                 ),
+                _FakeHTTPResponse(
+                    status=200,
+                    body=json.dumps({"sha": "sha-backendconfig", "encoding": "base64", "content": namespaced_manifest_wrong}),
+                ),
             *_gke_environment_config_present_responses(),
         ],
         calls,
@@ -1114,7 +1123,7 @@ def test_check_deploy_target_readiness_reports_misaligned_namespace_for_managed_
     assert readiness.manifest_namespace_aligned is False
     assert readiness.dispatch_service_availability is False
     assert readiness.dispatch_service_reason_code == "target_configuration_invalid"
-    assert len(calls) == 13
+    assert len(calls) == 14
 
 
 def test_check_deploy_target_readiness_flags_missing_cluster_name_configuration(monkeypatch) -> None:
@@ -1192,6 +1201,10 @@ def test_check_deploy_target_readiness_flags_missing_cluster_name_configuration(
                     status=200,
                     body=json.dumps({"sha": "sha-frontendconfig", "encoding": "base64", "content": namespaced_manifest}),
                 ),
+                _FakeHTTPResponse(
+                    status=200,
+                    body=json.dumps({"sha": "sha-backendconfig", "encoding": "base64", "content": namespaced_manifest}),
+                ),
             _http_error(
                 "https://api.github.com/repos/mhanson13/tnmfire/actions/variables/KUBERNETES_CLUSTER_NAME",
                 status_code=404,
@@ -1218,7 +1231,7 @@ def test_check_deploy_target_readiness_flags_missing_cluster_name_configuration(
     assert readiness.dispatch_service_availability is False
     assert readiness.dispatch_service_reason_code == "missing_cluster_name"
     assert readiness.workflow_conformance_status == "conformant"
-    assert len(calls) == 14
+    assert len(calls) == 15
 
 
 @pytest.mark.parametrize(
@@ -1324,6 +1337,10 @@ def test_check_deploy_target_readiness_uses_admin_managed_gke_config_first(
                 _FakeHTTPResponse(
                     status=200,
                     body=json.dumps({"sha": "sha-frontendconfig", "encoding": "base64", "content": namespaced_manifest}),
+                ),
+                _FakeHTTPResponse(
+                    status=200,
+                    body=json.dumps({"sha": "sha-backendconfig", "encoding": "base64", "content": namespaced_manifest}),
                 ),
             _http_error(
                 f"https://api.github.com/repos/mhanson13/tnmfire/actions/variables/{variable_name}",
@@ -1439,6 +1456,10 @@ def test_check_deploy_target_readiness_resolves_managed_gke_config_from_admin_wi
                     status=200,
                     body=json.dumps({"sha": "sha-frontendconfig", "encoding": "base64", "content": namespaced_manifest}),
                 ),
+                _FakeHTTPResponse(
+                    status=200,
+                    body=json.dumps({"sha": "sha-backendconfig", "encoding": "base64", "content": namespaced_manifest}),
+                ),
         ],
         calls,
     )
@@ -1462,7 +1483,7 @@ def test_check_deploy_target_readiness_resolves_managed_gke_config_from_admin_wi
         not (method == "GET" and ("/actions/variables/" in url or "/actions/secrets/" in url))
         for method, url in calls
     )
-    assert len(calls) == 10
+    assert len(calls) == 11
 
 
 def test_check_deploy_target_readiness_resolves_managed_gke_config_from_repo_fallback_when_admin_missing(
@@ -1542,6 +1563,10 @@ def test_check_deploy_target_readiness_resolves_managed_gke_config_from_repo_fal
                     status=200,
                     body=json.dumps({"sha": "sha-frontendconfig", "encoding": "base64", "content": namespaced_manifest}),
                 ),
+                _FakeHTTPResponse(
+                    status=200,
+                    body=json.dumps({"sha": "sha-backendconfig", "encoding": "base64", "content": namespaced_manifest}),
+                ),
             _FakeHTTPResponse(status=200, body=json.dumps({"name": "KUBERNETES_CLUSTER_NAME"})),
             _FakeHTTPResponse(status=200, body=json.dumps({"name": "KUBERNETES_CLUSTER_LOCATION"})),
             _FakeHTTPResponse(status=200, body=json.dumps({"name": "GCP_PROJECT_ID"})),
@@ -1565,7 +1590,7 @@ def test_check_deploy_target_readiness_resolves_managed_gke_config_from_repo_fal
         not (method == "GET" and "/actions/secrets/" in url)
         for method, url in calls
     )
-    assert len(calls) == 13
+    assert len(calls) == 14
 
 
 def test_check_deploy_target_readiness_treats_whitespace_admin_values_as_missing_and_uses_repo_fallback(
@@ -1645,6 +1670,10 @@ def test_check_deploy_target_readiness_treats_whitespace_admin_values_as_missing
                     status=200,
                     body=json.dumps({"sha": "sha-frontendconfig", "encoding": "base64", "content": namespaced_manifest}),
                 ),
+                _FakeHTTPResponse(
+                    status=200,
+                    body=json.dumps({"sha": "sha-backendconfig", "encoding": "base64", "content": namespaced_manifest}),
+                ),
             _FakeHTTPResponse(status=200, body=json.dumps({"name": "KUBERNETES_CLUSTER_NAME"})),
         ],
         calls,
@@ -1668,7 +1697,7 @@ def test_check_deploy_target_readiness_treats_whitespace_admin_values_as_missing
     cluster_resolution_details = details.get("cluster_name_resolution_details") or []
     assert "admin_config_missing" in cluster_resolution_details
     assert "resolved_from_repo_config" in cluster_resolution_details
-    assert len(calls) == 11
+    assert len(calls) == 12
 
 
 def test_dispatch_deploy_classifies_token_not_authorized(monkeypatch) -> None:
@@ -1769,6 +1798,10 @@ def test_dispatch_deploy_uses_admin_managed_gke_config_for_readiness_and_dispatc
                 _FakeHTTPResponse(
                     status=200,
                     body=json.dumps({"sha": "sha-frontendconfig", "encoding": "base64", "content": namespaced_manifest}),
+                ),
+                _FakeHTTPResponse(
+                    status=200,
+                    body=json.dumps({"sha": "sha-backendconfig", "encoding": "base64", "content": namespaced_manifest}),
                 ),
             _FakeHTTPResponse(status=204),
             _FakeHTTPResponse(status=200, body=json.dumps({"workflow_runs": []})),
@@ -1881,6 +1914,10 @@ def test_dispatch_deploy_blocks_when_gke_config_missing_in_admin_and_repo_fallba
                     status=200,
                     body=json.dumps({"sha": "sha-frontendconfig", "encoding": "base64", "content": namespaced_manifest}),
                 ),
+                _FakeHTTPResponse(
+                    status=200,
+                    body=json.dumps({"sha": "sha-backendconfig", "encoding": "base64", "content": namespaced_manifest}),
+                ),
             _http_error(
                 "https://api.github.com/repos/mhanson13/tnmfire/actions/variables/KUBERNETES_CLUSTER_NAME",
                 status_code=404,
@@ -1988,6 +2025,10 @@ def test_dispatch_deploy_uses_repo_fallback_when_admin_managed_gke_config_missin
                 _FakeHTTPResponse(
                     status=200,
                     body=json.dumps({"sha": "sha-frontendconfig", "encoding": "base64", "content": namespaced_manifest}),
+                ),
+                _FakeHTTPResponse(
+                    status=200,
+                    body=json.dumps({"sha": "sha-backendconfig", "encoding": "base64", "content": namespaced_manifest}),
                 ),
             _FakeHTTPResponse(status=200, body=json.dumps({"name": "KUBERNETES_CLUSTER_NAME"})),
             _FakeHTTPResponse(status=200, body=json.dumps({"name": "KUBERNETES_CLUSTER_LOCATION"})),
@@ -2467,7 +2508,7 @@ def test_ensure_deploy_workflow_creates_missing_file_and_verifies_presence(monke
     )
     assert result.provisioned is True
     assert result.workflow_path == ".github/workflows/deploy-tnmfire-www-prod.yml"
-    assert result.commit_sha == "verified-7"
+    assert result.commit_sha == "verified-8"
     assert result.kubernetes_namespace == "tnmfire"
     assert result.namespace_source == "repo_name"
     assert result.namespace_model_status == "aligned"
@@ -2478,6 +2519,7 @@ def test_ensure_deploy_workflow_creates_missing_file_and_verifies_presence(monke
         "k8s/ingress.yaml",
         "k8s/managedcertificate.yaml",
         "k8s/frontendconfig.yaml",
+        "k8s/backendconfig.yaml",
     )
     assert result.managed_resource_quota_expected is False
     assert result.managed_resource_quota_present is None
@@ -2487,7 +2529,7 @@ def test_ensure_deploy_workflow_creates_missing_file_and_verifies_presence(monke
     assert result.managed_network_policy_present is None
     assert result.managed_namespace_policies_aligned is True
     assert result.managed_workflow_outcome == "managed_workflow_created"
-    assert len(calls) == 24
+    assert len(calls) == 27
     assert calls[0][1].endswith("/repos/mhanson13/tnmfire")
     assert calls[1][1].endswith("/repos/mhanson13/tnmfire/branches/main")
     assert calls[2][1].endswith("/contents/.github/workflows/deploy-tnmfire-www-prod.yml?ref=main")
@@ -2498,6 +2540,7 @@ def test_ensure_deploy_workflow_creates_missing_file_and_verifies_presence(monke
     assert any(call[1].endswith("/contents/k8s/ingress.yaml?ref=main") for call in calls)
     assert any(call[1].endswith("/contents/k8s/managedcertificate.yaml?ref=main") for call in calls)
     assert any(call[1].endswith("/contents/k8s/frontendconfig.yaml?ref=main") for call in calls)
+    assert any(call[1].endswith("/contents/k8s/backendconfig.yaml?ref=main") for call in calls)
 
 
 def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> None:
@@ -2508,6 +2551,7 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     captured_ingress_put_payload: dict[str, object] = {}
     captured_managed_certificate_put_payload: dict[str, object] = {}
     captured_frontend_config_put_payload: dict[str, object] = {}
+    captured_backend_config_put_payload: dict[str, object] = {}
     queue = _managed_provisioning_responses()
 
     def _stub(request, timeout=None):
@@ -2549,6 +2593,12 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
             and request.data
         ):
             captured_frontend_config_put_payload.update(json.loads(request.data.decode("utf-8")))
+        if (
+            request.get_method() == "PUT"
+            and request.full_url.endswith("/contents/k8s/backendconfig.yaml")
+            and request.data
+        ):
+            captured_backend_config_put_payload.update(json.loads(request.data.decode("utf-8")))
         next_item = queue.pop(0)
         if isinstance(next_item, Exception):
             raise next_item
@@ -2581,6 +2631,9 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     encoded_frontend_config_content = str(captured_frontend_config_put_payload.get("content") or "")
     assert encoded_frontend_config_content
     frontend_config_yaml = base64.b64decode(encoded_frontend_config_content).decode("utf-8")
+    encoded_backend_config_content = str(captured_backend_config_put_payload.get("content") or "")
+    assert encoded_backend_config_content
+    backend_config_yaml = base64.b64decode(encoded_backend_config_content).decode("utf-8")
     assert "workflow_dispatch" in workflow_yaml
     assert "permissions:" in workflow_yaml
     assert "packages: read" in workflow_yaml
@@ -2726,6 +2779,7 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "memory: 512Mi" in deployment_yaml
     assert "targetPort: 8080" in service_yaml
     assert "cloud.google.com/neg: '{\"ingress\": true}'" in service_yaml
+    assert "cloud.google.com/backend-config: '{\"default\": \"site-web-backend-config\"}'" in service_yaml
     assert "kubernetes.io/ingress.class: gce" in ingress_yaml
     assert "networking.gke.io/managed-certificates: site-web-preview-cert" in ingress_yaml
     assert "networking.gke.io/v1beta1.FrontendConfig: site-web-frontend-config" in ingress_yaml
@@ -2739,7 +2793,11 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "name: site-web-frontend-config" in frontend_config_yaml
     assert "redirectToHttps:" in frontend_config_yaml
     assert "enabled: true" in frontend_config_yaml
-    assert len(calls) == 24
+    assert "kind: BackendConfig" in backend_config_yaml
+    assert "name: site-web-backend-config" in backend_config_yaml
+    assert "requestPath: /" in backend_config_yaml
+    assert "port: 8080" in backend_config_yaml
+    assert len(calls) == 27
 
 
 def test_ensure_deploy_workflow_renders_admin_managed_gke_values_before_repo_fallback(monkeypatch) -> None:
@@ -2813,7 +2871,7 @@ def test_ensure_deploy_workflow_upgrades_platform_managed_placeholder_workflow(m
         _FakeHTTPResponse(status=201, body=json.dumps({"commit": {"sha": "workflow-commit"}})),
         _managed_workflow_verify_response(sha="workflow-verified-upsert"),
     ]
-    for index in range(1, 7):
+    for index in range(1, 8):
         queue.append(
             _FakeHTTPResponse(
                 status=200,
@@ -2896,7 +2954,7 @@ def test_ensure_deploy_workflow_upgrades_legacy_platform_placeholder_workflow(mo
         _FakeHTTPResponse(status=201, body=json.dumps({"commit": {"sha": "workflow-commit"}})),
         _managed_workflow_verify_response(sha="workflow-verified-upsert"),
     ]
-    for index in range(1, 7):
+    for index in range(1, 8):
         queue.append(
             _FakeHTTPResponse(
                 status=200,
@@ -3105,7 +3163,7 @@ def test_ensure_deploy_workflow_preserves_unknown_custom_workflow(monkeypatch) -
             body=json.dumps({"sha": "custom-workflow-sha", "encoding": "base64", "content": custom_workflow_content}),
         ),
     ]
-    for index in range(1, 7):
+    for index in range(1, 8):
         queue.append(
             _FakeHTTPResponse(
                 status=200,
@@ -3152,6 +3210,7 @@ def test_ensure_deploy_workflow_includes_optional_namespace_policy_manifests_whe
         "k8s/ingress.yaml",
         "k8s/managedcertificate.yaml",
         "k8s/frontendconfig.yaml",
+        "k8s/backendconfig.yaml",
         "k8s/resourcequota.yaml",
         "k8s/limitrange.yaml",
         "k8s/networkpolicy.yaml",
@@ -3183,6 +3242,7 @@ def test_ensure_deploy_workflow_includes_optional_namespace_policy_manifests_whe
         "k8s/ingress.yaml",
         "k8s/managedcertificate.yaml",
         "k8s/frontendconfig.yaml",
+        "k8s/backendconfig.yaml",
         "k8s/resourcequota.yaml",
         "k8s/limitrange.yaml",
         "k8s/networkpolicy.yaml",
@@ -3239,7 +3299,7 @@ def test_ensure_deploy_workflow_fails_when_upgraded_workflow_is_not_conformant(m
         _FakeHTTPResponse(status=201, body=json.dumps({"commit": {"sha": "workflow-commit"}})),
         _managed_workflow_verify_response(sha="workflow-verified-upsert"),
     ]
-    for index in range(1, 7):
+    for index in range(1, 8):
         queue.append(
             _FakeHTTPResponse(
                 status=200,
@@ -3346,6 +3406,7 @@ def test_check_deploy_target_readiness_flags_missing_expected_resource_quota_man
             _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-ingress", "encoding": "base64", "content": namespaced_manifest})),
             _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-managedcertificate", "encoding": "base64", "content": namespaced_manifest})),
             _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-frontendconfig", "encoding": "base64", "content": namespaced_manifest})),
+            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-backendconfig", "encoding": "base64", "content": namespaced_manifest})),
             _http_error(
                 "https://api.github.com/repos/mhanson13/tnmfire/contents/k8s/resourcequota.yaml?ref=main",
                 status_code=404,
