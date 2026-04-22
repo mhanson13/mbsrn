@@ -2778,7 +2778,7 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
               Enable managed repository auto-create for missing publish targets
             </label>
             <p className="hint muted">
-              Admin-owned policy. When enabled, publish can create missing repositories under the configured owner.
+              Admin-owned policy. When enabled, the runtime GitHub token can create missing repositories under the configured owner only.
             </p>
             <p className="hint muted">
               Managed GKE target fields below are admin-owned source of truth. Repo vars/secrets remain legacy fallback only.

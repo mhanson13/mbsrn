@@ -296,11 +296,13 @@ It transforms a business's website and market context into structured insights a
 - publish now enforces workflow bootstrap verification on every non-dry-run publish for target/generated repos:
   - checks/verifies `.github/workflows/{workflow_id}` on target branch
   - provisions missing workflow file before publish is considered valid
+  - initializes uninitialized target refs for managed bootstrap writes when safe
   - fails publish if provisioning cannot be verified (`workflow_provisioning_failed`)
   - keeps duplicate artifact write protection while allowing workflow-repair publishes (`duplicate_publish_repair`) when content already exists but workflow is missing
 - deploy now prefers authoritative workflow identity captured at publish time (`deploy_workflow_id` / `deploy_workflow_path`) before falling back to workspace/default workflow ids, preventing stale workspace workflow drift from blocking dispatch.
 - deploy now records requested-vs-used workflow identifiers (`workflow_identifier_requested`, `workflow_identifier_used`) plus identifier type/resolution source fields so dispatch by workflow id vs file-derived identifier is explicit in control-plane diagnostics.
 - deploy target lookup failures are now classified with non-secret reason codes (`repo_not_found`, `workflow_not_found`, `branch_not_found_or_ref_invalid`, `workflow_not_dispatchable`, `workflow_dispatch_not_supported`, `token_not_authorized`) for clearer control-plane troubleshooting.
+- publish/bootstrap failures now include narrow GitHub provisioning codes for operator/admin triage (`github_branch_not_found_or_uninitialized`, `github_repo_state_invalid_for_bootstrap`, `github_workflow_write_not_authorized`, `github_contents_write_not_authorized`, `github_workflow_provisioning_failed`).
 - deploy now emits an explicit managed-target readiness preflight (`seo_migration_target_readiness_check`) for the authoritative tuple (repo owner/name, ref, workflow id/path) so dispatch never relies on implicit repo/ref/workflow assumptions.
 - deploy diagnostics now model a distinct dispatch-service availability stage (`dispatch_service_availability`, `dispatch_service_reason_code`) so operators can distinguish workflow identity/trigger support from downstream service/function readiness before dispatch.
 - deploy readiness now adds deterministic workflow conformance checks (`workflow_conformance_status`, `workflow_conformance_reasons`) so placeholder/non-conformant workflow content is distinguished from deploy-capable managed workflows before or alongside dispatch attempts.

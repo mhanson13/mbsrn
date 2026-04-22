@@ -966,6 +966,69 @@ describe("site migration workflow route", () => {
     expect(within(destinationSummary).getByText("mhanson13/tnmfire")).toBeInTheDocument();
   });
 
+  it("shows repository provisioning guidance when publish will auto-create a missing repo", async () => {
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(
+      buildMigrationWorkspaceSummary({
+        publish_readiness: {
+          ready: true,
+          reasons: [],
+          target: {
+            enabled: true,
+            repo_owner: "mhanson13",
+            repo_name: "tnmfire",
+            branch: "main",
+            artifact_root: "/",
+            repository_exists: false,
+            repository_auto_create_enabled: true,
+            repository_auto_create_available: true,
+            repo_ensure_outcome: "would_create_on_publish",
+          },
+        },
+      }),
+    );
+
+    render(<SiteMigrationWorkflowPage />);
+
+    const destinationSummary = await screen.findByTestId("migration-destination-summary");
+    expect(
+      within(destinationSummary).getByText(
+        "Missing repository will be auto-created on live publish (admin policy enabled).",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("shows repository provisioning authorization guidance when runtime token cannot create repos", async () => {
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(
+      buildMigrationWorkspaceSummary({
+        publish_readiness: {
+          ready: false,
+          reasons: ["GitHub runtime is not authorized to inspect the configured publish repository target."],
+          target: {
+            enabled: true,
+            repo_owner: "mhanson13",
+            repo_name: "tnmfire",
+            branch: "main",
+            artifact_root: "/",
+            repository_exists: false,
+            repository_auto_create_enabled: true,
+            repository_ensure_outcome: "check_failed",
+            repository_ensure_failure_reason_code: "repo_auto_create_not_authorized",
+            repo_ensure_outcome: "failed_not_authorized",
+          },
+        },
+      }),
+    );
+
+    render(<SiteMigrationWorkflowPage />);
+
+    const destinationSummary = await screen.findByTestId("migration-destination-summary");
+    expect(
+      within(destinationSummary).getByText(
+        "Runtime token is not authorized to create repositories under the configured owner.",
+      ),
+    ).toBeInTheDocument();
+  });
+
   it("renders advanced diagnostics and history with collapsible publish/deploy history panels", async () => {
     const user = userEvent.setup();
     render(<SiteMigrationWorkflowPage />);

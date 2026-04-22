@@ -1057,6 +1057,7 @@ class SEOMigrationService:
         repository_exists: bool | None = None
         repository_ensure_outcome: str | None = None
         repository_ensure_skipped_reason: str | None = None
+        repo_ensure_outcome: str | None = None
         workflow_provisioning_verified = False
         workflow_resolution_for_provision: dict[str, object] | None = None
         expected_publish_url: str | None = None
@@ -1086,6 +1087,31 @@ class SEOMigrationService:
             )
             or _DEPLOY_TARGET_ENVIRONMENT_SOURCE_ADMIN
         )
+        if dry_run:
+            readiness_target = _normalize_json_dict(readiness.get("target"))
+            repository_exists = (
+                bool(readiness_target.get("repository_exists"))
+                if isinstance(readiness_target.get("repository_exists"), bool)
+                else None
+            )
+            repository_ensure_outcome = _normalize_string(
+                readiness_target.get("repository_ensure_outcome"),
+                max_length=80,
+            )
+            repository_ensure_skipped_reason = _normalize_string(
+                readiness_target.get("repository_ensure_skipped_reason"),
+                max_length=80,
+            )
+            repo_ensure_outcome = _derive_repo_ensure_outcome(
+                repository_exists=repository_exists,
+                repository_auto_create_created=False,
+                repository_auto_create_enabled=repository_auto_create_enabled,
+                repository_ensure_outcome=repository_ensure_outcome,
+                failure_reason_code=_normalize_string(
+                    readiness_target.get("repository_ensure_failure_reason_code"),
+                    max_length=80,
+                ),
+            )
         try:
             if not dry_run:
                 repository_ensure_result: SEOMigrationGitHubRepositoryEnsureResult = (
@@ -1107,6 +1133,13 @@ class SEOMigrationService:
                 repository_ensure_skipped_reason = _normalize_string(
                     repository_ensure_result.skipped_reason,
                     max_length=80,
+                )
+                repo_ensure_outcome = _derive_repo_ensure_outcome(
+                    repository_exists=repository_exists,
+                    repository_auto_create_created=repository_auto_create_created,
+                    repository_auto_create_enabled=repository_auto_create_enabled,
+                    repository_ensure_outcome=repository_ensure_outcome,
+                    failure_reason_code=None,
                 )
             deploy_target_for_workflow: dict[str, object] | None = None
             try:
@@ -1236,6 +1269,7 @@ class SEOMigrationService:
                     managed_network_policy_present=deploy_workflow_provision_result.managed_network_policy_present,
                     managed_namespace_policies_aligned=deploy_workflow_provision_result.managed_namespace_policies_aligned,
                     workflow_remediation_outcome=workflow_remediation_outcome,
+                    repository_auto_create_created=repository_auto_create_created,
                     commit_sha=deploy_workflow_provision_result.commit_sha,
                     verified=True,
                 )
@@ -1267,6 +1301,7 @@ class SEOMigrationService:
                     managed_network_policy_present=deploy_workflow_provision_result.managed_network_policy_present,
                     managed_namespace_policies_aligned=deploy_workflow_provision_result.managed_namespace_policies_aligned,
                     workflow_remediation_outcome=workflow_remediation_outcome,
+                    repository_auto_create_created=repository_auto_create_created,
                     commit_sha=deploy_workflow_provision_result.commit_sha,
                     verified=True,
                 )
@@ -1333,6 +1368,13 @@ class SEOMigrationService:
                             "deploy_secret_propagation_status": deploy_secret_propagation_status,
                             "deploy_secret_propagation_reason": deploy_secret_propagation_reason,
                             "deploy_secret_propagation_source": deploy_secret_propagation_source,
+                            "repository_auto_create_enabled": repository_auto_create_enabled,
+                            "repository_ensure_attempted": repository_ensure_attempted,
+                            "repository_auto_create_created": repository_auto_create_created,
+                            "repository_exists": repository_exists,
+                            "repository_ensure_outcome": repository_ensure_outcome,
+                            "repository_ensure_skipped_reason": repository_ensure_skipped_reason,
+                            "repo_ensure_outcome": repo_ensure_outcome,
                         },
                         failure_category="duplicate_request",
                         failure_reason=failure_message,
@@ -1352,6 +1394,14 @@ class SEOMigrationService:
                     dry_run=dry_run,
                 )
         except SEOMigrationGitHubPublisherError as exc:
+            if repo_ensure_outcome is None:
+                repo_ensure_outcome = _derive_repo_ensure_outcome(
+                    repository_exists=repository_exists,
+                    repository_auto_create_created=repository_auto_create_created,
+                    repository_auto_create_enabled=repository_auto_create_enabled,
+                    repository_ensure_outcome=repository_ensure_outcome,
+                    failure_reason_code=_normalize_string(exc.code, max_length=80),
+                )
             if workflow_provisioning_remediation_mode:
                 workflow_remediation_outcome = _derive_workflow_remediation_outcome(
                     remediation_attempted=workflow_remediation_attempted,
@@ -1475,9 +1525,12 @@ class SEOMigrationService:
                         else None
                     ),
                     workflow_remediation_outcome=workflow_remediation_outcome,
+                    repository_auto_create_created=repository_auto_create_created,
                     verified=workflow_provisioning_verified,
                     error_code=exc.code,
                     error_message=exc.safe_message,
+                    error_stage=exc.stage,
+                    error_status_code=exc.status_code,
                 )
             failure_category = self._categorize_publisher_failure(exc=exc, action="publish")
             artifact.publish_status = "publish_failed"
@@ -1514,6 +1567,7 @@ class SEOMigrationService:
                     "repository_exists": repository_exists,
                     "repository_ensure_outcome": repository_ensure_outcome,
                     "repository_ensure_skipped_reason": repository_ensure_skipped_reason,
+                    "repo_ensure_outcome": repo_ensure_outcome,
                     "failure_reason": _normalize_string(exc.code, max_length=80),
                     "failure_category": failure_category,
                     "error": exc.safe_message,
@@ -1551,6 +1605,7 @@ class SEOMigrationService:
                     "repository_exists": repository_exists,
                     "repository_ensure_outcome": repository_ensure_outcome,
                     "repository_ensure_skipped_reason": repository_ensure_skipped_reason,
+                    "repo_ensure_outcome": repo_ensure_outcome,
                     "kubernetes_namespace": (
                         deploy_workflow_provision_result.kubernetes_namespace
                         if deploy_workflow_provision_result is not None
@@ -1644,6 +1699,7 @@ class SEOMigrationService:
             "repository_exists": repository_exists,
             "repository_ensure_outcome": repository_ensure_outcome,
             "repository_ensure_skipped_reason": repository_ensure_skipped_reason,
+            "repo_ensure_outcome": repo_ensure_outcome,
             "workflow_provisioning_verified": workflow_provisioning_verified,
             "deploy_workflow_mode": deploy_workflow_mode,
             "target_environment_key": target_environment_key,
@@ -1756,6 +1812,7 @@ class SEOMigrationService:
                 "repository_exists": repository_exists,
                 "repository_ensure_outcome": repository_ensure_outcome,
                 "repository_ensure_skipped_reason": repository_ensure_skipped_reason,
+                "repo_ensure_outcome": repo_ensure_outcome,
                 "workflow_provisioning_verified": workflow_provisioning_verified,
                 "deploy_workflow_mode": deploy_workflow_mode,
                 "target_environment_key": target_environment_key,
@@ -8483,10 +8540,13 @@ class SEOMigrationService:
         managed_network_policy_present: bool | None = None,
         managed_namespace_policies_aligned: bool | None = None,
         workflow_remediation_outcome: str | None = None,
+        repository_auto_create_created: bool | None = None,
         commit_sha: str | None = None,
         verified: bool | None = None,
         error_code: str | None = None,
         error_message: str | None = None,
+        error_stage: str | None = None,
+        error_status_code: int | None = None,
     ) -> None:
         payload: dict[str, object] = {
             "event": _MIGRATION_WORKFLOW_PROVISIONING_LOG_EVENT,
@@ -8550,6 +8610,8 @@ class SEOMigrationService:
         )
         if normalized_workflow_remediation_outcome:
             payload["workflow_remediation_outcome"] = normalized_workflow_remediation_outcome
+        if repository_auto_create_created is not None:
+            payload["repository_auto_create_created"] = bool(repository_auto_create_created)
         normalized_sha = _normalize_string(commit_sha, max_length=80)
         if normalized_sha:
             payload["commit_sha"] = normalized_sha
@@ -8561,6 +8623,11 @@ class SEOMigrationService:
         normalized_error_message = _normalize_string(error_message, max_length=300)
         if normalized_error_message:
             payload["error_message"] = normalized_error_message
+        normalized_error_stage = _normalize_string(error_stage, max_length=60)
+        if normalized_error_stage:
+            payload["error_stage"] = normalized_error_stage
+        if error_status_code is not None:
+            payload["http_status_code"] = int(error_status_code)
         level = logging.INFO if payload["status"] != "failed" else logging.WARNING
         self._emit_structured_service_log(
             payload=payload,
@@ -9969,6 +10036,8 @@ class SEOMigrationService:
             "repo_auto_create_disabled",
             "repo_auto_create_not_authorized",
             "repo_create_failed_runtime_unavailable",
+            "github_workflow_write_not_authorized",
+            "github_contents_write_not_authorized",
         }:
             return "config_missing"
         if code in {
@@ -9976,6 +10045,9 @@ class SEOMigrationService:
             "github_workflow_invalid",
             "workflow_provisioning_failed",
             "workflow_provision_failed",
+            "github_workflow_provisioning_failed",
+            "github_branch_not_found_or_uninitialized",
+            "github_repo_state_invalid_for_bootstrap",
             _DEPLOY_TARGET_REASON_REPO_NOT_FOUND,
             _DEPLOY_TARGET_REASON_WORKFLOW_NOT_FOUND,
             _DEPLOY_TARGET_REASON_REF_INVALID,
@@ -10523,6 +10595,7 @@ class SEOMigrationService:
         target_valid = False
         repository_exists: bool | None = None
         repository_ensure_outcome: str | None = None
+        repo_ensure_outcome: str | None = None
         effective_publish_config, admin_prerequisites, admin_reasons = self._build_effective_publish_config(
             workspace_publish_config=workspace.publish_config_json,
             require_admin=True,
@@ -10590,6 +10663,14 @@ class SEOMigrationService:
                 repository_ensure_outcome = "check_failed"
                 target_summary["repository_ensure_outcome"] = repository_ensure_outcome
                 target_summary["repository_ensure_failure_reason_code"] = _normalize_string(exc.code, max_length=80)
+                repo_ensure_outcome = _derive_repo_ensure_outcome(
+                    repository_exists=repository_exists,
+                    repository_auto_create_created=False,
+                    repository_auto_create_enabled=repository_auto_create_enabled,
+                    repository_ensure_outcome=repository_ensure_outcome,
+                    failure_reason_code=_normalize_string(exc.code, max_length=80),
+                )
+                target_summary["repo_ensure_outcome"] = repo_ensure_outcome
                 normalized_reason_code = _normalize_string(exc.code, max_length=80)
                 if normalized_reason_code in {
                     "repo_create_failed_invalid_name",
@@ -10621,6 +10702,14 @@ class SEOMigrationService:
                 target_summary["repository_auto_create_available"] = bool(
                     repository_auto_create_enabled and not repository_exists
                 )
+                repo_ensure_outcome = _derive_repo_ensure_outcome(
+                    repository_exists=repository_exists,
+                    repository_auto_create_created=bool(repo_status.auto_create_created),
+                    repository_auto_create_enabled=repository_auto_create_enabled,
+                    repository_ensure_outcome=repository_ensure_outcome,
+                    failure_reason_code=None,
+                )
+                target_summary["repo_ensure_outcome"] = repo_ensure_outcome
                 if not repository_exists and not repository_auto_create_enabled:
                     reasons.append(
                         "Publish target repository was not found and admin repository auto-create is disabled."
@@ -10648,6 +10737,7 @@ class SEOMigrationService:
                 "target_enabled": bool(target_summary.get("enabled")),
                 "publish_target_repo_exists": repository_exists,
                 "publish_target_repo_ensure_outcome": repository_ensure_outcome,
+                "publish_target_repo_ensure_summary": repo_ensure_outcome,
                 "publish_target_repo_auto_create_available": bool(
                     repository_auto_create_enabled and repository_exists is False
                 ),
@@ -11734,6 +11824,37 @@ def _resolve_deploy_target(
     }
 
 
+def _derive_repo_ensure_outcome(
+    *,
+    repository_exists: bool | None,
+    repository_auto_create_created: bool,
+    repository_auto_create_enabled: bool,
+    repository_ensure_outcome: str | None,
+    failure_reason_code: str | None,
+) -> str:
+    normalized_failure = _normalize_string(failure_reason_code, max_length=80)
+    if normalized_failure:
+        failure_map = {
+            "repo_auto_create_not_authorized": "failed_not_authorized",
+            "repo_create_failed_owner_mismatch": "failed_owner_mismatch",
+            "repo_create_failed_invalid_name": "failed_invalid_name",
+            "repo_create_failed_conflict": "failed_conflict",
+            "repo_create_failed_runtime_unavailable": "failed_runtime_unavailable",
+            "repo_auto_create_disabled": "skipped_policy_disabled",
+        }
+        return failure_map.get(normalized_failure, "failed_unknown")
+    if repository_auto_create_created:
+        return "created"
+    if repository_exists is True:
+        return "exists"
+    normalized_outcome = _normalize_string(repository_ensure_outcome, max_length=80)
+    if normalized_outcome == "repo_missing":
+        return "would_create_on_publish" if repository_auto_create_enabled else "skipped_policy_disabled"
+    if normalized_outcome == "check_failed":
+        return "failed_unknown"
+    return "unknown"
+
+
 def _normalize_deploy_failure_reason_code(value: object) -> str | None:
     normalized = _normalize_string(value, max_length=80)
     if not normalized:
@@ -11760,6 +11881,11 @@ def _normalize_deploy_failure_reason_code(value: object) -> str | None:
         "repo_create_failed_owner_mismatch",
         "repo_create_failed_conflict",
         "repo_create_failed_runtime_unavailable",
+        "github_workflow_write_not_authorized",
+        "github_contents_write_not_authorized",
+        "github_workflow_provisioning_failed",
+        "github_branch_not_found_or_uninitialized",
+        "github_repo_state_invalid_for_bootstrap",
     }
     if normalized_lower in allowed:
         return normalized_lower

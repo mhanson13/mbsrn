@@ -17,6 +17,11 @@ from app.core.time import utc_now
 _LOGGER = logging.getLogger(__name__)
 _VALID_REPO_OWNER_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{0,38}$")
 _VALID_REPO_NAME_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,100}$")
+_GITHUB_REASON_WORKFLOW_WRITE_NOT_AUTHORIZED = "github_workflow_write_not_authorized"
+_GITHUB_REASON_CONTENTS_WRITE_NOT_AUTHORIZED = "github_contents_write_not_authorized"
+_GITHUB_REASON_BRANCH_UNINITIALIZED = "github_branch_not_found_or_uninitialized"
+_GITHUB_REASON_REPO_BOOTSTRAP_INVALID = "github_repo_state_invalid_for_bootstrap"
+_GITHUB_REASON_WORKFLOW_PROVISIONING_FAILED = "github_workflow_provisioning_failed"
 
 
 @dataclass(frozen=True)
@@ -193,6 +198,7 @@ class SEOMigrationGitHubPublisherError(RuntimeError):
     safe_message: str
     status_code: int | None = None
     stage: str | None = None
+    provider_message: str | None = None
 
     def __str__(self) -> str:
         return self.safe_message
@@ -623,6 +629,35 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 expected_owner=normalized_expected_owner,
             )
         except SEOMigrationGitHubPublisherError as exc:
+            if exc.code == "repo_create_failed_conflict":
+                try:
+                    self._ensure_repo_exists(repo_owner=normalized_owner, repo_name=normalized_repo)
+                except SEOMigrationGitHubPublisherError:
+                    pass
+                else:
+                    _emit_structured_publisher_log(
+                        payload={
+                            "event": "seo_migration_repo_auto_create_succeeded",
+                            "repo_owner": normalized_owner,
+                            "repo_name": normalized_repo,
+                            "auto_create_enabled": auto_create_enabled_value,
+                            "create_mode": "race_conflict_repo_exists",
+                            "outcome": "repo_exists",
+                            "race_conflict_resolved": True,
+                        },
+                        fallback_message="seo_migration_repo_auto_create_succeeded",
+                        level=logging.INFO,
+                    )
+                    return SEOMigrationGitHubRepositoryEnsureResult(
+                        repo_owner=normalized_owner,
+                        repo_name=normalized_repo,
+                        exists=True,
+                        auto_create_enabled=auto_create_enabled_value,
+                        auto_create_attempted=True,
+                        auto_create_created=False,
+                        outcome="repo_exists",
+                        skipped_reason="created_during_race",
+                    )
             _emit_structured_publisher_log(
                 payload={
                     "event": "seo_migration_repo_auto_create_failed",
@@ -1630,6 +1665,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 return response_body if response_body else None
         except urllib.error.HTTPError as exc:
             status_code = int(getattr(exc, "code", 0) or 0)
+            provider_message = _sanitize_github_error_message(self._extract_http_error_message(exc))
             if allow_404 and status_code == 404:
                 return None
             if status_error_map and status_code in status_error_map:
@@ -1639,6 +1675,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                     safe_message=safe_message,
                     status_code=status_code,
                     stage=error_stage,
+                    provider_message=provider_message,
                 ) from exc
             if status_code in {401, 403}:
                 raise SEOMigrationGitHubPublisherError(
@@ -1646,6 +1683,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                     safe_message="GitHub publish/deploy authentication failed.",
                     status_code=status_code,
                     stage=error_stage,
+                    provider_message=provider_message,
                 ) from exc
             if status_code == 404:
                 raise SEOMigrationGitHubPublisherError(
@@ -1653,6 +1691,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                     safe_message="GitHub repository or workflow target was not found.",
                     status_code=status_code,
                     stage=error_stage,
+                    provider_message=provider_message,
                 ) from exc
             if status_code in {408, 429, 500, 502, 503, 504}:
                 raise SEOMigrationGitHubPublisherError(
@@ -1660,12 +1699,14 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                     safe_message="GitHub publish/deploy request failed temporarily.",
                     status_code=status_code,
                     stage=error_stage,
+                    provider_message=provider_message,
                 ) from exc
             raise SEOMigrationGitHubPublisherError(
                 code="github_request_failed",
                 safe_message="GitHub publish/deploy request failed.",
                 status_code=status_code,
                 stage=error_stage,
+                provider_message=provider_message,
             ) from exc
         except (TimeoutError, socket.timeout) as exc:
             raise SEOMigrationGitHubPublisherError(
@@ -1723,6 +1764,18 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 safe_message="GitHub deploy ref was not found or is invalid.",
                 stage="ref_lookup",
             )
+        _emit_structured_publisher_log(
+            payload={
+                "event": "seo_migration_workflow_provisioning_operation",
+                "operation_kind": "ref_check",
+                "operation_status": "started",
+                "repo_owner": repo_owner,
+                "repo_name": repo_name,
+                "ref": normalized_ref,
+            },
+            fallback_message="seo_migration_workflow_provisioning_operation",
+            level=logging.INFO,
+        )
         branch_exists = self._request_json(
             method="GET",
             path=(
@@ -1744,6 +1797,22 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             error_stage="ref_lookup",
         )
         if isinstance(branch_exists, dict):
+            _emit_structured_publisher_log(
+                payload={
+                    "event": "seo_migration_workflow_provisioning_operation",
+                    "operation_kind": "ref_check",
+                    "operation_status": "succeeded",
+                    "repo_owner": repo_owner,
+                    "repo_name": repo_name,
+                    "ref": normalized_ref,
+                    "branch_exists_verified": True,
+                    "repo_bootstrap_required": False,
+                    "repo_bootstrap_completed": False,
+                    "repo_bootstrap_state": "ref_exists",
+                },
+                fallback_message="seo_migration_workflow_provisioning_operation",
+                level=logging.INFO,
+            )
             return
         if not allow_repair:
             raise SEOMigrationGitHubPublisherError(
@@ -1752,11 +1821,82 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 stage="ref_lookup",
             )
         default_branch = self._resolve_default_branch(repo_owner=repo_owner, repo_name=repo_name)
-        default_branch_sha = self._resolve_branch_head_sha(
-            repo_owner=repo_owner,
-            repo_name=repo_name,
-            branch=default_branch,
-        )
+        try:
+            default_branch_sha = self._resolve_branch_head_sha(
+                repo_owner=repo_owner,
+                repo_name=repo_name,
+                branch=default_branch,
+            )
+        except SEOMigrationGitHubPublisherError as exc:
+            if exc.code != _GITHUB_REASON_BRANCH_UNINITIALIZED:
+                raise
+            _emit_structured_publisher_log(
+                payload={
+                    "event": "seo_migration_workflow_provisioning_operation",
+                    "operation_kind": "repo_bootstrap",
+                    "operation_status": "started",
+                    "repo_owner": repo_owner,
+                    "repo_name": repo_name,
+                    "ref": normalized_ref,
+                    "repo_bootstrap_required": True,
+                    "repo_bootstrap_state": "uninitialized_branch",
+                    "github_error_code": exc.code,
+                    "http_status_code": exc.status_code,
+                    "github_error_message": _sanitize_github_error_message(exc.provider_message),
+                },
+                fallback_message="seo_migration_workflow_provisioning_operation",
+                level=logging.INFO,
+            )
+            self._bootstrap_repository_branch(
+                repo_owner=repo_owner,
+                repo_name=repo_name,
+                branch=normalized_ref,
+            )
+            branch_exists_after_bootstrap = self._request_json(
+                method="GET",
+                path=(
+                    f"/repos/{urllib.parse.quote(repo_owner)}/{urllib.parse.quote(repo_name)}"
+                    f"/branches/{urllib.parse.quote(normalized_ref, safe='')}"
+                ),
+                expected_statuses=(200,),
+                allow_404=True,
+                status_error_map={
+                    401: (
+                        "token_not_authorized",
+                        "GitHub token is not authorized for deploy operations.",
+                    ),
+                    403: (
+                        "token_not_authorized",
+                        "GitHub token is not authorized for deploy operations.",
+                    ),
+                },
+                error_stage="ref_lookup",
+            )
+            if not isinstance(branch_exists_after_bootstrap, dict):
+                raise SEOMigrationGitHubPublisherError(
+                    code=_GITHUB_REASON_REPO_BOOTSTRAP_INVALID,
+                    safe_message=(
+                        "GitHub repository target could not be initialized for managed workflow provisioning."
+                    ),
+                    stage="workflow_provisioning",
+                )
+            _emit_structured_publisher_log(
+                payload={
+                    "event": "seo_migration_workflow_provisioning_operation",
+                    "operation_kind": "repo_bootstrap",
+                    "operation_status": "succeeded",
+                    "repo_owner": repo_owner,
+                    "repo_name": repo_name,
+                    "ref": normalized_ref,
+                    "branch_exists_verified": True,
+                    "repo_bootstrap_required": True,
+                    "repo_bootstrap_completed": True,
+                    "repo_bootstrap_state": "initialized_empty_repo",
+                },
+                fallback_message="seo_migration_workflow_provisioning_operation",
+                level=logging.INFO,
+            )
+            return
         self._request_json(
             method="POST",
             path=f"/repos/{urllib.parse.quote(repo_owner)}/{urllib.parse.quote(repo_name)}/git/refs",
@@ -1807,6 +1947,22 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 safe_message="GitHub deploy ref was not found or is invalid.",
                 stage="ref_lookup",
             )
+        _emit_structured_publisher_log(
+            payload={
+                "event": "seo_migration_workflow_provisioning_operation",
+                "operation_kind": "ref_repair",
+                "operation_status": "succeeded",
+                "repo_owner": repo_owner,
+                "repo_name": repo_name,
+                "ref": normalized_ref,
+                "branch_exists_verified": True,
+                "repo_bootstrap_required": False,
+                "repo_bootstrap_completed": False,
+                "repo_bootstrap_state": "ref_created_from_default",
+            },
+            fallback_message="seo_migration_workflow_provisioning_operation",
+            level=logging.INFO,
+        )
 
     def _resolve_default_branch(self, *, repo_owner: str, repo_name: str) -> str:
         repo_payload = self._request_json(
@@ -1861,6 +2017,10 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                     "branch_not_found_or_ref_invalid",
                     "GitHub deploy ref was not found or is invalid.",
                 ),
+                409: (
+                    _GITHUB_REASON_BRANCH_UNINITIALIZED,
+                    "GitHub repository branch is missing or uninitialized for managed workflow provisioning.",
+                ),
             },
             error_stage="ref_lookup",
         )
@@ -1885,6 +2045,146 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 stage="ref_lookup",
             )
         return sha
+
+    def _bootstrap_repository_branch(
+        self,
+        *,
+        repo_owner: str,
+        repo_name: str,
+        branch: str,
+    ) -> None:
+        bootstrap_content = (
+            "# MBSRN managed repository bootstrap\n"
+            "\n"
+            "This repository was initialized automatically for migration publish/deploy provisioning.\n"
+        )
+        blob_payload = self._request_json(
+            method="POST",
+            path=f"/repos/{urllib.parse.quote(repo_owner)}/{urllib.parse.quote(repo_name)}/git/blobs",
+            payload={
+                "content": bootstrap_content,
+                "encoding": "utf-8",
+            },
+            expected_statuses=(201,),
+            status_error_map={
+                401: (
+                    _GITHUB_REASON_CONTENTS_WRITE_NOT_AUTHORIZED,
+                    "GitHub token is not authorized to write repository contents for managed workflow provisioning.",
+                ),
+                403: (
+                    _GITHUB_REASON_CONTENTS_WRITE_NOT_AUTHORIZED,
+                    "GitHub token is not authorized to write repository contents for managed workflow provisioning.",
+                ),
+            },
+            error_stage="workflow_provisioning",
+        )
+        blob_sha = _coerce_string((blob_payload or {}).get("sha")) if isinstance(blob_payload, dict) else None
+        if not blob_sha:
+            raise SEOMigrationGitHubPublisherError(
+                code=_GITHUB_REASON_REPO_BOOTSTRAP_INVALID,
+                safe_message="GitHub repository target could not be initialized for managed workflow provisioning.",
+                stage="workflow_provisioning",
+            )
+
+        tree_payload = self._request_json(
+            method="POST",
+            path=f"/repos/{urllib.parse.quote(repo_owner)}/{urllib.parse.quote(repo_name)}/git/trees",
+            payload={
+                "tree": [
+                    {
+                        "path": "README.md",
+                        "mode": "100644",
+                        "type": "blob",
+                        "sha": blob_sha,
+                    }
+                ]
+            },
+            expected_statuses=(201,),
+            status_error_map={
+                401: (
+                    _GITHUB_REASON_CONTENTS_WRITE_NOT_AUTHORIZED,
+                    "GitHub token is not authorized to write repository contents for managed workflow provisioning.",
+                ),
+                403: (
+                    _GITHUB_REASON_CONTENTS_WRITE_NOT_AUTHORIZED,
+                    "GitHub token is not authorized to write repository contents for managed workflow provisioning.",
+                ),
+            },
+            error_stage="workflow_provisioning",
+        )
+        tree_sha = _coerce_string((tree_payload or {}).get("sha")) if isinstance(tree_payload, dict) else None
+        if not tree_sha:
+            raise SEOMigrationGitHubPublisherError(
+                code=_GITHUB_REASON_REPO_BOOTSTRAP_INVALID,
+                safe_message="GitHub repository target could not be initialized for managed workflow provisioning.",
+                stage="workflow_provisioning",
+            )
+
+        commit_payload = self._request_json(
+            method="POST",
+            path=f"/repos/{urllib.parse.quote(repo_owner)}/{urllib.parse.quote(repo_name)}/git/commits",
+            payload={
+                "message": "chore(migration): initialize repository for managed publish bootstrap",
+                "tree": tree_sha,
+            },
+            expected_statuses=(201,),
+            status_error_map={
+                401: (
+                    _GITHUB_REASON_CONTENTS_WRITE_NOT_AUTHORIZED,
+                    "GitHub token is not authorized to write repository contents for managed workflow provisioning.",
+                ),
+                403: (
+                    _GITHUB_REASON_CONTENTS_WRITE_NOT_AUTHORIZED,
+                    "GitHub token is not authorized to write repository contents for managed workflow provisioning.",
+                ),
+            },
+            error_stage="workflow_provisioning",
+        )
+        commit_sha = _coerce_string((commit_payload or {}).get("sha")) if isinstance(commit_payload, dict) else None
+        if not commit_sha:
+            raise SEOMigrationGitHubPublisherError(
+                code=_GITHUB_REASON_REPO_BOOTSTRAP_INVALID,
+                safe_message="GitHub repository target could not be initialized for managed workflow provisioning.",
+                stage="workflow_provisioning",
+            )
+
+        try:
+            self._request_json(
+                method="POST",
+                path=f"/repos/{urllib.parse.quote(repo_owner)}/{urllib.parse.quote(repo_name)}/git/refs",
+                payload={
+                    "ref": f"refs/heads/{branch}",
+                    "sha": commit_sha,
+                },
+                expected_statuses=(201,),
+                status_error_map={
+                    401: (
+                        _GITHUB_REASON_CONTENTS_WRITE_NOT_AUTHORIZED,
+                        "GitHub token is not authorized to write repository contents for managed workflow provisioning.",
+                    ),
+                    403: (
+                        _GITHUB_REASON_CONTENTS_WRITE_NOT_AUTHORIZED,
+                        "GitHub token is not authorized to write repository contents for managed workflow provisioning.",
+                    ),
+                },
+                error_stage="workflow_provisioning",
+            )
+        except SEOMigrationGitHubPublisherError as exc:
+            if exc.status_code == 422:
+                return
+            if exc.code in {
+                "github_timeout",
+                "github_network_error",
+                "github_temporal_failure",
+            }:
+                raise
+            raise SEOMigrationGitHubPublisherError(
+                code=_GITHUB_REASON_REPO_BOOTSTRAP_INVALID,
+                safe_message="GitHub repository target could not be initialized for managed workflow provisioning.",
+                status_code=exc.status_code,
+                stage="workflow_provisioning",
+                provider_message=exc.provider_message,
+            ) from exc
 
     def _fetch_workflow_file_payload_on_ref(
         self,
@@ -2384,13 +2684,49 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             site_id=site_id,
         )
         workflow_path = _workflow_repo_path(normalized_workflow_id)
-        self._ensure_repo_exists(repo_owner=repo_owner, repo_name=repo_name)
-        self._ensure_ref_exists(
-            repo_owner=repo_owner,
-            repo_name=repo_name,
-            ref=branch,
-            allow_repair=not dry_run,
+        _emit_structured_publisher_log(
+            payload={
+                "event": "seo_migration_workflow_provisioning_operation",
+                "operation_kind": "workflow_bootstrap_start",
+                "operation_status": "started",
+                "repo_owner": repo_owner,
+                "repo_name": repo_name,
+                "ref": branch,
+                "workflow_id": normalized_workflow_id,
+                "workflow_path": workflow_path,
+                "deploy_workflow_mode": normalized_workflow_mode,
+                "target_environment_key": normalized_target_environment_key,
+            },
+            fallback_message="seo_migration_workflow_provisioning_operation",
+            level=logging.INFO,
         )
+        self._ensure_repo_exists(repo_owner=repo_owner, repo_name=repo_name)
+        try:
+            self._ensure_ref_exists(
+                repo_owner=repo_owner,
+                repo_name=repo_name,
+                ref=branch,
+                allow_repair=not dry_run,
+            )
+        except SEOMigrationGitHubPublisherError as exc:
+            _emit_structured_publisher_log(
+                payload={
+                    "event": "seo_migration_workflow_provisioning_operation",
+                    "operation_kind": "ref_check",
+                    "operation_status": "failed",
+                    "repo_owner": repo_owner,
+                    "repo_name": repo_name,
+                    "ref": branch,
+                    "workflow_id": normalized_workflow_id,
+                    "workflow_path": workflow_path,
+                    "http_status_code": exc.status_code,
+                    "github_error_code": exc.code,
+                    "github_error_message": _sanitize_github_error_message(exc.provider_message),
+                },
+                fallback_message="seo_migration_workflow_provisioning_operation",
+                level=logging.WARNING,
+            )
+            raise
         workflow_yaml = _render_managed_deploy_workflow_yaml(
             workflow_id=normalized_workflow_id,
             repo_owner=repo_owner,
@@ -2978,14 +3314,99 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         }
         if existing_sha:
             payload["sha"] = existing_sha
-        response_payload = self._request_json(
-            method="PUT",
-            path=(
-                f"/repos/{urllib.parse.quote(repo_owner)}/{urllib.parse.quote(repo_name)}"
-                f"/contents/{urllib.parse.quote(path, safe='/')}"
-            ),
-            payload=payload,
+        put_path = (
+            f"/repos/{urllib.parse.quote(repo_owner)}/{urllib.parse.quote(repo_name)}"
+            f"/contents/{urllib.parse.quote(path, safe='/')}"
         )
+        is_workflow_file = path.lower().startswith(".github/workflows/")
+        _emit_structured_publisher_log(
+            payload={
+                "event": "seo_migration_workflow_provisioning_operation",
+                "operation_kind": "file_upsert",
+                "operation_status": "started",
+                "repo_owner": repo_owner,
+                "repo_name": repo_name,
+                "ref": branch,
+                "path": path,
+                "write_mode": "update" if bool(existing_sha) else "create",
+            },
+            fallback_message="seo_migration_workflow_provisioning_operation",
+            level=logging.INFO,
+        )
+        try:
+            response_payload = self._request_json(
+                method="PUT",
+                path=put_path,
+                payload=payload,
+                status_error_map={
+                    401: (
+                        _GITHUB_REASON_WORKFLOW_WRITE_NOT_AUTHORIZED
+                        if is_workflow_file
+                        else _GITHUB_REASON_CONTENTS_WRITE_NOT_AUTHORIZED,
+                        "GitHub token is not authorized to write repository contents for managed workflow provisioning.",
+                    ),
+                    403: (
+                        _GITHUB_REASON_WORKFLOW_WRITE_NOT_AUTHORIZED
+                        if is_workflow_file
+                        else _GITHUB_REASON_CONTENTS_WRITE_NOT_AUTHORIZED,
+                        "GitHub token is not authorized to write repository contents for managed workflow provisioning.",
+                    ),
+                },
+                error_stage="workflow_provisioning",
+            )
+        except SEOMigrationGitHubPublisherError as exc:
+            provider_message = _sanitize_github_error_message(exc.provider_message)
+            _emit_structured_publisher_log(
+                payload={
+                    "event": "seo_migration_workflow_provisioning_operation",
+                    "operation_kind": "file_upsert",
+                    "operation_status": "failed",
+                    "repo_owner": repo_owner,
+                    "repo_name": repo_name,
+                    "ref": branch,
+                    "path": path,
+                    "write_mode": "update" if bool(existing_sha) else "create",
+                    "http_status_code": exc.status_code,
+                    "github_error_code": exc.code,
+                    "github_error_message": provider_message,
+                    "workflow_file_target": is_workflow_file,
+                },
+                fallback_message="seo_migration_workflow_provisioning_operation",
+                level=logging.WARNING,
+            )
+            provider_message_lower = (provider_message or "").lower()
+            branch_state_markers = (
+                "branch",
+                "ref",
+                "reference",
+                "repository is empty",
+                "no commit",
+            )
+            is_branch_state_error = exc.status_code == 409 or (
+                exc.status_code == 422
+                and (
+                    not provider_message_lower
+                    or any(marker in provider_message_lower for marker in branch_state_markers)
+                )
+            )
+            if is_branch_state_error:
+                raise SEOMigrationGitHubPublisherError(
+                    code=_GITHUB_REASON_BRANCH_UNINITIALIZED,
+                    safe_message="GitHub repository branch is missing or uninitialized for managed workflow provisioning.",
+                    status_code=exc.status_code,
+                    stage="workflow_provisioning",
+                    provider_message=provider_message,
+                ) from exc
+            mapped_code = exc.code
+            if exc.code == "github_request_failed":
+                mapped_code = _GITHUB_REASON_WORKFLOW_PROVISIONING_FAILED
+            raise SEOMigrationGitHubPublisherError(
+                code=mapped_code,
+                safe_message=exc.safe_message,
+                status_code=exc.status_code,
+                stage=exc.stage or "workflow_provisioning",
+                provider_message=provider_message,
+            ) from exc
         commit_sha: str | None = None
         if isinstance(response_payload, dict):
             commit_payload = response_payload.get("commit")
@@ -2996,6 +3417,21 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             repo_name=repo_name,
             branch=branch,
             path=path,
+        )
+        _emit_structured_publisher_log(
+            payload={
+                "event": "seo_migration_workflow_provisioning_operation",
+                "operation_kind": "file_upsert",
+                "operation_status": "succeeded",
+                "repo_owner": repo_owner,
+                "repo_name": repo_name,
+                "ref": branch,
+                "path": path,
+                "write_mode": "update" if bool(existing_sha) else "create",
+                "workflow_file_target": is_workflow_file,
+            },
+            fallback_message="seo_migration_workflow_provisioning_operation",
+            level=logging.INFO,
         )
         del commit_sha
         return True, verified_sha, workflow_outcome
@@ -4421,6 +4857,21 @@ def _emit_structured_publisher_log(
     except TypeError:
         message = fallback_message
     _LOGGER.log(level, message)
+
+
+def _sanitize_github_error_message(value: object, *, max_length: int = 240) -> str | None:
+    normalized = _coerce_string(value)
+    if not normalized:
+        return None
+    compact = " ".join(normalized.replace("\r", " ").replace("\n", " ").split())
+    if not compact:
+        return None
+    lowered = compact.lower()
+    if "authorization" in lowered and "bearer" in lowered:
+        return "authorization_header_redacted"
+    if len(compact) > max_length:
+        return compact[:max_length]
+    return compact
 
 
 def _decode_workflow_file_content(workflow_file_payload: dict[str, object] | None) -> str | None:

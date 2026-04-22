@@ -496,6 +496,11 @@ Reason-code guidance:
 - `repo_create_failed_owner_mismatch`: configured owner is outside the admin-owned target boundary.
 - `repo_create_failed_conflict`: repository create returned conflict (already exists or owner/repo conflict).
 - `repo_create_failed_runtime_unavailable`: repository auto-create failed due to temporary runtime/API availability issues.
+- `github_branch_not_found_or_uninitialized`: target branch/ref exists in config but GitHub repo state has no initialized commit/ref tree for provisioning writes.
+- `github_repo_state_invalid_for_bootstrap`: repository initialization/bootstrap could not complete safely.
+- `github_workflow_write_not_authorized`: token can access repo metadata but lacks workflow-path write permission for `.github/workflows/*`.
+- `github_contents_write_not_authorized`: token lacks repository contents write permission for managed manifest/content files.
+- `github_workflow_provisioning_failed`: workflow bootstrap request failed with non-specific provider error after request classification.
 - `workflow_not_found`: repository exists, but requested workflow id/path was not found.
 - `branch_not_found_or_ref_invalid`: dispatch ref is invalid or missing in target repo.
 - `workflow_not_dispatchable`: workflow exists but is not in a dispatch-ready state for target ref.
@@ -519,6 +524,43 @@ Repository auto-create observability (publish path):
   - `auto_create_created`
   - `outcome`
   - `skipped_reason`
+  - `private_by_default` (create attempts use private repository visibility)
+  - `repo_ensure_outcome` (normalized control-plane summary)
+
+Workflow bootstrap observability (publish path):
+- compare:
+  - `seo_migration_workflow_provisioning` (service-level control-plane event)
+  - `seo_migration_workflow_provisioning_operation` (publisher operation trace)
+- key operation fields:
+  - `operation_kind`
+  - `operation_status`
+  - `repo_owner`, `repo_name`, `ref`
+  - `path` (for file operations)
+  - `http_status_code`
+  - `github_error_code`
+  - `github_error_message` (sanitized)
+  - `repo_bootstrap_required`
+  - `repo_bootstrap_completed`
+  - `repo_bootstrap_state`
+
+Token capability minimums for publish bootstrap:
+- repository auto-create: token must create repositories under the configured owner namespace.
+- managed workflow provisioning: token must write `.github/workflows/*`.
+- managed manifest provisioning: token must write repository contents under `k8s/*`.
+
+`repo_ensure_outcome` interpretation:
+- `exists`: target repo already existed (or existed by the time ensure completed).
+- `created`: runtime created the missing repo successfully.
+- `would_create_on_publish`: readiness/dry-run observed missing repo with auto-create policy enabled.
+- `skipped_policy_disabled`: repo missing but admin policy disallows auto-create.
+- `failed_not_authorized`: runtime token could not create repos under configured owner.
+- `failed_invalid_name`: repo name failed validation.
+- `failed_owner_mismatch`: owner was outside admin-owned boundary.
+- `failed_conflict`: create conflict (for example, created in a concurrent race).
+- `failed_runtime_unavailable`: transient GitHub API/runtime failure during create.
+
+Race-note:
+- if a create call returns conflict but a follow-up repo lookup confirms existence, publish treats that as idempotent success (`outcome=repo_exists`, `skipped_reason=created_during_race`) and continues.
 
 Workflow conformance status guidance:
 - `conformant`: workflow content includes `workflow_dispatch` and managed deploy contract markers.

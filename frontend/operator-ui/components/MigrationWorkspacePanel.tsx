@@ -579,6 +579,64 @@ function toManagedGkeConfigGuidance(value: string | null): string | null {
   return null;
 }
 
+function toRepositoryProvisioningGuidance(params: {
+  repoEnsureOutcome: string | null;
+  repositoryExists: boolean | null;
+  repositoryAutoCreateEnabled: boolean | null;
+  repositoryAutoCreateAvailable: boolean | null;
+  repositoryEnsureFailureReasonCode: string | null;
+}): string | null {
+  const {
+    repoEnsureOutcome,
+    repositoryExists,
+    repositoryAutoCreateEnabled,
+    repositoryAutoCreateAvailable,
+    repositoryEnsureFailureReasonCode,
+  } = params;
+  const normalizedOutcome = (repoEnsureOutcome || "").trim().toLowerCase();
+  if (normalizedOutcome === "exists") {
+    return "Target repository exists.";
+  }
+  if (normalizedOutcome === "created") {
+    return "Target repository was created by the managed runtime token.";
+  }
+  if (normalizedOutcome === "would_create_on_publish") {
+    return "Missing repository will be auto-created on live publish (admin policy enabled).";
+  }
+  if (normalizedOutcome === "skipped_policy_disabled") {
+    return "Missing repository cannot be auto-created because admin policy is disabled.";
+  }
+  if (normalizedOutcome === "failed_not_authorized") {
+    return "Runtime token is not authorized to create repositories under the configured owner.";
+  }
+  if (normalizedOutcome === "failed_invalid_name") {
+    return "Repository name is invalid for auto-create.";
+  }
+  if (normalizedOutcome === "failed_owner_mismatch") {
+    return "Repository owner is outside the admin-owned publish target.";
+  }
+  if (normalizedOutcome === "failed_conflict") {
+    return "Repository create encountered a conflict; re-check repository state and retry.";
+  }
+  if (normalizedOutcome === "failed_runtime_unavailable") {
+    return "Repository auto-create is temporarily unavailable.";
+  }
+  const normalizedFailureReason = (repositoryEnsureFailureReasonCode || "").trim().toLowerCase();
+  if (normalizedFailureReason === "repo_auto_create_not_authorized") {
+    return "Runtime token is not authorized to create repositories under the configured owner.";
+  }
+  if (repositoryExists === true) {
+    return "Target repository exists.";
+  }
+  if (repositoryAutoCreateAvailable === true || (repositoryExists === false && repositoryAutoCreateEnabled === true)) {
+    return "Missing repository will be auto-created on live publish (admin policy enabled).";
+  }
+  if (repositoryExists === false && repositoryAutoCreateEnabled === false) {
+    return "Missing repository cannot be auto-created because admin policy is disabled.";
+  }
+  return null;
+}
+
 function parseStringNumberMap(value: unknown): Record<string, number> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return {};
@@ -1906,6 +1964,26 @@ export function MigrationWorkspacePanel({
   const deployRuntimeStatusLabel = toRuntimeConfigLabel(deployConfigPrerequisites);
   const publishRuntimeStatusMessage = asStringOrNull(publishConfigPrerequisites.github_publisher_status_message);
   const deployRuntimeStatusMessage = asStringOrNull(deployConfigPrerequisites.github_publisher_status_message);
+  const publishRepositoryExists =
+    asBooleanOrNull(publishTarget.repository_exists)
+    ?? asBooleanOrNull(publishConfigPrerequisites.publish_target_repo_exists);
+  const publishRepositoryAutoCreateEnabled =
+    asBooleanOrNull(publishTarget.repository_auto_create_enabled)
+    ?? asBooleanOrNull(publishConfigPrerequisites.github_repository_auto_create_enabled);
+  const publishRepositoryAutoCreateAvailable =
+    asBooleanOrNull(publishTarget.repository_auto_create_available)
+    ?? asBooleanOrNull(publishConfigPrerequisites.publish_target_repo_auto_create_available);
+  const publishRepositoryEnsureFailureReasonCode = asStringOrNull(publishTarget.repository_ensure_failure_reason_code);
+  const publishRepoEnsureOutcome =
+    asStringOrNull(publishTarget.repo_ensure_outcome)
+    || asStringOrNull(publishConfigPrerequisites.publish_target_repo_ensure_summary);
+  const publishRepositoryProvisioningGuidance = toRepositoryProvisioningGuidance({
+    repoEnsureOutcome: publishRepoEnsureOutcome,
+    repositoryExists: publishRepositoryExists,
+    repositoryAutoCreateEnabled: publishRepositoryAutoCreateEnabled,
+    repositoryAutoCreateAvailable: publishRepositoryAutoCreateAvailable,
+    repositoryEnsureFailureReasonCode: publishRepositoryEnsureFailureReasonCode,
+  });
   const deployPrimaryBlockerMessage = toDeployBlockerMessage(deployBlockerCodes);
   const contextSummary = asRecord(summary?.context_summary);
   const migrationDiagnostics = asRecord(contextSummary.migration_diagnostics);
@@ -3314,6 +3392,14 @@ export function MigrationWorkspacePanel({
                   <span>{deployRuntimeStatusLabel}</span>
                 </span>
               </WorkspaceMetadataItem>
+              {(effectivePublishRepository || !publishReadiness.ready) && publishRepositoryProvisioningGuidance ? (
+                <WorkspaceMetadataItem label="Repository provisioning">
+                  <span className="row-wrap-tight">
+                    <span className="badge badge-muted">Runtime</span>
+                    <span>{publishRepositoryProvisioningGuidance}</span>
+                  </span>
+                </WorkspaceMetadataItem>
+              ) : null}
               {(deployWorkflowIdentifier || !deployReadiness.ready) ? (
                 <WorkspaceMetadataItem label="Workflow identifier / path">
                   {deployWorkflowIdentifier || "Not configured"}

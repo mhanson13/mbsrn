@@ -407,6 +407,128 @@ def test_ensure_repository_create_unauthorized_classifies_precisely(monkeypatch)
     ]
 
 
+def test_ensure_repository_create_conflict_resolves_to_idempotent_success_when_repo_exists(monkeypatch) -> None:
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    calls: list[tuple[str, str]] = []
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _http_error(
+                "https://api.github.com/repos/mhanson13/tnmfire",
+                status_code=404,
+                message="Not Found",
+            ),
+            _http_error(
+                "https://api.github.com/orgs/mhanson13/repos",
+                status_code=409,
+                message="Conflict",
+            ),
+            _FakeHTTPResponse(status=200, body=json.dumps({"full_name": "mhanson13/tnmfire"})),
+        ],
+        calls,
+    )
+
+    result = publisher.ensure_repository(
+        repo_owner="mhanson13",
+        repo_name="tnmfire",
+        auto_create_enabled=True,
+        create_if_missing=True,
+        expected_owner="mhanson13",
+    )
+
+    assert result.exists is True
+    assert result.auto_create_attempted is True
+    assert result.auto_create_created is False
+    assert result.outcome == "repo_exists"
+    assert result.skipped_reason == "created_during_race"
+    assert calls == [
+        ("GET", "https://api.github.com/repos/mhanson13/tnmfire"),
+        ("POST", "https://api.github.com/orgs/mhanson13/repos"),
+        ("GET", "https://api.github.com/repos/mhanson13/tnmfire"),
+    ]
+
+
+def test_ensure_repository_personal_owner_falls_back_to_user_create(monkeypatch) -> None:
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    calls: list[tuple[str, str]] = []
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _http_error(
+                "https://api.github.com/repos/mhanson13/tnmfire",
+                status_code=404,
+                message="Not Found",
+            ),
+            _http_error(
+                "https://api.github.com/orgs/mhanson13/repos",
+                status_code=404,
+                message="Not Found",
+            ),
+            _FakeHTTPResponse(status=200, body=json.dumps({"login": "mhanson13"})),
+            _FakeHTTPResponse(status=201, body=json.dumps({"name": "tnmfire"})),
+            _FakeHTTPResponse(status=200, body=json.dumps({"full_name": "mhanson13/tnmfire"})),
+        ],
+        calls,
+    )
+
+    result = publisher.ensure_repository(
+        repo_owner="mhanson13",
+        repo_name="tnmfire",
+        auto_create_enabled=True,
+        create_if_missing=True,
+        expected_owner="mhanson13",
+    )
+
+    assert result.exists is True
+    assert result.auto_create_attempted is True
+    assert result.auto_create_created is True
+    assert result.outcome == "repo_created"
+    assert calls == [
+        ("GET", "https://api.github.com/repos/mhanson13/tnmfire"),
+        ("POST", "https://api.github.com/orgs/mhanson13/repos"),
+        ("GET", "https://api.github.com/user"),
+        ("POST", "https://api.github.com/user/repos"),
+        ("GET", "https://api.github.com/repos/mhanson13/tnmfire"),
+    ]
+
+
+def test_ensure_repository_auto_create_defaults_to_private_visibility(monkeypatch) -> None:
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    observed_private_value: bool | None = None
+    queue = [
+        _http_error(
+            "https://api.github.com/repos/mhanson13/tnmfire",
+            status_code=404,
+            message="Not Found",
+        ),
+        _FakeHTTPResponse(status=201, body=json.dumps({"name": "tnmfire"})),
+        _FakeHTTPResponse(status=200, body=json.dumps({"full_name": "mhanson13/tnmfire"})),
+    ]
+
+    def _stub(request, timeout=None):
+        nonlocal observed_private_value
+        del timeout
+        if request.get_method() == "POST" and request.full_url == "https://api.github.com/orgs/mhanson13/repos":
+            payload = json.loads((request.data or b"{}").decode("utf-8"))
+            observed_private_value = bool(payload.get("private"))
+        next_item = queue.pop(0)
+        if isinstance(next_item, Exception):
+            raise next_item
+        return next_item
+
+    monkeypatch.setattr(urllib.request, "urlopen", _stub)
+
+    publisher.ensure_repository(
+        repo_owner="mhanson13",
+        repo_name="tnmfire",
+        auto_create_enabled=True,
+        create_if_missing=True,
+        expected_owner="mhanson13",
+    )
+
+    assert observed_private_value is True
+
+
 def test_derive_site_kubernetes_namespace_normalizes_repo_name_values() -> None:
     assert derive_site_kubernetes_namespace(repo_name="tnmfire", site_id=None) == ("tnmfire", "repo_name")
     assert derive_site_kubernetes_namespace(repo_name="Lars Construction", site_id=None) == (
@@ -2700,6 +2822,170 @@ def test_ensure_deploy_workflow_creates_missing_file_and_verifies_presence(monke
     assert any(call[1].endswith("/contents/k8s/managedcertificate.yaml?ref=main") for call in calls)
     assert any(call[1].endswith("/contents/k8s/frontendconfig.yaml?ref=main") for call in calls)
     assert any(call[1].endswith("/contents/k8s/backendconfig.yaml?ref=main") for call in calls)
+
+
+def test_ensure_deploy_workflow_bootstraps_uninitialized_repo_branch(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    queue: list[object] = [
+        _FakeHTTPResponse(status=200, body=json.dumps({"default_branch": "main"})),
+        _http_error(
+            "https://api.github.com/repos/mhanson13/tnmfire/branches/main",
+            status_code=404,
+            message="Not Found",
+        ),
+        _FakeHTTPResponse(status=200, body=json.dumps({"default_branch": "main"})),
+        _http_error(
+            "https://api.github.com/repos/mhanson13/tnmfire/git/ref/heads/main",
+            status_code=409,
+            message="Git Repository is empty.",
+        ),
+        _FakeHTTPResponse(status=201, body=json.dumps({"sha": "blob-sha"})),
+        _FakeHTTPResponse(status=201, body=json.dumps({"sha": "tree-sha"})),
+        _FakeHTTPResponse(status=201, body=json.dumps({"sha": "commit-sha"})),
+        _FakeHTTPResponse(status=201, body="{}"),
+        _FakeHTTPResponse(status=200, body="{}"),
+    ]
+    queue.extend(_managed_provisioning_responses()[2:])
+    _install_urlopen_stub(monkeypatch, queue, calls)
+
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    result = publisher.ensure_deploy_workflow(
+        repo_owner="mhanson13",
+        repo_name="tnmfire",
+        branch="main",
+        workflow_id="deploy-tnmfire-www-prod.yml",
+        dry_run=False,
+    )
+
+    assert result.provisioned is True
+    assert any(method == "POST" and url.endswith("/git/blobs") for method, url in calls)
+    assert any(method == "POST" and url.endswith("/git/trees") for method, url in calls)
+    assert any(method == "POST" and url.endswith("/git/commits") for method, url in calls)
+    assert any(method == "POST" and url.endswith("/git/refs") for method, url in calls)
+
+
+def test_ensure_deploy_workflow_classifies_workflow_write_forbidden(monkeypatch, caplog) -> None:
+    calls: list[tuple[str, str]] = []
+    caplog.set_level("INFO", logger="app.integrations.seo_migration_github_publisher")
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _FakeHTTPResponse(status=200, body=json.dumps({"default_branch": "main"})),
+            _FakeHTTPResponse(status=200, body="{}"),
+            _http_error(
+                "https://api.github.com/repos/mhanson13/tnmfire/contents/.github/workflows/deploy-tnmfire-www-prod.yml?ref=main",
+                status_code=404,
+                message="Not Found",
+            ),
+            _http_error(
+                "https://api.github.com/repos/mhanson13/tnmfire/contents/.github/workflows/deploy-tnmfire-www-prod.yml",
+                status_code=403,
+                message="Resource not accessible by integration",
+            ),
+        ],
+        calls,
+    )
+
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    with pytest.raises(SEOMigrationGitHubPublisherError) as exc_info:
+        publisher.ensure_deploy_workflow(
+            repo_owner="mhanson13",
+            repo_name="tnmfire",
+            branch="main",
+            workflow_id="deploy-tnmfire-www-prod.yml",
+            dry_run=False,
+        )
+
+    assert exc_info.value.code == "github_workflow_write_not_authorized"
+    assert exc_info.value.stage == "workflow_provisioning"
+    failed_operation_logs = [
+        record.msg
+        for record in caplog.records
+        if isinstance(record.msg, str)
+        and '"event": "seo_migration_workflow_provisioning_operation"' in record.msg
+        and '"operation_status": "failed"' in record.msg
+        and '"operation_kind": "file_upsert"' in record.msg
+    ]
+    assert failed_operation_logs
+    assert '"http_status_code": 403' in failed_operation_logs[-1]
+    assert '"github_error_code": "github_workflow_write_not_authorized"' in failed_operation_logs[-1]
+
+
+def test_ensure_deploy_workflow_classifies_branch_uninitialized_when_put_reports_branch_error(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _FakeHTTPResponse(status=200, body=json.dumps({"default_branch": "main"})),
+            _FakeHTTPResponse(status=200, body="{}"),
+            _http_error(
+                "https://api.github.com/repos/mhanson13/tnmfire/contents/.github/workflows/deploy-tnmfire-www-prod.yml?ref=main",
+                status_code=404,
+                message="Not Found",
+            ),
+            _http_error(
+                "https://api.github.com/repos/mhanson13/tnmfire/contents/.github/workflows/deploy-tnmfire-www-prod.yml",
+                status_code=422,
+                message="Invalid request. Branch main was not found.",
+            ),
+        ],
+        calls,
+    )
+
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    with pytest.raises(SEOMigrationGitHubPublisherError) as exc_info:
+        publisher.ensure_deploy_workflow(
+            repo_owner="mhanson13",
+            repo_name="tnmfire",
+            branch="main",
+            workflow_id="deploy-tnmfire-www-prod.yml",
+            dry_run=False,
+        )
+
+    assert exc_info.value.code == "github_branch_not_found_or_uninitialized"
+    assert exc_info.value.stage == "workflow_provisioning"
+
+
+def test_ensure_deploy_workflow_classifies_contents_write_forbidden_on_manifest(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _FakeHTTPResponse(status=200, body=json.dumps({"default_branch": "main"})),
+            _FakeHTTPResponse(status=200, body="{}"),
+            _http_error(
+                "https://api.github.com/repos/mhanson13/tnmfire/contents/.github/workflows/deploy-tnmfire-www-prod.yml?ref=main",
+                status_code=404,
+                message="Not Found",
+            ),
+            _FakeHTTPResponse(status=201, body=json.dumps({"commit": {"sha": "workflow-commit"}})),
+            _managed_workflow_verify_response(sha="workflow-verified"),
+            _http_error(
+                "https://api.github.com/repos/mhanson13/tnmfire/contents/k8s/namespace.yaml?ref=main",
+                status_code=404,
+                message="Not Found",
+            ),
+            _http_error(
+                "https://api.github.com/repos/mhanson13/tnmfire/contents/k8s/namespace.yaml",
+                status_code=403,
+                message="Resource not accessible by integration",
+            ),
+        ],
+        calls,
+    )
+
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    with pytest.raises(SEOMigrationGitHubPublisherError) as exc_info:
+        publisher.ensure_deploy_workflow(
+            repo_owner="mhanson13",
+            repo_name="tnmfire",
+            branch="main",
+            workflow_id="deploy-tnmfire-www-prod.yml",
+            dry_run=False,
+        )
+
+    assert exc_info.value.code == "github_contents_write_not_authorized"
+    assert exc_info.value.stage == "workflow_provisioning"
 
 
 def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> None:

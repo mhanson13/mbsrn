@@ -734,6 +734,9 @@ Publish behavior:
 - if target repository is missing:
   - when `github_repository_auto_create_enabled=true`, publish attempts repository creation under the configured admin owner and then continues
   - when disabled, publish/readiness fails with a clear admin-policy blocker (repository auto-create disabled)
+- if target repository exists but target ref is uninitialized (no commit history yet), publish bootstrap initializes the managed branch before workflow/manifest writes
+- runtime repository auto-create uses private repository visibility by default (`private=true`) to avoid accidental public exposure
+- dry-run never creates repositories; readiness and publish diagnostics report whether a live publish would auto-create the missing repository
 - publish always runs deploy-workflow bootstrap verification against the target branch (`.github/workflows/{workflow_id}`) before returning success for non-dry-run publish
 - generated/target repos are treated as workflow-missing by default until verified
 - if workflow is missing, publish provisions it and verifies presence before marking publish as valid/deploy-ready
@@ -746,12 +749,33 @@ Publish behavior:
 - duplicate artifact protection remains in place for file writes, but no longer short-circuits workflow bootstrap
 - if artifact content is already published and workflow is missing, a follow-up publish can repair workflow bootstrap without re-writing artifact files (`duplicate_publish_repair`)
 - duplicate publish handling now always attempts managed workflow remediation before duplicate rejection (`workflow_remediation_attempted=true` in publish diagnostics/log target fields)
+- publish/readiness diagnostics include a normalized `repo_ensure_outcome` field for repo-provisioning auditability:
+  - `exists`
+  - `created`
+  - `would_create_on_publish`
+  - `skipped_policy_disabled`
+  - `failed_not_authorized`
+  - `failed_invalid_name`
+  - `failed_owner_mismatch`
+  - `failed_conflict`
+  - `failed_runtime_unavailable`
 - duplicate publish diagnostics now also emit `workflow_remediation_outcome`:
   - `remediation_upgraded_managed_placeholder`: managed scaffold/legacy workflow was replaced with current production template content
   - `remediation_already_current`: managed workflow already matched current contract; no write needed
   - `remediation_preserved_custom`: custom/non-managed workflow was intentionally preserved
   - `remediation_write_failed`: remediation attempt failed due to GitHub write/provision error
-  - `remediation_not_attempted`: remediation path was not invoked (for example non-duplicate publish)
+- `remediation_not_attempted`: remediation path was not invoked (for example non-duplicate publish)
+- workflow/bootstrap provisioning now emits operation-level diagnostics (`event=seo_migration_workflow_provisioning_operation`) with:
+  - `operation_kind` (`ref_check`, `repo_bootstrap`, `file_upsert`, etc.)
+  - `operation_status` (`started`, `succeeded`, `failed`)
+  - target metadata (`repo_owner`, `repo_name`, `ref`, `path`)
+  - safe failure detail (`http_status_code`, `github_error_code`, sanitized `github_error_message`)
+- workflow/bootstrap failure codes are now more precise for new-repo and permission edge cases:
+  - `github_branch_not_found_or_uninitialized`
+  - `github_repo_state_invalid_for_bootstrap`
+  - `github_workflow_write_not_authorized`
+  - `github_contents_write_not_authorized`
+  - `github_workflow_provisioning_failed`
 - retry after a failed publish is supported and recorded as a new history event
 - dry-run publish records history but does not overwrite prior successful publish commit metadata
 - workflow provisioning is idempotent for deploy-capable managed workflows and preserves unknown custom workflows
@@ -807,6 +831,7 @@ Operational behavior:
   - deploy workflow mode
   - target environment key
   - target environment source
+- admin UI help text explicitly warns that enabling repository auto-create allows the runtime GitHub token to create missing repositories under the configured owner boundary only
 - migration publish/deploy readiness includes admin config prerequisites (`admin_publish_config_*`)
 - publish/deploy readiness reasons now call out the required actor/action more explicitly:
   - `Admin must configure a GitHub publish target before publish is available.`

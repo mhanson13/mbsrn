@@ -6655,6 +6655,47 @@ def test_publish_dry_run_does_not_overwrite_published_state(db_session) -> None:
     assert publish_history[-1].get("status") == "dry_run"
 
 
+def test_publish_dry_run_reports_repo_auto_create_capability_without_creating_repo(db_session) -> None:
+    publisher = _RecordingGitHubPublisher(existing_repository=False)
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _set_admin_repo_auto_create_enabled(db_session, enabled=True)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes=None,
+        principal_id="principal-1",
+    )
+
+    publish_result = service.publish_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=True,
+        commit_message=None,
+        analytics_measurement_id=None,
+        principal_id="principal-1",
+    )
+
+    assert publisher.ensure_repository_calls
+    assert all(call[3] is False for call in publisher.ensure_repository_calls)
+    assert publish_result.result.get("repository_ensure_attempted") is False
+    assert publish_result.result.get("repository_auto_create_created") is False
+    assert publish_result.result.get("repo_ensure_outcome") == "would_create_on_publish"
+
+
 def test_publish_requires_admin_github_publish_config_enabled(db_session) -> None:
     publisher = _RecordingGitHubPublisher()
     service = _build_service(
@@ -7544,6 +7585,7 @@ def test_publish_missing_repo_with_auto_create_disabled_returns_precise_failure(
     assert any("auto-create is disabled" in str(reason).lower() for reason in reasons)
     assert target.get("repository_auto_create_enabled") is False
     assert target.get("repository_exists") is False
+    assert target.get("repo_ensure_outcome") == "skipped_policy_disabled"
 
 
 def test_publish_missing_repo_with_auto_create_enabled_creates_repo_and_continues(db_session) -> None:
@@ -7586,6 +7628,7 @@ def test_publish_missing_repo_with_auto_create_enabled_creates_repo_and_continue
     assert publish_result.result.get("repository_ensure_attempted") is True
     assert publish_result.result.get("repository_auto_create_created") is True
     assert publish_result.result.get("repository_ensure_outcome") == "repo_created"
+    assert publish_result.result.get("repo_ensure_outcome") == "created"
 
 
 def test_publish_readiness_reports_repo_auto_create_capability_for_missing_repo(db_session) -> None:
@@ -7610,5 +7653,7 @@ def test_publish_readiness_reports_repo_auto_create_capability_for_missing_repo(
     assert target.get("repository_auto_create_enabled") is True
     assert target.get("repository_exists") is False
     assert target.get("repository_auto_create_available") is True
+    assert target.get("repo_ensure_outcome") == "would_create_on_publish"
     assert prerequisites.get("publish_target_repo_exists") is False
     assert prerequisites.get("publish_target_repo_auto_create_available") is True
+    assert prerequisites.get("publish_target_repo_ensure_summary") == "would_create_on_publish"
