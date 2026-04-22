@@ -33,6 +33,7 @@ from app.integrations.seo_migration_github_publisher import (
     SEOMigrationGitHubTargetReadinessResult,
     SEOMigrationGitHubWorkflowProvisionResult,
     derive_site_kubernetes_namespace,
+    derive_site_preview_hostname,
     normalize_workflow_dispatch_identifier_for_api,
 )
 from app.models.business import Business
@@ -9093,6 +9094,10 @@ class SEOMigrationService:
             repo_name=repo_name,
             site_id=workspace.site_id,
         )
+        preview_hostname, preview_hostname_source = _safe_derive_preview_hostname_for_summary(
+            repo_name=repo_name,
+            site_id=workspace.site_id,
+        )
         return {
             "enabled": bool(normalized.get("enabled")),
             "repo_owner": str(normalized.get("repo_owner") or fallback_publish.get("repo_owner") or "").strip(),
@@ -9109,6 +9114,9 @@ class SEOMigrationService:
             "kubernetes_namespace": kubernetes_namespace,
             "namespace_source": namespace_source,
             "namespace_model_status": "unknown",
+            "preview_hostname": preview_hostname,
+            "preview_hostname_source": preview_hostname_source,
+            "preview_url": f"https://{preview_hostname}" if preview_hostname else None,
         }
 
     def _resolve_deploy_target_with_workflow_precedence(
@@ -9246,6 +9254,10 @@ class SEOMigrationService:
             repo_name=resolved_target.get("repo_name"),
             site_id=workspace.site_id,
         )
+        resolved_preview_hostname, resolved_preview_hostname_source = _safe_derive_preview_hostname_for_summary(
+            repo_name=resolved_target.get("repo_name"),
+            site_id=workspace.site_id,
+        )
         admin_deploy_metadata = self._resolve_admin_deploy_template_metadata()
         resolution = {
             "source": str(selected_candidate.get("source") or fallback_source),
@@ -9268,6 +9280,9 @@ class SEOMigrationService:
             ),
             "kubernetes_namespace": resolved_namespace,
             "namespace_source": resolved_namespace_source,
+            "preview_hostname": resolved_preview_hostname,
+            "preview_hostname_source": resolved_preview_hostname_source,
+            "preview_url": f"https://{resolved_preview_hostname}" if resolved_preview_hostname else None,
             "namespace_model_status": "unknown",
         }
         return resolved_target, resolution
@@ -9464,6 +9479,48 @@ class SEOMigrationService:
             if resolved_live_url_source in {_MIGRATION_URL_SOURCE_DEPLOY_RESULT, _MIGRATION_URL_SOURCE_WORKFLOW_OUTPUT}
             else None
         )
+        resolved_live_host = _extract_hostname_for_url(confirmed_live_url)
+        preview_hostname = _normalize_string(deploy_target.get("preview_hostname"), max_length=253)
+        if not preview_hostname:
+            preview_hostname = _normalize_string(deploy_readiness.get("preview_hostname"), max_length=253)
+        if not preview_hostname:
+            preview_hostname, _ = _safe_derive_preview_hostname_for_summary(
+                repo_name=(
+                    _normalize_string(deploy_target.get("repo_name"), max_length=120)
+                    or publish_repo
+                    or workspace.site_id
+                ),
+                site_id=workspace.site_id,
+            )
+        preview_url = (
+            _normalize_url_candidate(deploy_target.get("preview_url"))
+            or _normalize_url_candidate(deploy_readiness.get("preview_url"))
+            or (f"https://{preview_hostname}" if preview_hostname else None)
+        )
+        preview_live_url = (
+            confirmed_live_url
+            if preview_hostname and resolved_live_host and resolved_live_host == preview_hostname.lower()
+            else None
+        )
+        customer_domain_url = expected_publish_url
+        customer_domain_host = _extract_hostname_for_url(customer_domain_url)
+        customer_domain_live_url = (
+            confirmed_live_url
+            if customer_domain_host and resolved_live_host and customer_domain_host == resolved_live_host
+            else None
+        )
+        if customer_domain_url is None:
+            customer_domain_state = "not_configured"
+        elif customer_domain_live_url:
+            customer_domain_state = "active_live"
+        else:
+            customer_domain_state = "pending_cutover"
+        if preview_url is None:
+            preview_state = "not_configured"
+        elif preview_live_url:
+            preview_state = "active_live"
+        else:
+            preview_state = "expected_after_deploy"
         deployed_live = bool(workspace.last_deployed_at)
         deploy_state = "unknown"
         if confirmed_live_url and deployed_live:
@@ -9541,6 +9598,12 @@ class SEOMigrationService:
                 "site_workflow_file_path": _normalize_workflow_path_for_deploy(
                     deploy_target.get("site_workflow_file_path")
                 ),
+                "preview_hostname": preview_hostname,
+                "preview_url": preview_live_url or preview_url,
+                "preview_state": preview_state,
+                "customer_domain_url": customer_domain_url,
+                "customer_domain_state": customer_domain_state,
+                "customer_domain_live_url": customer_domain_live_url,
                 "kubernetes_namespace": deploy_namespace,
                 "namespace_source": deploy_namespace_source,
                 "namespace_model_status": deploy_namespace_model_status,
@@ -12431,6 +12494,23 @@ def _safe_derive_kubernetes_namespace_for_summary(
     return normalized_namespace, normalized_source
 
 
+def _safe_derive_preview_hostname_for_summary(
+    *,
+    repo_name: object,
+    site_id: object | None = None,
+) -> tuple[str | None, str | None]:
+    try:
+        preview_hostname, source = derive_site_preview_hostname(
+            repo_name=repo_name,
+            site_id=site_id,
+        )
+    except (SEOMigrationGitHubPublisherError, ValueError):
+        return None, None
+    normalized_hostname = _normalize_string(preview_hostname, max_length=253)
+    normalized_source = _normalize_string(source, max_length=60)
+    return normalized_hostname, normalized_source
+
+
 def _normalize_workflow_id_for_deploy(value: object) -> str | None:
     normalized = _normalize_string(value, max_length=160)
     if not normalized:
@@ -13256,6 +13336,18 @@ def _normalize_url_candidate(value: object) -> str | None:
     if lowered.startswith("http://") or lowered.startswith("https://"):
         return normalized
     return None
+
+
+def _extract_hostname_for_url(value: object) -> str | None:
+    normalized = _normalize_url_candidate(value)
+    if not normalized:
+        return None
+    try:
+        parsed = urlsplit(normalized)
+    except ValueError:
+        return None
+    hostname = (parsed.hostname or "").strip().lower()
+    return hostname or None
 
 
 def _normalize_host_candidate(value: object) -> str | None:

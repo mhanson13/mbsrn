@@ -622,6 +622,12 @@ export interface MigrationDestinationDeploySummary {
   resolved_live_url?: string | null;
   expected_url?: string | null;
   active_url?: string | null;
+  preview_hostname?: string | null;
+  preview_url?: string | null;
+  preview_state?: string | null;
+  customer_domain_url?: string | null;
+  customer_domain_state?: string | null;
+  customer_domain_live_url?: string | null;
   url_source?: string | null;
   url_source_detail?: string | null;
   is_deployed?: boolean;

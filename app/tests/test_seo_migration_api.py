@@ -1137,6 +1137,12 @@ def test_migration_summary_destination_reports_expected_publish_and_deploy_urls(
     assert deploy_destination.get("expected_publish_url") == "https://tnmfire-www.example"
     assert deploy_destination.get("resolved_live_url") is None
     assert deploy_destination.get("expected_url") == "https://tnmfire-www.example"
+    assert deploy_destination.get("preview_hostname") == "tnmfire-site.site.mbsrn.com"
+    assert deploy_destination.get("preview_url") == "https://tnmfire-site.site.mbsrn.com"
+    assert deploy_destination.get("preview_state") == "expected_after_deploy"
+    assert deploy_destination.get("customer_domain_url") == "https://tnmfire-www.example"
+    assert deploy_destination.get("customer_domain_state") == "pending_cutover"
+    assert deploy_destination.get("customer_domain_live_url") is None
     assert deploy_destination.get("url_source") == "deterministic_target_config"
     assert deploy_destination.get("url_source_detail") == "deploy_input:site_url"
     assert deploy_destination.get("state") == "expected_after_deploy"

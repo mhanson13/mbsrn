@@ -183,6 +183,12 @@ interface MigrationDestinationSummaryEvaluation {
   publishUrlSourceDetail: string | null;
   deployExpectedPublishUrl: string | null;
   deployResolvedLiveUrl: string | null;
+  deployPreviewHostname: string | null;
+  deployPreviewUrl: string | null;
+  deployPreviewState: string;
+  deployCustomerDomainUrl: string | null;
+  deployCustomerDomainLiveUrl: string | null;
+  deployCustomerDomainState: string;
   deployState: string;
   deployUrlSource: string | null;
   deployUrlSourceDetail: string | null;
@@ -1379,6 +1385,18 @@ function derivePublishTreeUrl(
     : `https://github.com/${owner}/${repo}/tree/${encodedBranch}`;
 }
 
+function extractHostnameFromUrl(value: string | null): string | null {
+  if (!value) {
+    return null;
+  }
+  try {
+    const parsed = new URL(value);
+    return parsed.hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
 function deriveDeployUrlFromInputs(inputs: Record<string, unknown>): { url: string | null; source: string | null } {
   const candidates = ["deploy_url", "public_url", "site_url", "url"];
   for (const key of candidates) {
@@ -1466,6 +1484,33 @@ function deriveMigrationDestinationSummary(params: {
     deployUrlSource === "deploy_result" || deployUrlSource === "workflow_output"
       ? deployResolvedLiveCandidate
       : asStringOrNull(deployDestination.active_url);
+  const deployResolvedLiveHost = extractHostnameFromUrl(deployResolvedLiveUrl);
+  const deployPreviewHostname = asStringOrNull(deployDestination.preview_hostname);
+  const deployPreviewUrl =
+    asStringOrNull(deployDestination.preview_url) ||
+    (deployPreviewHostname ? `https://${deployPreviewHostname}` : null);
+  const deployPreviewLiveUrl =
+    deployResolvedLiveUrl && deployPreviewHostname && deployResolvedLiveHost === deployPreviewHostname.toLowerCase()
+      ? deployResolvedLiveUrl
+      : null;
+  const deployPreviewState =
+    asStringOrNull(deployDestination.preview_state) ||
+    (deployPreviewLiveUrl ? "active_live" : deployPreviewUrl ? "expected_after_deploy" : "not_configured");
+  const deployCustomerDomainUrl =
+    asStringOrNull(deployDestination.customer_domain_url) || deployExpectedPublishUrl;
+  const deployCustomerDomainHost = extractHostnameFromUrl(deployCustomerDomainUrl);
+  const deployCustomerDomainLiveUrl =
+    asStringOrNull(deployDestination.customer_domain_live_url) ||
+    (deployResolvedLiveUrl && deployCustomerDomainHost && deployResolvedLiveHost === deployCustomerDomainHost
+      ? deployResolvedLiveUrl
+      : null);
+  const deployCustomerDomainState =
+    asStringOrNull(deployDestination.customer_domain_state) ||
+    (deployCustomerDomainUrl
+      ? deployCustomerDomainLiveUrl
+        ? "active_live"
+        : "pending_cutover"
+      : "not_configured");
   const deployWorkflowMode =
     asStringOrNull(deployDestination.deploy_workflow_mode) ||
     asStringOrNull(params.deployTarget.deploy_workflow_mode);
@@ -1531,6 +1576,12 @@ function deriveMigrationDestinationSummary(params: {
     publishUrlSourceDetail,
     deployExpectedPublishUrl,
     deployResolvedLiveUrl,
+    deployPreviewHostname,
+    deployPreviewUrl: deployPreviewLiveUrl || deployPreviewUrl,
+    deployPreviewState,
+    deployCustomerDomainUrl,
+    deployCustomerDomainLiveUrl,
+    deployCustomerDomainState,
     deployState: asStringOrNull(deployDestination.state) || (deployExpectedPublishUrl ? "expected_after_deploy" : "unknown"),
     deployUrlSource,
     deployUrlSourceDetail,
@@ -3227,13 +3278,22 @@ export function MigrationWorkspacePanel({
                   </a>
                 </WorkspaceMetadataItem>
               ) : null}
-              <WorkspaceMetadataItem label="Expected post-deploy site URL">
-                {destinationSummary.deployExpectedPublishUrl ? (
-                  <a href={destinationSummary.deployExpectedPublishUrl} target="_blank" rel="noreferrer">
-                    {destinationSummary.deployExpectedPublishUrl}
+              <WorkspaceMetadataItem label="Preview URL (platform-owned)">
+                {destinationSummary.deployPreviewUrl ? (
+                  <a href={destinationSummary.deployPreviewUrl} target="_blank" rel="noreferrer">
+                    {destinationSummary.deployPreviewUrl}
                   </a>
                 ) : (
-                  "Not determinable from current configuration"
+                  "Not yet determinable"
+                )}
+              </WorkspaceMetadataItem>
+              <WorkspaceMetadataItem label="Customer production domain">
+                {destinationSummary.deployCustomerDomainUrl ? (
+                  <a href={destinationSummary.deployCustomerDomainUrl} target="_blank" rel="noreferrer">
+                    {destinationSummary.deployCustomerDomainUrl}
+                  </a>
+                ) : (
+                  "Not configured"
                 )}
               </WorkspaceMetadataItem>
             </WorkspaceMetadataGrid>
@@ -3329,6 +3389,20 @@ export function MigrationWorkspacePanel({
               ) : null}
               <WorkspaceMetadataItem label="Deploy URL state">
                 {deployTargetStateLabel}
+              </WorkspaceMetadataItem>
+              <WorkspaceMetadataItem label="Preview deployment">
+                {destinationSummary.deployPreviewState === "active_live"
+                  ? "Preview deployed"
+                  : destinationSummary.deployPreviewUrl
+                    ? "Preview pending deployment evidence"
+                    : "Preview target not configured"}
+              </WorkspaceMetadataItem>
+              <WorkspaceMetadataItem label="Customer domain status">
+                {destinationSummary.deployCustomerDomainState === "active_live"
+                  ? "Production domain connected"
+                  : destinationSummary.deployCustomerDomainState === "pending_cutover"
+                    ? "Production domain not yet connected"
+                    : "Production domain not configured"}
               </WorkspaceMetadataItem>
               <WorkspaceMetadataItem label="Live URL (confirmed)">
                 {destinationSummary.deployResolvedLiveUrl ? (

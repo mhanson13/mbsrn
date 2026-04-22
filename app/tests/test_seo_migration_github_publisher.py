@@ -16,6 +16,7 @@ from app.integrations.seo_migration_github_publisher import (
     _derive_site_runtime_image_repository,
     _classify_rollout_blocker_hints_from_describe_outputs,
     derive_site_kubernetes_namespace,
+    derive_site_preview_hostname,
 )
 
 
@@ -154,6 +155,7 @@ def _managed_provisioning_responses(*, missing_verify_path: str | None = None) -
         "k8s/deployment.yaml",
         "k8s/service.yaml",
         "k8s/ingress.yaml",
+        "k8s/managedcertificate.yaml",
         "k8s/frontendconfig.yaml",
     )
     for index, managed_path in enumerate(managed_paths, start=1):
@@ -270,6 +272,12 @@ def test_derive_site_kubernetes_namespace_rejects_empty_source_values() -> None:
         derive_site_kubernetes_namespace(repo_name="   ", site_id=None)
     assert exc_info.value.code == "namespace_invalid"
     assert exc_info.value.stage == "workflow_provisioning"
+
+
+def test_derive_site_preview_hostname_matches_namespace_slug() -> None:
+    preview_hostname, source = derive_site_preview_hostname(repo_name="TnM Fire", site_id=None)
+    assert preview_hostname == "tnm-fire.site.mbsrn.com"
+    assert source == "repo_name"
 
 
 def test_derive_site_runtime_image_repository_uses_owner_scoped_path() -> None:
@@ -987,6 +995,10 @@ def test_check_deploy_target_readiness_reports_aligned_namespace_for_managed_tem
                 status=200,
                 body=json.dumps({"sha": "sha-ingress", "encoding": "base64", "content": namespaced_manifest}),
             ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-managedcertificate", "encoding": "base64", "content": namespaced_manifest}),
+            ),
                 _FakeHTTPResponse(
                     status=200,
                     body=json.dumps({"sha": "sha-frontendconfig", "encoding": "base64", "content": namespaced_manifest}),
@@ -1009,7 +1021,7 @@ def test_check_deploy_target_readiness_reports_aligned_namespace_for_managed_tem
     assert readiness.manifest_namespace_aligned is True
     assert readiness.dispatch_service_availability is True
     assert readiness.dispatch_service_reason_code == "available"
-    assert len(calls) == 12
+    assert len(calls) == 13
 
 
 def test_check_deploy_target_readiness_reports_misaligned_namespace_for_managed_template(monkeypatch) -> None:
@@ -1078,6 +1090,10 @@ def test_check_deploy_target_readiness_reports_misaligned_namespace_for_managed_
                 status=200,
                 body=json.dumps({"sha": "sha-ingress", "encoding": "base64", "content": namespaced_manifest_wrong}),
             ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-managedcertificate", "encoding": "base64", "content": namespaced_manifest_wrong}),
+            ),
                 _FakeHTTPResponse(
                     status=200,
                     body=json.dumps({"sha": "sha-frontendconfig", "encoding": "base64", "content": namespaced_manifest_wrong}),
@@ -1098,7 +1114,7 @@ def test_check_deploy_target_readiness_reports_misaligned_namespace_for_managed_
     assert readiness.manifest_namespace_aligned is False
     assert readiness.dispatch_service_availability is False
     assert readiness.dispatch_service_reason_code == "target_configuration_invalid"
-    assert len(calls) == 12
+    assert len(calls) == 13
 
 
 def test_check_deploy_target_readiness_flags_missing_cluster_name_configuration(monkeypatch) -> None:
@@ -1168,6 +1184,10 @@ def test_check_deploy_target_readiness_flags_missing_cluster_name_configuration(
                 status=200,
                 body=json.dumps({"sha": "sha-ingress", "encoding": "base64", "content": namespaced_manifest}),
             ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-managedcertificate", "encoding": "base64", "content": namespaced_manifest}),
+            ),
                 _FakeHTTPResponse(
                     status=200,
                     body=json.dumps({"sha": "sha-frontendconfig", "encoding": "base64", "content": namespaced_manifest}),
@@ -1198,7 +1218,7 @@ def test_check_deploy_target_readiness_flags_missing_cluster_name_configuration(
     assert readiness.dispatch_service_availability is False
     assert readiness.dispatch_service_reason_code == "missing_cluster_name"
     assert readiness.workflow_conformance_status == "conformant"
-    assert len(calls) == 13
+    assert len(calls) == 14
 
 
 @pytest.mark.parametrize(
@@ -1296,6 +1316,10 @@ def test_check_deploy_target_readiness_uses_admin_managed_gke_config_first(
             _FakeHTTPResponse(
                 status=200,
                 body=json.dumps({"sha": "sha-ingress", "encoding": "base64", "content": namespaced_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-managedcertificate", "encoding": "base64", "content": namespaced_manifest}),
             ),
                 _FakeHTTPResponse(
                     status=200,
@@ -1407,6 +1431,10 @@ def test_check_deploy_target_readiness_resolves_managed_gke_config_from_admin_wi
                 status=200,
                 body=json.dumps({"sha": "sha-ingress", "encoding": "base64", "content": namespaced_manifest}),
             ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-managedcertificate", "encoding": "base64", "content": namespaced_manifest}),
+            ),
                 _FakeHTTPResponse(
                     status=200,
                     body=json.dumps({"sha": "sha-frontendconfig", "encoding": "base64", "content": namespaced_manifest}),
@@ -1434,7 +1462,7 @@ def test_check_deploy_target_readiness_resolves_managed_gke_config_from_admin_wi
         not (method == "GET" and ("/actions/variables/" in url or "/actions/secrets/" in url))
         for method, url in calls
     )
-    assert len(calls) == 9
+    assert len(calls) == 10
 
 
 def test_check_deploy_target_readiness_resolves_managed_gke_config_from_repo_fallback_when_admin_missing(
@@ -1506,6 +1534,10 @@ def test_check_deploy_target_readiness_resolves_managed_gke_config_from_repo_fal
                 status=200,
                 body=json.dumps({"sha": "sha-ingress", "encoding": "base64", "content": namespaced_manifest}),
             ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-managedcertificate", "encoding": "base64", "content": namespaced_manifest}),
+            ),
                 _FakeHTTPResponse(
                     status=200,
                     body=json.dumps({"sha": "sha-frontendconfig", "encoding": "base64", "content": namespaced_manifest}),
@@ -1533,7 +1565,7 @@ def test_check_deploy_target_readiness_resolves_managed_gke_config_from_repo_fal
         not (method == "GET" and "/actions/secrets/" in url)
         for method, url in calls
     )
-    assert len(calls) == 12
+    assert len(calls) == 13
 
 
 def test_check_deploy_target_readiness_treats_whitespace_admin_values_as_missing_and_uses_repo_fallback(
@@ -1605,6 +1637,10 @@ def test_check_deploy_target_readiness_treats_whitespace_admin_values_as_missing
                 status=200,
                 body=json.dumps({"sha": "sha-ingress", "encoding": "base64", "content": namespaced_manifest}),
             ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-managedcertificate", "encoding": "base64", "content": namespaced_manifest}),
+            ),
                 _FakeHTTPResponse(
                     status=200,
                     body=json.dumps({"sha": "sha-frontendconfig", "encoding": "base64", "content": namespaced_manifest}),
@@ -1632,7 +1668,7 @@ def test_check_deploy_target_readiness_treats_whitespace_admin_values_as_missing
     cluster_resolution_details = details.get("cluster_name_resolution_details") or []
     assert "admin_config_missing" in cluster_resolution_details
     assert "resolved_from_repo_config" in cluster_resolution_details
-    assert len(calls) == 10
+    assert len(calls) == 11
 
 
 def test_dispatch_deploy_classifies_token_not_authorized(monkeypatch) -> None:
@@ -1725,6 +1761,10 @@ def test_dispatch_deploy_uses_admin_managed_gke_config_for_readiness_and_dispatc
             _FakeHTTPResponse(
                 status=200,
                 body=json.dumps({"sha": "sha-ingress", "encoding": "base64", "content": namespaced_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-managedcertificate", "encoding": "base64", "content": namespaced_manifest}),
             ),
                 _FakeHTTPResponse(
                     status=200,
@@ -1833,6 +1873,10 @@ def test_dispatch_deploy_blocks_when_gke_config_missing_in_admin_and_repo_fallba
                 status=200,
                 body=json.dumps({"sha": "sha-ingress", "encoding": "base64", "content": namespaced_manifest}),
             ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-managedcertificate", "encoding": "base64", "content": namespaced_manifest}),
+            ),
                 _FakeHTTPResponse(
                     status=200,
                     body=json.dumps({"sha": "sha-frontendconfig", "encoding": "base64", "content": namespaced_manifest}),
@@ -1936,6 +1980,10 @@ def test_dispatch_deploy_uses_repo_fallback_when_admin_managed_gke_config_missin
             _FakeHTTPResponse(
                 status=200,
                 body=json.dumps({"sha": "sha-ingress", "encoding": "base64", "content": namespaced_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-managedcertificate", "encoding": "base64", "content": namespaced_manifest}),
             ),
                 _FakeHTTPResponse(
                     status=200,
@@ -2419,7 +2467,7 @@ def test_ensure_deploy_workflow_creates_missing_file_and_verifies_presence(monke
     )
     assert result.provisioned is True
     assert result.workflow_path == ".github/workflows/deploy-tnmfire-www-prod.yml"
-    assert result.commit_sha == "verified-6"
+    assert result.commit_sha == "verified-7"
     assert result.kubernetes_namespace == "tnmfire"
     assert result.namespace_source == "repo_name"
     assert result.namespace_model_status == "aligned"
@@ -2428,6 +2476,7 @@ def test_ensure_deploy_workflow_creates_missing_file_and_verifies_presence(monke
         "k8s/deployment.yaml",
         "k8s/service.yaml",
         "k8s/ingress.yaml",
+        "k8s/managedcertificate.yaml",
         "k8s/frontendconfig.yaml",
     )
     assert result.managed_resource_quota_expected is False
@@ -2438,7 +2487,7 @@ def test_ensure_deploy_workflow_creates_missing_file_and_verifies_presence(monke
     assert result.managed_network_policy_present is None
     assert result.managed_namespace_policies_aligned is True
     assert result.managed_workflow_outcome == "managed_workflow_created"
-    assert len(calls) == 21
+    assert len(calls) == 24
     assert calls[0][1].endswith("/repos/mhanson13/tnmfire")
     assert calls[1][1].endswith("/repos/mhanson13/tnmfire/branches/main")
     assert calls[2][1].endswith("/contents/.github/workflows/deploy-tnmfire-www-prod.yml?ref=main")
@@ -2447,6 +2496,7 @@ def test_ensure_deploy_workflow_creates_missing_file_and_verifies_presence(monke
     assert any(call[1].endswith("/contents/k8s/deployment.yaml?ref=main") for call in calls)
     assert any(call[1].endswith("/contents/k8s/service.yaml?ref=main") for call in calls)
     assert any(call[1].endswith("/contents/k8s/ingress.yaml?ref=main") for call in calls)
+    assert any(call[1].endswith("/contents/k8s/managedcertificate.yaml?ref=main") for call in calls)
     assert any(call[1].endswith("/contents/k8s/frontendconfig.yaml?ref=main") for call in calls)
 
 
@@ -2456,6 +2506,7 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     captured_deployment_put_payload: dict[str, object] = {}
     captured_service_put_payload: dict[str, object] = {}
     captured_ingress_put_payload: dict[str, object] = {}
+    captured_managed_certificate_put_payload: dict[str, object] = {}
     captured_frontend_config_put_payload: dict[str, object] = {}
     queue = _managed_provisioning_responses()
 
@@ -2488,6 +2539,12 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
             captured_ingress_put_payload.update(json.loads(request.data.decode("utf-8")))
         if (
             request.get_method() == "PUT"
+            and request.full_url.endswith("/contents/k8s/managedcertificate.yaml")
+            and request.data
+        ):
+            captured_managed_certificate_put_payload.update(json.loads(request.data.decode("utf-8")))
+        if (
+            request.get_method() == "PUT"
             and request.full_url.endswith("/contents/k8s/frontendconfig.yaml")
             and request.data
         ):
@@ -2518,6 +2575,9 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     encoded_ingress_content = str(captured_ingress_put_payload.get("content") or "")
     assert encoded_ingress_content
     ingress_yaml = base64.b64decode(encoded_ingress_content).decode("utf-8")
+    encoded_managed_certificate_content = str(captured_managed_certificate_put_payload.get("content") or "")
+    assert encoded_managed_certificate_content
+    managed_certificate_yaml = base64.b64decode(encoded_managed_certificate_content).decode("utf-8")
     encoded_frontend_config_content = str(captured_frontend_config_put_payload.get("content") or "")
     assert encoded_frontend_config_content
     frontend_config_yaml = base64.b64decode(encoded_frontend_config_content).decode("utf-8")
@@ -2525,6 +2585,7 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "permissions:" in workflow_yaml
     assert "packages: read" in workflow_yaml
     assert "K8S_NAMESPACE: tnmfire" in workflow_yaml
+    assert "MBSRN_PREVIEW_HOSTNAME: tnmfire.site.mbsrn.com" in workflow_yaml
     assert "SITE_WEB_IMAGE_REPOSITORY: ghcr.io/mhanson13/site-web" in workflow_yaml
     assert "ghcr.io/mbsrn/site-web" not in workflow_yaml
     assert (
@@ -2623,6 +2684,10 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "sleep_seconds=15" in workflow_yaml
     assert "Waiting up to ${wait_seconds}s for ingress external address assignment in namespace $K8S_NAMESPACE." in workflow_yaml
     assert "kubectl get ingress site-web --namespace \"$K8S_NAMESPACE\"" in workflow_yaml
+    assert "ingress_spec_host=\"$(kubectl get ingress site-web --namespace \"$K8S_NAMESPACE\" -o jsonpath='{.spec.rules[0].host}' 2>/dev/null || true)\"" in workflow_yaml
+    assert "preview_host=\"$MBSRN_PREVIEW_HOSTNAME\"" in workflow_yaml
+    assert "if [ -z \"$preview_host\" ] && [ -n \"$ingress_spec_host\" ]; then" in workflow_yaml
+    assert "if [ -n \"$preview_host\" ]; then" in workflow_yaml
     assert "Ingress created but external address is not assigned yet for namespace $K8S_NAMESPACE." in workflow_yaml
     assert "Likely rollout blocker: ingress/load balancer provisioning still in progress." in workflow_yaml
     assert "This may take several minutes on GKE." in workflow_yaml
@@ -2662,13 +2727,19 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "targetPort: 8080" in service_yaml
     assert "cloud.google.com/neg: '{\"ingress\": true}'" in service_yaml
     assert "kubernetes.io/ingress.class: gce" in ingress_yaml
+    assert "networking.gke.io/managed-certificates: site-web-preview-cert" in ingress_yaml
     assert "networking.gke.io/v1beta1.FrontendConfig: site-web-frontend-config" in ingress_yaml
     assert "ingressClassName: gce" in ingress_yaml
+    assert "host: tnmfire.site.mbsrn.com" in ingress_yaml
+    assert "kind: ManagedCertificate" in managed_certificate_yaml
+    assert "name: site-web-preview-cert" in managed_certificate_yaml
+    assert "domains:" in managed_certificate_yaml
+    assert "- tnmfire.site.mbsrn.com" in managed_certificate_yaml
     assert "kind: FrontendConfig" in frontend_config_yaml
     assert "name: site-web-frontend-config" in frontend_config_yaml
     assert "redirectToHttps:" in frontend_config_yaml
     assert "enabled: true" in frontend_config_yaml
-    assert len(calls) == 21
+    assert len(calls) == 24
 
 
 def test_ensure_deploy_workflow_renders_admin_managed_gke_values_before_repo_fallback(monkeypatch) -> None:
@@ -2742,7 +2813,7 @@ def test_ensure_deploy_workflow_upgrades_platform_managed_placeholder_workflow(m
         _FakeHTTPResponse(status=201, body=json.dumps({"commit": {"sha": "workflow-commit"}})),
         _managed_workflow_verify_response(sha="workflow-verified-upsert"),
     ]
-    for index in range(1, 6):
+    for index in range(1, 7):
         queue.append(
             _FakeHTTPResponse(
                 status=200,
@@ -2825,7 +2896,7 @@ def test_ensure_deploy_workflow_upgrades_legacy_platform_placeholder_workflow(mo
         _FakeHTTPResponse(status=201, body=json.dumps({"commit": {"sha": "workflow-commit"}})),
         _managed_workflow_verify_response(sha="workflow-verified-upsert"),
     ]
-    for index in range(1, 6):
+    for index in range(1, 7):
         queue.append(
             _FakeHTTPResponse(
                 status=200,
@@ -3034,7 +3105,7 @@ def test_ensure_deploy_workflow_preserves_unknown_custom_workflow(monkeypatch) -
             body=json.dumps({"sha": "custom-workflow-sha", "encoding": "base64", "content": custom_workflow_content}),
         ),
     ]
-    for index in range(1, 6):
+    for index in range(1, 7):
         queue.append(
             _FakeHTTPResponse(
                 status=200,
@@ -3079,6 +3150,7 @@ def test_ensure_deploy_workflow_includes_optional_namespace_policy_manifests_whe
         "k8s/deployment.yaml",
         "k8s/service.yaml",
         "k8s/ingress.yaml",
+        "k8s/managedcertificate.yaml",
         "k8s/frontendconfig.yaml",
         "k8s/resourcequota.yaml",
         "k8s/limitrange.yaml",
@@ -3109,6 +3181,7 @@ def test_ensure_deploy_workflow_includes_optional_namespace_policy_manifests_whe
         "k8s/deployment.yaml",
         "k8s/service.yaml",
         "k8s/ingress.yaml",
+        "k8s/managedcertificate.yaml",
         "k8s/frontendconfig.yaml",
         "k8s/resourcequota.yaml",
         "k8s/limitrange.yaml",
@@ -3166,7 +3239,7 @@ def test_ensure_deploy_workflow_fails_when_upgraded_workflow_is_not_conformant(m
         _FakeHTTPResponse(status=201, body=json.dumps({"commit": {"sha": "workflow-commit"}})),
         _managed_workflow_verify_response(sha="workflow-verified-upsert"),
     ]
-    for index in range(1, 6):
+    for index in range(1, 7):
         queue.append(
             _FakeHTTPResponse(
                 status=200,
@@ -3271,6 +3344,7 @@ def test_check_deploy_target_readiness_flags_missing_expected_resource_quota_man
             _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-deployment", "encoding": "base64", "content": namespaced_manifest})),
             _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-service", "encoding": "base64", "content": namespaced_manifest})),
             _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-ingress", "encoding": "base64", "content": namespaced_manifest})),
+            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-managedcertificate", "encoding": "base64", "content": namespaced_manifest})),
             _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-frontendconfig", "encoding": "base64", "content": namespaced_manifest})),
             _http_error(
                 "https://api.github.com/repos/mhanson13/tnmfire/contents/k8s/resourcequota.yaml?ref=main",
@@ -3302,3 +3376,5 @@ def test_check_deploy_target_readiness_flags_missing_expected_resource_quota_man
     assert readiness.dispatch_service_availability is False
     assert readiness.dispatch_service_reason_code == "target_configuration_invalid"
     assert any(call[1].endswith("/contents/k8s/resourcequota.yaml?ref=main") for call in calls)
+
+

@@ -113,6 +113,7 @@ class SEOMigrationGitHubWorkflowProvisionResult:
     target_environment_source: str | None = None
     kubernetes_namespace: str | None = None
     namespace_source: str | None = None
+    preview_hostname: str | None = None
     managed_manifest_paths: tuple[str, ...] = ()
     namespace_model_status: str | None = None
     managed_resource_quota_expected: bool = False
@@ -150,6 +151,7 @@ class SEOMigrationGitHubTargetReadinessResult:
     workflow_conformance_evidence_summary: str | None = None
     kubernetes_namespace: str | None = None
     namespace_source: str | None = None
+    preview_hostname: str | None = None
     workflow_namespace_aligned: bool | None = None
     manifest_namespace_aligned: bool | None = None
     namespace_model_status: str | None = None
@@ -1930,6 +1932,10 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             repo_name=repo_name,
             site_id=site_id,
         )
+        preview_hostname, _ = derive_site_preview_hostname(
+            repo_name=repo_name,
+            site_id=site_id,
+        )
         workflow_path = _workflow_repo_path(normalized_workflow_id)
         self._ensure_repo_exists(repo_owner=repo_owner, repo_name=repo_name)
         self._ensure_ref_exists(
@@ -1949,6 +1955,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             managed_gke_config=normalized_managed_gke_config,
             kubernetes_namespace=derived_namespace,
             namespace_source=namespace_source,
+            preview_hostname=preview_hostname,
             site_id=site_id,
         )
         manifest_file_payloads = _render_managed_gke_manifest_files(
@@ -1958,6 +1965,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             target_environment_source=normalized_target_environment_source,
             kubernetes_namespace=derived_namespace,
             namespace_source=namespace_source,
+            preview_hostname=preview_hostname,
             namespace_isolation_defaults=normalized_namespace_isolation_defaults,
             site_id=site_id,
         )
@@ -2059,6 +2067,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 target_environment_source=normalized_target_environment_source,
                 kubernetes_namespace=derived_namespace,
                 namespace_source=namespace_source,
+                preview_hostname=preview_hostname,
                 managed_manifest_paths=managed_manifest_paths,
                 namespace_model_status=namespace_model_status,
                 managed_resource_quota_expected=bool(policy_expectations.get("resource_quota_expected")),
@@ -2109,6 +2118,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             target_environment_source=normalized_target_environment_source,
             kubernetes_namespace=derived_namespace,
             namespace_source=namespace_source,
+            preview_hostname=preview_hostname,
             managed_manifest_paths=managed_manifest_paths,
             namespace_model_status=namespace_model_status,
             managed_resource_quota_expected=bool(policy_expectations.get("resource_quota_expected")),
@@ -2212,6 +2222,10 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         policy_expectations = _managed_policy_expectations(normalized_namespace_isolation_defaults)
         expected_manifest_paths = _expected_managed_manifest_paths(normalized_namespace_isolation_defaults)
         derived_namespace, namespace_source = derive_site_kubernetes_namespace(
+            repo_name=target.repo_name,
+            site_id=None,
+        )
+        preview_hostname, _ = derive_site_preview_hostname(
             repo_name=target.repo_name,
             site_id=None,
         )
@@ -2338,6 +2352,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             workflow_conformance_evidence_summary=workflow_conformance.evidence_summary,
             kubernetes_namespace=derived_namespace,
             namespace_source=namespace_source,
+            preview_hostname=preview_hostname,
             workflow_namespace_aligned=workflow_namespace_aligned if managed_workflow else None,
             manifest_namespace_aligned=manifest_namespace_aligned if managed_workflow else None,
             namespace_model_status=namespace_model_status,
@@ -2777,17 +2792,21 @@ _MBSRN_MANAGED_NAMESPACE_FILE_PATH = "k8s/namespace.yaml"
 _MBSRN_MANAGED_DEPLOYMENT_FILE_PATH = "k8s/deployment.yaml"
 _MBSRN_MANAGED_SERVICE_FILE_PATH = "k8s/service.yaml"
 _MBSRN_MANAGED_INGRESS_FILE_PATH = "k8s/ingress.yaml"
+_MBSRN_MANAGED_CERTIFICATE_FILE_PATH = "k8s/managedcertificate.yaml"
 _MBSRN_MANAGED_FRONTEND_CONFIG_FILE_PATH = "k8s/frontendconfig.yaml"
 _MBSRN_MANAGED_RESOURCE_QUOTA_FILE_PATH = "k8s/resourcequota.yaml"
 _MBSRN_MANAGED_LIMIT_RANGE_FILE_PATH = "k8s/limitrange.yaml"
 _MBSRN_MANAGED_NETWORK_POLICY_FILE_PATH = "k8s/networkpolicy.yaml"
 _MBSRN_MANAGED_IMAGE_PULL_SECRET_NAME = "mbsrn-ghcr-pull"
 _MBSRN_MANAGED_SITE_WEB_IMAGE_REPO_NAME = "site-web"
+_MBSRN_MANAGED_PREVIEW_CERTIFICATE_NAME = "site-web-preview-cert"
+_MBSRN_MANAGED_PREVIEW_DOMAIN_SUFFIX = "site.mbsrn.com"
 _MBSRN_MANAGED_CORE_MANIFEST_PATHS: tuple[str, ...] = (
     _MBSRN_MANAGED_NAMESPACE_FILE_PATH,
     _MBSRN_MANAGED_DEPLOYMENT_FILE_PATH,
     _MBSRN_MANAGED_SERVICE_FILE_PATH,
     _MBSRN_MANAGED_INGRESS_FILE_PATH,
+    _MBSRN_MANAGED_CERTIFICATE_FILE_PATH,
     _MBSRN_MANAGED_FRONTEND_CONFIG_FILE_PATH,
 )
 _MBSRN_MANAGED_OPTIONAL_POLICY_MANIFEST_PATHS: tuple[str, ...] = (
@@ -2899,6 +2918,18 @@ def derive_site_kubernetes_namespace(*, repo_name: object, site_id: object | Non
         safe_message="Kubernetes namespace could not be derived from deploy target metadata.",
         stage="workflow_provisioning",
     )
+
+
+def derive_site_preview_hostname(*, repo_name: object, site_id: object | None = None) -> tuple[str, str]:
+    namespace, namespace_source = derive_site_kubernetes_namespace(repo_name=repo_name, site_id=site_id)
+    host_label = _safe_identifier_fragment(namespace, fallback="", max_length=63).strip("-")
+    if not host_label:
+        raise SEOMigrationGitHubPublisherError(
+            code="preview_hostname_invalid",
+            safe_message="Preview hostname could not be derived from deploy target metadata.",
+            stage="workflow_provisioning",
+        )
+    return f"{host_label}.{_MBSRN_MANAGED_PREVIEW_DOMAIN_SUFFIX}", namespace_source
 
 
 def _derive_site_runtime_image_repository(*, repo_owner: object) -> str:
@@ -3023,6 +3054,7 @@ def _render_managed_deploy_workflow_yaml(
     managed_gke_config: dict[str, object] | None,
     kubernetes_namespace: str,
     namespace_source: str,
+    preview_hostname: str,
     site_id: str | None = None,
 ) -> str:
     normalized_workflow_id = str(workflow_id or "").strip() or "deploy-www-prod.yml"
@@ -3059,6 +3091,7 @@ def _render_managed_deploy_workflow_yaml(
     normalized_site_fragment = _safe_identifier_fragment(site_id, fallback="workspace")
     normalized_namespace = _safe_identifier_fragment(kubernetes_namespace, fallback=normalized_repo_fragment, max_length=63)
     normalized_namespace_source = _safe_identifier_fragment(namespace_source, fallback="repo-name", max_length=40)
+    normalized_preview_hostname = (_coerce_string(preview_hostname) or "").strip().lower()
     normalized_name = f"MBSRN Deploy {normalized_repo_fragment}"
     return (
         f"# {_MBSRN_MANAGED_WORKFLOW_MARKER}\n"
@@ -3090,6 +3123,7 @@ def _render_managed_deploy_workflow_yaml(
         f"      MBSRN_TARGET_ENVIRONMENT_KEY: {normalized_environment_key}\n"
         f"      MBSRN_TARGET_ENVIRONMENT_SOURCE: {normalized_environment_source}\n"
         f"      MBSRN_SITE_IDENTITY: {normalized_site_fragment}\n"
+        f"      MBSRN_PREVIEW_HOSTNAME: {normalized_preview_hostname}\n"
         f"      SITE_WEB_IMAGE_REPOSITORY: {site_runtime_image_repository}\n"
         "      SITE_WEB_IMAGE_TAG: ${{ vars.MBSRN_SITE_WEB_IMAGE_TAG || vars.SITE_WEB_IMAGE_TAG || secrets.MBSRN_SITE_WEB_IMAGE_TAG || secrets.SITE_WEB_IMAGE_TAG || '' }}\n"
         f"      GKE_CLUSTER_NAME: {rendered_cluster_name}\n"
@@ -3269,9 +3303,12 @@ def _render_managed_deploy_workflow_yaml(
         "          echo \"Waiting up to ${wait_seconds}s for ingress external address assignment in namespace $K8S_NAMESPACE.\"\n"
         "          ingress_host=\"\"\n"
         "          ingress_ip=\"\"\n"
+        "          ingress_spec_host=\"\"\n"
+        "          preview_host=\"$MBSRN_PREVIEW_HOSTNAME\"\n"
         "          for attempt in $(seq 1 \"$max_attempts\"); do\n"
         "            ingress_host=\"$(kubectl get ingress site-web --namespace \"$K8S_NAMESPACE\" -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)\"\n"
         "            ingress_ip=\"$(kubectl get ingress site-web --namespace \"$K8S_NAMESPACE\" -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)\"\n"
+        "            ingress_spec_host=\"$(kubectl get ingress site-web --namespace \"$K8S_NAMESPACE\" -o jsonpath='{.spec.rules[0].host}' 2>/dev/null || true)\"\n"
         "            if [ -n \"$ingress_host\" ] || [ -n \"$ingress_ip\" ]; then\n"
         "              echo \"Ingress external address resolved on attempt ${attempt}/${max_attempts}.\"\n"
         "              break\n"
@@ -3282,7 +3319,12 @@ def _render_managed_deploy_workflow_yaml(
         "            fi\n"
         "          done\n"
         "          live_url=\"\"\n"
-        "          if [ -n \"$ingress_host\" ]; then\n"
+        "          if [ -z \"$preview_host\" ] && [ -n \"$ingress_spec_host\" ]; then\n"
+        "            preview_host=\"$ingress_spec_host\"\n"
+        "          fi\n"
+        "          if [ -n \"$preview_host\" ]; then\n"
+        "            live_url=\"https://$preview_host\"\n"
+        "          elif [ -n \"$ingress_host\" ]; then\n"
         "            live_url=\"https://$ingress_host\"\n"
         "          elif [ -n \"$ingress_ip\" ]; then\n"
         "            live_url=\"http://$ingress_ip\"\n"
@@ -3316,6 +3358,7 @@ def _render_managed_deploy_workflow_yaml(
         f'          echo "Target environment key: {normalized_environment_key}"\n'
         f'          echo "Target environment source: {normalized_environment_source}"\n'
         f'          echo "Site identity: {normalized_site_fragment}"\n'
+        "          echo \"Preview hostname: $MBSRN_PREVIEW_HOSTNAME\"\n"
         "          echo \"Site runtime image: ${{ steps.resolve_site_runtime_image.outputs.site_runtime_image_reference }}\"\n"
         "          echo \"Site runtime image selection mode: ${{ steps.resolve_site_runtime_image.outputs.site_runtime_image_selection_mode }}\"\n"
     )
@@ -3329,6 +3372,7 @@ def _render_managed_gke_manifest_files(
     target_environment_source: str,
     kubernetes_namespace: str,
     namespace_source: str,
+    preview_hostname: str,
     namespace_isolation_defaults: dict[str, object] | None,
     site_id: str | None,
 ) -> dict[str, str]:
@@ -3340,6 +3384,7 @@ def _render_managed_gke_manifest_files(
     namespace = _safe_identifier_fragment(kubernetes_namespace, fallback=repo_fragment, max_length=63)
     namespace_origin = _safe_identifier_fragment(namespace_source, fallback="repo-name", max_length=40)
     site_fragment = _safe_identifier_fragment(site_id, fallback="workspace", max_length=60)
+    normalized_preview_hostname = (_coerce_string(preview_hostname) or "").strip().lower()
 
     labels = (
         f"    app.kubernetes.io/managed-by: {_MBSRN_MANAGED_LABEL}\n"
@@ -3434,11 +3479,13 @@ def _render_managed_gke_manifest_files(
         f"{labels}"
         "  annotations:\n"
         "    kubernetes.io/ingress.class: gce\n"
+        f"    networking.gke.io/managed-certificates: {_MBSRN_MANAGED_PREVIEW_CERTIFICATE_NAME}\n"
         "    networking.gke.io/v1beta1.FrontendConfig: site-web-frontend-config\n"
         "spec:\n"
         "  ingressClassName: gce\n"
         "  rules:\n"
-        "    - http:\n"
+        f"    - host: {normalized_preview_hostname}\n"
+        "      http:\n"
         "        paths:\n"
         "          - path: /\n"
         "            pathType: Prefix\n"
@@ -3447,6 +3494,19 @@ def _render_managed_gke_manifest_files(
         "                name: site-web\n"
         "                port:\n"
         "                  number: 80\n"
+    )
+    managed_certificate_manifest = (
+        f"# {_MBSRN_MANAGED_MANIFEST_MARKER}\n"
+        "apiVersion: networking.gke.io/v1\n"
+        "kind: ManagedCertificate\n"
+        "metadata:\n"
+        f"  name: {_MBSRN_MANAGED_PREVIEW_CERTIFICATE_NAME}\n"
+        f"  namespace: {namespace}\n"
+        "  labels:\n"
+        f"{labels}"
+        "spec:\n"
+        "  domains:\n"
+        f"    - {normalized_preview_hostname}\n"
     )
     frontend_config_manifest = (
         f"# {_MBSRN_MANAGED_MANIFEST_MARKER}\n"
@@ -3466,6 +3526,7 @@ def _render_managed_gke_manifest_files(
         _MBSRN_MANAGED_DEPLOYMENT_FILE_PATH: deployment_manifest,
         _MBSRN_MANAGED_SERVICE_FILE_PATH: service_manifest,
         _MBSRN_MANAGED_INGRESS_FILE_PATH: ingress_manifest,
+        _MBSRN_MANAGED_CERTIFICATE_FILE_PATH: managed_certificate_manifest,
         _MBSRN_MANAGED_FRONTEND_CONFIG_FILE_PATH: frontend_config_manifest,
     }
     normalized_defaults = _normalize_namespace_isolation_defaults(namespace_isolation_defaults)
