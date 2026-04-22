@@ -2768,6 +2768,11 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "imagePullSecrets:" in deployment_yaml
     assert "name: mbsrn-ghcr-pull" in deployment_yaml
     assert "containerPort: 8080" in deployment_yaml
+    assert "env:" in deployment_yaml
+    assert "name: HOSTNAME" in deployment_yaml
+    assert "value: \"0.0.0.0\"" in deployment_yaml
+    assert "name: PORT" in deployment_yaml
+    assert "value: \"8080\"" in deployment_yaml
     assert "readinessProbe:" in deployment_yaml
     assert "port: 8080" in deployment_yaml
     assert "\n            - containerPort: 80\n" not in deployment_yaml

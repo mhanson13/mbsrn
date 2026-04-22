@@ -928,6 +928,10 @@ Deploy behavior:
   - verify rollout (`kubectl rollout status deployment/site-web --namespace <derived-namespace>`)
   - managed `site-web` deployment template references `imagePullSecrets: [{name: mbsrn-ghcr-pull}]` for private GHCR pulls
   - managed `site-web` runtime image repository is deterministic: `ghcr.io/<target-repo-owner>/site-web`
+  - managed `site-web` deployment template pins runtime serving env for health-check parity:
+    - `HOSTNAME=0.0.0.0`
+    - `PORT=8080`
+    - this ensures root-path probes and direct pod checks (`curl http://127.0.0.1:8080/`) hit a valid HTTP listener
   - deploy-time image selection order for managed site workloads:
     1. immutable SHA tag from `MBSRN_SITE_WEB_IMAGE_TAG` / `SITE_WEB_IMAGE_TAG` (vars first, then secrets) when the tag exists in GHCR
     2. safe fallback to `:latest`

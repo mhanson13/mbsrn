@@ -856,6 +856,7 @@ Common stage-aware interpretations:
     - pod crash/startup failure
     - probe failure
       - if probe events show `connection refused`, confirm managed site runtime port wiring is aligned (`containerPort=8080`, probe port `8080`, service `targetPort=8080`)
+      - if probe events are green but `curl -i http://127.0.0.1:8080/` inside the pod returns `Empty reply from server`, treat this as app/runtime serving failure (not ingress wiring). Managed template now sets `HOSTNAME=0.0.0.0` and `PORT=8080` explicitly so root-path HTTP responses are health-checkable.
     - config/secret reference failure
     - namespace ResourceQuota rejection (`FailedCreate`, `exceeded quota`, `requested` > `limited`)
     - scheduling/resource pressure
