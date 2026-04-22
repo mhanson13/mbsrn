@@ -30,6 +30,7 @@ from app.integrations.seo_migration_github_publisher import (
     SEOMigrationGitHubPublishTarget,
     SEOMigrationGitHubPublisher,
     SEOMigrationGitHubPublisherError,
+    SEOMigrationGitHubRepositoryEnsureResult,
     SEOMigrationGitHubTargetReadinessResult,
     SEOMigrationGitHubWorkflowProvisionResult,
     derive_site_kubernetes_namespace,
@@ -979,6 +980,7 @@ class SEOMigrationService:
                 require_admin=True,
             )
             target = _resolve_publish_target(effective_publish_config)
+            admin_prerequisites = dict(admin_publish_prerequisites)
         except ValueError as exc:
             failure_message = str(exc) or "Publish target is invalid."
             self._log_control_plane_action(
@@ -1049,6 +1051,12 @@ class SEOMigrationService:
         deploy_secret_propagation_status = _DEPLOY_SECRET_PROPAGATION_STATUS_NOT_ATTEMPTED
         deploy_secret_propagation_reason: str | None = None
         deploy_secret_propagation_source: str | None = None
+        repository_auto_create_enabled = bool(admin_prerequisites.get("github_repository_auto_create_enabled"))
+        repository_ensure_attempted = False
+        repository_auto_create_created = False
+        repository_exists: bool | None = None
+        repository_ensure_outcome: str | None = None
+        repository_ensure_skipped_reason: str | None = None
         workflow_provisioning_verified = False
         workflow_resolution_for_provision: dict[str, object] | None = None
         expected_publish_url: str | None = None
@@ -1079,6 +1087,27 @@ class SEOMigrationService:
             or _DEPLOY_TARGET_ENVIRONMENT_SOURCE_ADMIN
         )
         try:
+            if not dry_run:
+                repository_ensure_result: SEOMigrationGitHubRepositoryEnsureResult = (
+                    self.github_publisher.ensure_repository(
+                        repo_owner=target["repo_owner"],
+                        repo_name=target["repo_name"],
+                        auto_create_enabled=repository_auto_create_enabled,
+                        create_if_missing=True,
+                        expected_owner=target["repo_owner"],
+                    )
+                )
+                repository_ensure_attempted = bool(repository_ensure_result.auto_create_attempted)
+                repository_auto_create_created = bool(repository_ensure_result.auto_create_created)
+                repository_exists = bool(repository_ensure_result.exists)
+                repository_ensure_outcome = _normalize_string(
+                    repository_ensure_result.outcome,
+                    max_length=80,
+                )
+                repository_ensure_skipped_reason = _normalize_string(
+                    repository_ensure_result.skipped_reason,
+                    max_length=80,
+                )
             deploy_target_for_workflow: dict[str, object] | None = None
             try:
                 (
@@ -1479,6 +1508,12 @@ class SEOMigrationService:
                     "deploy_secret_propagation_status": deploy_secret_propagation_status,
                     "deploy_secret_propagation_reason": deploy_secret_propagation_reason,
                     "deploy_secret_propagation_source": deploy_secret_propagation_source,
+                    "repository_auto_create_enabled": repository_auto_create_enabled,
+                    "repository_ensure_attempted": repository_ensure_attempted,
+                    "repository_auto_create_created": repository_auto_create_created,
+                    "repository_exists": repository_exists,
+                    "repository_ensure_outcome": repository_ensure_outcome,
+                    "repository_ensure_skipped_reason": repository_ensure_skipped_reason,
                     "failure_reason": _normalize_string(exc.code, max_length=80),
                     "failure_category": failure_category,
                     "error": exc.safe_message,
@@ -1510,6 +1545,12 @@ class SEOMigrationService:
                     "deploy_secret_propagation_status": deploy_secret_propagation_status,
                     "deploy_secret_propagation_reason": deploy_secret_propagation_reason,
                     "deploy_secret_propagation_source": deploy_secret_propagation_source,
+                    "repository_auto_create_enabled": repository_auto_create_enabled,
+                    "repository_ensure_attempted": repository_ensure_attempted,
+                    "repository_auto_create_created": repository_auto_create_created,
+                    "repository_exists": repository_exists,
+                    "repository_ensure_outcome": repository_ensure_outcome,
+                    "repository_ensure_skipped_reason": repository_ensure_skipped_reason,
                     "kubernetes_namespace": (
                         deploy_workflow_provision_result.kubernetes_namespace
                         if deploy_workflow_provision_result is not None
@@ -1597,6 +1638,12 @@ class SEOMigrationService:
             "deploy_secret_propagation_status": deploy_secret_propagation_status,
             "deploy_secret_propagation_reason": deploy_secret_propagation_reason,
             "deploy_secret_propagation_source": deploy_secret_propagation_source,
+            "repository_auto_create_enabled": repository_auto_create_enabled,
+            "repository_ensure_attempted": repository_ensure_attempted,
+            "repository_auto_create_created": repository_auto_create_created,
+            "repository_exists": repository_exists,
+            "repository_ensure_outcome": repository_ensure_outcome,
+            "repository_ensure_skipped_reason": repository_ensure_skipped_reason,
             "workflow_provisioning_verified": workflow_provisioning_verified,
             "deploy_workflow_mode": deploy_workflow_mode,
             "target_environment_key": target_environment_key,
@@ -1703,6 +1750,12 @@ class SEOMigrationService:
                 "deploy_secret_propagation_status": deploy_secret_propagation_status,
                 "deploy_secret_propagation_reason": deploy_secret_propagation_reason,
                 "deploy_secret_propagation_source": deploy_secret_propagation_source,
+                "repository_auto_create_enabled": repository_auto_create_enabled,
+                "repository_ensure_attempted": repository_ensure_attempted,
+                "repository_auto_create_created": repository_auto_create_created,
+                "repository_exists": repository_exists,
+                "repository_ensure_outcome": repository_ensure_outcome,
+                "repository_ensure_skipped_reason": repository_ensure_skipped_reason,
                 "workflow_provisioning_verified": workflow_provisioning_verified,
                 "deploy_workflow_mode": deploy_workflow_mode,
                 "target_environment_key": target_environment_key,
@@ -8918,6 +8971,7 @@ class SEOMigrationService:
 
     @staticmethod
     def _safe_publish_target_summary(config: object) -> dict[str, object]:
+        source = _normalize_json_dict(config)
         normalized = _normalize_publish_config(config)
         return {
             "enabled": bool(normalized.get("enabled")),
@@ -8925,6 +8979,10 @@ class SEOMigrationService:
             "repo_name": str(normalized.get("repo_name") or "").strip(),
             "branch": str(normalized.get("branch") or "").strip(),
             "artifact_root": str(normalized.get("artifact_root") or "").strip(),
+            "github_repository_auto_create_enabled": _coerce_bool(
+                source.get("github_repository_auto_create_enabled"),
+                default=False,
+            ),
         }
 
     @staticmethod
@@ -9027,6 +9085,7 @@ class SEOMigrationService:
             "admin_publish_config_enabled": False,
             "admin_publish_config_valid": False,
             "admin_publish_configured": False,
+            "github_repository_auto_create_enabled": False,
             "operator_repository_configured": False,
         }
         reasons: list[str] = []
@@ -9042,6 +9101,9 @@ class SEOMigrationService:
         base_path = _normalize_string(getattr(admin_config, "base_path", None), max_length=160) or "/"
         normalized_artifact_root = base_path.strip().replace("\\", "/").strip("/")
         enabled = bool(getattr(admin_config, "enabled", False))
+        repository_auto_create_enabled = bool(
+            getattr(admin_config, "github_repository_auto_create_enabled", False)
+        )
 
         prerequisites["admin_publish_config_present"] = bool(owner)
         prerequisites["admin_publish_config_enabled"] = enabled
@@ -9061,8 +9123,10 @@ class SEOMigrationService:
 
         prerequisites["admin_publish_config_valid"] = True
         prerequisites["admin_publish_configured"] = True
+        prerequisites["github_repository_auto_create_enabled"] = repository_auto_create_enabled
         effective_config["enabled"] = True
         effective_config["repo_owner"] = owner
+        effective_config["github_repository_auto_create_enabled"] = repository_auto_create_enabled
         if self._is_default_workspace_publish_config(normalized_workspace):
             effective_config["repo_name"] = ""
         if not str(effective_config.get("branch") or "").strip():
@@ -9902,6 +9966,9 @@ class SEOMigrationService:
             _GITHUB_PUBLISHER_REASON_RUNTIME_CONFIG_INVALID,
             _GITHUB_PUBLISHER_REASON_RUNTIME_INTEGRATION_UNAVAILABLE,
             _DEPLOY_TARGET_REASON_TOKEN_UNAUTHORIZED,
+            "repo_auto_create_disabled",
+            "repo_auto_create_not_authorized",
+            "repo_create_failed_runtime_unavailable",
         }:
             return "config_missing"
         if code in {
@@ -9915,6 +9982,9 @@ class SEOMigrationService:
             _DEPLOY_TARGET_REASON_DISPATCH_UNSUPPORTED,
             _DEPLOY_TARGET_REASON_WORKFLOW_NOT_DISPATCHABLE,
             _DEPLOY_TARGET_REASON_WORKFLOW_NOT_PRODUCTION_READY,
+            "repo_create_failed_invalid_name",
+            "repo_create_failed_owner_mismatch",
+            "repo_create_failed_conflict",
         }:
             return "target_invalid"
         if action == "deploy":
@@ -10451,12 +10521,16 @@ class SEOMigrationService:
         blocker_codes: list[str] = []
         target_summary: dict[str, object] = {}
         target_valid = False
+        repository_exists: bool | None = None
+        repository_ensure_outcome: str | None = None
         effective_publish_config, admin_prerequisites, admin_reasons = self._build_effective_publish_config(
             workspace_publish_config=workspace.publish_config_json,
             require_admin=True,
         )
+        repository_auto_create_enabled = bool(admin_prerequisites.get("github_repository_auto_create_enabled"))
         reasons.extend(admin_reasons)
         target_summary = self._safe_publish_target_summary(effective_publish_config)
+        target_summary["repository_auto_create_enabled"] = repository_auto_create_enabled
         if not bool(admin_prerequisites.get("operator_repository_configured")):
             reasons.append("Operator must configure a GitHub repository before publish is available.")
             blocker_codes.append("publish_configuration_missing")
@@ -10470,6 +10544,7 @@ class SEOMigrationService:
                     "repo_name": target["repo_name"],
                     "branch": target["branch"],
                     "artifact_root": target["artifact_root"],
+                    "repository_auto_create_enabled": repository_auto_create_enabled,
                 }
                 if not target["enabled"]:
                     reasons.append("Publish target is not enabled.")
@@ -10502,6 +10577,55 @@ class SEOMigrationService:
                 workspace=workspace,
                 admin_prerequisites=admin_prerequisites,
             )
+        elif target_valid and bool(target_summary.get("enabled")):
+            try:
+                repo_status = self.github_publisher.ensure_repository(
+                    repo_owner=str(target_summary.get("repo_owner") or ""),
+                    repo_name=str(target_summary.get("repo_name") or ""),
+                    auto_create_enabled=repository_auto_create_enabled,
+                    create_if_missing=False,
+                    expected_owner=str(target_summary.get("repo_owner") or ""),
+                )
+            except SEOMigrationGitHubPublisherError as exc:
+                repository_ensure_outcome = "check_failed"
+                target_summary["repository_ensure_outcome"] = repository_ensure_outcome
+                target_summary["repository_ensure_failure_reason_code"] = _normalize_string(exc.code, max_length=80)
+                normalized_reason_code = _normalize_string(exc.code, max_length=80)
+                if normalized_reason_code in {
+                    "repo_create_failed_invalid_name",
+                    "repo_create_failed_owner_mismatch",
+                }:
+                    reasons.append("Publish target repository configuration is invalid.")
+                    blocker_codes.append("publish_configuration_invalid")
+                elif normalized_reason_code in {
+                    "token_not_authorized",
+                    "repo_auto_create_not_authorized",
+                    "github_auth_failed",
+                }:
+                    reasons.append(
+                        "GitHub runtime is not authorized to inspect the configured publish repository target."
+                    )
+                    blocker_codes.append("publish_runtime_unavailable")
+                else:
+                    reasons.append(exc.safe_message or "GitHub repository readiness check failed.")
+                    blocker_codes.append("publish_runtime_unavailable")
+            else:
+                repository_exists = bool(repo_status.exists)
+                repository_ensure_outcome = _normalize_string(repo_status.outcome, max_length=80)
+                target_summary["repository_exists"] = repository_exists
+                target_summary["repository_ensure_outcome"] = repository_ensure_outcome
+                target_summary["repository_ensure_skipped_reason"] = _normalize_string(
+                    repo_status.skipped_reason,
+                    max_length=80,
+                )
+                target_summary["repository_auto_create_available"] = bool(
+                    repository_auto_create_enabled and not repository_exists
+                )
+                if not repository_exists and not repository_auto_create_enabled:
+                    reasons.append(
+                        "Publish target repository was not found and admin repository auto-create is disabled."
+                    )
+                    blocker_codes.append("publish_configuration_missing")
         failure_category: str | None = None
         if reasons:
             failure_category = self._categorize_readiness_failure(
@@ -10522,6 +10646,11 @@ class SEOMigrationService:
                 "publish_runtime_available": bool(runtime_diagnostics.get("configured")),
                 "target_config_valid": target_valid,
                 "target_enabled": bool(target_summary.get("enabled")),
+                "publish_target_repo_exists": repository_exists,
+                "publish_target_repo_ensure_outcome": repository_ensure_outcome,
+                "publish_target_repo_auto_create_available": bool(
+                    repository_auto_create_enabled and repository_exists is False
+                ),
                 **admin_prerequisites,
             },
             "site_ga_measurement_id": _normalize_ga_measurement_id(site.ga4_measurement_id),
@@ -11625,6 +11754,12 @@ def _normalize_deploy_failure_reason_code(value: object) -> str | None:
         "github_network_error",
         "github_auth_failed",
         "publisher_not_configured",
+        "repo_auto_create_disabled",
+        "repo_auto_create_not_authorized",
+        "repo_create_failed_invalid_name",
+        "repo_create_failed_owner_mismatch",
+        "repo_create_failed_conflict",
+        "repo_create_failed_runtime_unavailable",
     }
     if normalized_lower in allowed:
         return normalized_lower

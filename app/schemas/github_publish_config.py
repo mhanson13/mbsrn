@@ -39,6 +39,7 @@ class GitHubPublishConfigRead(BaseModel):
     deploy_workflow_mode: str = "site_repo_template_v1"
     target_environment_key: str = "gke_prod"
     target_environment_source: str = "admin_config"
+    github_repository_auto_create_enabled: bool = False
     managed_gke_cluster_name: str | None = None
     managed_gke_cluster_location: str | None = None
     managed_gke_project_id: str | None = None
@@ -57,6 +58,7 @@ class GitHubPublishConfigUpdateRequest(BaseModel):
     base_path: str | None = Field(default="/", max_length=160)
     deploy_workflow_mode: str | None = Field(default="site_repo_template_v1", max_length=60)
     target_environment_key: str | None = Field(default="gke_prod", max_length=80)
+    github_repository_auto_create_enabled: bool = False
     managed_gke_cluster_name: str | None = Field(default=None, max_length=120)
     managed_gke_cluster_location: str | None = Field(default=None, max_length=120)
     managed_gke_project_id: str | None = Field(default=None, max_length=120)

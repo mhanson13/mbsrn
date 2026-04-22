@@ -39,6 +39,7 @@ from app.integrations.seo_migration_github_publisher import (
     SEOMigrationGitHubPublishTarget,
     SEOMigrationGitHubPublisher,
     SEOMigrationGitHubPublisherError,
+    SEOMigrationGitHubRepositoryEnsureResult,
     SEOMigrationGitHubTargetReadinessResult,
     SEOMigrationGitHubWorkflowProvisionResult,
 )
@@ -147,6 +148,28 @@ class _StubMigrationGitHubPublisher(SEOMigrationGitHubPublisher):
                 str | None,
             ]
         ] = []
+
+    def ensure_repository(
+        self,
+        *,
+        repo_owner: str,
+        repo_name: str,
+        auto_create_enabled: bool,
+        create_if_missing: bool = True,
+        expected_owner: str | None = None,
+        private_by_default: bool = True,
+    ) -> SEOMigrationGitHubRepositoryEnsureResult:
+        del auto_create_enabled, create_if_missing, expected_owner, private_by_default
+        return SEOMigrationGitHubRepositoryEnsureResult(
+            repo_owner=repo_owner,
+            repo_name=repo_name,
+            exists=True,
+            auto_create_enabled=False,
+            auto_create_attempted=False,
+            auto_create_created=False,
+            outcome="repo_exists",
+            skipped_reason=None,
+        )
 
     def publish_files(
         self,

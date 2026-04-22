@@ -15,6 +15,8 @@ from datetime import datetime, timedelta, timezone
 from app.core.time import utc_now
 
 _LOGGER = logging.getLogger(__name__)
+_VALID_REPO_OWNER_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{0,38}$")
+_VALID_REPO_NAME_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,100}$")
 
 
 @dataclass(frozen=True)
@@ -53,6 +55,18 @@ class SEOMigrationGitHubActionsSecretUpsertResult:
     secret_name: str
     action: str
     updated_at: str
+
+
+@dataclass(frozen=True)
+class SEOMigrationGitHubRepositoryEnsureResult:
+    repo_owner: str
+    repo_name: str
+    exists: bool
+    auto_create_enabled: bool
+    auto_create_attempted: bool
+    auto_create_created: bool
+    outcome: str
+    skipped_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -185,6 +199,26 @@ class SEOMigrationGitHubPublisherError(RuntimeError):
 
 
 class SEOMigrationGitHubPublisher:
+    def ensure_repository(
+        self,
+        *,
+        repo_owner: str,
+        repo_name: str,
+        auto_create_enabled: bool,
+        create_if_missing: bool = True,
+        expected_owner: str | None = None,
+        private_by_default: bool = True,
+    ) -> SEOMigrationGitHubRepositoryEnsureResult:
+        del (
+            repo_owner,
+            repo_name,
+            auto_create_enabled,
+            create_if_missing,
+            expected_owner,
+            private_by_default,
+        )
+        raise NotImplementedError
+
     def publish_files(
         self,
         *,
@@ -312,6 +346,29 @@ class MisconfiguredSEOMigrationGitHubPublisher(SEOMigrationGitHubPublisher):
         self.safe_message = safe_message
         self.reason_code = reason_code.strip() or "publisher_not_configured"
 
+    def ensure_repository(
+        self,
+        *,
+        repo_owner: str,
+        repo_name: str,
+        auto_create_enabled: bool,
+        create_if_missing: bool = True,
+        expected_owner: str | None = None,
+        private_by_default: bool = True,
+    ) -> SEOMigrationGitHubRepositoryEnsureResult:
+        del (
+            repo_owner,
+            repo_name,
+            auto_create_enabled,
+            create_if_missing,
+            expected_owner,
+            private_by_default,
+        )
+        raise SEOMigrationGitHubPublisherError(
+            code=self.reason_code,
+            safe_message=self.safe_message,
+        )
+
     def publish_files(
         self,
         *,
@@ -422,6 +479,396 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         self.timeout_seconds = max(1, int(timeout_seconds))
         self.committer_name = committer_name.strip() or "MBSRN Migration Bot"
         self.committer_email = committer_email.strip() or "migration-bot@mbsrn.local"
+
+    def ensure_repository(
+        self,
+        *,
+        repo_owner: str,
+        repo_name: str,
+        auto_create_enabled: bool,
+        create_if_missing: bool = True,
+        expected_owner: str | None = None,
+        private_by_default: bool = True,
+    ) -> SEOMigrationGitHubRepositoryEnsureResult:
+        normalized_owner = self._normalize_repo_owner_or_raise(repo_owner)
+        normalized_repo = self._normalize_repo_name_or_raise(repo_name)
+        normalized_expected_owner = self._normalize_expected_owner(expected_owner)
+        auto_create_enabled_value = bool(auto_create_enabled)
+        create_if_missing_value = bool(create_if_missing)
+        _emit_structured_publisher_log(
+            payload={
+                "event": "seo_migration_repo_ensure_started",
+                "repo_owner": normalized_owner,
+                "repo_name": normalized_repo,
+                "auto_create_enabled": auto_create_enabled_value,
+                "create_if_missing": create_if_missing_value,
+                "expected_owner": normalized_expected_owner,
+            },
+            fallback_message="seo_migration_repo_ensure_started",
+            level=logging.INFO,
+        )
+        try:
+            self._ensure_repo_exists(repo_owner=normalized_owner, repo_name=normalized_repo)
+            _emit_structured_publisher_log(
+                payload={
+                    "event": "seo_migration_repo_ensure_result",
+                    "repo_owner": normalized_owner,
+                    "repo_name": normalized_repo,
+                    "auto_create_enabled": auto_create_enabled_value,
+                    "create_if_missing": create_if_missing_value,
+                    "auto_create_attempted": False,
+                    "auto_create_created": False,
+                    "outcome": "repo_exists",
+                },
+                fallback_message="seo_migration_repo_ensure_result",
+                level=logging.INFO,
+            )
+            return SEOMigrationGitHubRepositoryEnsureResult(
+                repo_owner=normalized_owner,
+                repo_name=normalized_repo,
+                exists=True,
+                auto_create_enabled=auto_create_enabled_value,
+                auto_create_attempted=False,
+                auto_create_created=False,
+                outcome="repo_exists",
+                skipped_reason=None,
+            )
+        except SEOMigrationGitHubPublisherError as exc:
+            if exc.code != "repo_not_found":
+                raise
+
+        if not create_if_missing_value:
+            _emit_structured_publisher_log(
+                payload={
+                    "event": "seo_migration_repo_ensure_result",
+                    "repo_owner": normalized_owner,
+                    "repo_name": normalized_repo,
+                    "auto_create_enabled": auto_create_enabled_value,
+                    "create_if_missing": False,
+                    "auto_create_attempted": False,
+                    "auto_create_created": False,
+                    "outcome": "repo_missing",
+                    "skipped_reason": "check_only",
+                },
+                fallback_message="seo_migration_repo_ensure_result",
+                level=logging.INFO,
+            )
+            return SEOMigrationGitHubRepositoryEnsureResult(
+                repo_owner=normalized_owner,
+                repo_name=normalized_repo,
+                exists=False,
+                auto_create_enabled=auto_create_enabled_value,
+                auto_create_attempted=False,
+                auto_create_created=False,
+                outcome="repo_missing",
+                skipped_reason="check_only",
+            )
+
+        if not auto_create_enabled_value:
+            _emit_structured_publisher_log(
+                payload={
+                    "event": "seo_migration_repo_auto_create_skipped",
+                    "repo_owner": normalized_owner,
+                    "repo_name": normalized_repo,
+                    "auto_create_enabled": False,
+                    "skipped_reason": "policy_disabled",
+                },
+                fallback_message="seo_migration_repo_auto_create_skipped",
+                level=logging.WARNING,
+            )
+            raise SEOMigrationGitHubPublisherError(
+                code="repo_auto_create_disabled",
+                safe_message=(
+                    "GitHub repository target was not found and repository auto-create is disabled in admin settings."
+                ),
+                stage="repo_create",
+            )
+
+        if normalized_expected_owner and normalized_owner.lower() != normalized_expected_owner.lower():
+            _emit_structured_publisher_log(
+                payload={
+                    "event": "seo_migration_repo_auto_create_skipped",
+                    "repo_owner": normalized_owner,
+                    "repo_name": normalized_repo,
+                    "auto_create_enabled": True,
+                    "skipped_reason": "owner_mismatch",
+                    "expected_owner": normalized_expected_owner,
+                },
+                fallback_message="seo_migration_repo_auto_create_skipped",
+                level=logging.WARNING,
+            )
+            raise SEOMigrationGitHubPublisherError(
+                code="repo_create_failed_owner_mismatch",
+                safe_message="GitHub repository owner is outside the configured admin-owned publish target.",
+                stage="repo_create",
+            )
+
+        _emit_structured_publisher_log(
+            payload={
+                "event": "seo_migration_repo_auto_create_attempted",
+                "repo_owner": normalized_owner,
+                "repo_name": normalized_repo,
+                "auto_create_enabled": auto_create_enabled_value,
+                "expected_owner": normalized_expected_owner,
+                "private_by_default": bool(private_by_default),
+            },
+            fallback_message="seo_migration_repo_auto_create_attempted",
+            level=logging.INFO,
+        )
+        try:
+            create_mode = self._create_repository(
+                repo_owner=normalized_owner,
+                repo_name=normalized_repo,
+                private_by_default=private_by_default,
+                expected_owner=normalized_expected_owner,
+            )
+        except SEOMigrationGitHubPublisherError as exc:
+            _emit_structured_publisher_log(
+                payload={
+                    "event": "seo_migration_repo_auto_create_failed",
+                    "repo_owner": normalized_owner,
+                    "repo_name": normalized_repo,
+                    "auto_create_enabled": auto_create_enabled_value,
+                    "failure_reason_code": exc.code,
+                    "failure_stage": exc.stage,
+                },
+                fallback_message="seo_migration_repo_auto_create_failed",
+                level=logging.WARNING,
+            )
+            raise
+        self._ensure_repo_exists(repo_owner=normalized_owner, repo_name=normalized_repo)
+        _emit_structured_publisher_log(
+            payload={
+                "event": "seo_migration_repo_auto_create_succeeded",
+                "repo_owner": normalized_owner,
+                "repo_name": normalized_repo,
+                "auto_create_enabled": auto_create_enabled_value,
+                "create_mode": create_mode,
+                "outcome": "repo_created",
+            },
+            fallback_message="seo_migration_repo_auto_create_succeeded",
+            level=logging.INFO,
+        )
+        return SEOMigrationGitHubRepositoryEnsureResult(
+            repo_owner=normalized_owner,
+            repo_name=normalized_repo,
+            exists=True,
+            auto_create_enabled=auto_create_enabled_value,
+            auto_create_attempted=True,
+            auto_create_created=True,
+            outcome="repo_created",
+            skipped_reason=None,
+        )
+
+    @staticmethod
+    def _normalize_repo_owner_or_raise(value: object) -> str:
+        normalized = (_coerce_string(value) or "").strip()
+        if not normalized or not _VALID_REPO_OWNER_PATTERN.fullmatch(normalized):
+            raise SEOMigrationGitHubPublisherError(
+                code="repo_create_failed_owner_mismatch",
+                safe_message="GitHub repository owner is outside the configured admin-owned publish target.",
+                stage="repo_create",
+            )
+        return normalized
+
+    @staticmethod
+    def _normalize_repo_name_or_raise(value: object) -> str:
+        normalized = (_coerce_string(value) or "").strip()
+        if not normalized or not _VALID_REPO_NAME_PATTERN.fullmatch(normalized):
+            raise SEOMigrationGitHubPublisherError(
+                code="repo_create_failed_invalid_name",
+                safe_message="GitHub repository name is invalid for auto-create.",
+                stage="repo_create",
+            )
+        return normalized
+
+    @staticmethod
+    def _normalize_expected_owner(value: object) -> str | None:
+        normalized = (_coerce_string(value) or "").strip()
+        if not normalized:
+            return None
+        if not _VALID_REPO_OWNER_PATTERN.fullmatch(normalized):
+            return None
+        return normalized
+
+    def _create_repository(
+        self,
+        *,
+        repo_owner: str,
+        repo_name: str,
+        private_by_default: bool,
+        expected_owner: str | None,
+    ) -> str:
+        payload = {
+            "name": repo_name,
+            "private": bool(private_by_default),
+            "auto_init": False,
+        }
+        org_path = f"/orgs/{urllib.parse.quote(repo_owner, safe='')}/repos"
+        try:
+            self._request_json(
+                method="POST",
+                path=org_path,
+                payload=payload,
+                expected_statuses=(201,),
+                status_error_map={
+                    401: (
+                        "repo_auto_create_not_authorized",
+                        "GitHub token is not authorized to create repositories for the configured owner.",
+                    ),
+                    403: (
+                        "repo_auto_create_not_authorized",
+                        "GitHub token is not authorized to create repositories for the configured owner.",
+                    ),
+                    409: (
+                        "repo_create_failed_conflict",
+                        "GitHub repository creation conflict occurred for the configured target.",
+                    ),
+                },
+                error_stage="repo_create",
+            )
+            return "org_repository_created"
+        except SEOMigrationGitHubPublisherError as exc:
+            if exc.code in {"repo_auto_create_not_authorized", "repo_create_failed_conflict"}:
+                raise
+            if exc.code in {"github_timeout", "github_network_error", "github_temporal_failure"}:
+                raise SEOMigrationGitHubPublisherError(
+                    code="repo_create_failed_runtime_unavailable",
+                    safe_message="GitHub repository auto-create failed temporarily.",
+                    stage="repo_create",
+                ) from exc
+            if exc.code == "github_request_failed":
+                raise self._classify_repo_create_request_failed(
+                    repo_owner=repo_owner,
+                    repo_name=repo_name,
+                    exc=exc,
+                ) from exc
+            if exc.code != "github_target_not_found":
+                raise
+
+        user_login = self._resolve_authenticated_user_login()
+        if not user_login:
+            raise SEOMigrationGitHubPublisherError(
+                code="repo_create_failed_runtime_unavailable",
+                safe_message="GitHub repository auto-create could not verify authenticated owner.",
+                stage="repo_create",
+            )
+        if user_login.lower() != repo_owner.lower():
+            raise SEOMigrationGitHubPublisherError(
+                code="repo_create_failed_owner_mismatch",
+                safe_message="GitHub repository owner is outside the configured admin-owned publish target.",
+                stage="repo_create",
+            )
+        if expected_owner and user_login.lower() != expected_owner.lower():
+            raise SEOMigrationGitHubPublisherError(
+                code="repo_create_failed_owner_mismatch",
+                safe_message="GitHub repository owner is outside the configured admin-owned publish target.",
+                stage="repo_create",
+            )
+
+        user_path = "/user/repos"
+        try:
+            self._request_json(
+                method="POST",
+                path=user_path,
+                payload=payload,
+                expected_statuses=(201,),
+                status_error_map={
+                    401: (
+                        "repo_auto_create_not_authorized",
+                        "GitHub token is not authorized to create repositories for the configured owner.",
+                    ),
+                    403: (
+                        "repo_auto_create_not_authorized",
+                        "GitHub token is not authorized to create repositories for the configured owner.",
+                    ),
+                    409: (
+                        "repo_create_failed_conflict",
+                        "GitHub repository creation conflict occurred for the configured target.",
+                    ),
+                },
+                error_stage="repo_create",
+            )
+        except SEOMigrationGitHubPublisherError as exc:
+            if exc.code in {"repo_auto_create_not_authorized", "repo_create_failed_conflict"}:
+                raise
+            if exc.code in {"github_timeout", "github_network_error", "github_temporal_failure"}:
+                raise SEOMigrationGitHubPublisherError(
+                    code="repo_create_failed_runtime_unavailable",
+                    safe_message="GitHub repository auto-create failed temporarily.",
+                    stage="repo_create",
+                ) from exc
+            if exc.code == "github_request_failed":
+                raise self._classify_repo_create_request_failed(
+                    repo_owner=repo_owner,
+                    repo_name=repo_name,
+                    exc=exc,
+                ) from exc
+            raise
+        return "user_repository_created"
+
+    def _classify_repo_create_request_failed(
+        self,
+        *,
+        repo_owner: str,
+        repo_name: str,
+        exc: SEOMigrationGitHubPublisherError,
+    ) -> SEOMigrationGitHubPublisherError:
+        repo_exists = self._repo_exists_probe(repo_owner=repo_owner, repo_name=repo_name)
+        if repo_exists:
+            return SEOMigrationGitHubPublisherError(
+                code="repo_create_failed_conflict",
+                safe_message="GitHub repository creation conflict occurred for the configured target.",
+                stage="repo_create",
+                status_code=exc.status_code,
+            )
+        return SEOMigrationGitHubPublisherError(
+            code="repo_create_failed_invalid_name",
+            safe_message="GitHub repository name is invalid for auto-create.",
+            stage="repo_create",
+            status_code=exc.status_code,
+        )
+
+    def _repo_exists_probe(self, *, repo_owner: str, repo_name: str) -> bool:
+        payload = self._request_json(
+            method="GET",
+            path=f"/repos/{urllib.parse.quote(repo_owner)}/{urllib.parse.quote(repo_name)}",
+            expected_statuses=(200,),
+            allow_404=True,
+            status_error_map={
+                401: (
+                    "repo_auto_create_not_authorized",
+                    "GitHub token is not authorized to create repositories for the configured owner.",
+                ),
+                403: (
+                    "repo_auto_create_not_authorized",
+                    "GitHub token is not authorized to create repositories for the configured owner.",
+                ),
+            },
+            error_stage="repo_create",
+        )
+        return isinstance(payload, dict)
+
+    def _resolve_authenticated_user_login(self) -> str | None:
+        payload = self._request_json(
+            method="GET",
+            path="/user",
+            expected_statuses=(200,),
+            status_error_map={
+                401: (
+                    "repo_auto_create_not_authorized",
+                    "GitHub token is not authorized to create repositories for the configured owner.",
+                ),
+                403: (
+                    "repo_auto_create_not_authorized",
+                    "GitHub token is not authorized to create repositories for the configured owner.",
+                ),
+            },
+            error_stage="repo_create",
+        )
+        if not isinstance(payload, dict):
+            return None
+        return _coerce_string(payload.get("login"))
 
     def publish_files(
         self,

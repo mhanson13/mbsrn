@@ -67,6 +67,7 @@ def test_get_github_publish_config_returns_defaults_when_unset(db_session, seede
     assert payload["deploy_workflow_mode"] == "site_repo_template_v1"
     assert payload["target_environment_key"] == "gke_prod"
     assert payload["target_environment_source"] == "admin_config"
+    assert payload["github_repository_auto_create_enabled"] is False
     assert payload["managed_gke_cluster_name"] is None
     assert payload["managed_gke_cluster_location"] is None
     assert payload["managed_gke_project_id"] is None
@@ -115,6 +116,7 @@ def test_put_github_publish_config_persists_and_reads_back(db_session, seeded_bu
             "base_path": "/site",
             "deploy_workflow_mode": "site_repo_template_v1",
             "target_environment_key": "gke_prod_us_central1",
+            "github_repository_auto_create_enabled": True,
             "managed_gke_cluster_name": "mbsrn-cluster",
             "managed_gke_cluster_location": "us-central1",
             "managed_gke_project_id": "mbsrn-prod",
@@ -159,6 +161,7 @@ def test_put_github_publish_config_persists_and_reads_back(db_session, seeded_bu
     assert updated["deploy_workflow_mode"] == "site_repo_template_v1"
     assert updated["target_environment_key"] == "gke_prod_us_central1"
     assert updated["target_environment_source"] == "admin_config"
+    assert updated["github_repository_auto_create_enabled"] is True
     assert updated["managed_gke_cluster_name"] == "mbsrn-cluster"
     assert updated["managed_gke_cluster_location"] == "us-central1"
     assert updated["managed_gke_project_id"] == "mbsrn-prod"
@@ -183,6 +186,7 @@ def test_put_github_publish_config_persists_and_reads_back(db_session, seeded_bu
     assert fetched["deploy_workflow_mode"] == "site_repo_template_v1"
     assert fetched["target_environment_key"] == "gke_prod_us_central1"
     assert fetched["target_environment_source"] == "admin_config"
+    assert fetched["github_repository_auto_create_enabled"] is True
     assert fetched["managed_gke_cluster_name"] == "mbsrn-cluster"
     assert fetched["managed_gke_cluster_location"] == "us-central1"
     assert fetched["managed_gke_project_id"] == "mbsrn-prod"

@@ -959,6 +959,7 @@ function applyGitHubPublishConfigInputs(
     setManagedGkeClusterName: (value: string) => void;
     setManagedGkeClusterLocation: (value: string) => void;
     setManagedGkeProjectId: (value: string) => void;
+    setRepositoryAutoCreateEnabled: (value: boolean) => void;
     setManagedDeployKeyConfigured: (value: boolean) => void;
     setManagedDeployKeyUpdatedAt: (value: string | null) => void;
     clearManagedDeployKeyInput: () => void;
@@ -975,6 +976,7 @@ function applyGitHubPublishConfigInputs(
   setters.setManagedGkeClusterName(config.managed_gke_cluster_name || "");
   setters.setManagedGkeClusterLocation(config.managed_gke_cluster_location || "");
   setters.setManagedGkeProjectId(config.managed_gke_project_id || "");
+  setters.setRepositoryAutoCreateEnabled(Boolean(config.github_repository_auto_create_enabled));
   setters.setManagedDeployKeyConfigured(Boolean(config.managed_gcp_deploy_key_configured));
   setters.setManagedDeployKeyUpdatedAt(config.managed_gcp_deploy_key_updated_at || null);
   setters.clearManagedDeployKeyInput();
@@ -1072,6 +1074,7 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
   const [githubPublishManagedGkeClusterLocationInput, setGitHubPublishManagedGkeClusterLocationInput] =
     useState("");
   const [githubPublishManagedGkeProjectIdInput, setGitHubPublishManagedGkeProjectIdInput] = useState("");
+  const [githubRepositoryAutoCreateEnabled, setGitHubRepositoryAutoCreateEnabled] = useState(false);
   const [githubPublishManagedDeployKeyInput, setGitHubPublishManagedDeployKeyInput] = useState("");
   const [githubPublishManagedDeployKeyClear, setGitHubPublishManagedDeployKeyClear] = useState(false);
   const [githubPublishManagedDeployKeyConfigured, setGitHubPublishManagedDeployKeyConfigured] = useState(false);
@@ -1296,6 +1299,7 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
             setManagedGkeClusterName: setGitHubPublishManagedGkeClusterNameInput,
             setManagedGkeClusterLocation: setGitHubPublishManagedGkeClusterLocationInput,
             setManagedGkeProjectId: setGitHubPublishManagedGkeProjectIdInput,
+            setRepositoryAutoCreateEnabled: setGitHubRepositoryAutoCreateEnabled,
             setManagedDeployKeyConfigured: setGitHubPublishManagedDeployKeyConfigured,
             setManagedDeployKeyUpdatedAt: setGitHubPublishManagedDeployKeyUpdatedAt,
             clearManagedDeployKeyInput: () => setGitHubPublishManagedDeployKeyInput(""),
@@ -1745,6 +1749,7 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
         base_path: validation.basePath,
         deploy_workflow_mode: validation.deployWorkflowMode,
         target_environment_key: validation.targetEnvironmentKey,
+        github_repository_auto_create_enabled: githubRepositoryAutoCreateEnabled,
         managed_gke_cluster_name: validation.managedGkeClusterName,
         managed_gke_cluster_location: validation.managedGkeClusterLocation,
         managed_gke_project_id: validation.managedGkeProjectId,
@@ -1767,6 +1772,7 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
         setManagedGkeClusterName: setGitHubPublishManagedGkeClusterNameInput,
         setManagedGkeClusterLocation: setGitHubPublishManagedGkeClusterLocationInput,
         setManagedGkeProjectId: setGitHubPublishManagedGkeProjectIdInput,
+        setRepositoryAutoCreateEnabled: setGitHubRepositoryAutoCreateEnabled,
         setManagedDeployKeyConfigured: setGitHubPublishManagedDeployKeyConfigured,
         setManagedDeployKeyUpdatedAt: setGitHubPublishManagedDeployKeyUpdatedAt,
         clearManagedDeployKeyInput: () => setGitHubPublishManagedDeployKeyInput(""),
@@ -2761,6 +2767,19 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
             {githubPublishValidation.targetEnvironmentKeyError ? (
               <p className="hint error">{githubPublishValidation.targetEnvironmentKeyError}</p>
             ) : null}
+            <label htmlFor="github-publish-repository-auto-create-enabled" className="checkbox-chip">
+              <input
+                id="github-publish-repository-auto-create-enabled"
+                type="checkbox"
+                checked={githubRepositoryAutoCreateEnabled}
+                onChange={(event) => setGitHubRepositoryAutoCreateEnabled(event.target.checked)}
+                disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
+              />
+              Enable managed repository auto-create for missing publish targets
+            </label>
+            <p className="hint muted">
+              Admin-owned policy. When enabled, publish can create missing repositories under the configured owner.
+            </p>
             <p className="hint muted">
               Managed GKE target fields below are admin-owned source of truth. Repo vars/secrets remain legacy fallback only.
             </p>
@@ -3140,6 +3159,9 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                 </WorkspaceMetadataItem>
                 <WorkspaceMetadataItem label="Target environment key">
                   <code>{githubPublishValidation.targetEnvironmentKey}</code>
+                </WorkspaceMetadataItem>
+                <WorkspaceMetadataItem label="Repository auto-create">
+                  <span>{githubRepositoryAutoCreateEnabled ? "Enabled" : "Disabled"}</span>
                 </WorkspaceMetadataItem>
                 <WorkspaceMetadataItem label="Managed GKE cluster">
                   <code>{githubPublishValidation.managedGkeClusterName || "Not configured"}</code>

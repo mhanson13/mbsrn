@@ -248,6 +248,165 @@ def _managed_provisioning_responses_with_paths(
     return responses
 
 
+def test_ensure_repository_returns_exists_when_repo_present(monkeypatch) -> None:
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    calls: list[tuple[str, str]] = []
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _FakeHTTPResponse(status=200, body=json.dumps({"full_name": "mhanson13/tnmfire"})),
+        ],
+        calls,
+    )
+
+    result = publisher.ensure_repository(
+        repo_owner="mhanson13",
+        repo_name="tnmfire",
+        auto_create_enabled=False,
+        create_if_missing=True,
+        expected_owner="mhanson13",
+    )
+
+    assert result.exists is True
+    assert result.auto_create_attempted is False
+    assert result.auto_create_created is False
+    assert result.outcome == "repo_exists"
+    assert calls == [("GET", "https://api.github.com/repos/mhanson13/tnmfire")]
+
+
+def test_ensure_repository_check_only_reports_repo_missing(monkeypatch) -> None:
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    calls: list[tuple[str, str]] = []
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _http_error(
+                "https://api.github.com/repos/mhanson13/tnmfire",
+                status_code=404,
+                message="Not Found",
+            ),
+        ],
+        calls,
+    )
+
+    result = publisher.ensure_repository(
+        repo_owner="mhanson13",
+        repo_name="tnmfire",
+        auto_create_enabled=True,
+        create_if_missing=False,
+        expected_owner="mhanson13",
+    )
+
+    assert result.exists is False
+    assert result.auto_create_attempted is False
+    assert result.auto_create_created is False
+    assert result.outcome == "repo_missing"
+    assert result.skipped_reason == "check_only"
+    assert calls == [("GET", "https://api.github.com/repos/mhanson13/tnmfire")]
+
+
+def test_ensure_repository_missing_repo_with_auto_create_disabled_raises_precise_reason(monkeypatch) -> None:
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    calls: list[tuple[str, str]] = []
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _http_error(
+                "https://api.github.com/repos/mhanson13/tnmfire",
+                status_code=404,
+                message="Not Found",
+            ),
+        ],
+        calls,
+    )
+
+    with pytest.raises(SEOMigrationGitHubPublisherError) as exc_info:
+        publisher.ensure_repository(
+            repo_owner="mhanson13",
+            repo_name="tnmfire",
+            auto_create_enabled=False,
+            create_if_missing=True,
+            expected_owner="mhanson13",
+        )
+
+    assert exc_info.value.code == "repo_auto_create_disabled"
+    assert exc_info.value.stage == "repo_create"
+    assert calls == [("GET", "https://api.github.com/repos/mhanson13/tnmfire")]
+
+
+def test_ensure_repository_missing_repo_with_auto_create_enabled_creates_repository(monkeypatch) -> None:
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    calls: list[tuple[str, str]] = []
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _http_error(
+                "https://api.github.com/repos/mhanson13/tnmfire",
+                status_code=404,
+                message="Not Found",
+            ),
+            _FakeHTTPResponse(status=201, body=json.dumps({"name": "tnmfire"})),
+            _FakeHTTPResponse(status=200, body=json.dumps({"full_name": "mhanson13/tnmfire"})),
+        ],
+        calls,
+    )
+
+    result = publisher.ensure_repository(
+        repo_owner="mhanson13",
+        repo_name="tnmfire",
+        auto_create_enabled=True,
+        create_if_missing=True,
+        expected_owner="mhanson13",
+    )
+
+    assert result.exists is True
+    assert result.auto_create_attempted is True
+    assert result.auto_create_created is True
+    assert result.outcome == "repo_created"
+    assert calls == [
+        ("GET", "https://api.github.com/repos/mhanson13/tnmfire"),
+        ("POST", "https://api.github.com/orgs/mhanson13/repos"),
+        ("GET", "https://api.github.com/repos/mhanson13/tnmfire"),
+    ]
+
+
+def test_ensure_repository_create_unauthorized_classifies_precisely(monkeypatch) -> None:
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    calls: list[tuple[str, str]] = []
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _http_error(
+                "https://api.github.com/repos/mhanson13/tnmfire",
+                status_code=404,
+                message="Not Found",
+            ),
+            _http_error(
+                "https://api.github.com/orgs/mhanson13/repos",
+                status_code=403,
+                message="Forbidden",
+            ),
+        ],
+        calls,
+    )
+
+    with pytest.raises(SEOMigrationGitHubPublisherError) as exc_info:
+        publisher.ensure_repository(
+            repo_owner="mhanson13",
+            repo_name="tnmfire",
+            auto_create_enabled=True,
+            create_if_missing=True,
+            expected_owner="mhanson13",
+        )
+
+    assert exc_info.value.code == "repo_auto_create_not_authorized"
+    assert exc_info.value.stage == "repo_create"
+    assert calls == [
+        ("GET", "https://api.github.com/repos/mhanson13/tnmfire"),
+        ("POST", "https://api.github.com/orgs/mhanson13/repos"),
+    ]
+
+
 def test_derive_site_kubernetes_namespace_normalizes_repo_name_values() -> None:
     assert derive_site_kubernetes_namespace(repo_name="tnmfire", site_id=None) == ("tnmfire", "repo_name")
     assert derive_site_kubernetes_namespace(repo_name="Lars Construction", site_id=None) == (

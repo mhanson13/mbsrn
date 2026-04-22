@@ -110,6 +110,7 @@ describe("admin route", () => {
       deploy_workflow_mode: "site_repo_template_v1",
       target_environment_key: "gke_prod",
       target_environment_source: "admin_config",
+      github_repository_auto_create_enabled: false,
       managed_gke_cluster_name: "mbsrn-cluster",
       managed_gke_cluster_location: "us-central1",
       managed_gke_project_id: "mbsrn-prod",
@@ -155,6 +156,7 @@ describe("admin route", () => {
       deploy_workflow_mode: "site_repo_template_v1",
       target_environment_key: "gke_prod",
       target_environment_source: "admin_config",
+      github_repository_auto_create_enabled: true,
       managed_gke_cluster_name: "mbsrn-cluster",
       managed_gke_cluster_location: "us-central1",
       managed_gke_project_id: "mbsrn-prod",
@@ -449,6 +451,7 @@ describe("admin route", () => {
       deploy_workflow_mode: "site_repo_template_v1",
       target_environment_key: "gke_prod",
       target_environment_source: "admin_config",
+      github_repository_auto_create_enabled: false,
       managed_gke_cluster_name: "mbsrn-cluster",
       managed_gke_cluster_location: "us-central1",
       managed_gke_project_id: "mbsrn-prod",
@@ -494,6 +497,7 @@ describe("admin route", () => {
       deploy_workflow_mode: "site_repo_template_v1",
       target_environment_key: "gke_prod_blue",
       target_environment_source: "admin_config",
+      github_repository_auto_create_enabled: true,
       managed_gke_cluster_name: "mbsrn-cluster-prod",
       managed_gke_cluster_location: "us-central1-b",
       managed_gke_project_id: "mbsrn-prod-2",
@@ -554,6 +558,10 @@ describe("admin route", () => {
     expect(deployWorkflowModeInput).toHaveValue("site_repo_template_v1");
     const targetEnvironmentKeyInput = screen.getByLabelText("Target Environment Key");
     expect(targetEnvironmentKeyInput).toHaveValue("gke_prod");
+    const repoAutoCreateToggle = screen.getByLabelText(
+      "Enable managed repository auto-create for missing publish targets",
+    );
+    expect(repoAutoCreateToggle).not.toBeChecked();
     const managedGkeClusterNameInput = screen.getByLabelText("Managed GKE Cluster Name");
     expect(managedGkeClusterNameInput).toHaveValue("mbsrn-cluster");
     const managedGkeClusterLocationInput = screen.getByLabelText("Managed GKE Cluster Location");
@@ -598,6 +606,7 @@ describe("admin route", () => {
       base_path: "/site/content",
       deploy_workflow_mode: "site_repo_template_v1",
       target_environment_key: "gke_prod_blue",
+      github_repository_auto_create_enabled: false,
       managed_gke_cluster_name: "mbsrn-cluster-prod",
       managed_gke_cluster_location: "us-central1-b",
       managed_gke_project_id: "mbsrn-prod-2",

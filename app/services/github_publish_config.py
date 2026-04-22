@@ -78,6 +78,7 @@ class GitHubPublishConfigService:
             deploy_workflow_mode=_DEFAULT_DEPLOY_WORKFLOW_MODE,
             target_environment_key=_DEFAULT_TARGET_ENVIRONMENT_KEY,
             target_environment_source=_TARGET_ENVIRONMENT_SOURCE_ADMIN,
+            github_repository_auto_create_enabled=False,
             managed_gke_cluster_name=None,
             managed_gke_cluster_location=None,
             managed_gke_project_id=None,
@@ -144,8 +145,16 @@ class GitHubPublishConfigService:
         )
         target_environment_source = _TARGET_ENVIRONMENT_SOURCE_ADMIN
         enabled = bool(payload.enabled)
+        github_repository_auto_create_enabled = bool(payload.github_repository_auto_create_enabled)
         existing = self.repository.get_singleton()
         payload_fields_set = getattr(payload, "model_fields_set", set()) or set()
+        github_repository_auto_create_enabled_provided = (
+            "github_repository_auto_create_enabled" in payload_fields_set
+        )
+        if not github_repository_auto_create_enabled_provided and existing is not None:
+            github_repository_auto_create_enabled = bool(
+                getattr(existing, "github_repository_auto_create_enabled", False)
+            )
         managed_cluster_name_provided = "managed_gke_cluster_name" in payload_fields_set
         managed_cluster_location_provided = "managed_gke_cluster_location" in payload_fields_set
         managed_project_id_provided = "managed_gke_project_id" in payload_fields_set
@@ -258,6 +267,11 @@ class GitHubPublishConfigService:
             "target_environment_source": (
                 existing.target_environment_source if existing is not None else _TARGET_ENVIRONMENT_SOURCE_ADMIN
             ),
+            "github_repository_auto_create_enabled": (
+                bool(getattr(existing, "github_repository_auto_create_enabled", False))
+                if existing is not None
+                else False
+            ),
             "managed_gke_cluster_name": (
                 existing.managed_gke_cluster_name if existing is not None else None
             ),
@@ -306,6 +320,7 @@ class GitHubPublishConfigService:
             "deploy_workflow_mode": deploy_workflow_mode,
             "target_environment_key": target_environment_key,
             "target_environment_source": target_environment_source,
+            "github_repository_auto_create_enabled": github_repository_auto_create_enabled,
             "managed_gke_cluster_name": managed_gke_cluster_name,
             "managed_gke_cluster_location": managed_gke_cluster_location,
             "managed_gke_project_id": managed_gke_project_id,
@@ -324,6 +339,7 @@ class GitHubPublishConfigService:
                 deploy_workflow_mode=deploy_workflow_mode,
                 target_environment_key=target_environment_key,
                 target_environment_source=target_environment_source,
+                github_repository_auto_create_enabled=github_repository_auto_create_enabled,
                 managed_gke_cluster_name=managed_gke_cluster_name,
                 managed_gke_cluster_location=managed_gke_cluster_location,
                 managed_gke_project_id=managed_gke_project_id,
@@ -340,6 +356,7 @@ class GitHubPublishConfigService:
             existing.deploy_workflow_mode = deploy_workflow_mode
             existing.target_environment_key = target_environment_key
             existing.target_environment_source = target_environment_source
+            existing.github_repository_auto_create_enabled = github_repository_auto_create_enabled
             existing.managed_gke_cluster_name = managed_gke_cluster_name
             existing.managed_gke_cluster_location = managed_gke_cluster_location
             existing.managed_gke_project_id = managed_gke_project_id
@@ -360,6 +377,7 @@ class GitHubPublishConfigService:
                 "deploy_workflow_mode",
                 "target_environment_key",
                 "target_environment_source",
+                "github_repository_auto_create_enabled",
                 "managed_gke_cluster_name",
                 "managed_gke_cluster_location",
                 "managed_gke_project_id",
@@ -392,6 +410,9 @@ class GitHubPublishConfigService:
                     "deploy_workflow_mode": existing.deploy_workflow_mode,
                     "target_environment_key": existing.target_environment_key,
                     "target_environment_source": existing.target_environment_source,
+                    "github_repository_auto_create_enabled": bool(
+                        getattr(existing, "github_repository_auto_create_enabled", False)
+                    ),
                     "managed_gke_cluster_name": existing.managed_gke_cluster_name,
                     "managed_gke_cluster_location": existing.managed_gke_cluster_location,
                     "managed_gke_project_id": existing.managed_gke_project_id,

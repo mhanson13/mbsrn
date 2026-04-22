@@ -25,6 +25,7 @@ from app.integrations.seo_migration_github_publisher import (
     SEOMigrationGitHubPublishTarget,
     SEOMigrationGitHubPublisher,
     SEOMigrationGitHubPublisherError,
+    SEOMigrationGitHubRepositoryEnsureResult,
     SEOMigrationGitHubTargetReadinessResult,
     SEOMigrationGitHubWorkflowProvisionResult,
 )
@@ -142,6 +143,10 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
     def __init__(
         self,
         *,
+        existing_repository: bool = True,
+        ensure_repository_error_code: str | None = None,
+        ensure_repository_error_message: str | None = None,
+        ensure_repository_error_stage: str | None = None,
         fail_publish: bool = False,
         fail_deploy: bool = False,
         deploy_live_url: str | None = None,
@@ -199,6 +204,10 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         secret_propagation_error_stage: str | None = None,
         existing_deploy_secret: bool = False,
     ) -> None:
+        self.existing_repository = existing_repository
+        self.ensure_repository_error_code = ensure_repository_error_code
+        self.ensure_repository_error_message = ensure_repository_error_message
+        self.ensure_repository_error_stage = ensure_repository_error_stage
         self.fail_publish = fail_publish
         self.fail_deploy = fail_deploy
         self.deploy_live_url = deploy_live_url
@@ -270,6 +279,7 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         self.publish_calls: list[
             tuple[SEOMigrationGitHubPublishTarget, list[SEOMigrationGitHubPublishFile], str, bool]
         ] = []
+        self.ensure_repository_calls: list[tuple[str, str, bool, bool, str | None, bool]] = []
         self.deploy_calls: list[tuple[SEOMigrationGitHubDeployTarget, bool]] = []
         self.deploy_managed_gke_configs: list[dict[str, object] | None] = []
         self.refresh_calls: list[tuple[SEOMigrationGitHubDeployTarget, int, str | None]] = []
@@ -289,6 +299,75 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
                 str | None,
             ]
         ] = []
+
+    def ensure_repository(
+        self,
+        *,
+        repo_owner: str,
+        repo_name: str,
+        auto_create_enabled: bool,
+        create_if_missing: bool = True,
+        expected_owner: str | None = None,
+        private_by_default: bool = True,
+    ) -> SEOMigrationGitHubRepositoryEnsureResult:
+        self.ensure_repository_calls.append(
+            (
+                repo_owner,
+                repo_name,
+                bool(auto_create_enabled),
+                bool(create_if_missing),
+                expected_owner,
+                bool(private_by_default),
+            )
+        )
+        if self.ensure_repository_error_code:
+            raise SEOMigrationGitHubPublisherError(
+                code=self.ensure_repository_error_code,
+                safe_message=self.ensure_repository_error_message or "Simulated repository ensure failure.",
+                stage=self.ensure_repository_error_stage or "repo_create",
+            )
+        if self.existing_repository:
+            return SEOMigrationGitHubRepositoryEnsureResult(
+                repo_owner=repo_owner,
+                repo_name=repo_name,
+                exists=True,
+                auto_create_enabled=bool(auto_create_enabled),
+                auto_create_attempted=False,
+                auto_create_created=False,
+                outcome="repo_exists",
+                skipped_reason=None,
+            )
+        if bool(create_if_missing) and not bool(auto_create_enabled):
+            raise SEOMigrationGitHubPublisherError(
+                code="repo_auto_create_disabled",
+                safe_message=(
+                    "GitHub repository target was not found and repository auto-create is disabled in admin settings."
+                ),
+                stage="repo_create",
+            )
+        if bool(create_if_missing) and bool(auto_create_enabled):
+            self.existing_repository = True
+            return SEOMigrationGitHubRepositoryEnsureResult(
+                repo_owner=repo_owner,
+                repo_name=repo_name,
+                exists=True,
+                auto_create_enabled=True,
+                auto_create_attempted=True,
+                auto_create_created=True,
+                outcome="repo_created",
+                skipped_reason=None,
+            )
+        skipped_reason = "check_only" if not bool(create_if_missing) else "policy_disabled"
+        return SEOMigrationGitHubRepositoryEnsureResult(
+            repo_owner=repo_owner,
+            repo_name=repo_name,
+            exists=False,
+            auto_create_enabled=bool(auto_create_enabled),
+            auto_create_attempted=False,
+            auto_create_created=False,
+            outcome="repo_missing",
+            skipped_reason=skipped_reason,
+        )
 
     def publish_files(
         self,
@@ -809,6 +888,13 @@ def _configure_deploy_target(
         },
         principal_id="principal-1",
     )
+
+
+def _set_admin_repo_auto_create_enabled(db_session, *, enabled: bool) -> None:
+    config = db_session.query(GitHubPublishConfig).first()
+    assert config is not None
+    config.github_repository_auto_create_enabled = bool(enabled)
+    db_session.commit()
 
 
 def test_update_deploy_config_rejects_operator_updates_to_admin_owned_fields(db_session) -> None:
@@ -7411,3 +7497,118 @@ def test_deploy_logs_distinguish_trigger_support_from_dispatch_service_availabil
         and payload.get("target", {}).get("deploy_trace_id")
         for payload in control_plane_payloads
     )
+
+
+def test_publish_missing_repo_with_auto_create_disabled_returns_precise_failure(db_session) -> None:
+    publisher = _RecordingGitHubPublisher(existing_repository=False)
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes="Approved for publish",
+        principal_id="principal-1",
+    )
+
+    with pytest.raises(SEOMigrationValidationError, match="repository auto-create is disabled"):
+        service.publish_artifact_version(
+            business_id=business_id,
+            site_id=site_id,
+            artifact_version_id=artifact.id,
+            dry_run=False,
+            commit_message="Publish migration",
+            analytics_measurement_id=None,
+            principal_id="principal-1",
+        )
+
+    assert publisher.ensure_repository_calls
+    assert all(call[2] is False for call in publisher.ensure_repository_calls)
+    assert all(call[3] is False for call in publisher.ensure_repository_calls)
+
+    summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
+    readiness = summary.publish_readiness
+    reasons = readiness.get("reasons") if isinstance(readiness.get("reasons"), list) else []
+    target = readiness.get("target") if isinstance(readiness.get("target"), dict) else {}
+    assert any("auto-create is disabled" in str(reason).lower() for reason in reasons)
+    assert target.get("repository_auto_create_enabled") is False
+    assert target.get("repository_exists") is False
+
+
+def test_publish_missing_repo_with_auto_create_enabled_creates_repo_and_continues(db_session) -> None:
+    publisher = _RecordingGitHubPublisher(existing_repository=False)
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _set_admin_repo_auto_create_enabled(db_session, enabled=True)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes="Approved for publish",
+        principal_id="principal-1",
+    )
+
+    publish_result = service.publish_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        commit_message="Publish migration",
+        analytics_measurement_id=None,
+        principal_id="principal-1",
+    )
+
+    assert publisher.ensure_repository_calls
+    assert any(call[2] is True and call[3] is True for call in publisher.ensure_repository_calls)
+    assert publish_result.result.get("repository_auto_create_enabled") is True
+    assert publish_result.result.get("repository_ensure_attempted") is True
+    assert publish_result.result.get("repository_auto_create_created") is True
+    assert publish_result.result.get("repository_ensure_outcome") == "repo_created"
+
+
+def test_publish_readiness_reports_repo_auto_create_capability_for_missing_repo(db_session) -> None:
+    publisher = _RecordingGitHubPublisher(existing_repository=False)
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _set_admin_repo_auto_create_enabled(db_session, enabled=True)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+
+    summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
+    readiness = summary.publish_readiness
+    target = readiness.get("target") if isinstance(readiness.get("target"), dict) else {}
+    prerequisites = (
+        readiness.get("config_prerequisites") if isinstance(readiness.get("config_prerequisites"), dict) else {}
+    )
+
+    assert target.get("repository_auto_create_enabled") is True
+    assert target.get("repository_exists") is False
+    assert target.get("repository_auto_create_available") is True
+    assert prerequisites.get("publish_target_repo_exists") is False
+    assert prerequisites.get("publish_target_repo_auto_create_available") is True

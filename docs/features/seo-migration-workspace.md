@@ -713,6 +713,7 @@ Admin-owned baseline (global):
 - `owner` (GitHub account/org)
 - `default_branch` (fallback when workspace branch override is empty)
 - `base_path`
+- `github_repository_auto_create_enabled` (admin policy gate for creating missing target repos)
 - `enabled`
 
 Workspace-owned destination (site-scoped):
@@ -729,6 +730,10 @@ Publish behavior:
 - explicit operator-triggered action only
 - approved artifact required
 - bounded file/path validation before publish
+- publish performs target repository existence verification before workflow bootstrap and content writes
+- if target repository is missing:
+  - when `github_repository_auto_create_enabled=true`, publish attempts repository creation under the configured admin owner and then continues
+  - when disabled, publish/readiness fails with a clear admin-policy blocker (repository auto-create disabled)
 - publish always runs deploy-workflow bootstrap verification against the target branch (`.github/workflows/{workflow_id}`) before returning success for non-dry-run publish
 - generated/target repos are treated as workflow-missing by default until verified
 - if workflow is missing, publish provisions it and verifies presence before marking publish as valid/deploy-ready
@@ -769,6 +774,7 @@ Migration publish now depends on an admin-managed GitHub target baseline:
   - `owner` (`account/org`, for example `mhanson13`)
   - `default_branch`
   - `base_path` (`/` for repo root, optional subpath like `/site`)
+  - `github_repository_auto_create_enabled` (admin-controlled policy for missing-repository auto-create)
   - `enabled`
   - `deploy_workflow_mode` (`site_repo_template_v1` currently supported)
   - `target_environment_key` (admin-owned environment mapping key, for example `gke_prod`)
@@ -797,6 +803,7 @@ Operational behavior:
   - owner
   - default branch
   - normalized base path
+  - repository auto-create policy state
   - deploy workflow mode
   - target environment key
   - target environment source
@@ -1115,6 +1122,13 @@ Migration publish/deploy paths normalize failures into stable categories:
     - `branch_not_found_or_ref_invalid`
     - `workflow_not_dispatchable`
     - `workflow_dispatch_not_supported`
+  - Publish repository auto-create/control-plane reason codes:
+    - `repo_auto_create_disabled`
+    - `repo_auto_create_not_authorized`
+    - `repo_create_failed_invalid_name`
+    - `repo_create_failed_owner_mismatch`
+    - `repo_create_failed_conflict`
+    - `repo_create_failed_runtime_unavailable`
 - `approval_required`
   - Attempted publish/deploy before required approval/publish prerequisites were satisfied.
   - Operator action: approve artifact first; deploy only after successful publish.

@@ -490,6 +490,12 @@ Workflow lookup failure quick triage:
 Reason-code guidance:
 
 - `repo_not_found`: repository lookup failed for owner/repo.
+- `repo_auto_create_disabled`: target repository is missing and admin policy does not allow runtime repository creation.
+- `repo_auto_create_not_authorized`: runtime GitHub token could not create repository under configured owner.
+- `repo_create_failed_invalid_name`: configured repository name failed validation for auto-create.
+- `repo_create_failed_owner_mismatch`: configured owner is outside the admin-owned target boundary.
+- `repo_create_failed_conflict`: repository create returned conflict (already exists or owner/repo conflict).
+- `repo_create_failed_runtime_unavailable`: repository auto-create failed due to temporary runtime/API availability issues.
 - `workflow_not_found`: repository exists, but requested workflow id/path was not found.
 - `branch_not_found_or_ref_invalid`: dispatch ref is invalid or missing in target repo.
 - `workflow_not_dispatchable`: workflow exists but is not in a dispatch-ready state for target ref.
@@ -497,6 +503,22 @@ Reason-code guidance:
 - `workflow_not_production_ready`: workflow exists and is dispatchable, but is still scaffold/placeholder content and is blocked before dispatch.
 - `token_not_authorized`: runtime token lacks required repository/workflow permissions.
 - `workflow_provisioning_failed`: publish could not verify workflow file presence after provisioning attempt.
+
+Repository auto-create observability (publish path):
+- compare publish events:
+  - `seo_migration_repo_ensure_started`
+  - `seo_migration_repo_ensure_result`
+  - `seo_migration_repo_auto_create_attempted`
+  - `seo_migration_repo_auto_create_succeeded` / `seo_migration_repo_auto_create_failed`
+- key fields:
+  - `repo_owner`
+  - `repo_name`
+  - `auto_create_enabled`
+  - `create_if_missing`
+  - `auto_create_attempted`
+  - `auto_create_created`
+  - `outcome`
+  - `skipped_reason`
 
 Workflow conformance status guidance:
 - `conformant`: workflow content includes `workflow_dispatch` and managed deploy contract markers.

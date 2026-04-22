@@ -31,6 +31,11 @@ class GitHubPublishConfig(Base):
         nullable=False,
         default="admin_config",
     )
+    github_repository_auto_create_enabled: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+    )
     managed_gke_cluster_name: Mapped[str | None] = mapped_column(
         String(120),
         nullable=True,
