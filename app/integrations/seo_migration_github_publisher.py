@@ -368,6 +368,7 @@ class SEOMigrationGitHubPublisher:
         site_id: str | None = None,
         business_id: str | None = None,
         repository_auto_create_created: bool | None = None,
+        artifact_version_id: str | None = None,
     ) -> SEOMigrationGitHubWorkflowProvisionResult:
         del (
             deploy_workflow_mode,
@@ -378,6 +379,7 @@ class SEOMigrationGitHubPublisher:
             site_id,
             business_id,
             repository_auto_create_created,
+            artifact_version_id,
         )
         workflow_path = _workflow_repo_path(workflow_id)
         return SEOMigrationGitHubWorkflowProvisionResult(
@@ -2275,8 +2277,10 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         allow_repair: bool,
         dry_run: bool | None = None,
         remediation_mode: str | None = None,
+        workflow_path: str | None = None,
         business_id: str | None = None,
         site_id: str | None = None,
+        artifact_version_id: str | None = None,
         repository_auto_create_created: bool | None = None,
     ) -> None:
         normalized_ref = str(ref or "").strip()
@@ -2300,6 +2304,10 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 "repo_owner": repo_owner,
                 "repo_name": repo_name,
                 "ref": normalized_ref,
+                "workflow_path": _normalize_workflow_path_for_log(workflow_path),
+                "artifact_version_id": _coerce_string(artifact_version_id),
+                "business_id": _coerce_string(business_id),
+                "site_id": _coerce_string(site_id),
                 "dry_run": dry_run_value,
                 "allow_repair": allow_repair_value,
                 "remediation_mode": normalized_remediation_mode,
@@ -2356,6 +2364,10 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                     "repo_owner": repo_owner,
                     "repo_name": repo_name,
                     "ref": normalized_ref,
+                    "workflow_path": _normalize_workflow_path_for_log(workflow_path),
+                    "artifact_version_id": _coerce_string(artifact_version_id),
+                    "business_id": _coerce_string(business_id),
+                    "site_id": _coerce_string(site_id),
                     "branch_exists_verified": True,
                     "repo_bootstrap_required": False,
                     "repo_bootstrap_completed": False,
@@ -2376,6 +2388,10 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 "repo_owner": repo_owner,
                 "repo_name": repo_name,
                 "ref": normalized_ref,
+                "workflow_path": _normalize_workflow_path_for_log(workflow_path),
+                "artifact_version_id": _coerce_string(artifact_version_id),
+                "business_id": _coerce_string(business_id),
+                "site_id": _coerce_string(site_id),
                 "repo_exists": True,
                 "repository_auto_create_created": (
                     bool(repository_auto_create_created)
@@ -2395,6 +2411,9 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 "remediation_mode": normalized_remediation_mode,
                 "bootstrap_allowed": bootstrap_allowed,
                 "will_attempt_bootstrap": bool(bootstrap_allowed),
+                "bootstrap_blocked_reason": (
+                    "bootstrap_disabled_by_execution_mode" if not bootstrap_allowed else None
+                ),
                 "git_commit": runtime_git_commit,
                 "build_version": runtime_build_version,
             },
@@ -2402,6 +2421,16 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             level=logging.INFO,
         )
         if not bootstrap_allowed:
+            if decision_source == "ref_check_uninitialized":
+                raise SEOMigrationGitHubPublisherError(
+                    code=_GITHUB_REASON_REPO_BOOTSTRAP_INVALID,
+                    safe_message=(
+                        "GitHub repository branch is uninitialized and bootstrap is disabled for this execution mode."
+                    ),
+                    status_code=(ref_check_error.status_code if ref_check_error else None),
+                    stage=(ref_check_error.stage if ref_check_error else "workflow_provisioning"),
+                    provider_message=(ref_check_error.provider_message if ref_check_error else None),
+                )
             raise SEOMigrationGitHubPublisherError(
                 code="branch_not_found_or_ref_invalid",
                 safe_message="GitHub deploy ref was not found or is invalid.",
@@ -2432,6 +2461,10 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                     "repo_owner": repo_owner,
                     "repo_name": repo_name,
                     "ref": normalized_ref,
+                    "workflow_path": _normalize_workflow_path_for_log(workflow_path),
+                    "artifact_version_id": _coerce_string(artifact_version_id),
+                    "business_id": _coerce_string(business_id),
+                    "site_id": _coerce_string(site_id),
                     "repo_exists": True,
                     "repository_auto_create_created": (
                         bool(repository_auto_create_created)
@@ -2463,6 +2496,10 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                     "repo_owner": repo_owner,
                     "repo_name": repo_name,
                     "ref": normalized_ref,
+                    "workflow_path": _normalize_workflow_path_for_log(workflow_path),
+                    "artifact_version_id": _coerce_string(artifact_version_id),
+                    "business_id": _coerce_string(business_id),
+                    "site_id": _coerce_string(site_id),
                     "repo_bootstrap_required": True,
                     "repo_bootstrap_state": "uninitialized_branch",
                     "github_error_code": bootstrap_error_code,
@@ -2515,6 +2552,10 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                     "repo_owner": repo_owner,
                     "repo_name": repo_name,
                     "ref": normalized_ref,
+                    "workflow_path": _normalize_workflow_path_for_log(workflow_path),
+                    "artifact_version_id": _coerce_string(artifact_version_id),
+                    "business_id": _coerce_string(business_id),
+                    "site_id": _coerce_string(site_id),
                     "branch_exists_verified": True,
                     "repo_bootstrap_required": True,
                     "repo_bootstrap_completed": True,
@@ -2582,6 +2623,10 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 "repo_owner": repo_owner,
                 "repo_name": repo_name,
                 "ref": normalized_ref,
+                "workflow_path": _normalize_workflow_path_for_log(workflow_path),
+                "artifact_version_id": _coerce_string(artifact_version_id),
+                "business_id": _coerce_string(business_id),
+                "site_id": _coerce_string(site_id),
                 "branch_exists_verified": True,
                 "repo_bootstrap_required": False,
                 "repo_bootstrap_completed": False,
@@ -3524,6 +3569,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         site_id: str | None = None,
         business_id: str | None = None,
         repository_auto_create_created: bool | None = None,
+        artifact_version_id: str | None = None,
     ) -> SEOMigrationGitHubWorkflowProvisionResult:
         normalized_workflow_id = str(workflow_id or "").strip()
         if not normalized_workflow_id:
@@ -3611,8 +3657,10 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 allow_repair=not dry_run,
                 dry_run=dry_run,
                 remediation_mode="workflow_provisioning",
+                workflow_path=workflow_path,
                 business_id=_normalize_repo_management_id(business_id),
                 site_id=_normalize_repo_management_id(site_id),
+                artifact_version_id=_coerce_string(artifact_version_id),
                 repository_auto_create_created=repository_auto_create_created,
             )
         except SEOMigrationGitHubPublisherError as exc:
@@ -3855,6 +3903,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             allow_repair=allow_ref_repair and (not dry_run),
             dry_run=dry_run,
             remediation_mode=remediation_mode,
+            workflow_path=workflow_path,
         )
         workflow_file_payload = self._fetch_workflow_file_payload_on_ref(
             repo_owner=target.repo_owner,
@@ -4593,6 +4642,19 @@ def _workflow_repo_path(workflow_id: str) -> str:
     if normalized.lower().startswith("github/workflows/"):
         return f".{normalized}"
     return _join_repo_path(".github/workflows", normalized)
+
+
+def _normalize_workflow_path_for_log(value: object) -> str | None:
+    normalized = _coerce_string(value)
+    if not normalized:
+        return None
+    try:
+        return _workflow_repo_path(normalized)
+    except SEOMigrationGitHubPublisherError:
+        compact = normalized.strip().replace("\\", "/").lstrip("/")
+        if not compact:
+            return None
+        return compact[:200]
 
 
 def normalize_workflow_dispatch_identifier_for_api(workflow_id: object) -> str | None:

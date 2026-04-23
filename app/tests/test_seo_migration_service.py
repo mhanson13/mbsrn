@@ -332,6 +332,7 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
                 str | None,
                 str | None,
                 bool | None,
+                str | None,
             ]
         ] = []
 
@@ -657,6 +658,7 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         site_id: str | None = None,
         business_id: str | None = None,
         repository_auto_create_created: bool | None = None,
+        artifact_version_id: str | None = None,
     ) -> SEOMigrationGitHubWorkflowProvisionResult:
         self.workflow_provision_calls.append(
             (
@@ -673,6 +675,7 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
                 site_id,
                 business_id,
                 repository_auto_create_created,
+                artifact_version_id,
             )
         )
         if self.fail_workflow_provision:
@@ -4171,6 +4174,7 @@ def test_publish_provisions_missing_deploy_workflow_once(db_session, caplog) -> 
     assert isinstance(workflow_call[8], dict)
     assert isinstance(workflow_call[9], dict)
     assert workflow_call[10] == site_id
+    assert workflow_call[13] == artifact.id
     assert result.result.get("deploy_workflow_provisioned") is True
     assert result.result.get("deploy_workflow_id") == "deploy-tnmfire-www-prod.yml"
     assert result.result.get("deploy_workflow_path") == ".github/workflows/deploy-tnmfire-www-prod.yml"
@@ -4319,6 +4323,7 @@ def test_publish_does_not_overwrite_existing_deploy_workflow(db_session, caplog)
     assert isinstance(workflow_call[8], dict)
     assert isinstance(workflow_call[9], dict)
     assert workflow_call[10] == site_id
+    assert workflow_call[13] == artifact.id
     assert result.result.get("deploy_workflow_provisioned") is False
     provision_logs = [
         record

@@ -150,6 +150,7 @@ class _StubMigrationGitHubPublisher(SEOMigrationGitHubPublisher):
                 str | None,
                 str | None,
                 bool | None,
+                str | None,
             ]
         ] = []
 
@@ -318,6 +319,7 @@ class _StubMigrationGitHubPublisher(SEOMigrationGitHubPublisher):
         site_id: str | None = None,
         business_id: str | None = None,
         repository_auto_create_created: bool | None = None,
+        artifact_version_id: str | None = None,
     ) -> SEOMigrationGitHubWorkflowProvisionResult:
         self.workflow_provision_calls.append(
             (
@@ -334,6 +336,7 @@ class _StubMigrationGitHubPublisher(SEOMigrationGitHubPublisher):
                 site_id,
                 business_id,
                 repository_auto_create_created,
+                artifact_version_id,
             )
         )
         if self.fail_workflow_provision:

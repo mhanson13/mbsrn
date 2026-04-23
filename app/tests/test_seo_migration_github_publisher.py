@@ -3654,6 +3654,7 @@ def test_ensure_deploy_workflow_bootstraps_when_ref_check_raises_generic_409_emp
         dry_run=False,
         business_id="business-1",
         site_id="site-1",
+        artifact_version_id="artifact-1",
         repository_auto_create_created=False,
     )
 
@@ -3675,6 +3676,10 @@ def test_ensure_deploy_workflow_bootstraps_when_ref_check_raises_generic_409_emp
     assert '"bootstrap_allowed": true' in decision_logs[-1].msg
     assert '"dry_run": false' in decision_logs[-1].msg
     assert '"remediation_mode": "workflow_provisioning"' in decision_logs[-1].msg
+    assert '"workflow_path": ".github/workflows/deploy-tnmfire-www-prod.yml"' in decision_logs[-1].msg
+    assert '"artifact_version_id": "artifact-1"' in decision_logs[-1].msg
+    assert '"business_id": "business-1"' in decision_logs[-1].msg
+    assert '"site_id": "site-1"' in decision_logs[-1].msg
 
 
 def test_ensure_deploy_workflow_logs_bootstrap_blocked_context_when_dry_run(
@@ -3714,9 +3719,10 @@ def test_ensure_deploy_workflow_logs_bootstrap_blocked_context_when_dry_run(
             dry_run=True,
             business_id="business-1",
             site_id="site-1",
+            artifact_version_id="artifact-2",
         )
 
-    assert exc_info.value.code == "branch_not_found_or_ref_invalid"
+    assert exc_info.value.code == "github_repo_state_invalid_for_bootstrap"
     decision_logs = [
         record
         for record in caplog.records
@@ -3731,6 +3737,11 @@ def test_ensure_deploy_workflow_logs_bootstrap_blocked_context_when_dry_run(
     assert '"bootstrap_allowed": false' in decision_logs[-1].msg
     assert '"will_attempt_bootstrap": false' in decision_logs[-1].msg
     assert '"remediation_mode": "workflow_provisioning"' in decision_logs[-1].msg
+    assert '"bootstrap_blocked_reason": "bootstrap_disabled_by_execution_mode"' in decision_logs[-1].msg
+    assert '"workflow_path": ".github/workflows/deploy-tnmfire-www-prod.yml"' in decision_logs[-1].msg
+    assert '"artifact_version_id": "artifact-2"' in decision_logs[-1].msg
+    assert '"business_id": "business-1"' in decision_logs[-1].msg
+    assert '"site_id": "site-1"' in decision_logs[-1].msg
 
 
 def test_ensure_deploy_workflow_ref_check_409_bootstrap_failure_preserves_precise_code(monkeypatch) -> None:

@@ -1315,6 +1315,7 @@ class SEOMigrationService:
                     site_id=site.id,
                     business_id=workspace.business_id,
                     repository_auto_create_created=repository_auto_create_created,
+                    artifact_version_id=artifact.id,
                 )
                 workflow_provisioning_verified = True
                 workflow_remediation_outcome = _derive_workflow_remediation_outcome(
