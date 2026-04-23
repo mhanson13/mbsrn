@@ -265,6 +265,10 @@ It transforms a business's website and market context into structured insights a
 - Adds authoritative managed-repo ownership marker enforcement (`mbsrn.key`) so managed publish can safely update only MBSRN-owned target repositories:
   - new/bootstrapped repos get marker creation during initialization
   - existing repos without marker (or with mismatched/invalid marker) are blocked from managed overwrite/update publish.
+- Enforces deterministic managed-repo baseline defaults for MBSRN-owned repositories:
+  - newly auto-created repos are created with explicit `private` visibility
+  - initial bootstrap commit includes `mbsrn.key`, `README.md`, `.gitignore`, and `LICENSE`
+  - existing managed repos reconcile missing baseline files additively (no overwrite of existing customized files)
 - Hardens admin GitHub publish target trust with pre-save validation, normalized effective-target preview, clearer publish/deploy readiness ownership messaging, and lightweight structured config-change logging.
 - Uses split ownership for migration publish target:
 - Admin owns GitHub account/owner baseline and runtime credential boundary.

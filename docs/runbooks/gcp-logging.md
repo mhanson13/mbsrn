@@ -500,6 +500,7 @@ Reason-code guidance:
 - `github_repo_management_marker_mismatch`: existing repository marker points to a different business/site.
 - `github_repo_management_marker_invalid`: `mbsrn.key` exists but is invalid/unparseable.
 - `github_repo_bootstrap_marker_write_failed`: bootstrap could not write the required `mbsrn.key` ownership marker.
+- `github_repo_baseline_reconciliation_failed`: managed baseline file reconciliation (`README.md`, `.gitignore`, `LICENSE`) failed after marker validation.
 - `github_branch_not_found_or_uninitialized`: target branch/ref exists in config but GitHub repo state has no initialized commit/ref tree for provisioning writes.
 - `github_repo_state_invalid_for_bootstrap`: repository initialization/bootstrap could not complete safely.
 - `github_workflow_write_not_authorized`: token can access repo metadata but lacks workflow-path write permission for `.github/workflows/*`.
@@ -552,6 +553,13 @@ Publish preflight observability (before live content/workflow writes):
   - `repo_management_marker_valid`
   - `repo_management_marker_matches_site`
   - `repo_management_marker_source_ref`
+  - `repo_visibility_target`
+  - `repo_visibility_observed`
+  - `repo_baseline_required`
+  - `repo_baseline_reconciliation_needed`
+  - `readme_present`
+  - `gitignore_present`
+  - `license_present`
   - `preflight_status`
   - `preflight_blocker_code`
 - interpretation:
@@ -562,6 +570,7 @@ Publish preflight observability (before live content/workflow writes):
   - `would_auto_create_repo=true` appears in readiness/dry-run when repo is missing and admin auto-create policy is enabled; dry-run still performs no mutation.
   - `repo_management_status=managed_marker_match` is the expected steady-state for managed publish/update on existing repos.
   - `repo_management_status=marker_missing|marker_mismatch|marker_invalid` means managed publish is intentionally blocked before any content/workflow overwrite.
+  - `repo_baseline_required=true` with `preflight_status=ready_with_actions` means publish will add only missing managed baseline files (`README.md`, `.gitignore`, `LICENSE`) for an already managed repo.
 
 Workflow bootstrap observability (publish path):
 - compare:
@@ -593,6 +602,21 @@ Managed marker observability:
   - new/empty repos: bootstrap writes `mbsrn.key` before managed workflow/manifest/content updates
   - existing managed repos: marker must be present/valid/matching
   - existing non-managed repos: marker blocker prevents overwrite
+
+Managed baseline reconciliation observability:
+- event:
+  - `seo_migration_repo_baseline_reconciliation`
+- key fields:
+  - `repo_baseline_required`
+  - `repo_baseline_reconciled`
+  - `readme_present`
+  - `gitignore_present`
+  - `license_present`
+  - `repo_visibility_target`
+- interpretation:
+  - `repo_baseline_required=true` and `repo_baseline_reconciled=true`: missing baseline files were added successfully.
+  - `repo_baseline_required=true` and `repo_baseline_reconciled=false` in non-dry-run paths is unexpected; inspect publish failure code (`github_repo_baseline_reconciliation_failed`).
+  - existing files are additive-only and preserved; reconciliation writes only missing baseline files.
 
 Token capability minimums for publish bootstrap:
 - repository auto-create: token must create repositories under the configured owner namespace.

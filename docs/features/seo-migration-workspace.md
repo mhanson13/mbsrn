@@ -738,10 +738,22 @@ Publish behavior:
   - `mbsrn.key` content is JSON and includes at minimum:
     - `business_id`
     - `site_id`
+  - managed baseline contract for MBSRN-owned repos also requires root files:
+    - `README.md`
+    - `.gitignore`
+    - `LICENSE`
   - new repos initialized by managed publish bootstrap write `mbsrn.key` in the first commit
+  - new or empty repos initialized by managed publish bootstrap create the full baseline in the first commit:
+    - `mbsrn.key`
+    - `README.md`
+    - `.gitignore`
+    - `LICENSE`
   - existing non-empty repos without `mbsrn.key` are blocked from managed overwrite/update publish
   - existing repos with `mbsrn.key` are publishable only when marker values match the current workspace business/site
   - invalid/unparseable marker content is treated as a hard blocker
+  - existing managed repos are reconciled additively:
+    - missing `README.md` / `.gitignore` / `LICENSE` files are added
+    - existing customized versions are preserved (no overwrite)
 - if target repository exists but target ref is uninitialized (no commit history yet), publish bootstrap initializes the managed branch before workflow/manifest writes
 - runtime repository auto-create uses private repository visibility by default (`private=true`) to avoid accidental public exposure
 - dry-run never creates repositories; readiness and publish diagnostics report whether a live publish would auto-create the missing repository
@@ -784,9 +796,17 @@ Publish behavior:
     - `repo_management_marker_valid`
     - `repo_management_marker_matches_site`
     - `repo_management_marker_source_ref`
+    - `repo_visibility_target`
+    - `repo_visibility_observed`
+    - `repo_baseline_required`
+    - `repo_baseline_reconciliation_needed`
+    - `readme_present`
+    - `gitignore_present`
+    - `license_present`
 - dry-run remains non-mutating and includes truthful preflight findings:
   - if repo is missing and auto-create is enabled, dry-run reports `would_auto_create_repo=true` and `preflight_status=ready_with_actions`
   - if repo is missing and auto-create is disabled, readiness/preflight is blocked before live publish
+  - `preflight_status=ready_with_actions` can also indicate additive managed-baseline reconciliation for an already managed repo (missing `README.md` / `.gitignore` / `LICENSE`)
 - duplicate publish diagnostics now also emit `workflow_remediation_outcome`:
   - `remediation_upgraded_managed_placeholder`: managed scaffold/legacy workflow was replaced with current production template content
   - `remediation_already_current`: managed workflow already matched current contract; no write needed
@@ -808,6 +828,7 @@ Publish behavior:
   - `github_repo_management_marker_mismatch`
   - `github_repo_management_marker_invalid`
   - `github_repo_bootstrap_marker_write_failed`
+  - `github_repo_baseline_reconciliation_failed`
 - retry after a failed publish is supported and recorded as a new history event
 - dry-run publish records history but does not overwrite prior successful publish commit metadata
 - workflow provisioning is idempotent for deploy-capable managed workflows and preserves unknown custom workflows
@@ -1191,6 +1212,7 @@ Migration publish/deploy paths normalize failures into stable categories:
     - `github_repo_management_marker_mismatch`
     - `github_repo_management_marker_invalid`
     - `github_repo_bootstrap_marker_write_failed`
+    - `github_repo_baseline_reconciliation_failed`
 - `approval_required`
   - Attempted publish/deploy before required approval/publish prerequisites were satisfied.
   - Operator action: approve artifact first; deploy only after successful publish.

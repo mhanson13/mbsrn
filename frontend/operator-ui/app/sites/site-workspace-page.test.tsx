@@ -1028,6 +1028,40 @@ describe("site migration workflow route", () => {
     ).toBeInTheDocument();
   });
 
+  it("shows repository provisioning guidance when managed baseline files will be reconciled", async () => {
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(
+      buildMigrationWorkspaceSummary({
+        publish_readiness: {
+          ready: true,
+          reasons: [],
+          target: {
+            enabled: true,
+            repo_owner: "mhanson13",
+            repo_name: "tnmfire",
+            branch: "main",
+            artifact_root: "/",
+            repository_exists: true,
+            repo_ensure_outcome: "exists",
+            preflight_status: "ready_with_actions",
+            repo_baseline_reconciliation_needed: true,
+            readme_present: false,
+            gitignore_present: false,
+            license_present: false,
+          },
+        },
+      }),
+    );
+
+    render(<SiteMigrationWorkflowPage />);
+
+    const destinationSummary = await screen.findByTestId("migration-destination-summary");
+    expect(
+      within(destinationSummary).getByText(
+        "Repository is MBSRN-managed and missing baseline files (README.md, .gitignore, LICENSE); live publish will reconcile missing files.",
+      ),
+    ).toBeInTheDocument();
+  });
+
   it("shows repository provisioning guidance when publish preflight detects workflow write authorization gap", async () => {
     mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(
       buildMigrationWorkspaceSummary({

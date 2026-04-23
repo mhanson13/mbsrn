@@ -588,6 +588,10 @@ function toRepositoryProvisioningGuidance(params: {
   publishPreflightStatus: string | null;
   publishPreflightBlockerCode: string | null;
   publishPreflightWouldBootstrapBranch: boolean | null;
+  publishPreflightWouldReconcileRepoBaseline: boolean | null;
+  readmePresent: boolean | null;
+  gitignorePresent: boolean | null;
+  licensePresent: boolean | null;
 }): string | null {
   const {
     repoEnsureOutcome,
@@ -598,6 +602,10 @@ function toRepositoryProvisioningGuidance(params: {
     publishPreflightStatus,
     publishPreflightBlockerCode,
     publishPreflightWouldBootstrapBranch,
+    publishPreflightWouldReconcileRepoBaseline,
+    readmePresent,
+    gitignorePresent,
+    licensePresent,
   } = params;
   const normalizedPreflightBlocker = (publishPreflightBlockerCode || "").trim().toLowerCase();
   if (normalizedPreflightBlocker === "github_workflow_write_not_authorized") {
@@ -627,6 +635,24 @@ function toRepositoryProvisioningGuidance(params: {
     && publishPreflightWouldBootstrapBranch === true
   ) {
     return "Target branch is missing and will be bootstrapped during live publish.";
+  }
+  if (
+    ((publishPreflightStatus || "").trim().toLowerCase() === "ready_with_actions"
+      || (publishPreflightStatus || "").trim().toLowerCase() === "warning")
+    && publishPreflightWouldReconcileRepoBaseline === true
+  ) {
+    const missing: string[] = [];
+    if (readmePresent === false) {
+      missing.push("README.md");
+    }
+    if (gitignorePresent === false) {
+      missing.push(".gitignore");
+    }
+    if (licensePresent === false) {
+      missing.push("LICENSE");
+    }
+    const missingSummary = missing.length > 0 ? missing.join(", ") : "managed baseline files";
+    return `Repository is MBSRN-managed and missing baseline files (${missingSummary}); live publish will reconcile missing files.`;
   }
   const normalizedOutcome = (repoEnsureOutcome || "").trim().toLowerCase();
   if (normalizedOutcome === "exists") {
@@ -2012,6 +2038,12 @@ export function MigrationWorkspacePanel({
   const publishPreflightStatus = asStringOrNull(publishTarget.preflight_status);
   const publishPreflightBlockerCode = asStringOrNull(publishTarget.preflight_blocker_code);
   const publishPreflightWouldBootstrapBranch = asBooleanOrNull(publishTarget.would_bootstrap_branch);
+  const publishPreflightWouldReconcileRepoBaseline = asBooleanOrNull(
+    publishTarget.repo_baseline_reconciliation_needed,
+  );
+  const publishReadmePresent = asBooleanOrNull(publishTarget.readme_present);
+  const publishGitignorePresent = asBooleanOrNull(publishTarget.gitignore_present);
+  const publishLicensePresent = asBooleanOrNull(publishTarget.license_present);
   const publishRepoEnsureOutcome =
     asStringOrNull(publishTarget.repo_ensure_outcome)
     || asStringOrNull(publishConfigPrerequisites.publish_target_repo_ensure_summary);
@@ -2024,6 +2056,10 @@ export function MigrationWorkspacePanel({
     publishPreflightStatus,
     publishPreflightBlockerCode,
     publishPreflightWouldBootstrapBranch,
+    publishPreflightWouldReconcileRepoBaseline,
+    readmePresent: publishReadmePresent,
+    gitignorePresent: publishGitignorePresent,
+    licensePresent: publishLicensePresent,
   });
   const deployPrimaryBlockerMessage = toDeployBlockerMessage(deployBlockerCodes);
   const contextSummary = asRecord(summary?.context_summary);

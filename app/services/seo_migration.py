@@ -10182,6 +10182,7 @@ class SEOMigrationService:
             "github_repo_management_marker_mismatch",
             "github_repo_management_marker_invalid",
             "github_repo_bootstrap_marker_write_failed",
+            "github_repo_baseline_reconciliation_failed",
             _DEPLOY_TARGET_REASON_REPO_NOT_FOUND,
             _DEPLOY_TARGET_REASON_WORKFLOW_NOT_FOUND,
             _DEPLOY_TARGET_REASON_REF_INVALID,
@@ -10852,6 +10853,39 @@ class SEOMigrationService:
                     preflight_result.preflight_blocker_code,
                     max_length=80,
                 )
+                target_summary["repo_visibility_target"] = _normalize_string(
+                    preflight_result.repo_visibility_target,
+                    max_length=32,
+                )
+                target_summary["repo_visibility_observed"] = _normalize_string(
+                    preflight_result.repo_visibility_observed,
+                    max_length=32,
+                )
+                target_summary["repo_baseline_required"] = (
+                    bool(preflight_result.repo_baseline_required)
+                    if isinstance(preflight_result.repo_baseline_required, bool)
+                    else None
+                )
+                target_summary["repo_baseline_reconciliation_needed"] = (
+                    bool(preflight_result.repo_baseline_reconciliation_needed)
+                    if isinstance(preflight_result.repo_baseline_reconciliation_needed, bool)
+                    else None
+                )
+                target_summary["readme_present"] = (
+                    bool(preflight_result.readme_present)
+                    if isinstance(preflight_result.readme_present, bool)
+                    else None
+                )
+                target_summary["gitignore_present"] = (
+                    bool(preflight_result.gitignore_present)
+                    if isinstance(preflight_result.gitignore_present, bool)
+                    else None
+                )
+                target_summary["license_present"] = (
+                    bool(preflight_result.license_present)
+                    if isinstance(preflight_result.license_present, bool)
+                    else None
+                )
                 target_summary["repo_management_status"] = _normalize_string(
                     preflight_result.repo_management_status,
                     max_length=80,
@@ -10914,8 +10948,15 @@ class SEOMigrationService:
                         "can_write_workflows": preflight_result.can_write_workflows,
                         "would_auto_create_repo": preflight_result.would_auto_create_repo,
                         "would_bootstrap_branch": preflight_result.would_bootstrap_branch,
+                        "would_reconcile_repo_baseline": preflight_result.repo_baseline_reconciliation_needed,
                         "preflight_status": preflight_result.preflight_status,
                         "preflight_blocker_code": preflight_blocker_code,
+                        "repo_visibility_target": preflight_result.repo_visibility_target,
+                        "repo_visibility_observed": preflight_result.repo_visibility_observed,
+                        "repo_baseline_required": preflight_result.repo_baseline_required,
+                        "readme_present": preflight_result.readme_present,
+                        "gitignore_present": preflight_result.gitignore_present,
+                        "license_present": preflight_result.license_present,
                         "repo_management_status": preflight_result.repo_management_status,
                         "repo_management_marker_present": preflight_result.repo_management_marker_present,
                         "repo_management_marker_valid": preflight_result.repo_management_marker_valid,
@@ -10986,6 +11027,14 @@ class SEOMigrationService:
                 ),
                 "publish_target_would_bootstrap_branch": _coerce_bool(
                     target_summary.get("would_bootstrap_branch"),
+                    default=False,
+                ),
+                "publish_target_would_reconcile_repo_baseline": _coerce_bool(
+                    target_summary.get("repo_baseline_reconciliation_needed"),
+                    default=False,
+                ),
+                "publish_target_repo_baseline_required": _coerce_bool(
+                    target_summary.get("repo_baseline_required"),
                     default=False,
                 ),
                 "publish_target_preflight_status": _normalize_string(

@@ -28,6 +28,7 @@ _GITHUB_REASON_REPO_MANAGEMENT_MARKER_MISSING = "github_repo_management_marker_m
 _GITHUB_REASON_REPO_MANAGEMENT_MARKER_MISMATCH = "github_repo_management_marker_mismatch"
 _GITHUB_REASON_REPO_MANAGEMENT_MARKER_INVALID = "github_repo_management_marker_invalid"
 _GITHUB_REASON_REPO_BOOTSTRAP_MARKER_WRITE_FAILED = "github_repo_bootstrap_marker_write_failed"
+_GITHUB_REASON_REPO_BASELINE_RECONCILIATION_FAILED = "github_repo_baseline_reconciliation_failed"
 _MBSRN_REPO_MANAGEMENT_MARKER_PATH = "mbsrn.key"
 
 
@@ -99,6 +100,13 @@ class SEOMigrationGitHubPublishPreflightResult:
     would_bootstrap_branch: bool
     preflight_status: str
     preflight_blocker_code: str | None = None
+    repo_visibility_target: str | None = None
+    repo_visibility_observed: str | None = None
+    repo_baseline_required: bool | None = None
+    repo_baseline_reconciliation_needed: bool | None = None
+    readme_present: bool | None = None
+    gitignore_present: bool | None = None
+    license_present: bool | None = None
     repo_management_status: str | None = None
     repo_management_marker_present: bool | None = None
     repo_management_marker_valid: bool | None = None
@@ -621,12 +629,13 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 "auto_create_enabled": auto_create_enabled_value,
                 "create_if_missing": create_if_missing_value,
                 "expected_owner": normalized_expected_owner,
+                "repo_visibility_target": _MBSRN_MANAGED_REPO_BASELINE_TARGET_VISIBILITY,
             },
             fallback_message="seo_migration_repo_ensure_started",
             level=logging.INFO,
         )
         try:
-            self._ensure_repo_exists(repo_owner=normalized_owner, repo_name=normalized_repo)
+            repo_payload = self._ensure_repo_exists(repo_owner=normalized_owner, repo_name=normalized_repo)
             _emit_structured_publisher_log(
                 payload={
                     "event": "seo_migration_repo_ensure_result",
@@ -637,6 +646,8 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                     "auto_create_attempted": False,
                     "auto_create_created": False,
                     "outcome": "repo_exists",
+                    "repo_visibility_target": _MBSRN_MANAGED_REPO_BASELINE_TARGET_VISIBILITY,
+                    "repo_visibility_observed": _normalize_repo_visibility(repo_payload),
                 },
                 fallback_message="seo_migration_repo_ensure_result",
                 level=logging.INFO,
@@ -667,6 +678,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                     "auto_create_created": False,
                     "outcome": "repo_missing",
                     "skipped_reason": "check_only",
+                    "repo_visibility_target": _MBSRN_MANAGED_REPO_BASELINE_TARGET_VISIBILITY,
                 },
                 fallback_message="seo_migration_repo_ensure_result",
                 level=logging.INFO,
@@ -690,6 +702,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                     "repo_name": normalized_repo,
                     "auto_create_enabled": False,
                     "skipped_reason": "policy_disabled",
+                    "repo_visibility_target": _MBSRN_MANAGED_REPO_BASELINE_TARGET_VISIBILITY,
                 },
                 fallback_message="seo_migration_repo_auto_create_skipped",
                 level=logging.WARNING,
@@ -711,6 +724,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                     "auto_create_enabled": True,
                     "skipped_reason": "owner_mismatch",
                     "expected_owner": normalized_expected_owner,
+                    "repo_visibility_target": _MBSRN_MANAGED_REPO_BASELINE_TARGET_VISIBILITY,
                 },
                 fallback_message="seo_migration_repo_auto_create_skipped",
                 level=logging.WARNING,
@@ -729,6 +743,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 "auto_create_enabled": auto_create_enabled_value,
                 "expected_owner": normalized_expected_owner,
                 "private_by_default": bool(private_by_default),
+                "repo_visibility_target": _MBSRN_MANAGED_REPO_BASELINE_TARGET_VISIBILITY,
             },
             fallback_message="seo_migration_repo_auto_create_attempted",
             level=logging.INFO,
@@ -743,7 +758,10 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         except SEOMigrationGitHubPublisherError as exc:
             if exc.code == "repo_create_failed_conflict":
                 try:
-                    self._ensure_repo_exists(repo_owner=normalized_owner, repo_name=normalized_repo)
+                    repo_payload = self._ensure_repo_exists(
+                        repo_owner=normalized_owner,
+                        repo_name=normalized_repo,
+                    )
                 except SEOMigrationGitHubPublisherError:
                     pass
                 else:
@@ -756,6 +774,8 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                             "create_mode": "race_conflict_repo_exists",
                             "outcome": "repo_exists",
                             "race_conflict_resolved": True,
+                            "repo_visibility_target": _MBSRN_MANAGED_REPO_BASELINE_TARGET_VISIBILITY,
+                            "repo_visibility_observed": _normalize_repo_visibility(repo_payload),
                         },
                         fallback_message="seo_migration_repo_auto_create_succeeded",
                         level=logging.INFO,
@@ -783,7 +803,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 level=logging.WARNING,
             )
             raise
-        self._ensure_repo_exists(repo_owner=normalized_owner, repo_name=normalized_repo)
+        repo_payload = self._ensure_repo_exists(repo_owner=normalized_owner, repo_name=normalized_repo)
         _emit_structured_publisher_log(
             payload={
                 "event": "seo_migration_repo_auto_create_succeeded",
@@ -792,6 +812,8 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 "auto_create_enabled": auto_create_enabled_value,
                 "create_mode": create_mode,
                 "outcome": "repo_created",
+                "repo_visibility_target": _MBSRN_MANAGED_REPO_BASELINE_TARGET_VISIBILITY,
+                "repo_visibility_observed": _normalize_repo_visibility(repo_payload),
             },
             fallback_message="seo_migration_repo_auto_create_succeeded",
             level=logging.INFO,
@@ -835,8 +857,15 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         can_write_workflows = False
         would_auto_create_repo = False
         would_bootstrap_branch = False
+        would_reconcile_repo_baseline = False
         preflight_status = "blocked"
         preflight_blocker_code: str | None = None
+        repo_visibility_target = _MBSRN_MANAGED_REPO_BASELINE_TARGET_VISIBILITY
+        repo_visibility_observed: str | None = None
+        repo_baseline_required: bool | None = None
+        readme_present: bool | None = None
+        gitignore_present: bool | None = None
+        license_present: bool | None = None
         repo_management_status: str | None = None
         repo_management_marker_present: bool | None = None
         repo_management_marker_valid: bool | None = None
@@ -915,6 +944,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                         preflight_blocker_code = (_coerce_string(exc.code) or "").strip().lower() or None
                     repo_payload = None
                 can_read_contents = isinstance(repo_payload, dict)
+                repo_visibility_observed = _normalize_repo_visibility(repo_payload)
                 permissions_payload = (
                     repo_payload.get("permissions")
                     if isinstance(repo_payload, dict)
@@ -1022,10 +1052,50 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 repo_management_marker_source_ref = management_state.source_ref
                 if management_state.blocker_code and preflight_blocker_code is None:
                     preflight_blocker_code = management_state.blocker_code
+                if (
+                    management_state.blocker_code is None
+                    and normalized_expected_business_id
+                    and normalized_expected_site_id
+                ):
+                    baseline_ref = (
+                        (_coerce_string(management_state.source_ref) or "").strip()
+                        or normalized_ref
+                    )
+                    try:
+                        baseline_presence = self._evaluate_repo_baseline_presence(
+                            repo_owner=normalized_owner,
+                            repo_name=normalized_repo,
+                            ref=baseline_ref,
+                            repo_initialized=repo_initialized,
+                            error_stage="publish_preflight",
+                        )
+                    except SEOMigrationGitHubPublisherError as exc:
+                        if preflight_blocker_code is None:
+                            preflight_blocker_code = (_coerce_string(exc.code) or "").strip().lower() or None
+                    else:
+                        repo_baseline_required = bool(baseline_presence.get("repo_baseline_required"))
+                        readme_present = (
+                            bool(baseline_presence.get("readme_present"))
+                            if baseline_presence.get("readme_present") is not None
+                            else None
+                        )
+                        gitignore_present = (
+                            bool(baseline_presence.get("gitignore_present"))
+                            if baseline_presence.get("gitignore_present") is not None
+                            else None
+                        )
+                        license_present = (
+                            bool(baseline_presence.get("license_present"))
+                            if baseline_presence.get("license_present") is not None
+                            else None
+                        )
+                        would_reconcile_repo_baseline = bool(
+                            repo_baseline_required and repo_initialized and can_write_contents
+                        )
 
         if preflight_blocker_code:
             preflight_status = "blocked"
-        elif would_auto_create_repo or would_bootstrap_branch:
+        elif would_auto_create_repo or would_bootstrap_branch or would_reconcile_repo_baseline:
             preflight_status = "ready_with_actions"
         else:
             preflight_status = "ready"
@@ -1045,6 +1115,13 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             would_bootstrap_branch=would_bootstrap_branch,
             preflight_status=preflight_status,
             preflight_blocker_code=preflight_blocker_code,
+            repo_visibility_target=repo_visibility_target,
+            repo_visibility_observed=repo_visibility_observed,
+            repo_baseline_required=repo_baseline_required,
+            repo_baseline_reconciliation_needed=would_reconcile_repo_baseline,
+            readme_present=readme_present,
+            gitignore_present=gitignore_present,
+            license_present=license_present,
             repo_management_status=repo_management_status,
             repo_management_marker_present=repo_management_marker_present,
             repo_management_marker_valid=repo_management_marker_valid,
@@ -1068,8 +1145,15 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 "can_write_workflows": result.can_write_workflows,
                 "would_auto_create_repo": result.would_auto_create_repo,
                 "would_bootstrap_branch": result.would_bootstrap_branch,
+                "would_reconcile_repo_baseline": result.repo_baseline_reconciliation_needed,
                 "preflight_status": result.preflight_status,
                 "preflight_blocker_code": result.preflight_blocker_code,
+                "repo_visibility_target": result.repo_visibility_target,
+                "repo_visibility_observed": result.repo_visibility_observed,
+                "repo_baseline_required": result.repo_baseline_required,
+                "readme_present": result.readme_present,
+                "gitignore_present": result.gitignore_present,
+                "license_present": result.license_present,
                 "repo_management_status": result.repo_management_status,
                 "repo_management_marker_present": result.repo_management_marker_present,
                 "repo_management_marker_valid": result.repo_management_marker_valid,
@@ -1369,6 +1453,41 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 or "Repository is not managed by MBSRN and publish is blocked.",
                 stage="publish",
             )
+        effective_business_id = (
+            _normalize_repo_management_id(target.business_id)
+            or _normalize_repo_management_id(management_state.marker_business_id)
+        )
+        effective_site_id = (
+            _normalize_repo_management_id(target.site_id)
+            or _normalize_repo_management_id(management_state.marker_site_id)
+        )
+        baseline_reconcile_result = self._reconcile_managed_repo_baseline_files(
+            repo_owner=target.repo_owner,
+            repo_name=target.repo_name,
+            branch=target.branch,
+            business_id=effective_business_id,
+            site_id=effective_site_id,
+            dry_run=dry_run,
+        )
+        _emit_structured_publisher_log(
+            payload={
+                "event": "seo_migration_repo_baseline_reconciliation",
+                "repo_owner": target.repo_owner,
+                "repo_name": target.repo_name,
+                "ref": target.branch,
+                "repo_visibility_target": _MBSRN_MANAGED_REPO_BASELINE_TARGET_VISIBILITY,
+                "repo_baseline_required": baseline_reconcile_result.get("repo_baseline_required"),
+                "repo_baseline_initialized": False,
+                "repo_baseline_reconciled": baseline_reconcile_result.get("repo_baseline_reconciled"),
+                "repo_management_marker_present": management_state.marker_present,
+                "repo_management_marker_valid": management_state.marker_valid,
+                "readme_present": baseline_reconcile_result.get("readme_present"),
+                "gitignore_present": baseline_reconcile_result.get("gitignore_present"),
+                "license_present": baseline_reconcile_result.get("license_present"),
+            },
+            fallback_message="seo_migration_repo_baseline_reconciliation",
+            level=logging.INFO,
+        )
 
         commit_shas: list[str] = []
         total_bytes = 0
@@ -2246,8 +2365,8 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 stage=error_stage,
             ) from exc
 
-    def _ensure_repo_exists(self, *, repo_owner: str, repo_name: str) -> None:
-        self._request_json(
+    def _ensure_repo_exists(self, *, repo_owner: str, repo_name: str) -> dict[str, object] | None:
+        payload = self._request_json(
             method="GET",
             path=f"/repos/{urllib.parse.quote(repo_owner)}/{urllib.parse.quote(repo_name)}",
             expected_statuses=(200,),
@@ -2267,6 +2386,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             },
             error_stage="repo_lookup",
         )
+        return payload if isinstance(payload, dict) else None
 
     def _ensure_ref_exists(
         self,
@@ -2897,6 +3017,102 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             return None
         return payload
 
+    def _evaluate_repo_baseline_presence(
+        self,
+        *,
+        repo_owner: str,
+        repo_name: str,
+        ref: str,
+        repo_initialized: bool,
+        error_stage: str,
+    ) -> dict[str, bool | None]:
+        if not repo_initialized:
+            return {
+                "repo_baseline_required": True,
+                "readme_present": None,
+                "gitignore_present": None,
+                "license_present": None,
+            }
+        readme_present = self._repo_file_exists_on_ref(
+            repo_owner=repo_owner,
+            repo_name=repo_name,
+            ref=ref,
+            path=_MBSRN_MANAGED_REPO_BASELINE_README_PATH,
+            error_stage=error_stage,
+        )
+        gitignore_present = self._repo_file_exists_on_ref(
+            repo_owner=repo_owner,
+            repo_name=repo_name,
+            ref=ref,
+            path=_MBSRN_MANAGED_REPO_BASELINE_GITIGNORE_PATH,
+            error_stage=error_stage,
+        )
+        license_present = self._repo_file_exists_on_ref(
+            repo_owner=repo_owner,
+            repo_name=repo_name,
+            ref=ref,
+            path=_MBSRN_MANAGED_REPO_BASELINE_LICENSE_PATH,
+            error_stage=error_stage,
+        )
+        return {
+            "repo_baseline_required": not bool(readme_present and gitignore_present and license_present),
+            "readme_present": bool(readme_present),
+            "gitignore_present": bool(gitignore_present),
+            "license_present": bool(license_present),
+        }
+
+    def _repo_file_exists_on_ref(
+        self,
+        *,
+        repo_owner: str,
+        repo_name: str,
+        ref: str,
+        path: str,
+        error_stage: str,
+    ) -> bool:
+        try:
+            payload = self._request_json(
+                method="GET",
+                path=(
+                    f"/repos/{urllib.parse.quote(repo_owner)}/{urllib.parse.quote(repo_name)}"
+                    f"/contents/{urllib.parse.quote(path, safe='/')}?ref={urllib.parse.quote(ref, safe='')}"
+                ),
+                expected_statuses=(200,),
+                allow_404=True,
+                status_error_map={
+                    401: (
+                        _GITHUB_REASON_CONTENTS_WRITE_NOT_AUTHORIZED,
+                        "GitHub token is not authorized to read repository contents for managed publish.",
+                    ),
+                    403: (
+                        _GITHUB_REASON_CONTENTS_WRITE_NOT_AUTHORIZED,
+                        "GitHub token is not authorized to read repository contents for managed publish.",
+                    ),
+                    409: (
+                        _GITHUB_REASON_BRANCH_UNINITIALIZED,
+                        "GitHub repository branch is missing or uninitialized for managed publish.",
+                    ),
+                    422: (
+                        _GITHUB_REASON_BRANCH_UNINITIALIZED,
+                        "GitHub repository branch is missing or uninitialized for managed publish.",
+                    ),
+                },
+                error_stage=error_stage,
+            )
+        except SEOMigrationGitHubPublisherError as exc:
+            if _should_treat_ref_check_as_uninitialized(exc):
+                raise SEOMigrationGitHubPublisherError(
+                    code=_GITHUB_REASON_BRANCH_UNINITIALIZED,
+                    safe_message="GitHub repository branch is missing or uninitialized for managed publish.",
+                    status_code=exc.status_code,
+                    stage=exc.stage,
+                    provider_message=exc.provider_message,
+                ) from exc
+            if exc.code == "github_request_failed":
+                raise self._classify_publish_request_failed(exc=exc) from exc
+            raise
+        return isinstance(payload, dict)
+
     def _bootstrap_repository_branch(
         self,
         *,
@@ -2916,74 +3132,51 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 ),
                 stage="workflow_provisioning",
             )
-        bootstrap_content = (
-            "# MBSRN managed repository bootstrap\n"
-            "\n"
-            "This repository was initialized automatically for migration publish/deploy provisioning.\n"
+        baseline_files = _render_repo_baseline_files(
+            repo_owner=repo_owner,
+            repo_name=repo_name,
+            business_id=normalized_business_id,
+            site_id=normalized_site_id,
         )
-        blob_payload = self._request_json(
-            method="POST",
-            path=f"/repos/{urllib.parse.quote(repo_owner)}/{urllib.parse.quote(repo_name)}/git/blobs",
-            payload={
-                "content": bootstrap_content,
-                "encoding": "utf-8",
-            },
-            expected_statuses=(201,),
-            status_error_map={
-                401: (
-                    _GITHUB_REASON_CONTENTS_WRITE_NOT_AUTHORIZED,
-                    "GitHub token is not authorized to write repository contents for managed workflow provisioning.",
-                ),
-                403: (
-                    _GITHUB_REASON_CONTENTS_WRITE_NOT_AUTHORIZED,
-                    "GitHub token is not authorized to write repository contents for managed workflow provisioning.",
-                ),
-            },
-            error_stage="workflow_provisioning",
-        )
-        blob_sha = _coerce_string((blob_payload or {}).get("sha")) if isinstance(blob_payload, dict) else None
-        if not blob_sha:
-            raise SEOMigrationGitHubPublisherError(
-                code=_GITHUB_REASON_REPO_BOOTSTRAP_INVALID,
-                safe_message="GitHub repository target could not be initialized for managed workflow provisioning.",
-                stage="workflow_provisioning",
+        blob_sha_by_path: dict[str, str] = {}
+        for baseline_path, baseline_content in baseline_files.items():
+            blob_payload = self._request_json(
+                method="POST",
+                path=f"/repos/{urllib.parse.quote(repo_owner)}/{urllib.parse.quote(repo_name)}/git/blobs",
+                payload={
+                    "content": baseline_content,
+                    "encoding": "utf-8",
+                },
+                expected_statuses=(201,),
+                status_error_map={
+                    401: (
+                        _GITHUB_REASON_CONTENTS_WRITE_NOT_AUTHORIZED,
+                        "GitHub token is not authorized to write repository contents for managed workflow provisioning.",
+                    ),
+                    403: (
+                        _GITHUB_REASON_CONTENTS_WRITE_NOT_AUTHORIZED,
+                        "GitHub token is not authorized to write repository contents for managed workflow provisioning.",
+                    ),
+                },
+                error_stage="workflow_provisioning",
             )
-        marker_blob_payload = self._request_json(
-            method="POST",
-            path=f"/repos/{urllib.parse.quote(repo_owner)}/{urllib.parse.quote(repo_name)}/git/blobs",
-            payload={
-                "content": _render_repo_management_marker_content(
-                    business_id=normalized_business_id,
-                    site_id=normalized_site_id,
-                ),
-                "encoding": "utf-8",
-            },
-            expected_statuses=(201,),
-            status_error_map={
-                401: (
-                    _GITHUB_REASON_CONTENTS_WRITE_NOT_AUTHORIZED,
-                    "GitHub token is not authorized to write repository contents for managed workflow provisioning.",
-                ),
-                403: (
-                    _GITHUB_REASON_CONTENTS_WRITE_NOT_AUTHORIZED,
-                    "GitHub token is not authorized to write repository contents for managed workflow provisioning.",
-                ),
-            },
-            error_stage="workflow_provisioning",
-        )
-        marker_blob_sha = (
-            _coerce_string((marker_blob_payload or {}).get("sha"))
-            if isinstance(marker_blob_payload, dict)
-            else None
-        )
-        if not marker_blob_sha:
-            raise SEOMigrationGitHubPublisherError(
-                code=_GITHUB_REASON_REPO_BOOTSTRAP_MARKER_WRITE_FAILED,
-                safe_message=(
-                    "GitHub repository bootstrap could not write the managed ownership marker."
-                ),
-                stage="workflow_provisioning",
-            )
+            blob_sha = _coerce_string((blob_payload or {}).get("sha")) if isinstance(blob_payload, dict) else None
+            if not blob_sha:
+                marker_write_failure = baseline_path == _MBSRN_REPO_MANAGEMENT_MARKER_PATH
+                raise SEOMigrationGitHubPublisherError(
+                    code=(
+                        _GITHUB_REASON_REPO_BOOTSTRAP_MARKER_WRITE_FAILED
+                        if marker_write_failure
+                        else _GITHUB_REASON_REPO_BOOTSTRAP_INVALID
+                    ),
+                    safe_message=(
+                        "GitHub repository bootstrap could not write the managed ownership marker."
+                        if marker_write_failure
+                        else "GitHub repository target could not be initialized for managed workflow provisioning."
+                    ),
+                    stage="workflow_provisioning",
+                )
+            blob_sha_by_path[baseline_path] = blob_sha
 
         tree_payload = self._request_json(
             method="POST",
@@ -2991,17 +3184,12 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             payload={
                 "tree": [
                     {
-                        "path": "README.md",
+                        "path": baseline_path,
                         "mode": "100644",
                         "type": "blob",
-                        "sha": blob_sha,
-                    },
-                    {
-                        "path": _MBSRN_REPO_MANAGEMENT_MARKER_PATH,
-                        "mode": "100644",
-                        "type": "blob",
-                        "sha": marker_blob_sha,
+                        "sha": baseline_sha,
                     }
+                    for baseline_path, baseline_sha in blob_sha_by_path.items()
                 ]
             },
             expected_statuses=(201,),
@@ -4155,6 +4343,167 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             return response_payload
         return None
 
+    def _reconcile_managed_repo_baseline_files(
+        self,
+        *,
+        repo_owner: str,
+        repo_name: str,
+        branch: str,
+        business_id: str | None,
+        site_id: str | None,
+        dry_run: bool,
+    ) -> dict[str, bool]:
+        normalized_business_id = _normalize_repo_management_id(business_id)
+        normalized_site_id = _normalize_repo_management_id(site_id)
+        if not normalized_business_id or not normalized_site_id:
+            raise SEOMigrationGitHubPublisherError(
+                code=_GITHUB_REASON_REPO_BASELINE_RECONCILIATION_FAILED,
+                safe_message="Managed repository baseline reconciliation requires business/site ownership metadata.",
+                stage="publish",
+            )
+        baseline_files = _render_repo_baseline_files(
+            repo_owner=repo_owner,
+            repo_name=repo_name,
+            business_id=normalized_business_id,
+            site_id=normalized_site_id,
+        )
+        presence_by_path: dict[str, bool] = {}
+        for baseline_path in _MBSRN_MANAGED_REPO_BASELINE_RECONCILE_PATHS:
+            presence_by_path[baseline_path] = self._repo_file_exists_on_ref(
+                repo_owner=repo_owner,
+                repo_name=repo_name,
+                ref=branch,
+                path=baseline_path,
+                error_stage="publish",
+            )
+        missing_paths = [
+            path
+            for path in _MBSRN_MANAGED_REPO_BASELINE_RECONCILE_PATHS
+            if not presence_by_path.get(path)
+        ]
+        reconciled = False
+        for missing_path in missing_paths:
+            self._upsert_repo_file_if_missing(
+                repo_owner=repo_owner,
+                repo_name=repo_name,
+                branch=branch,
+                path=missing_path,
+                content=str(baseline_files.get(missing_path) or ""),
+                commit_message=f"chore(migration): add managed baseline file {missing_path}",
+                dry_run=dry_run,
+            )
+            if not dry_run:
+                reconciled = True
+            presence_by_path[missing_path] = True
+        return {
+            "repo_baseline_required": bool(missing_paths),
+            "repo_baseline_reconciled": bool(reconciled),
+            "readme_present": bool(presence_by_path.get(_MBSRN_MANAGED_REPO_BASELINE_README_PATH)),
+            "gitignore_present": bool(presence_by_path.get(_MBSRN_MANAGED_REPO_BASELINE_GITIGNORE_PATH)),
+            "license_present": bool(presence_by_path.get(_MBSRN_MANAGED_REPO_BASELINE_LICENSE_PATH)),
+        }
+
+    def _upsert_repo_file_if_missing(
+        self,
+        *,
+        repo_owner: str,
+        repo_name: str,
+        branch: str,
+        path: str,
+        content: str,
+        commit_message: str,
+        dry_run: bool,
+    ) -> None:
+        existing_payload = self._request_json(
+            method="GET",
+            path=(
+                f"/repos/{urllib.parse.quote(repo_owner)}/{urllib.parse.quote(repo_name)}"
+                f"/contents/{urllib.parse.quote(path, safe='/')}?ref={urllib.parse.quote(branch, safe='')}"
+            ),
+            expected_statuses=(200,),
+            allow_404=True,
+            status_error_map={
+                401: (
+                    _GITHUB_REASON_CONTENTS_WRITE_NOT_AUTHORIZED,
+                    "GitHub token is not authorized to read repository contents for publish.",
+                ),
+                403: (
+                    _GITHUB_REASON_CONTENTS_WRITE_NOT_AUTHORIZED,
+                    "GitHub token is not authorized to read repository contents for publish.",
+                ),
+                409: (
+                    _GITHUB_REASON_BRANCH_UNINITIALIZED,
+                    "GitHub repository branch is missing or uninitialized for managed publish.",
+                ),
+                422: (
+                    _GITHUB_REASON_BRANCH_UNINITIALIZED,
+                    "GitHub repository branch is missing or uninitialized for managed publish.",
+                ),
+            },
+            error_stage="publish",
+        )
+        existing_sha = _coerce_string((existing_payload or {}).get("sha")) if isinstance(existing_payload, dict) else None
+        if existing_sha:
+            return
+        if dry_run:
+            return
+        encoded_content = base64.b64encode(content.encode("utf-8")).decode("ascii")
+        payload: dict[str, object] = {
+            "message": commit_message,
+            "content": encoded_content,
+            "branch": branch,
+            "committer": {
+                "name": self.committer_name,
+                "email": self.committer_email,
+            },
+        }
+        try:
+            _ = self._request_json(
+                method="PUT",
+                path=(
+                    f"/repos/{urllib.parse.quote(repo_owner)}/{urllib.parse.quote(repo_name)}"
+                    f"/contents/{urllib.parse.quote(path, safe='/')}"
+                ),
+                payload=payload,
+                status_error_map={
+                    401: (
+                        _GITHUB_REASON_CONTENTS_WRITE_NOT_AUTHORIZED,
+                        "GitHub token is not authorized to write repository contents for publish.",
+                    ),
+                    403: (
+                        _GITHUB_REASON_CONTENTS_WRITE_NOT_AUTHORIZED,
+                        "GitHub token is not authorized to write repository contents for publish.",
+                    ),
+                },
+                error_stage="publish",
+            )
+        except SEOMigrationGitHubPublisherError as exc:
+            if exc.code == "github_request_failed":
+                classified = self._classify_publish_request_failed(exc=exc)
+                raise self._classify_repo_baseline_reconciliation_failure(exc=classified) from exc
+            raise self._classify_repo_baseline_reconciliation_failure(exc=exc) from exc
+
+    @staticmethod
+    def _classify_repo_baseline_reconciliation_failure(
+        *,
+        exc: SEOMigrationGitHubPublisherError,
+    ) -> SEOMigrationGitHubPublisherError:
+        if exc.code in {
+            _GITHUB_REASON_CONTENTS_WRITE_NOT_AUTHORIZED,
+            _GITHUB_REASON_BRANCH_UNINITIALIZED,
+            _GITHUB_REASON_REPO_MANAGEMENT_MARKER_MISSING,
+            _GITHUB_REASON_REPO_MANAGEMENT_MARKER_MISMATCH,
+            _GITHUB_REASON_REPO_MANAGEMENT_MARKER_INVALID,
+        }:
+            return exc
+        return SEOMigrationGitHubPublisherError(
+            code=_GITHUB_REASON_REPO_BASELINE_RECONCILIATION_FAILED,
+            safe_message="GitHub managed repository baseline reconciliation failed.",
+            status_code=exc.status_code,
+            stage=exc.stage or "publish",
+            provider_message=exc.provider_message,
+        )
+
     def _is_managed_file_payload(self, *, file_payload: dict[str, object] | None, marker: str) -> bool:
         if not isinstance(file_payload, dict):
             return False
@@ -4712,6 +5061,15 @@ _MBSRN_MANAGED_IMAGE_PULL_SECRET_NAME = "mbsrn-ghcr-pull"
 _MBSRN_MANAGED_SITE_WEB_IMAGE_REPO_NAME = "site-web"
 _MBSRN_MANAGED_PREVIEW_CERTIFICATE_NAME = "site-web-preview-cert"
 _MBSRN_MANAGED_PREVIEW_DOMAIN_SUFFIX = "site.mbsrn.com"
+_MBSRN_MANAGED_REPO_BASELINE_README_PATH = "README.md"
+_MBSRN_MANAGED_REPO_BASELINE_GITIGNORE_PATH = ".gitignore"
+_MBSRN_MANAGED_REPO_BASELINE_LICENSE_PATH = "LICENSE"
+_MBSRN_MANAGED_REPO_BASELINE_TARGET_VISIBILITY = "private"
+_MBSRN_MANAGED_REPO_BASELINE_RECONCILE_PATHS: tuple[str, ...] = (
+    _MBSRN_MANAGED_REPO_BASELINE_README_PATH,
+    _MBSRN_MANAGED_REPO_BASELINE_GITIGNORE_PATH,
+    _MBSRN_MANAGED_REPO_BASELINE_LICENSE_PATH,
+)
 _MBSRN_MANAGED_CORE_MANIFEST_PATHS: tuple[str, ...] = (
     _MBSRN_MANAGED_NAMESPACE_FILE_PATH,
     _MBSRN_MANAGED_DEPLOYMENT_FILE_PATH,
@@ -5894,6 +6252,266 @@ def _normalize_repo_management_id(value: object) -> str | None:
     if not compact:
         return None
     return compact[:120]
+
+
+def _normalize_repo_visibility(repo_payload: dict[str, object] | None) -> str | None:
+    if not isinstance(repo_payload, dict):
+        return None
+    private_value = repo_payload.get("private")
+    if isinstance(private_value, bool):
+        return "private" if private_value else "public"
+    visibility_value = (_coerce_string(repo_payload.get("visibility")) or "").strip().lower()
+    if visibility_value in {"private", "public", "internal"}:
+        return visibility_value
+    return None
+
+
+def _render_repo_baseline_files(
+    *,
+    repo_owner: str,
+    repo_name: str,
+    business_id: str,
+    site_id: str,
+) -> dict[str, str]:
+    return {
+        _MBSRN_REPO_MANAGEMENT_MARKER_PATH: _render_repo_management_marker_content(
+            business_id=business_id,
+            site_id=site_id,
+        ),
+        _MBSRN_MANAGED_REPO_BASELINE_README_PATH: _render_repo_baseline_readme_content(
+            repo_owner=repo_owner,
+            repo_name=repo_name,
+        ),
+        _MBSRN_MANAGED_REPO_BASELINE_GITIGNORE_PATH: _render_repo_baseline_gitignore_content(),
+        _MBSRN_MANAGED_REPO_BASELINE_LICENSE_PATH: _render_repo_baseline_license_content(),
+    }
+
+
+def _render_repo_baseline_readme_content(*, repo_owner: str, repo_name: str) -> str:
+    normalized_owner = (_coerce_string(repo_owner) or "").strip() or "unknown-owner"
+    normalized_repo = (_coerce_string(repo_name) or "").strip() or "managed-site"
+    return (
+        f"# {normalized_repo}\n"
+        "\n"
+        f"This repository (`{normalized_owner}/{normalized_repo}`) is managed by MBSRN.\n"
+        "\n"
+        "- Ownership marker: `mbsrn.key`\n"
+        "- Managed publish/deploy assets may be updated by MBSRN migration workflows.\n"
+    )
+
+
+def _render_repo_baseline_gitignore_content() -> str:
+    return (
+        "# Byte-compiled / optimized / DLL files\n"
+        "__pycache__/\n"
+        "*.py[cod]\n"
+        "*$py.class\n"
+        "\n"
+        "# Virtual environments\n"
+        ".venv/\n"
+        "venv/\n"
+        "env/\n"
+        "ENV/\n"
+        "\n"
+        "# Distribution / packaging\n"
+        "build/\n"
+        "dist/\n"
+        "*.egg-info/\n"
+        "\n"
+        "# Test / coverage\n"
+        ".pytest_cache/\n"
+        ".coverage\n"
+        "htmlcov/\n"
+        "\n"
+        "# IDE/editor\n"
+        ".vscode/\n"
+        ".idea/\n"
+        "\n"
+        "# OS-generated\n"
+        ".DS_Store\n"
+        "Thumbs.db\n"
+    )
+
+
+def _render_repo_baseline_license_content() -> str:
+    return (
+        "Apache License\n"
+        "Version 2.0, January 2004\n"
+        "http://www.apache.org/licenses/\n"
+        "\n"
+        "TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION\n"
+        "\n"
+        "1. Definitions.\n"
+        "\n"
+        "\"License\" shall mean the terms and conditions for use, reproduction,\n"
+        "and distribution as defined by Sections 1 through 9 of this document.\n"
+        "\n"
+        "\"Licensor\" shall mean the copyright owner or entity authorized by\n"
+        "the copyright owner that is granting the License.\n"
+        "\n"
+        "\"Legal Entity\" shall mean the union of the acting entity and all\n"
+        "other entities that control, are controlled by, or are under common\n"
+        "control with that entity. For the purposes of this definition,\n"
+        "\"control\" means (i) the power, direct or indirect, to cause the\n"
+        "direction or management of such entity, whether by contract or\n"
+        "otherwise, or (ii) ownership of fifty percent (50%) or more of the\n"
+        "outstanding shares, or (iii) beneficial ownership of such entity.\n"
+        "\n"
+        "\"You\" (or \"Your\") shall mean an individual or Legal Entity\n"
+        "exercising permissions granted by this License.\n"
+        "\n"
+        "\"Source\" form shall mean the preferred form for making modifications,\n"
+        "including but not limited to software source code, documentation\n"
+        "source, and configuration files.\n"
+        "\n"
+        "\"Object\" form shall mean any form resulting from mechanical\n"
+        "transformation or translation of a Source form, including but\n"
+        "not limited to compiled object code, generated documentation,\n"
+        "and conversions to other media types.\n"
+        "\n"
+        "\"Work\" shall mean the work of authorship, whether in Source or\n"
+        "Object form, made available under the License, as indicated by a\n"
+        "copyright notice that is included in or attached to the work\n"
+        "(an example is provided in the Appendix below).\n"
+        "\n"
+        "\"Derivative Works\" shall mean any work, whether in Source or Object\n"
+        "form, that is based on (or derived from) the Work and for which the\n"
+        "editorial revisions, annotations, elaborations, or other modifications\n"
+        "represent, as a whole, an original work of authorship. For the purposes\n"
+        "of this License, Derivative Works shall not include works that remain\n"
+        "separable from, or merely link (or bind by name) to the interfaces of,\n"
+        "the Work and Derivative Works thereof.\n"
+        "\n"
+        "\"Contribution\" shall mean any work of authorship, including\n"
+        "the original version of the Work and any modifications or additions\n"
+        "to that Work or Derivative Works thereof, that is intentionally\n"
+        "submitted to Licensor for inclusion in the Work by the copyright owner\n"
+        "or by an individual or Legal Entity authorized to submit on behalf of\n"
+        "the copyright owner. For the purposes of this definition, \"submitted\"\n"
+        "means any form of electronic, verbal, or written communication sent to\n"
+        "the Licensor or its representatives, including but not limited to\n"
+        "communication on electronic mailing lists, source code control systems,\n"
+        "and issue tracking systems that are managed by, or on behalf of, the\n"
+        "Licensor for the purpose of discussing and improving the Work, but\n"
+        "excluding communication that is conspicuously marked or otherwise\n"
+        "designated in writing by the copyright owner as \"Not a Contribution.\"\n"
+        "\n"
+        "\"Contributor\" shall mean Licensor and any individual or Legal Entity\n"
+        "on behalf of whom a Contribution has been received by Licensor and\n"
+        "subsequently incorporated within the Work.\n"
+        "\n"
+        "2. Grant of Copyright License. Subject to the terms and conditions of\n"
+        "this License, each Contributor hereby grants to You a perpetual,\n"
+        "worldwide, non-exclusive, no-charge, royalty-free, irrevocable\n"
+        "copyright license to reproduce, prepare Derivative Works of,\n"
+        "publicly display, publicly perform, sublicense, and distribute the\n"
+        "Work and such Derivative Works in Source or Object form.\n"
+        "\n"
+        "3. Grant of Patent License. Subject to the terms and conditions of\n"
+        "this License, each Contributor hereby grants to You a perpetual,\n"
+        "worldwide, non-exclusive, no-charge, royalty-free, irrevocable\n"
+        "(except as stated in this section) patent license to make, have made,\n"
+        "use, offer to sell, sell, import, and otherwise transfer the Work,\n"
+        "where such license applies only to those patent claims licensable\n"
+        "by such Contributor that are necessarily infringed by their\n"
+        "Contribution(s) alone or by combination of their Contribution(s)\n"
+        "with the Work to which such Contribution(s) was submitted. If You\n"
+        "institute patent litigation against any entity (including a\n"
+        "cross-claim or counterclaim in a lawsuit) alleging that the Work\n"
+        "or a Contribution incorporated within the Work constitutes direct\n"
+        "or contributory patent infringement, then any patent licenses\n"
+        "granted to You under this License for that Work shall terminate\n"
+        "as of the date such litigation is filed.\n"
+        "\n"
+        "4. Redistribution. You may reproduce and distribute copies of the\n"
+        "Work or Derivative Works thereof in any medium, with or without\n"
+        "modifications, and in Source or Object form, provided that You\n"
+        "meet the following conditions:\n"
+        "\n"
+        "(a) You must give any other recipients of the Work or\n"
+        "Derivative Works a copy of this License; and\n"
+        "\n"
+        "(b) You must cause any modified files to carry prominent notices\n"
+        "stating that You changed the files; and\n"
+        "\n"
+        "(c) You must retain, in the Source form of any Derivative Works\n"
+        "that You distribute, all copyright, patent, trademark, and\n"
+        "attribution notices from the Source form of the Work,\n"
+        "excluding those notices that do not pertain to any part of\n"
+        "the Derivative Works; and\n"
+        "\n"
+        "(d) If the Work includes a \"NOTICE\" text file as part of its\n"
+        "distribution, then any Derivative Works that You distribute must\n"
+        "include a readable copy of the attribution notices contained\n"
+        "within such NOTICE file, excluding those notices that do not\n"
+        "pertain to any part of the Derivative Works, in at least one\n"
+        "of the following places: within a NOTICE text file distributed\n"
+        "as part of the Derivative Works; within the Source form or\n"
+        "documentation, if provided along with the Derivative Works; or,\n"
+        "within a display generated by the Derivative Works, if and\n"
+        "wherever such third-party notices normally appear. The contents\n"
+        "of the NOTICE file are for informational purposes only and\n"
+        "do not modify the License. You may add Your own attribution\n"
+        "notices within Derivative Works that You distribute, alongside\n"
+        "or as an addendum to the NOTICE text from the Work, provided\n"
+        "that such additional attribution notices cannot be construed\n"
+        "as modifying the License.\n"
+        "\n"
+        "You may add Your own copyright statement to Your modifications and\n"
+        "may provide additional or different license terms and conditions\n"
+        "for use, reproduction, or distribution of Your modifications, or\n"
+        "for any such Derivative Works as a whole, provided Your use,\n"
+        "reproduction, and distribution of the Work otherwise complies with\n"
+        "the conditions stated in this License.\n"
+        "\n"
+        "5. Submission of Contributions. Unless You explicitly state otherwise,\n"
+        "any Contribution intentionally submitted for inclusion in the Work\n"
+        "by You to the Licensor shall be under the terms and conditions of\n"
+        "this License, without any additional terms or conditions.\n"
+        "Notwithstanding the above, nothing herein shall supersede or modify\n"
+        "the terms of any separate license agreement you may have executed\n"
+        "with Licensor regarding such Contributions.\n"
+        "\n"
+        "6. Trademarks. This License does not grant permission to use the trade\n"
+        "names, trademarks, service marks, or product names of the Licensor,\n"
+        "except as required for reasonable and customary use in describing the\n"
+        "origin of the Work and reproducing the content of the NOTICE file.\n"
+        "\n"
+        "7. Disclaimer of Warranty. Unless required by applicable law or\n"
+        "agreed to in writing, Licensor provides the Work (and each\n"
+        "Contributor provides its Contributions) on an \"AS IS\" BASIS,\n"
+        "WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or\n"
+        "implied, including, without limitation, any warranties or conditions\n"
+        "of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A\n"
+        "PARTICULAR PURPOSE. You are solely responsible for determining the\n"
+        "appropriateness of using or redistributing the Work and assume any\n"
+        "risks associated with Your exercise of permissions under this License.\n"
+        "\n"
+        "8. Limitation of Liability. In no event and under no legal theory,\n"
+        "whether in tort (including negligence), contract, or otherwise,\n"
+        "unless required by applicable law (such as deliberate and grossly\n"
+        "negligent acts) or agreed to in writing, shall any Contributor be\n"
+        "liable to You for damages, including any direct, indirect, special,\n"
+        "incidental, or consequential damages of any character arising as a\n"
+        "result of this License or out of the use or inability to use the\n"
+        "Work (including but not limited to damages for loss of goodwill,\n"
+        "work stoppage, computer failure or malfunction, or any and all\n"
+        "other commercial damages or losses), even if such Contributor\n"
+        "has been advised of the possibility of such damages.\n"
+        "\n"
+        "9. Accepting Warranty or Additional Liability. While redistributing\n"
+        "the Work or Derivative Works thereof, You may choose to offer,\n"
+        "and charge a fee for, acceptance of support, warranty, indemnity,\n"
+        "or other liability obligations and/or rights consistent with this\n"
+        "License. However, in accepting such obligations, You may act only\n"
+        "on Your own behalf and on Your sole responsibility, not on behalf\n"
+        "of any other Contributor, and only if You agree to indemnify,\n"
+        "defend, and hold each Contributor harmless for any liability\n"
+        "incurred by, or claims asserted against, such Contributor by reason\n"
+        "of your accepting any such warranty or additional liability.\n"
+        "\n"
+        "END OF TERMS AND CONDITIONS\n"
+    )
 
 
 def _render_repo_management_marker_content(*, business_id: str, site_id: str) -> str:

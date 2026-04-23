@@ -127,6 +127,14 @@ def _repo_management_marker_invalid_response(*, sha: str = "marker-invalid-sha")
     )
 
 
+def _managed_repo_baseline_present_responses() -> list[_FakeHTTPResponse]:
+    return [
+        _FakeHTTPResponse(status=200, body=json.dumps({"sha": "readme-sha"})),
+        _FakeHTTPResponse(status=200, body=json.dumps({"sha": "gitignore-sha"})),
+        _FakeHTTPResponse(status=200, body=json.dumps({"sha": "license-sha"})),
+    ]
+
+
 def _install_urlopen_stub(monkeypatch, responses, calls):
     queue = list(responses)
 
@@ -851,6 +859,77 @@ def test_run_publish_preflight_existing_repo_with_management_marker_mismatch_is_
     assert result.repo_management_marker_site_id == "different-site"
 
 
+def test_run_publish_preflight_existing_managed_repo_missing_baseline_files_reports_reconcile_action(monkeypatch) -> None:
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    calls: list[tuple[str, str]] = []
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _FakeHTTPResponse(status=200, body=json.dumps({"full_name": "mhanson13/tnmfire"})),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps(
+                    {
+                        "full_name": "mhanson13/tnmfire",
+                        "default_branch": "main",
+                        "private": True,
+                        "permissions": {"push": True},
+                    }
+                ),
+            ),
+            _FakeHTTPResponse(status=200, body=json.dumps({"total_count": 1, "workflows": [{"id": 1}]})),
+            _FakeHTTPResponse(status=200, body=json.dumps({"name": "main"})),
+            _repo_management_marker_response(),
+            _http_error(
+                "https://api.github.com/repos/mhanson13/tnmfire/contents/README.md?ref=main",
+                status_code=404,
+                message="Not Found",
+            ),
+            _http_error(
+                "https://api.github.com/repos/mhanson13/tnmfire/contents/.gitignore?ref=main",
+                status_code=404,
+                message="Not Found",
+            ),
+            _http_error(
+                "https://api.github.com/repos/mhanson13/tnmfire/contents/LICENSE?ref=main",
+                status_code=404,
+                message="Not Found",
+            ),
+        ],
+        calls,
+    )
+
+    result = publisher.run_publish_preflight(
+        repo_owner="mhanson13",
+        repo_name="tnmfire",
+        target_ref="main",
+        auto_create_enabled=False,
+        expected_owner="mhanson13",
+        expected_business_id="business-1",
+        expected_site_id="site-1",
+    )
+
+    assert result.preflight_status == "ready_with_actions"
+    assert result.preflight_blocker_code is None
+    assert result.repo_visibility_target == "private"
+    assert result.repo_visibility_observed == "private"
+    assert result.repo_baseline_required is True
+    assert result.repo_baseline_reconciliation_needed is True
+    assert result.readme_present is False
+    assert result.gitignore_present is False
+    assert result.license_present is False
+    assert calls == [
+        ("GET", "https://api.github.com/repos/mhanson13/tnmfire"),
+        ("GET", "https://api.github.com/repos/mhanson13/tnmfire"),
+        ("GET", "https://api.github.com/repos/mhanson13/tnmfire/actions/workflows?per_page=1"),
+        ("GET", "https://api.github.com/repos/mhanson13/tnmfire/branches/main"),
+        ("GET", "https://api.github.com/repos/mhanson13/tnmfire/contents/mbsrn.key?ref=main"),
+        ("GET", "https://api.github.com/repos/mhanson13/tnmfire/contents/README.md?ref=main"),
+        ("GET", "https://api.github.com/repos/mhanson13/tnmfire/contents/.gitignore?ref=main"),
+        ("GET", "https://api.github.com/repos/mhanson13/tnmfire/contents/LICENSE?ref=main"),
+    ]
+
+
 def test_publish_files_blocks_existing_repo_without_management_marker(monkeypatch) -> None:
     calls: list[tuple[str, str]] = []
     _install_urlopen_stub(
@@ -938,6 +1017,7 @@ def test_publish_files_allows_existing_repo_with_matching_management_marker(monk
                 business_id="business-1",
                 site_id="site-1",
             ),
+            *_managed_repo_baseline_present_responses(),
             _http_error(
                 "https://api.github.com/repos/mhanson13/tnmfire/contents/index.html?ref=main",
                 status_code=404,
@@ -972,6 +1052,213 @@ def test_publish_files_allows_existing_repo_with_matching_management_marker(monk
     assert result.files_published == 1
     assert result.committed_paths == ("index.html",)
     assert result.commit_shas == ("commit-1",)
+
+
+def test_publish_files_reconciles_missing_repo_baseline_files_for_managed_repo(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _FakeHTTPResponse(status=200, body=json.dumps({"default_branch": "main"})),
+            _FakeHTTPResponse(status=200, body=json.dumps({"object": {"sha": "main-sha"}})),
+            _repo_management_marker_response(
+                business_id="business-1",
+                site_id="site-1",
+            ),
+            _http_error(
+                "https://api.github.com/repos/mhanson13/tnmfire/contents/README.md?ref=main",
+                status_code=404,
+                message="Not Found",
+            ),
+            _http_error(
+                "https://api.github.com/repos/mhanson13/tnmfire/contents/.gitignore?ref=main",
+                status_code=404,
+                message="Not Found",
+            ),
+            _http_error(
+                "https://api.github.com/repos/mhanson13/tnmfire/contents/LICENSE?ref=main",
+                status_code=404,
+                message="Not Found",
+            ),
+            _http_error(
+                "https://api.github.com/repos/mhanson13/tnmfire/contents/README.md?ref=main",
+                status_code=404,
+                message="Not Found",
+            ),
+            _FakeHTTPResponse(status=201, body=json.dumps({"commit": {"sha": "baseline-readme"}})),
+            _http_error(
+                "https://api.github.com/repos/mhanson13/tnmfire/contents/.gitignore?ref=main",
+                status_code=404,
+                message="Not Found",
+            ),
+            _FakeHTTPResponse(status=201, body=json.dumps({"commit": {"sha": "baseline-gitignore"}})),
+            _http_error(
+                "https://api.github.com/repos/mhanson13/tnmfire/contents/LICENSE?ref=main",
+                status_code=404,
+                message="Not Found",
+            ),
+            _FakeHTTPResponse(status=201, body=json.dumps({"commit": {"sha": "baseline-license"}})),
+            _http_error(
+                "https://api.github.com/repos/mhanson13/tnmfire/contents/index.html?ref=main",
+                status_code=404,
+                message="Not Found",
+            ),
+            _FakeHTTPResponse(status=201, body=json.dumps({"commit": {"sha": "content-commit"}})),
+        ],
+        calls,
+    )
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+
+    result = publisher.publish_files(
+        target=SEOMigrationGitHubPublishTarget(
+            repo_owner="mhanson13",
+            repo_name="tnmfire",
+            branch="main",
+            artifact_root="",
+            business_id="business-1",
+            site_id="site-1",
+        ),
+        files=[
+            SEOMigrationGitHubPublishFile(
+                path="index.html",
+                content="<html><body>test</body></html>",
+                media_type="text/html",
+            )
+        ],
+        commit_message="publish",
+        dry_run=False,
+    )
+
+    baseline_put_calls = [
+        call for call in calls if call[0] == "PUT" and "/contents/" in call[1] and not call[1].endswith("/contents/index.html")
+    ]
+    assert len(baseline_put_calls) == 3
+    assert any(call[1].endswith("/contents/README.md") for call in baseline_put_calls)
+    assert any(call[1].endswith("/contents/.gitignore") for call in baseline_put_calls)
+    assert any(call[1].endswith("/contents/LICENSE") for call in baseline_put_calls)
+    assert result.files_published == 1
+    assert result.committed_paths == ("index.html",)
+    assert result.commit_shas == ("content-commit",)
+
+
+def test_publish_files_reconciles_only_missing_baseline_files_without_overwriting_present_files(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _FakeHTTPResponse(status=200, body=json.dumps({"default_branch": "main"})),
+            _FakeHTTPResponse(status=200, body=json.dumps({"object": {"sha": "main-sha"}})),
+            _repo_management_marker_response(
+                business_id="business-1",
+                site_id="site-1",
+            ),
+            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "readme-sha"})),
+            _http_error(
+                "https://api.github.com/repos/mhanson13/tnmfire/contents/.gitignore?ref=main",
+                status_code=404,
+                message="Not Found",
+            ),
+            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "license-sha"})),
+            _http_error(
+                "https://api.github.com/repos/mhanson13/tnmfire/contents/.gitignore?ref=main",
+                status_code=404,
+                message="Not Found",
+            ),
+            _FakeHTTPResponse(status=201, body=json.dumps({"commit": {"sha": "baseline-gitignore"}})),
+            _http_error(
+                "https://api.github.com/repos/mhanson13/tnmfire/contents/index.html?ref=main",
+                status_code=404,
+                message="Not Found",
+            ),
+            _FakeHTTPResponse(status=201, body=json.dumps({"commit": {"sha": "content-commit"}})),
+        ],
+        calls,
+    )
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+
+    _ = publisher.publish_files(
+        target=SEOMigrationGitHubPublishTarget(
+            repo_owner="mhanson13",
+            repo_name="tnmfire",
+            branch="main",
+            artifact_root="",
+            business_id="business-1",
+            site_id="site-1",
+        ),
+        files=[
+            SEOMigrationGitHubPublishFile(
+                path="index.html",
+                content="<html><body>test</body></html>",
+                media_type="text/html",
+            )
+        ],
+        commit_message="publish",
+        dry_run=False,
+    )
+
+    baseline_put_calls = [
+        call for call in calls if call[0] == "PUT" and "/contents/" in call[1] and not call[1].endswith("/contents/index.html")
+    ]
+    assert baseline_put_calls == [
+        ("PUT", "https://api.github.com/repos/mhanson13/tnmfire/contents/.gitignore"),
+    ]
+
+
+def test_publish_files_classifies_repo_baseline_reconciliation_failure_precisely(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _FakeHTTPResponse(status=200, body=json.dumps({"default_branch": "main"})),
+            _FakeHTTPResponse(status=200, body=json.dumps({"object": {"sha": "main-sha"}})),
+            _repo_management_marker_response(
+                business_id="business-1",
+                site_id="site-1",
+            ),
+            _http_error(
+                "https://api.github.com/repos/mhanson13/tnmfire/contents/README.md?ref=main",
+                status_code=404,
+                message="Not Found",
+            ),
+            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "gitignore-sha"})),
+            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "license-sha"})),
+            _http_error(
+                "https://api.github.com/repos/mhanson13/tnmfire/contents/README.md?ref=main",
+                status_code=404,
+                message="Not Found",
+            ),
+            _http_error(
+                "https://api.github.com/repos/mhanson13/tnmfire/contents/README.md",
+                status_code=500,
+                message="Server Error",
+            ),
+        ],
+        calls,
+    )
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+
+    with pytest.raises(SEOMigrationGitHubPublisherError) as exc_info:
+        publisher.publish_files(
+            target=SEOMigrationGitHubPublishTarget(
+                repo_owner="mhanson13",
+                repo_name="tnmfire",
+                branch="main",
+                artifact_root="",
+                business_id="business-1",
+                site_id="site-1",
+            ),
+            files=[
+                SEOMigrationGitHubPublishFile(
+                    path="index.html",
+                    content="<html><body>test</body></html>",
+                    media_type="text/html",
+                )
+            ],
+            commit_message="publish",
+            dry_run=False,
+        )
+
+    assert exc_info.value.code == "github_repo_baseline_reconciliation_failed"
 
 
 def test_derive_site_kubernetes_namespace_normalizes_repo_name_values() -> None:
@@ -1201,6 +1488,7 @@ def test_publish_files_classifies_contents_write_forbidden(monkeypatch) -> None:
             _FakeHTTPResponse(status=200, body=json.dumps({"default_branch": "main"})),
             _FakeHTTPResponse(status=200, body=json.dumps({"object": {"sha": "main-sha"}})),
             _repo_management_marker_response(),
+            *_managed_repo_baseline_present_responses(),
             _http_error(
                 "https://api.github.com/repos/mhanson13/tnmfire/contents/index.html?ref=main",
                 status_code=404,
@@ -1245,6 +1533,7 @@ def test_publish_files_classifies_branch_uninitialized_from_lookup(monkeypatch) 
             _FakeHTTPResponse(status=200, body=json.dumps({"default_branch": "main"})),
             _FakeHTTPResponse(status=200, body=json.dumps({"object": {"sha": "main-sha"}})),
             _repo_management_marker_response(),
+            *_managed_repo_baseline_present_responses(),
             _http_error(
                 "https://api.github.com/repos/mhanson13/tnmfire/contents/index.html?ref=main",
                 status_code=422,
@@ -1284,6 +1573,7 @@ def test_publish_files_classifies_generic_request_failure(monkeypatch) -> None:
             _FakeHTTPResponse(status=200, body=json.dumps({"default_branch": "main"})),
             _FakeHTTPResponse(status=200, body=json.dumps({"object": {"sha": "main-sha"}})),
             _repo_management_marker_response(),
+            *_managed_repo_baseline_present_responses(),
             _http_error(
                 "https://api.github.com/repos/mhanson13/tnmfire/contents/index.html?ref=main",
                 status_code=404,
@@ -3426,8 +3716,10 @@ def test_ensure_deploy_workflow_bootstraps_uninitialized_repo_branch(monkeypatch
             status_code=409,
             message="Git Repository is empty.",
         ),
-        _FakeHTTPResponse(status=201, body=json.dumps({"sha": "blob-sha"})),
         _FakeHTTPResponse(status=201, body=json.dumps({"sha": "marker-blob-sha"})),
+        _FakeHTTPResponse(status=201, body=json.dumps({"sha": "readme-blob-sha"})),
+        _FakeHTTPResponse(status=201, body=json.dumps({"sha": "gitignore-blob-sha"})),
+        _FakeHTTPResponse(status=201, body=json.dumps({"sha": "license-blob-sha"})),
         _FakeHTTPResponse(status=201, body=json.dumps({"sha": "tree-sha"})),
         _FakeHTTPResponse(status=201, body=json.dumps({"sha": "commit-sha"})),
         _FakeHTTPResponse(status=201, body="{}"),
@@ -3470,10 +3762,12 @@ def test_ensure_deploy_workflow_bootstraps_uninitialized_repo_branch(monkeypatch
 def test_bootstrap_repository_branch_writes_mbsrn_management_marker(monkeypatch) -> None:
     calls: list[tuple[str, str]] = []
     captured_tree_payload: dict[str, object] = {}
-    marker_blob_contents: list[str] = []
+    blob_contents: list[str] = []
     queue: list[object] = [
-        _FakeHTTPResponse(status=201, body=json.dumps({"sha": "readme-blob-sha"})),
         _FakeHTTPResponse(status=201, body=json.dumps({"sha": "marker-blob-sha"})),
+        _FakeHTTPResponse(status=201, body=json.dumps({"sha": "readme-blob-sha"})),
+        _FakeHTTPResponse(status=201, body=json.dumps({"sha": "gitignore-blob-sha"})),
+        _FakeHTTPResponse(status=201, body=json.dumps({"sha": "license-blob-sha"})),
         _FakeHTTPResponse(status=201, body=json.dumps({"sha": "tree-sha"})),
         _FakeHTTPResponse(status=201, body=json.dumps({"sha": "commit-sha"})),
         _FakeHTTPResponse(status=201, body="{}"),
@@ -3484,8 +3778,7 @@ def test_bootstrap_repository_branch_writes_mbsrn_management_marker(monkeypatch)
         calls.append((request.get_method(), request.full_url))
         if request.data and request.get_method() == "POST" and request.full_url.endswith("/git/blobs"):
             payload = json.loads(request.data.decode("utf-8"))
-            if payload.get("content", "").startswith("{"):
-                marker_blob_contents.append(str(payload.get("content")))
+            blob_contents.append(str(payload.get("content") or ""))
         if request.data and request.get_method() == "POST" and request.full_url.endswith("/git/trees"):
             captured_tree_payload.update(json.loads(request.data.decode("utf-8")))
         next_item = queue.pop(0)
@@ -3506,10 +3799,16 @@ def test_bootstrap_repository_branch_writes_mbsrn_management_marker(monkeypatch)
     tree_entries = captured_tree_payload.get("tree")
     assert isinstance(tree_entries, list)
     assert any(isinstance(item, dict) and item.get("path") == "mbsrn.key" for item in tree_entries)
-    assert marker_blob_contents
-    marker_payload = json.loads(marker_blob_contents[-1])
+    assert any(isinstance(item, dict) and item.get("path") == "README.md" for item in tree_entries)
+    assert any(isinstance(item, dict) and item.get("path") == ".gitignore" for item in tree_entries)
+    assert any(isinstance(item, dict) and item.get("path") == "LICENSE" for item in tree_entries)
+    marker_blob_content = next((item for item in blob_contents if item.startswith("{")), "")
+    assert marker_blob_content
+    marker_payload = json.loads(marker_blob_content)
     assert marker_payload.get("business_id") == "business-1"
     assert marker_payload.get("site_id") == "site-1"
+    assert any("# Byte-compiled / optimized / DLL files" in item for item in blob_contents)
+    assert any(item.startswith("Apache License") for item in blob_contents)
 
 
 def test_ensure_deploy_workflow_bootstraps_when_ref_check_returns_409_empty_repo(monkeypatch) -> None:
@@ -3538,8 +3837,10 @@ def test_ensure_deploy_workflow_bootstraps_when_ref_check_returns_409_empty_repo
             status_code=409,
             message="Git Repository is empty.",
         ),
-        _FakeHTTPResponse(status=201, body=json.dumps({"sha": "blob-sha"})),
         _FakeHTTPResponse(status=201, body=json.dumps({"sha": "marker-blob-sha"})),
+        _FakeHTTPResponse(status=201, body=json.dumps({"sha": "readme-blob-sha"})),
+        _FakeHTTPResponse(status=201, body=json.dumps({"sha": "gitignore-blob-sha"})),
+        _FakeHTTPResponse(status=201, body=json.dumps({"sha": "license-blob-sha"})),
         _FakeHTTPResponse(status=201, body=json.dumps({"sha": "tree-sha"})),
         _FakeHTTPResponse(status=201, body=json.dumps({"sha": "commit-sha"})),
         _FakeHTTPResponse(status=201, body="{}"),
@@ -3603,8 +3904,10 @@ def test_ensure_deploy_workflow_bootstraps_when_ref_check_raises_generic_409_emp
             status_code=409,
             message="Git Repository is empty.",
         ),
-        _FakeHTTPResponse(status=201, body=json.dumps({"sha": "blob-sha"})),
         _FakeHTTPResponse(status=201, body=json.dumps({"sha": "marker-blob-sha"})),
+        _FakeHTTPResponse(status=201, body=json.dumps({"sha": "readme-blob-sha"})),
+        _FakeHTTPResponse(status=201, body=json.dumps({"sha": "gitignore-blob-sha"})),
+        _FakeHTTPResponse(status=201, body=json.dumps({"sha": "license-blob-sha"})),
         _FakeHTTPResponse(status=201, body=json.dumps({"sha": "tree-sha"})),
         _FakeHTTPResponse(status=201, body=json.dumps({"sha": "commit-sha"})),
         _FakeHTTPResponse(status=201, body="{}"),
@@ -3786,7 +4089,7 @@ def test_ensure_deploy_workflow_ref_check_409_bootstrap_failure_preserves_precis
             site_id="site-1",
         )
 
-    assert exc_info.value.code == "github_repo_state_invalid_for_bootstrap"
+    assert exc_info.value.code == "github_repo_bootstrap_marker_write_failed"
     assert exc_info.value.stage == "workflow_provisioning"
 
 
@@ -3816,8 +4119,10 @@ def test_ensure_deploy_workflow_bootstraps_when_default_ref_lookup_returns_404(m
             status_code=404,
             message="Reference does not exist",
         ),
-        _FakeHTTPResponse(status=201, body=json.dumps({"sha": "blob-sha"})),
         _FakeHTTPResponse(status=201, body=json.dumps({"sha": "marker-blob-sha"})),
+        _FakeHTTPResponse(status=201, body=json.dumps({"sha": "readme-blob-sha"})),
+        _FakeHTTPResponse(status=201, body=json.dumps({"sha": "gitignore-blob-sha"})),
+        _FakeHTTPResponse(status=201, body=json.dumps({"sha": "license-blob-sha"})),
         _FakeHTTPResponse(status=201, body=json.dumps({"sha": "tree-sha"})),
         _FakeHTTPResponse(status=201, body=json.dumps({"sha": "commit-sha"})),
         _FakeHTTPResponse(status=201, body="{}"),
