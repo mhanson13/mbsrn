@@ -22,6 +22,7 @@ _GITHUB_REASON_CONTENTS_WRITE_NOT_AUTHORIZED = "github_contents_write_not_author
 _GITHUB_REASON_BRANCH_UNINITIALIZED = "github_branch_not_found_or_uninitialized"
 _GITHUB_REASON_REPO_BOOTSTRAP_INVALID = "github_repo_state_invalid_for_bootstrap"
 _GITHUB_REASON_WORKFLOW_PROVISIONING_FAILED = "github_workflow_provisioning_failed"
+_GITHUB_REASON_CONTENTS_PUBLISH_FAILED = "github_contents_publish_failed"
 
 
 @dataclass(frozen=True)
@@ -72,6 +73,24 @@ class SEOMigrationGitHubRepositoryEnsureResult:
     auto_create_created: bool
     outcome: str
     skipped_reason: str | None = None
+
+
+@dataclass(frozen=True)
+class SEOMigrationGitHubPublishPreflightResult:
+    repo_owner: str
+    repo_name: str
+    target_ref: str
+    repo_exists: bool
+    repo_ensure_outcome: str
+    target_ref_exists: bool
+    repo_initialized: bool
+    can_read_contents: bool
+    can_write_contents: bool
+    can_write_workflows: bool
+    would_auto_create_repo: bool
+    would_bootstrap_branch: bool
+    preflight_status: str
+    preflight_blocker_code: str | None = None
 
 
 @dataclass(frozen=True)
@@ -205,6 +224,33 @@ class SEOMigrationGitHubPublisherError(RuntimeError):
 
 
 class SEOMigrationGitHubPublisher:
+    def run_publish_preflight(
+        self,
+        *,
+        repo_owner: str,
+        repo_name: str,
+        target_ref: str,
+        auto_create_enabled: bool,
+        expected_owner: str | None = None,
+    ) -> SEOMigrationGitHubPublishPreflightResult:
+        del auto_create_enabled, expected_owner
+        return SEOMigrationGitHubPublishPreflightResult(
+            repo_owner=repo_owner,
+            repo_name=repo_name,
+            target_ref=target_ref,
+            repo_exists=True,
+            repo_ensure_outcome="exists",
+            target_ref_exists=True,
+            repo_initialized=True,
+            can_read_contents=True,
+            can_write_contents=True,
+            can_write_workflows=True,
+            would_auto_create_repo=False,
+            would_bootstrap_branch=False,
+            preflight_status="ready",
+            preflight_blocker_code=None,
+        )
+
     def ensure_repository(
         self,
         *,
@@ -370,6 +416,21 @@ class MisconfiguredSEOMigrationGitHubPublisher(SEOMigrationGitHubPublisher):
             expected_owner,
             private_by_default,
         )
+        raise SEOMigrationGitHubPublisherError(
+            code=self.reason_code,
+            safe_message=self.safe_message,
+        )
+
+    def run_publish_preflight(
+        self,
+        *,
+        repo_owner: str,
+        repo_name: str,
+        target_ref: str,
+        auto_create_enabled: bool,
+        expected_owner: str | None = None,
+    ) -> SEOMigrationGitHubPublishPreflightResult:
+        del repo_owner, repo_name, target_ref, auto_create_enabled, expected_owner
         raise SEOMigrationGitHubPublisherError(
             code=self.reason_code,
             safe_message=self.safe_message,
@@ -695,6 +756,249 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             skipped_reason=None,
         )
 
+    def run_publish_preflight(
+        self,
+        *,
+        repo_owner: str,
+        repo_name: str,
+        target_ref: str,
+        auto_create_enabled: bool,
+        expected_owner: str | None = None,
+    ) -> SEOMigrationGitHubPublishPreflightResult:
+        normalized_owner = self._normalize_repo_owner_or_raise(repo_owner)
+        normalized_repo = self._normalize_repo_name_or_raise(repo_name)
+        normalized_ref = (_coerce_string(target_ref) or "").strip() or "main"
+        normalized_expected_owner = self._normalize_expected_owner(expected_owner)
+        auto_create_enabled_value = bool(auto_create_enabled)
+
+        repo_exists = False
+        repo_ensure_outcome = "unknown"
+        target_ref_exists = False
+        repo_initialized = False
+        can_read_contents = False
+        can_write_contents = False
+        can_write_workflows = False
+        would_auto_create_repo = False
+        would_bootstrap_branch = False
+        preflight_status = "blocked"
+        preflight_blocker_code: str | None = None
+        permissions_push_value: bool | None = None
+        workflows_api_accessible: bool | None = None
+
+        try:
+            ensure_result = self.ensure_repository(
+                repo_owner=normalized_owner,
+                repo_name=normalized_repo,
+                auto_create_enabled=auto_create_enabled_value,
+                create_if_missing=False,
+                expected_owner=normalized_expected_owner,
+            )
+        except SEOMigrationGitHubPublisherError as exc:
+            preflight_blocker_code = (_coerce_string(exc.code) or "").strip().lower() or None
+            if preflight_blocker_code == "repo_auto_create_disabled":
+                repo_ensure_outcome = "skipped_policy_disabled"
+            elif preflight_blocker_code == "repo_create_failed_invalid_name":
+                repo_ensure_outcome = "failed_invalid_name"
+            elif preflight_blocker_code == "repo_create_failed_owner_mismatch":
+                repo_ensure_outcome = "failed_owner_mismatch"
+            elif preflight_blocker_code == "repo_auto_create_not_authorized":
+                repo_ensure_outcome = "failed_not_authorized"
+            else:
+                repo_ensure_outcome = "failed_unknown"
+        else:
+            repo_exists = bool(ensure_result.exists)
+            if repo_exists:
+                repo_ensure_outcome = "exists"
+            elif auto_create_enabled_value:
+                repo_ensure_outcome = "would_create_on_publish"
+            else:
+                repo_ensure_outcome = "skipped_policy_disabled"
+            would_auto_create_repo = bool((not repo_exists) and auto_create_enabled_value)
+            if (
+                would_auto_create_repo
+                and normalized_expected_owner
+                and normalized_owner.lower() != normalized_expected_owner.lower()
+            ):
+                would_auto_create_repo = False
+                preflight_blocker_code = "repo_create_failed_owner_mismatch"
+                repo_ensure_outcome = "failed_owner_mismatch"
+
+            if not repo_exists and preflight_blocker_code is None and not would_auto_create_repo:
+                preflight_blocker_code = "repo_auto_create_disabled"
+
+            if repo_exists:
+                try:
+                    repo_payload = self._request_json(
+                        method="GET",
+                        path=f"/repos/{urllib.parse.quote(normalized_owner)}/{urllib.parse.quote(normalized_repo)}",
+                        expected_statuses=(200,),
+                        status_error_map={
+                            401: (
+                                "token_not_authorized",
+                                "GitHub token is not authorized for publish operations.",
+                            ),
+                            403: (
+                                "token_not_authorized",
+                                "GitHub token is not authorized for publish operations.",
+                            ),
+                            404: (
+                                "repo_not_found",
+                                "GitHub repository target was not found.",
+                            ),
+                        },
+                        error_stage="publish_preflight",
+                    )
+                except SEOMigrationGitHubPublisherError as exc:
+                    if preflight_blocker_code is None:
+                        preflight_blocker_code = (_coerce_string(exc.code) or "").strip().lower() or None
+                    repo_payload = None
+                can_read_contents = isinstance(repo_payload, dict)
+                permissions_payload = (
+                    repo_payload.get("permissions")
+                    if isinstance(repo_payload, dict)
+                    else None
+                )
+                can_write_contents, permissions_push_value = self._infer_contents_write_capability(
+                    permissions_payload=permissions_payload,
+                )
+                if not can_write_contents and preflight_blocker_code is None:
+                    preflight_blocker_code = _GITHUB_REASON_CONTENTS_WRITE_NOT_AUTHORIZED
+
+                try:
+                    self._request_json(
+                        method="GET",
+                        path=(
+                            f"/repos/{urllib.parse.quote(normalized_owner)}/{urllib.parse.quote(normalized_repo)}"
+                            "/actions/workflows?per_page=1"
+                        ),
+                        expected_statuses=(200,),
+                        allow_404=True,
+                        status_error_map={
+                            401: (
+                                _GITHUB_REASON_WORKFLOW_WRITE_NOT_AUTHORIZED,
+                                "GitHub token is not authorized to access workflow operations for publish.",
+                            ),
+                            403: (
+                                _GITHUB_REASON_WORKFLOW_WRITE_NOT_AUTHORIZED,
+                                "GitHub token is not authorized to access workflow operations for publish.",
+                            ),
+                        },
+                        error_stage="publish_preflight",
+                        expect_object=False,
+                    )
+                    workflows_api_accessible = True
+                except SEOMigrationGitHubPublisherError as exc:
+                    workflows_api_accessible = False
+                    if preflight_blocker_code is None:
+                        preflight_blocker_code = (_coerce_string(exc.code) or "").strip().lower() or None
+                can_write_workflows = bool(can_write_contents and workflows_api_accessible)
+                if (not can_write_workflows) and preflight_blocker_code is None:
+                    preflight_blocker_code = _GITHUB_REASON_WORKFLOW_WRITE_NOT_AUTHORIZED
+
+                try:
+                    branch_payload = self._request_json(
+                        method="GET",
+                        path=(
+                            f"/repos/{urllib.parse.quote(normalized_owner)}/{urllib.parse.quote(normalized_repo)}"
+                            f"/branches/{urllib.parse.quote(normalized_ref, safe='')}"
+                        ),
+                        expected_statuses=(200,),
+                        allow_404=True,
+                        status_error_map={
+                            401: (
+                                "token_not_authorized",
+                                "GitHub token is not authorized for publish operations.",
+                            ),
+                            403: (
+                                "token_not_authorized",
+                                "GitHub token is not authorized for publish operations.",
+                            ),
+                        },
+                        error_stage="publish_preflight",
+                    )
+                except SEOMigrationGitHubPublisherError as exc:
+                    branch_payload = None
+                    if preflight_blocker_code is None:
+                        preflight_blocker_code = (_coerce_string(exc.code) or "").strip().lower() or None
+                target_ref_exists = isinstance(branch_payload, dict)
+                if target_ref_exists:
+                    repo_initialized = True
+                else:
+                    default_branch = (_coerce_string((repo_payload or {}).get("default_branch")) or "").strip() or "main"
+                    try:
+                        _ = self._resolve_branch_head_sha(
+                            repo_owner=normalized_owner,
+                            repo_name=normalized_repo,
+                            branch=default_branch,
+                        )
+                        repo_initialized = True
+                    except SEOMigrationGitHubPublisherError as exc:
+                        if exc.code == _GITHUB_REASON_BRANCH_UNINITIALIZED:
+                            repo_initialized = False
+                        elif preflight_blocker_code is None:
+                            preflight_blocker_code = (_coerce_string(exc.code) or "").strip().lower() or None
+                    would_bootstrap_branch = bool((not target_ref_exists) and can_write_contents)
+                    if (not would_bootstrap_branch) and preflight_blocker_code is None:
+                        preflight_blocker_code = _GITHUB_REASON_BRANCH_UNINITIALIZED
+
+        if preflight_blocker_code:
+            preflight_status = "blocked"
+        elif would_auto_create_repo or would_bootstrap_branch:
+            preflight_status = "ready_with_actions"
+        else:
+            preflight_status = "ready"
+
+        result = SEOMigrationGitHubPublishPreflightResult(
+            repo_owner=normalized_owner,
+            repo_name=normalized_repo,
+            target_ref=normalized_ref,
+            repo_exists=repo_exists,
+            repo_ensure_outcome=repo_ensure_outcome,
+            target_ref_exists=target_ref_exists,
+            repo_initialized=repo_initialized,
+            can_read_contents=can_read_contents,
+            can_write_contents=can_write_contents,
+            can_write_workflows=can_write_workflows,
+            would_auto_create_repo=would_auto_create_repo,
+            would_bootstrap_branch=would_bootstrap_branch,
+            preflight_status=preflight_status,
+            preflight_blocker_code=preflight_blocker_code,
+        )
+        _emit_structured_publisher_log(
+            payload={
+                "event": "seo_migration_publish_preflight",
+                "repo_owner": result.repo_owner,
+                "repo_name": result.repo_name,
+                "target_ref": result.target_ref,
+                "repo_exists": result.repo_exists,
+                "repo_ensure_outcome": result.repo_ensure_outcome,
+                "target_ref_exists": result.target_ref_exists,
+                "repo_initialized": result.repo_initialized,
+                "can_read_contents": result.can_read_contents,
+                "can_write_contents": result.can_write_contents,
+                "can_write_workflows": result.can_write_workflows,
+                "would_auto_create_repo": result.would_auto_create_repo,
+                "would_bootstrap_branch": result.would_bootstrap_branch,
+                "preflight_status": result.preflight_status,
+                "preflight_blocker_code": result.preflight_blocker_code,
+                "permissions_push_value": permissions_push_value,
+                "workflows_api_accessible": workflows_api_accessible,
+            },
+            fallback_message="seo_migration_publish_preflight",
+            level=(logging.INFO if preflight_status != "blocked" else logging.WARNING),
+        )
+        return result
+
+    @staticmethod
+    def _infer_contents_write_capability(*, permissions_payload: object) -> tuple[bool, bool | None]:
+        if not isinstance(permissions_payload, dict):
+            return True, None
+        push_value = permissions_payload.get("push")
+        maintain_value = permissions_payload.get("maintain")
+        admin_value = permissions_payload.get("admin")
+        can_write = bool(push_value or maintain_value or admin_value)
+        return can_write, bool(push_value)
+
     @staticmethod
     def _normalize_repo_owner_or_raise(value: object) -> str:
         normalized = (_coerce_string(value) or "").strip()
@@ -935,11 +1239,35 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         for file_item in files:
             total_bytes += len(file_item.content.encode("utf-8"))
             final_path = _join_repo_path(target.artifact_root, file_item.path)
-            existing_sha = self._fetch_existing_sha(
-                repo_owner=target.repo_owner,
-                repo_name=target.repo_name,
-                branch=target.branch,
-                path=final_path,
+            try:
+                existing_payload = self._request_json(
+                    method="GET",
+                    path=(
+                        f"/repos/{urllib.parse.quote(target.repo_owner)}/{urllib.parse.quote(target.repo_name)}"
+                        f"/contents/{urllib.parse.quote(final_path, safe='/')}?ref={urllib.parse.quote(target.branch, safe='')}"
+                    ),
+                    expected_statuses=(200,),
+                    allow_404=True,
+                    error_stage="publish",
+                    status_error_map={
+                        401: (
+                            _GITHUB_REASON_CONTENTS_WRITE_NOT_AUTHORIZED,
+                            "GitHub token is not authorized to write repository contents for publish.",
+                        ),
+                        403: (
+                            _GITHUB_REASON_CONTENTS_WRITE_NOT_AUTHORIZED,
+                            "GitHub token is not authorized to write repository contents for publish.",
+                        ),
+                    },
+                )
+            except SEOMigrationGitHubPublisherError as exc:
+                if exc.code == "github_request_failed":
+                    raise self._classify_publish_request_failed(exc=exc) from exc
+                raise
+            existing_sha = (
+                _coerce_string(existing_payload.get("sha"))
+                if isinstance(existing_payload, dict)
+                else None
             )
             encoded_content = base64.b64encode(file_item.content.encode("utf-8")).decode("ascii")
             payload: dict[str, object] = {
@@ -953,14 +1281,30 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             }
             if existing_sha:
                 payload["sha"] = existing_sha
-            response_payload = self._request_json(
-                method="PUT",
-                path=(
-                    f"/repos/{urllib.parse.quote(target.repo_owner)}/{urllib.parse.quote(target.repo_name)}"
-                    f"/contents/{urllib.parse.quote(final_path, safe='/')}"
-                ),
-                payload=payload,
-            )
+            try:
+                response_payload = self._request_json(
+                    method="PUT",
+                    path=(
+                        f"/repos/{urllib.parse.quote(target.repo_owner)}/{urllib.parse.quote(target.repo_name)}"
+                        f"/contents/{urllib.parse.quote(final_path, safe='/')}"
+                    ),
+                    payload=payload,
+                    error_stage="publish",
+                    status_error_map={
+                        401: (
+                            _GITHUB_REASON_CONTENTS_WRITE_NOT_AUTHORIZED,
+                            "GitHub token is not authorized to write repository contents for publish.",
+                        ),
+                        403: (
+                            _GITHUB_REASON_CONTENTS_WRITE_NOT_AUTHORIZED,
+                            "GitHub token is not authorized to write repository contents for publish.",
+                        ),
+                    },
+                )
+            except SEOMigrationGitHubPublisherError as exc:
+                if exc.code == "github_request_failed":
+                    raise self._classify_publish_request_failed(exc=exc) from exc
+                raise
             if not isinstance(response_payload, dict):
                 raise SEOMigrationGitHubPublisherError(
                     code="publish_response_invalid",
@@ -984,6 +1328,45 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             commit_shas=tuple(_dedupe_strings(commit_shas)),
             committed_paths=tuple(committed_paths),
             published_at=published_at,
+        )
+
+    def _classify_publish_request_failed(
+        self,
+        *,
+        exc: SEOMigrationGitHubPublisherError,
+    ) -> SEOMigrationGitHubPublisherError:
+        provider_message = _sanitize_github_error_message(exc.provider_message)
+        provider_message_lower = (provider_message or "").lower()
+        branch_state_markers = (
+            "branch",
+            "ref",
+            "reference",
+            "repository is empty",
+            "empty repository",
+            "no commit",
+            "no default branch",
+            "uninitialized",
+        )
+        if exc.status_code == 409 or (
+            exc.status_code == 422
+            and (
+                not provider_message_lower
+                or any(marker in provider_message_lower for marker in branch_state_markers)
+            )
+        ):
+            return SEOMigrationGitHubPublisherError(
+                code=_GITHUB_REASON_BRANCH_UNINITIALIZED,
+                safe_message="GitHub repository branch is missing or uninitialized for publish.",
+                status_code=exc.status_code,
+                stage=exc.stage or "publish",
+                provider_message=provider_message,
+            )
+        return SEOMigrationGitHubPublisherError(
+            code=_GITHUB_REASON_CONTENTS_PUBLISH_FAILED,
+            safe_message="GitHub repository contents publish request failed.",
+            status_code=exc.status_code,
+            stage=exc.stage or "publish",
+            provider_message=provider_message,
         )
 
     def upsert_actions_secret(
@@ -2700,8 +3083,8 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             fallback_message="seo_migration_workflow_provisioning_operation",
             level=logging.INFO,
         )
-        self._ensure_repo_exists(repo_owner=repo_owner, repo_name=repo_name)
         try:
+            self._ensure_repo_exists(repo_owner=repo_owner, repo_name=repo_name)
             self._ensure_ref_exists(
                 repo_owner=repo_owner,
                 repo_name=repo_name,
@@ -2709,6 +3092,8 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 allow_repair=not dry_run,
             )
         except SEOMigrationGitHubPublisherError as exc:
+            if exc.code == "github_request_failed":
+                exc = self._classify_workflow_provisioning_request_failed(exc=exc)
             _emit_structured_publisher_log(
                 payload={
                     "event": "seo_migration_workflow_provisioning_operation",

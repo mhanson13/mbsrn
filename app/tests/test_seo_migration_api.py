@@ -35,6 +35,7 @@ from app.integrations.seo_migration_github_publisher import (
     SEOMigrationGitHubDeployRunStatusResult,
     SEOMigrationGitHubDeployTarget,
     SEOMigrationGitHubPublishFile,
+    SEOMigrationGitHubPublishPreflightResult,
     SEOMigrationGitHubPublishResult,
     SEOMigrationGitHubPublishTarget,
     SEOMigrationGitHubPublisher,
@@ -169,6 +170,33 @@ class _StubMigrationGitHubPublisher(SEOMigrationGitHubPublisher):
             auto_create_created=False,
             outcome="repo_exists",
             skipped_reason=None,
+        )
+
+    def run_publish_preflight(
+        self,
+        *,
+        repo_owner: str,
+        repo_name: str,
+        target_ref: str,
+        auto_create_enabled: bool,
+        expected_owner: str | None = None,
+    ) -> SEOMigrationGitHubPublishPreflightResult:
+        del auto_create_enabled, expected_owner
+        return SEOMigrationGitHubPublishPreflightResult(
+            repo_owner=repo_owner,
+            repo_name=repo_name,
+            target_ref=target_ref,
+            repo_exists=True,
+            repo_ensure_outcome="exists",
+            target_ref_exists=True,
+            repo_initialized=True,
+            can_read_contents=True,
+            can_write_contents=True,
+            can_write_workflows=True,
+            would_auto_create_repo=False,
+            would_bootstrap_branch=False,
+            preflight_status="ready",
+            preflight_blocker_code=None,
         )
 
     def publish_files(
@@ -1375,6 +1403,17 @@ def test_migration_summary_contract_includes_readiness_and_history_shapes(db_ses
     assert isinstance(payload["publish_readiness"].get("blocker_codes"), list)
     assert isinstance(payload["publish_readiness"].get("target"), dict)
     assert isinstance(payload["publish_readiness"].get("config_prerequisites"), dict)
+    publish_prereqs = payload["publish_readiness"].get("config_prerequisites") or {}
+    assert "publish_target_ref" in publish_prereqs
+    assert "publish_target_ref_exists" in publish_prereqs
+    assert "publish_target_repo_initialized" in publish_prereqs
+    assert "publish_target_can_read_contents" in publish_prereqs
+    assert "publish_target_can_write_contents" in publish_prereqs
+    assert "publish_target_can_write_workflows" in publish_prereqs
+    assert "publish_target_would_auto_create_repo" in publish_prereqs
+    assert "publish_target_would_bootstrap_branch" in publish_prereqs
+    assert "publish_target_preflight_status" in publish_prereqs
+    assert "publish_target_preflight_blocker_code" in publish_prereqs
     assert "last_status" in payload["publish_readiness"]
     assert "last_failure_category" in payload["publish_readiness"]
     assert "last_failure_message" in payload["publish_readiness"]

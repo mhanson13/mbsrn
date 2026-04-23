@@ -585,6 +585,9 @@ function toRepositoryProvisioningGuidance(params: {
   repositoryAutoCreateEnabled: boolean | null;
   repositoryAutoCreateAvailable: boolean | null;
   repositoryEnsureFailureReasonCode: string | null;
+  publishPreflightStatus: string | null;
+  publishPreflightBlockerCode: string | null;
+  publishPreflightWouldBootstrapBranch: boolean | null;
 }): string | null {
   const {
     repoEnsureOutcome,
@@ -592,7 +595,30 @@ function toRepositoryProvisioningGuidance(params: {
     repositoryAutoCreateEnabled,
     repositoryAutoCreateAvailable,
     repositoryEnsureFailureReasonCode,
+    publishPreflightStatus,
+    publishPreflightBlockerCode,
+    publishPreflightWouldBootstrapBranch,
   } = params;
+  const normalizedPreflightBlocker = (publishPreflightBlockerCode || "").trim().toLowerCase();
+  if (normalizedPreflightBlocker === "github_workflow_write_not_authorized") {
+    return "GitHub runtime is not authorized to write workflow files in the configured repository.";
+  }
+  if (normalizedPreflightBlocker === "github_contents_write_not_authorized") {
+    return "GitHub runtime is not authorized to write repository contents for publish.";
+  }
+  if (normalizedPreflightBlocker === "github_branch_not_found_or_uninitialized") {
+    return "Target branch is missing or uninitialized and cannot be bootstrapped with current runtime permissions.";
+  }
+  if (normalizedPreflightBlocker === "github_repo_state_invalid_for_bootstrap") {
+    return "Repository bootstrap could not be completed for the configured target branch.";
+  }
+  if (
+    ((publishPreflightStatus || "").trim().toLowerCase() === "ready_with_actions"
+      || (publishPreflightStatus || "").trim().toLowerCase() === "warning")
+    && publishPreflightWouldBootstrapBranch === true
+  ) {
+    return "Target branch is missing and will be bootstrapped during live publish.";
+  }
   const normalizedOutcome = (repoEnsureOutcome || "").trim().toLowerCase();
   if (normalizedOutcome === "exists") {
     return "Target repository exists.";
@@ -1974,6 +2000,9 @@ export function MigrationWorkspacePanel({
     asBooleanOrNull(publishTarget.repository_auto_create_available)
     ?? asBooleanOrNull(publishConfigPrerequisites.publish_target_repo_auto_create_available);
   const publishRepositoryEnsureFailureReasonCode = asStringOrNull(publishTarget.repository_ensure_failure_reason_code);
+  const publishPreflightStatus = asStringOrNull(publishTarget.preflight_status);
+  const publishPreflightBlockerCode = asStringOrNull(publishTarget.preflight_blocker_code);
+  const publishPreflightWouldBootstrapBranch = asBooleanOrNull(publishTarget.would_bootstrap_branch);
   const publishRepoEnsureOutcome =
     asStringOrNull(publishTarget.repo_ensure_outcome)
     || asStringOrNull(publishConfigPrerequisites.publish_target_repo_ensure_summary);
@@ -1983,6 +2012,9 @@ export function MigrationWorkspacePanel({
     repositoryAutoCreateEnabled: publishRepositoryAutoCreateEnabled,
     repositoryAutoCreateAvailable: publishRepositoryAutoCreateAvailable,
     repositoryEnsureFailureReasonCode: publishRepositoryEnsureFailureReasonCode,
+    publishPreflightStatus,
+    publishPreflightBlockerCode,
+    publishPreflightWouldBootstrapBranch,
   });
   const deployPrimaryBlockerMessage = toDeployBlockerMessage(deployBlockerCodes);
   const contextSummary = asRecord(summary?.context_summary);

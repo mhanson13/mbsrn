@@ -25,6 +25,7 @@ from app.integrations.seo_migration_github_publisher import (
     MisconfiguredSEOMigrationGitHubPublisher,
     SEOMigrationGitHubActionsSecretUpsertResult,
     SEOMigrationGitHubDeployTarget,
+    SEOMigrationGitHubPublishPreflightResult,
     SEOMigrationGitHubPublishFile,
     SEOMigrationGitHubPublishResult,
     SEOMigrationGitHubPublishTarget,
@@ -1058,6 +1059,16 @@ class SEOMigrationService:
         repository_ensure_outcome: str | None = None
         repository_ensure_skipped_reason: str | None = None
         repo_ensure_outcome: str | None = None
+        publish_preflight_status: str | None = None
+        publish_preflight_blocker_code: str | None = None
+        publish_preflight_target_ref: str | None = None
+        publish_preflight_target_ref_exists: bool | None = None
+        publish_preflight_repo_initialized: bool | None = None
+        publish_preflight_can_read_contents: bool | None = None
+        publish_preflight_can_write_contents: bool | None = None
+        publish_preflight_can_write_workflows: bool | None = None
+        publish_preflight_would_auto_create_repo: bool | None = None
+        publish_preflight_would_bootstrap_branch: bool | None = None
         workflow_provisioning_verified = False
         workflow_resolution_for_provision: dict[str, object] | None = None
         expected_publish_url: str | None = None
@@ -1087,8 +1098,49 @@ class SEOMigrationService:
             )
             or _DEPLOY_TARGET_ENVIRONMENT_SOURCE_ADMIN
         )
+        readiness_target = _normalize_json_dict(readiness.get("target"))
+        publish_preflight_status = _normalize_string(readiness_target.get("preflight_status"), max_length=40)
+        publish_preflight_blocker_code = _normalize_string(
+            readiness_target.get("preflight_blocker_code"),
+            max_length=80,
+        )
+        publish_preflight_target_ref = _normalize_string(readiness_target.get("target_ref"), max_length=120)
+        publish_preflight_target_ref_exists = (
+            _coerce_bool(readiness_target.get("target_ref_exists"), default=False)
+            if "target_ref_exists" in readiness_target
+            else None
+        )
+        publish_preflight_repo_initialized = (
+            _coerce_bool(readiness_target.get("repo_initialized"), default=False)
+            if "repo_initialized" in readiness_target
+            else None
+        )
+        publish_preflight_can_read_contents = (
+            _coerce_bool(readiness_target.get("can_read_contents"), default=False)
+            if "can_read_contents" in readiness_target
+            else None
+        )
+        publish_preflight_can_write_contents = (
+            _coerce_bool(readiness_target.get("can_write_contents"), default=False)
+            if "can_write_contents" in readiness_target
+            else None
+        )
+        publish_preflight_can_write_workflows = (
+            _coerce_bool(readiness_target.get("can_write_workflows"), default=False)
+            if "can_write_workflows" in readiness_target
+            else None
+        )
+        publish_preflight_would_auto_create_repo = (
+            _coerce_bool(readiness_target.get("would_auto_create_repo"), default=False)
+            if "would_auto_create_repo" in readiness_target
+            else None
+        )
+        publish_preflight_would_bootstrap_branch = (
+            _coerce_bool(readiness_target.get("would_bootstrap_branch"), default=False)
+            if "would_bootstrap_branch" in readiness_target
+            else None
+        )
         if dry_run:
-            readiness_target = _normalize_json_dict(readiness.get("target"))
             repository_exists = (
                 bool(readiness_target.get("repository_exists"))
                 if isinstance(readiness_target.get("repository_exists"), bool)
@@ -1568,6 +1620,16 @@ class SEOMigrationService:
                     "repository_ensure_outcome": repository_ensure_outcome,
                     "repository_ensure_skipped_reason": repository_ensure_skipped_reason,
                     "repo_ensure_outcome": repo_ensure_outcome,
+                    "publish_preflight_status": publish_preflight_status,
+                    "publish_preflight_blocker_code": publish_preflight_blocker_code,
+                    "publish_preflight_target_ref": publish_preflight_target_ref,
+                    "publish_preflight_target_ref_exists": publish_preflight_target_ref_exists,
+                    "publish_preflight_repo_initialized": publish_preflight_repo_initialized,
+                    "publish_preflight_can_read_contents": publish_preflight_can_read_contents,
+                    "publish_preflight_can_write_contents": publish_preflight_can_write_contents,
+                    "publish_preflight_can_write_workflows": publish_preflight_can_write_workflows,
+                    "publish_preflight_would_auto_create_repo": publish_preflight_would_auto_create_repo,
+                    "publish_preflight_would_bootstrap_branch": publish_preflight_would_bootstrap_branch,
                     "failure_reason": _normalize_string(exc.code, max_length=80),
                     "failure_category": failure_category,
                     "error": exc.safe_message,
@@ -1606,6 +1668,16 @@ class SEOMigrationService:
                     "repository_ensure_outcome": repository_ensure_outcome,
                     "repository_ensure_skipped_reason": repository_ensure_skipped_reason,
                     "repo_ensure_outcome": repo_ensure_outcome,
+                    "publish_preflight_status": publish_preflight_status,
+                    "publish_preflight_blocker_code": publish_preflight_blocker_code,
+                    "publish_preflight_target_ref": publish_preflight_target_ref,
+                    "publish_preflight_target_ref_exists": publish_preflight_target_ref_exists,
+                    "publish_preflight_repo_initialized": publish_preflight_repo_initialized,
+                    "publish_preflight_can_read_contents": publish_preflight_can_read_contents,
+                    "publish_preflight_can_write_contents": publish_preflight_can_write_contents,
+                    "publish_preflight_can_write_workflows": publish_preflight_can_write_workflows,
+                    "publish_preflight_would_auto_create_repo": publish_preflight_would_auto_create_repo,
+                    "publish_preflight_would_bootstrap_branch": publish_preflight_would_bootstrap_branch,
                     "kubernetes_namespace": (
                         deploy_workflow_provision_result.kubernetes_namespace
                         if deploy_workflow_provision_result is not None
@@ -1700,6 +1772,16 @@ class SEOMigrationService:
             "repository_ensure_outcome": repository_ensure_outcome,
             "repository_ensure_skipped_reason": repository_ensure_skipped_reason,
             "repo_ensure_outcome": repo_ensure_outcome,
+            "publish_preflight_status": publish_preflight_status,
+            "publish_preflight_blocker_code": publish_preflight_blocker_code,
+            "publish_preflight_target_ref": publish_preflight_target_ref,
+            "publish_preflight_target_ref_exists": publish_preflight_target_ref_exists,
+            "publish_preflight_repo_initialized": publish_preflight_repo_initialized,
+            "publish_preflight_can_read_contents": publish_preflight_can_read_contents,
+            "publish_preflight_can_write_contents": publish_preflight_can_write_contents,
+            "publish_preflight_can_write_workflows": publish_preflight_can_write_workflows,
+            "publish_preflight_would_auto_create_repo": publish_preflight_would_auto_create_repo,
+            "publish_preflight_would_bootstrap_branch": publish_preflight_would_bootstrap_branch,
             "workflow_provisioning_verified": workflow_provisioning_verified,
             "deploy_workflow_mode": deploy_workflow_mode,
             "target_environment_key": target_environment_key,
@@ -1813,6 +1895,16 @@ class SEOMigrationService:
                 "repository_ensure_outcome": repository_ensure_outcome,
                 "repository_ensure_skipped_reason": repository_ensure_skipped_reason,
                 "repo_ensure_outcome": repo_ensure_outcome,
+                "publish_preflight_status": publish_preflight_status,
+                "publish_preflight_blocker_code": publish_preflight_blocker_code,
+                "publish_preflight_target_ref": publish_preflight_target_ref,
+                "publish_preflight_target_ref_exists": publish_preflight_target_ref_exists,
+                "publish_preflight_repo_initialized": publish_preflight_repo_initialized,
+                "publish_preflight_can_read_contents": publish_preflight_can_read_contents,
+                "publish_preflight_can_write_contents": publish_preflight_can_write_contents,
+                "publish_preflight_can_write_workflows": publish_preflight_can_write_workflows,
+                "publish_preflight_would_auto_create_repo": publish_preflight_would_auto_create_repo,
+                "publish_preflight_would_bootstrap_branch": publish_preflight_would_bootstrap_branch,
                 "workflow_provisioning_verified": workflow_provisioning_verified,
                 "deploy_workflow_mode": deploy_workflow_mode,
                 "target_environment_key": target_environment_key,
@@ -10652,26 +10744,28 @@ class SEOMigrationService:
             )
         elif target_valid and bool(target_summary.get("enabled")):
             try:
-                repo_status = self.github_publisher.ensure_repository(
+                preflight_result: SEOMigrationGitHubPublishPreflightResult = self.github_publisher.run_publish_preflight(
                     repo_owner=str(target_summary.get("repo_owner") or ""),
                     repo_name=str(target_summary.get("repo_name") or ""),
+                    target_ref=str(target_summary.get("branch") or ""),
                     auto_create_enabled=repository_auto_create_enabled,
-                    create_if_missing=False,
                     expected_owner=str(target_summary.get("repo_owner") or ""),
                 )
             except SEOMigrationGitHubPublisherError as exc:
                 repository_ensure_outcome = "check_failed"
                 target_summary["repository_ensure_outcome"] = repository_ensure_outcome
-                target_summary["repository_ensure_failure_reason_code"] = _normalize_string(exc.code, max_length=80)
+                normalized_reason_code = _normalize_string(exc.code, max_length=80)
+                target_summary["repository_ensure_failure_reason_code"] = normalized_reason_code
+                target_summary["preflight_status"] = "blocked"
+                target_summary["preflight_blocker_code"] = normalized_reason_code
                 repo_ensure_outcome = _derive_repo_ensure_outcome(
                     repository_exists=repository_exists,
                     repository_auto_create_created=False,
                     repository_auto_create_enabled=repository_auto_create_enabled,
                     repository_ensure_outcome=repository_ensure_outcome,
-                    failure_reason_code=_normalize_string(exc.code, max_length=80),
+                    failure_reason_code=normalized_reason_code,
                 )
                 target_summary["repo_ensure_outcome"] = repo_ensure_outcome
-                normalized_reason_code = _normalize_string(exc.code, max_length=80)
                 if normalized_reason_code in {
                     "repo_create_failed_invalid_name",
                     "repo_create_failed_owner_mismatch",
@@ -10691,26 +10785,76 @@ class SEOMigrationService:
                     reasons.append(exc.safe_message or "GitHub repository readiness check failed.")
                     blocker_codes.append("publish_runtime_unavailable")
             else:
-                repository_exists = bool(repo_status.exists)
-                repository_ensure_outcome = _normalize_string(repo_status.outcome, max_length=80)
+                repository_exists = bool(preflight_result.repo_exists)
+                repository_ensure_outcome = _normalize_string(preflight_result.repo_ensure_outcome, max_length=80)
                 target_summary["repository_exists"] = repository_exists
                 target_summary["repository_ensure_outcome"] = repository_ensure_outcome
-                target_summary["repository_ensure_skipped_reason"] = _normalize_string(
-                    repo_status.skipped_reason,
-                    max_length=80,
+                target_summary["repository_ensure_skipped_reason"] = (
+                    "check_only" if not repository_exists else None
                 )
                 target_summary["repository_auto_create_available"] = bool(
                     repository_auto_create_enabled and not repository_exists
                 )
+                target_summary["target_ref"] = _normalize_string(preflight_result.target_ref, max_length=120)
+                target_summary["target_ref_exists"] = bool(preflight_result.target_ref_exists)
+                target_summary["repo_initialized"] = bool(preflight_result.repo_initialized)
+                target_summary["can_read_contents"] = bool(preflight_result.can_read_contents)
+                target_summary["can_write_contents"] = bool(preflight_result.can_write_contents)
+                target_summary["can_write_workflows"] = bool(preflight_result.can_write_workflows)
+                target_summary["would_auto_create_repo"] = bool(preflight_result.would_auto_create_repo)
+                target_summary["would_bootstrap_branch"] = bool(preflight_result.would_bootstrap_branch)
+                target_summary["preflight_status"] = _normalize_string(preflight_result.preflight_status, max_length=40)
+                target_summary["preflight_blocker_code"] = _normalize_string(
+                    preflight_result.preflight_blocker_code,
+                    max_length=80,
+                )
                 repo_ensure_outcome = _derive_repo_ensure_outcome(
                     repository_exists=repository_exists,
-                    repository_auto_create_created=bool(repo_status.auto_create_created),
+                    repository_auto_create_created=False,
                     repository_auto_create_enabled=repository_auto_create_enabled,
                     repository_ensure_outcome=repository_ensure_outcome,
                     failure_reason_code=None,
                 )
                 target_summary["repo_ensure_outcome"] = repo_ensure_outcome
-                if not repository_exists and not repository_auto_create_enabled:
+                preflight_blocker_code = _normalize_string(
+                    preflight_result.preflight_blocker_code,
+                    max_length=80,
+                )
+                self._emit_structured_service_log(
+                    payload={
+                        "event": "seo_migration_publish_preflight",
+                        "business_id": workspace.business_id,
+                        "site_id": workspace.site_id,
+                        "workspace_id": workspace.id,
+                        "artifact_version_id": artifact.id if artifact is not None else None,
+                        "repo_owner": preflight_result.repo_owner,
+                        "repo_name": preflight_result.repo_name,
+                        "target_ref": preflight_result.target_ref,
+                        "repo_exists": preflight_result.repo_exists,
+                        "repo_ensure_outcome": preflight_result.repo_ensure_outcome,
+                        "target_ref_exists": preflight_result.target_ref_exists,
+                        "repo_initialized": preflight_result.repo_initialized,
+                        "can_read_contents": preflight_result.can_read_contents,
+                        "can_write_contents": preflight_result.can_write_contents,
+                        "can_write_workflows": preflight_result.can_write_workflows,
+                        "would_auto_create_repo": preflight_result.would_auto_create_repo,
+                        "would_bootstrap_branch": preflight_result.would_bootstrap_branch,
+                        "preflight_status": preflight_result.preflight_status,
+                        "preflight_blocker_code": preflight_blocker_code,
+                    },
+                    fallback_message="seo_migration_publish_preflight",
+                    level=(logging.INFO if not preflight_blocker_code else logging.WARNING),
+                )
+                if preflight_blocker_code:
+                    target_summary["repository_ensure_failure_reason_code"] = preflight_blocker_code
+                    reasons.append(
+                        _derive_publish_preflight_blocker_message(
+                            blocker_code=preflight_blocker_code,
+                            repository_auto_create_enabled=repository_auto_create_enabled,
+                        )
+                    )
+                    blocker_codes.extend(_map_publish_preflight_blocker_codes(preflight_blocker_code))
+                elif not repository_exists and not repository_auto_create_enabled:
                     reasons.append(
                         "Publish target repository was not found and admin repository auto-create is disabled."
                     )
@@ -10740,6 +10884,37 @@ class SEOMigrationService:
                 "publish_target_repo_ensure_summary": repo_ensure_outcome,
                 "publish_target_repo_auto_create_available": bool(
                     repository_auto_create_enabled and repository_exists is False
+                ),
+                "publish_target_ref": _normalize_string(target_summary.get("target_ref"), max_length=120),
+                "publish_target_ref_exists": _coerce_bool(target_summary.get("target_ref_exists"), default=False),
+                "publish_target_repo_initialized": _coerce_bool(target_summary.get("repo_initialized"), default=False),
+                "publish_target_can_read_contents": _coerce_bool(
+                    target_summary.get("can_read_contents"),
+                    default=False,
+                ),
+                "publish_target_can_write_contents": _coerce_bool(
+                    target_summary.get("can_write_contents"),
+                    default=False,
+                ),
+                "publish_target_can_write_workflows": _coerce_bool(
+                    target_summary.get("can_write_workflows"),
+                    default=False,
+                ),
+                "publish_target_would_auto_create_repo": _coerce_bool(
+                    target_summary.get("would_auto_create_repo"),
+                    default=False,
+                ),
+                "publish_target_would_bootstrap_branch": _coerce_bool(
+                    target_summary.get("would_bootstrap_branch"),
+                    default=False,
+                ),
+                "publish_target_preflight_status": _normalize_string(
+                    target_summary.get("preflight_status"),
+                    max_length=40,
+                ),
+                "publish_target_preflight_blocker_code": _normalize_string(
+                    target_summary.get("preflight_blocker_code"),
+                    max_length=80,
                 ),
                 **admin_prerequisites,
             },
@@ -11848,11 +12023,76 @@ def _derive_repo_ensure_outcome(
     if repository_exists is True:
         return "exists"
     normalized_outcome = _normalize_string(repository_ensure_outcome, max_length=80)
+    if normalized_outcome in {
+        "exists",
+        "created",
+        "would_create_on_publish",
+        "skipped_policy_disabled",
+        "failed_not_authorized",
+        "failed_invalid_name",
+        "failed_owner_mismatch",
+        "failed_conflict",
+        "failed_runtime_unavailable",
+    }:
+        return normalized_outcome
     if normalized_outcome == "repo_missing":
         return "would_create_on_publish" if repository_auto_create_enabled else "skipped_policy_disabled"
     if normalized_outcome == "check_failed":
         return "failed_unknown"
     return "unknown"
+
+
+def _map_publish_preflight_blocker_codes(blocker_code: str) -> list[str]:
+    normalized = _normalize_string(blocker_code, max_length=80)
+    if not normalized:
+        return ["publish_runtime_unavailable"]
+    normalized_lower = normalized.lower()
+    if normalized_lower in {"repo_auto_create_disabled"}:
+        return ["publish_configuration_missing"]
+    if normalized_lower in {
+        "repo_create_failed_invalid_name",
+        "repo_create_failed_owner_mismatch",
+        "github_branch_not_found_or_uninitialized",
+        "github_repo_state_invalid_for_bootstrap",
+    }:
+        return ["publish_configuration_invalid"]
+    if normalized_lower in {
+        "repo_auto_create_not_authorized",
+        "token_not_authorized",
+        "github_auth_failed",
+        "github_contents_write_not_authorized",
+        "github_workflow_write_not_authorized",
+    }:
+        return ["publish_runtime_unavailable"]
+    return ["publish_runtime_unavailable"]
+
+
+def _derive_publish_preflight_blocker_message(
+    *,
+    blocker_code: str,
+    repository_auto_create_enabled: bool,
+) -> str:
+    normalized = _normalize_string(blocker_code, max_length=80)
+    normalized_lower = (normalized or "").lower()
+    if normalized_lower == "repo_auto_create_disabled":
+        return "Publish target repository was not found and admin repository auto-create is disabled."
+    if normalized_lower == "repo_create_failed_owner_mismatch":
+        return "Publish target repository owner is outside the admin-owned publish target."
+    if normalized_lower == "repo_create_failed_invalid_name":
+        return "Publish target repository name is invalid for managed auto-create."
+    if normalized_lower in {"repo_auto_create_not_authorized", "token_not_authorized", "github_auth_failed"}:
+        return "GitHub runtime is not authorized to inspect or create the configured publish repository target."
+    if normalized_lower == "github_contents_write_not_authorized":
+        return "GitHub runtime is not authorized to write repository contents for publish."
+    if normalized_lower == "github_workflow_write_not_authorized":
+        return "GitHub runtime is not authorized to write workflow files in the configured repository."
+    if normalized_lower in {"github_branch_not_found_or_uninitialized", "github_repo_state_invalid_for_bootstrap"}:
+        return (
+            "Publish target branch is missing or uninitialized and cannot be bootstrapped with current runtime permissions."
+        )
+    if repository_auto_create_enabled:
+        return "Publish target repository preflight failed. Review runtime GitHub permissions and target configuration."
+    return "Publish target repository preflight failed. Review admin publish configuration."
 
 
 def _normalize_deploy_failure_reason_code(value: object) -> str | None:

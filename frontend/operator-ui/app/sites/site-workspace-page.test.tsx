@@ -997,6 +997,68 @@ describe("site migration workflow route", () => {
     ).toBeInTheDocument();
   });
 
+  it("shows repository provisioning guidance when publish preflight indicates branch bootstrap", async () => {
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(
+      buildMigrationWorkspaceSummary({
+        publish_readiness: {
+          ready: true,
+          reasons: [],
+          target: {
+            enabled: true,
+            repo_owner: "mhanson13",
+            repo_name: "tnmfire",
+            branch: "main",
+            artifact_root: "/",
+            repository_exists: true,
+            repo_ensure_outcome: "exists",
+            preflight_status: "ready_with_actions",
+            would_bootstrap_branch: true,
+          },
+        },
+      }),
+    );
+
+    render(<SiteMigrationWorkflowPage />);
+
+    const destinationSummary = await screen.findByTestId("migration-destination-summary");
+    expect(
+      within(destinationSummary).getByText(
+        "Target branch is missing and will be bootstrapped during live publish.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("shows repository provisioning guidance when publish preflight detects workflow write authorization gap", async () => {
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(
+      buildMigrationWorkspaceSummary({
+        publish_readiness: {
+          ready: false,
+          reasons: ["GitHub runtime is not authorized to write workflow files in the configured repository."],
+          target: {
+            enabled: true,
+            repo_owner: "mhanson13",
+            repo_name: "tnmfire",
+            branch: "main",
+            artifact_root: "/",
+            repository_exists: true,
+            repo_ensure_outcome: "exists",
+            preflight_status: "blocked",
+            preflight_blocker_code: "github_workflow_write_not_authorized",
+          },
+        },
+      }),
+    );
+
+    render(<SiteMigrationWorkflowPage />);
+
+    const destinationSummary = await screen.findByTestId("migration-destination-summary");
+    expect(
+      within(destinationSummary).getAllByText(
+        "GitHub runtime is not authorized to write workflow files in the configured repository.",
+      ).length,
+    ).toBeGreaterThan(0);
+  });
+
   it("shows repository provisioning authorization guidance when runtime token cannot create repos", async () => {
     mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(
       buildMigrationWorkspaceSummary({

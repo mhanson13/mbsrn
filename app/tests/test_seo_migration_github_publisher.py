@@ -12,6 +12,8 @@ from app.core.time import utc_now
 from app.integrations.seo_migration_github_publisher import (
     GitHubSEOMigrationPublisher,
     SEOMigrationGitHubDeployTarget,
+    SEOMigrationGitHubPublishFile,
+    SEOMigrationGitHubPublishTarget,
     SEOMigrationGitHubPublisherError,
     _derive_site_runtime_image_repository,
     _classify_rollout_blocker_hints_from_describe_outputs,
@@ -529,6 +531,176 @@ def test_ensure_repository_auto_create_defaults_to_private_visibility(monkeypatc
     assert observed_private_value is True
 
 
+def test_run_publish_preflight_repo_exists_with_workflow_write_gap(monkeypatch) -> None:
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    calls: list[tuple[str, str]] = []
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _FakeHTTPResponse(status=200, body=json.dumps({"full_name": "mhanson13/tnmfire"})),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps(
+                    {
+                        "full_name": "mhanson13/tnmfire",
+                        "default_branch": "main",
+                        "permissions": {"push": True},
+                    }
+                ),
+            ),
+            _http_error(
+                "https://api.github.com/repos/mhanson13/tnmfire/actions/workflows?per_page=1",
+                status_code=403,
+                message="Forbidden",
+            ),
+            _FakeHTTPResponse(status=200, body=json.dumps({"name": "main"})),
+        ],
+        calls,
+    )
+
+    result = publisher.run_publish_preflight(
+        repo_owner="mhanson13",
+        repo_name="tnmfire",
+        target_ref="main",
+        auto_create_enabled=False,
+        expected_owner="mhanson13",
+    )
+
+    assert result.repo_exists is True
+    assert result.repo_ensure_outcome == "exists"
+    assert result.can_read_contents is True
+    assert result.can_write_contents is True
+    assert result.can_write_workflows is False
+    assert result.preflight_status == "blocked"
+    assert result.preflight_blocker_code == "github_workflow_write_not_authorized"
+    assert calls == [
+        ("GET", "https://api.github.com/repos/mhanson13/tnmfire"),
+        ("GET", "https://api.github.com/repos/mhanson13/tnmfire"),
+        ("GET", "https://api.github.com/repos/mhanson13/tnmfire/actions/workflows?per_page=1"),
+        ("GET", "https://api.github.com/repos/mhanson13/tnmfire/branches/main"),
+    ]
+
+
+def test_run_publish_preflight_repo_exists_with_missing_ref_reports_bootstrap_action(monkeypatch) -> None:
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    calls: list[tuple[str, str]] = []
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _FakeHTTPResponse(status=200, body=json.dumps({"full_name": "mhanson13/tnmfire"})),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps(
+                    {
+                        "full_name": "mhanson13/tnmfire",
+                        "default_branch": "main",
+                        "permissions": {"push": True},
+                    }
+                ),
+            ),
+            _FakeHTTPResponse(status=200, body=json.dumps({"total_count": 0, "workflows": []})),
+            _http_error(
+                "https://api.github.com/repos/mhanson13/tnmfire/branches/release",
+                status_code=404,
+                message="Not Found",
+            ),
+            _http_error(
+                "https://api.github.com/repos/mhanson13/tnmfire/git/ref/heads/main",
+                status_code=404,
+                message="Not Found",
+            ),
+        ],
+        calls,
+    )
+
+    result = publisher.run_publish_preflight(
+        repo_owner="mhanson13",
+        repo_name="tnmfire",
+        target_ref="release",
+        auto_create_enabled=False,
+        expected_owner="mhanson13",
+    )
+
+    assert result.repo_exists is True
+    assert result.target_ref == "release"
+    assert result.target_ref_exists is False
+    assert result.repo_initialized is False
+    assert result.can_write_contents is True
+    assert result.can_write_workflows is True
+    assert result.would_bootstrap_branch is True
+    assert result.preflight_status == "ready_with_actions"
+    assert result.preflight_blocker_code is None
+    assert calls == [
+        ("GET", "https://api.github.com/repos/mhanson13/tnmfire"),
+        ("GET", "https://api.github.com/repos/mhanson13/tnmfire"),
+        ("GET", "https://api.github.com/repos/mhanson13/tnmfire/actions/workflows?per_page=1"),
+        ("GET", "https://api.github.com/repos/mhanson13/tnmfire/branches/release"),
+        ("GET", "https://api.github.com/repos/mhanson13/tnmfire/git/ref/heads/main"),
+    ]
+
+
+def test_run_publish_preflight_missing_repo_with_auto_create_enabled_reports_would_create(monkeypatch) -> None:
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    calls: list[tuple[str, str]] = []
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _http_error(
+                "https://api.github.com/repos/mhanson13/tnmfire",
+                status_code=404,
+                message="Not Found",
+            ),
+        ],
+        calls,
+    )
+
+    result = publisher.run_publish_preflight(
+        repo_owner="mhanson13",
+        repo_name="tnmfire",
+        target_ref="main",
+        auto_create_enabled=True,
+        expected_owner="mhanson13",
+    )
+
+    assert result.repo_exists is False
+    assert result.repo_ensure_outcome == "would_create_on_publish"
+    assert result.would_auto_create_repo is True
+    assert result.preflight_status == "ready_with_actions"
+    assert result.preflight_blocker_code is None
+    assert calls == [("GET", "https://api.github.com/repos/mhanson13/tnmfire")]
+
+
+def test_run_publish_preflight_missing_repo_with_auto_create_disabled_is_blocked(monkeypatch) -> None:
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    calls: list[tuple[str, str]] = []
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _http_error(
+                "https://api.github.com/repos/mhanson13/tnmfire",
+                status_code=404,
+                message="Not Found",
+            ),
+        ],
+        calls,
+    )
+
+    result = publisher.run_publish_preflight(
+        repo_owner="mhanson13",
+        repo_name="tnmfire",
+        target_ref="main",
+        auto_create_enabled=False,
+        expected_owner="mhanson13",
+    )
+
+    assert result.repo_exists is False
+    assert result.repo_ensure_outcome == "skipped_policy_disabled"
+    assert result.would_auto_create_repo is False
+    assert result.preflight_status == "blocked"
+    assert result.preflight_blocker_code == "repo_auto_create_disabled"
+    assert calls == [("GET", "https://api.github.com/repos/mhanson13/tnmfire")]
+
+
 def test_derive_site_kubernetes_namespace_normalizes_repo_name_values() -> None:
     assert derive_site_kubernetes_namespace(repo_name="tnmfire", site_id=None) == ("tnmfire", "repo_name")
     assert derive_site_kubernetes_namespace(repo_name="Lars Construction", site_id=None) == (
@@ -746,6 +918,125 @@ def test_upsert_actions_secret_updates_existing_secret(monkeypatch) -> None:
         method == "PUT" and url.endswith("/actions/secrets/GCP_DEPLOY_KEY")
         for method, url in calls
     )
+
+
+def test_publish_files_classifies_contents_write_forbidden(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _http_error(
+                "https://api.github.com/repos/mhanson13/tnmfire/contents/index.html?ref=main",
+                status_code=404,
+                message="Not Found",
+            ),
+            _http_error(
+                "https://api.github.com/repos/mhanson13/tnmfire/contents/index.html",
+                status_code=403,
+                message="Resource not accessible by integration",
+            ),
+        ],
+        calls,
+    )
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    with pytest.raises(SEOMigrationGitHubPublisherError) as exc_info:
+        publisher.publish_files(
+            target=SEOMigrationGitHubPublishTarget(
+                repo_owner="mhanson13",
+                repo_name="tnmfire",
+                branch="main",
+                artifact_root="",
+            ),
+            files=[
+                SEOMigrationGitHubPublishFile(
+                    path="index.html",
+                    content="<html><body>test</body></html>",
+                    media_type="text/html",
+                )
+            ],
+            commit_message="publish",
+            dry_run=False,
+        )
+    assert exc_info.value.code == "github_contents_write_not_authorized"
+    assert exc_info.value.stage == "publish"
+
+
+def test_publish_files_classifies_branch_uninitialized_from_lookup(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _http_error(
+                "https://api.github.com/repos/mhanson13/tnmfire/contents/index.html?ref=main",
+                status_code=422,
+                message="Invalid request. Branch main was not found.",
+            ),
+        ],
+        calls,
+    )
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    with pytest.raises(SEOMigrationGitHubPublisherError) as exc_info:
+        publisher.publish_files(
+            target=SEOMigrationGitHubPublishTarget(
+                repo_owner="mhanson13",
+                repo_name="tnmfire",
+                branch="main",
+                artifact_root="",
+            ),
+            files=[
+                SEOMigrationGitHubPublishFile(
+                    path="index.html",
+                    content="<html><body>test</body></html>",
+                    media_type="text/html",
+                )
+            ],
+            commit_message="publish",
+            dry_run=False,
+        )
+    assert exc_info.value.code == "github_branch_not_found_or_uninitialized"
+    assert exc_info.value.stage == "publish"
+
+
+def test_publish_files_classifies_generic_request_failure(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _http_error(
+                "https://api.github.com/repos/mhanson13/tnmfire/contents/index.html?ref=main",
+                status_code=404,
+                message="Not Found",
+            ),
+            _http_error(
+                "https://api.github.com/repos/mhanson13/tnmfire/contents/index.html",
+                status_code=422,
+                message="Validation Failed",
+            ),
+        ],
+        calls,
+    )
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    with pytest.raises(SEOMigrationGitHubPublisherError) as exc_info:
+        publisher.publish_files(
+            target=SEOMigrationGitHubPublishTarget(
+                repo_owner="mhanson13",
+                repo_name="tnmfire",
+                branch="main",
+                artifact_root="",
+            ),
+            files=[
+                SEOMigrationGitHubPublishFile(
+                    path="index.html",
+                    content="<html><body>test</body></html>",
+                    media_type="text/html",
+                )
+            ],
+            commit_message="publish",
+            dry_run=False,
+        )
+    assert exc_info.value.code == "github_contents_publish_failed"
+    assert exc_info.value.code != "github_request_failed"
+    assert exc_info.value.stage == "publish"
 
 
 def test_dispatch_deploy_classifies_repo_not_found(monkeypatch) -> None:

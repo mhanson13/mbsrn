@@ -759,6 +759,21 @@ Publish behavior:
   - `failed_owner_mismatch`
   - `failed_conflict`
   - `failed_runtime_unavailable`
+- publish now performs a deterministic non-mutating GitHub target preflight before live write steps and surfaces preflight state in readiness and action payloads:
+  - `preflight_status`: `ready`, `ready_with_actions`, or `blocked`
+  - `preflight_blocker_code`: precise blocker when deterministically known (for example `github_workflow_write_not_authorized`, `github_contents_write_not_authorized`, `repo_auto_create_disabled`)
+  - capability/state fields:
+    - `target_ref`
+    - `target_ref_exists`
+    - `repo_initialized`
+    - `can_read_contents`
+    - `can_write_contents`
+    - `can_write_workflows`
+    - `would_auto_create_repo`
+    - `would_bootstrap_branch`
+- dry-run remains non-mutating and includes truthful preflight findings:
+  - if repo is missing and auto-create is enabled, dry-run reports `would_auto_create_repo=true` and `preflight_status=ready_with_actions`
+  - if repo is missing and auto-create is disabled, readiness/preflight is blocked before live publish
 - duplicate publish diagnostics now also emit `workflow_remediation_outcome`:
   - `remediation_upgraded_managed_placeholder`: managed scaffold/legacy workflow was replaced with current production template content
   - `remediation_already_current`: managed workflow already matched current contract; no write needed

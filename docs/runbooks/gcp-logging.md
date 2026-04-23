@@ -527,6 +527,31 @@ Repository auto-create observability (publish path):
   - `private_by_default` (create attempts use private repository visibility)
   - `repo_ensure_outcome` (normalized control-plane summary)
 
+Publish preflight observability (before live content/workflow writes):
+- event:
+  - `seo_migration_publish_preflight`
+- core fields:
+  - `repo_owner`
+  - `repo_name`
+  - `target_ref`
+  - `repo_exists`
+  - `repo_ensure_outcome`
+  - `target_ref_exists`
+  - `repo_initialized`
+  - `can_read_contents`
+  - `can_write_contents`
+  - `can_write_workflows`
+  - `would_auto_create_repo`
+  - `would_bootstrap_branch`
+  - `preflight_status`
+  - `preflight_blocker_code`
+- interpretation:
+  - `preflight_status=ready`: target is usable as-is.
+  - `preflight_status=ready_with_actions`: publish can proceed but must perform bounded setup (for example repo auto-create or branch bootstrap).
+  - `preflight_status=blocked`: deterministic blocker exists; remediate before retrying live publish.
+  - `can_write_contents=true` with `can_write_workflows=false` indicates token scope mismatch for `.github/workflows/*` writes.
+  - `would_auto_create_repo=true` appears in readiness/dry-run when repo is missing and admin auto-create policy is enabled; dry-run still performs no mutation.
+
 Workflow bootstrap observability (publish path):
 - compare:
   - `seo_migration_workflow_provisioning` (service-level control-plane event)

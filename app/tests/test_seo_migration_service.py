@@ -21,6 +21,7 @@ from app.integrations.seo_migration_github_publisher import (
     SEOMigrationGitHubDeployRunStatusResult,
     SEOMigrationGitHubDeployTarget,
     SEOMigrationGitHubPublishFile,
+    SEOMigrationGitHubPublishPreflightResult,
     SEOMigrationGitHubPublishResult,
     SEOMigrationGitHubPublishTarget,
     SEOMigrationGitHubPublisher,
@@ -148,6 +149,9 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         ensure_repository_error_message: str | None = None,
         ensure_repository_error_stage: str | None = None,
         fail_publish: bool = False,
+        publish_error_code: str | None = None,
+        publish_error_message: str | None = None,
+        publish_error_stage: str | None = None,
         fail_deploy: bool = False,
         deploy_live_url: str | None = None,
         deploy_workflow_output: dict[str, str] | None = None,
@@ -206,12 +210,23 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         secret_propagation_error_message: str | None = None,
         secret_propagation_error_stage: str | None = None,
         existing_deploy_secret: bool = False,
+        preflight_status: str | None = None,
+        preflight_blocker_code: str | None = None,
+        preflight_target_ref_exists: bool | None = None,
+        preflight_repo_initialized: bool | None = None,
+        preflight_can_read_contents: bool | None = None,
+        preflight_can_write_contents: bool | None = None,
+        preflight_can_write_workflows: bool | None = None,
+        preflight_would_bootstrap_branch: bool | None = None,
     ) -> None:
         self.existing_repository = existing_repository
         self.ensure_repository_error_code = ensure_repository_error_code
         self.ensure_repository_error_message = ensure_repository_error_message
         self.ensure_repository_error_stage = ensure_repository_error_stage
         self.fail_publish = fail_publish
+        self.publish_error_code = publish_error_code
+        self.publish_error_message = publish_error_message
+        self.publish_error_stage = publish_error_stage
         self.fail_deploy = fail_deploy
         self.deploy_live_url = deploy_live_url
         self.deploy_workflow_output = dict(deploy_workflow_output or {})
@@ -282,6 +297,14 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         self.secret_propagation_error_message = secret_propagation_error_message
         self.secret_propagation_error_stage = secret_propagation_error_stage
         self.existing_deploy_secret = existing_deploy_secret
+        self.preflight_status = preflight_status
+        self.preflight_blocker_code = preflight_blocker_code
+        self.preflight_target_ref_exists = preflight_target_ref_exists
+        self.preflight_repo_initialized = preflight_repo_initialized
+        self.preflight_can_read_contents = preflight_can_read_contents
+        self.preflight_can_write_contents = preflight_can_write_contents
+        self.preflight_can_write_workflows = preflight_can_write_workflows
+        self.preflight_would_bootstrap_branch = preflight_would_bootstrap_branch
         self.publish_calls: list[
             tuple[SEOMigrationGitHubPublishTarget, list[SEOMigrationGitHubPublishFile], str, bool]
         ] = []
@@ -291,6 +314,7 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         self.refresh_calls: list[tuple[SEOMigrationGitHubDeployTarget, int, str | None]] = []
         self.lookup_calls: list[tuple[SEOMigrationGitHubDeployTarget, str | None]] = []
         self.secret_upsert_calls: list[tuple[str, str, str, str]] = []
+        self.publish_preflight_calls: list[tuple[str, str, str, bool, str | None]] = []
         self.workflow_provision_calls: list[
             tuple[
                 str,
@@ -375,6 +399,94 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
             skipped_reason=skipped_reason,
         )
 
+    def run_publish_preflight(
+        self,
+        *,
+        repo_owner: str,
+        repo_name: str,
+        target_ref: str,
+        auto_create_enabled: bool,
+        expected_owner: str | None = None,
+    ) -> SEOMigrationGitHubPublishPreflightResult:
+        self.publish_preflight_calls.append(
+            (
+                repo_owner,
+                repo_name,
+                target_ref,
+                bool(auto_create_enabled),
+                expected_owner,
+            )
+        )
+        repo_status = self.ensure_repository(
+            repo_owner=repo_owner,
+            repo_name=repo_name,
+            auto_create_enabled=bool(auto_create_enabled),
+            create_if_missing=False,
+            expected_owner=expected_owner,
+        )
+        repo_exists = bool(repo_status.exists)
+        target_ref_exists = (
+            bool(self.preflight_target_ref_exists)
+            if self.preflight_target_ref_exists is not None
+            else repo_exists
+        )
+        can_read_contents = (
+            bool(self.preflight_can_read_contents)
+            if self.preflight_can_read_contents is not None
+            else repo_exists
+        )
+        can_write_contents = (
+            bool(self.preflight_can_write_contents)
+            if self.preflight_can_write_contents is not None
+            else repo_exists
+        )
+        can_write_workflows = (
+            bool(self.preflight_can_write_workflows)
+            if self.preflight_can_write_workflows is not None
+            else can_write_contents
+        )
+        repo_initialized = (
+            bool(self.preflight_repo_initialized)
+            if self.preflight_repo_initialized is not None
+            else target_ref_exists
+        )
+        would_bootstrap_branch = (
+            bool(self.preflight_would_bootstrap_branch)
+            if self.preflight_would_bootstrap_branch is not None
+            else bool(repo_exists and (not target_ref_exists) and can_write_contents)
+        )
+        would_auto_create_repo = bool((not repo_exists) and bool(auto_create_enabled))
+        repo_ensure_outcome = (
+            "exists"
+            if repo_exists
+            else ("would_create_on_publish" if bool(auto_create_enabled) else "skipped_policy_disabled")
+        )
+        preflight_blocker_code = str(self.preflight_blocker_code or "").strip().lower() or None
+        preflight_status = str(self.preflight_status or "").strip().lower() or None
+        if preflight_status is None:
+            if preflight_blocker_code:
+                preflight_status = "blocked"
+            elif would_auto_create_repo or would_bootstrap_branch:
+                preflight_status = "ready_with_actions"
+            else:
+                preflight_status = "ready"
+        return SEOMigrationGitHubPublishPreflightResult(
+            repo_owner=repo_owner,
+            repo_name=repo_name,
+            target_ref=target_ref,
+            repo_exists=repo_exists,
+            repo_ensure_outcome=repo_ensure_outcome,
+            target_ref_exists=target_ref_exists,
+            repo_initialized=repo_initialized,
+            can_read_contents=can_read_contents,
+            can_write_contents=can_write_contents,
+            can_write_workflows=can_write_workflows,
+            would_auto_create_repo=would_auto_create_repo,
+            would_bootstrap_branch=would_bootstrap_branch,
+            preflight_status=preflight_status,
+            preflight_blocker_code=preflight_blocker_code,
+        )
+
     def publish_files(
         self,
         *,
@@ -386,8 +498,9 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         self.publish_calls.append((target, list(files), commit_message, dry_run))
         if self.fail_publish:
             raise SEOMigrationGitHubPublisherError(
-                code="publish_failed",
-                safe_message="Simulated publish failure.",
+                code=self.publish_error_code or "publish_failed",
+                safe_message=self.publish_error_message or "Simulated publish failure.",
+                stage=self.publish_error_stage,
             )
         return SEOMigrationGitHubPublishResult(
             dry_run=dry_run,
@@ -6698,9 +6811,13 @@ def test_publish_dry_run_reports_repo_auto_create_capability_without_creating_re
 
     assert publisher.ensure_repository_calls
     assert all(call[3] is False for call in publisher.ensure_repository_calls)
+    assert publisher.publish_preflight_calls
     assert publish_result.result.get("repository_ensure_attempted") is False
     assert publish_result.result.get("repository_auto_create_created") is False
     assert publish_result.result.get("repo_ensure_outcome") == "would_create_on_publish"
+    assert publish_result.result.get("publish_preflight_status") == "ready_with_actions"
+    assert publish_result.result.get("publish_preflight_would_auto_create_repo") is True
+    assert publish_result.result.get("publish_preflight_blocker_code") is None
 
 
 def test_publish_requires_admin_github_publish_config_enabled(db_session) -> None:
@@ -7724,6 +7841,91 @@ def test_publish_new_repo_preserves_precise_workflow_provision_failure_code(
     assert target_payload.get("repo_ensure_outcome") == "created"
 
 
+@pytest.mark.parametrize(
+    ("publish_error_code", "expected_failure_category"),
+    (
+        ("github_contents_write_not_authorized", "config_missing"),
+        ("github_branch_not_found_or_uninitialized", "target_invalid"),
+        ("github_contents_publish_failed", "provider_error"),
+    ),
+)
+def test_publish_existing_repo_preserves_precise_publish_write_failure_code(
+    db_session,
+    caplog,
+    publish_error_code: str,
+    expected_failure_category: str,
+) -> None:
+    caplog.set_level("INFO", logger="app.services.seo_migration")
+    publisher = _RecordingGitHubPublisher(
+        existing_repository=True,
+        fail_publish=True,
+        publish_error_code=publish_error_code,
+        publish_error_message="Simulated publish write failure.",
+        publish_error_stage="publish",
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes="Approved for publish",
+        principal_id="principal-1",
+    )
+
+    with pytest.raises(SEOMigrationValidationError, match="Simulated publish write failure"):
+        service.publish_artifact_version(
+            business_id=business_id,
+            site_id=site_id,
+            artifact_version_id=artifact.id,
+            dry_run=False,
+            commit_message="Publish migration",
+            analytics_measurement_id=None,
+            principal_id="principal-1",
+        )
+
+    assert publisher.ensure_repository_calls
+    assert any(call[2] is False and call[3] is True for call in publisher.ensure_repository_calls)
+
+    workspace = service.get_workspace(business_id=business_id, site_id=site_id)
+    publish_history = workspace.publish_history_json or []
+    assert publish_history
+    latest_history_item = publish_history[-1]
+    assert latest_history_item.get("status") == "failed"
+    assert latest_history_item.get("failure_reason") == publish_error_code
+    assert latest_history_item.get("repository_auto_create_created") is False
+    assert latest_history_item.get("repo_ensure_outcome") == "exists"
+    assert latest_history_item.get("failure_reason") != "github_request_failed"
+
+    failed_action_logs = [
+        record.__dict__.get("json_fields")
+        for record in caplog.records
+        if isinstance(record.__dict__.get("json_fields"), dict)
+        and record.__dict__["json_fields"].get("event") == "seo_migration_control_plane_action"
+        and record.__dict__["json_fields"].get("action") == "publish"
+        and record.__dict__["json_fields"].get("status") == "failed"
+    ]
+    assert failed_action_logs
+    failed_payload = failed_action_logs[-1]
+    target_payload = failed_payload.get("target") or {}
+    assert failed_payload.get("failure_category") == expected_failure_category
+    assert target_payload.get("failure_reason_code") == publish_error_code
+    assert target_payload.get("failure_reason_code") != "github_request_failed"
+    assert target_payload.get("repository_auto_create_created") is False
+    assert target_payload.get("repo_ensure_outcome") == "exists"
+
+
 def test_publish_readiness_reports_repo_auto_create_capability_for_missing_repo(db_session) -> None:
     publisher = _RecordingGitHubPublisher(existing_repository=False)
     service = _build_service(
@@ -7747,6 +7949,45 @@ def test_publish_readiness_reports_repo_auto_create_capability_for_missing_repo(
     assert target.get("repository_exists") is False
     assert target.get("repository_auto_create_available") is True
     assert target.get("repo_ensure_outcome") == "would_create_on_publish"
+    assert target.get("preflight_status") == "ready_with_actions"
+    assert target.get("would_auto_create_repo") is True
+    assert target.get("preflight_blocker_code") is None
     assert prerequisites.get("publish_target_repo_exists") is False
     assert prerequisites.get("publish_target_repo_auto_create_available") is True
     assert prerequisites.get("publish_target_repo_ensure_summary") == "would_create_on_publish"
+    assert prerequisites.get("publish_target_preflight_status") == "ready_with_actions"
+    assert prerequisites.get("publish_target_would_auto_create_repo") is True
+
+
+def test_publish_readiness_reports_workflow_write_blocker_from_preflight(db_session) -> None:
+    publisher = _RecordingGitHubPublisher(
+        existing_repository=True,
+        preflight_blocker_code="github_workflow_write_not_authorized",
+        preflight_can_read_contents=True,
+        preflight_can_write_contents=True,
+        preflight_can_write_workflows=False,
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+
+    summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
+    readiness = summary.publish_readiness
+    reasons = readiness.get("reasons") if isinstance(readiness.get("reasons"), list) else []
+    target = readiness.get("target") if isinstance(readiness.get("target"), dict) else {}
+    prerequisites = (
+        readiness.get("config_prerequisites") if isinstance(readiness.get("config_prerequisites"), dict) else {}
+    )
+
+    assert readiness.get("ready") is False
+    assert any("not authorized to write workflow files" in str(reason).lower() for reason in reasons)
+    assert target.get("preflight_status") == "blocked"
+    assert target.get("preflight_blocker_code") == "github_workflow_write_not_authorized"
+    assert target.get("can_write_contents") is True
+    assert target.get("can_write_workflows") is False
+    assert prerequisites.get("publish_target_preflight_blocker_code") == "github_workflow_write_not_authorized"
