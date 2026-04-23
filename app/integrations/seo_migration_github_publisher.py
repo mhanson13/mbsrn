@@ -2159,26 +2159,37 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             fallback_message="seo_migration_workflow_provisioning_operation",
             level=logging.INFO,
         )
-        branch_exists = self._request_json(
-            method="GET",
-            path=(
-                f"/repos/{urllib.parse.quote(repo_owner)}/{urllib.parse.quote(repo_name)}"
-                f"/branches/{urllib.parse.quote(normalized_ref, safe='')}"
-            ),
-            expected_statuses=(200,),
-            allow_404=True,
-            status_error_map={
-                401: (
-                    "token_not_authorized",
-                    "GitHub token is not authorized for deploy operations.",
+        ref_check_error: SEOMigrationGitHubPublisherError | None = None
+        try:
+            branch_exists = self._request_json(
+                method="GET",
+                path=(
+                    f"/repos/{urllib.parse.quote(repo_owner)}/{urllib.parse.quote(repo_name)}"
+                    f"/branches/{urllib.parse.quote(normalized_ref, safe='')}"
                 ),
-                403: (
-                    "token_not_authorized",
-                    "GitHub token is not authorized for deploy operations.",
-                ),
-            },
-            error_stage="ref_lookup",
-        )
+                expected_statuses=(200,),
+                allow_404=True,
+                status_error_map={
+                    401: (
+                        "token_not_authorized",
+                        "GitHub token is not authorized for deploy operations.",
+                    ),
+                    403: (
+                        "token_not_authorized",
+                        "GitHub token is not authorized for deploy operations.",
+                    ),
+                    409: (
+                        _GITHUB_REASON_BRANCH_UNINITIALIZED,
+                        "GitHub repository branch is missing or uninitialized for managed workflow provisioning.",
+                    ),
+                },
+                error_stage="ref_lookup",
+            )
+        except SEOMigrationGitHubPublisherError as exc:
+            if exc.code != _GITHUB_REASON_BRANCH_UNINITIALIZED:
+                raise
+            branch_exists = None
+            ref_check_error = exc
         if isinstance(branch_exists, dict):
             _emit_structured_publisher_log(
                 payload={
@@ -2213,6 +2224,13 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         except SEOMigrationGitHubPublisherError as exc:
             if exc.code != _GITHUB_REASON_BRANCH_UNINITIALIZED:
                 raise
+            bootstrap_error_code = exc.code
+            bootstrap_status_code = exc.status_code
+            bootstrap_provider_message = exc.provider_message
+            if ref_check_error is not None:
+                bootstrap_error_code = ref_check_error.code or bootstrap_error_code
+                bootstrap_status_code = ref_check_error.status_code or bootstrap_status_code
+                bootstrap_provider_message = ref_check_error.provider_message or bootstrap_provider_message
             _emit_structured_publisher_log(
                 payload={
                     "event": "seo_migration_workflow_provisioning_operation",
@@ -2223,9 +2241,9 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                     "ref": normalized_ref,
                     "repo_bootstrap_required": True,
                     "repo_bootstrap_state": "uninitialized_branch",
-                    "github_error_code": exc.code,
-                    "http_status_code": exc.status_code,
-                    "github_error_message": _sanitize_github_error_message(exc.provider_message),
+                    "github_error_code": bootstrap_error_code,
+                    "http_status_code": bootstrap_status_code,
+                    "github_error_message": _sanitize_github_error_message(bootstrap_provider_message),
                 },
                 fallback_message="seo_migration_workflow_provisioning_operation",
                 level=logging.INFO,
