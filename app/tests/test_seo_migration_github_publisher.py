@@ -3195,6 +3195,73 @@ def test_ensure_deploy_workflow_bootstraps_when_ref_check_returns_409_empty_repo
     assert any(method == "POST" and url.endswith("/git/refs") for method, url in calls)
 
 
+def test_ensure_deploy_workflow_bootstraps_when_ref_check_raises_generic_409_empty_repo(
+    monkeypatch,
+    caplog,
+) -> None:
+    calls: list[tuple[str, str]] = []
+    queue: list[object] = [
+        _FakeHTTPResponse(status=200, body=json.dumps({"default_branch": "main"})),
+        _FakeHTTPResponse(status=200, body=json.dumps({"default_branch": "main"})),
+        _http_error(
+            "https://api.github.com/repos/mhanson13/tnmfire/git/ref/heads/main",
+            status_code=409,
+            message="Git Repository is empty.",
+        ),
+        _FakeHTTPResponse(status=201, body=json.dumps({"sha": "blob-sha"})),
+        _FakeHTTPResponse(status=201, body=json.dumps({"sha": "tree-sha"})),
+        _FakeHTTPResponse(status=201, body=json.dumps({"sha": "commit-sha"})),
+        _FakeHTTPResponse(status=201, body="{}"),
+        _FakeHTTPResponse(status=200, body="{}"),
+    ]
+    queue.extend(_managed_provisioning_responses()[2:])
+    _install_urlopen_stub(monkeypatch, queue, calls)
+    caplog.set_level("INFO", logger="app.integrations.seo_migration_github_publisher")
+
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    original_request_json = publisher._request_json
+    branch_check_intercepted = {"done": False}
+
+    def _patched_request_json(**kwargs):
+        path = str(kwargs.get("path") or "")
+        method = str(kwargs.get("method") or "").upper()
+        if (not branch_check_intercepted["done"]) and method == "GET" and path.endswith("/branches/main"):
+            branch_check_intercepted["done"] = True
+            raise SEOMigrationGitHubPublisherError(
+                code="github_request_failed",
+                safe_message="GitHub publish/deploy request failed.",
+                status_code=409,
+                stage="ref_lookup",
+                provider_message="Git Repository is empty.",
+            )
+        return original_request_json(**kwargs)
+
+    monkeypatch.setattr(publisher, "_request_json", _patched_request_json)
+    result = publisher.ensure_deploy_workflow(
+        repo_owner="mhanson13",
+        repo_name="tnmfire",
+        branch="main",
+        workflow_id="deploy-tnmfire-www-prod.yml",
+        dry_run=False,
+        repository_auto_create_created=False,
+    )
+
+    assert result.provisioned is True
+    assert branch_check_intercepted["done"] is True
+    assert any(method == "POST" and url.endswith("/git/blobs") for method, url in calls)
+    decision_logs = [
+        record
+        for record in caplog.records
+        if isinstance(record.msg, str)
+        and '"event": "seo_migration_workflow_provisioning_operation"' in record.msg
+        and '"operation_kind": "repo_bootstrap_decision"' in record.msg
+    ]
+    assert decision_logs
+    assert '"bootstrap_decision_source": "ref_check_uninitialized"' in decision_logs[-1].msg
+    assert '"will_attempt_bootstrap": true' in decision_logs[-1].msg
+    assert '"repository_auto_create_created": false' in decision_logs[-1].msg
+
+
 def test_ensure_deploy_workflow_ref_check_409_bootstrap_failure_preserves_precise_code(monkeypatch) -> None:
     calls: list[tuple[str, str]] = []
     queue: list[object] = [

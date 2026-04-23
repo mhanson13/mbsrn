@@ -1280,6 +1280,7 @@ class SEOMigrationService:
                     managed_gke_config=_normalize_json_dict(admin_deploy_metadata.get("managed_gke_config")),
                     namespace_isolation_defaults=admin_deploy_metadata.get("namespace_isolation_defaults"),
                     site_id=site.id,
+                    repository_auto_create_created=repository_auto_create_created,
                 )
                 workflow_provisioning_verified = True
                 workflow_remediation_outcome = _derive_workflow_remediation_outcome(

@@ -311,6 +311,7 @@ class _StubMigrationGitHubPublisher(SEOMigrationGitHubPublisher):
         managed_gke_config: dict[str, object] | None = None,
         namespace_isolation_defaults: dict[str, object] | None = None,
         site_id: str | None = None,
+        repository_auto_create_created: bool | None = None,
     ) -> SEOMigrationGitHubWorkflowProvisionResult:
         self.workflow_provision_calls.append(
             (
@@ -325,6 +326,7 @@ class _StubMigrationGitHubPublisher(SEOMigrationGitHubPublisher):
                 managed_gke_config,
                 namespace_isolation_defaults,
                 site_id,
+                repository_auto_create_created,
             )
         )
         if self.fail_workflow_provision:
