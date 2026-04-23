@@ -262,6 +262,9 @@ It transforms a business's website and market context into structured insights a
 - generated outputs remain operator-controlled through approval, publish, and deploy gates (no auto actions)
 - Adds admin-controlled GitHub publish baseline configuration (`owner`, `default_branch`, `base_path`, `enabled`) so migration publish has an explicit control-plane dependency.
 - Adds admin-controlled publish target repository auto-create policy (`github_repository_auto_create_enabled`) so managed publish can provision missing target repos under the configured owner boundary when allowed.
+- Adds authoritative managed-repo ownership marker enforcement (`mbsrn.key`) so managed publish can safely update only MBSRN-owned target repositories:
+  - new/bootstrapped repos get marker creation during initialization
+  - existing repos without marker (or with mismatched/invalid marker) are blocked from managed overwrite/update publish.
 - Hardens admin GitHub publish target trust with pre-save validation, normalized effective-target preview, clearer publish/deploy readiness ownership messaging, and lightweight structured config-change logging.
 - Uses split ownership for migration publish target:
 - Admin owns GitHub account/owner baseline and runtime credential boundary.

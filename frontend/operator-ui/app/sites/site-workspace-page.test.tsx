@@ -1059,6 +1059,37 @@ describe("site migration workflow route", () => {
     ).toBeGreaterThan(0);
   });
 
+  it("shows repository ownership guidance when publish preflight detects missing mbsrn.key marker", async () => {
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(
+      buildMigrationWorkspaceSummary({
+        publish_readiness: {
+          ready: false,
+          reasons: ["This repository exists but is not marked as MBSRN-managed (mbsrn.key missing), so publish is blocked."],
+          target: {
+            enabled: true,
+            repo_owner: "mhanson13",
+            repo_name: "tnmfire",
+            branch: "main",
+            artifact_root: "/",
+            repository_exists: true,
+            repo_ensure_outcome: "exists",
+            preflight_status: "blocked",
+            preflight_blocker_code: "github_repo_management_marker_missing",
+          },
+        },
+      }),
+    );
+
+    render(<SiteMigrationWorkflowPage />);
+
+    const destinationSummary = await screen.findByTestId("migration-destination-summary");
+    expect(
+      within(destinationSummary).getByText(
+        "This repository exists but is not marked as MBSRN-managed (mbsrn.key missing), so publish is blocked to avoid overwriting unrelated content.",
+      ),
+    ).toBeInTheDocument();
+  });
+
   it("shows repository provisioning authorization guidance when runtime token cannot create repos", async () => {
     mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(
       buildMigrationWorkspaceSummary({

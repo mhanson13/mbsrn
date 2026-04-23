@@ -734,6 +734,14 @@ Publish behavior:
 - if target repository is missing:
   - when `github_repository_auto_create_enabled=true`, publish attempts repository creation under the configured admin owner and then continues
   - when disabled, publish/readiness fails with a clear admin-policy blocker (repository auto-create disabled)
+- managed repository ownership is now enforced with a semaphore file at repo root: `mbsrn.key`
+  - `mbsrn.key` content is JSON and includes at minimum:
+    - `business_id`
+    - `site_id`
+  - new repos initialized by managed publish bootstrap write `mbsrn.key` in the first commit
+  - existing non-empty repos without `mbsrn.key` are blocked from managed overwrite/update publish
+  - existing repos with `mbsrn.key` are publishable only when marker values match the current workspace business/site
+  - invalid/unparseable marker content is treated as a hard blocker
 - if target repository exists but target ref is uninitialized (no commit history yet), publish bootstrap initializes the managed branch before workflow/manifest writes
 - runtime repository auto-create uses private repository visibility by default (`private=true`) to avoid accidental public exposure
 - dry-run never creates repositories; readiness and publish diagnostics report whether a live publish would auto-create the missing repository
@@ -771,6 +779,11 @@ Publish behavior:
     - `can_write_workflows`
     - `would_auto_create_repo`
     - `would_bootstrap_branch`
+    - `repo_management_status`
+    - `repo_management_marker_present`
+    - `repo_management_marker_valid`
+    - `repo_management_marker_matches_site`
+    - `repo_management_marker_source_ref`
 - dry-run remains non-mutating and includes truthful preflight findings:
   - if repo is missing and auto-create is enabled, dry-run reports `would_auto_create_repo=true` and `preflight_status=ready_with_actions`
   - if repo is missing and auto-create is disabled, readiness/preflight is blocked before live publish
@@ -791,6 +804,10 @@ Publish behavior:
   - `github_workflow_write_not_authorized`
   - `github_contents_write_not_authorized`
   - `github_workflow_provisioning_failed`
+  - `github_repo_management_marker_missing`
+  - `github_repo_management_marker_mismatch`
+  - `github_repo_management_marker_invalid`
+  - `github_repo_bootstrap_marker_write_failed`
 - retry after a failed publish is supported and recorded as a new history event
 - dry-run publish records history but does not overwrite prior successful publish commit metadata
 - workflow provisioning is idempotent for deploy-capable managed workflows and preserves unknown custom workflows
@@ -1169,6 +1186,11 @@ Migration publish/deploy paths normalize failures into stable categories:
     - `repo_create_failed_owner_mismatch`
     - `repo_create_failed_conflict`
     - `repo_create_failed_runtime_unavailable`
+  - Managed repository ownership marker reason codes:
+    - `github_repo_management_marker_missing`
+    - `github_repo_management_marker_mismatch`
+    - `github_repo_management_marker_invalid`
+    - `github_repo_bootstrap_marker_write_failed`
 - `approval_required`
   - Attempted publish/deploy before required approval/publish prerequisites were satisfied.
   - Operator action: approve artifact first; deploy only after successful publish.

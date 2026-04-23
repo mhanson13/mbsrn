@@ -496,6 +496,10 @@ Reason-code guidance:
 - `repo_create_failed_owner_mismatch`: configured owner is outside the admin-owned target boundary.
 - `repo_create_failed_conflict`: repository create returned conflict (already exists or owner/repo conflict).
 - `repo_create_failed_runtime_unavailable`: repository auto-create failed due to temporary runtime/API availability issues.
+- `github_repo_management_marker_missing`: existing repository is missing `mbsrn.key`; managed publish blocks to avoid overwriting unrelated content.
+- `github_repo_management_marker_mismatch`: existing repository marker points to a different business/site.
+- `github_repo_management_marker_invalid`: `mbsrn.key` exists but is invalid/unparseable.
+- `github_repo_bootstrap_marker_write_failed`: bootstrap could not write the required `mbsrn.key` ownership marker.
 - `github_branch_not_found_or_uninitialized`: target branch/ref exists in config but GitHub repo state has no initialized commit/ref tree for provisioning writes.
 - `github_repo_state_invalid_for_bootstrap`: repository initialization/bootstrap could not complete safely.
 - `github_workflow_write_not_authorized`: token can access repo metadata but lacks workflow-path write permission for `.github/workflows/*`.
@@ -543,6 +547,11 @@ Publish preflight observability (before live content/workflow writes):
   - `can_write_workflows`
   - `would_auto_create_repo`
   - `would_bootstrap_branch`
+  - `repo_management_status`
+  - `repo_management_marker_present`
+  - `repo_management_marker_valid`
+  - `repo_management_marker_matches_site`
+  - `repo_management_marker_source_ref`
   - `preflight_status`
   - `preflight_blocker_code`
 - interpretation:
@@ -551,6 +560,8 @@ Publish preflight observability (before live content/workflow writes):
   - `preflight_status=blocked`: deterministic blocker exists; remediate before retrying live publish.
   - `can_write_contents=true` with `can_write_workflows=false` indicates token scope mismatch for `.github/workflows/*` writes.
   - `would_auto_create_repo=true` appears in readiness/dry-run when repo is missing and admin auto-create policy is enabled; dry-run still performs no mutation.
+  - `repo_management_status=managed_marker_match` is the expected steady-state for managed publish/update on existing repos.
+  - `repo_management_status=marker_missing|marker_mismatch|marker_invalid` means managed publish is intentionally blocked before any content/workflow overwrite.
 
 Workflow bootstrap observability (publish path):
 - compare:
@@ -567,6 +578,21 @@ Workflow bootstrap observability (publish path):
   - `repo_bootstrap_required`
   - `repo_bootstrap_completed`
   - `repo_bootstrap_state`
+
+Managed marker observability:
+- marker check event:
+  - `seo_migration_repo_management_marker_check`
+- key fields:
+  - `repo_management_status`
+  - `repo_management_marker_present`
+  - `repo_management_marker_valid`
+  - `repo_management_marker_matches_site`
+  - `repo_management_marker_source_ref`
+  - `repo_management_blocker_code`
+- expected behavior:
+  - new/empty repos: bootstrap writes `mbsrn.key` before managed workflow/manifest/content updates
+  - existing managed repos: marker must be present/valid/matching
+  - existing non-managed repos: marker blocker prevents overwrite
 
 Token capability minimums for publish bootstrap:
 - repository auto-create: token must create repositories under the configured owner namespace.

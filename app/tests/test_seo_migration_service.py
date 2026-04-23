@@ -314,7 +314,9 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         self.refresh_calls: list[tuple[SEOMigrationGitHubDeployTarget, int, str | None]] = []
         self.lookup_calls: list[tuple[SEOMigrationGitHubDeployTarget, str | None]] = []
         self.secret_upsert_calls: list[tuple[str, str, str, str]] = []
-        self.publish_preflight_calls: list[tuple[str, str, str, bool, str | None]] = []
+        self.publish_preflight_calls: list[
+            tuple[str, str, str, bool, str | None, str | None, str | None]
+        ] = []
         self.workflow_provision_calls: list[
             tuple[
                 str,
@@ -327,6 +329,9 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
                 str | None,
                 dict[str, object] | None,
                 str | None,
+                str | None,
+                str | None,
+                bool | None,
             ]
         ] = []
 
@@ -407,6 +412,8 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         target_ref: str,
         auto_create_enabled: bool,
         expected_owner: str | None = None,
+        expected_business_id: str | None = None,
+        expected_site_id: str | None = None,
     ) -> SEOMigrationGitHubPublishPreflightResult:
         self.publish_preflight_calls.append(
             (
@@ -415,6 +422,8 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
                 target_ref,
                 bool(auto_create_enabled),
                 expected_owner,
+                expected_business_id,
+                expected_site_id,
             )
         )
         repo_status = self.ensure_repository(
@@ -646,6 +655,7 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         managed_gke_config: dict[str, object] | None = None,
         namespace_isolation_defaults: dict[str, object] | None = None,
         site_id: str | None = None,
+        business_id: str | None = None,
         repository_auto_create_created: bool | None = None,
     ) -> SEOMigrationGitHubWorkflowProvisionResult:
         self.workflow_provision_calls.append(
@@ -661,6 +671,7 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
                 managed_gke_config,
                 namespace_isolation_defaults,
                 site_id,
+                business_id,
                 repository_auto_create_created,
             )
         )
@@ -4179,6 +4190,16 @@ def test_publish_provisions_missing_deploy_workflow_once(db_session, caplog) -> 
     assert any('"status": "created"' in record.msg for record in provisioning_logs)
     assert any('"status": "verified"' in record.msg for record in provisioning_logs)
     assert any('"remediation_mode": "bootstrap"' in record.msg for record in provisioning_logs)
+    runtime_context_logs = [
+        record
+        for record in caplog.records
+        if isinstance(record.msg, str) and '"event": "seo_migration_publish_runtime_context"' in record.msg
+    ]
+    assert runtime_context_logs
+    assert '"dry_run": false' in runtime_context_logs[-1].msg
+    assert '"allow_repair": true' in runtime_context_logs[-1].msg
+    assert '"bootstrap_allowed": true' in runtime_context_logs[-1].msg
+    assert '"remediation_mode": "bootstrap"' in runtime_context_logs[-1].msg
 
 
 def test_publish_workflow_resolution_aligns_with_deploy_candidate_precedence(db_session, caplog) -> None:

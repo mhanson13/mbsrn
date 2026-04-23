@@ -13,6 +13,7 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 
 from app.core.time import utc_now
+from app.core.runtime_metadata import get_runtime_build_metadata
 
 _LOGGER = logging.getLogger(__name__)
 _VALID_REPO_OWNER_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{0,38}$")
@@ -23,6 +24,11 @@ _GITHUB_REASON_BRANCH_UNINITIALIZED = "github_branch_not_found_or_uninitialized"
 _GITHUB_REASON_REPO_BOOTSTRAP_INVALID = "github_repo_state_invalid_for_bootstrap"
 _GITHUB_REASON_WORKFLOW_PROVISIONING_FAILED = "github_workflow_provisioning_failed"
 _GITHUB_REASON_CONTENTS_PUBLISH_FAILED = "github_contents_publish_failed"
+_GITHUB_REASON_REPO_MANAGEMENT_MARKER_MISSING = "github_repo_management_marker_missing"
+_GITHUB_REASON_REPO_MANAGEMENT_MARKER_MISMATCH = "github_repo_management_marker_mismatch"
+_GITHUB_REASON_REPO_MANAGEMENT_MARKER_INVALID = "github_repo_management_marker_invalid"
+_GITHUB_REASON_REPO_BOOTSTRAP_MARKER_WRITE_FAILED = "github_repo_bootstrap_marker_write_failed"
+_MBSRN_REPO_MANAGEMENT_MARKER_PATH = "mbsrn.key"
 
 
 @dataclass(frozen=True)
@@ -31,6 +37,8 @@ class SEOMigrationGitHubPublishTarget:
     repo_name: str
     branch: str
     artifact_root: str
+    business_id: str | None = None
+    site_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -91,6 +99,26 @@ class SEOMigrationGitHubPublishPreflightResult:
     would_bootstrap_branch: bool
     preflight_status: str
     preflight_blocker_code: str | None = None
+    repo_management_status: str | None = None
+    repo_management_marker_present: bool | None = None
+    repo_management_marker_valid: bool | None = None
+    repo_management_marker_matches_site: bool | None = None
+    repo_management_marker_business_id: str | None = None
+    repo_management_marker_site_id: str | None = None
+    repo_management_marker_source_ref: str | None = None
+
+
+@dataclass(frozen=True)
+class SEOMigrationGitHubRepoManagementState:
+    status: str
+    marker_present: bool
+    marker_valid: bool
+    marker_matches_site: bool
+    marker_business_id: str | None = None
+    marker_site_id: str | None = None
+    source_ref: str | None = None
+    blocker_code: str | None = None
+    blocker_message: str | None = None
 
 
 @dataclass(frozen=True)
@@ -232,8 +260,10 @@ class SEOMigrationGitHubPublisher:
         target_ref: str,
         auto_create_enabled: bool,
         expected_owner: str | None = None,
+        expected_business_id: str | None = None,
+        expected_site_id: str | None = None,
     ) -> SEOMigrationGitHubPublishPreflightResult:
-        del auto_create_enabled, expected_owner
+        del auto_create_enabled, expected_owner, expected_business_id, expected_site_id
         return SEOMigrationGitHubPublishPreflightResult(
             repo_owner=repo_owner,
             repo_name=repo_name,
@@ -249,6 +279,10 @@ class SEOMigrationGitHubPublisher:
             would_bootstrap_branch=False,
             preflight_status="ready",
             preflight_blocker_code=None,
+            repo_management_status="managed_marker_match",
+            repo_management_marker_present=True,
+            repo_management_marker_valid=True,
+            repo_management_marker_matches_site=True,
         )
 
     def ensure_repository(
@@ -332,6 +366,7 @@ class SEOMigrationGitHubPublisher:
         managed_gke_config: dict[str, object] | None = None,
         namespace_isolation_defaults: dict[str, object] | None = None,
         site_id: str | None = None,
+        business_id: str | None = None,
         repository_auto_create_created: bool | None = None,
     ) -> SEOMigrationGitHubWorkflowProvisionResult:
         del (
@@ -341,6 +376,7 @@ class SEOMigrationGitHubPublisher:
             managed_gke_config,
             namespace_isolation_defaults,
             site_id,
+            business_id,
             repository_auto_create_created,
         )
         workflow_path = _workflow_repo_path(workflow_id)
@@ -431,8 +467,18 @@ class MisconfiguredSEOMigrationGitHubPublisher(SEOMigrationGitHubPublisher):
         target_ref: str,
         auto_create_enabled: bool,
         expected_owner: str | None = None,
+        expected_business_id: str | None = None,
+        expected_site_id: str | None = None,
     ) -> SEOMigrationGitHubPublishPreflightResult:
-        del repo_owner, repo_name, target_ref, auto_create_enabled, expected_owner
+        del (
+            repo_owner,
+            repo_name,
+            target_ref,
+            auto_create_enabled,
+            expected_owner,
+            expected_business_id,
+            expected_site_id,
+        )
         raise SEOMigrationGitHubPublisherError(
             code=self.reason_code,
             safe_message=self.safe_message,
@@ -548,6 +594,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         self.timeout_seconds = max(1, int(timeout_seconds))
         self.committer_name = committer_name.strip() or "MBSRN Migration Bot"
         self.committer_email = committer_email.strip() or "migration-bot@mbsrn.local"
+        self.runtime_build_metadata = get_runtime_build_metadata()
 
     def ensure_repository(
         self,
@@ -766,11 +813,15 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         target_ref: str,
         auto_create_enabled: bool,
         expected_owner: str | None = None,
+        expected_business_id: str | None = None,
+        expected_site_id: str | None = None,
     ) -> SEOMigrationGitHubPublishPreflightResult:
         normalized_owner = self._normalize_repo_owner_or_raise(repo_owner)
         normalized_repo = self._normalize_repo_name_or_raise(repo_name)
         normalized_ref = (_coerce_string(target_ref) or "").strip() or "main"
         normalized_expected_owner = self._normalize_expected_owner(expected_owner)
+        normalized_expected_business_id = _normalize_repo_management_id(expected_business_id)
+        normalized_expected_site_id = _normalize_repo_management_id(expected_site_id)
         auto_create_enabled_value = bool(auto_create_enabled)
 
         repo_exists = False
@@ -784,6 +835,13 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         would_bootstrap_branch = False
         preflight_status = "blocked"
         preflight_blocker_code: str | None = None
+        repo_management_status: str | None = None
+        repo_management_marker_present: bool | None = None
+        repo_management_marker_valid: bool | None = None
+        repo_management_marker_matches_site: bool | None = None
+        repo_management_marker_business_id: str | None = None
+        repo_management_marker_site_id: str | None = None
+        repo_management_marker_source_ref: str | None = None
         permissions_push_value: bool | None = None
         workflows_api_accessible: bool | None = None
 
@@ -943,6 +1001,26 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                     if (not would_bootstrap_branch) and preflight_blocker_code is None:
                         preflight_blocker_code = _GITHUB_REASON_BRANCH_UNINITIALIZED
 
+                management_state = self._evaluate_repo_management_state(
+                    repo_owner=normalized_owner,
+                    repo_name=normalized_repo,
+                    target_ref=normalized_ref,
+                    expected_business_id=normalized_expected_business_id,
+                    expected_site_id=normalized_expected_site_id,
+                    repo_initialized=repo_initialized,
+                    default_branch=(_coerce_string((repo_payload or {}).get("default_branch")) or "").strip() or "main",
+                    error_stage="publish_preflight",
+                )
+                repo_management_status = management_state.status
+                repo_management_marker_present = management_state.marker_present
+                repo_management_marker_valid = management_state.marker_valid
+                repo_management_marker_matches_site = management_state.marker_matches_site
+                repo_management_marker_business_id = management_state.marker_business_id
+                repo_management_marker_site_id = management_state.marker_site_id
+                repo_management_marker_source_ref = management_state.source_ref
+                if management_state.blocker_code and preflight_blocker_code is None:
+                    preflight_blocker_code = management_state.blocker_code
+
         if preflight_blocker_code:
             preflight_status = "blocked"
         elif would_auto_create_repo or would_bootstrap_branch:
@@ -965,6 +1043,13 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             would_bootstrap_branch=would_bootstrap_branch,
             preflight_status=preflight_status,
             preflight_blocker_code=preflight_blocker_code,
+            repo_management_status=repo_management_status,
+            repo_management_marker_present=repo_management_marker_present,
+            repo_management_marker_valid=repo_management_marker_valid,
+            repo_management_marker_matches_site=repo_management_marker_matches_site,
+            repo_management_marker_business_id=repo_management_marker_business_id,
+            repo_management_marker_site_id=repo_management_marker_site_id,
+            repo_management_marker_source_ref=repo_management_marker_source_ref,
         )
         _emit_structured_publisher_log(
             payload={
@@ -983,6 +1068,11 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 "would_bootstrap_branch": result.would_bootstrap_branch,
                 "preflight_status": result.preflight_status,
                 "preflight_blocker_code": result.preflight_blocker_code,
+                "repo_management_status": result.repo_management_status,
+                "repo_management_marker_present": result.repo_management_marker_present,
+                "repo_management_marker_valid": result.repo_management_marker_valid,
+                "repo_management_marker_matches_site": result.repo_management_marker_matches_site,
+                "repo_management_marker_source_ref": result.repo_management_marker_source_ref,
                 "permissions_push_value": permissions_push_value,
                 "workflows_api_accessible": workflows_api_accessible,
             },
@@ -1234,6 +1324,48 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 commit_shas=(),
                 committed_paths=tuple(item.path for item in files),
                 published_at=published_at,
+            )
+
+        default_branch = self._resolve_default_branch(repo_owner=target.repo_owner, repo_name=target.repo_name)
+        repo_initialized = self._is_repository_initialized(
+            repo_owner=target.repo_owner,
+            repo_name=target.repo_name,
+            default_branch=default_branch,
+        )
+        management_state = self._evaluate_repo_management_state(
+            repo_owner=target.repo_owner,
+            repo_name=target.repo_name,
+            target_ref=target.branch,
+            expected_business_id=_normalize_repo_management_id(target.business_id),
+            expected_site_id=_normalize_repo_management_id(target.site_id),
+            repo_initialized=repo_initialized,
+            default_branch=default_branch,
+            error_stage="publish",
+        )
+        _emit_structured_publisher_log(
+            payload={
+                "event": "seo_migration_repo_management_marker_check",
+                "repo_owner": target.repo_owner,
+                "repo_name": target.repo_name,
+                "ref": target.branch,
+                "repo_initialized": repo_initialized,
+                "repo_management_status": management_state.status,
+                "repo_management_marker_present": management_state.marker_present,
+                "repo_management_marker_valid": management_state.marker_valid,
+                "repo_management_marker_matches_site": management_state.marker_matches_site,
+                "repo_management_marker_source_ref": management_state.source_ref,
+                "repo_management_blocker_code": management_state.blocker_code,
+                "operation_kind": "publish_contents",
+            },
+            fallback_message="seo_migration_repo_management_marker_check",
+            level=(logging.INFO if not management_state.blocker_code else logging.WARNING),
+        )
+        if management_state.blocker_code:
+            raise SEOMigrationGitHubPublisherError(
+                code=management_state.blocker_code,
+                safe_message=management_state.blocker_message
+                or "Repository is not managed by MBSRN and publish is blocked.",
+                stage="publish",
             )
 
         commit_shas: list[str] = []
@@ -2141,6 +2273,10 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         repo_name: str,
         ref: str,
         allow_repair: bool,
+        dry_run: bool | None = None,
+        remediation_mode: str | None = None,
+        business_id: str | None = None,
+        site_id: str | None = None,
         repository_auto_create_created: bool | None = None,
     ) -> None:
         normalized_ref = str(ref or "").strip()
@@ -2150,6 +2286,12 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 safe_message="GitHub deploy ref was not found or is invalid.",
                 stage="ref_lookup",
             )
+        dry_run_value = bool(dry_run) if dry_run is not None else False
+        allow_repair_value = bool(allow_repair)
+        bootstrap_allowed = bool(allow_repair_value and (not dry_run_value))
+        normalized_remediation_mode = _coerce_string(remediation_mode) or "none"
+        runtime_git_commit = _coerce_string(self.runtime_build_metadata.get("git_commit")) or "unknown"
+        runtime_build_version = _coerce_string(self.runtime_build_metadata.get("build_version")) or "unknown"
         _emit_structured_publisher_log(
             payload={
                 "event": "seo_migration_workflow_provisioning_operation",
@@ -2158,6 +2300,12 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 "repo_owner": repo_owner,
                 "repo_name": repo_name,
                 "ref": normalized_ref,
+                "dry_run": dry_run_value,
+                "allow_repair": allow_repair_value,
+                "remediation_mode": normalized_remediation_mode,
+                "bootstrap_allowed": bootstrap_allowed,
+                "git_commit": runtime_git_commit,
+                "build_version": runtime_build_version,
             },
             fallback_message="seo_migration_workflow_provisioning_operation",
             level=logging.INFO,
@@ -2242,12 +2390,18 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                     if ref_check_error
                     else None
                 ),
-                "will_attempt_bootstrap": bool(allow_repair),
+                "dry_run": dry_run_value,
+                "allow_repair": allow_repair_value,
+                "remediation_mode": normalized_remediation_mode,
+                "bootstrap_allowed": bootstrap_allowed,
+                "will_attempt_bootstrap": bool(bootstrap_allowed),
+                "git_commit": runtime_git_commit,
+                "build_version": runtime_build_version,
             },
             fallback_message="seo_migration_workflow_provisioning_operation",
             level=logging.INFO,
         )
-        if not allow_repair:
+        if not bootstrap_allowed:
             raise SEOMigrationGitHubPublisherError(
                 code="branch_not_found_or_ref_invalid",
                 safe_message="GitHub deploy ref was not found or is invalid.",
@@ -2290,7 +2444,13 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                     "github_error_code": bootstrap_error_code,
                     "http_status_code": bootstrap_status_code,
                     "github_error_message": _sanitize_github_error_message(bootstrap_provider_message),
+                    "dry_run": dry_run_value,
+                    "allow_repair": allow_repair_value,
+                    "remediation_mode": normalized_remediation_mode,
+                    "bootstrap_allowed": bootstrap_allowed,
                     "will_attempt_bootstrap": True,
+                    "git_commit": runtime_git_commit,
+                    "build_version": runtime_build_version,
                 },
                 fallback_message="seo_migration_workflow_provisioning_operation",
                 level=logging.INFO,
@@ -2316,6 +2476,8 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 repo_owner=repo_owner,
                 repo_name=repo_name,
                 branch=normalized_ref,
+                business_id=business_id,
+                site_id=site_id,
             )
             branch_exists_after_bootstrap = self._request_json(
                 method="GET",
@@ -2511,13 +2673,204 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             )
         return sha
 
+    def _is_repository_initialized(
+        self,
+        *,
+        repo_owner: str,
+        repo_name: str,
+        default_branch: str,
+    ) -> bool:
+        try:
+            _ = self._resolve_branch_head_sha(
+                repo_owner=repo_owner,
+                repo_name=repo_name,
+                branch=default_branch,
+            )
+            return True
+        except SEOMigrationGitHubPublisherError as exc:
+            if _should_treat_ref_check_as_uninitialized(exc):
+                return False
+            raise
+
+    def _evaluate_repo_management_state(
+        self,
+        *,
+        repo_owner: str,
+        repo_name: str,
+        target_ref: str,
+        expected_business_id: str | None,
+        expected_site_id: str | None,
+        repo_initialized: bool,
+        default_branch: str,
+        error_stage: str,
+    ) -> SEOMigrationGitHubRepoManagementState:
+        normalized_target_ref = (_coerce_string(target_ref) or "").strip() or default_branch
+        refs_to_try: list[str] = [normalized_target_ref]
+        normalized_default_branch = (_coerce_string(default_branch) or "").strip() or "main"
+        if normalized_default_branch not in refs_to_try:
+            refs_to_try.append(normalized_default_branch)
+
+        marker_payload: dict[str, object] | None = None
+        source_ref: str | None = None
+        for candidate_ref in refs_to_try:
+            try:
+                payload = self._fetch_repo_management_marker_payload(
+                    repo_owner=repo_owner,
+                    repo_name=repo_name,
+                    ref=candidate_ref,
+                    error_stage=error_stage,
+                )
+            except SEOMigrationGitHubPublisherError as exc:
+                if _should_treat_ref_check_as_uninitialized(exc):
+                    continue
+                raise
+            if isinstance(payload, dict):
+                marker_payload = payload
+                source_ref = candidate_ref
+                break
+
+        if marker_payload is None:
+            if not repo_initialized:
+                return SEOMigrationGitHubRepoManagementState(
+                    status="bootstrap_required_no_marker",
+                    marker_present=False,
+                    marker_valid=False,
+                    marker_matches_site=True,
+                    source_ref=None,
+                    blocker_code=None,
+                    blocker_message=None,
+                )
+            return SEOMigrationGitHubRepoManagementState(
+                status="marker_missing",
+                marker_present=False,
+                marker_valid=False,
+                marker_matches_site=False,
+                source_ref=None,
+                blocker_code=_GITHUB_REASON_REPO_MANAGEMENT_MARKER_MISSING,
+                blocker_message=(
+                    "GitHub repository exists but is not marked as MBSRN-managed (mbsrn.key missing)."
+                ),
+            )
+
+        marker_business_id, marker_site_id = _parse_repo_management_marker_payload(marker_payload)
+        if not marker_business_id or not marker_site_id:
+            return SEOMigrationGitHubRepoManagementState(
+                status="marker_invalid",
+                marker_present=True,
+                marker_valid=False,
+                marker_matches_site=False,
+                source_ref=source_ref,
+                blocker_code=_GITHUB_REASON_REPO_MANAGEMENT_MARKER_INVALID,
+                blocker_message=(
+                    "GitHub repository management marker (mbsrn.key) is invalid for managed publish."
+                ),
+            )
+        if (
+            expected_business_id
+            and expected_site_id
+            and (
+                marker_business_id.strip().lower() != expected_business_id.strip().lower()
+                or marker_site_id.strip().lower() != expected_site_id.strip().lower()
+            )
+        ):
+            return SEOMigrationGitHubRepoManagementState(
+                status="marker_mismatch",
+                marker_present=True,
+                marker_valid=True,
+                marker_matches_site=False,
+                marker_business_id=marker_business_id,
+                marker_site_id=marker_site_id,
+                source_ref=source_ref,
+                blocker_code=_GITHUB_REASON_REPO_MANAGEMENT_MARKER_MISMATCH,
+                blocker_message=(
+                    "GitHub repository management marker (mbsrn.key) is assigned to a different business/site."
+                ),
+            )
+        return SEOMigrationGitHubRepoManagementState(
+            status="managed_marker_match",
+            marker_present=True,
+            marker_valid=True,
+            marker_matches_site=True,
+            marker_business_id=marker_business_id,
+            marker_site_id=marker_site_id,
+            source_ref=source_ref,
+            blocker_code=None,
+            blocker_message=None,
+        )
+
+    def _fetch_repo_management_marker_payload(
+        self,
+        *,
+        repo_owner: str,
+        repo_name: str,
+        ref: str,
+        error_stage: str,
+    ) -> dict[str, object] | None:
+        try:
+            payload = self._request_json(
+                method="GET",
+                path=(
+                    f"/repos/{urllib.parse.quote(repo_owner)}/{urllib.parse.quote(repo_name)}"
+                    f"/contents/{urllib.parse.quote(_MBSRN_REPO_MANAGEMENT_MARKER_PATH, safe='/')}"
+                    f"?ref={urllib.parse.quote(ref, safe='')}"
+                ),
+                expected_statuses=(200,),
+                allow_404=True,
+                status_error_map={
+                    401: (
+                        _GITHUB_REASON_CONTENTS_WRITE_NOT_AUTHORIZED,
+                        "GitHub token is not authorized to read repository contents for managed publish.",
+                    ),
+                    403: (
+                        _GITHUB_REASON_CONTENTS_WRITE_NOT_AUTHORIZED,
+                        "GitHub token is not authorized to read repository contents for managed publish.",
+                    ),
+                    409: (
+                        _GITHUB_REASON_BRANCH_UNINITIALIZED,
+                        "GitHub repository branch is missing or uninitialized for managed publish.",
+                    ),
+                    422: (
+                        _GITHUB_REASON_BRANCH_UNINITIALIZED,
+                        "GitHub repository branch is missing or uninitialized for managed publish.",
+                    ),
+                },
+                error_stage=error_stage,
+            )
+        except SEOMigrationGitHubPublisherError as exc:
+            if _should_treat_ref_check_as_uninitialized(exc):
+                raise SEOMigrationGitHubPublisherError(
+                    code=_GITHUB_REASON_BRANCH_UNINITIALIZED,
+                    safe_message="GitHub repository branch is missing or uninitialized for managed publish.",
+                    status_code=exc.status_code,
+                    stage=exc.stage,
+                    provider_message=exc.provider_message,
+                ) from exc
+            if exc.code == "github_request_failed":
+                raise self._classify_publish_request_failed(exc=exc) from exc
+            raise
+        if not isinstance(payload, dict):
+            return None
+        return payload
+
     def _bootstrap_repository_branch(
         self,
         *,
         repo_owner: str,
         repo_name: str,
         branch: str,
+        business_id: str | None = None,
+        site_id: str | None = None,
     ) -> None:
+        normalized_business_id = _normalize_repo_management_id(business_id)
+        normalized_site_id = _normalize_repo_management_id(site_id)
+        if not normalized_business_id or not normalized_site_id:
+            raise SEOMigrationGitHubPublisherError(
+                code=_GITHUB_REASON_REPO_BOOTSTRAP_MARKER_WRITE_FAILED,
+                safe_message=(
+                    "GitHub repository bootstrap requires managed ownership metadata and cannot proceed."
+                ),
+                stage="workflow_provisioning",
+            )
         bootstrap_content = (
             "# MBSRN managed repository bootstrap\n"
             "\n"
@@ -2550,6 +2903,42 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 safe_message="GitHub repository target could not be initialized for managed workflow provisioning.",
                 stage="workflow_provisioning",
             )
+        marker_blob_payload = self._request_json(
+            method="POST",
+            path=f"/repos/{urllib.parse.quote(repo_owner)}/{urllib.parse.quote(repo_name)}/git/blobs",
+            payload={
+                "content": _render_repo_management_marker_content(
+                    business_id=normalized_business_id,
+                    site_id=normalized_site_id,
+                ),
+                "encoding": "utf-8",
+            },
+            expected_statuses=(201,),
+            status_error_map={
+                401: (
+                    _GITHUB_REASON_CONTENTS_WRITE_NOT_AUTHORIZED,
+                    "GitHub token is not authorized to write repository contents for managed workflow provisioning.",
+                ),
+                403: (
+                    _GITHUB_REASON_CONTENTS_WRITE_NOT_AUTHORIZED,
+                    "GitHub token is not authorized to write repository contents for managed workflow provisioning.",
+                ),
+            },
+            error_stage="workflow_provisioning",
+        )
+        marker_blob_sha = (
+            _coerce_string((marker_blob_payload or {}).get("sha"))
+            if isinstance(marker_blob_payload, dict)
+            else None
+        )
+        if not marker_blob_sha:
+            raise SEOMigrationGitHubPublisherError(
+                code=_GITHUB_REASON_REPO_BOOTSTRAP_MARKER_WRITE_FAILED,
+                safe_message=(
+                    "GitHub repository bootstrap could not write the managed ownership marker."
+                ),
+                stage="workflow_provisioning",
+            )
 
         tree_payload = self._request_json(
             method="POST",
@@ -2561,6 +2950,12 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                         "mode": "100644",
                         "type": "blob",
                         "sha": blob_sha,
+                    },
+                    {
+                        "path": _MBSRN_REPO_MANAGEMENT_MARKER_PATH,
+                        "mode": "100644",
+                        "type": "blob",
+                        "sha": marker_blob_sha,
                     }
                 ]
             },
@@ -3127,6 +3522,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         managed_gke_config: dict[str, object] | None = None,
         namespace_isolation_defaults: dict[str, object] | None = None,
         site_id: str | None = None,
+        business_id: str | None = None,
         repository_auto_create_created: bool | None = None,
     ) -> SEOMigrationGitHubWorkflowProvisionResult:
         normalized_workflow_id = str(workflow_id or "").strip()
@@ -3168,11 +3564,55 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         )
         try:
             self._ensure_repo_exists(repo_owner=repo_owner, repo_name=repo_name)
+            default_branch = self._resolve_default_branch(repo_owner=repo_owner, repo_name=repo_name)
+            repo_initialized = self._is_repository_initialized(
+                repo_owner=repo_owner,
+                repo_name=repo_name,
+                default_branch=default_branch,
+            )
+            management_state = self._evaluate_repo_management_state(
+                repo_owner=repo_owner,
+                repo_name=repo_name,
+                target_ref=branch,
+                expected_business_id=_normalize_repo_management_id(business_id),
+                expected_site_id=_normalize_repo_management_id(site_id),
+                repo_initialized=repo_initialized,
+                default_branch=default_branch,
+                error_stage="workflow_provisioning",
+            )
+            _emit_structured_publisher_log(
+                payload={
+                    "event": "seo_migration_repo_management_marker_check",
+                    "repo_owner": repo_owner,
+                    "repo_name": repo_name,
+                    "ref": branch,
+                    "repo_initialized": repo_initialized,
+                    "repo_management_status": management_state.status,
+                    "repo_management_marker_present": management_state.marker_present,
+                    "repo_management_marker_valid": management_state.marker_valid,
+                    "repo_management_marker_matches_site": management_state.marker_matches_site,
+                    "repo_management_marker_source_ref": management_state.source_ref,
+                    "repo_management_blocker_code": management_state.blocker_code,
+                },
+                fallback_message="seo_migration_repo_management_marker_check",
+                level=(logging.INFO if not management_state.blocker_code else logging.WARNING),
+            )
+            if management_state.blocker_code:
+                raise SEOMigrationGitHubPublisherError(
+                    code=management_state.blocker_code,
+                    safe_message=management_state.blocker_message
+                    or "Repository is not managed by MBSRN and cannot be updated.",
+                    stage="workflow_provisioning",
+                )
             self._ensure_ref_exists(
                 repo_owner=repo_owner,
                 repo_name=repo_name,
                 ref=branch,
                 allow_repair=not dry_run,
+                dry_run=dry_run,
+                remediation_mode="workflow_provisioning",
+                business_id=_normalize_repo_management_id(business_id),
+                site_id=_normalize_repo_management_id(site_id),
                 repository_auto_create_created=repository_auto_create_created,
             )
         except SEOMigrationGitHubPublisherError as exc:
@@ -3413,6 +3853,8 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             repo_name=target.repo_name,
             ref=target.ref,
             allow_repair=allow_ref_repair and (not dry_run),
+            dry_run=dry_run,
+            remediation_mode=remediation_mode,
         )
         workflow_file_payload = self._fetch_workflow_file_payload_on_ref(
             repo_owner=target.repo_owner,
@@ -5380,6 +5822,41 @@ def _emit_structured_publisher_log(
     except TypeError:
         message = fallback_message
     _LOGGER.log(level, message)
+
+
+def _normalize_repo_management_id(value: object) -> str | None:
+    normalized = _coerce_string(value)
+    if not normalized:
+        return None
+    compact = normalized.strip()
+    if not compact:
+        return None
+    return compact[:120]
+
+
+def _render_repo_management_marker_content(*, business_id: str, site_id: str) -> str:
+    payload = {
+        "version": 1,
+        "created_by": "mbsrn",
+        "business_id": business_id,
+        "site_id": site_id,
+    }
+    return json.dumps(payload, ensure_ascii=True, sort_keys=True, indent=2) + "\n"
+
+
+def _parse_repo_management_marker_payload(payload: dict[str, object] | None) -> tuple[str | None, str | None]:
+    decoded = _decode_workflow_file_content(payload)
+    if not decoded:
+        return None, None
+    try:
+        parsed = json.loads(decoded)
+    except (TypeError, ValueError):
+        return None, None
+    if not isinstance(parsed, dict):
+        return None, None
+    business_id = _normalize_repo_management_id(parsed.get("business_id"))
+    site_id = _normalize_repo_management_id(parsed.get("site_id"))
+    return business_id, site_id
 
 
 def _sanitize_github_error_message(value: object, *, max_length: int = 240) -> str | None:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import time
 from pathlib import Path
@@ -27,6 +28,7 @@ from app.api.routes import (
     seo_v1_router,
 )
 from app.core.config import get_settings
+from app.core.runtime_metadata import get_runtime_build_metadata
 from app.db.base import Base
 from app.db.session import engine, get_database_target
 
@@ -93,6 +95,19 @@ _LOCALHOST_DATABASE_TARGETS = {"localhost", "127.0.0.1", "::1"}
 _CLOUDSQL_PROXY_STARTUP_CONNECTIVITY_MAX_ATTEMPTS = 60
 _CLOUDSQL_PROXY_STARTUP_CONNECTIVITY_RETRY_DELAY_SECONDS = 1.0
 _SCHEMA_READINESS_LOGGED_REVISION: str | None = None
+
+
+def _emit_structured_startup_log(
+    *,
+    payload: dict[str, object],
+    fallback_message: str,
+    level: int = logging.INFO,
+) -> None:
+    try:
+        message = json.dumps(payload, ensure_ascii=True, sort_keys=True)
+    except (TypeError, ValueError):
+        message = fallback_message
+    logger.log(level, message, extra={"json_fields": payload})
 
 
 def _is_localhost_database_target() -> bool:
@@ -336,6 +351,17 @@ _configure_security_headers()
 
 @app.on_event("startup")
 def on_startup() -> None:
+    runtime_build_metadata = get_runtime_build_metadata(app_env=settings.app_env)
+    _emit_structured_startup_log(
+        payload={
+            "event": "mbsrn_runtime_version",
+            "component": "mbsrn-api",
+            "service": settings.app_name,
+            **runtime_build_metadata,
+        },
+        fallback_message="mbsrn_runtime_version",
+    )
+
     if _should_enforce_schema_readiness():
         logger.info(
             "Startup schema readiness expectation expected_revision=%s app_env=%s db_connection_mode=%s "

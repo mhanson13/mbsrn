@@ -612,6 +612,15 @@ function toRepositoryProvisioningGuidance(params: {
   if (normalizedPreflightBlocker === "github_repo_state_invalid_for_bootstrap") {
     return "Repository bootstrap could not be completed for the configured target branch.";
   }
+  if (normalizedPreflightBlocker === "github_repo_management_marker_missing") {
+    return "This repository exists but is not marked as MBSRN-managed (mbsrn.key missing), so publish is blocked to avoid overwriting unrelated content.";
+  }
+  if (normalizedPreflightBlocker === "github_repo_management_marker_mismatch") {
+    return "This repository is marked as MBSRN-managed for a different business/site and cannot be reused.";
+  }
+  if (normalizedPreflightBlocker === "github_repo_management_marker_invalid") {
+    return "Repository management marker (mbsrn.key) is invalid and must be corrected before publish.";
+  }
   if (
     ((publishPreflightStatus || "").trim().toLowerCase() === "ready_with_actions"
       || (publishPreflightStatus || "").trim().toLowerCase() === "warning")

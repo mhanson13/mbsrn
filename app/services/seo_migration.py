@@ -13,6 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.time import utc_now
+from app.core.runtime_metadata import get_runtime_build_metadata
 from app.integrations.ai_execution_core import build_ai_diagnostics_summary, build_ai_failure_hint
 from app.integrations.seo_migration_artifact_provider import (
     MisconfiguredSEOMigrationArtifactGenerationProvider,
@@ -545,6 +546,7 @@ class SEOMigrationService:
         self.deploy_default_workflow_id = deploy_default_workflow_id.strip() or "deploy-www-prod.yml"
         self.deploy_default_ref = deploy_default_ref.strip() or "main"
         self.deploy_secret_gcp_key = (deploy_secret_gcp_key or "").strip() or None
+        self.runtime_build_metadata = get_runtime_build_metadata()
         self._resolved_migration_draft_timeout_seconds = _MIGRATION_DRAFT_TIMEOUT_DEFAULT_SECONDS
         self._resolved_migration_draft_timeout_source = "default"
 
@@ -1164,6 +1166,37 @@ class SEOMigrationService:
                     max_length=80,
                 ),
             )
+        publish_runtime_remediation_mode = "duplicate_publish_repair" if duplicate_publish_attempt else "bootstrap"
+        publish_runtime_allow_repair = not dry_run
+        publish_runtime_bootstrap_allowed = bool(publish_runtime_allow_repair and (not dry_run))
+        self._emit_structured_service_log(
+            payload={
+                "event": "seo_migration_publish_runtime_context",
+                "timestamp": utc_now().isoformat(),
+                "business_id": business_id,
+                "site_id": site_id,
+                "workspace_id": workspace.id,
+                "artifact_version_id": artifact.id,
+                "repo_owner": target.get("repo_owner"),
+                "repo_name": target.get("repo_name"),
+                "ref": target.get("branch"),
+                "dry_run": dry_run,
+                "remediation_mode": publish_runtime_remediation_mode,
+                "allow_repair": publish_runtime_allow_repair,
+                "bootstrap_allowed": publish_runtime_bootstrap_allowed,
+                "repository_auto_create_enabled": repository_auto_create_enabled,
+                "repository_auto_create_created": repository_auto_create_created,
+                "publish_preflight_status": publish_preflight_status,
+                "publish_preflight_blocker_code": publish_preflight_blocker_code,
+                "git_commit": self.runtime_build_metadata.get("git_commit"),
+                "build_version": self.runtime_build_metadata.get("build_version"),
+                "build_time": self.runtime_build_metadata.get("build_time"),
+                "image_tag": self.runtime_build_metadata.get("image_tag"),
+                "app_env": self.runtime_build_metadata.get("app_env"),
+            },
+            fallback_message="seo_migration_publish_runtime_context",
+            level=logging.INFO,
+        )
         try:
             if not dry_run:
                 repository_ensure_result: SEOMigrationGitHubRepositoryEnsureResult = (
@@ -1280,6 +1313,7 @@ class SEOMigrationService:
                     managed_gke_config=_normalize_json_dict(admin_deploy_metadata.get("managed_gke_config")),
                     namespace_isolation_defaults=admin_deploy_metadata.get("namespace_isolation_defaults"),
                     site_id=site.id,
+                    business_id=workspace.business_id,
                     repository_auto_create_created=repository_auto_create_created,
                 )
                 workflow_provisioning_verified = True
@@ -1441,6 +1475,8 @@ class SEOMigrationService:
                         repo_name=target["repo_name"],
                         branch=target["branch"],
                         artifact_root=target["artifact_root"],
+                        business_id=workspace.business_id,
+                        site_id=workspace.site_id,
                     ),
                     files=publish_files,
                     commit_message=normalized_commit_message,
@@ -10141,6 +10177,10 @@ class SEOMigrationService:
             "github_workflow_provisioning_failed",
             "github_branch_not_found_or_uninitialized",
             "github_repo_state_invalid_for_bootstrap",
+            "github_repo_management_marker_missing",
+            "github_repo_management_marker_mismatch",
+            "github_repo_management_marker_invalid",
+            "github_repo_bootstrap_marker_write_failed",
             _DEPLOY_TARGET_REASON_REPO_NOT_FOUND,
             _DEPLOY_TARGET_REASON_WORKFLOW_NOT_FOUND,
             _DEPLOY_TARGET_REASON_REF_INVALID,
@@ -10751,6 +10791,8 @@ class SEOMigrationService:
                     target_ref=str(target_summary.get("branch") or ""),
                     auto_create_enabled=repository_auto_create_enabled,
                     expected_owner=str(target_summary.get("repo_owner") or ""),
+                    expected_business_id=workspace.business_id,
+                    expected_site_id=workspace.site_id,
                 )
             except SEOMigrationGitHubPublisherError as exc:
                 repository_ensure_outcome = "check_failed"
@@ -10809,6 +10851,37 @@ class SEOMigrationService:
                     preflight_result.preflight_blocker_code,
                     max_length=80,
                 )
+                target_summary["repo_management_status"] = _normalize_string(
+                    preflight_result.repo_management_status,
+                    max_length=80,
+                )
+                target_summary["repo_management_marker_present"] = (
+                    bool(preflight_result.repo_management_marker_present)
+                    if isinstance(preflight_result.repo_management_marker_present, bool)
+                    else None
+                )
+                target_summary["repo_management_marker_valid"] = (
+                    bool(preflight_result.repo_management_marker_valid)
+                    if isinstance(preflight_result.repo_management_marker_valid, bool)
+                    else None
+                )
+                target_summary["repo_management_marker_matches_site"] = (
+                    bool(preflight_result.repo_management_marker_matches_site)
+                    if isinstance(preflight_result.repo_management_marker_matches_site, bool)
+                    else None
+                )
+                target_summary["repo_management_marker_business_id"] = _normalize_string(
+                    preflight_result.repo_management_marker_business_id,
+                    max_length=120,
+                )
+                target_summary["repo_management_marker_site_id"] = _normalize_string(
+                    preflight_result.repo_management_marker_site_id,
+                    max_length=120,
+                )
+                target_summary["repo_management_marker_source_ref"] = _normalize_string(
+                    preflight_result.repo_management_marker_source_ref,
+                    max_length=120,
+                )
                 repo_ensure_outcome = _derive_repo_ensure_outcome(
                     repository_exists=repository_exists,
                     repository_auto_create_created=False,
@@ -10842,6 +10915,11 @@ class SEOMigrationService:
                         "would_bootstrap_branch": preflight_result.would_bootstrap_branch,
                         "preflight_status": preflight_result.preflight_status,
                         "preflight_blocker_code": preflight_blocker_code,
+                        "repo_management_status": preflight_result.repo_management_status,
+                        "repo_management_marker_present": preflight_result.repo_management_marker_present,
+                        "repo_management_marker_valid": preflight_result.repo_management_marker_valid,
+                        "repo_management_marker_matches_site": preflight_result.repo_management_marker_matches_site,
+                        "repo_management_marker_source_ref": preflight_result.repo_management_marker_source_ref,
                     },
                     fallback_message="seo_migration_publish_preflight",
                     level=(logging.INFO if not preflight_blocker_code else logging.WARNING),
@@ -10916,6 +10994,25 @@ class SEOMigrationService:
                 "publish_target_preflight_blocker_code": _normalize_string(
                     target_summary.get("preflight_blocker_code"),
                     max_length=80,
+                ),
+                "publish_target_repo_management_status": _normalize_string(
+                    target_summary.get("repo_management_status"),
+                    max_length=80,
+                ),
+                "publish_target_repo_management_marker_present": (
+                    _coerce_bool(target_summary.get("repo_management_marker_present"), default=False)
+                    if "repo_management_marker_present" in target_summary
+                    else None
+                ),
+                "publish_target_repo_management_marker_valid": (
+                    _coerce_bool(target_summary.get("repo_management_marker_valid"), default=False)
+                    if "repo_management_marker_valid" in target_summary
+                    else None
+                ),
+                "publish_target_repo_management_marker_matches_site": (
+                    _coerce_bool(target_summary.get("repo_management_marker_matches_site"), default=False)
+                    if "repo_management_marker_matches_site" in target_summary
+                    else None
                 ),
                 **admin_prerequisites,
             },
@@ -12055,6 +12152,9 @@ def _map_publish_preflight_blocker_codes(blocker_code: str) -> list[str]:
         "repo_create_failed_owner_mismatch",
         "github_branch_not_found_or_uninitialized",
         "github_repo_state_invalid_for_bootstrap",
+        "github_repo_management_marker_missing",
+        "github_repo_management_marker_mismatch",
+        "github_repo_management_marker_invalid",
     }:
         return ["publish_configuration_invalid"]
     if normalized_lower in {
@@ -12091,6 +12191,16 @@ def _derive_publish_preflight_blocker_message(
         return (
             "Publish target branch is missing or uninitialized and cannot be bootstrapped with current runtime permissions."
         )
+    if normalized_lower == "github_repo_management_marker_missing":
+        return (
+            "This repository exists but is not marked as MBSRN-managed (mbsrn.key missing), so publish is blocked."
+        )
+    if normalized_lower == "github_repo_management_marker_mismatch":
+        return (
+            "This repository is marked for a different business/site and cannot be reused for this migration target."
+        )
+    if normalized_lower == "github_repo_management_marker_invalid":
+        return "Repository management marker (mbsrn.key) is invalid and must be corrected before publish."
     if repository_auto_create_enabled:
         return "Publish target repository preflight failed. Review runtime GitHub permissions and target configuration."
     return "Publish target repository preflight failed. Review admin publish configuration."

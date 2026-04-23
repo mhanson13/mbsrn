@@ -147,6 +147,9 @@ class _StubMigrationGitHubPublisher(SEOMigrationGitHubPublisher):
                 str | None,
                 dict[str, object] | None,
                 str | None,
+                str | None,
+                str | None,
+                bool | None,
             ]
         ] = []
 
@@ -180,8 +183,10 @@ class _StubMigrationGitHubPublisher(SEOMigrationGitHubPublisher):
         target_ref: str,
         auto_create_enabled: bool,
         expected_owner: str | None = None,
+        expected_business_id: str | None = None,
+        expected_site_id: str | None = None,
     ) -> SEOMigrationGitHubPublishPreflightResult:
-        del auto_create_enabled, expected_owner
+        del auto_create_enabled, expected_owner, expected_business_id, expected_site_id
         return SEOMigrationGitHubPublishPreflightResult(
             repo_owner=repo_owner,
             repo_name=repo_name,
@@ -311,6 +316,7 @@ class _StubMigrationGitHubPublisher(SEOMigrationGitHubPublisher):
         managed_gke_config: dict[str, object] | None = None,
         namespace_isolation_defaults: dict[str, object] | None = None,
         site_id: str | None = None,
+        business_id: str | None = None,
         repository_auto_create_created: bool | None = None,
     ) -> SEOMigrationGitHubWorkflowProvisionResult:
         self.workflow_provision_calls.append(
@@ -326,6 +332,7 @@ class _StubMigrationGitHubPublisher(SEOMigrationGitHubPublisher):
                 managed_gke_config,
                 namespace_isolation_defaults,
                 site_id,
+                business_id,
                 repository_auto_create_created,
             )
         )
