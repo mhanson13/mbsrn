@@ -97,6 +97,11 @@ _CLOUDSQL_PROXY_STARTUP_CONNECTIVITY_RETRY_DELAY_SECONDS = 1.0
 _SCHEMA_READINESS_LOGGED_REVISION: str | None = None
 
 
+def _service_name() -> str:
+    value = str(getattr(settings, "app_name", "") or "").strip()
+    return value or "mbsrn-api"
+
+
 def _emit_structured_startup_log(
     *,
     payload: dict[str, object],
@@ -238,7 +243,7 @@ def _check_schema_readiness() -> tuple[bool, dict[str, object]]:
     if EXPECTED_ALEMBIC_HEAD is None:
         return False, {
             "status": "not_ready",
-            "service": settings.app_name,
+            "service": _service_name(),
             "reason": "expected_revision_unresolved",
         }
 
@@ -254,7 +259,7 @@ def _check_schema_readiness() -> tuple[bool, dict[str, object]]:
         )
         return False, {
             "status": "not_ready",
-            "service": settings.app_name,
+            "service": _service_name(),
             "reason": "alembic_version_unavailable",
             "expected_revision": EXPECTED_ALEMBIC_HEAD,
             "database_host": DATABASE_TARGET_HOST,
@@ -266,7 +271,7 @@ def _check_schema_readiness() -> tuple[bool, dict[str, object]]:
         logger.warning("Schema readiness found invalid alembic_version state: %s", revisions)
         return False, {
             "status": "not_ready",
-            "service": settings.app_name,
+            "service": _service_name(),
             "reason": "invalid_alembic_version_state",
             "expected_revision": EXPECTED_ALEMBIC_HEAD,
             "current_revisions": revisions,
@@ -279,7 +284,7 @@ def _check_schema_readiness() -> tuple[bool, dict[str, object]]:
         )
         return False, {
             "status": "not_ready",
-            "service": settings.app_name,
+            "service": _service_name(),
             "reason": "schema_revision_mismatch",
             "expected_revision": EXPECTED_ALEMBIC_HEAD,
             "current_revisions": revisions,
@@ -297,7 +302,7 @@ def _check_schema_readiness() -> tuple[bool, dict[str, object]]:
         _SCHEMA_READINESS_LOGGED_REVISION = revisions[0]
     return True, {
         "status": "ok",
-        "service": settings.app_name,
+        "service": _service_name(),
         "schema_revision": revisions[0],
     }
 
@@ -356,7 +361,7 @@ def on_startup() -> None:
         payload={
             "event": "mbsrn_runtime_version",
             "component": "mbsrn-api",
-            "service": settings.app_name,
+            "service": _service_name(),
             **runtime_build_metadata,
         },
         fallback_message="mbsrn_runtime_version",
@@ -403,13 +408,13 @@ def on_startup() -> None:
 
 @app.get("/health")
 def health() -> dict[str, str]:
-    return {"status": "ok", "service": settings.app_name}
+    return {"status": "ok", "service": _service_name()}
 
 
 @app.get("/healthz")
 def readiness_health() -> Response:
     if not _should_enforce_schema_readiness():
-        return JSONResponse(status_code=200, content={"status": "ok", "service": settings.app_name})
+        return JSONResponse(status_code=200, content={"status": "ok", "service": _service_name()})
 
     ready, payload = _check_schema_readiness()
     if ready:
