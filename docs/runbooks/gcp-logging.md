@@ -503,6 +503,7 @@ Reason-code guidance:
 - `github_repo_baseline_reconciliation_failed`: managed baseline file reconciliation (`README.md`, `.gitignore`, `LICENSE`) failed after marker validation.
 - `github_branch_not_found_or_uninitialized`: target branch/ref exists in config but GitHub repo state has no initialized commit/ref tree for provisioning writes.
 - `github_repo_state_invalid_for_bootstrap`: repository initialization/bootstrap could not complete safely.
+- `github_repo_initialization_failed`: explicit repository initialization phase failed before workflow provisioning could continue.
 - `github_workflow_write_not_authorized`: token can access repo metadata but lacks workflow-path write permission for `.github/workflows/*`.
 - `github_contents_write_not_authorized`: token lacks repository contents write permission for managed manifest/content files.
 - `github_workflow_provisioning_failed`: workflow bootstrap request failed with non-specific provider error after request classification.
@@ -576,6 +577,18 @@ Workflow bootstrap observability (publish path):
 - compare:
   - `seo_migration_workflow_provisioning` (service-level control-plane event)
   - `seo_migration_workflow_provisioning_operation` (publisher operation trace)
+
+Repository Initialization Phase:
+- repository initialization phase (always before workflow write/ref provisioning):
+  - `repo_initialization_started`
+  - `repo_initialization_completed`
+  - `repo_initialization_failed`
+  - decision trace remains in `seo_migration_workflow_provisioning_operation` with:
+    - `operation_kind=repo_bootstrap_decision`
+    - `bootstrap_decision_source`
+    - `bootstrap_allowed`
+    - `will_attempt_bootstrap`
+    - `bootstrap_blocked_reason` (when bootstrap is intentionally disabled, e.g. dry-run)
 - key operation fields:
   - `operation_kind`
   - `operation_status`
@@ -600,6 +613,7 @@ Managed marker observability:
   - `repo_management_blocker_code`
 - expected behavior:
   - new/empty repos: bootstrap writes `mbsrn.key` before managed workflow/manifest/content updates
+  - empty repos now always emit `repo_initialization_*` events before workflow provisioning continues
   - existing managed repos: marker must be present/valid/matching
   - existing non-managed repos: marker blocker prevents overwrite
 

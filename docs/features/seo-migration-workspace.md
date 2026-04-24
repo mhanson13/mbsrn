@@ -751,10 +751,27 @@ Publish behavior:
   - existing non-empty repos without `mbsrn.key` are blocked from managed overwrite/update publish
   - existing repos with `mbsrn.key` are publishable only when marker values match the current workspace business/site
   - invalid/unparseable marker content is treated as a hard blocker
-  - existing managed repos are reconciled additively:
-    - missing `README.md` / `.gitignore` / `LICENSE` files are added
-    - existing customized versions are preserved (no overwrite)
+- existing managed repos are reconciled additively:
+  - missing `README.md` / `.gitignore` / `LICENSE` files are added
+  - existing customized versions are preserved (no overwrite)
+
+### Repository Initialization Phase
 - if target repository exists but target ref is uninitialized (no commit history yet), publish bootstrap initializes the managed branch before workflow/manifest writes
+- repository initialization now runs as an explicit phase before workflow provisioning for both:
+  - newly created repos
+  - existing repos that are reachable but still empty/uninitialized
+- initialization is deterministic and idempotent:
+  - initialized repos no-op
+  - empty repos are bootstrapped once with the managed baseline first commit
+  - ref resolution is re-checked after bootstrap before workflow write continues
+- initialization observability events:
+  - `repo_initialization_started`
+  - `repo_initialization_completed`
+  - `repo_initialization_failed`
+  - paired decision trace:
+    - `event=seo_migration_workflow_provisioning_operation`
+    - `operation_kind=repo_bootstrap_decision`
+    - includes `bootstrap_allowed` and `will_attempt_bootstrap` so dry-run/repair-disabled paths are explicit
 - runtime repository auto-create uses private repository visibility by default (`private=true`) to avoid accidental public exposure
 - dry-run never creates repositories; readiness and publish diagnostics report whether a live publish would auto-create the missing repository
 - publish always runs deploy-workflow bootstrap verification against the target branch (`.github/workflows/{workflow_id}`) before returning success for non-dry-run publish
@@ -820,7 +837,7 @@ Publish behavior:
   - safe failure detail (`http_status_code`, `github_error_code`, sanitized `github_error_message`)
 - workflow/bootstrap failure codes are now more precise for new-repo and permission edge cases:
   - `github_branch_not_found_or_uninitialized`
-  - `github_repo_state_invalid_for_bootstrap`
+  - `github_repo_initialization_failed`
   - `github_workflow_write_not_authorized`
   - `github_contents_write_not_authorized`
   - `github_workflow_provisioning_failed`

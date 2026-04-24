@@ -10178,6 +10178,7 @@ class SEOMigrationService:
             "github_workflow_provisioning_failed",
             "github_branch_not_found_or_uninitialized",
             "github_repo_state_invalid_for_bootstrap",
+            "github_repo_initialization_failed",
             "github_repo_management_marker_missing",
             "github_repo_management_marker_mismatch",
             "github_repo_management_marker_invalid",
@@ -12202,6 +12203,7 @@ def _map_publish_preflight_blocker_codes(blocker_code: str) -> list[str]:
         "repo_create_failed_owner_mismatch",
         "github_branch_not_found_or_uninitialized",
         "github_repo_state_invalid_for_bootstrap",
+        "github_repo_initialization_failed",
         "github_repo_management_marker_missing",
         "github_repo_management_marker_mismatch",
         "github_repo_management_marker_invalid",
@@ -12237,7 +12239,11 @@ def _derive_publish_preflight_blocker_message(
         return "GitHub runtime is not authorized to write repository contents for publish."
     if normalized_lower == "github_workflow_write_not_authorized":
         return "GitHub runtime is not authorized to write workflow files in the configured repository."
-    if normalized_lower in {"github_branch_not_found_or_uninitialized", "github_repo_state_invalid_for_bootstrap"}:
+    if normalized_lower in {
+        "github_branch_not_found_or_uninitialized",
+        "github_repo_state_invalid_for_bootstrap",
+        "github_repo_initialization_failed",
+    }:
         return (
             "Publish target branch is missing or uninitialized and cannot be bootstrapped with current runtime permissions."
         )
@@ -12287,6 +12293,7 @@ def _normalize_deploy_failure_reason_code(value: object) -> str | None:
         "github_workflow_provisioning_failed",
         "github_branch_not_found_or_uninitialized",
         "github_repo_state_invalid_for_bootstrap",
+        "github_repo_initialization_failed",
     }
     if normalized_lower in allowed:
         return normalized_lower

@@ -3759,6 +3759,90 @@ def test_ensure_deploy_workflow_bootstraps_uninitialized_repo_branch(monkeypatch
     assert any(method == "POST" and url.endswith("/git/refs") for method, url in calls)
 
 
+def test_ensure_deploy_workflow_bootstraps_newly_created_repo_before_workflow_provisioning(
+    monkeypatch,
+    caplog,
+) -> None:
+    calls: list[tuple[str, str]] = []
+    queue: list[object] = [
+        _FakeHTTPResponse(status=200, body=json.dumps({"full_name": "mhanson13/tnmfire"})),
+        _FakeHTTPResponse(status=200, body=json.dumps({"default_branch": "main"})),
+        _http_error(
+            "https://api.github.com/repos/mhanson13/tnmfire/git/ref/heads/main",
+            status_code=409,
+            message="Git Repository is empty.",
+        ),
+        _http_error(
+            "https://api.github.com/repos/mhanson13/tnmfire/contents/mbsrn.key?ref=main",
+            status_code=404,
+            message="Not Found",
+        ),
+        _http_error(
+            "https://api.github.com/repos/mhanson13/tnmfire/branches/main",
+            status_code=404,
+            message="Not Found",
+        ),
+        _FakeHTTPResponse(status=200, body=json.dumps({"default_branch": "main"})),
+        _http_error(
+            "https://api.github.com/repos/mhanson13/tnmfire/git/ref/heads/main",
+            status_code=409,
+            message="Git Repository is empty.",
+        ),
+        _FakeHTTPResponse(status=201, body=json.dumps({"sha": "marker-blob-sha"})),
+        _FakeHTTPResponse(status=201, body=json.dumps({"sha": "readme-blob-sha"})),
+        _FakeHTTPResponse(status=201, body=json.dumps({"sha": "gitignore-blob-sha"})),
+        _FakeHTTPResponse(status=201, body=json.dumps({"sha": "license-blob-sha"})),
+        _FakeHTTPResponse(status=201, body=json.dumps({"sha": "tree-sha"})),
+        _FakeHTTPResponse(status=201, body=json.dumps({"sha": "commit-sha"})),
+        _FakeHTTPResponse(status=201, body="{}"),
+        _FakeHTTPResponse(status=200, body="{}"),
+    ]
+    queue.extend(
+        _managed_file_upsert_responses(
+            managed_paths=(
+                ".github/workflows/deploy-tnmfire-www-prod.yml",
+                "k8s/namespace.yaml",
+                "k8s/deployment.yaml",
+                "k8s/service.yaml",
+                "k8s/ingress.yaml",
+                "k8s/managedcertificate.yaml",
+                "k8s/frontendconfig.yaml",
+                "k8s/backendconfig.yaml",
+            )
+        )
+    )
+    _install_urlopen_stub(monkeypatch, queue, calls)
+    caplog.set_level("INFO", logger="app.integrations.seo_migration_github_publisher")
+
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    result = publisher.ensure_deploy_workflow(
+        repo_owner="mhanson13",
+        repo_name="tnmfire",
+        branch="main",
+        workflow_id="deploy-tnmfire-www-prod.yml",
+        dry_run=False,
+        business_id="business-1",
+        site_id="site-1",
+        repository_auto_create_created=True,
+        artifact_version_id="artifact-1",
+    )
+
+    assert result.provisioned is True
+    decision_logs = [
+        record.msg
+        for record in caplog.records
+        if isinstance(record.msg, str)
+        and '"event": "seo_migration_workflow_provisioning_operation"' in record.msg
+        and '"operation_kind": "repo_bootstrap_decision"' in record.msg
+    ]
+    assert decision_logs
+    assert '"repository_auto_create_created": true' in decision_logs[-1]
+    assert any('"event": "repo_initialization_started"' in record.msg for record in caplog.records if isinstance(record.msg, str))
+    assert any(
+        '"event": "repo_initialization_completed"' in record.msg for record in caplog.records if isinstance(record.msg, str)
+    )
+
+
 def test_bootstrap_repository_branch_writes_mbsrn_management_marker(monkeypatch) -> None:
     calls: list[tuple[str, str]] = []
     captured_tree_payload: dict[str, object] = {}
@@ -4025,7 +4109,7 @@ def test_ensure_deploy_workflow_logs_bootstrap_blocked_context_when_dry_run(
             artifact_version_id="artifact-2",
         )
 
-    assert exc_info.value.code == "github_repo_state_invalid_for_bootstrap"
+    assert exc_info.value.code == "github_repo_initialization_failed"
     decision_logs = [
         record
         for record in caplog.records
@@ -4089,7 +4173,7 @@ def test_ensure_deploy_workflow_ref_check_409_bootstrap_failure_preserves_precis
             site_id="site-1",
         )
 
-    assert exc_info.value.code == "github_repo_bootstrap_marker_write_failed"
+    assert exc_info.value.code == "github_repo_initialization_failed"
     assert exc_info.value.stage == "workflow_provisioning"
 
 
