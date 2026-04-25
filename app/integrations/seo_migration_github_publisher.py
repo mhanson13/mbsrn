@@ -30,6 +30,7 @@ _GITHUB_REASON_REPO_MANAGEMENT_MARKER_INVALID = "github_repo_management_marker_i
 _GITHUB_REASON_REPO_BOOTSTRAP_MARKER_WRITE_FAILED = "github_repo_bootstrap_marker_write_failed"
 _GITHUB_REASON_REPO_BASELINE_RECONCILIATION_FAILED = "github_repo_baseline_reconciliation_failed"
 _GITHUB_REASON_REPO_INITIALIZATION_FAILED = "github_repo_initialization_failed"
+_GITHUB_REASON_REPO_REQUIRES_MANUAL_INITIALIZATION = "github_repo_requires_manual_initialization"
 _MBSRN_REPO_MANAGEMENT_MARKER_PATH = "mbsrn.key"
 
 
@@ -751,6 +752,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 "auto_create_enabled": auto_create_enabled_value,
                 "expected_owner": normalized_expected_owner,
                 "private_by_default": bool(private_by_default),
+                "repo_auto_create_auto_init_requested": True,
                 "repo_visibility_target": _MBSRN_MANAGED_REPO_BASELINE_TARGET_VISIBILITY,
             },
             fallback_message="seo_migration_repo_auto_create_attempted",
@@ -826,6 +828,22 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             fallback_message="seo_migration_repo_auto_create_succeeded",
             level=logging.INFO,
         )
+        self._verify_repository_auto_init_branch(
+            repo_owner=normalized_owner,
+            repo_name=normalized_repo,
+        )
+        _emit_structured_publisher_log(
+            payload={
+                "event": "seo_migration_repo_auto_create_auto_init_verified",
+                "repo_owner": normalized_owner,
+                "repo_name": normalized_repo,
+                "repo_auto_create_auto_init_verified": True,
+                "repo_visibility_target": _MBSRN_MANAGED_REPO_BASELINE_TARGET_VISIBILITY,
+                "repo_visibility_observed": _normalize_repo_visibility(repo_payload),
+            },
+            fallback_message="seo_migration_repo_auto_create_auto_init_verified",
+            level=logging.INFO,
+        )
         return SEOMigrationGitHubRepositoryEnsureResult(
             repo_owner=normalized_owner,
             repo_name=normalized_repo,
@@ -836,6 +854,32 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             outcome="repo_created",
             skipped_reason=None,
         )
+
+    def _verify_repository_auto_init_branch(
+        self,
+        *,
+        repo_owner: str,
+        repo_name: str,
+    ) -> None:
+        try:
+            default_branch = self._resolve_default_branch(repo_owner=repo_owner, repo_name=repo_name)
+            self._resolve_branch_head_sha(
+                repo_owner=repo_owner,
+                repo_name=repo_name,
+                branch=default_branch,
+            )
+        except SEOMigrationGitHubPublisherError as exc:
+            if _should_treat_ref_check_as_uninitialized(exc):
+                raise SEOMigrationGitHubPublisherError(
+                    code=_GITHUB_REASON_REPO_REQUIRES_MANUAL_INITIALIZATION,
+                    safe_message=(
+                        "GitHub repository exists but is empty. Create an initial commit or README before publish."
+                    ),
+                    status_code=exc.status_code,
+                    stage="repo_create",
+                    provider_message=_sanitize_github_error_message(exc.provider_message),
+                ) from exc
+            raise
 
     def run_publish_preflight(
         self,
@@ -1038,7 +1082,11 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                         elif preflight_blocker_code is None:
                             preflight_blocker_code = (_coerce_string(exc.code) or "").strip().lower() or None
                     would_bootstrap_branch = bool((not target_ref_exists) and can_write_contents)
-                    if (not would_bootstrap_branch) and preflight_blocker_code is None:
+                    if not repo_initialized and repo_exists:
+                        would_bootstrap_branch = False
+                        if preflight_blocker_code is None:
+                            preflight_blocker_code = _GITHUB_REASON_REPO_REQUIRES_MANUAL_INITIALIZATION
+                    elif (not would_bootstrap_branch) and preflight_blocker_code is None:
                         preflight_blocker_code = _GITHUB_REASON_BRANCH_UNINITIALIZED
 
                 management_state = self._evaluate_repo_management_state(
@@ -1227,7 +1275,8 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         payload = {
             "name": repo_name,
             "private": bool(private_by_default),
-            "auto_init": False,
+            "auto_init": True,
+            "default_branch": "main",
         }
         org_path = f"/orgs/{urllib.parse.quote(repo_owner, safe='')}/repos"
         try:
@@ -2490,6 +2539,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                     bootstrap_decision_source = "default_branch_uninitialized"
 
         provider_message = _sanitize_github_error_message(ref_check_exc.provider_message) if ref_check_exc else None
+        will_attempt_bootstrap = False
         _emit_structured_publisher_log(
             payload={
                 "event": "seo_migration_workflow_provisioning_operation",
@@ -2506,7 +2556,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 "allow_repair": allow_repair_value,
                 "remediation_mode": normalized_remediation_mode,
                 "bootstrap_allowed": bootstrap_allowed,
-                "will_attempt_bootstrap": bootstrap_allowed,
+                "will_attempt_bootstrap": will_attempt_bootstrap,
                 "bootstrap_blocked_reason": (
                     "bootstrap_disabled_by_execution_mode" if not bootstrap_allowed else None
                 ),
@@ -2585,54 +2635,57 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 provider_message=provider_message,
             ) from ref_check_exc
 
+        if not bool(repository_auto_create_created):
+            _emit_structured_publisher_log(
+                payload={
+                    "event": "repo_requires_manual_initialization",
+                    "repo_owner": repo_owner,
+                    "repo_name": repo_name,
+                    "ref": normalized_ref,
+                    "step_failed": "manual_initialization_required",
+                    "github_error_code": _GITHUB_REASON_REPO_REQUIRES_MANUAL_INITIALIZATION,
+                    "github_error_message": provider_message,
+                    "http_status_code": (ref_check_exc.status_code if ref_check_exc else None),
+                    "bootstrap_allowed": True,
+                    "will_attempt_bootstrap": False,
+                },
+                fallback_message="repo_requires_manual_initialization",
+                level=logging.WARNING,
+            )
+            raise SEOMigrationGitHubPublisherError(
+                code=_GITHUB_REASON_REPO_REQUIRES_MANUAL_INITIALIZATION,
+                safe_message=(
+                    "GitHub repository exists but is empty and must be manually initialized before publish."
+                ),
+                status_code=(ref_check_exc.status_code if ref_check_exc else None),
+                stage="workflow_provisioning",
+                provider_message=provider_message,
+            )
+
         try:
-            self._bootstrap_repository_branch(
+            verified_default_branch = self._resolve_default_branch(
                 repo_owner=repo_owner,
                 repo_name=repo_name,
-                branch=normalized_ref,
-                business_id=business_id,
-                site_id=site_id,
             )
-            branch_exists_after_bootstrap = self._request_json(
-                method="GET",
-                path=(
-                    f"/repos/{urllib.parse.quote(repo_owner)}/{urllib.parse.quote(repo_name)}"
-                    f"/branches/{urllib.parse.quote(normalized_ref, safe='')}"
-                ),
-                expected_statuses=(200,),
-                allow_404=True,
-                status_error_map={
-                    401: (
-                        "token_not_authorized",
-                        "GitHub token is not authorized for deploy operations.",
-                    ),
-                    403: (
-                        "token_not_authorized",
-                        "GitHub token is not authorized for deploy operations.",
-                    ),
-                },
-                error_stage="ref_lookup",
+            self._resolve_branch_head_sha(
+                repo_owner=repo_owner,
+                repo_name=repo_name,
+                branch=verified_default_branch,
             )
-            if not isinstance(branch_exists_after_bootstrap, dict):
-                raise SEOMigrationGitHubPublisherError(
-                    code=_GITHUB_REASON_REPO_INITIALIZATION_FAILED,
-                    safe_message="GitHub repository initialization could not verify target branch creation.",
-                    stage="workflow_provisioning",
-                )
-        except SEOMigrationGitHubPublisherError as bootstrap_exc:
-            bootstrap_provider_message = _sanitize_github_error_message(bootstrap_exc.provider_message)
+        except SEOMigrationGitHubPublisherError as verify_exc:
+            verify_provider_message = _sanitize_github_error_message(verify_exc.provider_message)
             _emit_structured_publisher_log(
                 payload={
                     "event": "repo_initialization_failed",
                     "repo_owner": repo_owner,
                     "repo_name": repo_name,
                     "ref": normalized_ref,
-                    "step_failed": _extract_repo_initialization_step(bootstrap_provider_message),
-                    "github_error_code": bootstrap_exc.code,
-                    "github_error_message": bootstrap_provider_message,
-                    "http_status_code": bootstrap_exc.status_code,
+                    "step_failed": "auto_init_verification_failed",
+                    "github_error_code": verify_exc.code,
+                    "github_error_message": verify_provider_message,
+                    "http_status_code": verify_exc.status_code,
                     "bootstrap_allowed": True,
-                    "will_attempt_bootstrap": True,
+                    "will_attempt_bootstrap": False,
                 },
                 fallback_message="repo_initialization_failed",
                 level=logging.WARNING,
@@ -2640,10 +2693,10 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             raise SEOMigrationGitHubPublisherError(
                 code=_GITHUB_REASON_REPO_INITIALIZATION_FAILED,
                 safe_message="GitHub repository initialization failed before workflow provisioning.",
-                status_code=bootstrap_exc.status_code,
+                status_code=verify_exc.status_code,
                 stage="workflow_provisioning",
-                provider_message=bootstrap_provider_message or bootstrap_exc.provider_message,
-            ) from bootstrap_exc
+                provider_message=verify_provider_message or verify_exc.provider_message,
+            ) from verify_exc
 
         _emit_structured_publisher_log(
             payload={
@@ -3267,14 +3320,26 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         def _raise_init_failed(
             *,
             step_failed: str,
+            request_path: str | None = None,
+            payload_keys: tuple[str, ...] | None = None,
             status_code: int | None = None,
             provider_message: str | None = None,
             safe_message: str | None = None,
         ) -> SEOMigrationGitHubPublisherError:
             normalized_provider_message = _sanitize_github_error_message(provider_message)
-            detail_suffix = ""
+            normalized_payload_keys = tuple(
+                str(item).strip() for item in (payload_keys or ()) if str(item).strip()
+            )
+            detail_parts: list[str] = []
+            if request_path:
+                detail_parts.append(f"request_path={request_path}")
+            if normalized_payload_keys:
+                detail_parts.append(f"payload_keys={','.join(normalized_payload_keys)}")
             if normalized_provider_message:
-                detail_suffix = f"; detail={normalized_provider_message}"
+                detail_parts.append(f"detail={normalized_provider_message}")
+            detail_suffix = ""
+            if detail_parts:
+                detail_suffix = ";" + ";".join(detail_parts)
             return SEOMigrationGitHubPublisherError(
                 code=_GITHUB_REASON_REPO_INITIALIZATION_FAILED,
                 safe_message=(
@@ -3291,6 +3356,8 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         if not normalized_business_id or not normalized_site_id:
             raise _raise_init_failed(
                 step_failed="blob",
+                request_path=f"/repos/{urllib.parse.quote(repo_owner)}/{urllib.parse.quote(repo_name)}/git/blobs",
+                payload_keys=("content", "encoding"),
                 safe_message="GitHub repository bootstrap requires managed ownership metadata and cannot proceed.",
             )
         baseline_files = _render_repo_baseline_files(
@@ -3325,6 +3392,8 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             except SEOMigrationGitHubPublisherError as exc:
                 raise _raise_init_failed(
                     step_failed="blob",
+                    request_path=f"/repos/{urllib.parse.quote(repo_owner)}/{urllib.parse.quote(repo_name)}/git/blobs",
+                    payload_keys=("content", "encoding"),
                     status_code=exc.status_code,
                     provider_message=exc.provider_message or exc.safe_message,
                 ) from exc
@@ -3332,15 +3401,18 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             if not blob_sha:
                 raise _raise_init_failed(
                     step_failed="blob",
+                    request_path=f"/repos/{urllib.parse.quote(repo_owner)}/{urllib.parse.quote(repo_name)}/git/blobs",
+                    payload_keys=("content", "encoding"),
                     safe_message="GitHub repository initialization failed before workflow provisioning.",
                     provider_message=f"missing_blob_sha_for_path={baseline_path}",
                 )
             blob_sha_by_path[baseline_path] = blob_sha
 
+        tree_request_path = f"/repos/{urllib.parse.quote(repo_owner)}/{urllib.parse.quote(repo_name)}/git/trees"
         try:
             tree_payload = self._request_json(
                 method="POST",
-                path=f"/repos/{urllib.parse.quote(repo_owner)}/{urllib.parse.quote(repo_name)}/git/trees",
+                path=tree_request_path,
                 payload={
                     "tree": [
                         {
@@ -3368,6 +3440,8 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         except SEOMigrationGitHubPublisherError as exc:
             raise _raise_init_failed(
                 step_failed="tree",
+                request_path=tree_request_path,
+                payload_keys=("tree",),
                 status_code=exc.status_code,
                 provider_message=exc.provider_message or exc.safe_message,
             ) from exc
@@ -3375,13 +3449,16 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         if not tree_sha:
             raise _raise_init_failed(
                 step_failed="tree",
+                request_path=tree_request_path,
+                payload_keys=("tree",),
                 provider_message="missing_tree_sha",
             )
 
+        commit_request_path = f"/repos/{urllib.parse.quote(repo_owner)}/{urllib.parse.quote(repo_name)}/git/commits"
         try:
             commit_payload = self._request_json(
                 method="POST",
-                path=f"/repos/{urllib.parse.quote(repo_owner)}/{urllib.parse.quote(repo_name)}/git/commits",
+                path=commit_request_path,
                 payload={
                     "message": "chore(migration): initialize repository for managed publish bootstrap",
                     "tree": tree_sha,
@@ -3403,6 +3480,8 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         except SEOMigrationGitHubPublisherError as exc:
             raise _raise_init_failed(
                 step_failed="commit",
+                request_path=commit_request_path,
+                payload_keys=("message", "tree", "parents"),
                 status_code=exc.status_code,
                 provider_message=exc.provider_message or exc.safe_message,
             ) from exc
@@ -3410,13 +3489,16 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         if not commit_sha:
             raise _raise_init_failed(
                 step_failed="commit",
+                request_path=commit_request_path,
+                payload_keys=("message", "tree", "parents"),
                 provider_message="missing_commit_sha",
             )
 
+        ref_request_path = f"/repos/{urllib.parse.quote(repo_owner)}/{urllib.parse.quote(repo_name)}/git/refs"
         try:
             self._request_json(
                 method="POST",
-                path=f"/repos/{urllib.parse.quote(repo_owner)}/{urllib.parse.quote(repo_name)}/git/refs",
+                path=ref_request_path,
                 payload={
                     "ref": f"refs/heads/{branch}",
                     "sha": commit_sha,
@@ -3437,6 +3519,8 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         except SEOMigrationGitHubPublisherError as exc:
             raise _raise_init_failed(
                 step_failed="ref",
+                request_path=ref_request_path,
+                payload_keys=("ref", "sha"),
                 status_code=exc.status_code,
                 provider_message=exc.provider_message or exc.safe_message,
             ) from exc
@@ -3993,6 +4077,74 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 fallback_message="seo_migration_repo_management_marker_check",
                 level=(logging.INFO if not management_state.blocker_code else logging.WARNING),
             )
+            effective_business_id = _normalize_repo_management_id(business_id)
+            effective_site_id = _normalize_repo_management_id(site_id)
+            if (
+                not dry_run
+                and bool(repository_auto_create_created)
+                and management_state.blocker_code == _GITHUB_REASON_REPO_MANAGEMENT_MARKER_MISSING
+                and effective_business_id
+                and effective_site_id
+            ):
+                baseline_reconcile_result = self._reconcile_managed_repo_baseline_files(
+                    repo_owner=repo_owner,
+                    repo_name=repo_name,
+                    branch=branch,
+                    business_id=effective_business_id,
+                    site_id=effective_site_id,
+                    dry_run=False,
+                )
+                _emit_structured_publisher_log(
+                    payload={
+                        "event": "seo_migration_repo_baseline_reconciliation",
+                        "repo_owner": repo_owner,
+                        "repo_name": repo_name,
+                        "ref": branch,
+                        "repo_baseline_required": baseline_reconcile_result.get("repo_baseline_required"),
+                        "repo_baseline_initialized": bool(repository_auto_create_created),
+                        "repo_baseline_reconciled": baseline_reconcile_result.get("repo_baseline_reconciled"),
+                        "repo_management_marker_present": management_state.marker_present,
+                        "repo_management_marker_valid": management_state.marker_valid,
+                        "readme_present": baseline_reconcile_result.get("readme_present"),
+                        "gitignore_present": baseline_reconcile_result.get("gitignore_present"),
+                        "license_present": baseline_reconcile_result.get("license_present"),
+                    },
+                    fallback_message="seo_migration_repo_baseline_reconciliation",
+                    level=logging.INFO,
+                )
+                repo_initialized = self._is_repository_initialized(
+                    repo_owner=repo_owner,
+                    repo_name=repo_name,
+                    default_branch=default_branch,
+                )
+                management_state = self._evaluate_repo_management_state(
+                    repo_owner=repo_owner,
+                    repo_name=repo_name,
+                    target_ref=branch,
+                    expected_business_id=effective_business_id,
+                    expected_site_id=effective_site_id,
+                    repo_initialized=repo_initialized,
+                    default_branch=default_branch,
+                    error_stage="workflow_provisioning",
+                )
+                _emit_structured_publisher_log(
+                    payload={
+                        "event": "seo_migration_repo_management_marker_check",
+                        "repo_owner": repo_owner,
+                        "repo_name": repo_name,
+                        "ref": branch,
+                        "repo_initialized": repo_initialized,
+                        "repo_management_status": management_state.status,
+                        "repo_management_marker_present": management_state.marker_present,
+                        "repo_management_marker_valid": management_state.marker_valid,
+                        "repo_management_marker_matches_site": management_state.marker_matches_site,
+                        "repo_management_marker_source_ref": management_state.source_ref,
+                        "repo_management_blocker_code": management_state.blocker_code,
+                        "repo_management_recheck_after_baseline_reconcile": True,
+                    },
+                    fallback_message="seo_migration_repo_management_marker_check",
+                    level=(logging.INFO if not management_state.blocker_code else logging.WARNING),
+                )
             if management_state.blocker_code:
                 raise SEOMigrationGitHubPublisherError(
                     code=management_state.blocker_code,
@@ -5262,6 +5414,7 @@ _MBSRN_MANAGED_REPO_BASELINE_GITIGNORE_PATH = ".gitignore"
 _MBSRN_MANAGED_REPO_BASELINE_LICENSE_PATH = "LICENSE"
 _MBSRN_MANAGED_REPO_BASELINE_TARGET_VISIBILITY = "private"
 _MBSRN_MANAGED_REPO_BASELINE_RECONCILE_PATHS: tuple[str, ...] = (
+    _MBSRN_REPO_MANAGEMENT_MARKER_PATH,
     _MBSRN_MANAGED_REPO_BASELINE_README_PATH,
     _MBSRN_MANAGED_REPO_BASELINE_GITIGNORE_PATH,
     _MBSRN_MANAGED_REPO_BASELINE_LICENSE_PATH,
@@ -6762,6 +6915,37 @@ def _extract_repo_initialization_step(value: object) -> str | None:
     if step in {"blob", "tree", "commit", "ref"}:
         return step
     return None
+
+
+def _extract_repo_initialization_request_path(value: object) -> str | None:
+    normalized = _coerce_string(value)
+    if not normalized:
+        return None
+    lowered = normalized.strip().lower()
+    prefix = "request_path="
+    marker_index = lowered.find(prefix)
+    if marker_index < 0:
+        return None
+    remainder = lowered[marker_index + len(prefix) :]
+    request_path = remainder.split(";", 1)[0].strip()
+    return request_path or None
+
+
+def _extract_repo_initialization_payload_keys(value: object) -> tuple[str, ...] | None:
+    normalized = _coerce_string(value)
+    if not normalized:
+        return None
+    lowered = normalized.strip().lower()
+    prefix = "payload_keys="
+    marker_index = lowered.find(prefix)
+    if marker_index < 0:
+        return None
+    remainder = lowered[marker_index + len(prefix) :]
+    payload_keys_value = remainder.split(";", 1)[0].strip()
+    if not payload_keys_value:
+        return None
+    keys = tuple(item.strip() for item in payload_keys_value.split(",") if item.strip())
+    return keys or None
 
 
 def _should_treat_ref_check_as_uninitialized(exc: SEOMigrationGitHubPublisherError) -> bool:

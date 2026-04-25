@@ -12164,6 +12164,7 @@ def _derive_repo_ensure_outcome(
             "repo_create_failed_invalid_name": "failed_invalid_name",
             "repo_create_failed_conflict": "failed_conflict",
             "repo_create_failed_runtime_unavailable": "failed_runtime_unavailable",
+            "github_repo_requires_manual_initialization": "failed_manual_initialization_required",
             "repo_auto_create_disabled": "skipped_policy_disabled",
         }
         return failure_map.get(normalized_failure, "failed_unknown")
@@ -12182,6 +12183,7 @@ def _derive_repo_ensure_outcome(
         "failed_owner_mismatch",
         "failed_conflict",
         "failed_runtime_unavailable",
+        "failed_manual_initialization_required",
     }:
         return normalized_outcome
     if normalized_outcome == "repo_missing":
@@ -12204,6 +12206,7 @@ def _map_publish_preflight_blocker_codes(blocker_code: str) -> list[str]:
         "github_branch_not_found_or_uninitialized",
         "github_repo_state_invalid_for_bootstrap",
         "github_repo_initialization_failed",
+        "github_repo_requires_manual_initialization",
         "github_repo_management_marker_missing",
         "github_repo_management_marker_mismatch",
         "github_repo_management_marker_invalid",
@@ -12246,6 +12249,10 @@ def _derive_publish_preflight_blocker_message(
     }:
         return (
             "Publish target branch is missing or uninitialized and cannot be bootstrapped with current runtime permissions."
+        )
+    if normalized_lower == "github_repo_requires_manual_initialization":
+        return (
+            "Publish target repository is empty and must be manually initialized before managed publish can proceed."
         )
     if normalized_lower == "github_repo_management_marker_missing":
         return (
@@ -12294,6 +12301,7 @@ def _normalize_deploy_failure_reason_code(value: object) -> str | None:
         "github_branch_not_found_or_uninitialized",
         "github_repo_state_invalid_for_bootstrap",
         "github_repo_initialization_failed",
+        "github_repo_requires_manual_initialization",
     }
     if normalized_lower in allowed:
         return normalized_lower

@@ -129,6 +129,7 @@ def _repo_management_marker_invalid_response(*, sha: str = "marker-invalid-sha")
 
 def _managed_repo_baseline_present_responses() -> list[_FakeHTTPResponse]:
     return [
+        _FakeHTTPResponse(status=200, body=json.dumps({"sha": "marker-sha"})),
         _FakeHTTPResponse(status=200, body=json.dumps({"sha": "readme-sha"})),
         _FakeHTTPResponse(status=200, body=json.dumps({"sha": "gitignore-sha"})),
         _FakeHTTPResponse(status=200, body=json.dumps({"sha": "license-sha"})),
@@ -390,19 +391,30 @@ def test_ensure_repository_missing_repo_with_auto_create_disabled_raises_precise
 def test_ensure_repository_missing_repo_with_auto_create_enabled_creates_repository(monkeypatch) -> None:
     publisher = GitHubSEOMigrationPublisher(token="test-token")
     calls: list[tuple[str, str]] = []
-    _install_urlopen_stub(
-        monkeypatch,
-        [
-            _http_error(
-                "https://api.github.com/repos/mhanson13/tnmfire",
-                status_code=404,
-                message="Not Found",
-            ),
-            _FakeHTTPResponse(status=201, body=json.dumps({"name": "tnmfire"})),
-            _FakeHTTPResponse(status=200, body=json.dumps({"full_name": "mhanson13/tnmfire"})),
-        ],
-        calls,
-    )
+    observed_payload: dict[str, object] = {}
+    queue = [
+        _http_error(
+            "https://api.github.com/repos/mhanson13/tnmfire",
+            status_code=404,
+            message="Not Found",
+        ),
+        _FakeHTTPResponse(status=201, body=json.dumps({"name": "tnmfire"})),
+        _FakeHTTPResponse(status=200, body=json.dumps({"full_name": "mhanson13/tnmfire"})),
+        _FakeHTTPResponse(status=200, body=json.dumps({"default_branch": "main"})),
+        _FakeHTTPResponse(status=200, body=json.dumps({"object": {"sha": "seed-sha"}})),
+    ]
+
+    def _stub(request, timeout=None):
+        del timeout
+        calls.append((request.get_method(), request.full_url))
+        if request.get_method() == "POST" and request.full_url == "https://api.github.com/orgs/mhanson13/repos":
+            observed_payload.update(json.loads((request.data or b"{}").decode("utf-8")))
+        next_item = queue.pop(0)
+        if isinstance(next_item, Exception):
+            raise next_item
+        return next_item
+
+    monkeypatch.setattr(urllib.request, "urlopen", _stub)
 
     result = publisher.ensure_repository(
         repo_owner="mhanson13",
@@ -416,10 +428,14 @@ def test_ensure_repository_missing_repo_with_auto_create_enabled_creates_reposit
     assert result.auto_create_attempted is True
     assert result.auto_create_created is True
     assert result.outcome == "repo_created"
+    assert observed_payload.get("private") is True
+    assert observed_payload.get("auto_init") is True
     assert calls == [
         ("GET", "https://api.github.com/repos/mhanson13/tnmfire"),
         ("POST", "https://api.github.com/orgs/mhanson13/repos"),
         ("GET", "https://api.github.com/repos/mhanson13/tnmfire"),
+        ("GET", "https://api.github.com/repos/mhanson13/tnmfire"),
+        ("GET", "https://api.github.com/repos/mhanson13/tnmfire/git/ref/heads/main"),
     ]
 
 
@@ -520,6 +536,8 @@ def test_ensure_repository_personal_owner_falls_back_to_user_create(monkeypatch)
             _FakeHTTPResponse(status=200, body=json.dumps({"login": "mhanson13"})),
             _FakeHTTPResponse(status=201, body=json.dumps({"name": "tnmfire"})),
             _FakeHTTPResponse(status=200, body=json.dumps({"full_name": "mhanson13/tnmfire"})),
+            _FakeHTTPResponse(status=200, body=json.dumps({"default_branch": "main"})),
+            _FakeHTTPResponse(status=200, body=json.dumps({"object": {"sha": "seed-sha"}})),
         ],
         calls,
     )
@@ -542,12 +560,15 @@ def test_ensure_repository_personal_owner_falls_back_to_user_create(monkeypatch)
         ("GET", "https://api.github.com/user"),
         ("POST", "https://api.github.com/user/repos"),
         ("GET", "https://api.github.com/repos/mhanson13/tnmfire"),
+        ("GET", "https://api.github.com/repos/mhanson13/tnmfire"),
+        ("GET", "https://api.github.com/repos/mhanson13/tnmfire/git/ref/heads/main"),
     ]
 
 
 def test_ensure_repository_auto_create_defaults_to_private_visibility(monkeypatch) -> None:
     publisher = GitHubSEOMigrationPublisher(token="test-token")
     observed_private_value: bool | None = None
+    observed_auto_init: bool | None = None
     queue = [
         _http_error(
             "https://api.github.com/repos/mhanson13/tnmfire",
@@ -556,14 +577,17 @@ def test_ensure_repository_auto_create_defaults_to_private_visibility(monkeypatc
         ),
         _FakeHTTPResponse(status=201, body=json.dumps({"name": "tnmfire"})),
         _FakeHTTPResponse(status=200, body=json.dumps({"full_name": "mhanson13/tnmfire"})),
+        _FakeHTTPResponse(status=200, body=json.dumps({"default_branch": "main"})),
+        _FakeHTTPResponse(status=200, body=json.dumps({"object": {"sha": "seed-sha"}})),
     ]
 
     def _stub(request, timeout=None):
-        nonlocal observed_private_value
+        nonlocal observed_private_value, observed_auto_init
         del timeout
         if request.get_method() == "POST" and request.full_url == "https://api.github.com/orgs/mhanson13/repos":
             payload = json.loads((request.data or b"{}").decode("utf-8"))
             observed_private_value = bool(payload.get("private"))
+            observed_auto_init = bool(payload.get("auto_init"))
         next_item = queue.pop(0)
         if isinstance(next_item, Exception):
             raise next_item
@@ -580,6 +604,7 @@ def test_ensure_repository_auto_create_defaults_to_private_visibility(monkeypatc
     )
 
     assert observed_private_value is True
+    assert observed_auto_init is True
 
 
 def test_run_publish_preflight_repo_exists_with_workflow_write_gap(monkeypatch) -> None:
@@ -690,9 +715,9 @@ def test_run_publish_preflight_repo_exists_with_missing_ref_reports_bootstrap_ac
     assert result.repo_initialized is False
     assert result.can_write_contents is True
     assert result.can_write_workflows is True
-    assert result.would_bootstrap_branch is True
-    assert result.preflight_status == "ready_with_actions"
-    assert result.preflight_blocker_code is None
+    assert result.would_bootstrap_branch is False
+    assert result.preflight_status == "blocked"
+    assert result.preflight_blocker_code == "github_repo_requires_manual_initialization"
     assert calls == [
         ("GET", "https://api.github.com/repos/mhanson13/tnmfire"),
         ("GET", "https://api.github.com/repos/mhanson13/tnmfire"),
@@ -1065,6 +1090,7 @@ def test_publish_files_reconciles_missing_repo_baseline_files_for_managed_repo(m
                 business_id="business-1",
                 site_id="site-1",
             ),
+            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "marker-sha"})),
             _http_error(
                 "https://api.github.com/repos/mhanson13/tnmfire/contents/README.md?ref=main",
                 status_code=404,
@@ -1152,6 +1178,7 @@ def test_publish_files_reconciles_only_missing_baseline_files_without_overwritin
                 business_id="business-1",
                 site_id="site-1",
             ),
+            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "marker-sha"})),
             _FakeHTTPResponse(status=200, body=json.dumps({"sha": "readme-sha"})),
             _http_error(
                 "https://api.github.com/repos/mhanson13/tnmfire/contents/.gitignore?ref=main",
@@ -1215,6 +1242,7 @@ def test_publish_files_classifies_repo_baseline_reconciliation_failure_precisely
                 business_id="business-1",
                 site_id="site-1",
             ),
+            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "marker-sha"})),
             _http_error(
                 "https://api.github.com/repos/mhanson13/tnmfire/contents/README.md?ref=main",
                 status_code=404,
@@ -3690,7 +3718,7 @@ def test_ensure_deploy_workflow_creates_missing_file_and_verifies_presence(monke
     assert any(call[1].endswith("/contents/k8s/backendconfig.yaml?ref=main") for call in calls)
 
 
-def test_ensure_deploy_workflow_bootstraps_uninitialized_repo_branch(monkeypatch) -> None:
+def test_ensure_deploy_workflow_existing_empty_repo_requires_manual_initialization(monkeypatch) -> None:
     calls: list[tuple[str, str]] = []
     queue: list[object] = [
         _FakeHTTPResponse(status=200, body=json.dumps({"full_name": "mhanson13/tnmfire"})),
@@ -3716,50 +3744,27 @@ def test_ensure_deploy_workflow_bootstraps_uninitialized_repo_branch(monkeypatch
             status_code=409,
             message="Git Repository is empty.",
         ),
-        _FakeHTTPResponse(status=201, body=json.dumps({"sha": "marker-blob-sha"})),
-        _FakeHTTPResponse(status=201, body=json.dumps({"sha": "readme-blob-sha"})),
-        _FakeHTTPResponse(status=201, body=json.dumps({"sha": "gitignore-blob-sha"})),
-        _FakeHTTPResponse(status=201, body=json.dumps({"sha": "license-blob-sha"})),
-        _FakeHTTPResponse(status=201, body=json.dumps({"sha": "tree-sha"})),
-        _FakeHTTPResponse(status=201, body=json.dumps({"sha": "commit-sha"})),
-        _FakeHTTPResponse(status=201, body="{}"),
-        _FakeHTTPResponse(status=200, body="{}"),
     ]
-    queue.extend(
-        _managed_file_upsert_responses(
-            managed_paths=(
-                ".github/workflows/deploy-tnmfire-www-prod.yml",
-                "k8s/namespace.yaml",
-                "k8s/deployment.yaml",
-                "k8s/service.yaml",
-                "k8s/ingress.yaml",
-                "k8s/managedcertificate.yaml",
-                "k8s/frontendconfig.yaml",
-                "k8s/backendconfig.yaml",
-            )
-        )
-    )
     _install_urlopen_stub(monkeypatch, queue, calls)
 
     publisher = GitHubSEOMigrationPublisher(token="test-token")
-    result = publisher.ensure_deploy_workflow(
-        repo_owner="mhanson13",
-        repo_name="tnmfire",
-        branch="main",
-        workflow_id="deploy-tnmfire-www-prod.yml",
-        dry_run=False,
-        business_id="business-1",
-        site_id="site-1",
-    )
+    with pytest.raises(SEOMigrationGitHubPublisherError) as exc_info:
+        publisher.ensure_deploy_workflow(
+            repo_owner="mhanson13",
+            repo_name="tnmfire",
+            branch="main",
+            workflow_id="deploy-tnmfire-www-prod.yml",
+            dry_run=False,
+            business_id="business-1",
+            site_id="site-1",
+        )
 
-    assert result.provisioned is True
-    assert any(method == "POST" and url.endswith("/git/blobs") for method, url in calls)
-    assert any(method == "POST" and url.endswith("/git/trees") for method, url in calls)
-    assert any(method == "POST" and url.endswith("/git/commits") for method, url in calls)
-    assert any(method == "POST" and url.endswith("/git/refs") for method, url in calls)
+    assert exc_info.value.code == "github_repo_requires_manual_initialization"
+    assert not any(method == "POST" and url.endswith("/git/blobs") for method, url in calls)
+    assert not any(method == "POST" and url.endswith("/contents/.github/workflows/deploy-tnmfire-www-prod.yml") for method, url in calls)
 
 
-def test_ensure_deploy_workflow_bootstraps_newly_created_repo_before_workflow_provisioning(
+def test_ensure_deploy_workflow_reconciles_baseline_for_newly_created_repo_before_workflow_provisioning(
     monkeypatch,
     caplog,
 ) -> None:
@@ -3767,10 +3772,11 @@ def test_ensure_deploy_workflow_bootstraps_newly_created_repo_before_workflow_pr
     queue: list[object] = [
         _FakeHTTPResponse(status=200, body=json.dumps({"full_name": "mhanson13/tnmfire"})),
         _FakeHTTPResponse(status=200, body=json.dumps({"default_branch": "main"})),
+        _FakeHTTPResponse(status=200, body=json.dumps({"object": {"sha": "main-sha"}})),
         _http_error(
-            "https://api.github.com/repos/mhanson13/tnmfire/git/ref/heads/main",
-            status_code=409,
-            message="Git Repository is empty.",
+            "https://api.github.com/repos/mhanson13/tnmfire/contents/mbsrn.key?ref=main",
+            status_code=404,
+            message="Not Found",
         ),
         _http_error(
             "https://api.github.com/repos/mhanson13/tnmfire/contents/mbsrn.key?ref=main",
@@ -3778,24 +3784,47 @@ def test_ensure_deploy_workflow_bootstraps_newly_created_repo_before_workflow_pr
             message="Not Found",
         ),
         _http_error(
-            "https://api.github.com/repos/mhanson13/tnmfire/branches/main",
+            "https://api.github.com/repos/mhanson13/tnmfire/contents/README.md?ref=main",
             status_code=404,
             message="Not Found",
         ),
-        _FakeHTTPResponse(status=200, body=json.dumps({"default_branch": "main"})),
         _http_error(
-            "https://api.github.com/repos/mhanson13/tnmfire/git/ref/heads/main",
-            status_code=409,
-            message="Git Repository is empty.",
+            "https://api.github.com/repos/mhanson13/tnmfire/contents/.gitignore?ref=main",
+            status_code=404,
+            message="Not Found",
         ),
-        _FakeHTTPResponse(status=201, body=json.dumps({"sha": "marker-blob-sha"})),
-        _FakeHTTPResponse(status=201, body=json.dumps({"sha": "readme-blob-sha"})),
-        _FakeHTTPResponse(status=201, body=json.dumps({"sha": "gitignore-blob-sha"})),
-        _FakeHTTPResponse(status=201, body=json.dumps({"sha": "license-blob-sha"})),
-        _FakeHTTPResponse(status=201, body=json.dumps({"sha": "tree-sha"})),
-        _FakeHTTPResponse(status=201, body=json.dumps({"sha": "commit-sha"})),
-        _FakeHTTPResponse(status=201, body="{}"),
-        _FakeHTTPResponse(status=200, body="{}"),
+        _http_error(
+            "https://api.github.com/repos/mhanson13/tnmfire/contents/LICENSE?ref=main",
+            status_code=404,
+            message="Not Found",
+        ),
+        _http_error(
+            "https://api.github.com/repos/mhanson13/tnmfire/contents/mbsrn.key?ref=main",
+            status_code=404,
+            message="Not Found",
+        ),
+        _FakeHTTPResponse(status=201, body=json.dumps({"commit": {"sha": "baseline-marker"}})),
+        _http_error(
+            "https://api.github.com/repos/mhanson13/tnmfire/contents/README.md?ref=main",
+            status_code=404,
+            message="Not Found",
+        ),
+        _FakeHTTPResponse(status=201, body=json.dumps({"commit": {"sha": "baseline-readme"}})),
+        _http_error(
+            "https://api.github.com/repos/mhanson13/tnmfire/contents/.gitignore?ref=main",
+            status_code=404,
+            message="Not Found",
+        ),
+        _FakeHTTPResponse(status=201, body=json.dumps({"commit": {"sha": "baseline-gitignore"}})),
+        _http_error(
+            "https://api.github.com/repos/mhanson13/tnmfire/contents/LICENSE?ref=main",
+            status_code=404,
+            message="Not Found",
+        ),
+        _FakeHTTPResponse(status=201, body=json.dumps({"commit": {"sha": "baseline-license"}})),
+        _FakeHTTPResponse(status=200, body=json.dumps({"object": {"sha": "main-sha"}})),
+        _repo_management_marker_response(),
+        _FakeHTTPResponse(status=200, body=json.dumps({"name": "main"})),
     ]
     queue.extend(
         _managed_file_upsert_responses(
@@ -3828,6 +3857,8 @@ def test_ensure_deploy_workflow_bootstraps_newly_created_repo_before_workflow_pr
     )
 
     assert result.provisioned is True
+    assert not any(method == "POST" and url.endswith("/git/blobs") for method, url in calls)
+    assert any(method == "PUT" and url.endswith("/contents/mbsrn.key") for method, url in calls)
     decision_logs = [
         record.msg
         for record in caplog.records
@@ -3835,12 +3866,7 @@ def test_ensure_deploy_workflow_bootstraps_newly_created_repo_before_workflow_pr
         and '"event": "seo_migration_workflow_provisioning_operation"' in record.msg
         and '"operation_kind": "repo_bootstrap_decision"' in record.msg
     ]
-    assert decision_logs
-    assert '"repository_auto_create_created": true' in decision_logs[-1]
-    assert any('"event": "repo_initialization_started"' in record.msg for record in caplog.records if isinstance(record.msg, str))
-    assert any(
-        '"event": "repo_initialization_completed"' in record.msg for record in caplog.records if isinstance(record.msg, str)
-    )
+    assert not decision_logs
 
 
 def test_bootstrap_repository_branch_writes_mbsrn_management_marker(monkeypatch) -> None:
@@ -3849,6 +3875,7 @@ def test_bootstrap_repository_branch_writes_mbsrn_management_marker(monkeypatch)
     captured_commit_payload: dict[str, object] = {}
     captured_ref_payload: dict[str, object] = {}
     blob_contents: list[str] = []
+    blob_payload_keys: list[tuple[str, ...]] = []
     queue: list[object] = [
         _FakeHTTPResponse(status=201, body=json.dumps({"sha": "marker-blob-sha"})),
         _FakeHTTPResponse(status=201, body=json.dumps({"sha": "readme-blob-sha"})),
@@ -3865,6 +3892,7 @@ def test_bootstrap_repository_branch_writes_mbsrn_management_marker(monkeypatch)
         if request.data and request.get_method() == "POST" and request.full_url.endswith("/git/blobs"):
             payload = json.loads(request.data.decode("utf-8"))
             blob_contents.append(str(payload.get("content") or ""))
+            blob_payload_keys.append(tuple(sorted(str(key) for key in payload.keys())))
         if request.data and request.get_method() == "POST" and request.full_url.endswith("/git/trees"):
             captured_tree_payload.update(json.loads(request.data.decode("utf-8")))
         if request.data and request.get_method() == "POST" and request.full_url.endswith("/git/commits"):
@@ -3892,6 +3920,13 @@ def test_bootstrap_repository_branch_writes_mbsrn_management_marker(monkeypatch)
     assert any(isinstance(item, dict) and item.get("path") == "README.md" for item in tree_entries)
     assert any(isinstance(item, dict) and item.get("path") == ".gitignore" for item in tree_entries)
     assert any(isinstance(item, dict) and item.get("path") == "LICENSE" for item in tree_entries)
+    assert calls[0][0] == "POST"
+    assert calls[0][1].endswith("/git/blobs")
+    assert not any("/contents/" in url for _, url in calls)
+    assert not any("/branches/" in url for _, url in calls)
+    assert not any("/git/ref/" in url for _, url in calls)
+    assert blob_payload_keys
+    assert all(keys == ("content", "encoding") for keys in blob_payload_keys)
     marker_blob_content = next((item for item in blob_contents if item.startswith("{")), "")
     assert marker_blob_content
     marker_payload = json.loads(marker_blob_content)
@@ -3984,9 +4019,12 @@ def test_bootstrap_repository_branch_step_failure_maps_to_repo_initialization_fa
     assert exc_info.value.code == "github_repo_initialization_failed"
     provider_message = str(exc_info.value.provider_message or "")
     assert f"step_failed={step_failed}" in provider_message
+    if step_failed == "blob":
+        assert "request_path=/repos/mhanson13/tnmfire/git/blobs" in provider_message
+        assert "payload_keys=content,encoding" in provider_message
 
 
-def test_ensure_deploy_workflow_bootstraps_when_ref_check_returns_409_empty_repo(monkeypatch) -> None:
+def test_ensure_deploy_workflow_ref_check_409_empty_repo_requires_manual_initialization(monkeypatch) -> None:
     calls: list[tuple[str, str]] = []
     queue: list[object] = [
         _FakeHTTPResponse(status=200, body=json.dumps({"full_name": "mhanson13/tnmfire"})),
@@ -4012,50 +4050,26 @@ def test_ensure_deploy_workflow_bootstraps_when_ref_check_returns_409_empty_repo
             status_code=409,
             message="Git Repository is empty.",
         ),
-        _FakeHTTPResponse(status=201, body=json.dumps({"sha": "marker-blob-sha"})),
-        _FakeHTTPResponse(status=201, body=json.dumps({"sha": "readme-blob-sha"})),
-        _FakeHTTPResponse(status=201, body=json.dumps({"sha": "gitignore-blob-sha"})),
-        _FakeHTTPResponse(status=201, body=json.dumps({"sha": "license-blob-sha"})),
-        _FakeHTTPResponse(status=201, body=json.dumps({"sha": "tree-sha"})),
-        _FakeHTTPResponse(status=201, body=json.dumps({"sha": "commit-sha"})),
-        _FakeHTTPResponse(status=201, body="{}"),
-        _FakeHTTPResponse(status=200, body="{}"),
     ]
-    queue.extend(
-        _managed_file_upsert_responses(
-            managed_paths=(
-                ".github/workflows/deploy-tnmfire-www-prod.yml",
-                "k8s/namespace.yaml",
-                "k8s/deployment.yaml",
-                "k8s/service.yaml",
-                "k8s/ingress.yaml",
-                "k8s/managedcertificate.yaml",
-                "k8s/frontendconfig.yaml",
-                "k8s/backendconfig.yaml",
-            )
-        )
-    )
     _install_urlopen_stub(monkeypatch, queue, calls)
 
     publisher = GitHubSEOMigrationPublisher(token="test-token")
-    result = publisher.ensure_deploy_workflow(
-        repo_owner="mhanson13",
-        repo_name="tnmfire",
-        branch="main",
-        workflow_id="deploy-tnmfire-www-prod.yml",
-        dry_run=False,
-        business_id="business-1",
-        site_id="site-1",
-    )
+    with pytest.raises(SEOMigrationGitHubPublisherError) as exc_info:
+        publisher.ensure_deploy_workflow(
+            repo_owner="mhanson13",
+            repo_name="tnmfire",
+            branch="main",
+            workflow_id="deploy-tnmfire-www-prod.yml",
+            dry_run=False,
+            business_id="business-1",
+            site_id="site-1",
+        )
 
-    assert result.provisioned is True
-    assert any(method == "POST" and url.endswith("/git/blobs") for method, url in calls)
-    assert any(method == "POST" and url.endswith("/git/trees") for method, url in calls)
-    assert any(method == "POST" and url.endswith("/git/commits") for method, url in calls)
-    assert any(method == "POST" and url.endswith("/git/refs") for method, url in calls)
+    assert exc_info.value.code == "github_repo_requires_manual_initialization"
+    assert not any(method == "POST" and url.endswith("/git/blobs") for method, url in calls)
 
 
-def test_ensure_deploy_workflow_bootstraps_when_ref_check_raises_generic_409_empty_repo(
+def test_ensure_deploy_workflow_ref_check_generic_409_empty_repo_logs_manual_init_requirement(
     monkeypatch,
     caplog,
 ) -> None:
@@ -4079,29 +4093,7 @@ def test_ensure_deploy_workflow_bootstraps_when_ref_check_raises_generic_409_emp
             status_code=409,
             message="Git Repository is empty.",
         ),
-        _FakeHTTPResponse(status=201, body=json.dumps({"sha": "marker-blob-sha"})),
-        _FakeHTTPResponse(status=201, body=json.dumps({"sha": "readme-blob-sha"})),
-        _FakeHTTPResponse(status=201, body=json.dumps({"sha": "gitignore-blob-sha"})),
-        _FakeHTTPResponse(status=201, body=json.dumps({"sha": "license-blob-sha"})),
-        _FakeHTTPResponse(status=201, body=json.dumps({"sha": "tree-sha"})),
-        _FakeHTTPResponse(status=201, body=json.dumps({"sha": "commit-sha"})),
-        _FakeHTTPResponse(status=201, body="{}"),
-        _FakeHTTPResponse(status=200, body="{}"),
     ]
-    queue.extend(
-        _managed_file_upsert_responses(
-            managed_paths=(
-                ".github/workflows/deploy-tnmfire-www-prod.yml",
-                "k8s/namespace.yaml",
-                "k8s/deployment.yaml",
-                "k8s/service.yaml",
-                "k8s/ingress.yaml",
-                "k8s/managedcertificate.yaml",
-                "k8s/frontendconfig.yaml",
-                "k8s/backendconfig.yaml",
-            )
-        )
-    )
     _install_urlopen_stub(monkeypatch, queue, calls)
     caplog.set_level("INFO", logger="app.integrations.seo_migration_github_publisher")
 
@@ -4124,21 +4116,22 @@ def test_ensure_deploy_workflow_bootstraps_when_ref_check_raises_generic_409_emp
         return original_request_json(**kwargs)
 
     monkeypatch.setattr(publisher, "_request_json", _patched_request_json)
-    result = publisher.ensure_deploy_workflow(
-        repo_owner="mhanson13",
-        repo_name="tnmfire",
-        branch="main",
-        workflow_id="deploy-tnmfire-www-prod.yml",
-        dry_run=False,
-        business_id="business-1",
-        site_id="site-1",
-        artifact_version_id="artifact-1",
-        repository_auto_create_created=False,
-    )
+    with pytest.raises(SEOMigrationGitHubPublisherError) as exc_info:
+        publisher.ensure_deploy_workflow(
+            repo_owner="mhanson13",
+            repo_name="tnmfire",
+            branch="main",
+            workflow_id="deploy-tnmfire-www-prod.yml",
+            dry_run=False,
+            business_id="business-1",
+            site_id="site-1",
+            artifact_version_id="artifact-1",
+            repository_auto_create_created=False,
+        )
 
-    assert result.provisioned is True
+    assert exc_info.value.code == "github_repo_requires_manual_initialization"
     assert branch_check_intercepted["done"] is True
-    assert any(method == "POST" and url.endswith("/git/blobs") for method, url in calls)
+    assert not any(method == "POST" and url.endswith("/git/blobs") for method, url in calls)
     decision_logs = [
         record
         for record in caplog.records
@@ -4148,7 +4141,7 @@ def test_ensure_deploy_workflow_bootstraps_when_ref_check_raises_generic_409_emp
     ]
     assert decision_logs
     assert '"bootstrap_decision_source": "ref_check_uninitialized"' in decision_logs[-1].msg
-    assert '"will_attempt_bootstrap": true' in decision_logs[-1].msg
+    assert '"will_attempt_bootstrap": false' in decision_logs[-1].msg
     assert '"repository_auto_create_created": false' in decision_logs[-1].msg
     assert '"allow_repair": true' in decision_logs[-1].msg
     assert '"bootstrap_allowed": true' in decision_logs[-1].msg
@@ -4158,6 +4151,10 @@ def test_ensure_deploy_workflow_bootstraps_when_ref_check_raises_generic_409_emp
     assert '"artifact_version_id": "artifact-1"' in decision_logs[-1].msg
     assert '"business_id": "business-1"' in decision_logs[-1].msg
     assert '"site_id": "site-1"' in decision_logs[-1].msg
+    assert any(
+        isinstance(record.msg, str) and '"event": "repo_requires_manual_initialization"' in record.msg
+        for record in caplog.records
+    )
 
 
 def test_ensure_deploy_workflow_logs_bootstrap_blocked_context_when_dry_run(
@@ -4222,7 +4219,10 @@ def test_ensure_deploy_workflow_logs_bootstrap_blocked_context_when_dry_run(
     assert '"site_id": "site-1"' in decision_logs[-1].msg
 
 
-def test_ensure_deploy_workflow_ref_check_409_bootstrap_failure_preserves_precise_code(monkeypatch) -> None:
+def test_ensure_deploy_workflow_ref_check_409_empty_repo_preserves_manual_init_code(
+    monkeypatch,
+    caplog,
+) -> None:
     calls: list[tuple[str, str]] = []
     queue: list[object] = [
         _FakeHTTPResponse(status=200, body=json.dumps({"full_name": "mhanson13/tnmfire"})),
@@ -4248,9 +4248,9 @@ def test_ensure_deploy_workflow_ref_check_409_bootstrap_failure_preserves_precis
             status_code=409,
             message="Git Repository is empty.",
         ),
-        _FakeHTTPResponse(status=201, body=json.dumps({})),
     ]
     _install_urlopen_stub(monkeypatch, queue, calls)
+    caplog.set_level("INFO", logger="app.integrations.seo_migration_github_publisher")
 
     publisher = GitHubSEOMigrationPublisher(token="test-token")
     with pytest.raises(SEOMigrationGitHubPublisherError) as exc_info:
@@ -4264,11 +4264,18 @@ def test_ensure_deploy_workflow_ref_check_409_bootstrap_failure_preserves_precis
             site_id="site-1",
         )
 
-    assert exc_info.value.code == "github_repo_initialization_failed"
+    assert exc_info.value.code == "github_repo_requires_manual_initialization"
     assert exc_info.value.stage == "workflow_provisioning"
+    failed_logs = [
+        record.msg
+        for record in caplog.records
+        if isinstance(record.msg, str) and '"event": "repo_requires_manual_initialization"' in record.msg
+    ]
+    assert failed_logs
+    assert '"step_failed": "manual_initialization_required"' in failed_logs[-1]
 
 
-def test_ensure_deploy_workflow_bootstraps_when_default_ref_lookup_returns_404(monkeypatch) -> None:
+def test_ensure_deploy_workflow_default_ref_lookup_404_requires_manual_initialization(monkeypatch) -> None:
     calls: list[tuple[str, str]] = []
     queue: list[object] = [
         _FakeHTTPResponse(status=200, body=json.dumps({"full_name": "mhanson13/tnmfire"})),
@@ -4294,47 +4301,23 @@ def test_ensure_deploy_workflow_bootstraps_when_default_ref_lookup_returns_404(m
             status_code=404,
             message="Reference does not exist",
         ),
-        _FakeHTTPResponse(status=201, body=json.dumps({"sha": "marker-blob-sha"})),
-        _FakeHTTPResponse(status=201, body=json.dumps({"sha": "readme-blob-sha"})),
-        _FakeHTTPResponse(status=201, body=json.dumps({"sha": "gitignore-blob-sha"})),
-        _FakeHTTPResponse(status=201, body=json.dumps({"sha": "license-blob-sha"})),
-        _FakeHTTPResponse(status=201, body=json.dumps({"sha": "tree-sha"})),
-        _FakeHTTPResponse(status=201, body=json.dumps({"sha": "commit-sha"})),
-        _FakeHTTPResponse(status=201, body="{}"),
-        _FakeHTTPResponse(status=200, body="{}"),
     ]
-    queue.extend(
-        _managed_file_upsert_responses(
-            managed_paths=(
-                ".github/workflows/deploy-tnmfire-www-prod.yml",
-                "k8s/namespace.yaml",
-                "k8s/deployment.yaml",
-                "k8s/service.yaml",
-                "k8s/ingress.yaml",
-                "k8s/managedcertificate.yaml",
-                "k8s/frontendconfig.yaml",
-                "k8s/backendconfig.yaml",
-            )
-        )
-    )
     _install_urlopen_stub(monkeypatch, queue, calls)
 
     publisher = GitHubSEOMigrationPublisher(token="test-token")
-    result = publisher.ensure_deploy_workflow(
-        repo_owner="mhanson13",
-        repo_name="tnmfire",
-        branch="main",
-        workflow_id="deploy-tnmfire-www-prod.yml",
-        dry_run=False,
-        business_id="business-1",
-        site_id="site-1",
-    )
+    with pytest.raises(SEOMigrationGitHubPublisherError) as exc_info:
+        publisher.ensure_deploy_workflow(
+            repo_owner="mhanson13",
+            repo_name="tnmfire",
+            branch="main",
+            workflow_id="deploy-tnmfire-www-prod.yml",
+            dry_run=False,
+            business_id="business-1",
+            site_id="site-1",
+        )
 
-    assert result.provisioned is True
-    assert any(method == "POST" and url.endswith("/git/blobs") for method, url in calls)
-    assert any(method == "POST" and url.endswith("/git/trees") for method, url in calls)
-    assert any(method == "POST" and url.endswith("/git/commits") for method, url in calls)
-    assert any(method == "POST" and url.endswith("/git/refs") for method, url in calls)
+    assert exc_info.value.code == "github_repo_requires_manual_initialization"
+    assert not any(method == "POST" and url.endswith("/git/blobs") for method, url in calls)
 
 
 def test_ensure_deploy_workflow_initialized_repo_does_not_bootstrap(monkeypatch) -> None:
