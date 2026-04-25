@@ -768,6 +768,7 @@ Publish behavior:
   - `repo_initialization_started`
   - `repo_initialization_completed`
   - `repo_initialization_failed`
+  - failure logs include `step_failed` (`blob`, `tree`, `commit`, `ref`) for precise bootstrap-stage diagnosis
   - paired decision trace:
     - `event=seo_migration_workflow_provisioning_operation`
     - `operation_kind=repo_bootstrap_decision`

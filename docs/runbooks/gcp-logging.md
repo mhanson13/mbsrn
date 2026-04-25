@@ -589,6 +589,11 @@ Repository Initialization Phase:
     - `bootstrap_allowed`
     - `will_attempt_bootstrap`
     - `bootstrap_blocked_reason` (when bootstrap is intentionally disabled, e.g. dry-run)
+  - `repo_initialization_failed` includes `step_failed` so failures are attributable to Git Data API stage:
+    - `blob`
+    - `tree`
+    - `commit`
+    - `ref`
 - key operation fields:
   - `operation_kind`
   - `operation_status`

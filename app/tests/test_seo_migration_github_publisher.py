@@ -3846,6 +3846,8 @@ def test_ensure_deploy_workflow_bootstraps_newly_created_repo_before_workflow_pr
 def test_bootstrap_repository_branch_writes_mbsrn_management_marker(monkeypatch) -> None:
     calls: list[tuple[str, str]] = []
     captured_tree_payload: dict[str, object] = {}
+    captured_commit_payload: dict[str, object] = {}
+    captured_ref_payload: dict[str, object] = {}
     blob_contents: list[str] = []
     queue: list[object] = [
         _FakeHTTPResponse(status=201, body=json.dumps({"sha": "marker-blob-sha"})),
@@ -3865,6 +3867,10 @@ def test_bootstrap_repository_branch_writes_mbsrn_management_marker(monkeypatch)
             blob_contents.append(str(payload.get("content") or ""))
         if request.data and request.get_method() == "POST" and request.full_url.endswith("/git/trees"):
             captured_tree_payload.update(json.loads(request.data.decode("utf-8")))
+        if request.data and request.get_method() == "POST" and request.full_url.endswith("/git/commits"):
+            captured_commit_payload.update(json.loads(request.data.decode("utf-8")))
+        if request.data and request.get_method() == "POST" and request.full_url.endswith("/git/refs"):
+            captured_ref_payload.update(json.loads(request.data.decode("utf-8")))
         next_item = queue.pop(0)
         if isinstance(next_item, Exception):
             raise next_item
@@ -3893,6 +3899,91 @@ def test_bootstrap_repository_branch_writes_mbsrn_management_marker(monkeypatch)
     assert marker_payload.get("site_id") == "site-1"
     assert any("# Byte-compiled / optimized / DLL files" in item for item in blob_contents)
     assert any(item.startswith("Apache License") for item in blob_contents)
+    assert captured_commit_payload.get("parents") == []
+    assert captured_ref_payload.get("ref") == "refs/heads/main"
+
+
+@pytest.mark.parametrize(
+    ("step_failed", "queue"),
+    [
+        (
+            "blob",
+            [
+                _http_error(
+                    "https://api.github.com/repos/mhanson13/tnmfire/git/blobs",
+                    status_code=403,
+                    message="Resource not accessible by integration",
+                ),
+            ],
+        ),
+        (
+            "tree",
+            [
+                _FakeHTTPResponse(status=201, body=json.dumps({"sha": "marker-blob-sha"})),
+                _FakeHTTPResponse(status=201, body=json.dumps({"sha": "readme-blob-sha"})),
+                _FakeHTTPResponse(status=201, body=json.dumps({"sha": "gitignore-blob-sha"})),
+                _FakeHTTPResponse(status=201, body=json.dumps({"sha": "license-blob-sha"})),
+                _http_error(
+                    "https://api.github.com/repos/mhanson13/tnmfire/git/trees",
+                    status_code=500,
+                    message="Internal Server Error",
+                ),
+            ],
+        ),
+        (
+            "commit",
+            [
+                _FakeHTTPResponse(status=201, body=json.dumps({"sha": "marker-blob-sha"})),
+                _FakeHTTPResponse(status=201, body=json.dumps({"sha": "readme-blob-sha"})),
+                _FakeHTTPResponse(status=201, body=json.dumps({"sha": "gitignore-blob-sha"})),
+                _FakeHTTPResponse(status=201, body=json.dumps({"sha": "license-blob-sha"})),
+                _FakeHTTPResponse(status=201, body=json.dumps({"sha": "tree-sha"})),
+                _http_error(
+                    "https://api.github.com/repos/mhanson13/tnmfire/git/commits",
+                    status_code=422,
+                    message="Validation failed",
+                ),
+            ],
+        ),
+        (
+            "ref",
+            [
+                _FakeHTTPResponse(status=201, body=json.dumps({"sha": "marker-blob-sha"})),
+                _FakeHTTPResponse(status=201, body=json.dumps({"sha": "readme-blob-sha"})),
+                _FakeHTTPResponse(status=201, body=json.dumps({"sha": "gitignore-blob-sha"})),
+                _FakeHTTPResponse(status=201, body=json.dumps({"sha": "license-blob-sha"})),
+                _FakeHTTPResponse(status=201, body=json.dumps({"sha": "tree-sha"})),
+                _FakeHTTPResponse(status=201, body=json.dumps({"sha": "commit-sha"})),
+                _http_error(
+                    "https://api.github.com/repos/mhanson13/tnmfire/git/refs",
+                    status_code=422,
+                    message="Reference update failed",
+                ),
+            ],
+        ),
+    ],
+)
+def test_bootstrap_repository_branch_step_failure_maps_to_repo_initialization_failed(
+    monkeypatch,
+    step_failed: str,
+    queue: list[object],
+) -> None:
+    calls: list[tuple[str, str]] = []
+    _install_urlopen_stub(monkeypatch, queue, calls)
+
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    with pytest.raises(SEOMigrationGitHubPublisherError) as exc_info:
+        publisher._bootstrap_repository_branch(
+            repo_owner="mhanson13",
+            repo_name="tnmfire",
+            branch="main",
+            business_id="business-1",
+            site_id="site-1",
+        )
+
+    assert exc_info.value.code == "github_repo_initialization_failed"
+    provider_message = str(exc_info.value.provider_message or "")
+    assert f"step_failed={step_failed}" in provider_message
 
 
 def test_ensure_deploy_workflow_bootstraps_when_ref_check_returns_409_empty_repo(monkeypatch) -> None:
