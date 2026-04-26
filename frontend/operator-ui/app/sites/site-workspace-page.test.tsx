@@ -25,6 +25,7 @@ import type {
   MigrationDeployActionResponse,
   MigrationHistoryListResponse,
   MigrationPublishActionResponse,
+  MigrationRepositoryAdoptActionResponse,
   MigrationArtifactVersionListResponse,
   MigrationWorkspace,
   MigrationWorkspaceSummary,
@@ -122,6 +123,7 @@ const mockUpdateMigrationAnalyticsConfig = jest.fn<Promise<MigrationWorkspace>, 
 const mockDeleteMigrationArtifactVersion = jest.fn<Promise<MigrationArtifactDeleteActionResponse>, unknown[]>();
 const mockApproveMigrationArtifactVersion = jest.fn<Promise<MigrationArtifactVersion>, unknown[]>();
 const mockPublishMigrationArtifactVersion = jest.fn<Promise<MigrationPublishActionResponse>, unknown[]>();
+const mockAdoptMigrationPublishRepository = jest.fn<Promise<MigrationRepositoryAdoptActionResponse>, unknown[]>();
 const mockDeployMigrationArtifactVersion = jest.fn<Promise<MigrationDeployActionResponse>, unknown[]>();
 const mockRefreshMigrationDeployStatus = jest.fn<Promise<MigrationDeployActionResponse>, unknown[]>();
 const mockFetchMigrationPublishHistory = jest.fn<Promise<MigrationHistoryListResponse>, unknown[]>();
@@ -190,6 +192,7 @@ jest.mock("../../lib/api/client", () => {
     deleteMigrationArtifactVersion: (...args: unknown[]) => mockDeleteMigrationArtifactVersion(...args),
     approveMigrationArtifactVersion: (...args: unknown[]) => mockApproveMigrationArtifactVersion(...args),
     publishMigrationArtifactVersion: (...args: unknown[]) => mockPublishMigrationArtifactVersion(...args),
+    adoptMigrationPublishRepository: (...args: unknown[]) => mockAdoptMigrationPublishRepository(...args),
     deployMigrationArtifactVersion: (...args: unknown[]) => mockDeployMigrationArtifactVersion(...args),
     refreshMigrationDeployStatus: (...args: unknown[]) => mockRefreshMigrationDeployStatus(...args),
     fetchMigrationPublishHistory: (...args: unknown[]) => mockFetchMigrationPublishHistory(...args),
@@ -1119,9 +1122,47 @@ describe("site migration workflow route", () => {
     const destinationSummary = await screen.findByTestId("migration-destination-summary");
     expect(
       within(destinationSummary).getByText(
-        "This repository exists but is not marked as MBSRN-managed (mbsrn.key missing), so publish is blocked to avoid overwriting unrelated content.",
+        "This repository exists but is not marked as MBSRN-managed. Adopt it to allow managed publish updates.",
       ),
     ).toBeInTheDocument();
+  });
+
+  it("shows adopt repository action for adoption-required publish targets and triggers adoption call", async () => {
+    const user = userEvent.setup();
+    jest.spyOn(window, "confirm").mockReturnValue(true);
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(
+      buildMigrationWorkspaceSummary({
+        publish_readiness: {
+          ready: false,
+          reasons: ["This repository exists but is not marked as MBSRN-managed. Adopt the repository before publish."],
+          target: {
+            enabled: true,
+            repo_owner: "mhanson13",
+            repo_name: "tnmfire",
+            branch: "main",
+            artifact_root: "/",
+            repository_exists: true,
+            repo_ensure_outcome: "exists",
+            preflight_status: "blocked",
+            preflight_blocker_code: "github_repo_adoption_required",
+          },
+        },
+      }),
+    );
+
+    render(<SiteMigrationWorkflowPage />);
+
+    const adoptionButton = await screen.findByTestId("migration-adopt-repository-button");
+    expect(adoptionButton).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "This repository exists but is not marked as MBSRN-managed. Adopt it to allow MBSRN to publish into it.",
+      ),
+    ).toBeInTheDocument();
+
+    await user.click(adoptionButton);
+
+    await waitFor(() => expect(mockAdoptMigrationPublishRepository).toHaveBeenCalledTimes(1));
   });
 
   it("shows repository provisioning authorization guidance when runtime token cannot create repos", async () => {
@@ -1923,6 +1964,7 @@ function seedCompetitorProfileGenerationDefaults(): void {
   mockDeleteMigrationArtifactVersion.mockReset();
   mockApproveMigrationArtifactVersion.mockReset();
   mockPublishMigrationArtifactVersion.mockReset();
+  mockAdoptMigrationPublishRepository.mockReset();
   mockDeployMigrationArtifactVersion.mockReset();
   mockRefreshMigrationDeployStatus.mockReset();
   mockFetchMigrationPublishHistory.mockReset();
@@ -1996,6 +2038,15 @@ function seedCompetitorProfileGenerationDefaults(): void {
     }),
     readiness: { ready: true, reasons: [] },
     result: { status: "published" },
+  });
+  mockAdoptMigrationPublishRepository.mockResolvedValue({
+    workspace: defaultMigrationWorkspace,
+    readiness: { ready: true, reasons: [] },
+    result: {
+      marker_written: true,
+      adoption_outcome: "marker_written",
+      reason_code: "github_repo_management_marker_written",
+    },
   });
   mockDeployMigrationArtifactVersion.mockResolvedValue({
     workspace: buildMigrationWorkspace({

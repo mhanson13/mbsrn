@@ -32,6 +32,7 @@ import type {
   MigrationEnrichedContentUpdateRequest,
   MigrationHistoryListResponse,
   MigrationPublishActionResponse,
+  MigrationRepositoryAdoptActionResponse,
   MigrationPublishConfigUpdateRequest,
   MigrationPublishRequest,
   MigrationPromptPreview,
@@ -506,6 +507,20 @@ export async function publishMigrationArtifactVersion(
       method: "POST",
       token,
       body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function adoptMigrationPublishRepository(
+  token: string,
+  businessId: string,
+  siteId: string,
+): Promise<MigrationRepositoryAdoptActionResponse> {
+  return apiRequest<MigrationRepositoryAdoptActionResponse>(
+    `/api/businesses/${businessId}/seo/sites/${siteId}/migration/publish/adopt-repository`,
+    {
+      method: "POST",
+      token,
     },
   );
 }

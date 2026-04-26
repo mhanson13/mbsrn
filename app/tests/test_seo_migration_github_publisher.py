@@ -81,6 +81,7 @@ def _repo_management_marker_content(
     return json.dumps(
         {
             "version": 1,
+            "managed_by": "mbsrn",
             "created_by": "mbsrn",
             "business_id": business_id,
             "site_id": site_id,
@@ -830,7 +831,7 @@ def test_run_publish_preflight_existing_repo_without_management_marker_is_blocke
     )
 
     assert result.preflight_status == "blocked"
-    assert result.preflight_blocker_code == "github_repo_management_marker_missing"
+    assert result.preflight_blocker_code == "github_repo_adoption_required"
     assert result.repo_management_status == "marker_missing"
     assert result.repo_management_marker_present is False
     assert result.repo_management_marker_valid is False
@@ -992,7 +993,131 @@ def test_publish_files_blocks_existing_repo_without_management_marker(monkeypatc
             commit_message="publish",
             dry_run=False,
         )
-    assert exc_info.value.code == "github_repo_management_marker_missing"
+    assert exc_info.value.code == "github_repo_adoption_required"
+
+
+def test_adopt_repository_writes_marker_for_existing_repo_without_marker(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"full_name": "mhanson13/tnmfire"}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"full_name": "mhanson13/tnmfire", "default_branch": "main"}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"object": {"sha": "main-sha"}}),
+            ),
+            _http_error(
+                "https://api.github.com/repos/mhanson13/tnmfire/contents/mbsrn.key?ref=main",
+                status_code=404,
+                message="Not Found",
+            ),
+            _http_error(
+                "https://api.github.com/repos/mhanson13/tnmfire/contents/mbsrn.key?ref=main",
+                status_code=404,
+                message="Not Found",
+            ),
+            _FakeHTTPResponse(status=201, body=json.dumps({"commit": {"sha": "commit-1"}})),
+            _repo_management_marker_response(
+                business_id="business-1",
+                site_id="site-1",
+            ),
+        ],
+        calls,
+    )
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+
+    result = publisher.adopt_repository(
+        repo_owner="mhanson13",
+        repo_name="tnmfire",
+        ref="main",
+        business_id="business-1",
+        site_id="site-1",
+        principal_id="principal-1",
+        expected_owner="mhanson13",
+    )
+
+    assert result.marker_written is True
+    assert result.adoption_outcome == "marker_written"
+    assert result.management_status == "managed_marker_match"
+    assert ("PUT", "https://api.github.com/repos/mhanson13/tnmfire/contents/mbsrn.key") in calls
+
+
+def test_adopt_repository_blocks_marker_mismatch(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _FakeHTTPResponse(status=200, body=json.dumps({"full_name": "mhanson13/tnmfire"})),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"full_name": "mhanson13/tnmfire", "default_branch": "main"}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"object": {"sha": "main-sha"}}),
+            ),
+            _repo_management_marker_response(
+                business_id="different-business",
+                site_id="different-site",
+            ),
+        ],
+        calls,
+    )
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+
+    with pytest.raises(SEOMigrationGitHubPublisherError) as exc_info:
+        publisher.adopt_repository(
+            repo_owner="mhanson13",
+            repo_name="tnmfire",
+            ref="main",
+            business_id="business-1",
+            site_id="site-1",
+            principal_id="principal-1",
+            expected_owner="mhanson13",
+        )
+
+    assert exc_info.value.code == "github_repo_management_marker_mismatch"
+
+
+def test_adopt_repository_fails_for_existing_empty_repo(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _FakeHTTPResponse(status=200, body=json.dumps({"full_name": "mhanson13/tnmfire"})),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"full_name": "mhanson13/tnmfire", "default_branch": "main"}),
+            ),
+            _http_error(
+                "https://api.github.com/repos/mhanson13/tnmfire/git/ref/heads/main",
+                status_code=409,
+                message="Git Repository is empty.",
+            ),
+        ],
+        calls,
+    )
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+
+    with pytest.raises(SEOMigrationGitHubPublisherError) as exc_info:
+        publisher.adopt_repository(
+            repo_owner="mhanson13",
+            repo_name="tnmfire",
+            ref="main",
+            business_id="business-1",
+            site_id="site-1",
+            principal_id="principal-1",
+            expected_owner="mhanson13",
+        )
+
+    assert exc_info.value.code == "github_repo_requires_manual_initialization"
 
 
 def test_publish_files_blocks_existing_repo_with_invalid_management_marker(monkeypatch) -> None:

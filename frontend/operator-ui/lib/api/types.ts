@@ -710,6 +710,12 @@ export interface MigrationDeployActionResponse {
   result: Record<string, unknown>;
 }
 
+export interface MigrationRepositoryAdoptActionResponse {
+  workspace: MigrationWorkspace;
+  readiness: Record<string, unknown>;
+  result: Record<string, unknown>;
+}
+
 export interface MigrationArtifactDeleteActionResponse {
   workspace: MigrationWorkspace;
   deleted_artifact_version_id: string;

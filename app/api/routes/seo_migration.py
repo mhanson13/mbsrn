@@ -25,6 +25,7 @@ from app.schemas.seo_migration import (
     SEOMigrationPublishActionRead,
     SEOMigrationPublishConfigUpdateRequest,
     SEOMigrationPublishRequest,
+    SEOMigrationRepositoryAdoptActionRead,
     SEOMigrationPromptPreviewRead,
     SEOMigrationRequirementsUpdateRequest,
     SEOMigrationSourceIngestRequest,
@@ -537,6 +538,34 @@ def publish_seo_migration_artifact_version(
     return SEOMigrationPublishActionRead(
         workspace=_to_workspace_read(action_result.workspace),
         artifact=_to_artifact_read(action_result.artifact),
+        readiness=action_result.readiness,
+        result=action_result.result,
+    )
+
+
+@router.post("/sites/{site_id}/migration/publish/adopt-repository", response_model=SEOMigrationRepositoryAdoptActionRead)
+def adopt_seo_migration_publish_repository(
+    business_id: str,
+    site_id: str,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    migration_service: SEOMigrationService = Depends(get_seo_migration_service),
+) -> SEOMigrationRepositoryAdoptActionRead:
+    scoped_business_id = resolve_tenant_business_id(
+        tenant_context=tenant_context,
+        requested_business_id=business_id,
+    )
+    try:
+        action_result = migration_service.adopt_publish_repository(
+            business_id=scoped_business_id,
+            site_id=site_id,
+            principal_id=tenant_context.principal_id,
+        )
+    except SEOMigrationNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except SEOMigrationValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=_validation_error_detail(exc)) from exc
+    return SEOMigrationRepositoryAdoptActionRead(
+        workspace=_to_workspace_read(action_result.workspace),
         readiness=action_result.readiness,
         result=action_result.result,
     )

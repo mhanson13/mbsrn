@@ -26,6 +26,7 @@ from app.integrations.seo_migration_github_publisher import (
     SEOMigrationGitHubPublishTarget,
     SEOMigrationGitHubPublisher,
     SEOMigrationGitHubPublisherError,
+    SEOMigrationGitHubRepoAdoptionResult,
     SEOMigrationGitHubRepositoryEnsureResult,
     SEOMigrationGitHubTargetReadinessResult,
     SEOMigrationGitHubWorkflowProvisionResult,
@@ -218,6 +219,13 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         preflight_can_write_contents: bool | None = None,
         preflight_can_write_workflows: bool | None = None,
         preflight_would_bootstrap_branch: bool | None = None,
+        fail_adoption: bool = False,
+        adoption_error_code: str | None = None,
+        adoption_error_message: str | None = None,
+        adoption_error_stage: str | None = None,
+        adoption_marker_written: bool = True,
+        adoption_outcome: str = "marker_written",
+        adoption_management_status: str = "managed_marker_match",
     ) -> None:
         self.existing_repository = existing_repository
         self.ensure_repository_error_code = ensure_repository_error_code
@@ -305,6 +313,13 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         self.preflight_can_write_contents = preflight_can_write_contents
         self.preflight_can_write_workflows = preflight_can_write_workflows
         self.preflight_would_bootstrap_branch = preflight_would_bootstrap_branch
+        self.fail_adoption = fail_adoption
+        self.adoption_error_code = adoption_error_code
+        self.adoption_error_message = adoption_error_message
+        self.adoption_error_stage = adoption_error_stage
+        self.adoption_marker_written = adoption_marker_written
+        self.adoption_outcome = adoption_outcome
+        self.adoption_management_status = adoption_management_status
         self.publish_calls: list[
             tuple[SEOMigrationGitHubPublishTarget, list[SEOMigrationGitHubPublishFile], str, bool]
         ] = []
@@ -316,6 +331,9 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         self.secret_upsert_calls: list[tuple[str, str, str, str]] = []
         self.publish_preflight_calls: list[
             tuple[str, str, str, bool, str | None, str | None, str | None]
+        ] = []
+        self.adopt_repository_calls: list[
+            tuple[str, str, str, str, str, str | None, str | None]
         ] = []
         self.workflow_provision_calls: list[
             tuple[
@@ -495,6 +513,45 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
             would_bootstrap_branch=would_bootstrap_branch,
             preflight_status=preflight_status,
             preflight_blocker_code=preflight_blocker_code,
+        )
+
+    def adopt_repository(
+        self,
+        *,
+        repo_owner: str,
+        repo_name: str,
+        ref: str,
+        business_id: str,
+        site_id: str,
+        principal_id: str | None = None,
+        expected_owner: str | None = None,
+    ) -> SEOMigrationGitHubRepoAdoptionResult:
+        self.adopt_repository_calls.append(
+            (
+                repo_owner,
+                repo_name,
+                ref,
+                business_id,
+                site_id,
+                principal_id,
+                expected_owner,
+            )
+        )
+        if self.fail_adoption or self.adoption_error_code:
+            raise SEOMigrationGitHubPublisherError(
+                code=self.adoption_error_code or "github_repo_adoption_failed",
+                safe_message=self.adoption_error_message or "Simulated repository adoption failure.",
+                stage=self.adoption_error_stage or "repo_adoption",
+            )
+        return SEOMigrationGitHubRepoAdoptionResult(
+            repo_owner=repo_owner,
+            repo_name=repo_name,
+            ref=ref,
+            marker_written=bool(self.adoption_marker_written),
+            adoption_outcome=self.adoption_outcome,
+            management_status=self.adoption_management_status,
+            marker_business_id=business_id,
+            marker_site_id=site_id,
         )
 
     def publish_files(
@@ -4630,6 +4687,52 @@ def test_publish_duplicate_request_logs_workflow_remediation_attempted(db_sessio
     assert duplicate_target.get("workflow_remediation_attempted") is True
     assert duplicate_target.get("workflow_remediation_outcome") == "remediation_already_current"
 
+
+def test_adopt_publish_repository_writes_marker_and_returns_readiness(db_session) -> None:
+    publisher = _RecordingGitHubPublisher(adoption_marker_written=True)
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+
+    action_result = service.adopt_publish_repository(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+
+    assert action_result.result.get("marker_written") is True
+    assert action_result.result.get("adoption_outcome") == "marker_written"
+    assert action_result.result.get("reason_code") == "github_repo_management_marker_written"
+    assert action_result.readiness.get("target", {}).get("repo_owner") == "acme"
+    assert len(publisher.adopt_repository_calls) == 1
+
+
+def test_adopt_publish_repository_surfaces_adoption_failure(db_session) -> None:
+    publisher = _RecordingGitHubPublisher(
+        fail_adoption=True,
+        adoption_error_code="github_repo_management_marker_mismatch",
+        adoption_error_message="Repository is marked for a different migration site.",
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+
+    with pytest.raises(SEOMigrationValidationError, match="different migration site"):
+        service.adopt_publish_repository(
+            business_id=business_id,
+            site_id=site_id,
+            principal_id="principal-1",
+        )
 
 def test_publish_propagates_deploy_secret_for_approved_managed_target(db_session) -> None:
     publisher = _RecordingGitHubPublisher(existing_workflow=True)

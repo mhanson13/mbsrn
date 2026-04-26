@@ -736,8 +736,12 @@ Publish behavior:
   - when disabled, publish/readiness fails with a clear admin-policy blocker (repository auto-create disabled)
 - managed repository ownership is now enforced with a semaphore file at repo root: `mbsrn.key`
   - `mbsrn.key` content is JSON and includes at minimum:
+    - `managed_by` (`"mbsrn"`)
     - `business_id`
     - `site_id`
+    - adoption writes also include:
+      - `adopted_at`
+      - `adopted_by` (principal id when available)
   - managed baseline contract for MBSRN-owned repos also requires root files:
     - `README.md`
     - `.gitignore`
@@ -749,6 +753,10 @@ Publish behavior:
     - `.gitignore`
     - `LICENSE`
   - existing non-empty repos without `mbsrn.key` are blocked from managed overwrite/update publish
+  - existing repo adoption is explicit (not silent in publish):
+    - readiness/preflight returns `github_repo_adoption_required`
+    - operator/admin can run `Adopt repository` to write `mbsrn.key`
+    - after adoption succeeds, normal managed publish/reconciliation is allowed
   - existing repos with `mbsrn.key` are publishable only when marker values match the current workspace business/site
   - invalid/unparseable marker content is treated as a hard blocker
 - existing managed repos are reconciled additively:

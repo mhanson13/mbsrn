@@ -496,6 +496,9 @@ Reason-code guidance:
 - `repo_create_failed_owner_mismatch`: configured owner is outside the admin-owned target boundary.
 - `repo_create_failed_conflict`: repository create returned conflict (already exists or owner/repo conflict).
 - `repo_create_failed_runtime_unavailable`: repository auto-create failed due to temporary runtime/API availability issues.
+- `github_repo_adoption_required`: existing repository is not marked as MBSRN-managed; publish is blocked until explicit adoption writes `mbsrn.key`.
+- `github_repo_adoption_failed`: explicit repository adoption action failed.
+- `github_repo_management_marker_written`: explicit adoption wrote `mbsrn.key` successfully.
 - `github_repo_management_marker_missing`: existing repository is missing `mbsrn.key`; managed publish blocks to avoid overwriting unrelated content.
 - `github_repo_management_marker_mismatch`: existing repository marker points to a different business/site.
 - `github_repo_management_marker_invalid`: `mbsrn.key` exists but is invalid/unparseable.
@@ -609,6 +612,11 @@ Repository Initialization Phase:
 Managed marker observability:
 - marker check event:
   - `seo_migration_repo_management_marker_check`
+- explicit adoption events:
+  - `seo_migration_github_repo_adoption` (`status=started|completed|failed`)
+  - `repo_adoption_started`
+  - `repo_adoption_completed`
+  - `repo_adoption_failed`
 - key fields:
   - `repo_management_status`
   - `repo_management_marker_present`
@@ -620,7 +628,7 @@ Managed marker observability:
   - new/empty repos: bootstrap writes `mbsrn.key` before managed workflow/manifest/content updates
   - empty repos now always emit `repo_initialization_*` events before workflow provisioning continues
   - existing managed repos: marker must be present/valid/matching
-  - existing non-managed repos: marker blocker prevents overwrite
+  - existing non-managed repos: marker blocker prevents overwrite until explicit adoption
 
 Managed baseline reconciliation observability:
 - event:

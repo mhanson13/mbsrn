@@ -26,6 +26,7 @@ from app.integrations.seo_migration_github_publisher import (
     MisconfiguredSEOMigrationGitHubPublisher,
     SEOMigrationGitHubActionsSecretUpsertResult,
     SEOMigrationGitHubDeployTarget,
+    SEOMigrationGitHubRepoAdoptionResult,
     SEOMigrationGitHubPublishPreflightResult,
     SEOMigrationGitHubPublishFile,
     SEOMigrationGitHubPublishResult,
@@ -408,6 +409,13 @@ class SEOMigrationDeployActionResult:
     artifact: SEOMigrationArtifactVersion
     result: dict[str, object]
     readiness: dict[str, object]
+
+
+@dataclass(frozen=True)
+class SEOMigrationRepositoryAdoptionActionResult:
+    workspace: SEOMigrationWorkspace
+    readiness: dict[str, object]
+    result: dict[str, object]
 
 
 @dataclass(frozen=True)
@@ -1958,6 +1966,145 @@ class SEOMigrationService:
             artifact=artifact,
             readiness=readiness,
             result=history_payload,
+        )
+
+    def adopt_publish_repository(
+        self,
+        *,
+        business_id: str,
+        site_id: str,
+        principal_id: str | None,
+    ) -> SEOMigrationRepositoryAdoptionActionResult:
+        started_at = time.monotonic()
+        workspace = self.get_workspace(business_id=business_id, site_id=site_id)
+        site = self._require_site(business_id=business_id, site_id=site_id)
+        self._log_control_plane_action(
+            action="repo_adopt",
+            status="requested",
+            business_id=business_id,
+            site_id=site_id,
+            workspace_id=workspace.id,
+            artifact_version_id=workspace.latest_approved_artifact_version_id,
+            artifact_version=workspace.latest_approved_artifact_version_number,
+            principal_id=principal_id,
+            target_summary=self._safe_effective_publish_target_summary(workspace.publish_config_json),
+        )
+        try:
+            (
+                effective_publish_config,
+                _admin_prerequisites,
+                _admin_reasons,
+            ) = self._build_effective_publish_config(
+                workspace_publish_config=workspace.publish_config_json,
+                require_admin=True,
+            )
+            target = _resolve_publish_target(effective_publish_config)
+        except ValueError as exc:
+            failure_message = str(exc) or "Publish target is invalid."
+            self._log_control_plane_action(
+                action="repo_adopt",
+                status="failed",
+                business_id=business_id,
+                site_id=site_id,
+                workspace_id=workspace.id,
+                artifact_version_id=workspace.latest_approved_artifact_version_id,
+                artifact_version=workspace.latest_approved_artifact_version_number,
+                principal_id=principal_id,
+                target_summary=self._safe_effective_publish_target_summary(workspace.publish_config_json),
+                failure_category="target_invalid",
+                failure_reason=failure_message,
+                duration_ms=self._duration_ms(started_at),
+            )
+            raise SEOMigrationValidationError(failure_message) from exc
+
+        adoption_result: SEOMigrationGitHubRepoAdoptionResult
+        try:
+            adoption_result = self.github_publisher.adopt_repository(
+                repo_owner=str(target["repo_owner"] or ""),
+                repo_name=str(target["repo_name"] or ""),
+                ref=str(target["branch"] or "main"),
+                business_id=business_id,
+                site_id=site_id,
+                principal_id=principal_id,
+                expected_owner=str(target["repo_owner"] or ""),
+            )
+        except SEOMigrationGitHubPublisherError as exc:
+            failure_category = self._categorize_publisher_failure(exc=exc, action="publish")
+            self._log_control_plane_action(
+                action="repo_adopt",
+                status="failed",
+                business_id=business_id,
+                site_id=site_id,
+                workspace_id=workspace.id,
+                artifact_version_id=workspace.latest_approved_artifact_version_id,
+                artifact_version=workspace.latest_approved_artifact_version_number,
+                principal_id=principal_id,
+                target_summary={
+                    **target,
+                    "failure_reason_code": _normalize_string(exc.code, max_length=80),
+                    "failure_stage": _normalize_string(exc.stage, max_length=40),
+                },
+                failure_category=failure_category,
+                failure_reason=exc.safe_message,
+                duration_ms=self._duration_ms(started_at),
+            )
+            raise SEOMigrationValidationError(exc.safe_message) from exc
+
+        workspace.updated_by_principal_id = principal_id
+        self.seo_migration_repository.save_workspace(workspace)
+        self.session.commit()
+        self.session.refresh(workspace)
+
+        approved_artifact = None
+        if workspace.latest_approved_artifact_version_id:
+            approved_artifact = self.seo_migration_repository.get_artifact_version_for_business_site(
+                business_id,
+                site_id,
+                workspace.latest_approved_artifact_version_id,
+            )
+        readiness = self._build_publish_readiness(
+            site=site,
+            workspace=workspace,
+            artifact=approved_artifact,
+        )
+        adoption_reason_code = (
+            "github_repo_management_marker_written"
+            if bool(adoption_result.marker_written)
+            else "github_repo_management_marker_present"
+        )
+        result_payload: dict[str, object] = {
+            "repo_owner": adoption_result.repo_owner,
+            "repo_name": adoption_result.repo_name,
+            "ref": adoption_result.ref,
+            "marker_written": bool(adoption_result.marker_written),
+            "adoption_outcome": _normalize_string(adoption_result.adoption_outcome, max_length=64),
+            "repo_management_status": _normalize_string(adoption_result.management_status, max_length=80),
+            "repo_management_marker_business_id": _normalize_string(
+                adoption_result.marker_business_id,
+                max_length=120,
+            ),
+            "repo_management_marker_site_id": _normalize_string(
+                adoption_result.marker_site_id,
+                max_length=120,
+            ),
+            "reason_code": adoption_reason_code,
+        }
+        self._log_control_plane_action(
+            action="repo_adopt",
+            status="completed",
+            business_id=business_id,
+            site_id=site_id,
+            workspace_id=workspace.id,
+            artifact_version_id=workspace.latest_approved_artifact_version_id,
+            artifact_version=workspace.latest_approved_artifact_version_number,
+            principal_id=principal_id,
+            target_summary=result_payload,
+            duration_ms=self._duration_ms(started_at),
+        )
+        return SEOMigrationRepositoryAdoptionActionResult(
+            workspace=workspace,
+            readiness=readiness,
+            result=result_payload,
         )
 
     def deploy_artifact_version(
@@ -10180,8 +10327,10 @@ class SEOMigrationService:
             "github_repo_state_invalid_for_bootstrap",
             "github_repo_initialization_failed",
             "github_repo_management_marker_missing",
+            "github_repo_adoption_required",
             "github_repo_management_marker_mismatch",
             "github_repo_management_marker_invalid",
+            "github_repo_adoption_failed",
             "github_repo_bootstrap_marker_write_failed",
             "github_repo_baseline_reconciliation_failed",
             _DEPLOY_TARGET_REASON_REPO_NOT_FOUND,
@@ -12207,9 +12356,11 @@ def _map_publish_preflight_blocker_codes(blocker_code: str) -> list[str]:
         "github_repo_state_invalid_for_bootstrap",
         "github_repo_initialization_failed",
         "github_repo_requires_manual_initialization",
+        "github_repo_adoption_required",
         "github_repo_management_marker_missing",
         "github_repo_management_marker_mismatch",
         "github_repo_management_marker_invalid",
+        "github_repo_adoption_failed",
     }:
         return ["publish_configuration_invalid"]
     if normalized_lower in {
@@ -12254,9 +12405,9 @@ def _derive_publish_preflight_blocker_message(
         return (
             "Publish target repository is empty and must be manually initialized before managed publish can proceed."
         )
-    if normalized_lower == "github_repo_management_marker_missing":
+    if normalized_lower in {"github_repo_adoption_required", "github_repo_management_marker_missing"}:
         return (
-            "This repository exists but is not marked as MBSRN-managed (mbsrn.key missing), so publish is blocked."
+            "This repository exists but is not marked as MBSRN-managed. Adopt the repository before publish."
         )
     if normalized_lower == "github_repo_management_marker_mismatch":
         return (
@@ -12264,6 +12415,8 @@ def _derive_publish_preflight_blocker_message(
         )
     if normalized_lower == "github_repo_management_marker_invalid":
         return "Repository management marker (mbsrn.key) is invalid and must be corrected before publish."
+    if normalized_lower == "github_repo_adoption_failed":
+        return "Repository adoption failed. Review GitHub integration logs and retry adoption."
     if repository_auto_create_enabled:
         return "Publish target repository preflight failed. Review runtime GitHub permissions and target configuration."
     return "Publish target repository preflight failed. Review admin publish configuration."

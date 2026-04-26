@@ -27,6 +27,10 @@ _GITHUB_REASON_CONTENTS_PUBLISH_FAILED = "github_contents_publish_failed"
 _GITHUB_REASON_REPO_MANAGEMENT_MARKER_MISSING = "github_repo_management_marker_missing"
 _GITHUB_REASON_REPO_MANAGEMENT_MARKER_MISMATCH = "github_repo_management_marker_mismatch"
 _GITHUB_REASON_REPO_MANAGEMENT_MARKER_INVALID = "github_repo_management_marker_invalid"
+_GITHUB_REASON_REPO_MANAGEMENT_MARKER_PRESENT = "github_repo_management_marker_present"
+_GITHUB_REASON_REPO_ADOPTION_REQUIRED = "github_repo_adoption_required"
+_GITHUB_REASON_REPO_ADOPTION_FAILED = "github_repo_adoption_failed"
+_GITHUB_REASON_REPO_MANAGEMENT_MARKER_WRITTEN = "github_repo_management_marker_written"
 _GITHUB_REASON_REPO_BOOTSTRAP_MARKER_WRITE_FAILED = "github_repo_bootstrap_marker_write_failed"
 _GITHUB_REASON_REPO_BASELINE_RECONCILIATION_FAILED = "github_repo_baseline_reconciliation_failed"
 _GITHUB_REASON_REPO_INITIALIZATION_FAILED = "github_repo_initialization_failed"
@@ -116,6 +120,18 @@ class SEOMigrationGitHubPublishPreflightResult:
     repo_management_marker_business_id: str | None = None
     repo_management_marker_site_id: str | None = None
     repo_management_marker_source_ref: str | None = None
+
+
+@dataclass(frozen=True)
+class SEOMigrationGitHubRepoAdoptionResult:
+    repo_owner: str
+    repo_name: str
+    ref: str
+    marker_written: bool
+    adoption_outcome: str
+    management_status: str
+    marker_business_id: str | None = None
+    marker_site_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -342,6 +358,20 @@ class SEOMigrationGitHubPublisher:
     ) -> SEOMigrationGitHubActionsSecretUpsertResult:
         raise NotImplementedError
 
+    def adopt_repository(
+        self,
+        *,
+        repo_owner: str,
+        repo_name: str,
+        ref: str,
+        business_id: str,
+        site_id: str,
+        principal_id: str | None = None,
+        expected_owner: str | None = None,
+    ) -> SEOMigrationGitHubRepoAdoptionResult:
+        del repo_owner, repo_name, ref, business_id, site_id, principal_id, expected_owner
+        raise NotImplementedError
+
     def dispatch_deploy(
         self,
         *,
@@ -526,6 +556,23 @@ class MisconfiguredSEOMigrationGitHubPublisher(SEOMigrationGitHubPublisher):
         secret_value: str,
     ) -> SEOMigrationGitHubActionsSecretUpsertResult:
         del repo_owner, repo_name, secret_name, secret_value
+        raise SEOMigrationGitHubPublisherError(
+            code=self.reason_code,
+            safe_message=self.safe_message,
+        )
+
+    def adopt_repository(
+        self,
+        *,
+        repo_owner: str,
+        repo_name: str,
+        ref: str,
+        business_id: str,
+        site_id: str,
+        principal_id: str | None = None,
+        expected_owner: str | None = None,
+    ) -> SEOMigrationGitHubRepoAdoptionResult:
+        del repo_owner, repo_name, ref, business_id, site_id, principal_id, expected_owner
         raise SEOMigrationGitHubPublisherError(
             code=self.reason_code,
             safe_message=self.safe_message,
@@ -1443,6 +1490,294 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         if not isinstance(payload, dict):
             return None
         return _coerce_string(payload.get("login"))
+
+    def adopt_repository(
+        self,
+        *,
+        repo_owner: str,
+        repo_name: str,
+        ref: str,
+        business_id: str,
+        site_id: str,
+        principal_id: str | None = None,
+        expected_owner: str | None = None,
+    ) -> SEOMigrationGitHubRepoAdoptionResult:
+        normalized_owner = self._normalize_repo_owner_or_raise(repo_owner)
+        normalized_repo = self._normalize_repo_name_or_raise(repo_name)
+        normalized_ref = (_coerce_string(ref) or "").strip() or "main"
+        normalized_expected_owner = self._normalize_expected_owner(expected_owner)
+        normalized_business_id = _normalize_repo_management_id(business_id)
+        normalized_site_id = _normalize_repo_management_id(site_id)
+        if not normalized_business_id or not normalized_site_id:
+            raise SEOMigrationGitHubPublisherError(
+                code=_GITHUB_REASON_REPO_ADOPTION_FAILED,
+                safe_message="Repository adoption requires valid business/site identifiers.",
+                stage="repo_adoption",
+            )
+        if normalized_expected_owner and normalized_owner.lower() != normalized_expected_owner.lower():
+            raise SEOMigrationGitHubPublisherError(
+                code="repo_create_failed_owner_mismatch",
+                safe_message="GitHub repository owner is outside the configured admin-owned publish target.",
+                stage="repo_adoption",
+            )
+
+        adoption_started_payload: dict[str, object] = {
+            "repo_owner": normalized_owner,
+            "repo_name": normalized_repo,
+            "ref": normalized_ref,
+            "business_id": normalized_business_id,
+            "site_id": normalized_site_id,
+            "principal_id": _coerce_string(principal_id),
+            "marker_written": False,
+            "failure_reason_code": None,
+        }
+        _emit_structured_publisher_log(
+            payload={
+                "event": "seo_migration_github_repo_adoption",
+                "status": "started",
+                **adoption_started_payload,
+            },
+            fallback_message="seo_migration_github_repo_adoption",
+            level=logging.INFO,
+        )
+        _emit_structured_publisher_log(
+            payload={
+                "event": "repo_adoption_started",
+                **adoption_started_payload,
+            },
+            fallback_message="repo_adoption_started",
+            level=logging.INFO,
+        )
+
+        def _emit_adoption_failure(*, code: str, message: str | None = None, stage: str | None = None) -> None:
+            payload = {
+                "repo_owner": normalized_owner,
+                "repo_name": normalized_repo,
+                "ref": normalized_ref,
+                "business_id": normalized_business_id,
+                "site_id": normalized_site_id,
+                "principal_id": _coerce_string(principal_id),
+                "marker_written": False,
+                "failure_reason_code": code,
+                "failure_stage": stage,
+                "failure_message": _sanitize_github_error_message(message),
+            }
+            _emit_structured_publisher_log(
+                payload={
+                    "event": "seo_migration_github_repo_adoption",
+                    "status": "failed",
+                    **payload,
+                },
+                fallback_message="seo_migration_github_repo_adoption",
+                level=logging.WARNING,
+            )
+            _emit_structured_publisher_log(
+                payload={
+                    "event": "repo_adoption_failed",
+                    **payload,
+                },
+                fallback_message="repo_adoption_failed",
+                level=logging.WARNING,
+            )
+
+        try:
+            self._ensure_repo_exists(repo_owner=normalized_owner, repo_name=normalized_repo)
+            default_branch = self._resolve_default_branch(repo_owner=normalized_owner, repo_name=normalized_repo)
+            repo_initialized = self._is_repository_initialized(
+                repo_owner=normalized_owner,
+                repo_name=normalized_repo,
+                default_branch=default_branch,
+            )
+            if not repo_initialized:
+                _emit_adoption_failure(code=_GITHUB_REASON_REPO_REQUIRES_MANUAL_INITIALIZATION)
+                raise SEOMigrationGitHubPublisherError(
+                    code=_GITHUB_REASON_REPO_REQUIRES_MANUAL_INITIALIZATION,
+                    safe_message=(
+                        "GitHub repository exists but is empty and must be manually initialized before adoption."
+                    ),
+                    stage="repo_adoption",
+                )
+            management_state = self._evaluate_repo_management_state(
+                repo_owner=normalized_owner,
+                repo_name=normalized_repo,
+                target_ref=normalized_ref,
+                expected_business_id=normalized_business_id,
+                expected_site_id=normalized_site_id,
+                repo_initialized=True,
+                default_branch=default_branch,
+                error_stage="repo_adoption",
+            )
+            if management_state.status == "managed_marker_match":
+                _emit_structured_publisher_log(
+                    payload={
+                        "event": "seo_migration_github_repo_adoption",
+                        "status": "completed",
+                        "repo_owner": normalized_owner,
+                        "repo_name": normalized_repo,
+                        "ref": normalized_ref,
+                        "business_id": normalized_business_id,
+                        "site_id": normalized_site_id,
+                        "principal_id": _coerce_string(principal_id),
+                        "marker_written": False,
+                        "adoption_outcome": "already_managed",
+                        "reason_code": _GITHUB_REASON_REPO_MANAGEMENT_MARKER_PRESENT,
+                    },
+                    fallback_message="seo_migration_github_repo_adoption",
+                    level=logging.INFO,
+                )
+                _emit_structured_publisher_log(
+                    payload={
+                        "event": "repo_adoption_completed",
+                        "repo_owner": normalized_owner,
+                        "repo_name": normalized_repo,
+                        "ref": normalized_ref,
+                        "business_id": normalized_business_id,
+                        "site_id": normalized_site_id,
+                        "principal_id": _coerce_string(principal_id),
+                        "marker_written": False,
+                        "adoption_outcome": "already_managed",
+                        "reason_code": _GITHUB_REASON_REPO_MANAGEMENT_MARKER_PRESENT,
+                    },
+                    fallback_message="repo_adoption_completed",
+                    level=logging.INFO,
+                )
+                return SEOMigrationGitHubRepoAdoptionResult(
+                    repo_owner=normalized_owner,
+                    repo_name=normalized_repo,
+                    ref=normalized_ref,
+                    marker_written=False,
+                    adoption_outcome="already_managed",
+                    management_status=management_state.status,
+                    marker_business_id=management_state.marker_business_id,
+                    marker_site_id=management_state.marker_site_id,
+                )
+            if management_state.blocker_code in {
+                _GITHUB_REASON_REPO_MANAGEMENT_MARKER_MISMATCH,
+                _GITHUB_REASON_REPO_MANAGEMENT_MARKER_INVALID,
+            }:
+                _emit_adoption_failure(
+                    code=str(management_state.blocker_code),
+                    message=management_state.blocker_message,
+                    stage="repo_adoption",
+                )
+                raise SEOMigrationGitHubPublisherError(
+                    code=str(management_state.blocker_code),
+                    safe_message=(
+                        _coerce_string(management_state.blocker_message)
+                        or "Repository management marker is not compatible with this migration target."
+                    ),
+                    stage="repo_adoption",
+                )
+            if not management_state.marker_present:
+                marker_content = _render_repo_management_marker_content(
+                    business_id=normalized_business_id,
+                    site_id=normalized_site_id,
+                    adopted_at=utc_now().isoformat(),
+                    adopted_by=principal_id,
+                )
+                self._upsert_repo_file_if_missing(
+                    repo_owner=normalized_owner,
+                    repo_name=normalized_repo,
+                    branch=normalized_ref,
+                    path=_MBSRN_REPO_MANAGEMENT_MARKER_PATH,
+                    content=marker_content,
+                    commit_message="chore(migration): adopt repository into MBSRN management",
+                    dry_run=False,
+                )
+                post_state = self._evaluate_repo_management_state(
+                    repo_owner=normalized_owner,
+                    repo_name=normalized_repo,
+                    target_ref=normalized_ref,
+                    expected_business_id=normalized_business_id,
+                    expected_site_id=normalized_site_id,
+                    repo_initialized=True,
+                    default_branch=default_branch,
+                    error_stage="repo_adoption",
+                )
+                if not post_state.marker_present or not post_state.marker_valid or not post_state.marker_matches_site:
+                    _emit_adoption_failure(
+                        code=_GITHUB_REASON_REPO_ADOPTION_FAILED,
+                        message="Repository marker write did not produce a valid managed marker.",
+                        stage="repo_adoption",
+                    )
+                    raise SEOMigrationGitHubPublisherError(
+                        code=_GITHUB_REASON_REPO_ADOPTION_FAILED,
+                        safe_message="GitHub repository adoption failed to verify management marker.",
+                        stage="repo_adoption",
+                    )
+                _emit_structured_publisher_log(
+                    payload={
+                        "event": "seo_migration_github_repo_adoption",
+                        "status": "completed",
+                        "repo_owner": normalized_owner,
+                        "repo_name": normalized_repo,
+                        "ref": normalized_ref,
+                        "business_id": normalized_business_id,
+                        "site_id": normalized_site_id,
+                        "principal_id": _coerce_string(principal_id),
+                        "marker_written": True,
+                        "adoption_outcome": "marker_written",
+                        "reason_code": _GITHUB_REASON_REPO_MANAGEMENT_MARKER_WRITTEN,
+                    },
+                    fallback_message="seo_migration_github_repo_adoption",
+                    level=logging.INFO,
+                )
+                _emit_structured_publisher_log(
+                    payload={
+                        "event": "repo_adoption_completed",
+                        "repo_owner": normalized_owner,
+                        "repo_name": normalized_repo,
+                        "ref": normalized_ref,
+                        "business_id": normalized_business_id,
+                        "site_id": normalized_site_id,
+                        "principal_id": _coerce_string(principal_id),
+                        "marker_written": True,
+                        "adoption_outcome": "marker_written",
+                        "reason_code": _GITHUB_REASON_REPO_MANAGEMENT_MARKER_WRITTEN,
+                    },
+                    fallback_message="repo_adoption_completed",
+                    level=logging.INFO,
+                )
+                return SEOMigrationGitHubRepoAdoptionResult(
+                    repo_owner=normalized_owner,
+                    repo_name=normalized_repo,
+                    ref=normalized_ref,
+                    marker_written=True,
+                    adoption_outcome="marker_written",
+                    management_status=post_state.status,
+                    marker_business_id=post_state.marker_business_id,
+                    marker_site_id=post_state.marker_site_id,
+                )
+            _emit_adoption_failure(
+                code=_GITHUB_REASON_REPO_ADOPTION_FAILED,
+                message="Repository adoption decision path was inconclusive.",
+                stage="repo_adoption",
+            )
+            raise SEOMigrationGitHubPublisherError(
+                code=_GITHUB_REASON_REPO_ADOPTION_FAILED,
+                safe_message="GitHub repository adoption could not be completed.",
+                stage="repo_adoption",
+            )
+        except SEOMigrationGitHubPublisherError as exc:
+            if exc.code not in {
+                _GITHUB_REASON_REPO_MANAGEMENT_MARKER_MISMATCH,
+                _GITHUB_REASON_REPO_MANAGEMENT_MARKER_INVALID,
+                _GITHUB_REASON_REPO_REQUIRES_MANUAL_INITIALIZATION,
+                _GITHUB_REASON_REPO_ADOPTION_FAILED,
+            }:
+                _emit_adoption_failure(
+                    code=_GITHUB_REASON_REPO_ADOPTION_FAILED,
+                    message=exc.provider_message or exc.safe_message,
+                    stage=exc.stage or "repo_adoption",
+                )
+                raise SEOMigrationGitHubPublisherError(
+                    code=_GITHUB_REASON_REPO_ADOPTION_FAILED,
+                    safe_message="GitHub repository adoption failed.",
+                    status_code=exc.status_code,
+                    stage=exc.stage or "repo_adoption",
+                    provider_message=_sanitize_github_error_message(exc.provider_message),
+                ) from exc
+            raise
 
     def publish_files(
         self,
@@ -3106,7 +3441,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 marker_valid=False,
                 marker_matches_site=False,
                 source_ref=None,
-                blocker_code=_GITHUB_REASON_REPO_MANAGEMENT_MARKER_MISSING,
+                blocker_code=_GITHUB_REASON_REPO_ADOPTION_REQUIRED,
                 blocker_message=(
                     "GitHub repository exists but is not marked as MBSRN-managed (mbsrn.key missing)."
                 ),
@@ -4082,7 +4417,10 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             if (
                 not dry_run
                 and bool(repository_auto_create_created)
-                and management_state.blocker_code == _GITHUB_REASON_REPO_MANAGEMENT_MARKER_MISSING
+                and management_state.blocker_code in {
+                    _GITHUB_REASON_REPO_MANAGEMENT_MARKER_MISSING,
+                    _GITHUB_REASON_REPO_ADOPTION_REQUIRED,
+                }
                 and effective_business_id
                 and effective_site_id
             ):
@@ -4840,6 +5178,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             _GITHUB_REASON_CONTENTS_WRITE_NOT_AUTHORIZED,
             _GITHUB_REASON_BRANCH_UNINITIALIZED,
             _GITHUB_REASON_REPO_MANAGEMENT_MARKER_MISSING,
+            _GITHUB_REASON_REPO_ADOPTION_REQUIRED,
             _GITHUB_REASON_REPO_MANAGEMENT_MARKER_MISMATCH,
             _GITHUB_REASON_REPO_MANAGEMENT_MARKER_INVALID,
         }:
@@ -6863,13 +7202,26 @@ def _render_repo_baseline_license_content() -> str:
     )
 
 
-def _render_repo_management_marker_content(*, business_id: str, site_id: str) -> str:
+def _render_repo_management_marker_content(
+    *,
+    business_id: str,
+    site_id: str,
+    adopted_at: str | None = None,
+    adopted_by: str | None = None,
+) -> str:
     payload = {
         "version": 1,
+        "managed_by": "mbsrn",
         "created_by": "mbsrn",
         "business_id": business_id,
         "site_id": site_id,
     }
+    normalized_adopted_at = _coerce_string(adopted_at)
+    normalized_adopted_by = _coerce_string(adopted_by)
+    if normalized_adopted_at:
+        payload["adopted_at"] = normalized_adopted_at
+    if normalized_adopted_by:
+        payload["adopted_by"] = normalized_adopted_by
     return json.dumps(payload, ensure_ascii=True, sort_keys=True, indent=2) + "\n"
 
 

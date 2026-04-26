@@ -40,6 +40,7 @@ from app.integrations.seo_migration_github_publisher import (
     SEOMigrationGitHubPublishTarget,
     SEOMigrationGitHubPublisher,
     SEOMigrationGitHubPublisherError,
+    SEOMigrationGitHubRepoAdoptionResult,
     SEOMigrationGitHubRepositoryEnsureResult,
     SEOMigrationGitHubTargetReadinessResult,
     SEOMigrationGitHubWorkflowProvisionResult,
@@ -117,6 +118,9 @@ class _StubMigrationGitHubPublisher(SEOMigrationGitHubPublisher):
         refresh_workflow_run_conclusion: str | None = None,
         refresh_workflow_output: dict[str, str] | None = None,
         deploy_target_dispatch_service_reason_code: str | None = None,
+        fail_adoption: bool = False,
+        adoption_error_code: str | None = None,
+        adoption_error_message: str | None = None,
     ) -> None:
         self.fail_publish = fail_publish
         self.fail_deploy = fail_deploy
@@ -131,10 +135,14 @@ class _StubMigrationGitHubPublisher(SEOMigrationGitHubPublisher):
         self.deploy_target_dispatch_service_reason_code = (
             (deploy_target_dispatch_service_reason_code or "").strip().lower() or None
         )
+        self.fail_adoption = fail_adoption
+        self.adoption_error_code = adoption_error_code
+        self.adoption_error_message = adoption_error_message
         self.publish_calls: list[tuple[SEOMigrationGitHubPublishTarget, list[SEOMigrationGitHubPublishFile], bool]] = []
         self.deploy_calls: list[tuple[SEOMigrationGitHubDeployTarget, bool]] = []
         self.refresh_calls: list[tuple[SEOMigrationGitHubDeployTarget, int, str | None]] = []
         self.secret_upsert_calls: list[tuple[str, str, str, str]] = []
+        self.adopt_repository_calls: list[tuple[str, str, str, str, str, str | None, str | None]] = []
         self.workflow_provision_calls: list[
             tuple[
                 str,
@@ -231,6 +239,45 @@ class _StubMigrationGitHubPublisher(SEOMigrationGitHubPublisher):
             commit_shas=() if dry_run else ("abc123",),
             committed_paths=tuple(item.path for item in files),
             published_at="2026-04-07T12:00:00+00:00",
+        )
+
+    def adopt_repository(
+        self,
+        *,
+        repo_owner: str,
+        repo_name: str,
+        ref: str,
+        business_id: str,
+        site_id: str,
+        principal_id: str | None = None,
+        expected_owner: str | None = None,
+    ) -> SEOMigrationGitHubRepoAdoptionResult:
+        self.adopt_repository_calls.append(
+            (
+                repo_owner,
+                repo_name,
+                ref,
+                business_id,
+                site_id,
+                principal_id,
+                expected_owner,
+            )
+        )
+        if self.fail_adoption:
+            raise SEOMigrationGitHubPublisherError(
+                code=self.adoption_error_code or "github_repo_adoption_failed",
+                safe_message=self.adoption_error_message or "Simulated adoption failure.",
+                stage="repo_adoption",
+            )
+        return SEOMigrationGitHubRepoAdoptionResult(
+            repo_owner=repo_owner,
+            repo_name=repo_name,
+            ref=ref,
+            marker_written=True,
+            adoption_outcome="marker_written",
+            management_status="managed_marker_match",
+            marker_business_id=business_id,
+            marker_site_id=site_id,
         )
 
     def upsert_actions_secret(
@@ -810,6 +857,71 @@ def test_migration_api_happy_path_workflow(db_session) -> None:
     assert "ANALYTICS_PLACEHOLDER" in file_preview_response.json()["content"]
     assert publisher.publish_calls
     assert publisher.deploy_calls
+
+
+def test_adopt_publish_repository_endpoint_writes_management_marker(db_session) -> None:
+    business_id = "11111111-1111-1111-1111-111111111111"
+    site_id = "22222222-2222-2222-2222-222222222222"
+    _seed_business_and_site(db_session, business_id=business_id, site_id=site_id)
+    publisher = _StubMigrationGitHubPublisher()
+    client = _make_client(db_session, business_id=business_id, github_publisher=publisher)
+
+    workspace_response = client.put(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/workspace",
+        json={
+            "source_url": "https://legacy.example",
+            "publish_config": {
+                "enabled": True,
+                "repo_owner": "mhanson13",
+                "repo_name": "scmechanical",
+                "branch": "main",
+            },
+        },
+    )
+    assert workspace_response.status_code == 200
+
+    response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/publish/adopt-repository",
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["result"]["marker_written"] is True
+    assert payload["result"]["adoption_outcome"] == "marker_written"
+    assert len(publisher.adopt_repository_calls) == 1
+
+
+def test_adopt_publish_repository_endpoint_returns_validation_error_on_failure(db_session) -> None:
+    business_id = "11111111-1111-1111-1111-111111111111"
+    site_id = "22222222-2222-2222-2222-222222222222"
+    _seed_business_and_site(db_session, business_id=business_id, site_id=site_id)
+    publisher = _StubMigrationGitHubPublisher(
+        fail_adoption=True,
+        adoption_error_code="github_repo_adoption_failed",
+        adoption_error_message="GitHub repository adoption failed.",
+    )
+    client = _make_client(db_session, business_id=business_id, github_publisher=publisher)
+
+    workspace_response = client.put(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/workspace",
+        json={
+            "source_url": "https://legacy.example",
+            "publish_config": {
+                "enabled": True,
+                "repo_owner": "mhanson13",
+                "repo_name": "scmechanical",
+                "branch": "main",
+            },
+        },
+    )
+    assert workspace_response.status_code == 200
+
+    response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/publish/adopt-repository",
+    )
+    assert response.status_code == 422
+    detail = response.json().get("detail") or {}
+    detail_message = detail.get("message") if isinstance(detail, dict) else str(detail)
+    assert "adoption failed" in str(detail_message).lower()
 
 
 def test_delete_migration_artifact_version_allows_eligible_draft(db_session) -> None:

@@ -8,6 +8,7 @@ import { WorkspaceMessageStack } from "./layout/WorkspaceMessageStack";
 import { WorkspaceMetadataGrid, WorkspaceMetadataItem } from "./layout/WorkspaceMetadataGrid";
 import {
   ApiRequestError,
+  adoptMigrationPublishRepository,
   approveMigrationArtifactVersion,
   deleteMigrationArtifactVersion,
   deployMigrationArtifactVersion,
@@ -50,6 +51,7 @@ type BusyAction =
   | "save_deploy_config"
   | "generate"
   | "approve"
+  | "adopt_repository"
   | "publish"
   | "deploy"
   | "refresh_deploy_status"
@@ -614,6 +616,9 @@ function toRepositoryProvisioningGuidance(params: {
   if (normalizedPreflightBlocker === "github_contents_write_not_authorized") {
     return "GitHub runtime is not authorized to write repository contents for publish.";
   }
+  if (normalizedPreflightBlocker === "github_repo_adoption_required") {
+    return "This repository exists but is not marked as MBSRN-managed. Adopt it to allow managed publish updates.";
+  }
   if (normalizedPreflightBlocker === "github_branch_not_found_or_uninitialized") {
     return "Target branch is missing or uninitialized and cannot be bootstrapped with current runtime permissions.";
   }
@@ -621,7 +626,7 @@ function toRepositoryProvisioningGuidance(params: {
     return "Repository bootstrap could not be completed for the configured target branch.";
   }
   if (normalizedPreflightBlocker === "github_repo_management_marker_missing") {
-    return "This repository exists but is not marked as MBSRN-managed (mbsrn.key missing), so publish is blocked to avoid overwriting unrelated content.";
+    return "This repository exists but is not marked as MBSRN-managed. Adopt it to allow managed publish updates.";
   }
   if (normalizedPreflightBlocker === "github_repo_management_marker_mismatch") {
     return "This repository is marked as MBSRN-managed for a different business/site and cannot be reused.";
@@ -2080,6 +2085,13 @@ export function MigrationWorkspacePanel({
   const publishPrimaryBlockerMessage = !Boolean(publishReadiness.ready)
     ? publishFailureMessage || publishRuntimeStatusMessage || publishReadinessReasons[0] || "Publish target is not ready."
     : null;
+  const publishRepoAdoptionRequired = (() => {
+    const normalizedPreflightBlocker = (publishPreflightBlockerCode || "").trim().toLowerCase();
+    return (
+      normalizedPreflightBlocker === "github_repo_adoption_required"
+      || normalizedPreflightBlocker === "github_repo_management_marker_missing"
+    );
+  })();
   const deploySummaryBlockerMessage = !Boolean(deployReadiness.ready)
     ? deployFailureMessage || deployPrimaryBlockerMessage || deployRuntimeStatusMessage || deployReadinessReasons[0] || "Deploy target is not ready."
     : null;
@@ -3108,6 +3120,42 @@ export function MigrationWorkspacePanel({
       await loadWorkspaceData(false, { preserveErrorMessage: true });
       setErrorHint(null);
       setErrorMessage(formatActionFailureMessage("publish", category, baseMessage));
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const handleAdoptPublishRepository = async (): Promise<void> => {
+    if (!effectivePublishRepoOwner || !effectivePublishRepoName) {
+      setErrorHint(null);
+      setErrorMessage("Publish repository owner/name is required before repository adoption.");
+      return;
+    }
+    const confirmed = window.confirm(
+      "Adopt this repository for MBSRN-managed publish? This writes mbsrn.key. After adoption, MBSRN may update managed site files.",
+    );
+    if (!confirmed) {
+      return;
+    }
+    setBusyAction("adopt_repository");
+    setErrorMessage(null);
+    setErrorHint(null);
+    setStatusMessage(null);
+    try {
+      const actionResult = await adoptMigrationPublishRepository(token, businessId, siteId);
+      const resultPayload = asRecord(actionResult.result);
+      const markerWritten = resultPayload.marker_written === true;
+      setStatusMessage(
+        markerWritten
+          ? "Repository adopted for MBSRN-managed publish."
+          : "Repository is already marked as MBSRN-managed.",
+      );
+      await loadWorkspaceData(false);
+    } catch (error) {
+      const baseMessage = toErrorMessage(error, "Repository adoption failed.");
+      await loadWorkspaceData(false, { preserveErrorMessage: true });
+      setErrorHint(null);
+      setErrorMessage(baseMessage);
     } finally {
       setBusyAction(null);
     }
@@ -4359,6 +4407,25 @@ export function MigrationWorkspacePanel({
         <div className="grid grid-2">
           <div className="panel panel-compact stack">
             <strong>Publish</strong>
+            {publishRepoAdoptionRequired ? (
+              <div className="panel panel-compact stack-tight" data-testid="migration-repo-adoption-panel">
+                <span className="hint warning">
+                  This repository exists but is not marked as MBSRN-managed. Adopt it to allow MBSRN to publish into it.
+                </span>
+                <button
+                  type="button"
+                  className="button button-secondary"
+                  onClick={() => void handleAdoptPublishRepository()}
+                  disabled={isActionInFlight}
+                  data-testid="migration-adopt-repository-button"
+                >
+                  {busyAction === "adopt_repository" ? "Adopting..." : "Adopt repository"}
+                </button>
+                <span className="hint muted">
+                  This writes an MBSRN management marker to the repository. After adoption, MBSRN may update managed site files.
+                </span>
+              </div>
+            ) : null}
             <label className="link-row">
               <input type="checkbox" checked={publishDryRun} onChange={(event) => setPublishDryRun(event.target.checked)} />
               <span>Dry run only</span>
