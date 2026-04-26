@@ -4899,8 +4899,14 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "enabled: true" in frontend_config_yaml
     assert "kind: BackendConfig" in backend_config_yaml
     assert "name: site-web-backend-config" in backend_config_yaml
+    assert "healthCheck:" in backend_config_yaml
+    assert "type: HTTP" in backend_config_yaml
     assert "requestPath: /" in backend_config_yaml
     assert "port: 8080" in backend_config_yaml
+    assert "checkIntervalSec: 10" in backend_config_yaml
+    assert "timeoutSec: 5" in backend_config_yaml
+    assert "healthyThreshold: 1" in backend_config_yaml
+    assert "unhealthyThreshold: 3" in backend_config_yaml
     assert len(calls) == 30
 
 
