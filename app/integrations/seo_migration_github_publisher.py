@@ -6525,6 +6525,7 @@ def _render_managed_gke_manifest_files(
         f"{labels}"
         "  annotations:\n"
         "    kubernetes.io/ingress.class: gce\n"
+        "    kubernetes.io/ingress.global-static-ip-name: mbsrn-site-lb-ip\n"
         f"    networking.gke.io/managed-certificates: {preview_certificate_name}\n"
         "    networking.gke.io/v1beta1.FrontendConfig: site-web-frontend-config\n"
         "spec:\n"

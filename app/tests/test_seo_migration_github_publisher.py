@@ -4884,6 +4884,7 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "cloud.google.com/neg: '{\"ingress\": true}'" in service_yaml
     assert "cloud.google.com/backend-config: '{\"default\": \"site-web-backend-config\"}'" in service_yaml
     assert "kubernetes.io/ingress.class: gce" in ingress_yaml
+    assert "kubernetes.io/ingress.global-static-ip-name: mbsrn-site-lb-ip" in ingress_yaml
     assert "networking.gke.io/managed-certificates: site-web-preview-cert-tnmfire" in ingress_yaml
     assert "networking.gke.io/managed-certificates: site-web-preview-cert-tnmfire," not in ingress_yaml
     assert "networking.gke.io/v1beta1.FrontendConfig: site-web-frontend-config" in ingress_yaml
