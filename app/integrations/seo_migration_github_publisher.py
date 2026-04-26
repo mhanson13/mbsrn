@@ -6580,7 +6580,7 @@ def _render_managed_gke_manifest_files(
         "spec:\n"
         "  healthCheck:\n"
         "    type: HTTP\n"
-        "    requestPath: /\n"
+        "    requestPath: /healthz\n"
         "    port: 8080\n"
         "    checkIntervalSec: 10\n"
         "    timeoutSec: 5\n"

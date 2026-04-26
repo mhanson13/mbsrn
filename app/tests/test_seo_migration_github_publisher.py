@@ -5,6 +5,7 @@ import json
 import base64
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 import pytest
 
@@ -4872,6 +4873,7 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "name: PORT" in deployment_yaml
     assert "value: \"8080\"" in deployment_yaml
     assert "readinessProbe:" in deployment_yaml
+    assert "path: /" in deployment_yaml
     assert "port: 8080" in deployment_yaml
     assert "\n            - containerPort: 80\n" not in deployment_yaml
     assert "requests:" in deployment_yaml
@@ -4902,13 +4904,27 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "name: site-web-backend-config" in backend_config_yaml
     assert "healthCheck:" in backend_config_yaml
     assert "type: HTTP" in backend_config_yaml
-    assert "requestPath: /" in backend_config_yaml
+    assert "requestPath: /healthz" in backend_config_yaml
     assert "port: 8080" in backend_config_yaml
     assert "checkIntervalSec: 10" in backend_config_yaml
     assert "timeoutSec: 5" in backend_config_yaml
     assert "healthyThreshold: 1" in backend_config_yaml
     assert "unhealthyThreshold: 3" in backend_config_yaml
     assert len(calls) == 30
+
+
+def test_managed_site_runtime_template_includes_healthz_route() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    healthz_route_path = repo_root / "frontend" / "www" / "app" / "healthz" / "route.ts"
+    home_page_path = repo_root / "frontend" / "www" / "app" / "page.tsx"
+
+    route_content = healthz_route_path.read_text(encoding="utf-8")
+    home_page_content = home_page_path.read_text(encoding="utf-8")
+
+    assert "export function GET()" in route_content
+    assert 'new Response("ok"' in route_content
+    assert "status: 200" in route_content
+    assert "export default function HomePage" in home_page_content
 
 
 def test_render_managed_gke_manifests_for_sc_mechanical_is_site_scoped() -> None:
