@@ -581,6 +581,12 @@ function toManagedGkeConfigGuidance(value: string | null): string | null {
   if (normalized === "certificate_domain_mismatch") {
     return "The deployed certificate does not match the site hostname. This usually means the managed certificate or ingress points at another site's hostname. Republish/deploy after admin verification of generated ingress/certificate resources.";
   }
+  if (normalized === "stale_managed_certificate_present") {
+    return "A previous site's certificate is still present in this environment. This may cause incorrect SSL certificates to be served. Redeploy or remove stale certificates.";
+  }
+  if (normalized === "ingress_certificate_mismatch") {
+    return "Ingress is referencing the wrong managed certificate for this site hostname. Republish/deploy after admin verification of generated ingress/certificate resources.";
+  }
   return null;
 }
 

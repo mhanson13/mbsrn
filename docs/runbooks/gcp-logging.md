@@ -942,6 +942,23 @@ If browser TLS fails with `SSL_ERROR_BAD_CERT_DOMAIN` for preview host:
    - `kubectl describe ingress site-web -n <site-namespace>`
 4. If annotation/domain points at another site hostname, republish + redeploy the site so managed ingress/certificate resources are regenerated for the correct host.
 
+Managed certificate mismatch reason-code interpretation:
+- `dispatch_service_reason_code=certificate_domain_mismatch`
+  - ingress host and managed certificate domain disagree for the expected preview host.
+- `dispatch_service_reason_code=ingress_certificate_mismatch`
+  - ingress managed-certificate annotation does not match the expected site-scoped certificate name.
+- `dispatch_service_reason_code=stale_managed_certificate_present`
+  - ingress annotation references multiple certificates and includes stale cross-site names.
+  - check and remove stale certificates after confirming only one site-scoped certificate should remain attached.
+
+Safe namespace-scoped verification commands:
+- `kubectl get managedcertificate -n <site-namespace>`
+- `kubectl describe managedcertificate <expected-or-stale-cert-name> -n <site-namespace>`
+- `kubectl describe ingress site-web -n <site-namespace>`
+
+Safe cleanup command (manual admin action, never automatic):
+- `kubectl delete managedcertificate <old-cert-name> -n <site-namespace>`
+
 If TLS is valid but preview URL returns HTTP 502:
 1. Confirm `BackendConfig` exists in the namespace:
    - `kubectl get backendconfig -n <namespace>`

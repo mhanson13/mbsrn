@@ -1133,7 +1133,12 @@ Deploy behavior:
     - managed certificate resource: `k8s/managedcertificate.yaml`
     - managed certificate name: `site-web-preview-cert-<normalized-site>`
     - ingress annotation: `networking.gke.io/managed-certificates: site-web-preview-cert-<normalized-site>`
-    - certificate domain and ingress host must match the same site-specific preview hostname; cross-site certificate references are treated as target-configuration mismatch.
+    - certificate domain and ingress host must match the same site-specific preview hostname.
+    - mismatch classifications:
+      - `certificate_domain_mismatch` when ingress host/certificate domain disagree
+      - `ingress_certificate_mismatch` when ingress annotation references the wrong certificate name
+      - `stale_managed_certificate_present` when ingress annotation includes extra cross-site certificate names
+    - stale certificate resources are never auto-deleted; readiness/diagnostics provide manual cleanup guidance.
   - ingress address resolution uses a bounded wait loop (10-minute max: `40 x 15s`) because GKE load balancer provisioning can lag successful rollout
   - workflow emits all three output keys on success:
     - `live_url`

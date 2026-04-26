@@ -4857,6 +4857,9 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         workflow_namespace_aligned: bool | None = None
         manifest_namespace_aligned: bool | None = None
         certificate_domain_aligned: bool | None = None
+        certificate_domain_mismatch: bool | None = None
+        stale_managed_certificate_present: bool | None = None
+        ingress_certificate_mismatch: bool | None = None
         namespace_model_status = _NAMESPACE_MODEL_STATUS_UNKNOWN
         certificate_alignment_details: dict[str, object] = {}
         if managed_workflow:
@@ -4886,6 +4889,15 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 ),
                 expected_preview_hostname=preview_hostname,
                 expected_certificate_name=preview_certificate_name,
+            )
+            stale_managed_certificate_present = bool(
+                certificate_alignment_details.get("stale_managed_certificate_present")
+            )
+            ingress_certificate_mismatch = bool(
+                certificate_alignment_details.get("ingress_certificate_mismatch")
+            )
+            certificate_domain_mismatch = bool(
+                certificate_alignment_details.get("certificate_domain_mismatch")
             )
             managed_resource_quota_present = (
                 bool(manifest_presence_by_path.get(_MBSRN_MANAGED_RESOURCE_QUOTA_FILE_PATH))
@@ -4930,6 +4942,9 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             managed_limit_range_present = None
             managed_network_policy_present = None
             managed_namespace_policies_aligned = None
+            certificate_domain_mismatch = None
+            stale_managed_certificate_present = None
+            ingress_certificate_mismatch = None
         dispatch_service_availability = True
         dispatch_service_reason_code = "available"
         gke_config_missing_reason_codes: list[str] = []
@@ -4966,9 +4981,15 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         if managed_workflow and namespace_model_status == _NAMESPACE_MODEL_STATUS_MISALIGNED:
             dispatch_service_availability = False
             dispatch_service_reason_code = "target_configuration_invalid"
-        if managed_workflow and certificate_domain_aligned is False:
+        if managed_workflow and certificate_domain_mismatch is True:
             dispatch_service_availability = False
             dispatch_service_reason_code = _DEPLOY_DISPATCH_SERVICE_REASON_CERTIFICATE_DOMAIN_MISMATCH
+        elif managed_workflow and stale_managed_certificate_present is True:
+            dispatch_service_availability = False
+            dispatch_service_reason_code = _DEPLOY_DISPATCH_SERVICE_REASON_STALE_MANAGED_CERTIFICATE_PRESENT
+        elif managed_workflow and ingress_certificate_mismatch is True:
+            dispatch_service_availability = False
+            dispatch_service_reason_code = _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_CERTIFICATE_MISMATCH
         if managed_workflow and gke_config_reason_code is not None:
             dispatch_service_availability = False
             dispatch_service_reason_code = gke_config_reason_code
@@ -5831,6 +5852,8 @@ _DEPLOY_DISPATCH_SERVICE_REASON_MISSING_CLUSTER_NAME = "missing_cluster_name"
 _DEPLOY_DISPATCH_SERVICE_REASON_MISSING_CLUSTER_LOCATION = "missing_cluster_location"
 _DEPLOY_DISPATCH_SERVICE_REASON_MISSING_GCP_PROJECT_ID = "missing_gcp_project_id"
 _DEPLOY_DISPATCH_SERVICE_REASON_CERTIFICATE_DOMAIN_MISMATCH = "certificate_domain_mismatch"
+_DEPLOY_DISPATCH_SERVICE_REASON_STALE_MANAGED_CERTIFICATE_PRESENT = "stale_managed_certificate_present"
+_DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_CERTIFICATE_MISMATCH = "ingress_certificate_mismatch"
 _DEPLOY_GKE_CONFIG_MISSING_REASON_PRIORITY: tuple[str, ...] = (
     _DEPLOY_DISPATCH_SERVICE_REASON_MISSING_CLUSTER_NAME,
     _DEPLOY_DISPATCH_SERVICE_REASON_MISSING_CLUSTER_LOCATION,
@@ -6769,6 +6792,7 @@ def _evaluate_preview_certificate_alignment(
 
     ingress_host: str | None = None
     ingress_cert_annotation: str | None = None
+    ingress_cert_annotation_values: tuple[str, ...] = ()
     if ingress_kind == "ingress":
         ingress_host = _extract_manifest_scalar(
             ingress_content,
@@ -6778,6 +6802,7 @@ def _evaluate_preview_certificate_alignment(
             ingress_content,
             pattern=r"(?m)^\s*networking\.gke\.io/managed-certificates:\s*([^\n#]+)$",
         )
+        ingress_cert_annotation_values = _extract_comma_separated_values(ingress_cert_annotation)
 
     certificate_name: str | None = None
     certificate_domains: tuple[str, ...] = ()
@@ -6792,20 +6817,45 @@ def _evaluate_preview_certificate_alignment(
         )
 
     host_conflict = bool(expected_host and ingress_host and ingress_host != expected_host)
-    annotation_conflict = bool(expected_cert_name and ingress_cert_annotation and ingress_cert_annotation != expected_cert_name)
+    annotation_conflict = bool(
+        expected_cert_name
+        and ingress_cert_annotation_values
+        and (
+            expected_cert_name not in ingress_cert_annotation_values
+            or len(ingress_cert_annotation_values) != 1
+        )
+    )
     certificate_name_conflict = bool(expected_cert_name and certificate_name and certificate_name != expected_cert_name)
     domain_conflict = bool(expected_host and certificate_domains and expected_host not in certificate_domains)
+    annotation_includes_expected = bool(
+        expected_cert_name and expected_cert_name in ingress_cert_annotation_values
+    )
+    stale_managed_certificate_names: list[str] = []
+    if expected_cert_name and annotation_includes_expected:
+        stale_managed_certificate_names.extend(
+            value
+            for value in ingress_cert_annotation_values
+            if value and value != expected_cert_name
+        )
+    stale_managed_certificate_names = list(dict.fromkeys(stale_managed_certificate_names))
+    stale_managed_certificate_present = bool(stale_managed_certificate_names)
+    ingress_certificate_mismatch = bool(annotation_conflict or certificate_name_conflict)
+    certificate_domain_mismatch = bool(host_conflict or domain_conflict)
 
     observed_evidence = any(
         value
         for value in (
             ingress_host,
-            ingress_cert_annotation,
+            ingress_cert_annotation_values,
             certificate_name,
             certificate_domains,
         )
     )
-    has_conflict = host_conflict or annotation_conflict or certificate_name_conflict or domain_conflict
+    has_conflict = (
+        certificate_domain_mismatch
+        or ingress_certificate_mismatch
+        or stale_managed_certificate_present
+    )
     all_aligned = not has_conflict
     if has_conflict:
         alignment_status = "mismatched"
@@ -6817,12 +6867,17 @@ def _evaluate_preview_certificate_alignment(
     return all_aligned, {
         "preview_certificate_ingress_host": ingress_host,
         "preview_certificate_ingress_annotation": ingress_cert_annotation,
+        "preview_certificate_ingress_annotation_values": list(ingress_cert_annotation_values),
         "preview_certificate_name": certificate_name,
         "preview_certificate_domains": list(certificate_domains),
         "preview_certificate_ingress_host_conflict": host_conflict,
         "preview_certificate_annotation_conflict": annotation_conflict,
         "preview_certificate_name_conflict": certificate_name_conflict,
         "preview_certificate_domain_conflict": domain_conflict,
+        "ingress_certificate_mismatch": ingress_certificate_mismatch,
+        "stale_managed_certificate_present": stale_managed_certificate_present,
+        "stale_managed_certificate_names": stale_managed_certificate_names,
+        "certificate_domain_mismatch": certificate_domain_mismatch,
         "preview_certificate_alignment_status": alignment_status,
     }
 
@@ -6853,6 +6908,16 @@ def _extract_manifest_list_values(content: str, *, parent_key: str) -> tuple[str
         if normalized:
             values.append(normalized)
     return tuple(values)
+
+
+def _extract_comma_separated_values(raw_value: str | None) -> tuple[str, ...]:
+    if not raw_value:
+        return ()
+    values = [
+        token.strip().strip('"').strip("'").strip().lower()
+        for token in str(raw_value).split(",")
+    ]
+    return tuple(token for token in values if token)
 
 
 def _status_links_to_workflow_run(*, status_item: dict[str, object], workflow_run_id: int) -> bool:
