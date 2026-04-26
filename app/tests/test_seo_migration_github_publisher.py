@@ -16,8 +16,10 @@ from app.integrations.seo_migration_github_publisher import (
     SEOMigrationGitHubPublishTarget,
     SEOMigrationGitHubPublisherError,
     _derive_site_runtime_image_repository,
+    _render_managed_gke_manifest_files,
     _classify_rollout_blocker_hints_from_describe_outputs,
     derive_site_kubernetes_namespace,
+    derive_site_preview_certificate_name,
     derive_site_preview_hostname,
 )
 
@@ -1445,6 +1447,15 @@ def test_derive_site_preview_hostname_matches_namespace_slug() -> None:
     preview_hostname, source = derive_site_preview_hostname(repo_name="TnM Fire", site_id=None)
     assert preview_hostname == "tnm-fire.site.mbsrn.com"
     assert source == "repo_name"
+
+
+def test_derive_site_preview_certificate_name_is_site_scoped_and_dns1123_safe() -> None:
+    certificate_name, source = derive_site_preview_certificate_name(repo_name="Sc Mechanical", site_id=None)
+    assert source == "repo_name"
+    assert certificate_name == "site-web-preview-cert-sc-mechanical"
+    assert len(certificate_name) <= 63
+    assert certificate_name.lower() == certificate_name
+    assert "_" not in certificate_name
 
 
 def test_derive_site_runtime_image_repository_uses_owner_scoped_path() -> None:
@@ -4873,12 +4884,12 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "cloud.google.com/neg: '{\"ingress\": true}'" in service_yaml
     assert "cloud.google.com/backend-config: '{\"default\": \"site-web-backend-config\"}'" in service_yaml
     assert "kubernetes.io/ingress.class: gce" in ingress_yaml
-    assert "networking.gke.io/managed-certificates: site-web-preview-cert" in ingress_yaml
+    assert "networking.gke.io/managed-certificates: site-web-preview-cert-tnmfire" in ingress_yaml
     assert "networking.gke.io/v1beta1.FrontendConfig: site-web-frontend-config" in ingress_yaml
     assert "ingressClassName: gce" in ingress_yaml
     assert "host: tnmfire.site.mbsrn.com" in ingress_yaml
     assert "kind: ManagedCertificate" in managed_certificate_yaml
-    assert "name: site-web-preview-cert" in managed_certificate_yaml
+    assert "name: site-web-preview-cert-tnmfire" in managed_certificate_yaml
     assert "domains:" in managed_certificate_yaml
     assert "- tnmfire.site.mbsrn.com" in managed_certificate_yaml
     assert "kind: FrontendConfig" in frontend_config_yaml
@@ -4890,6 +4901,70 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "requestPath: /" in backend_config_yaml
     assert "port: 8080" in backend_config_yaml
     assert len(calls) == 30
+
+
+def test_render_managed_gke_manifests_for_sc_mechanical_is_site_scoped() -> None:
+    manifests = _render_managed_gke_manifest_files(
+        repo_owner="mhanson13",
+        repo_name="sc-mechanical",
+        target_environment_key="gke-prod",
+        target_environment_source="admin_config",
+        kubernetes_namespace="sc-mechanical",
+        namespace_source="repo_name",
+        preview_hostname="sc-mechanical.site.mbsrn.com",
+        namespace_isolation_defaults=None,
+        site_id="site-sc-mechanical",
+    )
+    ingress_yaml = manifests["k8s/ingress.yaml"]
+    managed_certificate_yaml = manifests["k8s/managedcertificate.yaml"]
+
+    assert "host: sc-mechanical.site.mbsrn.com" in ingress_yaml
+    assert "networking.gke.io/managed-certificates: site-web-preview-cert-sc-mechanical" in ingress_yaml
+    assert "name: site-web-preview-cert-sc-mechanical" in managed_certificate_yaml
+    assert "- sc-mechanical.site.mbsrn.com" in managed_certificate_yaml
+    assert "tnmfire.site.mbsrn.com" not in ingress_yaml
+    assert "tnmfire.site.mbsrn.com" not in managed_certificate_yaml
+    assert "site-web-preview-cert-tnmfire" not in ingress_yaml
+    assert "site-web-preview-cert-tnmfire" not in managed_certificate_yaml
+
+
+def test_render_managed_gke_manifests_isolated_across_sequential_sites() -> None:
+    tnmfire_manifests = _render_managed_gke_manifest_files(
+        repo_owner="mhanson13",
+        repo_name="tnmfire",
+        target_environment_key="gke-prod",
+        target_environment_source="admin_config",
+        kubernetes_namespace="tnmfire",
+        namespace_source="repo_name",
+        preview_hostname="tnmfire.site.mbsrn.com",
+        namespace_isolation_defaults=None,
+        site_id="site-tnmfire",
+    )
+    sc_mechanical_manifests = _render_managed_gke_manifest_files(
+        repo_owner="mhanson13",
+        repo_name="sc-mechanical",
+        target_environment_key="gke-prod",
+        target_environment_source="admin_config",
+        kubernetes_namespace="sc-mechanical",
+        namespace_source="repo_name",
+        preview_hostname="sc-mechanical.site.mbsrn.com",
+        namespace_isolation_defaults=None,
+        site_id="site-sc-mechanical",
+    )
+
+    tnmfire_ingress = tnmfire_manifests["k8s/ingress.yaml"]
+    sc_mechanical_ingress = sc_mechanical_manifests["k8s/ingress.yaml"]
+    tnmfire_cert = tnmfire_manifests["k8s/managedcertificate.yaml"]
+    sc_mechanical_cert = sc_mechanical_manifests["k8s/managedcertificate.yaml"]
+
+    assert "host: tnmfire.site.mbsrn.com" in tnmfire_ingress
+    assert "host: sc-mechanical.site.mbsrn.com" in sc_mechanical_ingress
+    assert "site-web-preview-cert-tnmfire" in tnmfire_ingress
+    assert "site-web-preview-cert-sc-mechanical" in sc_mechanical_ingress
+    assert "site-web-preview-cert-sc-mechanical" not in tnmfire_cert
+    assert "site-web-preview-cert-tnmfire" not in sc_mechanical_cert
+    assert "tnmfire.site.mbsrn.com" not in sc_mechanical_cert
+    assert "sc-mechanical.site.mbsrn.com" not in tnmfire_cert
 
 
 def test_ensure_deploy_workflow_renders_admin_managed_gke_values_before_repo_fallback(monkeypatch) -> None:
@@ -5542,4 +5617,99 @@ def test_check_deploy_target_readiness_flags_missing_expected_resource_quota_man
     assert readiness.dispatch_service_reason_code == "target_configuration_invalid"
     assert any(call[1].endswith("/contents/k8s/resourcequota.yaml?ref=main") for call in calls)
 
+
+def test_check_deploy_target_readiness_flags_certificate_domain_mismatch(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    managed_workflow = _encode_workflow_yaml(
+        (
+            "# mbsrn-managed-template:site_repo_template_v1\n"
+            "name: Managed Deploy\n"
+            "on:\n"
+            "  workflow_dispatch:\n"
+            "jobs:\n"
+            "  deploy:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    env:\n"
+            "      K8S_NAMESPACE: tnmfire\n"
+            "    steps:\n"
+            "      - uses: google-github-actions/auth@v2\n"
+            "      - run: kubectl apply -n \"$K8S_NAMESPACE\" -f k8s/deployment.yaml\n"
+        )
+    )
+    namespaced_manifest = _encode_workflow_yaml(
+        (
+            "# mbsrn-managed-manifest:site_repo_template_v1\n"
+            "apiVersion: v1\n"
+            "kind: Service\n"
+            "metadata:\n"
+            "  name: site-web\n"
+            "  namespace: tnmfire\n"
+        )
+    )
+    ingress_manifest_mismatched = _encode_workflow_yaml(
+        (
+            "# mbsrn-managed-manifest:site_repo_template_v1\n"
+            "apiVersion: networking.k8s.io/v1\n"
+            "kind: Ingress\n"
+            "metadata:\n"
+            "  name: site-web\n"
+            "  namespace: tnmfire\n"
+            "  annotations:\n"
+            "    networking.gke.io/managed-certificates: site-web-preview-cert-sc-mechanical\n"
+            "spec:\n"
+            "  rules:\n"
+            "    - host: sc-mechanical.site.mbsrn.com\n"
+        )
+    )
+    certificate_manifest_mismatched = _encode_workflow_yaml(
+        (
+            "# mbsrn-managed-manifest:site_repo_template_v1\n"
+            "apiVersion: networking.gke.io/v1\n"
+            "kind: ManagedCertificate\n"
+            "metadata:\n"
+            "  name: site-web-preview-cert-sc-mechanical\n"
+            "  namespace: tnmfire\n"
+            "spec:\n"
+            "  domains:\n"
+            "    - sc-mechanical.site.mbsrn.com\n"
+        )
+    )
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _FakeHTTPResponse(status=200, body="{}"),
+            _FakeHTTPResponse(status=200, body="{}"),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "wfsha", "encoding": "base64", "content": managed_workflow}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"state": "active", "path": ".github/workflows/deploy-tnmfire-www-prod.yml"}),
+            ),
+            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-namespace", "encoding": "base64", "content": namespaced_manifest})),
+            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-deployment", "encoding": "base64", "content": namespaced_manifest})),
+            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-service", "encoding": "base64", "content": namespaced_manifest})),
+            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-ingress", "encoding": "base64", "content": ingress_manifest_mismatched})),
+            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-managedcertificate", "encoding": "base64", "content": certificate_manifest_mismatched})),
+            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-frontendconfig", "encoding": "base64", "content": namespaced_manifest})),
+            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-backendconfig", "encoding": "base64", "content": namespaced_manifest})),
+            *_gke_environment_config_present_responses(),
+        ],
+        calls,
+    )
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    readiness = publisher.check_deploy_target_readiness(
+        target=_dispatch_target(),
+        allow_ref_repair=False,
+        allow_workflow_repair=False,
+        dry_run=False,
+    )
+
+    assert readiness.dispatch_service_availability is False
+    assert readiness.dispatch_service_reason_code == "certificate_domain_mismatch"
+    details = readiness.managed_gke_config_details or {}
+    assert details.get("preview_certificate_alignment_status") == "mismatched"
+    assert details.get("expected_preview_hostname") == "tnmfire.site.mbsrn.com"
+    assert details.get("preview_certificate_domains") == ["sc-mechanical.site.mbsrn.com"]
 

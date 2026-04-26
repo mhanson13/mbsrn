@@ -604,6 +604,42 @@ describe("site migration workflow route", () => {
     expect(deployHistory).not.toHaveTextContent("Selected workflow exists but is not dispatchable for this deploy target.");
   });
 
+  it("surfaces certificate-domain mismatch guidance when deploy target manifests point to another hostname", async () => {
+    const user = userEvent.setup();
+    const summary = buildMigrationWorkspaceSummary({
+      deploy_readiness: {
+        ready: false,
+        reasons: ["Deploy target configuration is invalid."],
+        dispatch_service_reason_code: "certificate_domain_mismatch",
+        target: {
+          enabled: true,
+          repo_owner: "mhanson13",
+          repo_name: "sc-mechanical",
+          workflow_id: "deploy-sc-mechanical-www-prod.yml",
+          ref: "main",
+        },
+      },
+    });
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(summary);
+    mockFetchMigrationPublishHistory.mockResolvedValueOnce({ items: [], total: 0 });
+    mockFetchMigrationDeployHistory.mockResolvedValueOnce({ items: [], total: 0 });
+
+    render(<SiteMigrationWorkflowPage />);
+
+    const deployReadinessCard = await screen.findByTestId("migration-deploy-readiness");
+    expect(within(deployReadinessCard).getByTestId("migration-managed-gke-config-guidance-readiness")).toHaveTextContent(
+      "The deployed certificate does not match the site hostname. This usually means the managed certificate or ingress points at another site's hostname. Republish/deploy after admin verification of generated ingress/certificate resources.",
+    );
+
+    await user.click(await screen.findByText("Show detailed migration failure diagnostics"));
+    const deployDiagnostics = screen.getByTestId("migration-deploy-diagnostics");
+    expect(
+      within(deployDiagnostics).getByTestId("migration-managed-gke-config-guidance-diagnostics"),
+    ).toHaveTextContent(
+      "The deployed certificate does not match the site hostname. This usually means the managed certificate or ingress points at another site's hostname. Republish/deploy after admin verification of generated ingress/certificate resources.",
+    );
+  });
+
   it("updates selected draft diagnostics context when artifact selection changes", async () => {
     const user = userEvent.setup();
     const artifactOne = buildMigrationArtifactVersion({ id: "artifact-v1", version: 1 });

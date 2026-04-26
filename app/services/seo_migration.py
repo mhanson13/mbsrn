@@ -262,6 +262,7 @@ _DEPLOY_DISPATCH_SERVICE_REASON_TARGET_METADATA_MISSING = "target_metadata_missi
 _DEPLOY_DISPATCH_SERVICE_REASON_MISSING_CLUSTER_NAME = "missing_cluster_name"
 _DEPLOY_DISPATCH_SERVICE_REASON_MISSING_CLUSTER_LOCATION = "missing_cluster_location"
 _DEPLOY_DISPATCH_SERVICE_REASON_MISSING_GCP_PROJECT_ID = "missing_gcp_project_id"
+_DEPLOY_DISPATCH_SERVICE_REASON_CERTIFICATE_DOMAIN_MISMATCH = "certificate_domain_mismatch"
 _DEPLOY_WORKFLOW_MODE_SITE_REPO_TEMPLATE_V1 = "site_repo_template_v1"
 _DEPLOY_TARGET_ENVIRONMENT_SOURCE_ADMIN = "admin_config"
 _DEPLOY_DEFAULT_TARGET_ENVIRONMENT_KEY = "gke_prod"
@@ -12531,6 +12532,7 @@ def _normalize_dispatch_service_reason_code(value: object) -> str | None:
         _DEPLOY_DISPATCH_SERVICE_REASON_MISSING_CLUSTER_NAME,
         _DEPLOY_DISPATCH_SERVICE_REASON_MISSING_CLUSTER_LOCATION,
         _DEPLOY_DISPATCH_SERVICE_REASON_MISSING_GCP_PROJECT_ID,
+        _DEPLOY_DISPATCH_SERVICE_REASON_CERTIFICATE_DOMAIN_MISMATCH,
     }:
         return normalized_lower
     if normalized_lower in {
@@ -13001,6 +13003,7 @@ def _derive_dispatch_service_reason_code(
         _DEPLOY_DISPATCH_SERVICE_REASON_MISSING_CLUSTER_NAME,
         _DEPLOY_DISPATCH_SERVICE_REASON_MISSING_CLUSTER_LOCATION,
         _DEPLOY_DISPATCH_SERVICE_REASON_MISSING_GCP_PROJECT_ID,
+        _DEPLOY_DISPATCH_SERVICE_REASON_CERTIFICATE_DOMAIN_MISMATCH,
     }:
         return runtime_reason
     if not target_valid:
@@ -13044,6 +13047,11 @@ def _derive_managed_gke_dispatch_readiness_message(*, dispatch_service_reason_co
             "Admin action required: managed deploy target is missing required admin GKE project id "
             "configuration. Update MBSRN admin deployment settings."
         )
+    if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_CERTIFICATE_DOMAIN_MISMATCH:
+        return (
+            "Managed deploy target manifests are misaligned: the ingress host and managed certificate domain do not "
+            "match this site hostname. Republish/deploy after admin verification of generated ingress/certificate resources."
+        )
     return None
 
 
@@ -13086,6 +13094,12 @@ def _derive_deploy_failure_remediation_hint(
         return (
             "Managed deploy target is missing required admin GKE project id configuration. "
             "Update MBSRN admin deployment settings."
+        )
+    if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_CERTIFICATE_DOMAIN_MISMATCH:
+        return (
+            "The deployed certificate does not match the site hostname. This usually means ingress or managed "
+            "certificate resources point to another site's hostname. Republish/deploy after admin verification "
+            "of generated ingress/certificate resources."
         )
     if (
         normalized_reason == _DEPLOY_TARGET_REASON_WORKFLOW_NOT_DISPATCHABLE

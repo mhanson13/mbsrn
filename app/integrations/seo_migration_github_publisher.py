@@ -4108,9 +4108,10 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         ref: str,
         kubernetes_namespace: str,
         manifest_paths: tuple[str, ...] | list[str] | None = None,
-    ) -> tuple[bool, dict[str, bool], dict[str, bool]]:
+    ) -> tuple[bool, dict[str, bool], dict[str, bool], dict[str, str | None]]:
         alignment_by_path: dict[str, bool] = {}
         presence_by_path: dict[str, bool] = {}
+        content_by_path: dict[str, str | None] = {}
         effective_manifest_paths = tuple(manifest_paths or _MBSRN_MANAGED_CORE_MANIFEST_PATHS)
         for manifest_path in effective_manifest_paths:
             payload = self._fetch_workflow_file_payload_on_ref(
@@ -4121,12 +4122,13 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             )
             presence_by_path[manifest_path] = isinstance(payload, dict)
             manifest_content = _decode_workflow_file_content(payload)
+            content_by_path[manifest_path] = manifest_content
             alignment_by_path[manifest_path] = _manifest_content_matches_namespace(
                 manifest_path=manifest_path,
                 manifest_content=manifest_content,
                 kubernetes_namespace=kubernetes_namespace,
             )
-        return all(alignment_by_path.values()), alignment_by_path, presence_by_path
+        return all(alignment_by_path.values()), alignment_by_path, presence_by_path, content_by_path
 
     def _ensure_workflow_dispatch_ready_for_target(
         self,
@@ -4846,22 +4848,44 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             repo_name=target.repo_name,
             site_id=None,
         )
+        preview_certificate_name, _ = derive_site_preview_certificate_name(
+            repo_name=target.repo_name,
+            site_id=None,
+        )
         workflow_content = _decode_workflow_file_content(workflow_file_payload) or ""
         managed_workflow = _MBSRN_MANAGED_WORKFLOW_MARKER in workflow_content.lower()
         workflow_namespace_aligned: bool | None = None
         manifest_namespace_aligned: bool | None = None
+        certificate_domain_aligned: bool | None = None
         namespace_model_status = _NAMESPACE_MODEL_STATUS_UNKNOWN
+        certificate_alignment_details: dict[str, object] = {}
         if managed_workflow:
             workflow_namespace_aligned = _workflow_content_matches_namespace(
                 workflow_content=workflow_content,
                 kubernetes_namespace=derived_namespace,
             )
-            manifest_namespace_aligned, _, manifest_presence_by_path = self._evaluate_manifest_namespace_alignment(
+            (
+                manifest_namespace_aligned,
+                _,
+                manifest_presence_by_path,
+                manifest_content_by_path,
+            ) = self._evaluate_manifest_namespace_alignment(
                 repo_owner=target.repo_owner,
                 repo_name=target.repo_name,
                 ref=target.ref,
                 kubernetes_namespace=derived_namespace,
                 manifest_paths=expected_manifest_paths,
+            )
+            (
+                certificate_domain_aligned,
+                certificate_alignment_details,
+            ) = _evaluate_preview_certificate_alignment(
+                ingress_manifest_content=manifest_content_by_path.get(_MBSRN_MANAGED_INGRESS_FILE_PATH),
+                managed_certificate_manifest_content=manifest_content_by_path.get(
+                    _MBSRN_MANAGED_CERTIFICATE_FILE_PATH
+                ),
+                expected_preview_hostname=preview_hostname,
+                expected_certificate_name=preview_certificate_name,
             )
             managed_resource_quota_present = (
                 bool(manifest_presence_by_path.get(_MBSRN_MANAGED_RESOURCE_QUOTA_FILE_PATH))
@@ -4898,7 +4922,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             )
             namespace_model_status = (
                 _NAMESPACE_MODEL_STATUS_ALIGNED
-                if workflow_namespace_aligned and manifest_namespace_aligned
+                if workflow_namespace_aligned and manifest_namespace_aligned and bool(certificate_domain_aligned)
                 else _NAMESPACE_MODEL_STATUS_MISALIGNED
             )
         else:
@@ -4942,9 +4966,19 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         if managed_workflow and namespace_model_status == _NAMESPACE_MODEL_STATUS_MISALIGNED:
             dispatch_service_availability = False
             dispatch_service_reason_code = "target_configuration_invalid"
+        if managed_workflow and certificate_domain_aligned is False:
+            dispatch_service_availability = False
+            dispatch_service_reason_code = _DEPLOY_DISPATCH_SERVICE_REASON_CERTIFICATE_DOMAIN_MISMATCH
         if managed_workflow and gke_config_reason_code is not None:
             dispatch_service_availability = False
             dispatch_service_reason_code = gke_config_reason_code
+        if managed_workflow and certificate_alignment_details:
+            gke_config_details = {
+                **gke_config_details,
+                **certificate_alignment_details,
+                "expected_preview_certificate_name": preview_certificate_name,
+                "expected_preview_hostname": preview_hostname,
+            }
         return SEOMigrationGitHubTargetReadinessResult(
             repo_owner=target.repo_owner,
             repo_name=target.repo_name,
@@ -5746,7 +5780,7 @@ _MBSRN_MANAGED_LIMIT_RANGE_FILE_PATH = "k8s/limitrange.yaml"
 _MBSRN_MANAGED_NETWORK_POLICY_FILE_PATH = "k8s/networkpolicy.yaml"
 _MBSRN_MANAGED_IMAGE_PULL_SECRET_NAME = "mbsrn-ghcr-pull"
 _MBSRN_MANAGED_SITE_WEB_IMAGE_REPO_NAME = "site-web"
-_MBSRN_MANAGED_PREVIEW_CERTIFICATE_NAME = "site-web-preview-cert"
+_MBSRN_MANAGED_PREVIEW_CERTIFICATE_NAME_PREFIX = "site-web-preview-cert"
 _MBSRN_MANAGED_PREVIEW_DOMAIN_SUFFIX = "site.mbsrn.com"
 _MBSRN_MANAGED_REPO_BASELINE_README_PATH = "README.md"
 _MBSRN_MANAGED_REPO_BASELINE_GITIGNORE_PATH = ".gitignore"
@@ -5796,6 +5830,7 @@ _GKE_CONFIG_SOURCE_UNKNOWN = "unknown"
 _DEPLOY_DISPATCH_SERVICE_REASON_MISSING_CLUSTER_NAME = "missing_cluster_name"
 _DEPLOY_DISPATCH_SERVICE_REASON_MISSING_CLUSTER_LOCATION = "missing_cluster_location"
 _DEPLOY_DISPATCH_SERVICE_REASON_MISSING_GCP_PROJECT_ID = "missing_gcp_project_id"
+_DEPLOY_DISPATCH_SERVICE_REASON_CERTIFICATE_DOMAIN_MISMATCH = "certificate_domain_mismatch"
 _DEPLOY_GKE_CONFIG_MISSING_REASON_PRIORITY: tuple[str, ...] = (
     _DEPLOY_DISPATCH_SERVICE_REASON_MISSING_CLUSTER_NAME,
     _DEPLOY_DISPATCH_SERVICE_REASON_MISSING_CLUSTER_LOCATION,
@@ -5888,6 +5923,26 @@ def derive_site_preview_hostname(*, repo_name: object, site_id: object | None = 
             stage="workflow_provisioning",
         )
     return f"{host_label}.{_MBSRN_MANAGED_PREVIEW_DOMAIN_SUFFIX}", namespace_source
+
+
+def derive_site_preview_certificate_name(*, repo_name: object, site_id: object | None = None) -> tuple[str, str]:
+    namespace, namespace_source = derive_site_kubernetes_namespace(repo_name=repo_name, site_id=site_id)
+    suffix_budget = 63 - len(_MBSRN_MANAGED_PREVIEW_CERTIFICATE_NAME_PREFIX) - 1
+    suffix = _safe_identifier_fragment(namespace, fallback="", max_length=max(suffix_budget, 1)).strip("-")
+    if not suffix:
+        raise SEOMigrationGitHubPublisherError(
+            code="preview_certificate_name_invalid",
+            safe_message="Preview certificate name could not be derived from deploy target metadata.",
+            stage="workflow_provisioning",
+        )
+    certificate_name = f"{_MBSRN_MANAGED_PREVIEW_CERTIFICATE_NAME_PREFIX}-{suffix}"[:63].strip("-")
+    if not certificate_name:
+        raise SEOMigrationGitHubPublisherError(
+            code="preview_certificate_name_invalid",
+            safe_message="Preview certificate name could not be derived from deploy target metadata.",
+            stage="workflow_provisioning",
+        )
+    return certificate_name, namespace_source
 
 
 def _derive_site_runtime_image_repository(*, repo_owner: object) -> str:
@@ -6335,6 +6390,10 @@ def _render_managed_gke_manifest_files(
     site_id: str | None,
 ) -> dict[str, str]:
     site_runtime_image_repository = _derive_site_runtime_image_repository(repo_owner=repo_owner)
+    preview_certificate_name, _ = derive_site_preview_certificate_name(
+        repo_name=repo_name,
+        site_id=site_id,
+    )
     repo_owner_fragment = _safe_identifier_fragment(repo_owner, fallback="mbsrn", max_length=40)
     repo_fragment = _safe_identifier_fragment(repo_name, fallback="site", max_length=40)
     env_key = _safe_identifier_fragment(target_environment_key, fallback="gke-prod", max_length=40)
@@ -6443,7 +6502,7 @@ def _render_managed_gke_manifest_files(
         f"{labels}"
         "  annotations:\n"
         "    kubernetes.io/ingress.class: gce\n"
-        f"    networking.gke.io/managed-certificates: {_MBSRN_MANAGED_PREVIEW_CERTIFICATE_NAME}\n"
+        f"    networking.gke.io/managed-certificates: {preview_certificate_name}\n"
         "    networking.gke.io/v1beta1.FrontendConfig: site-web-frontend-config\n"
         "spec:\n"
         "  ingressClassName: gce\n"
@@ -6464,7 +6523,7 @@ def _render_managed_gke_manifest_files(
         "apiVersion: networking.gke.io/v1\n"
         "kind: ManagedCertificate\n"
         "metadata:\n"
-        f"  name: {_MBSRN_MANAGED_PREVIEW_CERTIFICATE_NAME}\n"
+        f"  name: {preview_certificate_name}\n"
         f"  namespace: {namespace}\n"
         "  labels:\n"
         f"{labels}"
@@ -6685,6 +6744,115 @@ def _manifest_content_matches_namespace(
         return re.search(pattern, content) is not None
     pattern = rf"(?m)^\s*namespace:\s*[\"']?{re.escape(namespace)}[\"']?\s*$"
     return re.search(pattern, content) is not None
+
+
+def _evaluate_preview_certificate_alignment(
+    *,
+    ingress_manifest_content: str | None,
+    managed_certificate_manifest_content: str | None,
+    expected_preview_hostname: str,
+    expected_certificate_name: str,
+) -> tuple[bool, dict[str, object]]:
+    ingress_content = str(ingress_manifest_content or "")
+    certificate_content = str(managed_certificate_manifest_content or "")
+    expected_host = (str(expected_preview_hostname or "").strip().lower() or None)
+    expected_cert_name = (str(expected_certificate_name or "").strip().lower() or None)
+
+    ingress_kind = _extract_manifest_scalar(
+        ingress_content,
+        pattern=r"(?m)^\s*kind:\s*([^\n#]+)$",
+    )
+    certificate_kind = _extract_manifest_scalar(
+        certificate_content,
+        pattern=r"(?m)^\s*kind:\s*([^\n#]+)$",
+    )
+
+    ingress_host: str | None = None
+    ingress_cert_annotation: str | None = None
+    if ingress_kind == "ingress":
+        ingress_host = _extract_manifest_scalar(
+            ingress_content,
+            pattern=r"(?m)^\s*-\s*host:\s*([^\n#]+)$",
+        )
+        ingress_cert_annotation = _extract_manifest_scalar(
+            ingress_content,
+            pattern=r"(?m)^\s*networking\.gke\.io/managed-certificates:\s*([^\n#]+)$",
+        )
+
+    certificate_name: str | None = None
+    certificate_domains: tuple[str, ...] = ()
+    if certificate_kind == "managedcertificate":
+        certificate_name = _extract_manifest_scalar(
+            certificate_content,
+            pattern=r"(?m)^\s*name:\s*([^\n#]+)$",
+        )
+        certificate_domains = _extract_manifest_list_values(
+            certificate_content,
+            parent_key="domains",
+        )
+
+    host_conflict = bool(expected_host and ingress_host and ingress_host != expected_host)
+    annotation_conflict = bool(expected_cert_name and ingress_cert_annotation and ingress_cert_annotation != expected_cert_name)
+    certificate_name_conflict = bool(expected_cert_name and certificate_name and certificate_name != expected_cert_name)
+    domain_conflict = bool(expected_host and certificate_domains and expected_host not in certificate_domains)
+
+    observed_evidence = any(
+        value
+        for value in (
+            ingress_host,
+            ingress_cert_annotation,
+            certificate_name,
+            certificate_domains,
+        )
+    )
+    has_conflict = host_conflict or annotation_conflict or certificate_name_conflict or domain_conflict
+    all_aligned = not has_conflict
+    if has_conflict:
+        alignment_status = "mismatched"
+    elif observed_evidence:
+        alignment_status = "aligned"
+    else:
+        alignment_status = "insufficient_evidence"
+
+    return all_aligned, {
+        "preview_certificate_ingress_host": ingress_host,
+        "preview_certificate_ingress_annotation": ingress_cert_annotation,
+        "preview_certificate_name": certificate_name,
+        "preview_certificate_domains": list(certificate_domains),
+        "preview_certificate_ingress_host_conflict": host_conflict,
+        "preview_certificate_annotation_conflict": annotation_conflict,
+        "preview_certificate_name_conflict": certificate_name_conflict,
+        "preview_certificate_domain_conflict": domain_conflict,
+        "preview_certificate_alignment_status": alignment_status,
+    }
+
+
+def _extract_manifest_scalar(content: str, *, pattern: str) -> str | None:
+    if not content:
+        return None
+    match = re.search(pattern, content)
+    if not match:
+        return None
+    value = match.group(1).strip().strip('"').strip("'").strip()
+    return value.lower() if value else None
+
+
+def _extract_manifest_list_values(content: str, *, parent_key: str) -> tuple[str, ...]:
+    if not content:
+        return ()
+    parent_pattern = rf"(?ms)^\s*{re.escape(parent_key)}:\s*\n(?P<body>(?:\s*-\s*[^\n]+\n?)*)"
+    match = re.search(parent_pattern, content)
+    if not match:
+        return ()
+    values: list[str] = []
+    for line in match.group("body").splitlines():
+        item_match = re.match(r"^\s*-\s*([^\n#]+)$", line)
+        if not item_match:
+            continue
+        normalized = item_match.group(1).strip().strip('"').strip("'").strip().lower()
+        if normalized:
+            values.append(normalized)
+    return tuple(values)
 
 
 def _status_links_to_workflow_run(*, status_item: dict[str, object], workflow_run_id: int) -> bool:

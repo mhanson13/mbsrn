@@ -1131,7 +1131,9 @@ Deploy behavior:
   - managed site ingress now includes a host-specific preview rule and certificate wiring:
     - preview host: `<normalized-site>.site.mbsrn.com`
     - managed certificate resource: `k8s/managedcertificate.yaml`
-    - ingress annotation: `networking.gke.io/managed-certificates: site-web-preview-cert`
+    - managed certificate name: `site-web-preview-cert-<normalized-site>`
+    - ingress annotation: `networking.gke.io/managed-certificates: site-web-preview-cert-<normalized-site>`
+    - certificate domain and ingress host must match the same site-specific preview hostname; cross-site certificate references are treated as target-configuration mismatch.
   - ingress address resolution uses a bounded wait loop (10-minute max: `40 x 15s`) because GKE load balancer provisioning can lag successful rollout
   - workflow emits all three output keys on success:
     - `live_url`

@@ -578,6 +578,9 @@ function toManagedGkeConfigGuidance(value: string | null): string | null {
   if (normalized === "missing_gcp_project_id") {
     return "Managed deploy target is missing required admin GKE project id configuration. Update admin deployment settings.";
   }
+  if (normalized === "certificate_domain_mismatch") {
+    return "The deployed certificate does not match the site hostname. This usually means the managed certificate or ingress points at another site's hostname. Republish/deploy after admin verification of generated ingress/certificate resources.";
+  }
   return null;
 }
 
