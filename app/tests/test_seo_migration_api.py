@@ -360,13 +360,13 @@ class _StubMigrationGitHubPublisher(SEOMigrationGitHubPublisher):
         ref: str,
         kubernetes_namespace: str,
         managed_gke_config: dict[str, object] | None,
-        docker_userid: str | None,
-        docker_email: str | None,
-        docker_pat: str | None,
+        git_userid: str | None,
+        git_email: str | None,
+        git_token: str | None,
         gcp_deploy_key: str | None,
         dry_run: bool = False,
     ) -> SEOMigrationGitHubImagePullSecretProvisionResult:
-        del managed_gke_config, docker_userid, docker_email, docker_pat, gcp_deploy_key
+        del managed_gke_config, git_userid, git_email, git_token, gcp_deploy_key
         return SEOMigrationGitHubImagePullSecretProvisionResult(
             repo_owner=repo_owner,
             repo_name=repo_name,
@@ -581,9 +581,9 @@ def _make_client(
     return TestClient(app)
 
 
-def test_github_publisher_dependency_uses_migration_github_token_when_present() -> None:
+def test_github_publisher_dependency_uses_git_token_when_present() -> None:
     settings = SimpleNamespace(
-        migration_github_token=" test-token ",
+        git_token=" test-token ",
         migration_github_api_base_url="https://api.github.com",
         migration_github_timeout_seconds=30.0,
         migration_publish_committer_name="MBSRN Automation",
@@ -597,7 +597,7 @@ def test_github_publisher_dependency_uses_migration_github_token_when_present() 
 
 def test_github_publisher_dependency_returns_misconfigured_when_token_missing() -> None:
     settings = SimpleNamespace(
-        migration_github_token="  ",
+        git_token="  ",
         migration_github_api_base_url="https://api.github.com",
         migration_github_timeout_seconds=30.0,
         migration_publish_committer_name="MBSRN Automation",

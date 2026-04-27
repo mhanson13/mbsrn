@@ -288,9 +288,10 @@ It transforms a business's website and market context into structured insights a
   - when enabled, publish provisions and verifies `k8s/resourcequota.yaml`, `k8s/limitrange.yaml`, and `k8s/networkpolicy.yaml` as platform-managed files.
 - Readiness explicitly distinguishes merged metadata readiness from runtime publisher capability (for example credential unavailable vs runtime integration unavailable) so publish blockers map to the correct actor.
 - Deploy readiness now exposes explicit blocker classes (`published_artifact_missing`, deploy target config missing/invalid, deploy runtime/integration unavailable) so deploy blockers map to the correct actor without generic "runtime missing" ambiguity.
-- Runtime publisher credentials remain environment-managed (`MIGRATION_GITHUB_TOKEN`) and are never exposed through Admin/workspace payloads.
-- Local development uses the same `MIGRATION_GITHUB_TOKEN` env var name (with a local test token value when needed) to avoid test/runtime naming drift.
-- Production deployment injects `MIGRATION_GITHUB_TOKEN` into `mbsrn-api` through existing `mbsrn-api-auth` secret wiring; the token is not stored/editable in application UI.
+- Runtime publisher credentials remain environment-managed (`GIT_TOKEN`) and are never exposed through Admin/workspace payloads.
+- Local development uses the same `GIT_TOKEN` env var name (with a local test token value when needed) to avoid test/runtime naming drift.
+- Production deployment injects `GIT_TOKEN` into `mbsrn-api` through existing `mbsrn-api-auth` secret wiring; the token is not stored/editable in application UI.
+- `GIT_TOKEN` also backs GHCR pull-secret provisioning and must include `read:packages` plus required GitHub repository/API scopes for publisher operations.
 - Hybrid deploy-secret bridge model:
   - `GCP_DEPLOY_KEY` is admin-owned and managed through MBSRN admin GitHub publish configuration.
   - secret material is write-only in admin APIs/UI; reads return status metadata only (`configured`, `updated_at`).

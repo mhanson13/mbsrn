@@ -503,9 +503,9 @@ class SEOMigrationService:
         deploy_default_workflow_id: str = "deploy-www-prod.yml",
         deploy_default_ref: str = "main",
         deploy_secret_gcp_key: str | None = None,
-        deploy_secret_docker_userid: str | None = None,
-        deploy_secret_docker_email: str | None = None,
-        deploy_secret_docker_pat: str | None = None,
+        deploy_secret_git_userid: str | None = None,
+        deploy_secret_git_email: str | None = None,
+        deploy_secret_git_token: str | None = None,
     ) -> None:
         self.session = session
         self.business_repository = business_repository
@@ -562,9 +562,9 @@ class SEOMigrationService:
         self.deploy_default_workflow_id = deploy_default_workflow_id.strip() or "deploy-www-prod.yml"
         self.deploy_default_ref = deploy_default_ref.strip() or "main"
         self.deploy_secret_gcp_key = (deploy_secret_gcp_key or "").strip() or None
-        self.deploy_secret_docker_userid = (deploy_secret_docker_userid or "").strip() or None
-        self.deploy_secret_docker_email = (deploy_secret_docker_email or "").strip() or None
-        self.deploy_secret_docker_pat = (deploy_secret_docker_pat or "").strip() or None
+        self.deploy_secret_git_userid = (deploy_secret_git_userid or "").strip() or None
+        self.deploy_secret_git_email = (deploy_secret_git_email or "").strip() or None
+        self.deploy_secret_git_token = (deploy_secret_git_token or "").strip() or None
         self.runtime_build_metadata = get_runtime_build_metadata()
         self._resolved_migration_draft_timeout_seconds = _MIGRATION_DRAFT_TIMEOUT_DEFAULT_SECONDS
         self._resolved_migration_draft_timeout_source = "default"
@@ -2788,9 +2788,9 @@ class SEOMigrationService:
                         ref=deploy_target_for_dispatch.ref,
                         kubernetes_namespace=dispatch_namespace,
                         managed_gke_config=managed_gke_config_for_dispatch,
-                        docker_userid=self.deploy_secret_docker_userid,
-                        docker_email=self.deploy_secret_docker_email,
-                        docker_pat=self.deploy_secret_docker_pat,
+                        git_userid=self.deploy_secret_git_userid,
+                        git_email=self.deploy_secret_git_email,
+                        git_token=self.deploy_secret_git_token,
                         gcp_deploy_key=deploy_secret_value_for_provision,
                         dry_run=False,
                     )
@@ -9191,22 +9191,22 @@ class SEOMigrationService:
     def _resolve_managed_image_pull_secret_runtime_config(
         self,
     ) -> tuple[dict[str, object], str | None]:
-        docker_userid = (self.deploy_secret_docker_userid or "").strip()
-        docker_email = (self.deploy_secret_docker_email or "").strip()
-        docker_pat = (self.deploy_secret_docker_pat or "").strip()
+        git_userid = (self.deploy_secret_git_userid or "").strip()
+        git_email = (self.deploy_secret_git_email or "").strip()
+        git_token = (self.deploy_secret_git_token or "").strip()
         payload: dict[str, object] = {
-            "docker_userid_configured": bool(docker_userid),
-            "docker_email_configured": bool(docker_email),
-            "docker_pat_configured": bool(docker_pat),
+            "git_userid_configured": bool(git_userid),
+            "git_email_configured": bool(git_email),
+            "git_token_configured": bool(git_token),
             "config_source": "control_plane_runtime",
         }
         missing_fields: list[str] = []
-        if not docker_userid:
-            missing_fields.append("docker_userid")
-        if not docker_email:
-            missing_fields.append("docker_email")
-        if not docker_pat:
-            missing_fields.append("docker_pat")
+        if not git_userid:
+            missing_fields.append("git_userid")
+        if not git_email:
+            missing_fields.append("git_email")
+        if not git_token:
+            missing_fields.append("git_token")
         if missing_fields:
             payload["missing_fields"] = missing_fields
             return payload, _DEPLOY_DISPATCH_SERVICE_REASON_IMAGE_PULL_SECRET_MISSING
@@ -13142,7 +13142,7 @@ def _derive_managed_gke_dispatch_readiness_message(*, dispatch_service_reason_co
     if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_IMAGE_PULL_SECRET_MISSING:
         return (
             "Admin action required: managed deploy target is missing required GHCR pull credentials "
-            "(DOCKER_USERID, DOCKER_EMAIL, DOCKER_PAT). Configure MBSRN control-plane deployment settings and "
+            "(GIT_USERID, GIT_EMAIL, GIT_TOKEN). Configure MBSRN control-plane deployment settings and "
             "verify deploy-prod projects them into the API runtime secret."
         )
     if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_IMAGE_PULL_SECRET_NOT_REFERENCED:
@@ -13210,8 +13210,8 @@ def _derive_deploy_failure_remediation_hint(
         )
     if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_IMAGE_PULL_SECRET_MISSING:
         return (
-            "Managed deploy target is missing required GHCR pull credentials (DOCKER_USERID, DOCKER_EMAIL, "
-            "DOCKER_PAT). Configure MBSRN control-plane deployment settings, ensure deploy-prod projects them into "
+            "Managed deploy target is missing required GHCR pull credentials (GIT_USERID, GIT_EMAIL, "
+            "GIT_TOKEN). Configure MBSRN control-plane deployment settings, ensure deploy-prod projects them into "
             "the API runtime, and retry deploy."
         )
     if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_IMAGE_PULL_SECRET_NOT_REFERENCED:

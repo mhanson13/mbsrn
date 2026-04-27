@@ -1000,9 +1000,10 @@ Required credential note:
   - `Missing KUBERNETES_CLUSTER_LOCATION variable/secret`
   - `Missing GCP_PROJECT_ID variable/secret`
 - control plane provisions `ghcr-pull-secret` in the target namespace before deploy dispatch and fails early when any required deploy secret is missing:
-  - `DOCKER_USERID` (production: `mhanson13`)
-  - `DOCKER_EMAIL` (production: `mhanson13@gmail.com`)
-  - `DOCKER_PAT` (PAT never logged/surfaced)
+  - `GIT_USERID` (production: `mhanson13`)
+  - `GIT_EMAIL` (production: `mhanson13@gmail.com`)
+  - `GIT_TOKEN` (PAT never logged/surfaced)
+  - `GIT_TOKEN` must include repository/API publish permissions and `read:packages` for GHCR pulls
   - these are resolved from the mbsrn control-plane runtime/admin deployment configuration, not from target site repositories.
   - GitHub repository secrets must be projected into control-plane runtime by `deploy-prod` (`mbsrn-api-auth` + API env). Repository-secret presence by itself does not satisfy readiness.
 - deploy readiness diagnostics can surface missing managed GKE config before dispatch via:
@@ -1021,7 +1022,7 @@ Required credential note:
   - `missing_cluster_*` / `missing_gcp_project_id`:
     admin-owned managed target configuration blockers (fix MBSRN admin deployment settings first; repo vars/secrets are legacy fallback only)
   - `image_pull_secret_missing`:
-    admin/runtime deployment-credential blocker (configure `DOCKER_USERID`, `DOCKER_EMAIL`, `DOCKER_PAT` in mbsrn control-plane deployment settings and verify `deploy-prod` projected them into runtime)
+    admin/runtime deployment-credential blocker (configure `GIT_USERID`, `GIT_EMAIL`, `GIT_TOKEN` in mbsrn control-plane deployment settings and verify `deploy-prod` projected them into runtime)
   - `image_pull_secret_not_referenced`:
     managed-manifest alignment blocker (republish managed manifests so deployment references `ghcr-pull-secret`)
   - `runtime_credential_missing` with `secret_name=GCP_DEPLOY_KEY`:
@@ -1079,9 +1080,9 @@ Common stage-aware interpretations:
     - confirm the namespace-scoped secret exists:
       - `kubectl get secret ghcr-pull-secret -n <namespace>`
     - confirm required mbsrn control-plane runtime secrets are configured:
-      - `DOCKER_USERID` (production: `mhanson13`)
-      - `DOCKER_EMAIL` (production: `mhanson13@gmail.com`)
-      - `DOCKER_PAT` (PAT value must never be printed in logs)
+      - `GIT_USERID` (production: `mhanson13`)
+      - `GIT_EMAIL` (production: `mhanson13@gmail.com`)
+      - `GIT_TOKEN` (PAT value must never be printed in logs)
     - confirm the selected runtime image is owner-scoped to the target repo owner:
       - `site_runtime_image_reference` should match `ghcr.io/<target-repo-owner>/site-web:<tag>`
       - owner mismatch can produce GHCR 403/unauthorized signals even when pull-secret wiring exists
@@ -1179,8 +1180,8 @@ Live URL confirmation guidance:
 
 Local-only validation note:
 
-- For optional local verification against GitHub APIs, use `MIGRATION_GITHUB_TOKEN` with a local test token value in local environment only.
-- Never print/log/commit token values. Production runtime should continue using infrastructure-managed `MIGRATION_GITHUB_TOKEN` wiring.
+- For optional local verification against GitHub APIs, use `GIT_TOKEN` with a local test token value in local environment only.
+- Never print/log/commit token values. Production runtime should continue using infrastructure-managed `GIT_TOKEN` wiring.
 
 ## Local Live Validation (Migration /responses)
 
@@ -1211,3 +1212,4 @@ If failure occurs:
   - `has_null_optional_fields`
   - `schema_object_nodes_non_false_additional_properties`
   - `schema_object_nodes_missing_required`
+

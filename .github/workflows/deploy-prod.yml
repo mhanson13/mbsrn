@@ -85,11 +85,10 @@ jobs:
           APP_SESSION_SECRET: ${{ secrets.APP_SESSION_SECRET }}
           GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
           AI_PROVIDER_API_KEY: ${{ secrets.AI_PROVIDER_API_KEY }}
-          MIGRATION_GITHUB_TOKEN: ${{ secrets.MIGRATION_GITHUB_TOKEN }}
+          GIT_TOKEN: ${{ secrets.GIT_TOKEN }}
           GOOGLE_PLACES_API_KEY: ${{ secrets.GOOGLE_PLACES_API_KEY }}
-          DOCKER_USERID: ${{ secrets.DOCKER_USERID }}
-          DOCKER_EMAIL: ${{ secrets.DOCKER_EMAIL }}
-          DOCKER_PAT: ${{ secrets.DOCKER_PAT }}
+          GIT_USERID: ${{ secrets.GIT_USERID }}
+          GIT_EMAIL: ${{ secrets.GIT_EMAIL }}
         run: |
           set -euo pipefail
 
@@ -133,10 +132,9 @@ jobs:
             APP_SESSION_SECRET
             GOOGLE_OAUTH_CLIENT_SECRET
             AI_PROVIDER_API_KEY
-            MIGRATION_GITHUB_TOKEN
-            DOCKER_USERID
-            DOCKER_EMAIL
-            DOCKER_PAT
+            GIT_TOKEN
+            GIT_USERID
+            GIT_EMAIL
           )
 
           for name in "${required[@]}"; do
@@ -475,12 +473,11 @@ jobs:
           APP_SESSION_SECRET: ${{ secrets.APP_SESSION_SECRET }}
           GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
           AI_PROVIDER_API_KEY: ${{ secrets.AI_PROVIDER_API_KEY }}
-          MIGRATION_GITHUB_TOKEN: ${{ secrets.MIGRATION_GITHUB_TOKEN }}
+          GIT_TOKEN: ${{ secrets.GIT_TOKEN }}
           GOOGLE_PLACES_API_KEY: ${{ secrets.GOOGLE_PLACES_API_KEY }}
           SEARCH_CONSOLE_CREDENTIALS_JSON: ${{ secrets.SEARCH_CONSOLE_CREDENTIALS_JSON }}
-          DOCKER_USERID: ${{ secrets.DOCKER_USERID }}
-          DOCKER_EMAIL: ${{ secrets.DOCKER_EMAIL }}
-          DOCKER_PAT: ${{ secrets.DOCKER_PAT }}
+          GIT_USERID: ${{ secrets.GIT_USERID }}
+          GIT_EMAIL: ${{ secrets.GIT_EMAIL }}
         run: |
           set -euo pipefail
 
@@ -499,10 +496,9 @@ jobs:
             --from-literal=GOOGLE_OAUTH_CLIENT_SECRET="${GOOGLE_OAUTH_CLIENT_SECRET}" \
             --from-literal=GCP_PROJECT_ID="${GCP_PROJECT_ID}" \
             --from-literal=AI_PROVIDER_API_KEY="${AI_PROVIDER_API_KEY}" \
-            --from-literal=MIGRATION_GITHUB_TOKEN="${MIGRATION_GITHUB_TOKEN}" \
-            --from-literal=DOCKER_USERID="${DOCKER_USERID}" \
-            --from-literal=DOCKER_EMAIL="${DOCKER_EMAIL}" \
-            --from-literal=DOCKER_PAT="${DOCKER_PAT}" \
+            --from-literal=GIT_TOKEN="${GIT_TOKEN}" \
+            --from-literal=GIT_USERID="${GIT_USERID}" \
+            --from-literal=GIT_EMAIL="${GIT_EMAIL}" \
             --from-literal=GOOGLE_PLACES_API_KEY="${GOOGLE_PLACES_API_KEY}" \
             --from-literal=SEARCH_CONSOLE_CREDENTIALS_JSON="${SEARCH_CONSOLE_CREDENTIALS_JSON}" \
             --from-literal=AI_PROVIDER_NAME="${AI_PROVIDER_NAME}" \
@@ -621,17 +617,23 @@ jobs:
             else
               echo "Secret wiring check: mbsrn-api-auth key DATABASE_URL is missing."
             fi
-          migration_github_token_key_present="$(kubectl -n "${K8S_NAMESPACE}" get secret mbsrn-api-auth -o jsonpath='{.data.MIGRATION_GITHUB_TOKEN}' 2>/dev/null || true)"
-          if [[ -n "${migration_github_token_key_present}" ]]; then
-            echo "Secret wiring check: mbsrn-api-auth key MIGRATION_GITHUB_TOKEN is present."
+          git_token_key_present="$(kubectl -n "${K8S_NAMESPACE}" get secret mbsrn-api-auth -o jsonpath='{.data.GIT_TOKEN}' 2>/dev/null || true)"
+          if [[ -n "${git_token_key_present}" ]]; then
+            echo "Secret wiring check: mbsrn-api-auth key GIT_TOKEN is present."
           else
-            echo "Secret wiring check: mbsrn-api-auth key MIGRATION_GITHUB_TOKEN is missing."
+            echo "Secret wiring check: mbsrn-api-auth key GIT_TOKEN is missing."
           fi
-          docker_pat_key_present="$(kubectl -n "${K8S_NAMESPACE}" get secret mbsrn-api-auth -o jsonpath='{.data.DOCKER_PAT}' 2>/dev/null || true)"
-          if [[ -n "${docker_pat_key_present}" ]]; then
-            echo "Secret wiring check: mbsrn-api-auth key DOCKER_PAT is present."
+          git_userid_key_present="$(kubectl -n "${K8S_NAMESPACE}" get secret mbsrn-api-auth -o jsonpath='{.data.GIT_USERID}' 2>/dev/null || true)"
+          if [[ -n "${git_userid_key_present}" ]]; then
+            echo "Secret wiring check: mbsrn-api-auth key GIT_USERID is present."
           else
-            echo "Secret wiring check: mbsrn-api-auth key DOCKER_PAT is missing."
+            echo "Secret wiring check: mbsrn-api-auth key GIT_USERID is missing."
+          fi
+          git_email_key_present="$(kubectl -n "${K8S_NAMESPACE}" get secret mbsrn-api-auth -o jsonpath='{.data.GIT_EMAIL}' 2>/dev/null || true)"
+          if [[ -n "${git_email_key_present}" ]]; then
+            echo "Secret wiring check: mbsrn-api-auth key GIT_EMAIL is present."
+          else
+            echo "Secret wiring check: mbsrn-api-auth key GIT_EMAIL is missing."
           fi
           echo "::endgroup::"
           }

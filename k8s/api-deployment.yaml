@@ -75,26 +75,21 @@ spec:
                 secretKeyRef:
                   name: mbsrn-api-auth
                   key: AI_PROVIDER_API_KEY
-            - name: MIGRATION_GITHUB_TOKEN
+            - name: GIT_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: mbsrn-api-auth
-                  key: MIGRATION_GITHUB_TOKEN
-            - name: DOCKER_USERID
+                  key: GIT_TOKEN
+            - name: GIT_USERID
               valueFrom:
                 secretKeyRef:
                   name: mbsrn-api-auth
-                  key: DOCKER_USERID
-            - name: DOCKER_EMAIL
+                  key: GIT_USERID
+            - name: GIT_EMAIL
               valueFrom:
                 secretKeyRef:
                   name: mbsrn-api-auth
-                  key: DOCKER_EMAIL
-            - name: DOCKER_PAT
-              valueFrom:
-                secretKeyRef:
-                  name: mbsrn-api-auth
-                  key: DOCKER_PAT
+                  key: GIT_EMAIL
             - name: GOOGLE_PLACES_API_KEY
               valueFrom:
                 secretKeyRef:

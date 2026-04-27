@@ -101,11 +101,10 @@ class Settings:
     seo_competitor_profile_raw_output_retention_days: int
     seo_competitor_profile_run_retention_days: int
     seo_competitor_profile_rejected_draft_retention_days: int
-    migration_github_token: str | None = field(repr=False)
+    git_token: str | None = field(repr=False)
     gcp_deploy_key: str | None = field(repr=False)
-    docker_userid: str | None = field(repr=False)
-    docker_email: str | None = field(repr=False)
-    docker_pat: str | None = field(repr=False)
+    git_userid: str | None = field(repr=False)
+    git_email: str | None = field(repr=False)
     migration_github_api_base_url: str
     migration_github_timeout_seconds: int
     migration_publish_commit_message_prefix: str
@@ -468,11 +467,10 @@ def get_settings() -> Settings:
             90,
             min_value=1,
         ),
-        migration_github_token=os.getenv("MIGRATION_GITHUB_TOKEN"),
+        git_token=os.getenv("GIT_TOKEN"),
         gcp_deploy_key=os.getenv("GCP_DEPLOY_KEY"),
-        docker_userid=os.getenv("DOCKER_USERID"),
-        docker_email=os.getenv("DOCKER_EMAIL"),
-        docker_pat=os.getenv("DOCKER_PAT"),
+        git_userid=os.getenv("GIT_USERID"),
+        git_email=os.getenv("GIT_EMAIL"),
         migration_github_api_base_url=(
             os.getenv("MIGRATION_GITHUB_API_BASE_URL", "https://api.github.com").strip() or "https://api.github.com"
         ),

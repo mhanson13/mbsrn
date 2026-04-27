@@ -928,7 +928,7 @@ Security constraints:
 
 ## Required Runtime Configuration
 Migration publish/deploy runtime configuration is environment-driven:
-- `MIGRATION_GITHUB_TOKEN`
+- `GIT_TOKEN`
 - `MIGRATION_GITHUB_API_BASE_URL`
 - `MIGRATION_GITHUB_TIMEOUT_SECONDS`
 - `MIGRATION_PUBLISH_COMMIT_MESSAGE_PREFIX`
@@ -939,8 +939,9 @@ Migration publish/deploy runtime configuration is environment-driven:
 
 Notes:
 - token is only read from runtime environment, never persisted in workspace rows
-- production deployment wiring injects `MIGRATION_GITHUB_TOKEN` into `mbsrn-api` from the `mbsrn-api-auth` Kubernetes secret (`secretKeyRef` key `MIGRATION_GITHUB_TOKEN`)
-- optional local GitHub control-plane validation should use `MIGRATION_GITHUB_TOKEN` (with a local test token value if needed); this keeps local/test/runtime naming consistent while remaining a non-production credential input
+- production deployment wiring injects `GIT_TOKEN` into `mbsrn-api` from the `mbsrn-api-auth` Kubernetes secret (`secretKeyRef` key `GIT_TOKEN`)
+- optional local GitHub control-plane validation should use `GIT_TOKEN` (with a local test token value if needed); this keeps local/test/runtime naming consistent while remaining a non-production credential input
+- `GIT_TOKEN` is a GitHub token used for both GitHub API publish/deploy operations and GHCR pull-secret provisioning; required capabilities include repository API access plus `read:packages`
 - per-site publish/deploy target details are stored in workspace config JSON fields
 - runtime config is validated at action/readiness time for migration publish/deploy (feature-scoped validation); unrelated app features continue running when migration config is missing
 - publish readiness now distinguishes metadata readiness from runtime publisher capability:
@@ -1035,11 +1036,11 @@ Deploy behavior:
   - fetch GKE credentials (`google-github-actions/get-gke-credentials`)
   - apply namespace first (`kubectl apply -f k8s/namespace.yaml`)
   - control plane provisions namespace-scoped GHCR pull secret (`ghcr-pull-secret`) before target deploy dispatch:
-    - `DOCKER_USERID` (production value: `mhanson13`)
-    - `DOCKER_EMAIL` (production value: `mhanson13@gmail.com`)
-    - `DOCKER_PAT` (personal access token; never logged or surfaced)
+    - `GIT_USERID` (production value: `mhanson13`)
+    - `GIT_EMAIL` (production value: `mhanson13@gmail.com`)
+    - `GIT_TOKEN` (personal access token; never logged or surfaced)
     - these are resolved only from the mbsrn control-plane runtime/admin deployment configuration (not target site repositories)
-    - GitHub Actions repository secrets alone are not sufficient until `deploy-prod` projects them into `mbsrn-api-auth` and API runtime env (`DOCKER_USERID`, `DOCKER_EMAIL`, `DOCKER_PAT`)
+    - GitHub Actions repository secrets alone are not sufficient until `deploy-prod` projects them into `mbsrn-api-auth` and API runtime env (`GIT_USERID`, `GIT_EMAIL`, `GIT_TOKEN`)
   - apply managed manifests (`kubectl apply -f k8s/`)
   - verify rollout (`kubectl rollout status deployment/site-web --namespace <derived-namespace>`)
   - managed `site-web` deployment template references `imagePullSecrets: [{name: ghcr-pull-secret}]` for private GHCR pulls
@@ -1090,9 +1091,9 @@ Deploy behavior:
     - `missing_cluster_name` -> set managed GKE cluster name in MBSRN admin deployment settings
     - `missing_cluster_location` -> set managed GKE cluster location in MBSRN admin deployment settings
     - `missing_gcp_project_id` -> set managed GCP project ID in MBSRN admin deployment settings
-    - `image_pull_secret_missing` -> configure `DOCKER_USERID`, `DOCKER_EMAIL`, `DOCKER_PAT` in **mbsrn control-plane** deployment settings and verify `deploy-prod` projected them into runtime before retry
+    - `image_pull_secret_missing` -> configure `GIT_USERID`, `GIT_EMAIL`, `GIT_TOKEN` in **mbsrn control-plane** deployment settings and verify `deploy-prod` projected them into runtime before retry
     - `image_pull_secret_not_referenced` -> republish managed deploy manifests so deployment references `ghcr-pull-secret`
-  - GHCR pull credentials are evaluated from control-plane runtime configuration and used to provision namespace-scoped Kubernetes pull secrets; target site repositories must not store Docker credentials.
+  - GHCR pull credentials are evaluated from control-plane runtime configuration and used to provision namespace-scoped Kubernetes pull secrets; target site repositories must not store `GIT_USERID`/`GIT_EMAIL`/`GIT_TOKEN` credentials.
   - configuration source expectation is explicit in UI copy:
     - managed deploy resolves admin platform config first; repo vars/secrets are legacy fallback only
   - troubleshooting precedence:
@@ -1524,7 +1525,7 @@ If dispatch was accepted but run evidence is not yet present, the workspace show
 
 ## Controlled Production Exercise Checklist
 Use this checklist for a bounded real-world migration exercise:
-1. Confirm migration runtime config is present (`MIGRATION_GITHUB_TOKEN` and related `MIGRATION_*` values).
+1. Confirm migration runtime config is present (`GIT_TOKEN` and related `MIGRATION_*` values).
 2. Confirm the target site repository uses GitHub Pages with **Source = GitHub Actions** for the selected deploy workflow path.
 3. Confirm selected workflow contract emits explicit deploy evidence keys (`resolved_live_url`, `live_url`, `deployed_url`) on successful deploy.
 4. Confirm publish target repo/branch/artifact-root is intentional for this site workspace.
@@ -1651,3 +1652,4 @@ Rollback pattern:
 - no external asset proxying
 - no infrastructure/runtime file generation by model
 - deploy request tracks intent/history; production validation remains an operator responsibility
+

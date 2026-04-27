@@ -2708,9 +2708,9 @@ def test_check_deploy_target_readiness_flags_missing_image_pull_secret_credentia
             "project_id": "mbsrn-prod",
         },
         managed_image_pull_secret_config={
-            "docker_userid_configured": False,
-            "docker_email_configured": False,
-            "docker_pat_configured": False,
+            "git_userid_configured": False,
+            "git_email_configured": False,
+            "git_token_configured": False,
         },
     )
     assert readiness.dispatch_service_availability is False
@@ -2719,9 +2719,9 @@ def test_check_deploy_target_readiness_flags_missing_image_pull_secret_credentia
     assert details.get("image_pull_secret_name") == "ghcr-pull-secret"
     assert details.get("image_pull_secret_referenced") is True
     assert sorted(details.get("image_pull_secret_missing_fields") or []) == [
-        "docker_email",
-        "docker_pat",
-        "docker_userid",
+        "git_email",
+        "git_token",
+        "git_userid",
     ]
     assert not any("/actions/secrets/" in path for _, path in calls)
 
@@ -2836,9 +2836,9 @@ def test_check_deploy_target_readiness_flags_image_pull_secret_not_referenced(mo
             "project_id": "mbsrn-prod",
         },
         managed_image_pull_secret_config={
-            "docker_userid_configured": True,
-            "docker_email_configured": True,
-            "docker_pat_configured": True,
+            "git_userid_configured": True,
+            "git_email_configured": True,
+            "git_token_configured": True,
         },
     )
     assert readiness.dispatch_service_availability is False
@@ -5145,9 +5145,9 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "Reset stale site-web deployment" in workflow_yaml
     assert "Resetting deployment to eliminate stale image references." in workflow_yaml
     assert "kubectl delete deployment site-web --namespace \"$K8S_NAMESPACE\" --ignore-not-found" in workflow_yaml
-    assert "DOCKER_USERID: ${{ secrets.DOCKER_USERID }}" not in workflow_yaml
-    assert "DOCKER_EMAIL: ${{ secrets.DOCKER_EMAIL }}" not in workflow_yaml
-    assert "DOCKER_PAT: ${{ secrets.DOCKER_PAT }}" not in workflow_yaml
+    assert "GIT_USERID: ${{ secrets.GIT_USERID }}" not in workflow_yaml
+    assert "GIT_EMAIL: ${{ secrets.GIT_EMAIL }}" not in workflow_yaml
+    assert "GIT_TOKEN: ${{ secrets.GIT_TOKEN }}" not in workflow_yaml
     assert "kubectl create secret docker-registry ghcr-pull-secret" not in workflow_yaml
     assert "Apply managed manifests" in workflow_yaml
     assert "kubectl apply -f k8s/deployment.yaml" in workflow_yaml

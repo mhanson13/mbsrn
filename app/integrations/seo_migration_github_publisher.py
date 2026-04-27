@@ -376,9 +376,9 @@ class SEOMigrationGitHubPublisher:
         ref: str,
         kubernetes_namespace: str,
         managed_gke_config: dict[str, object] | None,
-        docker_userid: str | None,
-        docker_email: str | None,
-        docker_pat: str | None,
+        git_userid: str | None,
+        git_email: str | None,
+        git_token: str | None,
         gcp_deploy_key: str | None,
         dry_run: bool = False,
     ) -> SEOMigrationGitHubImagePullSecretProvisionResult:
@@ -388,9 +388,9 @@ class SEOMigrationGitHubPublisher:
             ref,
             kubernetes_namespace,
             managed_gke_config,
-            docker_userid,
-            docker_email,
-            docker_pat,
+            git_userid,
+            git_email,
+            git_token,
             gcp_deploy_key,
             dry_run,
         )
@@ -647,9 +647,9 @@ class MisconfiguredSEOMigrationGitHubPublisher(SEOMigrationGitHubPublisher):
         ref: str,
         kubernetes_namespace: str,
         managed_gke_config: dict[str, object] | None,
-        docker_userid: str | None,
-        docker_email: str | None,
-        docker_pat: str | None,
+        git_userid: str | None,
+        git_email: str | None,
+        git_token: str | None,
         gcp_deploy_key: str | None,
         dry_run: bool = False,
     ) -> SEOMigrationGitHubImagePullSecretProvisionResult:
@@ -659,9 +659,9 @@ class MisconfiguredSEOMigrationGitHubPublisher(SEOMigrationGitHubPublisher):
             ref,
             kubernetes_namespace,
             managed_gke_config,
-            docker_userid,
-            docker_email,
-            docker_pat,
+            git_userid,
+            git_email,
+            git_token,
             gcp_deploy_key,
             dry_run,
         )
@@ -2234,9 +2234,9 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         ref: str,
         kubernetes_namespace: str,
         managed_gke_config: dict[str, object] | None,
-        docker_userid: str | None,
-        docker_email: str | None,
-        docker_pat: str | None,
+        git_userid: str | None,
+        git_email: str | None,
+        git_token: str | None,
         gcp_deploy_key: str | None,
         dry_run: bool = False,
     ) -> SEOMigrationGitHubImagePullSecretProvisionResult:
@@ -2245,22 +2245,22 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             fallback="site",
             max_length=63,
         )
-        normalized_docker_userid = _coerce_string(docker_userid)
-        normalized_docker_email = _coerce_string(docker_email)
-        normalized_docker_pat = _coerce_string(docker_pat)
+        normalized_git_userid = _coerce_string(git_userid)
+        normalized_git_email = _coerce_string(git_email)
+        normalized_git_token = _coerce_string(git_token)
         missing_fields: list[str] = []
-        if not normalized_docker_userid:
-            missing_fields.append(_DOCKER_ENV_USERID.lower())
-        if not normalized_docker_email:
-            missing_fields.append(_DOCKER_ENV_EMAIL.lower())
-        if not normalized_docker_pat:
-            missing_fields.append(_DOCKER_ENV_PAT.lower())
+        if not normalized_git_userid:
+            missing_fields.append(_GIT_ENV_USERID.lower())
+        if not normalized_git_email:
+            missing_fields.append(_GIT_ENV_EMAIL.lower())
+        if not normalized_git_token:
+            missing_fields.append(_GIT_ENV_TOKEN.lower())
         if missing_fields:
             raise SEOMigrationGitHubPublisherError(
                 code=_DEPLOY_DISPATCH_SERVICE_REASON_IMAGE_PULL_SECRET_MISSING,
                 safe_message=(
                     "Managed deploy target is missing required GHCR pull credentials "
-                    "(DOCKER_USERID, DOCKER_EMAIL, DOCKER_PAT)."
+                    "(GIT_USERID, GIT_EMAIL, GIT_TOKEN)."
                 ),
                 stage="image_pull_secret_provision",
             )
@@ -2329,9 +2329,9 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 cluster_location=cluster_location,
                 cluster_name=cluster_name,
                 kubernetes_namespace=normalized_namespace,
-                docker_userid=normalized_docker_userid,
-                docker_email=normalized_docker_email,
-                docker_pat=normalized_docker_pat,
+                git_userid=normalized_git_userid,
+                git_email=normalized_git_email,
+                git_token=normalized_git_token,
                 timeout_seconds=self.timeout_seconds,
             )
         except SEOMigrationGitHubPublisherError:
@@ -4339,17 +4339,17 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             else {}
         )
         presence = {
-            "docker_userid_configured": bool(config_payload.get("docker_userid_configured")),
-            "docker_email_configured": bool(config_payload.get("docker_email_configured")),
-            "docker_pat_configured": bool(config_payload.get("docker_pat_configured")),
+            "git_userid_configured": bool(config_payload.get("git_userid_configured")),
+            "git_email_configured": bool(config_payload.get("git_email_configured")),
+            "git_token_configured": bool(config_payload.get("git_token_configured")),
         }
         missing_fields: list[str] = []
-        if not presence["docker_userid_configured"]:
-            missing_fields.append(_DOCKER_ENV_USERID.lower())
-        if not presence["docker_email_configured"]:
-            missing_fields.append(_DOCKER_ENV_EMAIL.lower())
-        if not presence["docker_pat_configured"]:
-            missing_fields.append(_DOCKER_ENV_PAT.lower())
+        if not presence["git_userid_configured"]:
+            missing_fields.append(_GIT_ENV_USERID.lower())
+        if not presence["git_email_configured"]:
+            missing_fields.append(_GIT_ENV_EMAIL.lower())
+        if not presence["git_token_configured"]:
+            missing_fields.append(_GIT_ENV_TOKEN.lower())
         reason_code = (
             _DEPLOY_DISPATCH_SERVICE_REASON_IMAGE_PULL_SECRET_MISSING
             if missing_fields
@@ -6013,9 +6013,9 @@ def _upsert_namespace_scoped_ghcr_pull_secret(
     cluster_location: str,
     cluster_name: str,
     kubernetes_namespace: str,
-    docker_userid: str,
-    docker_email: str,
-    docker_pat: str,
+    git_userid: str,
+    git_email: str,
+    git_token: str,
     timeout_seconds: int,
 ) -> str:
     access_token = _resolve_google_access_token_from_service_account_json(
@@ -6102,13 +6102,13 @@ def _upsert_namespace_scoped_ghcr_pull_secret(
             error_stage="image_pull_secret_provision",
         )
 
-    docker_auth = base64.b64encode(f"{docker_userid}:{docker_pat}".encode("utf-8")).decode("ascii")
+    docker_auth = base64.b64encode(f"{git_userid}:{git_token}".encode("utf-8")).decode("ascii")
     docker_config_payload = {
         "auths": {
             "ghcr.io": {
-                "username": docker_userid,
-                "password": docker_pat,
-                "email": docker_email,
+                "username": git_userid,
+                "password": git_token,
+                "email": git_email,
                 "auth": docker_auth,
             }
         }
@@ -6544,9 +6544,9 @@ _NAMESPACE_MODEL_STATUS_UNKNOWN = "unknown"
 _GKE_ENV_PROJECT_ID = "GCP_PROJECT_ID"
 _GKE_ENV_CLUSTER_NAME = "KUBERNETES_CLUSTER_NAME"
 _GKE_ENV_CLUSTER_LOCATION = "KUBERNETES_CLUSTER_LOCATION"
-_DOCKER_ENV_USERID = "DOCKER_USERID"
-_DOCKER_ENV_EMAIL = "DOCKER_EMAIL"
-_DOCKER_ENV_PAT = "DOCKER_PAT"
+_GIT_ENV_USERID = "GIT_USERID"
+_GIT_ENV_EMAIL = "GIT_EMAIL"
+_GIT_ENV_TOKEN = "GIT_TOKEN"
 _IMAGE_PULL_SECRET_CONFIG_SOURCE_CONTROL_PLANE = "control_plane_runtime"
 _MANAGED_GKE_CONFIG_CLUSTER_NAME = "cluster_name"
 _MANAGED_GKE_CONFIG_CLUSTER_LOCATION = "cluster_location"

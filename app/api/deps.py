@@ -788,7 +788,7 @@ def get_seo_migration_artifact_provider() -> SEOMigrationArtifactGenerationProvi
 
 def get_seo_migration_github_publisher() -> SEOMigrationGitHubPublisher:
     settings = get_settings()
-    token = (settings.migration_github_token or "").strip()
+    token = (settings.git_token or "").strip()
     if not token:
         return MisconfiguredSEOMigrationGitHubPublisher(
             safe_message="GitHub publishing runtime credential is unavailable.",
@@ -1138,9 +1138,9 @@ def get_seo_migration_service(
         deploy_default_workflow_id=settings.migration_deploy_default_workflow_id,
         deploy_default_ref=settings.migration_deploy_default_ref,
         deploy_secret_gcp_key=settings.gcp_deploy_key,
-        deploy_secret_docker_userid=settings.docker_userid,
-        deploy_secret_docker_email=settings.docker_email,
-        deploy_secret_docker_pat=settings.docker_pat,
+        deploy_secret_git_userid=settings.git_userid,
+        deploy_secret_git_email=settings.git_email,
+        deploy_secret_git_token=settings.git_token,
     )
 
 
