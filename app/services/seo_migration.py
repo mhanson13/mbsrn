@@ -13062,7 +13062,7 @@ def _derive_managed_gke_dispatch_readiness_message(*, dispatch_service_reason_co
     if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_IMAGE_PULL_SECRET_MISSING:
         return (
             "Admin action required: managed deploy target is missing required GHCR pull credentials "
-            "(DOCKER_USERID, DOCKER_EMAIL, DOCKER_PAT). Configure repository GitHub Actions secrets."
+            "(DOCKER_USERID, DOCKER_EMAIL, DOCKER_PAT). Configure target site repository GitHub Actions secrets."
         )
     if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_IMAGE_PULL_SECRET_NOT_REFERENCED:
         return (
@@ -13130,7 +13130,7 @@ def _derive_deploy_failure_remediation_hint(
     if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_IMAGE_PULL_SECRET_MISSING:
         return (
             "Managed deploy target is missing required GHCR pull credentials (DOCKER_USERID, DOCKER_EMAIL, "
-            "DOCKER_PAT). Configure repository GitHub Actions secrets and retry deploy."
+            "DOCKER_PAT). Configure target site repository GitHub Actions secrets and retry deploy."
         )
     if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_IMAGE_PULL_SECRET_NOT_REFERENCED:
         return (
