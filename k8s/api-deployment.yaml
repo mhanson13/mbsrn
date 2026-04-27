@@ -80,6 +80,21 @@ spec:
                 secretKeyRef:
                   name: mbsrn-api-auth
                   key: MIGRATION_GITHUB_TOKEN
+            - name: DOCKER_USERID
+              valueFrom:
+                secretKeyRef:
+                  name: mbsrn-api-auth
+                  key: DOCKER_USERID
+            - name: DOCKER_EMAIL
+              valueFrom:
+                secretKeyRef:
+                  name: mbsrn-api-auth
+                  key: DOCKER_EMAIL
+            - name: DOCKER_PAT
+              valueFrom:
+                secretKeyRef:
+                  name: mbsrn-api-auth
+                  key: DOCKER_PAT
             - name: GOOGLE_PLACES_API_KEY
               valueFrom:
                 secretKeyRef:

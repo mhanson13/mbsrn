@@ -87,6 +87,9 @@ jobs:
           AI_PROVIDER_API_KEY: ${{ secrets.AI_PROVIDER_API_KEY }}
           MIGRATION_GITHUB_TOKEN: ${{ secrets.MIGRATION_GITHUB_TOKEN }}
           GOOGLE_PLACES_API_KEY: ${{ secrets.GOOGLE_PLACES_API_KEY }}
+          DOCKER_USERID: ${{ secrets.DOCKER_USERID }}
+          DOCKER_EMAIL: ${{ secrets.DOCKER_EMAIL }}
+          DOCKER_PAT: ${{ secrets.DOCKER_PAT }}
         run: |
           set -euo pipefail
 
@@ -131,6 +134,9 @@ jobs:
             GOOGLE_OAUTH_CLIENT_SECRET
             AI_PROVIDER_API_KEY
             MIGRATION_GITHUB_TOKEN
+            DOCKER_USERID
+            DOCKER_EMAIL
+            DOCKER_PAT
           )
 
           for name in "${required[@]}"; do
@@ -472,6 +478,9 @@ jobs:
           MIGRATION_GITHUB_TOKEN: ${{ secrets.MIGRATION_GITHUB_TOKEN }}
           GOOGLE_PLACES_API_KEY: ${{ secrets.GOOGLE_PLACES_API_KEY }}
           SEARCH_CONSOLE_CREDENTIALS_JSON: ${{ secrets.SEARCH_CONSOLE_CREDENTIALS_JSON }}
+          DOCKER_USERID: ${{ secrets.DOCKER_USERID }}
+          DOCKER_EMAIL: ${{ secrets.DOCKER_EMAIL }}
+          DOCKER_PAT: ${{ secrets.DOCKER_PAT }}
         run: |
           set -euo pipefail
 
@@ -491,6 +500,9 @@ jobs:
             --from-literal=GCP_PROJECT_ID="${GCP_PROJECT_ID}" \
             --from-literal=AI_PROVIDER_API_KEY="${AI_PROVIDER_API_KEY}" \
             --from-literal=MIGRATION_GITHUB_TOKEN="${MIGRATION_GITHUB_TOKEN}" \
+            --from-literal=DOCKER_USERID="${DOCKER_USERID}" \
+            --from-literal=DOCKER_EMAIL="${DOCKER_EMAIL}" \
+            --from-literal=DOCKER_PAT="${DOCKER_PAT}" \
             --from-literal=GOOGLE_PLACES_API_KEY="${GOOGLE_PLACES_API_KEY}" \
             --from-literal=SEARCH_CONSOLE_CREDENTIALS_JSON="${SEARCH_CONSOLE_CREDENTIALS_JSON}" \
             --from-literal=AI_PROVIDER_NAME="${AI_PROVIDER_NAME}" \
@@ -609,13 +621,19 @@ jobs:
             else
               echo "Secret wiring check: mbsrn-api-auth key DATABASE_URL is missing."
             fi
-            migration_github_token_key_present="$(kubectl -n "${K8S_NAMESPACE}" get secret mbsrn-api-auth -o jsonpath='{.data.MIGRATION_GITHUB_TOKEN}' 2>/dev/null || true)"
-            if [[ -n "${migration_github_token_key_present}" ]]; then
-              echo "Secret wiring check: mbsrn-api-auth key MIGRATION_GITHUB_TOKEN is present."
-            else
-              echo "Secret wiring check: mbsrn-api-auth key MIGRATION_GITHUB_TOKEN is missing."
-            fi
-            echo "::endgroup::"
+          migration_github_token_key_present="$(kubectl -n "${K8S_NAMESPACE}" get secret mbsrn-api-auth -o jsonpath='{.data.MIGRATION_GITHUB_TOKEN}' 2>/dev/null || true)"
+          if [[ -n "${migration_github_token_key_present}" ]]; then
+            echo "Secret wiring check: mbsrn-api-auth key MIGRATION_GITHUB_TOKEN is present."
+          else
+            echo "Secret wiring check: mbsrn-api-auth key MIGRATION_GITHUB_TOKEN is missing."
+          fi
+          docker_pat_key_present="$(kubectl -n "${K8S_NAMESPACE}" get secret mbsrn-api-auth -o jsonpath='{.data.DOCKER_PAT}' 2>/dev/null || true)"
+          if [[ -n "${docker_pat_key_present}" ]]; then
+            echo "Secret wiring check: mbsrn-api-auth key DOCKER_PAT is present."
+          else
+            echo "Secret wiring check: mbsrn-api-auth key DOCKER_PAT is missing."
+          fi
+          echo "::endgroup::"
           }
 
           kubectl rollout status deployment/mbsrn-ui --namespace "${K8S_NAMESPACE}" --timeout=300s

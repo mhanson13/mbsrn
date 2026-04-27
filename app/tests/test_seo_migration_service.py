@@ -935,6 +935,9 @@ def _build_service(
     github_publisher: SEOMigrationGitHubPublisher | None = None,
     env_default_model_name: str | None = None,
     deploy_secret_gcp_key: str | None = "{\"type\":\"service_account\"}",
+    deploy_secret_docker_userid: str | None = None,
+    deploy_secret_docker_email: str | None = None,
+    deploy_secret_docker_pat: str | None = None,
 ) -> SEOMigrationService:
     github_publish_config_service = GitHubPublishConfigService(
         session=db_session,
@@ -960,6 +963,9 @@ def _build_service(
         provider_model_name="mock-seo-migration-v1",
         env_default_model_name=env_default_model_name,
         deploy_secret_gcp_key=deploy_secret_gcp_key,
+        deploy_secret_docker_userid=deploy_secret_docker_userid,
+        deploy_secret_docker_email=deploy_secret_docker_email,
+        deploy_secret_docker_pat=deploy_secret_docker_pat,
     )
 
 
@@ -986,6 +992,48 @@ def _mark_workspace_ingested(service: SEOMigrationService, *, business_id: str, 
     }
     service.seo_migration_repository.save_workspace(workspace)
     service.session.commit()
+
+
+def test_managed_image_pull_secret_runtime_config_reads_control_plane_runtime_values(db_session) -> None:
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        deploy_secret_docker_userid="mhanson13",
+        deploy_secret_docker_email="mhanson13@gmail.com",
+        deploy_secret_docker_pat="pat-test-value",
+    )
+
+    payload, reason_code = service._resolve_managed_image_pull_secret_runtime_config()
+
+    assert reason_code is None
+    assert payload.get("config_source") == "control_plane_runtime"
+    assert payload.get("docker_userid_configured") is True
+    assert payload.get("docker_email_configured") is True
+    assert payload.get("docker_pat_configured") is True
+    assert "missing_fields" not in payload
+
+
+def test_managed_image_pull_secret_runtime_config_reports_missing_runtime_projection(db_session) -> None:
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        deploy_secret_docker_userid=None,
+        deploy_secret_docker_email=None,
+        deploy_secret_docker_pat=None,
+    )
+
+    payload, reason_code = service._resolve_managed_image_pull_secret_runtime_config()
+
+    assert reason_code == "image_pull_secret_missing"
+    assert payload.get("config_source") == "control_plane_runtime"
+    assert payload.get("docker_userid_configured") is False
+    assert payload.get("docker_email_configured") is False
+    assert payload.get("docker_pat_configured") is False
+    assert sorted(payload.get("missing_fields") or []) == [
+        "docker_email",
+        "docker_pat",
+        "docker_userid",
+    ]
 
 
 def _seed_reused_context_records(db_session, *, business_id: str, site_id: str) -> None:

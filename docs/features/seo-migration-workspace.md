@@ -1039,6 +1039,7 @@ Deploy behavior:
     - `DOCKER_EMAIL` (production value: `mhanson13@gmail.com`)
     - `DOCKER_PAT` (personal access token; never logged or surfaced)
     - these are resolved only from the mbsrn control-plane runtime/admin deployment configuration (not target site repositories)
+    - GitHub Actions repository secrets alone are not sufficient until `deploy-prod` projects them into `mbsrn-api-auth` and API runtime env (`DOCKER_USERID`, `DOCKER_EMAIL`, `DOCKER_PAT`)
   - apply managed manifests (`kubectl apply -f k8s/`)
   - verify rollout (`kubectl rollout status deployment/site-web --namespace <derived-namespace>`)
   - managed `site-web` deployment template references `imagePullSecrets: [{name: ghcr-pull-secret}]` for private GHCR pulls
@@ -1089,7 +1090,7 @@ Deploy behavior:
     - `missing_cluster_name` -> set managed GKE cluster name in MBSRN admin deployment settings
     - `missing_cluster_location` -> set managed GKE cluster location in MBSRN admin deployment settings
     - `missing_gcp_project_id` -> set managed GCP project ID in MBSRN admin deployment settings
-    - `image_pull_secret_missing` -> configure `DOCKER_USERID`, `DOCKER_EMAIL`, `DOCKER_PAT` in **mbsrn control-plane** deployment settings before retry
+    - `image_pull_secret_missing` -> configure `DOCKER_USERID`, `DOCKER_EMAIL`, `DOCKER_PAT` in **mbsrn control-plane** deployment settings and verify `deploy-prod` projected them into runtime before retry
     - `image_pull_secret_not_referenced` -> republish managed deploy manifests so deployment references `ghcr-pull-secret`
   - GHCR pull credentials are evaluated from control-plane runtime configuration and used to provision namespace-scoped Kubernetes pull secrets; target site repositories must not store Docker credentials.
   - configuration source expectation is explicit in UI copy:

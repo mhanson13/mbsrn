@@ -2723,6 +2723,7 @@ def test_check_deploy_target_readiness_flags_missing_image_pull_secret_credentia
         "docker_pat",
         "docker_userid",
     ]
+    assert not any("/actions/secrets/" in path for _, path in calls)
 
 
 def test_check_deploy_target_readiness_flags_image_pull_secret_not_referenced(monkeypatch) -> None:
@@ -2845,6 +2846,7 @@ def test_check_deploy_target_readiness_flags_image_pull_secret_not_referenced(mo
     details = readiness.managed_gke_config_details or {}
     assert details.get("image_pull_secret_name") == "ghcr-pull-secret"
     assert details.get("image_pull_secret_referenced") is False
+    assert not any("/actions/secrets/" in path for _, path in calls)
 
 
 @pytest.mark.parametrize(

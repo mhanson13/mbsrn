@@ -153,3 +153,18 @@ def test_postgresql_scheme_is_normalized_to_psycopg_driver(monkeypatch: pytest.M
     settings = get_settings()
 
     assert settings.database_url == "postgresql+psycopg://postgres:postgres@localhost:5432/mbsrn"
+
+
+def test_runtime_docker_pull_credentials_are_read_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ENVIRONMENT", "development")
+    monkeypatch.setenv("APP_ENV", "ci")
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://postgres:postgres@localhost:5432/mbsrn")
+    monkeypatch.setenv("DOCKER_USERID", "mhanson13")
+    monkeypatch.setenv("DOCKER_EMAIL", "mhanson13@gmail.com")
+    monkeypatch.setenv("DOCKER_PAT", "test-token-value")
+
+    settings = get_settings()
+
+    assert settings.docker_userid == "mhanson13"
+    assert settings.docker_email == "mhanson13@gmail.com"
+    assert settings.docker_pat == "test-token-value"

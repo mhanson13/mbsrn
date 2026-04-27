@@ -1004,6 +1004,7 @@ Required credential note:
   - `DOCKER_EMAIL` (production: `mhanson13@gmail.com`)
   - `DOCKER_PAT` (PAT never logged/surfaced)
   - these are resolved from the mbsrn control-plane runtime/admin deployment configuration, not from target site repositories.
+  - GitHub repository secrets must be projected into control-plane runtime by `deploy-prod` (`mbsrn-api-auth` + API env). Repository-secret presence by itself does not satisfy readiness.
 - deploy readiness diagnostics can surface missing managed GKE config before dispatch via:
   - `dispatch_service_reason_code=missing_cluster_name`
   - `dispatch_service_reason_code=missing_cluster_location`
@@ -1020,7 +1021,7 @@ Required credential note:
   - `missing_cluster_*` / `missing_gcp_project_id`:
     admin-owned managed target configuration blockers (fix MBSRN admin deployment settings first; repo vars/secrets are legacy fallback only)
   - `image_pull_secret_missing`:
-    admin/runtime deployment-credential blocker (configure `DOCKER_USERID`, `DOCKER_EMAIL`, `DOCKER_PAT` in mbsrn control-plane deployment settings)
+    admin/runtime deployment-credential blocker (configure `DOCKER_USERID`, `DOCKER_EMAIL`, `DOCKER_PAT` in mbsrn control-plane deployment settings and verify `deploy-prod` projected them into runtime)
   - `image_pull_secret_not_referenced`:
     managed-manifest alignment blocker (republish managed manifests so deployment references `ghcr-pull-secret`)
   - `runtime_credential_missing` with `secret_name=GCP_DEPLOY_KEY`:

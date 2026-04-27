@@ -13142,7 +13142,8 @@ def _derive_managed_gke_dispatch_readiness_message(*, dispatch_service_reason_co
     if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_IMAGE_PULL_SECRET_MISSING:
         return (
             "Admin action required: managed deploy target is missing required GHCR pull credentials "
-            "(DOCKER_USERID, DOCKER_EMAIL, DOCKER_PAT). Configure MBSRN control-plane deployment settings."
+            "(DOCKER_USERID, DOCKER_EMAIL, DOCKER_PAT). Configure MBSRN control-plane deployment settings and "
+            "verify deploy-prod projects them into the API runtime secret."
         )
     if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_IMAGE_PULL_SECRET_NOT_REFERENCED:
         return (
@@ -13210,7 +13211,8 @@ def _derive_deploy_failure_remediation_hint(
     if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_IMAGE_PULL_SECRET_MISSING:
         return (
             "Managed deploy target is missing required GHCR pull credentials (DOCKER_USERID, DOCKER_EMAIL, "
-            "DOCKER_PAT). Configure MBSRN control-plane deployment settings and retry deploy."
+            "DOCKER_PAT). Configure MBSRN control-plane deployment settings, ensure deploy-prod projects them into "
+            "the API runtime, and retry deploy."
         )
     if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_IMAGE_PULL_SECRET_NOT_REFERENCED:
         return (
