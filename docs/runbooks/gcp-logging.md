@@ -999,11 +999,11 @@ Required credential note:
   - `Missing KUBERNETES_CLUSTER_NAME variable/secret`
   - `Missing KUBERNETES_CLUSTER_LOCATION variable/secret`
   - `Missing GCP_PROJECT_ID variable/secret`
-- workflow includes `Ensure GHCR image pull secret` pre-check and fails early when any required deploy secret is missing:
+- control plane provisions `ghcr-pull-secret` in the target namespace before deploy dispatch and fails early when any required deploy secret is missing:
   - `DOCKER_USERID` (production: `mhanson13`)
   - `DOCKER_EMAIL` (production: `mhanson13@gmail.com`)
   - `DOCKER_PAT` (PAT never logged/surfaced)
-  - these are resolved from the selected target site repository (`repo_owner`/`repo_name` deploy target), not from the mbsrn control-plane repository.
+  - these are resolved from the mbsrn control-plane runtime/admin deployment configuration, not from target site repositories.
 - deploy readiness diagnostics can surface missing managed GKE config before dispatch via:
   - `dispatch_service_reason_code=missing_cluster_name`
   - `dispatch_service_reason_code=missing_cluster_location`
@@ -1020,7 +1020,7 @@ Required credential note:
   - `missing_cluster_*` / `missing_gcp_project_id`:
     admin-owned managed target configuration blockers (fix MBSRN admin deployment settings first; repo vars/secrets are legacy fallback only)
   - `image_pull_secret_missing`:
-    admin/runtime deployment-credential blocker (configure `DOCKER_USERID`, `DOCKER_EMAIL`, `DOCKER_PAT` in the target site repository Actions secrets)
+    admin/runtime deployment-credential blocker (configure `DOCKER_USERID`, `DOCKER_EMAIL`, `DOCKER_PAT` in mbsrn control-plane deployment settings)
   - `image_pull_secret_not_referenced`:
     managed-manifest alignment blocker (republish managed manifests so deployment references `ghcr-pull-secret`)
   - `runtime_credential_missing` with `secret_name=GCP_DEPLOY_KEY`:
@@ -1073,11 +1073,11 @@ Common stage-aware interpretations:
     - when image pull blockers are detected, crash/probe hints are suppressed unless direct current describe evidence shows a started container failure
     - recent pod logs are supplemental context only; primary blocker hints come from namespace-scoped `kubectl describe` evidence
   - if output includes image-pull signatures (`image pull backoff`, `image pull forbidden`, `image pull secret missing`, `image pull secret not referenced`):
-    - confirm managed workflow step `Ensure GHCR image pull secret` succeeded
+    - confirm control-plane pull-secret provisioning step succeeded before dispatch
     - confirm deployment pod template references `imagePullSecrets: [{name: ghcr-pull-secret}]`
     - confirm the namespace-scoped secret exists:
       - `kubectl get secret ghcr-pull-secret -n <namespace>`
-    - confirm required target site repository Actions secrets are configured:
+    - confirm required mbsrn control-plane runtime secrets are configured:
       - `DOCKER_USERID` (production: `mhanson13`)
       - `DOCKER_EMAIL` (production: `mhanson13@gmail.com`)
       - `DOCKER_PAT` (PAT value must never be printed in logs)

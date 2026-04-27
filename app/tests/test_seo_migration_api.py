@@ -34,6 +34,7 @@ from app.integrations.seo_migration_github_publisher import (
     SEOMigrationGitHubDeployResult,
     SEOMigrationGitHubDeployRunStatusResult,
     SEOMigrationGitHubDeployTarget,
+    SEOMigrationGitHubImagePullSecretProvisionResult,
     SEOMigrationGitHubPublishFile,
     SEOMigrationGitHubPublishPreflightResult,
     SEOMigrationGitHubPublishResult,
@@ -303,8 +304,9 @@ class _StubMigrationGitHubPublisher(SEOMigrationGitHubPublisher):
         target: SEOMigrationGitHubDeployTarget,
         dry_run: bool,
         managed_gke_config: dict[str, object] | None = None,
+        managed_image_pull_secret_config: dict[str, object] | None = None,
     ) -> SEOMigrationGitHubDeployResult:
-        del managed_gke_config
+        del managed_gke_config, managed_image_pull_secret_config
         self.deploy_calls.append((target, dry_run))
         if self.deploy_target_dispatch_service_reason_code and not dry_run:
             raise SEOMigrationGitHubPublisherError(
@@ -348,6 +350,29 @@ class _StubMigrationGitHubPublisher(SEOMigrationGitHubPublisher):
             workflow_run_conclusion=self.refresh_workflow_run_conclusion,
             workflow_output=dict(self.refresh_workflow_output),
             refreshed_at="2026-04-07T12:20:00+00:00",
+        )
+
+    def provision_managed_image_pull_secret(
+        self,
+        *,
+        repo_owner: str,
+        repo_name: str,
+        ref: str,
+        kubernetes_namespace: str,
+        managed_gke_config: dict[str, object] | None,
+        docker_userid: str | None,
+        docker_email: str | None,
+        docker_pat: str | None,
+        gcp_deploy_key: str | None,
+        dry_run: bool = False,
+    ) -> SEOMigrationGitHubImagePullSecretProvisionResult:
+        del managed_gke_config, docker_userid, docker_email, docker_pat, gcp_deploy_key
+        return SEOMigrationGitHubImagePullSecretProvisionResult(
+            repo_owner=repo_owner,
+            repo_name=repo_name,
+            namespace=kubernetes_namespace,
+            secret_name="ghcr-pull-secret",
+            action="dry_run" if dry_run else "updated",
         )
 
     def ensure_deploy_workflow(
@@ -417,8 +442,16 @@ class _StubMigrationGitHubPublisher(SEOMigrationGitHubPublisher):
         remediation_mode: str = "none",
         managed_gke_config: dict[str, object] | None = None,
         namespace_isolation_defaults: dict[str, object] | None = None,
+        managed_image_pull_secret_config: dict[str, object] | None = None,
     ) -> SEOMigrationGitHubTargetReadinessResult:
-        del allow_ref_repair, allow_workflow_repair, dry_run, managed_gke_config, namespace_isolation_defaults
+        del (
+            allow_ref_repair,
+            allow_workflow_repair,
+            dry_run,
+            managed_gke_config,
+            namespace_isolation_defaults,
+            managed_image_pull_secret_config,
+        )
         dispatch_reason = self.deploy_target_dispatch_service_reason_code or "available"
         dispatch_available = dispatch_reason == "available"
         return SEOMigrationGitHubTargetReadinessResult(

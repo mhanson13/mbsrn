@@ -503,6 +503,9 @@ class SEOMigrationService:
         deploy_default_workflow_id: str = "deploy-www-prod.yml",
         deploy_default_ref: str = "main",
         deploy_secret_gcp_key: str | None = None,
+        deploy_secret_docker_userid: str | None = None,
+        deploy_secret_docker_email: str | None = None,
+        deploy_secret_docker_pat: str | None = None,
     ) -> None:
         self.session = session
         self.business_repository = business_repository
@@ -559,6 +562,9 @@ class SEOMigrationService:
         self.deploy_default_workflow_id = deploy_default_workflow_id.strip() or "deploy-www-prod.yml"
         self.deploy_default_ref = deploy_default_ref.strip() or "main"
         self.deploy_secret_gcp_key = (deploy_secret_gcp_key or "").strip() or None
+        self.deploy_secret_docker_userid = (deploy_secret_docker_userid or "").strip() or None
+        self.deploy_secret_docker_email = (deploy_secret_docker_email or "").strip() or None
+        self.deploy_secret_docker_pat = (deploy_secret_docker_pat or "").strip() or None
         self.runtime_build_metadata = get_runtime_build_metadata()
         self._resolved_migration_draft_timeout_seconds = _MIGRATION_DRAFT_TIMEOUT_DEFAULT_SECONDS
         self._resolved_migration_draft_timeout_source = "default"
@@ -2589,6 +2595,10 @@ class SEOMigrationService:
                 inputs=deploy_inputs,
             )
             managed_gke_config_for_dispatch = _normalize_json_dict(workflow_resolution.get("managed_gke_config"))
+            (
+                managed_image_pull_secret_config_for_dispatch,
+                _,
+            ) = self._resolve_managed_image_pull_secret_runtime_config()
             if not dry_run:
                 target_readiness = self.github_publisher.check_deploy_target_readiness(
                     target=deploy_target_for_dispatch,
@@ -2598,6 +2608,7 @@ class SEOMigrationService:
                     remediation_mode="none",
                     managed_gke_config=managed_gke_config_for_dispatch,
                     namespace_isolation_defaults=namespace_isolation_defaults,
+                    managed_image_pull_secret_config=managed_image_pull_secret_config_for_dispatch,
                 )
                 requested_ref = target_readiness.requested_ref
                 resolved_ref = target_readiness.resolved_ref
@@ -2755,6 +2766,34 @@ class SEOMigrationService:
                     ref=deploy_target_for_dispatch.ref,
                     inputs=deploy_inputs,
                 )
+                deploy_workflow_mode_for_dispatch = _normalize_string(
+                    workflow_resolution.get("deploy_workflow_mode"),
+                    max_length=80,
+                )
+                dispatch_namespace = _normalize_string(
+                    target_readiness.kubernetes_namespace,
+                    max_length=63,
+                ) or _normalize_string(
+                    workflow_resolution.get("kubernetes_namespace"),
+                    max_length=63,
+                )
+                if (
+                    deploy_workflow_mode_for_dispatch == _DEPLOY_WORKFLOW_MODE_SITE_REPO_TEMPLATE_V1
+                    and dispatch_namespace
+                ):
+                    deploy_secret_value_for_provision, _, _ = self._resolve_deploy_secret_for_propagation()
+                    self.github_publisher.provision_managed_image_pull_secret(
+                        repo_owner=deploy_target_for_dispatch.repo_owner,
+                        repo_name=deploy_target_for_dispatch.repo_name,
+                        ref=deploy_target_for_dispatch.ref,
+                        kubernetes_namespace=dispatch_namespace,
+                        managed_gke_config=managed_gke_config_for_dispatch,
+                        docker_userid=self.deploy_secret_docker_userid,
+                        docker_email=self.deploy_secret_docker_email,
+                        docker_pat=self.deploy_secret_docker_pat,
+                        gcp_deploy_key=deploy_secret_value_for_provision,
+                        dry_run=False,
+                    )
             actual_dispatch_identifier_sent = _normalize_string(
                 normalize_workflow_dispatch_identifier_for_api(deploy_target_for_dispatch.workflow_id),
                 max_length=200,
@@ -2803,6 +2842,7 @@ class SEOMigrationService:
                 target=deploy_target_for_dispatch,
                 dry_run=dry_run,
                 managed_gke_config=managed_gke_config_for_dispatch,
+                managed_image_pull_secret_config=managed_image_pull_secret_config_for_dispatch,
             )
             dispatch_attempted = not dry_run
             dispatch_result_stage = "workflow_dispatch" if not dry_run else "dry_run"
@@ -9148,6 +9188,30 @@ class SEOMigrationService:
             _GITHUB_PUBLISHER_REASON_RUNTIME_CREDENTIAL_MISSING,
         )
 
+    def _resolve_managed_image_pull_secret_runtime_config(
+        self,
+    ) -> tuple[dict[str, object], str | None]:
+        docker_userid = (self.deploy_secret_docker_userid or "").strip()
+        docker_email = (self.deploy_secret_docker_email or "").strip()
+        docker_pat = (self.deploy_secret_docker_pat or "").strip()
+        payload: dict[str, object] = {
+            "docker_userid_configured": bool(docker_userid),
+            "docker_email_configured": bool(docker_email),
+            "docker_pat_configured": bool(docker_pat),
+            "config_source": "control_plane_runtime",
+        }
+        missing_fields: list[str] = []
+        if not docker_userid:
+            missing_fields.append("docker_userid")
+        if not docker_email:
+            missing_fields.append("docker_email")
+        if not docker_pat:
+            missing_fields.append("docker_pat")
+        if missing_fields:
+            payload["missing_fields"] = missing_fields
+            return payload, _DEPLOY_DISPATCH_SERVICE_REASON_IMAGE_PULL_SECRET_MISSING
+        return payload, None
+
     def _log_target_readiness_check(
         self,
         *,
@@ -9728,6 +9792,7 @@ class SEOMigrationService:
             inputs={},
         )
         admin_deploy_metadata = self._resolve_admin_deploy_template_metadata()
+        managed_image_pull_secret_config, _ = self._resolve_managed_image_pull_secret_runtime_config()
         try:
             readiness = self.github_publisher.check_deploy_target_readiness(
                 target=target,
@@ -9739,6 +9804,7 @@ class SEOMigrationService:
                 namespace_isolation_defaults=_normalize_json_dict(
                     admin_deploy_metadata.get("namespace_isolation_defaults")
                 ),
+                managed_image_pull_secret_config=managed_image_pull_secret_config,
             )
         except SEOMigrationGitHubPublisherError as exc:
             return False, _normalize_deploy_failure_reason_code(exc.code)
@@ -11378,6 +11444,19 @@ class SEOMigrationService:
         dispatch_service_availability = (
             bool(runtime_diagnostics.get("configured")) and target_valid and bool(target_summary.get("enabled"))
         )
+        (
+            managed_image_pull_secret_config_for_readiness,
+            managed_image_pull_secret_reason_code,
+        ) = self._resolve_managed_image_pull_secret_runtime_config()
+        target_summary["managed_image_pull_secret_config_source"] = _normalize_string(
+            managed_image_pull_secret_config_for_readiness.get("config_source"),
+            max_length=80,
+        )
+        target_summary["managed_image_pull_secret_configured"] = bool(
+            managed_image_pull_secret_reason_code is None
+        )
+        if managed_image_pull_secret_reason_code is not None:
+            target_summary["managed_image_pull_secret_reason"] = managed_image_pull_secret_reason_code
         dispatch_service_reason_code = _derive_dispatch_service_reason_code(
             runtime_reason_code=str(runtime_diagnostics.get("reason_code") or ""),
             target_valid=target_valid,
@@ -11409,6 +11488,7 @@ class SEOMigrationService:
                         remediation_mode="none",
                         managed_gke_config=_normalize_json_dict(workflow_resolution.get("managed_gke_config")),
                         namespace_isolation_defaults=namespace_isolation_defaults,
+                        managed_image_pull_secret_config=managed_image_pull_secret_config_for_readiness,
                     )
                 except SEOMigrationGitHubPublisherError as exc:
                     dispatch_service_availability = False
@@ -13062,7 +13142,7 @@ def _derive_managed_gke_dispatch_readiness_message(*, dispatch_service_reason_co
     if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_IMAGE_PULL_SECRET_MISSING:
         return (
             "Admin action required: managed deploy target is missing required GHCR pull credentials "
-            "(DOCKER_USERID, DOCKER_EMAIL, DOCKER_PAT). Configure target site repository GitHub Actions secrets."
+            "(DOCKER_USERID, DOCKER_EMAIL, DOCKER_PAT). Configure MBSRN control-plane deployment settings."
         )
     if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_IMAGE_PULL_SECRET_NOT_REFERENCED:
         return (
@@ -13130,7 +13210,7 @@ def _derive_deploy_failure_remediation_hint(
     if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_IMAGE_PULL_SECRET_MISSING:
         return (
             "Managed deploy target is missing required GHCR pull credentials (DOCKER_USERID, DOCKER_EMAIL, "
-            "DOCKER_PAT). Configure target site repository GitHub Actions secrets and retry deploy."
+            "DOCKER_PAT). Configure MBSRN control-plane deployment settings and retry deploy."
         )
     if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_IMAGE_PULL_SECRET_NOT_REFERENCED:
         return (

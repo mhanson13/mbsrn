@@ -5,6 +5,7 @@ import base64
 import json
 import logging
 import re
+import ssl
 import socket
 import time
 import urllib.error
@@ -76,6 +77,15 @@ class SEOMigrationGitHubActionsSecretUpsertResult:
     secret_name: str
     action: str
     updated_at: str
+
+
+@dataclass(frozen=True)
+class SEOMigrationGitHubImagePullSecretProvisionResult:
+    repo_owner: str
+    repo_name: str
+    namespace: str
+    secret_name: str
+    action: str
 
 
 @dataclass(frozen=True)
@@ -358,6 +368,34 @@ class SEOMigrationGitHubPublisher:
     ) -> SEOMigrationGitHubActionsSecretUpsertResult:
         raise NotImplementedError
 
+    def provision_managed_image_pull_secret(
+        self,
+        *,
+        repo_owner: str,
+        repo_name: str,
+        ref: str,
+        kubernetes_namespace: str,
+        managed_gke_config: dict[str, object] | None,
+        docker_userid: str | None,
+        docker_email: str | None,
+        docker_pat: str | None,
+        gcp_deploy_key: str | None,
+        dry_run: bool = False,
+    ) -> SEOMigrationGitHubImagePullSecretProvisionResult:
+        del (
+            repo_owner,
+            repo_name,
+            ref,
+            kubernetes_namespace,
+            managed_gke_config,
+            docker_userid,
+            docker_email,
+            docker_pat,
+            gcp_deploy_key,
+            dry_run,
+        )
+        raise NotImplementedError
+
     def adopt_repository(
         self,
         *,
@@ -378,6 +416,7 @@ class SEOMigrationGitHubPublisher:
         target: SEOMigrationGitHubDeployTarget,
         dry_run: bool,
         managed_gke_config: dict[str, object] | None = None,
+        managed_image_pull_secret_config: dict[str, object] | None = None,
     ) -> SEOMigrationGitHubDeployResult:
         raise NotImplementedError
 
@@ -452,8 +491,16 @@ class SEOMigrationGitHubPublisher:
         remediation_mode: str = "none",
         managed_gke_config: dict[str, object] | None = None,
         namespace_isolation_defaults: dict[str, object] | None = None,
+        managed_image_pull_secret_config: dict[str, object] | None = None,
     ) -> SEOMigrationGitHubTargetReadinessResult:
-        del allow_ref_repair, allow_workflow_repair, dry_run, managed_gke_config, namespace_isolation_defaults
+        del (
+            allow_ref_repair,
+            allow_workflow_repair,
+            dry_run,
+            managed_gke_config,
+            namespace_isolation_defaults,
+            managed_image_pull_secret_config,
+        )
         workflow_path = _workflow_repo_path(target.workflow_id)
         return SEOMigrationGitHubTargetReadinessResult(
             repo_owner=target.repo_owner,
@@ -584,8 +631,40 @@ class MisconfiguredSEOMigrationGitHubPublisher(SEOMigrationGitHubPublisher):
         target: SEOMigrationGitHubDeployTarget,
         dry_run: bool,
         managed_gke_config: dict[str, object] | None = None,
+        managed_image_pull_secret_config: dict[str, object] | None = None,
     ) -> SEOMigrationGitHubDeployResult:
-        del target, dry_run, managed_gke_config
+        del target, dry_run, managed_gke_config, managed_image_pull_secret_config
+        raise SEOMigrationGitHubPublisherError(
+            code=self.reason_code,
+            safe_message=self.safe_message,
+        )
+
+    def provision_managed_image_pull_secret(
+        self,
+        *,
+        repo_owner: str,
+        repo_name: str,
+        ref: str,
+        kubernetes_namespace: str,
+        managed_gke_config: dict[str, object] | None,
+        docker_userid: str | None,
+        docker_email: str | None,
+        docker_pat: str | None,
+        gcp_deploy_key: str | None,
+        dry_run: bool = False,
+    ) -> SEOMigrationGitHubImagePullSecretProvisionResult:
+        del (
+            repo_owner,
+            repo_name,
+            ref,
+            kubernetes_namespace,
+            managed_gke_config,
+            docker_userid,
+            docker_email,
+            docker_pat,
+            gcp_deploy_key,
+            dry_run,
+        )
         raise SEOMigrationGitHubPublisherError(
             code=self.reason_code,
             safe_message=self.safe_message,
@@ -626,6 +705,7 @@ class MisconfiguredSEOMigrationGitHubPublisher(SEOMigrationGitHubPublisher):
         remediation_mode: str = "none",
         managed_gke_config: dict[str, object] | None = None,
         namespace_isolation_defaults: dict[str, object] | None = None,
+        managed_image_pull_secret_config: dict[str, object] | None = None,
     ) -> SEOMigrationGitHubTargetReadinessResult:
         del (
             target,
@@ -635,6 +715,7 @@ class MisconfiguredSEOMigrationGitHubPublisher(SEOMigrationGitHubPublisher):
             remediation_mode,
             managed_gke_config,
             namespace_isolation_defaults,
+            managed_image_pull_secret_config,
         )
         raise SEOMigrationGitHubPublisherError(
             code=self.reason_code,
@@ -2145,12 +2226,158 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             updated_at=utc_now().isoformat(),
         )
 
+    def provision_managed_image_pull_secret(
+        self,
+        *,
+        repo_owner: str,
+        repo_name: str,
+        ref: str,
+        kubernetes_namespace: str,
+        managed_gke_config: dict[str, object] | None,
+        docker_userid: str | None,
+        docker_email: str | None,
+        docker_pat: str | None,
+        gcp_deploy_key: str | None,
+        dry_run: bool = False,
+    ) -> SEOMigrationGitHubImagePullSecretProvisionResult:
+        normalized_namespace = _safe_identifier_fragment(
+            kubernetes_namespace,
+            fallback="site",
+            max_length=63,
+        )
+        normalized_docker_userid = _coerce_string(docker_userid)
+        normalized_docker_email = _coerce_string(docker_email)
+        normalized_docker_pat = _coerce_string(docker_pat)
+        missing_fields: list[str] = []
+        if not normalized_docker_userid:
+            missing_fields.append(_DOCKER_ENV_USERID.lower())
+        if not normalized_docker_email:
+            missing_fields.append(_DOCKER_ENV_EMAIL.lower())
+        if not normalized_docker_pat:
+            missing_fields.append(_DOCKER_ENV_PAT.lower())
+        if missing_fields:
+            raise SEOMigrationGitHubPublisherError(
+                code=_DEPLOY_DISPATCH_SERVICE_REASON_IMAGE_PULL_SECRET_MISSING,
+                safe_message=(
+                    "Managed deploy target is missing required GHCR pull credentials "
+                    "(DOCKER_USERID, DOCKER_EMAIL, DOCKER_PAT)."
+                ),
+                stage="image_pull_secret_provision",
+            )
+        if not _coerce_string(gcp_deploy_key):
+            raise SEOMigrationGitHubPublisherError(
+                code="runtime_credential_missing",
+                safe_message="Managed deploy runtime credential is unavailable for image pull secret provisioning.",
+                stage="image_pull_secret_provision",
+            )
+        normalized_managed_gke_config = _normalize_managed_gke_config(managed_gke_config)
+        cluster_name = _coerce_string(
+            normalized_managed_gke_config.get(_MANAGED_GKE_CONFIG_CLUSTER_NAME)
+        )
+        cluster_location = _coerce_string(
+            normalized_managed_gke_config.get(_MANAGED_GKE_CONFIG_CLUSTER_LOCATION)
+        )
+        project_id = _coerce_string(
+            normalized_managed_gke_config.get(_MANAGED_GKE_CONFIG_PROJECT_ID)
+        )
+        if not cluster_name:
+            raise SEOMigrationGitHubPublisherError(
+                code=_DEPLOY_DISPATCH_SERVICE_REASON_MISSING_CLUSTER_NAME,
+                safe_message="Managed deploy target is missing required GKE cluster name configuration.",
+                stage="image_pull_secret_provision",
+            )
+        if not cluster_location:
+            raise SEOMigrationGitHubPublisherError(
+                code=_DEPLOY_DISPATCH_SERVICE_REASON_MISSING_CLUSTER_LOCATION,
+                safe_message="Managed deploy target is missing required GKE cluster location configuration.",
+                stage="image_pull_secret_provision",
+            )
+        if not project_id:
+            raise SEOMigrationGitHubPublisherError(
+                code=_DEPLOY_DISPATCH_SERVICE_REASON_MISSING_GCP_PROJECT_ID,
+                safe_message="Managed deploy target is missing required GKE project id configuration.",
+                stage="image_pull_secret_provision",
+            )
+
+        _emit_structured_publisher_log(
+            payload={
+                "event": "seo_migration_managed_image_pull_secret_provisioning",
+                "repo_owner": repo_owner,
+                "repo_name": repo_name,
+                "ref": ref,
+                "kubernetes_namespace": normalized_namespace,
+                "secret_name": _MBSRN_MANAGED_IMAGE_PULL_SECRET_NAME,
+                "dry_run": bool(dry_run),
+                "operation_status": "started",
+            },
+            fallback_message="seo_migration_managed_image_pull_secret_provisioning",
+            level=logging.INFO,
+        )
+        if dry_run:
+            return SEOMigrationGitHubImagePullSecretProvisionResult(
+                repo_owner=repo_owner,
+                repo_name=repo_name,
+                namespace=normalized_namespace,
+                secret_name=_MBSRN_MANAGED_IMAGE_PULL_SECRET_NAME,
+                action="dry_run",
+            )
+
+        try:
+            action = _upsert_namespace_scoped_ghcr_pull_secret(
+                gcp_deploy_key=gcp_deploy_key,
+                project_id=project_id,
+                cluster_location=cluster_location,
+                cluster_name=cluster_name,
+                kubernetes_namespace=normalized_namespace,
+                docker_userid=normalized_docker_userid,
+                docker_email=normalized_docker_email,
+                docker_pat=normalized_docker_pat,
+                timeout_seconds=self.timeout_seconds,
+            )
+        except SEOMigrationGitHubPublisherError:
+            _emit_structured_publisher_log(
+                payload={
+                    "event": "seo_migration_managed_image_pull_secret_provisioning",
+                    "repo_owner": repo_owner,
+                    "repo_name": repo_name,
+                    "ref": ref,
+                    "kubernetes_namespace": normalized_namespace,
+                    "secret_name": _MBSRN_MANAGED_IMAGE_PULL_SECRET_NAME,
+                    "operation_status": "failed",
+                },
+                fallback_message="seo_migration_managed_image_pull_secret_provisioning",
+                level=logging.WARNING,
+            )
+            raise
+        _emit_structured_publisher_log(
+            payload={
+                "event": "seo_migration_managed_image_pull_secret_provisioning",
+                "repo_owner": repo_owner,
+                "repo_name": repo_name,
+                "ref": ref,
+                "kubernetes_namespace": normalized_namespace,
+                "secret_name": _MBSRN_MANAGED_IMAGE_PULL_SECRET_NAME,
+                "operation_status": "completed",
+                "action": action,
+            },
+            fallback_message="seo_migration_managed_image_pull_secret_provisioning",
+            level=logging.INFO,
+        )
+        return SEOMigrationGitHubImagePullSecretProvisionResult(
+            repo_owner=repo_owner,
+            repo_name=repo_name,
+            namespace=normalized_namespace,
+            secret_name=_MBSRN_MANAGED_IMAGE_PULL_SECRET_NAME,
+            action=action,
+        )
+
     def dispatch_deploy(
         self,
         *,
         target: SEOMigrationGitHubDeployTarget,
         dry_run: bool,
         managed_gke_config: dict[str, object] | None = None,
+        managed_image_pull_secret_config: dict[str, object] | None = None,
     ) -> SEOMigrationGitHubDeployResult:
         dispatched_at = utc_now().isoformat()
         workflow_output: dict[str, str] | None = None
@@ -2169,6 +2396,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 dry_run=False,
                 remediation_mode="none",
                 managed_gke_config=managed_gke_config,
+                managed_image_pull_secret_config=managed_image_pull_secret_config,
             )
             readiness_gke_details = (
                 readiness_result.managed_gke_config_details
@@ -4103,32 +4331,24 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
     def _validate_managed_image_pull_secret_config(
         self,
         *,
-        repo_owner: str,
-        repo_name: str,
+        managed_image_pull_secret_config: dict[str, object] | None = None,
     ) -> tuple[str | None, list[str], dict[str, bool], dict[str, object]]:
+        config_payload = (
+            managed_image_pull_secret_config
+            if isinstance(managed_image_pull_secret_config, dict)
+            else {}
+        )
         presence = {
-            "docker_userid_secret_present": self._actions_secret_present(
-                repo_owner=repo_owner,
-                repo_name=repo_name,
-                secret_name=_DOCKER_ENV_USERID,
-            ),
-            "docker_email_secret_present": self._actions_secret_present(
-                repo_owner=repo_owner,
-                repo_name=repo_name,
-                secret_name=_DOCKER_ENV_EMAIL,
-            ),
-            "docker_pat_secret_present": self._actions_secret_present(
-                repo_owner=repo_owner,
-                repo_name=repo_name,
-                secret_name=_DOCKER_ENV_PAT,
-            ),
+            "docker_userid_configured": bool(config_payload.get("docker_userid_configured")),
+            "docker_email_configured": bool(config_payload.get("docker_email_configured")),
+            "docker_pat_configured": bool(config_payload.get("docker_pat_configured")),
         }
         missing_fields: list[str] = []
-        if not presence["docker_userid_secret_present"]:
+        if not presence["docker_userid_configured"]:
             missing_fields.append(_DOCKER_ENV_USERID.lower())
-        if not presence["docker_email_secret_present"]:
+        if not presence["docker_email_configured"]:
             missing_fields.append(_DOCKER_ENV_EMAIL.lower())
-        if not presence["docker_pat_secret_present"]:
+        if not presence["docker_pat_configured"]:
             missing_fields.append(_DOCKER_ENV_PAT.lower())
         reason_code = (
             _DEPLOY_DISPATCH_SERVICE_REASON_IMAGE_PULL_SECRET_MISSING
@@ -4140,6 +4360,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             "image_pull_secret_config_reason_code": reason_code,
             "image_pull_secret_configured": not bool(missing_fields),
             "image_pull_secret_missing_fields": list(missing_fields),
+            "image_pull_secret_config_source": _IMAGE_PULL_SECRET_CONFIG_SOURCE_CONTROL_PLANE,
         }
         return reason_code, missing_fields, presence, details
 
@@ -4806,6 +5027,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         remediation_mode: str = "none",
         managed_gke_config: dict[str, object] | None = None,
         namespace_isolation_defaults: dict[str, object] | None = None,
+        managed_image_pull_secret_config: dict[str, object] | None = None,
     ) -> SEOMigrationGitHubTargetReadinessResult:
         workflow_path = _workflow_repo_path(target.workflow_id)
         self._ensure_repo_exists(repo_owner=target.repo_owner, repo_name=target.repo_name)
@@ -5055,39 +5277,46 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             dispatch_service_availability = False
             dispatch_service_reason_code = gke_config_reason_code
         if managed_workflow and dispatch_service_availability:
-            (
-                image_pull_secret_reason_code,
-                image_pull_secret_missing_fields,
-                image_pull_secret_presence,
-                image_pull_secret_validation_details,
-            ) = self._validate_managed_image_pull_secret_config(
-                repo_owner=target.repo_owner,
-                repo_name=target.repo_name,
-            )
-            image_pull_secret_details = {
-                **image_pull_secret_details,
-                **image_pull_secret_validation_details,
-            }
-            _emit_structured_publisher_log(
-                payload={
-                    "event": "seo_migration_deploy_image_pull_secret_config",
-                    "repo_owner": target.repo_owner,
-                    "repo_name": target.repo_name,
-                    "requested_ref": target.ref,
-                    "workflow_id": target.workflow_id,
-                    "workflow_path": workflow_path,
-                    "image_pull_secret_reason_code": image_pull_secret_reason_code,
-                    "image_pull_secret_missing_fields": list(image_pull_secret_missing_fields),
-                    **image_pull_secret_presence,
+            if isinstance(managed_image_pull_secret_config, dict):
+                (
+                    image_pull_secret_reason_code,
+                    image_pull_secret_missing_fields,
+                    image_pull_secret_presence,
+                    image_pull_secret_validation_details,
+                ) = self._validate_managed_image_pull_secret_config(
+                    managed_image_pull_secret_config=managed_image_pull_secret_config,
+                )
+                image_pull_secret_details = {
                     **image_pull_secret_details,
-                },
-                fallback_message="seo_migration_deploy_image_pull_secret_config",
-                level=logging.INFO,
-            )
-            if image_pull_secret_reason_code is not None:
-                dispatch_service_availability = False
-                dispatch_service_reason_code = image_pull_secret_reason_code
-            elif image_pull_secret_referenced is False:
+                    **image_pull_secret_validation_details,
+                }
+                _emit_structured_publisher_log(
+                    payload={
+                        "event": "seo_migration_deploy_image_pull_secret_config",
+                        "repo_owner": target.repo_owner,
+                        "repo_name": target.repo_name,
+                        "requested_ref": target.ref,
+                        "workflow_id": target.workflow_id,
+                        "workflow_path": workflow_path,
+                        "image_pull_secret_reason_code": image_pull_secret_reason_code,
+                        "image_pull_secret_missing_fields": list(image_pull_secret_missing_fields),
+                        **image_pull_secret_presence,
+                        **image_pull_secret_details,
+                    },
+                    fallback_message="seo_migration_deploy_image_pull_secret_config",
+                    level=logging.INFO,
+                )
+                if image_pull_secret_reason_code is not None:
+                    dispatch_service_availability = False
+                    dispatch_service_reason_code = image_pull_secret_reason_code
+            else:
+                image_pull_secret_details = {
+                    **image_pull_secret_details,
+                    "image_pull_secret_config_source": "unspecified",
+                    "image_pull_secret_config_reason_code": None,
+                    "image_pull_secret_configured": None,
+                }
+            if image_pull_secret_referenced is False:
                 dispatch_service_availability = False
                 dispatch_service_reason_code = _DEPLOY_DISPATCH_SERVICE_REASON_IMAGE_PULL_SECRET_NOT_REFERENCED
         if managed_workflow and certificate_alignment_details:
@@ -5777,6 +6006,380 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         return payload[:300]
 
 
+def _upsert_namespace_scoped_ghcr_pull_secret(
+    *,
+    gcp_deploy_key: str,
+    project_id: str,
+    cluster_location: str,
+    cluster_name: str,
+    kubernetes_namespace: str,
+    docker_userid: str,
+    docker_email: str,
+    docker_pat: str,
+    timeout_seconds: int,
+) -> str:
+    access_token = _resolve_google_access_token_from_service_account_json(
+        credentials_json=gcp_deploy_key,
+    )
+    cluster_payload = _request_google_json(
+        method="GET",
+        url=(
+            "https://container.googleapis.com/v1/projects/"
+            f"{urllib.parse.quote(project_id, safe='')}/locations/"
+            f"{urllib.parse.quote(cluster_location, safe='')}/clusters/"
+            f"{urllib.parse.quote(cluster_name, safe='')}"
+        ),
+        access_token=access_token,
+        timeout_seconds=timeout_seconds,
+        error_stage="image_pull_secret_provision",
+    )
+    if not isinstance(cluster_payload, dict):
+        raise SEOMigrationGitHubPublisherError(
+            code="image_pull_secret_provisioning_failed",
+            safe_message="Managed image pull secret provisioning could not resolve target GKE cluster metadata.",
+            stage="image_pull_secret_provision",
+        )
+    cluster_endpoint = _coerce_string(cluster_payload.get("endpoint"))
+    if not cluster_endpoint:
+        raise SEOMigrationGitHubPublisherError(
+            code="image_pull_secret_provisioning_failed",
+            safe_message="Managed image pull secret provisioning could not resolve target GKE cluster endpoint.",
+            stage="image_pull_secret_provision",
+        )
+    master_auth = cluster_payload.get("masterAuth")
+    cluster_ca_certificate = ""
+    if isinstance(master_auth, dict):
+        cluster_ca_certificate = _coerce_string(master_auth.get("clusterCaCertificate"))
+    if not cluster_ca_certificate:
+        raise SEOMigrationGitHubPublisherError(
+            code="image_pull_secret_provisioning_failed",
+            safe_message="Managed image pull secret provisioning could not resolve target GKE cluster CA bundle.",
+            stage="image_pull_secret_provision",
+        )
+    try:
+        decoded_cluster_ca = base64.b64decode(cluster_ca_certificate.encode("ascii")).decode(
+            "utf-8",
+            errors="ignore",
+        )
+    except Exception as exc:  # pragma: no cover - defensive
+        raise SEOMigrationGitHubPublisherError(
+            code="image_pull_secret_provisioning_failed",
+            safe_message="Managed image pull secret provisioning could not decode target GKE cluster CA bundle.",
+            stage="image_pull_secret_provision",
+        ) from exc
+    ssl_context = ssl.create_default_context(cadata=decoded_cluster_ca)
+
+    namespace_path = (
+        "/api/v1/namespaces/"
+        f"{urllib.parse.quote(kubernetes_namespace, safe='')}"
+    )
+    namespace_payload = _request_kubernetes_json(
+        method="GET",
+        endpoint=cluster_endpoint,
+        path=namespace_path,
+        access_token=access_token,
+        ssl_context=ssl_context,
+        timeout_seconds=timeout_seconds,
+        allow_404=True,
+        error_stage="image_pull_secret_provision",
+    )
+    if not isinstance(namespace_payload, dict):
+        _request_kubernetes_json(
+            method="POST",
+            endpoint=cluster_endpoint,
+            path="/api/v1/namespaces",
+            payload={
+                "apiVersion": "v1",
+                "kind": "Namespace",
+                "metadata": {
+                    "name": kubernetes_namespace,
+                },
+            },
+            access_token=access_token,
+            ssl_context=ssl_context,
+            timeout_seconds=timeout_seconds,
+            expected_statuses=(200, 201),
+            error_stage="image_pull_secret_provision",
+        )
+
+    docker_auth = base64.b64encode(f"{docker_userid}:{docker_pat}".encode("utf-8")).decode("ascii")
+    docker_config_payload = {
+        "auths": {
+            "ghcr.io": {
+                "username": docker_userid,
+                "password": docker_pat,
+                "email": docker_email,
+                "auth": docker_auth,
+            }
+        }
+    }
+    encoded_docker_config = base64.b64encode(
+        json.dumps(docker_config_payload, ensure_ascii=True, separators=(",", ":")).encode("utf-8")
+    ).decode("ascii")
+    secret_payload = {
+        "apiVersion": "v1",
+        "kind": "Secret",
+        "metadata": {
+            "name": _MBSRN_MANAGED_IMAGE_PULL_SECRET_NAME,
+            "namespace": kubernetes_namespace,
+        },
+        "type": "kubernetes.io/dockerconfigjson",
+        "data": {
+            ".dockerconfigjson": encoded_docker_config,
+        },
+    }
+    secret_path = (
+        "/api/v1/namespaces/"
+        f"{urllib.parse.quote(kubernetes_namespace, safe='')}/secrets/"
+        f"{urllib.parse.quote(_MBSRN_MANAGED_IMAGE_PULL_SECRET_NAME, safe='')}"
+    )
+    existing_secret_payload = _request_kubernetes_json(
+        method="GET",
+        endpoint=cluster_endpoint,
+        path=secret_path,
+        access_token=access_token,
+        ssl_context=ssl_context,
+        timeout_seconds=timeout_seconds,
+        allow_404=True,
+        error_stage="image_pull_secret_provision",
+    )
+    if isinstance(existing_secret_payload, dict):
+        existing_metadata = existing_secret_payload.get("metadata")
+        existing_resource_version = ""
+        if isinstance(existing_metadata, dict):
+            existing_resource_version = _coerce_string(existing_metadata.get("resourceVersion"))
+        if existing_resource_version:
+            secret_payload["metadata"]["resourceVersion"] = existing_resource_version
+        _request_kubernetes_json(
+            method="PUT",
+            endpoint=cluster_endpoint,
+            path=secret_path,
+            payload=secret_payload,
+            access_token=access_token,
+            ssl_context=ssl_context,
+            timeout_seconds=timeout_seconds,
+            expected_statuses=(200,),
+            error_stage="image_pull_secret_provision",
+        )
+        return "updated"
+    _request_kubernetes_json(
+        method="POST",
+        endpoint=cluster_endpoint,
+        path=(
+            "/api/v1/namespaces/"
+            f"{urllib.parse.quote(kubernetes_namespace, safe='')}/secrets"
+        ),
+        payload=secret_payload,
+        access_token=access_token,
+        ssl_context=ssl_context,
+        timeout_seconds=timeout_seconds,
+        expected_statuses=(200, 201),
+        error_stage="image_pull_secret_provision",
+    )
+    return "created"
+
+
+def _resolve_google_access_token_from_service_account_json(*, credentials_json: str) -> str:
+    normalized_credentials_json = _coerce_string(credentials_json)
+    if not normalized_credentials_json:
+        raise SEOMigrationGitHubPublisherError(
+            code="runtime_credential_missing",
+            safe_message="Managed deploy runtime credential is unavailable for image pull secret provisioning.",
+            stage="image_pull_secret_provision",
+        )
+    try:
+        parsed_credentials = json.loads(normalized_credentials_json)
+    except json.JSONDecodeError as exc:
+        raise SEOMigrationGitHubPublisherError(
+            code="runtime_configuration_invalid",
+            safe_message="Managed deploy runtime credential is invalid for image pull secret provisioning.",
+            stage="image_pull_secret_provision",
+        ) from exc
+    try:
+        from google.auth.transport.requests import Request as GoogleAuthRequest
+        from google.oauth2 import service_account
+    except ImportError as exc:  # pragma: no cover - environment dependent
+        raise SEOMigrationGitHubPublisherError(
+            code="runtime_integration_unavailable",
+            safe_message="Google auth runtime dependency is unavailable for image pull secret provisioning.",
+            stage="image_pull_secret_provision",
+        ) from exc
+    try:
+        credentials = service_account.Credentials.from_service_account_info(
+            parsed_credentials,
+            scopes=("https://www.googleapis.com/auth/cloud-platform",),
+        )
+        credentials.refresh(GoogleAuthRequest())
+        token = _coerce_string(getattr(credentials, "token", None))
+    except Exception as exc:
+        raise SEOMigrationGitHubPublisherError(
+            code="runtime_configuration_invalid",
+            safe_message="Managed deploy runtime credential could not be refreshed for image pull secret provisioning.",
+            stage="image_pull_secret_provision",
+        ) from exc
+    if not token:
+        raise SEOMigrationGitHubPublisherError(
+            code="runtime_configuration_invalid",
+            safe_message="Managed deploy runtime credential did not return an access token for image pull secret provisioning.",
+            stage="image_pull_secret_provision",
+        )
+    return token
+
+
+def _request_google_json(
+    *,
+    method: str,
+    url: str,
+    access_token: str,
+    timeout_seconds: int,
+    expected_statuses: tuple[int, ...] = (200,),
+    error_stage: str | None = None,
+) -> dict[str, object] | list[object] | None:
+    headers = {
+        "Accept": "application/json",
+        "Authorization": f"Bearer {access_token}",
+        "User-Agent": "MBSRN-MigrationPublisher/1.0",
+    }
+    request = urllib.request.Request(url=url, method=method, headers=headers)
+    return _request_json_via_urllib(
+        request=request,
+        timeout_seconds=timeout_seconds,
+        expected_statuses=expected_statuses,
+        allow_404=False,
+        error_stage=error_stage,
+        code_on_failure="image_pull_secret_provisioning_failed",
+        safe_message_on_failure="Managed image pull secret provisioning request to Google APIs failed.",
+    )
+
+
+def _request_kubernetes_json(
+    *,
+    method: str,
+    endpoint: str,
+    path: str,
+    access_token: str,
+    ssl_context: ssl.SSLContext,
+    timeout_seconds: int,
+    payload: dict[str, object] | None = None,
+    expected_statuses: tuple[int, ...] = (200,),
+    allow_404: bool = False,
+    error_stage: str | None = None,
+) -> dict[str, object] | list[object] | None:
+    body: bytes | None = None
+    headers = {
+        "Accept": "application/json",
+        "Authorization": f"Bearer {access_token}",
+        "User-Agent": "MBSRN-MigrationPublisher/1.0",
+    }
+    if payload is not None:
+        body = json.dumps(payload, ensure_ascii=True).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    request = urllib.request.Request(
+        url=f"https://{endpoint}{path}",
+        data=body,
+        method=method,
+        headers=headers,
+    )
+    return _request_json_via_urllib(
+        request=request,
+        timeout_seconds=timeout_seconds,
+        expected_statuses=expected_statuses,
+        allow_404=allow_404,
+        error_stage=error_stage,
+        code_on_failure="image_pull_secret_provisioning_failed",
+        safe_message_on_failure="Managed image pull secret provisioning request to Kubernetes API failed.",
+        ssl_context=ssl_context,
+    )
+
+
+def _request_json_via_urllib(
+    *,
+    request: urllib.request.Request,
+    timeout_seconds: int,
+    expected_statuses: tuple[int, ...],
+    allow_404: bool,
+    error_stage: str | None,
+    code_on_failure: str,
+    safe_message_on_failure: str,
+    ssl_context: ssl.SSLContext | None = None,
+) -> dict[str, object] | list[object] | None:
+    try:
+        with urllib.request.urlopen(
+            request,
+            timeout=timeout_seconds,
+            context=ssl_context,
+        ) as response:
+            status_code = int(getattr(response, "status", 0) or 0)
+            if status_code not in expected_statuses:
+                raise SEOMigrationGitHubPublisherError(
+                    code=code_on_failure,
+                    safe_message=safe_message_on_failure,
+                    status_code=status_code,
+                    stage=error_stage,
+                )
+            response_body = response.read().decode("utf-8", errors="replace").strip()
+            if not response_body:
+                return None
+            parsed = json.loads(response_body)
+            if isinstance(parsed, (dict, list)):
+                return parsed
+            return None
+    except urllib.error.HTTPError as exc:
+        status_code = int(getattr(exc, "code", 0) or 0)
+        if allow_404 and status_code == 404:
+            return None
+        provider_message = _sanitize_github_error_message(_extract_http_error_message_for_raw_http(exc))
+        raise SEOMigrationGitHubPublisherError(
+            code=code_on_failure,
+            safe_message=safe_message_on_failure,
+            status_code=status_code,
+            stage=error_stage,
+            provider_message=provider_message,
+        ) from exc
+    except json.JSONDecodeError as exc:
+        raise SEOMigrationGitHubPublisherError(
+            code=code_on_failure,
+            safe_message=safe_message_on_failure,
+            stage=error_stage,
+        ) from exc
+    except (TimeoutError, socket.timeout) as exc:
+        raise SEOMigrationGitHubPublisherError(
+            code="github_timeout",
+            safe_message="Managed image pull secret provisioning request timed out.",
+            stage=error_stage,
+        ) from exc
+    except urllib.error.URLError as exc:
+        if isinstance(exc.reason, TimeoutError) or isinstance(exc.reason, socket.timeout):
+            raise SEOMigrationGitHubPublisherError(
+                code="github_timeout",
+                safe_message="Managed image pull secret provisioning request timed out.",
+                stage=error_stage,
+            ) from exc
+        raise SEOMigrationGitHubPublisherError(
+            code=code_on_failure,
+            safe_message=safe_message_on_failure,
+            stage=error_stage,
+        ) from exc
+
+
+def _extract_http_error_message_for_raw_http(exc: urllib.error.HTTPError) -> str:
+    try:
+        payload = exc.read().decode("utf-8", errors="replace").strip()
+    except Exception:  # pragma: no cover - defensive
+        return ""
+    if not payload:
+        return ""
+    try:
+        parsed = json.loads(payload)
+        if isinstance(parsed, dict):
+            message = parsed.get("message")
+            if isinstance(message, str):
+                return message
+    except Exception:  # pragma: no cover - defensive
+        pass
+    return payload[:300]
+
+
 def _join_repo_path(root: str, path: str) -> str:
     normalized_root = root.strip("/")
     normalized_path = path.strip("/")
@@ -5944,6 +6547,7 @@ _GKE_ENV_CLUSTER_LOCATION = "KUBERNETES_CLUSTER_LOCATION"
 _DOCKER_ENV_USERID = "DOCKER_USERID"
 _DOCKER_ENV_EMAIL = "DOCKER_EMAIL"
 _DOCKER_ENV_PAT = "DOCKER_PAT"
+_IMAGE_PULL_SECRET_CONFIG_SOURCE_CONTROL_PLANE = "control_plane_runtime"
 _MANAGED_GKE_CONFIG_CLUSTER_NAME = "cluster_name"
 _MANAGED_GKE_CONFIG_CLUSTER_LOCATION = "cluster_location"
 _MANAGED_GKE_CONFIG_PROJECT_ID = "project_id"
@@ -6310,25 +6914,10 @@ def _render_managed_deploy_workflow_yaml(
         "          project_id: ${{ env.GKE_PROJECT_ID }}\n"
         "      - name: Ensure namespace exists\n"
         "        run: kubectl apply -f k8s/namespace.yaml\n"
-        "      - name: Ensure GHCR image pull secret\n"
-        "        env:\n"
-        "          DOCKER_USERID: ${{ secrets.DOCKER_USERID }}\n"
-        "          DOCKER_EMAIL: ${{ secrets.DOCKER_EMAIL }}\n"
-        "          DOCKER_PAT: ${{ secrets.DOCKER_PAT }}\n"
+        "      - name: Verify GHCR image pull secret\n"
         "        run: |\n"
         "          set -euo pipefail\n"
-        "          if [ -z \"$DOCKER_USERID\" ] || [ -z \"$DOCKER_EMAIL\" ] || [ -z \"$DOCKER_PAT\" ]; then\n"
-        "            echo \"Missing required GHCR pull credentials (DOCKER_USERID/DOCKER_EMAIL/DOCKER_PAT).\"\n"
-        "            exit 1\n"
-        "          fi\n"
-        "          kubectl create secret docker-registry "
-        f"{_MBSRN_MANAGED_IMAGE_PULL_SECRET_NAME} "
-        "            --namespace \"$K8S_NAMESPACE\" "
-        "            --docker-server=ghcr.io "
-        "            --docker-username=\"$DOCKER_USERID\" "
-        "            --docker-password=\"$DOCKER_PAT\" "
-        "            --docker-email=\"$DOCKER_EMAIL\" "
-        "            --dry-run=client -o yaml | kubectl apply -f -\n"
+        "          kubectl get secret ghcr-pull-secret --namespace \"$K8S_NAMESPACE\"\n"
         "      - name: Reset stale site-web deployment\n"
         "        run: |\n"
         "          echo \"Resetting deployment to eliminate stale image references.\"\n"
@@ -6339,9 +6928,6 @@ def _render_managed_deploy_workflow_yaml(
         "          kubectl apply -f k8s/\n"
         "      - name: Resolve managed site runtime image\n"
         "        id: resolve_site_runtime_image\n"
-        "        env:\n"
-        "          DOCKER_USERID: ${{ secrets.DOCKER_USERID }}\n"
-        "          DOCKER_PAT: ${{ secrets.DOCKER_PAT }}\n"
         "        run: |\n"
         "          set -euo pipefail\n"
         "          selected_mode=\"fallback_latest\"\n"
@@ -6349,16 +6935,9 @@ def _render_managed_deploy_workflow_yaml(
         "          normalized_tag=\"$(echo \"${SITE_WEB_IMAGE_TAG:-}\" | tr -d '[:space:]')\"\n"
         "          if [ -n \"$normalized_tag\" ] && [ \"$normalized_tag\" != \"latest\" ]; then\n"
         "            if echo \"$normalized_tag\" | grep -Eq '^[A-Fa-f0-9]{7,64}$'; then\n"
-        "              if [ -n \"${DOCKER_USERID:-}\" ] && [ -n \"${DOCKER_PAT:-}\" ]; then\n"
-        "                echo \"$DOCKER_PAT\" | docker login ghcr.io -u \"$DOCKER_USERID\" --password-stdin >/dev/null 2>&1 || true\n"
-        "              fi\n"
         "              candidate_image=\"${SITE_WEB_IMAGE_REPOSITORY}:${normalized_tag}\"\n"
-        "              if docker manifest inspect \"$candidate_image\" >/dev/null 2>&1; then\n"
-        "                selected_image=\"$candidate_image\"\n"
-        "                selected_mode=\"immutable_sha\"\n"
-        "              else\n"
-        "                echo \"Configured SITE_WEB_IMAGE_TAG '$normalized_tag' is unavailable; falling back to latest.\"\n"
-        "              fi\n"
+        "              selected_image=\"$candidate_image\"\n"
+        "              selected_mode=\"immutable_sha\"\n"
         "            else\n"
         "              echo \"Configured SITE_WEB_IMAGE_TAG '$normalized_tag' is not a SHA-like tag; falling back to latest.\"\n"
         "            fi\n"

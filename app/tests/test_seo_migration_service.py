@@ -20,6 +20,7 @@ from app.integrations.seo_migration_github_publisher import (
     SEOMigrationGitHubDeployResult,
     SEOMigrationGitHubDeployRunStatusResult,
     SEOMigrationGitHubDeployTarget,
+    SEOMigrationGitHubImagePullSecretProvisionResult,
     SEOMigrationGitHubPublishFile,
     SEOMigrationGitHubPublishPreflightResult,
     SEOMigrationGitHubPublishResult,
@@ -326,6 +327,10 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         self.ensure_repository_calls: list[tuple[str, str, bool, bool, str | None, bool]] = []
         self.deploy_calls: list[tuple[SEOMigrationGitHubDeployTarget, bool]] = []
         self.deploy_managed_gke_configs: list[dict[str, object] | None] = []
+        self.deploy_managed_image_pull_secret_configs: list[dict[str, object] | None] = []
+        self.provision_managed_image_pull_secret_calls: list[
+            tuple[str, str, str, str, dict[str, object] | None, str | None, str | None, str | None, str | None, bool]
+        ] = []
         self.refresh_calls: list[tuple[SEOMigrationGitHubDeployTarget, int, str | None]] = []
         self.lookup_calls: list[tuple[SEOMigrationGitHubDeployTarget, str | None]] = []
         self.secret_upsert_calls: list[tuple[str, str, str, str]] = []
@@ -613,8 +618,12 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         target: SEOMigrationGitHubDeployTarget,
         dry_run: bool,
         managed_gke_config: dict[str, object] | None = None,
+        managed_image_pull_secret_config: dict[str, object] | None = None,
     ) -> SEOMigrationGitHubDeployResult:
         self.deploy_managed_gke_configs.append(dict(managed_gke_config or {}) or None)
+        self.deploy_managed_image_pull_secret_configs.append(
+            dict(managed_image_pull_secret_config or {}) or None
+        )
         self.deploy_calls.append((target, dry_run))
         if self.fail_deploy:
             raise SEOMigrationGitHubPublisherError(
@@ -638,6 +647,42 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
             workflow_run_failure_reason_code=self.deploy_workflow_run_failure_reason_code,
             workflow_run_failure_stage=self.deploy_workflow_run_failure_stage,
             workflow_run_failure_step=self.deploy_workflow_run_failure_step,
+        )
+
+    def provision_managed_image_pull_secret(
+        self,
+        *,
+        repo_owner: str,
+        repo_name: str,
+        ref: str,
+        kubernetes_namespace: str,
+        managed_gke_config: dict[str, object] | None,
+        docker_userid: str | None,
+        docker_email: str | None,
+        docker_pat: str | None,
+        gcp_deploy_key: str | None,
+        dry_run: bool = False,
+    ) -> SEOMigrationGitHubImagePullSecretProvisionResult:
+        self.provision_managed_image_pull_secret_calls.append(
+            (
+                repo_owner,
+                repo_name,
+                ref,
+                kubernetes_namespace,
+                dict(managed_gke_config or {}) or None,
+                docker_userid,
+                docker_email,
+                docker_pat,
+                gcp_deploy_key,
+                bool(dry_run),
+            )
+        )
+        return SEOMigrationGitHubImagePullSecretProvisionResult(
+            repo_owner=repo_owner,
+            repo_name=repo_name,
+            namespace=kubernetes_namespace,
+            secret_name="ghcr-pull-secret",
+            action="dry_run" if dry_run else "updated",
         )
 
     def refresh_deploy_run_status(
@@ -782,8 +827,16 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         managed_gke_config: dict[str, object] | None = None,
         namespace_isolation_defaults: dict[str, object] | None = None,
         remediation_mode: str = "none",
+        managed_image_pull_secret_config: dict[str, object] | None = None,
     ) -> SEOMigrationGitHubTargetReadinessResult:
-        del allow_ref_repair, allow_workflow_repair, dry_run, managed_gke_config, namespace_isolation_defaults
+        del (
+            allow_ref_repair,
+            allow_workflow_repair,
+            dry_run,
+            managed_gke_config,
+            namespace_isolation_defaults,
+            managed_image_pull_secret_config,
+        )
         workflow_path = (
             target.workflow_id
             if str(target.workflow_id or "").startswith(".github/workflows/")

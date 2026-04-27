@@ -1138,6 +1138,9 @@ def get_seo_migration_service(
         deploy_default_workflow_id=settings.migration_deploy_default_workflow_id,
         deploy_default_ref=settings.migration_deploy_default_ref,
         deploy_secret_gcp_key=settings.gcp_deploy_key,
+        deploy_secret_docker_userid=settings.docker_userid,
+        deploy_secret_docker_email=settings.docker_email,
+        deploy_secret_docker_pat=settings.docker_pat,
     )
 
 

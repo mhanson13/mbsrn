@@ -627,7 +627,7 @@ describe("site migration workflow route", () => {
 
     const deployReadinessCard = await screen.findByTestId("migration-deploy-readiness");
     expect(within(deployReadinessCard).getByTestId("migration-managed-gke-config-guidance-readiness")).toHaveTextContent(
-      "Managed deploy target is missing required GHCR pull credentials (DOCKER_USERID, DOCKER_EMAIL, DOCKER_PAT). Configure target site repository GitHub Actions secrets.",
+      "Managed deploy target is missing required GHCR pull credentials (DOCKER_USERID, DOCKER_EMAIL, DOCKER_PAT). Configure MBSRN control-plane deployment settings.",
     );
   });
 

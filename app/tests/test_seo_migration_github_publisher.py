@@ -210,9 +210,6 @@ def _gke_environment_config_present_responses() -> list[object]:
         _FakeHTTPResponse(status=200, body=json.dumps({"name": "KUBERNETES_CLUSTER_LOCATION"})),
         _FakeHTTPResponse(status=200, body=json.dumps({"name": "GCP_PROJECT_ID"})),
         _FakeHTTPResponse(status=200, body=json.dumps({"name": "GCP_PROJECT_ID"})),
-        _FakeHTTPResponse(status=200, body=json.dumps({"name": "DOCKER_USERID"})),
-        _FakeHTTPResponse(status=200, body=json.dumps({"name": "DOCKER_EMAIL"})),
-        _FakeHTTPResponse(status=200, body=json.dumps({"name": "DOCKER_PAT"})),
     ]
 
 
@@ -2293,6 +2290,11 @@ def test_check_deploy_target_readiness_reports_aligned_namespace_for_managed_tem
             "metadata:\n"
             "  name: site-web\n"
             "  namespace: tnmfire\n"
+            "spec:\n"
+            "  template:\n"
+            "    spec:\n"
+            "      imagePullSecrets:\n"
+            "        - name: ghcr-pull-secret\n"
         )
     )
     deployment_manifest = _encode_workflow_yaml(
@@ -2369,7 +2371,7 @@ def test_check_deploy_target_readiness_reports_aligned_namespace_for_managed_tem
     assert readiness.manifest_namespace_aligned is True
     assert readiness.dispatch_service_availability is True
     assert readiness.dispatch_service_reason_code == "available"
-    assert len(calls) == 17
+    assert len(calls) == 14
 
 
 def test_check_deploy_target_readiness_reports_misaligned_namespace_for_managed_template(monkeypatch) -> None:
@@ -2505,6 +2507,11 @@ def test_check_deploy_target_readiness_flags_missing_cluster_name_configuration(
             "metadata:\n"
             "  name: site-web\n"
             "  namespace: tnmfire\n"
+            "spec:\n"
+            "  template:\n"
+            "    spec:\n"
+            "      imagePullSecrets:\n"
+            "        - name: ghcr-pull-secret\n"
         )
     )
     deployment_manifest = _encode_workflow_yaml(
@@ -2686,21 +2693,6 @@ def test_check_deploy_target_readiness_flags_missing_image_pull_secret_credentia
                 status=200,
                 body=json.dumps({"sha": "sha-backendconfig", "encoding": "base64", "content": namespaced_manifest}),
             ),
-            _http_error(
-                "https://api.github.com/repos/mhanson13/tnmfire/actions/secrets/DOCKER_USERID",
-                status_code=404,
-                message="Not Found",
-            ),
-            _http_error(
-                "https://api.github.com/repos/mhanson13/tnmfire/actions/secrets/DOCKER_EMAIL",
-                status_code=404,
-                message="Not Found",
-            ),
-            _http_error(
-                "https://api.github.com/repos/mhanson13/tnmfire/actions/secrets/DOCKER_PAT",
-                status_code=404,
-                message="Not Found",
-            ),
         ],
         calls,
     )
@@ -2714,6 +2706,11 @@ def test_check_deploy_target_readiness_flags_missing_image_pull_secret_credentia
             "cluster_name": "mbsrn-cluster",
             "cluster_location": "us-central1",
             "project_id": "mbsrn-prod",
+        },
+        managed_image_pull_secret_config={
+            "docker_userid_configured": False,
+            "docker_email_configured": False,
+            "docker_pat_configured": False,
         },
     )
     assert readiness.dispatch_service_availability is False
@@ -2823,9 +2820,6 @@ def test_check_deploy_target_readiness_flags_image_pull_secret_not_referenced(mo
                 status=200,
                 body=json.dumps({"sha": "sha-backendconfig", "encoding": "base64", "content": namespaced_manifest}),
             ),
-            _FakeHTTPResponse(status=200, body=json.dumps({"name": "DOCKER_USERID"})),
-            _FakeHTTPResponse(status=200, body=json.dumps({"name": "DOCKER_EMAIL"})),
-            _FakeHTTPResponse(status=200, body=json.dumps({"name": "DOCKER_PAT"})),
         ],
         calls,
     )
@@ -2839,6 +2833,11 @@ def test_check_deploy_target_readiness_flags_image_pull_secret_not_referenced(mo
             "cluster_name": "mbsrn-cluster",
             "cluster_location": "us-central1",
             "project_id": "mbsrn-prod",
+        },
+        managed_image_pull_secret_config={
+            "docker_userid_configured": True,
+            "docker_email_configured": True,
+            "docker_pat_configured": True,
         },
     )
     assert readiness.dispatch_service_availability is False
@@ -3100,13 +3099,10 @@ def test_check_deploy_target_readiness_resolves_managed_gke_config_from_admin_wi
                     status=200,
                     body=json.dumps({"sha": "sha-frontendconfig", "encoding": "base64", "content": namespaced_manifest}),
                 ),
-                _FakeHTTPResponse(
-                    status=200,
-                    body=json.dumps({"sha": "sha-backendconfig", "encoding": "base64", "content": namespaced_manifest}),
-                ),
-            _FakeHTTPResponse(status=200, body=json.dumps({"name": "DOCKER_USERID"})),
-            _FakeHTTPResponse(status=200, body=json.dumps({"name": "DOCKER_EMAIL"})),
-            _FakeHTTPResponse(status=200, body=json.dumps({"name": "DOCKER_PAT"})),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-backendconfig", "encoding": "base64", "content": namespaced_manifest}),
+            ),
         ],
         calls,
     )
@@ -3140,7 +3136,7 @@ def test_check_deploy_target_readiness_resolves_managed_gke_config_from_admin_wi
         )
         for method, url in calls
     )
-    assert len(calls) == 14
+    assert len(calls) == 11
 
 
 def test_check_deploy_target_readiness_resolves_managed_gke_config_from_repo_fallback_when_admin_missing(
@@ -3242,9 +3238,6 @@ def test_check_deploy_target_readiness_resolves_managed_gke_config_from_repo_fal
             _FakeHTTPResponse(status=200, body=json.dumps({"name": "KUBERNETES_CLUSTER_NAME"})),
             _FakeHTTPResponse(status=200, body=json.dumps({"name": "KUBERNETES_CLUSTER_LOCATION"})),
             _FakeHTTPResponse(status=200, body=json.dumps({"name": "GCP_PROJECT_ID"})),
-            _FakeHTTPResponse(status=200, body=json.dumps({"name": "DOCKER_USERID"})),
-            _FakeHTTPResponse(status=200, body=json.dumps({"name": "DOCKER_EMAIL"})),
-            _FakeHTTPResponse(status=200, body=json.dumps({"name": "DOCKER_PAT"})),
         ],
         calls,
     )
@@ -3272,7 +3265,7 @@ def test_check_deploy_target_readiness_resolves_managed_gke_config_from_repo_fal
         )
         for method, url in calls
     )
-    assert len(calls) == 17
+    assert len(calls) == 14
 
 
 def test_check_deploy_target_readiness_treats_whitespace_admin_values_as_missing_and_uses_repo_fallback(
@@ -3367,14 +3360,11 @@ def test_check_deploy_target_readiness_treats_whitespace_admin_values_as_missing
                     status=200,
                     body=json.dumps({"sha": "sha-frontendconfig", "encoding": "base64", "content": namespaced_manifest}),
                 ),
-                _FakeHTTPResponse(
-                    status=200,
-                    body=json.dumps({"sha": "sha-backendconfig", "encoding": "base64", "content": namespaced_manifest}),
-                ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-backendconfig", "encoding": "base64", "content": namespaced_manifest}),
+            ),
             _FakeHTTPResponse(status=200, body=json.dumps({"name": "KUBERNETES_CLUSTER_NAME"})),
-            _FakeHTTPResponse(status=200, body=json.dumps({"name": "DOCKER_USERID"})),
-            _FakeHTTPResponse(status=200, body=json.dumps({"name": "DOCKER_EMAIL"})),
-            _FakeHTTPResponse(status=200, body=json.dumps({"name": "DOCKER_PAT"})),
         ],
         calls,
     )
@@ -3397,7 +3387,7 @@ def test_check_deploy_target_readiness_treats_whitespace_admin_values_as_missing
     cluster_resolution_details = details.get("cluster_name_resolution_details") or []
     assert "admin_config_missing" in cluster_resolution_details
     assert "resolved_from_repo_config" in cluster_resolution_details
-    assert len(calls) == 15
+    assert len(calls) == 12
 
 
 def test_dispatch_deploy_classifies_token_not_authorized(monkeypatch) -> None:
@@ -3499,13 +3489,10 @@ def test_dispatch_deploy_uses_admin_managed_gke_config_for_readiness_and_dispatc
                     status=200,
                     body=json.dumps({"sha": "sha-frontendconfig", "encoding": "base64", "content": namespaced_manifest}),
                 ),
-                _FakeHTTPResponse(
-                    status=200,
-                    body=json.dumps({"sha": "sha-backendconfig", "encoding": "base64", "content": namespaced_manifest}),
-                ),
-            _FakeHTTPResponse(status=200, body=json.dumps({"name": "DOCKER_USERID"})),
-            _FakeHTTPResponse(status=200, body=json.dumps({"name": "DOCKER_EMAIL"})),
-            _FakeHTTPResponse(status=200, body=json.dumps({"name": "DOCKER_PAT"})),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-backendconfig", "encoding": "base64", "content": namespaced_manifest}),
+            ),
             _FakeHTTPResponse(status=204),
             _FakeHTTPResponse(status=200, body=json.dumps({"workflow_runs": []})),
             _FakeHTTPResponse(status=200, body=json.dumps([])),
@@ -3746,9 +3733,6 @@ def test_dispatch_deploy_uses_repo_fallback_when_admin_managed_gke_config_missin
             _FakeHTTPResponse(status=200, body=json.dumps({"name": "KUBERNETES_CLUSTER_NAME"})),
             _FakeHTTPResponse(status=200, body=json.dumps({"name": "KUBERNETES_CLUSTER_LOCATION"})),
             _FakeHTTPResponse(status=200, body=json.dumps({"name": "GCP_PROJECT_ID"})),
-            _FakeHTTPResponse(status=200, body=json.dumps({"name": "DOCKER_USERID"})),
-            _FakeHTTPResponse(status=200, body=json.dumps({"name": "DOCKER_EMAIL"})),
-            _FakeHTTPResponse(status=200, body=json.dumps({"name": "DOCKER_PAT"})),
             _FakeHTTPResponse(status=204),
             _FakeHTTPResponse(status=200, body=json.dumps({"workflow_runs": []})),
             _FakeHTTPResponse(status=200, body=json.dumps([])),
@@ -5154,26 +5138,24 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "Authenticate to GCP" in workflow_yaml
     assert "Get GKE credentials" in workflow_yaml
     assert "Ensure namespace exists" in workflow_yaml
-    assert "Ensure GHCR image pull secret" in workflow_yaml
+    assert "Verify GHCR image pull secret" in workflow_yaml
+    assert "kubectl get secret ghcr-pull-secret --namespace \"$K8S_NAMESPACE\"" in workflow_yaml
     assert "Reset stale site-web deployment" in workflow_yaml
     assert "Resetting deployment to eliminate stale image references." in workflow_yaml
     assert "kubectl delete deployment site-web --namespace \"$K8S_NAMESPACE\" --ignore-not-found" in workflow_yaml
-    assert "DOCKER_USERID: ${{ secrets.DOCKER_USERID }}" in workflow_yaml
-    assert "DOCKER_EMAIL: ${{ secrets.DOCKER_EMAIL }}" in workflow_yaml
-    assert "DOCKER_PAT: ${{ secrets.DOCKER_PAT }}" in workflow_yaml
-    assert "Missing required GHCR pull credentials (DOCKER_USERID/DOCKER_EMAIL/DOCKER_PAT)." in workflow_yaml
-    assert "kubectl create secret docker-registry ghcr-pull-secret" in workflow_yaml
-    assert "--docker-email=\"$DOCKER_EMAIL\"" in workflow_yaml
+    assert "DOCKER_USERID: ${{ secrets.DOCKER_USERID }}" not in workflow_yaml
+    assert "DOCKER_EMAIL: ${{ secrets.DOCKER_EMAIL }}" not in workflow_yaml
+    assert "DOCKER_PAT: ${{ secrets.DOCKER_PAT }}" not in workflow_yaml
+    assert "kubectl create secret docker-registry ghcr-pull-secret" not in workflow_yaml
     assert "Apply managed manifests" in workflow_yaml
     assert "kubectl apply -f k8s/deployment.yaml" in workflow_yaml
     assert "Resolve managed site runtime image" in workflow_yaml
     assert "selected_mode=\"fallback_latest\"" in workflow_yaml
     assert "selected_image=\"${SITE_WEB_IMAGE_REPOSITORY}:latest\"" in workflow_yaml
     assert "selected_mode=\"immutable_sha\"" in workflow_yaml
-    assert "docker manifest inspect \"$candidate_image\"" in workflow_yaml
     assert "kubectl set image deployment/site-web site-web=\"${selected_image}\"" in workflow_yaml
     assert "Managed site runtime image selected: ${selected_image} (mode=${selected_mode})" in workflow_yaml
-    assert "Configured SITE_WEB_IMAGE_TAG '$normalized_tag' is unavailable; falling back to latest." in workflow_yaml
+    assert "Configured SITE_WEB_IMAGE_TAG '$normalized_tag' is not a SHA-like tag; falling back to latest." in workflow_yaml
     assert "Verify rollout" in workflow_yaml
     assert "Verify service and ingress" in workflow_yaml
     assert "project_id: ${{ env.GKE_PROJECT_ID }}" in workflow_yaml

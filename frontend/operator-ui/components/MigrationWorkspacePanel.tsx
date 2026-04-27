@@ -579,7 +579,7 @@ function toManagedGkeConfigGuidance(value: string | null): string | null {
     return "Managed deploy target is missing required admin GKE project id configuration. Update admin deployment settings.";
   }
   if (normalized === "image_pull_secret_missing") {
-    return "Managed deploy target is missing required GHCR pull credentials (DOCKER_USERID, DOCKER_EMAIL, DOCKER_PAT). Configure target site repository GitHub Actions secrets.";
+    return "Managed deploy target is missing required GHCR pull credentials (DOCKER_USERID, DOCKER_EMAIL, DOCKER_PAT). Configure MBSRN control-plane deployment settings.";
   }
   if (normalized === "image_pull_secret_not_referenced") {
     return "Managed deployment manifest is missing required image pull secret reference (ghcr-pull-secret). Republish managed deploy manifests.";
