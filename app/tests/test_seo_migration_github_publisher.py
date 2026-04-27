@@ -210,6 +210,9 @@ def _gke_environment_config_present_responses() -> list[object]:
         _FakeHTTPResponse(status=200, body=json.dumps({"name": "KUBERNETES_CLUSTER_LOCATION"})),
         _FakeHTTPResponse(status=200, body=json.dumps({"name": "GCP_PROJECT_ID"})),
         _FakeHTTPResponse(status=200, body=json.dumps({"name": "GCP_PROJECT_ID"})),
+        _FakeHTTPResponse(status=200, body=json.dumps({"name": "DOCKER_USERID"})),
+        _FakeHTTPResponse(status=200, body=json.dumps({"name": "DOCKER_EMAIL"})),
+        _FakeHTTPResponse(status=200, body=json.dumps({"name": "DOCKER_PAT"})),
     ]
 
 
@@ -1483,6 +1486,7 @@ def test_classify_rollout_blockers_prioritizes_image_pull_not_found_without_cras
             "State: Waiting\nReason: ImagePullBackOff\n"
         ),
     )
+    assert "image_pull_backoff" in hints
     assert "image_pull_failure" in hints
     assert "container_image_not_found" in hints
     assert "pod_crash_or_startup_failure" not in hints
@@ -1497,8 +1501,23 @@ def test_classify_rollout_blockers_prioritizes_private_registry_auth_without_cra
             "Warning  Failed  kubelet  pull access denied\n"
         ),
     )
+    assert "image_pull_forbidden" in hints
+    assert "image_pull_secret_not_referenced" in hints
     assert "image_pull_failure" in hints
     assert "private_registry_auth_failure" in hints
+    assert "pod_crash_or_startup_failure" not in hints
+
+
+def test_classify_rollout_blockers_reports_missing_pull_secret() -> None:
+    hints = _classify_rollout_blocker_hints_from_describe_outputs(
+        deployment_describe_output="",
+        pods_describe_output=(
+            "Warning  Failed  kubelet  FailedToRetrieveImagePullSecret\n"
+            "Warning  Failed  kubelet  secret \"ghcr-pull-secret\" not found for image pull\n"
+        ),
+    )
+    assert "image_pull_secret_missing" in hints
+    assert "image_pull_forbidden" not in hints
     assert "pod_crash_or_startup_failure" not in hints
 
 
@@ -2276,6 +2295,21 @@ def test_check_deploy_target_readiness_reports_aligned_namespace_for_managed_tem
             "  namespace: tnmfire\n"
         )
     )
+    deployment_manifest = _encode_workflow_yaml(
+        (
+            "# mbsrn-managed-manifest:site_repo_template_v1\n"
+            "apiVersion: apps/v1\n"
+            "kind: Deployment\n"
+            "metadata:\n"
+            "  name: site-web\n"
+            "  namespace: tnmfire\n"
+            "spec:\n"
+            "  template:\n"
+            "    spec:\n"
+            "      imagePullSecrets:\n"
+            "        - name: ghcr-pull-secret\n"
+        )
+    )
     _install_urlopen_stub(
         monkeypatch,
         [
@@ -2295,7 +2329,7 @@ def test_check_deploy_target_readiness_reports_aligned_namespace_for_managed_tem
             ),
             _FakeHTTPResponse(
                 status=200,
-                body=json.dumps({"sha": "sha-deployment", "encoding": "base64", "content": namespaced_manifest}),
+                body=json.dumps({"sha": "sha-deployment", "encoding": "base64", "content": deployment_manifest}),
             ),
             _FakeHTTPResponse(
                 status=200,
@@ -2335,7 +2369,7 @@ def test_check_deploy_target_readiness_reports_aligned_namespace_for_managed_tem
     assert readiness.manifest_namespace_aligned is True
     assert readiness.dispatch_service_availability is True
     assert readiness.dispatch_service_reason_code == "available"
-    assert len(calls) == 14
+    assert len(calls) == 17
 
 
 def test_check_deploy_target_readiness_reports_misaligned_namespace_for_managed_template(monkeypatch) -> None:
@@ -2473,6 +2507,21 @@ def test_check_deploy_target_readiness_flags_missing_cluster_name_configuration(
             "  namespace: tnmfire\n"
         )
     )
+    deployment_manifest = _encode_workflow_yaml(
+        (
+            "# mbsrn-managed-manifest:site_repo_template_v1\n"
+            "apiVersion: apps/v1\n"
+            "kind: Deployment\n"
+            "metadata:\n"
+            "  name: site-web\n"
+            "  namespace: tnmfire\n"
+            "spec:\n"
+            "  template:\n"
+            "    spec:\n"
+            "      imagePullSecrets:\n"
+            "        - name: ghcr-pull-secret\n"
+        )
+    )
     _install_urlopen_stub(
         monkeypatch,
         [
@@ -2492,7 +2541,7 @@ def test_check_deploy_target_readiness_flags_missing_cluster_name_configuration(
             ),
             _FakeHTTPResponse(
                 status=200,
-                body=json.dumps({"sha": "sha-deployment", "encoding": "base64", "content": namespaced_manifest}),
+                body=json.dumps({"sha": "sha-deployment", "encoding": "base64", "content": deployment_manifest}),
             ),
             _FakeHTTPResponse(
                 status=200,
@@ -2541,6 +2590,262 @@ def test_check_deploy_target_readiness_flags_missing_cluster_name_configuration(
     assert readiness.dispatch_service_reason_code == "missing_cluster_name"
     assert readiness.workflow_conformance_status == "conformant"
     assert len(calls) == 15
+
+
+def test_check_deploy_target_readiness_flags_missing_image_pull_secret_credentials(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    managed_workflow = _encode_workflow_yaml(
+        (
+            "# mbsrn-managed-template:site_repo_template_v1\n"
+            "name: Managed Deploy\n"
+            "on:\n"
+            "  workflow_dispatch:\n"
+            "jobs:\n"
+            "  deploy:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    env:\n"
+            "      K8S_NAMESPACE: tnmfire\n"
+            "    steps:\n"
+            "      - uses: google-github-actions/auth@v2\n"
+            "      - uses: google-github-actions/get-gke-credentials@v2\n"
+            "      - run: kubectl apply -n \"$K8S_NAMESPACE\" -f k8s/deployment.yaml\n"
+        )
+    )
+    namespace_manifest = _encode_workflow_yaml(
+        (
+            "# mbsrn-managed-manifest:site_repo_template_v1\n"
+            "apiVersion: v1\n"
+            "kind: Namespace\n"
+            "metadata:\n"
+            "  name: tnmfire\n"
+        )
+    )
+    deployment_manifest = _encode_workflow_yaml(
+        (
+            "# mbsrn-managed-manifest:site_repo_template_v1\n"
+            "apiVersion: apps/v1\n"
+            "kind: Deployment\n"
+            "metadata:\n"
+            "  name: site-web\n"
+            "  namespace: tnmfire\n"
+            "spec:\n"
+            "  template:\n"
+            "    spec:\n"
+            "      imagePullSecrets:\n"
+            "        - name: ghcr-pull-secret\n"
+        )
+    )
+    namespaced_manifest = _encode_workflow_yaml(
+        (
+            "# mbsrn-managed-manifest:site_repo_template_v1\n"
+            "apiVersion: v1\n"
+            "kind: Service\n"
+            "metadata:\n"
+            "  name: site-web\n"
+            "  namespace: tnmfire\n"
+        )
+    )
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _FakeHTTPResponse(status=200, body="{}"),
+            _FakeHTTPResponse(status=200, body="{}"),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "wfsha", "encoding": "base64", "content": managed_workflow}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"state": "active", "path": ".github/workflows/deploy-tnmfire-www-prod.yml"}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-namespace", "encoding": "base64", "content": namespace_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-deployment", "encoding": "base64", "content": deployment_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-service", "encoding": "base64", "content": namespaced_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-ingress", "encoding": "base64", "content": namespaced_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-managedcertificate", "encoding": "base64", "content": namespaced_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-frontendconfig", "encoding": "base64", "content": namespaced_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-backendconfig", "encoding": "base64", "content": namespaced_manifest}),
+            ),
+            _http_error(
+                "https://api.github.com/repos/mhanson13/tnmfire/actions/secrets/DOCKER_USERID",
+                status_code=404,
+                message="Not Found",
+            ),
+            _http_error(
+                "https://api.github.com/repos/mhanson13/tnmfire/actions/secrets/DOCKER_EMAIL",
+                status_code=404,
+                message="Not Found",
+            ),
+            _http_error(
+                "https://api.github.com/repos/mhanson13/tnmfire/actions/secrets/DOCKER_PAT",
+                status_code=404,
+                message="Not Found",
+            ),
+        ],
+        calls,
+    )
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    readiness = publisher.check_deploy_target_readiness(
+        target=_dispatch_target(),
+        allow_ref_repair=False,
+        allow_workflow_repair=False,
+        dry_run=False,
+        managed_gke_config={
+            "cluster_name": "mbsrn-cluster",
+            "cluster_location": "us-central1",
+            "project_id": "mbsrn-prod",
+        },
+    )
+    assert readiness.dispatch_service_availability is False
+    assert readiness.dispatch_service_reason_code == "image_pull_secret_missing"
+    details = readiness.managed_gke_config_details or {}
+    assert details.get("image_pull_secret_name") == "ghcr-pull-secret"
+    assert details.get("image_pull_secret_referenced") is True
+    assert sorted(details.get("image_pull_secret_missing_fields") or []) == [
+        "docker_email",
+        "docker_pat",
+        "docker_userid",
+    ]
+
+
+def test_check_deploy_target_readiness_flags_image_pull_secret_not_referenced(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    managed_workflow = _encode_workflow_yaml(
+        (
+            "# mbsrn-managed-template:site_repo_template_v1\n"
+            "name: Managed Deploy\n"
+            "on:\n"
+            "  workflow_dispatch:\n"
+            "jobs:\n"
+            "  deploy:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    env:\n"
+            "      K8S_NAMESPACE: tnmfire\n"
+            "    steps:\n"
+            "      - uses: google-github-actions/auth@v2\n"
+            "      - uses: google-github-actions/get-gke-credentials@v2\n"
+            "      - run: kubectl apply -n \"$K8S_NAMESPACE\" -f k8s/deployment.yaml\n"
+        )
+    )
+    namespace_manifest = _encode_workflow_yaml(
+        (
+            "# mbsrn-managed-manifest:site_repo_template_v1\n"
+            "apiVersion: v1\n"
+            "kind: Namespace\n"
+            "metadata:\n"
+            "  name: tnmfire\n"
+        )
+    )
+    deployment_manifest_without_pull_secret = _encode_workflow_yaml(
+        (
+            "# mbsrn-managed-manifest:site_repo_template_v1\n"
+            "apiVersion: apps/v1\n"
+            "kind: Deployment\n"
+            "metadata:\n"
+            "  name: site-web\n"
+            "  namespace: tnmfire\n"
+        )
+    )
+    namespaced_manifest = _encode_workflow_yaml(
+        (
+            "# mbsrn-managed-manifest:site_repo_template_v1\n"
+            "apiVersion: v1\n"
+            "kind: Service\n"
+            "metadata:\n"
+            "  name: site-web\n"
+            "  namespace: tnmfire\n"
+        )
+    )
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _FakeHTTPResponse(status=200, body="{}"),
+            _FakeHTTPResponse(status=200, body="{}"),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "wfsha", "encoding": "base64", "content": managed_workflow}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"state": "active", "path": ".github/workflows/deploy-tnmfire-www-prod.yml"}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-namespace", "encoding": "base64", "content": namespace_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps(
+                    {
+                        "sha": "sha-deployment",
+                        "encoding": "base64",
+                        "content": deployment_manifest_without_pull_secret,
+                    }
+                ),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-service", "encoding": "base64", "content": namespaced_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-ingress", "encoding": "base64", "content": namespaced_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-managedcertificate", "encoding": "base64", "content": namespaced_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-frontendconfig", "encoding": "base64", "content": namespaced_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-backendconfig", "encoding": "base64", "content": namespaced_manifest}),
+            ),
+            _FakeHTTPResponse(status=200, body=json.dumps({"name": "DOCKER_USERID"})),
+            _FakeHTTPResponse(status=200, body=json.dumps({"name": "DOCKER_EMAIL"})),
+            _FakeHTTPResponse(status=200, body=json.dumps({"name": "DOCKER_PAT"})),
+        ],
+        calls,
+    )
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    readiness = publisher.check_deploy_target_readiness(
+        target=_dispatch_target(),
+        allow_ref_repair=False,
+        allow_workflow_repair=False,
+        dry_run=False,
+        managed_gke_config={
+            "cluster_name": "mbsrn-cluster",
+            "cluster_location": "us-central1",
+            "project_id": "mbsrn-prod",
+        },
+    )
+    assert readiness.dispatch_service_availability is False
+    assert readiness.dispatch_service_reason_code == "image_pull_secret_not_referenced"
+    details = readiness.managed_gke_config_details or {}
+    assert details.get("image_pull_secret_name") == "ghcr-pull-secret"
+    assert details.get("image_pull_secret_referenced") is False
 
 
 @pytest.mark.parametrize(
@@ -2610,6 +2915,21 @@ def test_check_deploy_target_readiness_uses_admin_managed_gke_config_first(
             "  namespace: tnmfire\n"
         )
     )
+    deployment_manifest = _encode_workflow_yaml(
+        (
+            "# mbsrn-managed-manifest:site_repo_template_v1\n"
+            "apiVersion: apps/v1\n"
+            "kind: Deployment\n"
+            "metadata:\n"
+            "  name: site-web\n"
+            "  namespace: tnmfire\n"
+            "spec:\n"
+            "  template:\n"
+            "    spec:\n"
+            "      imagePullSecrets:\n"
+            "        - name: ghcr-pull-secret\n"
+        )
+    )
     _install_urlopen_stub(
         monkeypatch,
         [
@@ -2629,7 +2949,7 @@ def test_check_deploy_target_readiness_uses_admin_managed_gke_config_first(
             ),
             _FakeHTTPResponse(
                 status=200,
-                body=json.dumps({"sha": "sha-deployment", "encoding": "base64", "content": namespaced_manifest}),
+                body=json.dumps({"sha": "sha-deployment", "encoding": "base64", "content": deployment_manifest}),
             ),
             _FakeHTTPResponse(
                 status=200,
@@ -2728,6 +3048,21 @@ def test_check_deploy_target_readiness_resolves_managed_gke_config_from_admin_wi
             "  namespace: tnmfire\n"
         )
     )
+    deployment_manifest = _encode_workflow_yaml(
+        (
+            "# mbsrn-managed-manifest:site_repo_template_v1\n"
+            "apiVersion: apps/v1\n"
+            "kind: Deployment\n"
+            "metadata:\n"
+            "  name: site-web\n"
+            "  namespace: tnmfire\n"
+            "spec:\n"
+            "  template:\n"
+            "    spec:\n"
+            "      imagePullSecrets:\n"
+            "        - name: ghcr-pull-secret\n"
+        )
+    )
     _install_urlopen_stub(
         monkeypatch,
         [
@@ -2747,7 +3082,7 @@ def test_check_deploy_target_readiness_resolves_managed_gke_config_from_admin_wi
             ),
             _FakeHTTPResponse(
                 status=200,
-                body=json.dumps({"sha": "sha-deployment", "encoding": "base64", "content": namespaced_manifest}),
+                body=json.dumps({"sha": "sha-deployment", "encoding": "base64", "content": deployment_manifest}),
             ),
             _FakeHTTPResponse(
                 status=200,
@@ -2769,6 +3104,9 @@ def test_check_deploy_target_readiness_resolves_managed_gke_config_from_admin_wi
                     status=200,
                     body=json.dumps({"sha": "sha-backendconfig", "encoding": "base64", "content": namespaced_manifest}),
                 ),
+            _FakeHTTPResponse(status=200, body=json.dumps({"name": "DOCKER_USERID"})),
+            _FakeHTTPResponse(status=200, body=json.dumps({"name": "DOCKER_EMAIL"})),
+            _FakeHTTPResponse(status=200, body=json.dumps({"name": "DOCKER_PAT"})),
         ],
         calls,
     )
@@ -2789,10 +3127,20 @@ def test_check_deploy_target_readiness_resolves_managed_gke_config_from_admin_wi
     details = readiness.managed_gke_config_details or {}
     assert details.get("gke_config_resolution_source") == "resolved_from_admin_config"
     assert all(
-        not (method == "GET" and ("/actions/variables/" in url or "/actions/secrets/" in url))
+        not (
+            method == "GET"
+            and (
+                "/actions/variables/KUBERNETES_CLUSTER_NAME" in url
+                or "/actions/variables/KUBERNETES_CLUSTER_LOCATION" in url
+                or "/actions/variables/GCP_PROJECT_ID" in url
+                or "/actions/secrets/KUBERNETES_CLUSTER_NAME" in url
+                or "/actions/secrets/KUBERNETES_CLUSTER_LOCATION" in url
+                or "/actions/secrets/GCP_PROJECT_ID" in url
+            )
+        )
         for method, url in calls
     )
-    assert len(calls) == 11
+    assert len(calls) == 14
 
 
 def test_check_deploy_target_readiness_resolves_managed_gke_config_from_repo_fallback_when_admin_missing(
@@ -2835,6 +3183,21 @@ def test_check_deploy_target_readiness_resolves_managed_gke_config_from_repo_fal
             "  namespace: tnmfire\n"
         )
     )
+    deployment_manifest = _encode_workflow_yaml(
+        (
+            "# mbsrn-managed-manifest:site_repo_template_v1\n"
+            "apiVersion: apps/v1\n"
+            "kind: Deployment\n"
+            "metadata:\n"
+            "  name: site-web\n"
+            "  namespace: tnmfire\n"
+            "spec:\n"
+            "  template:\n"
+            "    spec:\n"
+            "      imagePullSecrets:\n"
+            "        - name: ghcr-pull-secret\n"
+        )
+    )
     _install_urlopen_stub(
         monkeypatch,
         [
@@ -2854,7 +3217,7 @@ def test_check_deploy_target_readiness_resolves_managed_gke_config_from_repo_fal
             ),
             _FakeHTTPResponse(
                 status=200,
-                body=json.dumps({"sha": "sha-deployment", "encoding": "base64", "content": namespaced_manifest}),
+                body=json.dumps({"sha": "sha-deployment", "encoding": "base64", "content": deployment_manifest}),
             ),
             _FakeHTTPResponse(
                 status=200,
@@ -2879,6 +3242,9 @@ def test_check_deploy_target_readiness_resolves_managed_gke_config_from_repo_fal
             _FakeHTTPResponse(status=200, body=json.dumps({"name": "KUBERNETES_CLUSTER_NAME"})),
             _FakeHTTPResponse(status=200, body=json.dumps({"name": "KUBERNETES_CLUSTER_LOCATION"})),
             _FakeHTTPResponse(status=200, body=json.dumps({"name": "GCP_PROJECT_ID"})),
+            _FakeHTTPResponse(status=200, body=json.dumps({"name": "DOCKER_USERID"})),
+            _FakeHTTPResponse(status=200, body=json.dumps({"name": "DOCKER_EMAIL"})),
+            _FakeHTTPResponse(status=200, body=json.dumps({"name": "DOCKER_PAT"})),
         ],
         calls,
     )
@@ -2896,10 +3262,17 @@ def test_check_deploy_target_readiness_resolves_managed_gke_config_from_repo_fal
     assert details.get("gke_config_resolution_source") == "resolved_from_repo_config"
     assert "resolved_from_repo_config" in (details.get("cluster_name_resolution_details") or [])
     assert all(
-        not (method == "GET" and "/actions/secrets/" in url)
+        not (
+            method == "GET"
+            and (
+                "/actions/secrets/KUBERNETES_CLUSTER_NAME" in url
+                or "/actions/secrets/KUBERNETES_CLUSTER_LOCATION" in url
+                or "/actions/secrets/GCP_PROJECT_ID" in url
+            )
+        )
         for method, url in calls
     )
-    assert len(calls) == 14
+    assert len(calls) == 17
 
 
 def test_check_deploy_target_readiness_treats_whitespace_admin_values_as_missing_and_uses_repo_fallback(
@@ -2932,6 +3305,21 @@ def test_check_deploy_target_readiness_treats_whitespace_admin_values_as_missing
             "  name: tnmfire\n"
         )
     )
+    deployment_manifest = _encode_workflow_yaml(
+        (
+            "# mbsrn-managed-manifest:site_repo_template_v1\n"
+            "apiVersion: apps/v1\n"
+            "kind: Deployment\n"
+            "metadata:\n"
+            "  name: site-web\n"
+            "  namespace: tnmfire\n"
+            "spec:\n"
+            "  template:\n"
+            "    spec:\n"
+            "      imagePullSecrets:\n"
+            "        - name: ghcr-pull-secret\n"
+        )
+    )
     namespaced_manifest = _encode_workflow_yaml(
         (
             "# mbsrn-managed-manifest:site_repo_template_v1\n"
@@ -2961,7 +3349,7 @@ def test_check_deploy_target_readiness_treats_whitespace_admin_values_as_missing
             ),
             _FakeHTTPResponse(
                 status=200,
-                body=json.dumps({"sha": "sha-deployment", "encoding": "base64", "content": namespaced_manifest}),
+                body=json.dumps({"sha": "sha-deployment", "encoding": "base64", "content": deployment_manifest}),
             ),
             _FakeHTTPResponse(
                 status=200,
@@ -2984,6 +3372,9 @@ def test_check_deploy_target_readiness_treats_whitespace_admin_values_as_missing
                     body=json.dumps({"sha": "sha-backendconfig", "encoding": "base64", "content": namespaced_manifest}),
                 ),
             _FakeHTTPResponse(status=200, body=json.dumps({"name": "KUBERNETES_CLUSTER_NAME"})),
+            _FakeHTTPResponse(status=200, body=json.dumps({"name": "DOCKER_USERID"})),
+            _FakeHTTPResponse(status=200, body=json.dumps({"name": "DOCKER_EMAIL"})),
+            _FakeHTTPResponse(status=200, body=json.dumps({"name": "DOCKER_PAT"})),
         ],
         calls,
     )
@@ -3006,7 +3397,7 @@ def test_check_deploy_target_readiness_treats_whitespace_admin_values_as_missing
     cluster_resolution_details = details.get("cluster_name_resolution_details") or []
     assert "admin_config_missing" in cluster_resolution_details
     assert "resolved_from_repo_config" in cluster_resolution_details
-    assert len(calls) == 12
+    assert len(calls) == 15
 
 
 def test_dispatch_deploy_classifies_token_not_authorized(monkeypatch) -> None:
@@ -3112,6 +3503,9 @@ def test_dispatch_deploy_uses_admin_managed_gke_config_for_readiness_and_dispatc
                     status=200,
                     body=json.dumps({"sha": "sha-backendconfig", "encoding": "base64", "content": namespaced_manifest}),
                 ),
+            _FakeHTTPResponse(status=200, body=json.dumps({"name": "DOCKER_USERID"})),
+            _FakeHTTPResponse(status=200, body=json.dumps({"name": "DOCKER_EMAIL"})),
+            _FakeHTTPResponse(status=200, body=json.dumps({"name": "DOCKER_PAT"})),
             _FakeHTTPResponse(status=204),
             _FakeHTTPResponse(status=200, body=json.dumps({"workflow_runs": []})),
             _FakeHTTPResponse(status=200, body=json.dumps([])),
@@ -3133,7 +3527,17 @@ def test_dispatch_deploy_uses_admin_managed_gke_config_for_readiness_and_dispatc
 
     assert result.workflow_run_id is None
     assert all(
-        not (method == "GET" and ("/actions/variables/" in url or "/actions/secrets/" in url))
+        not (
+            method == "GET"
+            and (
+                "/actions/variables/KUBERNETES_CLUSTER_NAME" in url
+                or "/actions/variables/KUBERNETES_CLUSTER_LOCATION" in url
+                or "/actions/variables/GCP_PROJECT_ID" in url
+                or "/actions/secrets/KUBERNETES_CLUSTER_NAME" in url
+                or "/actions/secrets/KUBERNETES_CLUSTER_LOCATION" in url
+                or "/actions/secrets/GCP_PROJECT_ID" in url
+            )
+        )
         for method, url in calls
     )
     readiness_logs = [
@@ -3342,6 +3746,9 @@ def test_dispatch_deploy_uses_repo_fallback_when_admin_managed_gke_config_missin
             _FakeHTTPResponse(status=200, body=json.dumps({"name": "KUBERNETES_CLUSTER_NAME"})),
             _FakeHTTPResponse(status=200, body=json.dumps({"name": "KUBERNETES_CLUSTER_LOCATION"})),
             _FakeHTTPResponse(status=200, body=json.dumps({"name": "GCP_PROJECT_ID"})),
+            _FakeHTTPResponse(status=200, body=json.dumps({"name": "DOCKER_USERID"})),
+            _FakeHTTPResponse(status=200, body=json.dumps({"name": "DOCKER_EMAIL"})),
+            _FakeHTTPResponse(status=200, body=json.dumps({"name": "DOCKER_PAT"})),
             _FakeHTTPResponse(status=204),
             _FakeHTTPResponse(status=200, body=json.dumps({"workflow_runs": []})),
             _FakeHTTPResponse(status=200, body=json.dumps([])),
@@ -4751,9 +5158,12 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "Reset stale site-web deployment" in workflow_yaml
     assert "Resetting deployment to eliminate stale image references." in workflow_yaml
     assert "kubectl delete deployment site-web --namespace \"$K8S_NAMESPACE\" --ignore-not-found" in workflow_yaml
-    assert "GHCR_PULL_USERNAME: ${{ github.actor }}" in workflow_yaml
-    assert "GHCR_PULL_TOKEN: ${{ github.token }}" in workflow_yaml
-    assert "kubectl create secret docker-registry mbsrn-ghcr-pull" in workflow_yaml
+    assert "DOCKER_USERID: ${{ secrets.DOCKER_USERID }}" in workflow_yaml
+    assert "DOCKER_EMAIL: ${{ secrets.DOCKER_EMAIL }}" in workflow_yaml
+    assert "DOCKER_PAT: ${{ secrets.DOCKER_PAT }}" in workflow_yaml
+    assert "Missing required GHCR pull credentials (DOCKER_USERID/DOCKER_EMAIL/DOCKER_PAT)." in workflow_yaml
+    assert "kubectl create secret docker-registry ghcr-pull-secret" in workflow_yaml
+    assert "--docker-email=\"$DOCKER_EMAIL\"" in workflow_yaml
     assert "Apply managed manifests" in workflow_yaml
     assert "kubectl apply -f k8s/deployment.yaml" in workflow_yaml
     assert "Resolve managed site runtime image" in workflow_yaml
@@ -4810,8 +5220,11 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     )
     assert "kubectl describe pods --namespace \"$K8S_NAMESPACE\" -l app.kubernetes.io/name=site-web" in workflow_yaml
     assert "image_pull_detected=false" in workflow_yaml
-    assert "Likely rollout blocker: image pull failure." in workflow_yaml
-    assert "Likely rollout blocker: private registry authentication failure." in workflow_yaml
+    assert "image_pull_secret_missing_detected=false" in workflow_yaml
+    assert "Likely rollout blocker: image pull backoff." in workflow_yaml
+    assert "Likely rollout blocker: image pull secret missing." in workflow_yaml
+    assert "Likely rollout blocker: image pull forbidden." in workflow_yaml
+    assert "Likely rollout blocker: image pull secret not referenced." in workflow_yaml
     assert "Likely rollout blocker: container image not found in registry." in workflow_yaml
     assert "container_started_evidence=false" in workflow_yaml
     assert "crash_direct_evidence=false" in workflow_yaml
@@ -4865,7 +5278,7 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "image: ghcr.io/mhanson13/site-web:latest" in deployment_yaml
     assert "ghcr.io/mbsrn/site-web" not in deployment_yaml
     assert "imagePullSecrets:" in deployment_yaml
-    assert "name: mbsrn-ghcr-pull" in deployment_yaml
+    assert "name: ghcr-pull-secret" in deployment_yaml
     assert "containerPort: 8080" in deployment_yaml
     assert "env:" in deployment_yaml
     assert "name: HOSTNAME" in deployment_yaml

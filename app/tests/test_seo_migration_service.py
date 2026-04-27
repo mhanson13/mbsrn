@@ -7187,6 +7187,14 @@ def test_runtime_credential_missing_reason_is_exposed_in_publish_readiness(db_se
             "missing_gcp_project_id",
             "managed deploy target is missing required admin gke project id configuration",
         ),
+        (
+            "image_pull_secret_missing",
+            "managed deploy target is missing required ghcr pull credentials",
+        ),
+        (
+            "image_pull_secret_not_referenced",
+            "managed deployment manifest is missing required image pull secret reference",
+        ),
     ],
 )
 def test_deploy_readiness_blocks_when_managed_gke_environment_config_is_missing(

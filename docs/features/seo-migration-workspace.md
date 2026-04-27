@@ -1034,10 +1034,13 @@ Deploy behavior:
   - authenticate to GCP using repository secret JSON credentials (`google-github-actions/auth` with `credentials_json`)
   - fetch GKE credentials (`google-github-actions/get-gke-credentials`)
   - apply namespace first (`kubectl apply -f k8s/namespace.yaml`)
-  - provision namespace-scoped GHCR pull secret (`mbsrn-ghcr-pull`) from workflow token context before workload apply
+  - provision namespace-scoped GHCR pull secret (`ghcr-pull-secret`) from deploy secrets before workload apply:
+    - `DOCKER_USERID` (production value: `mhanson13`)
+    - `DOCKER_EMAIL` (production value: `mhanson13@gmail.com`)
+    - `DOCKER_PAT` (personal access token; never logged or surfaced)
   - apply managed manifests (`kubectl apply -f k8s/`)
   - verify rollout (`kubectl rollout status deployment/site-web --namespace <derived-namespace>`)
-  - managed `site-web` deployment template references `imagePullSecrets: [{name: mbsrn-ghcr-pull}]` for private GHCR pulls
+  - managed `site-web` deployment template references `imagePullSecrets: [{name: ghcr-pull-secret}]` for private GHCR pulls
   - managed `site-web` runtime image repository is deterministic: `ghcr.io/<target-repo-owner>/site-web`
   - managed `site-web` deployment template pins runtime serving env for health-check parity:
     - `HOSTNAME=0.0.0.0`
@@ -1078,11 +1081,15 @@ Deploy behavior:
     - `dispatch_service_reason_code=missing_cluster_name`
     - `dispatch_service_reason_code=missing_cluster_location`
     - `dispatch_service_reason_code=missing_gcp_project_id`
+    - `dispatch_service_reason_code=image_pull_secret_missing`
+    - `dispatch_service_reason_code=image_pull_secret_not_referenced`
   - readiness and dispatch now share the same managed GKE config resolution path so deploy cannot report `dispatch_service_availability=available` and then fail later with missing cluster/location/project for the same target tuple.
   - migration workspace deploy readiness/diagnostics now surface concise operator guidance for these cases:
     - `missing_cluster_name` -> set managed GKE cluster name in MBSRN admin deployment settings
     - `missing_cluster_location` -> set managed GKE cluster location in MBSRN admin deployment settings
     - `missing_gcp_project_id` -> set managed GCP project ID in MBSRN admin deployment settings
+    - `image_pull_secret_missing` -> configure `DOCKER_USERID`, `DOCKER_EMAIL`, `DOCKER_PAT` as repository Actions secrets before retry
+    - `image_pull_secret_not_referenced` -> republish managed deploy manifests so deployment references `ghcr-pull-secret`
   - configuration source expectation is explicit in UI copy:
     - managed deploy resolves admin platform config first; repo vars/secrets are legacy fallback only
   - troubleshooting precedence:

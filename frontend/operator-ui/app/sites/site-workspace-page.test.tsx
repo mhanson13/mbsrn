@@ -604,6 +604,33 @@ describe("site migration workflow route", () => {
     expect(deployHistory).not.toHaveTextContent("Selected workflow exists but is not dispatchable for this deploy target.");
   });
 
+  it("surfaces managed GHCR pull-credential guidance when image pull secrets are missing", async () => {
+    const summary = buildMigrationWorkspaceSummary({
+      deploy_readiness: {
+        ready: false,
+        reasons: ["Deploy target is not enabled."],
+        dispatch_service_reason_code: "image_pull_secret_missing",
+        target: {
+          enabled: true,
+          repo_owner: "mhanson13",
+          repo_name: "scmechanical",
+          workflow_id: "deploy-scmechanical-www-prod.yml",
+          ref: "main",
+        },
+      },
+    });
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(summary);
+    mockFetchMigrationPublishHistory.mockResolvedValueOnce({ items: [], total: 0 });
+    mockFetchMigrationDeployHistory.mockResolvedValueOnce({ items: [], total: 0 });
+
+    render(<SiteMigrationWorkflowPage />);
+
+    const deployReadinessCard = await screen.findByTestId("migration-deploy-readiness");
+    expect(within(deployReadinessCard).getByTestId("migration-managed-gke-config-guidance-readiness")).toHaveTextContent(
+      "Managed deploy target is missing required GHCR pull credentials (DOCKER_USERID, DOCKER_EMAIL, DOCKER_PAT). Configure repository GitHub Actions secrets.",
+    );
+  });
+
   it("surfaces certificate-domain mismatch guidance when deploy target manifests point to another hostname", async () => {
     const user = userEvent.setup();
     const summary = buildMigrationWorkspaceSummary({

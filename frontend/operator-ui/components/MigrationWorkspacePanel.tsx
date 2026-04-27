@@ -578,6 +578,12 @@ function toManagedGkeConfigGuidance(value: string | null): string | null {
   if (normalized === "missing_gcp_project_id") {
     return "Managed deploy target is missing required admin GKE project id configuration. Update admin deployment settings.";
   }
+  if (normalized === "image_pull_secret_missing") {
+    return "Managed deploy target is missing required GHCR pull credentials (DOCKER_USERID, DOCKER_EMAIL, DOCKER_PAT). Configure repository GitHub Actions secrets.";
+  }
+  if (normalized === "image_pull_secret_not_referenced") {
+    return "Managed deployment manifest is missing required image pull secret reference (ghcr-pull-secret). Republish managed deploy manifests.";
+  }
   if (normalized === "certificate_domain_mismatch") {
     return "The deployed certificate does not match the site hostname. This usually means the managed certificate or ingress points at another site's hostname. Republish/deploy after admin verification of generated ingress/certificate resources.";
   }
