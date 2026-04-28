@@ -4852,6 +4852,10 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             namespace_isolation_defaults=normalized_namespace_isolation_defaults,
             site_id=site_id,
         )
+        runtime_file_payloads = _render_managed_site_runtime_files(
+            repo_owner=repo_owner,
+            repo_name=repo_name,
+        )
         expected_managed_manifest_paths = _expected_managed_manifest_paths(normalized_namespace_isolation_defaults)
         managed_manifest_paths = tuple(path for path in expected_managed_manifest_paths if path in manifest_file_payloads)
 
@@ -4890,6 +4894,21 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             file_sha_by_path[manifest_path] = manifest_sha
             if manifest_sha:
                 commit_sha = manifest_sha
+        for runtime_path, runtime_content in runtime_file_payloads.items():
+            runtime_updated, runtime_sha, _ = self._upsert_managed_repo_file(
+                repo_owner=repo_owner,
+                repo_name=repo_name,
+                branch=branch,
+                path=runtime_path,
+                content=runtime_content,
+                marker=_MBSRN_MANAGED_MANIFEST_MARKER,
+                commit_message=f"chore(migration): provision managed runtime file {runtime_path}",
+                dry_run=dry_run,
+            )
+            any_file_updated = any_file_updated or runtime_updated
+            file_sha_by_path[runtime_path] = runtime_sha
+            if runtime_sha:
+                commit_sha = runtime_sha
 
         verified_workflow_sha = file_sha_by_path.get(workflow_path)
         namespace_manifest_sha = file_sha_by_path.get(_MBSRN_MANAGED_NAMESPACE_FILE_PATH)
@@ -4899,6 +4918,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         resource_quota_manifest_sha = file_sha_by_path.get(_MBSRN_MANAGED_RESOURCE_QUOTA_FILE_PATH)
         limit_range_manifest_sha = file_sha_by_path.get(_MBSRN_MANAGED_LIMIT_RANGE_FILE_PATH)
         network_policy_manifest_sha = file_sha_by_path.get(_MBSRN_MANAGED_NETWORK_POLICY_FILE_PATH)
+        runtime_dockerfile_sha = file_sha_by_path.get(_MBSRN_MANAGED_SITE_RUNTIME_DOCKERFILE_PATH)
         expected_manifest_shas = [file_sha_by_path.get(path) for path in expected_managed_manifest_paths]
         workflow_verify_payload = self._fetch_existing_file_payload(
             repo_owner=repo_owner,
@@ -4933,6 +4953,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             if (
                 verified_workflow_sha
                 and all(bool(item) for item in expected_manifest_shas)
+                and bool(runtime_dockerfile_sha)
             )
             else _NAMESPACE_MODEL_STATUS_UNKNOWN
         )
@@ -4980,6 +5001,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             or not deployment_manifest_sha
             or not service_manifest_sha
             or not ingress_manifest_sha
+            or not runtime_dockerfile_sha
             or not all(bool(item) for item in expected_manifest_shas)
             or (workflow_updated and not workflow_verify_conformance.is_conformant)
         ):
@@ -5135,6 +5157,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         certificate_domain_mismatch: bool | None = None
         stale_managed_certificate_present: bool | None = None
         ingress_certificate_mismatch: bool | None = None
+        content_identity_mismatch: bool | None = None
         image_pull_secret_referenced: bool | None = None
         image_pull_secret_reason_code: str | None = None
         image_pull_secret_missing_fields: list[str] = []
@@ -5264,6 +5287,25 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             deployment_manifest_content = manifest_content_by_path.get(
                 _MBSRN_MANAGED_DEPLOYMENT_FILE_PATH
             )
+            deployment_image_reference = _extract_deployment_image_reference(
+                deployment_manifest_content=deployment_manifest_content
+            )
+            deployment_image_repository, deployment_image_tag = _container_image_identity(
+                deployment_image_reference
+            )
+            expected_image_repository = _derive_site_runtime_image_repository(
+                repo_owner=target.repo_owner,
+                repo_name=target.repo_name,
+            ).lower()
+            legacy_generic_image_detected = _is_legacy_generic_site_runtime_image_repository(
+                image_repository=deployment_image_repository,
+                repo_owner=target.repo_owner,
+            )
+            content_identity_mismatch = bool(
+                deployment_image_repository
+                and expected_image_repository
+                and deployment_image_repository != expected_image_repository
+            )
             image_pull_secret_referenced = _deployment_references_image_pull_secret(
                 deployment_manifest_content=deployment_manifest_content,
                 image_pull_secret_name=_MBSRN_MANAGED_IMAGE_PULL_SECRET_NAME,
@@ -5273,6 +5315,17 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 "image_pull_secret_referenced": image_pull_secret_referenced,
                 "image_pull_secret_required": image_pull_secret_required,
                 "image_pull_auth_mode": "private" if image_pull_secret_required else "public",
+                "site_runtime_image_repository_expected": expected_image_repository,
+                "site_runtime_image_repository_observed": deployment_image_repository,
+                "site_runtime_image_tag_observed": deployment_image_tag,
+                "site_runtime_image_reference_observed": deployment_image_reference,
+                "site_runtime_image_legacy_generic_detected": legacy_generic_image_detected,
+                "site_runtime_image_expected_repository_matched": bool(
+                    deployment_image_repository
+                    and expected_image_repository
+                    and deployment_image_repository == expected_image_repository
+                ),
+                "site_runtime_content_source": "site_repo_build",
             }
         if managed_workflow and namespace_model_status == _NAMESPACE_MODEL_STATUS_MISALIGNED:
             dispatch_service_availability = False
@@ -5286,6 +5339,9 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         elif managed_workflow and ingress_certificate_mismatch is True:
             dispatch_service_availability = False
             dispatch_service_reason_code = _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_CERTIFICATE_MISMATCH
+        elif managed_workflow and content_identity_mismatch is True:
+            dispatch_service_availability = False
+            dispatch_service_reason_code = _DEPLOY_DISPATCH_SERVICE_REASON_DEPLOYED_CONTENT_IDENTITY_MISMATCH
         if managed_workflow and gke_config_reason_code is not None:
             dispatch_service_availability = False
             dispatch_service_reason_code = gke_config_reason_code
@@ -6522,6 +6578,7 @@ _MBSRN_MANAGED_LIMIT_RANGE_FILE_PATH = "k8s/limitrange.yaml"
 _MBSRN_MANAGED_NETWORK_POLICY_FILE_PATH = "k8s/networkpolicy.yaml"
 _MBSRN_MANAGED_IMAGE_PULL_SECRET_NAME = "ghcr-pull-secret"
 _MBSRN_MANAGED_SITE_WEB_IMAGE_REPO_NAME = "site-web"
+_MBSRN_MANAGED_SITE_RUNTIME_DOCKERFILE_PATH = "site-runtime/Dockerfile"
 _MBSRN_MANAGED_PREVIEW_CERTIFICATE_NAME_PREFIX = "site-web-preview-cert"
 _MBSRN_MANAGED_PREVIEW_DOMAIN_SUFFIX = "site.mbsrn.com"
 _MBSRN_MANAGED_REPO_BASELINE_README_PATH = "README.md"
@@ -6581,6 +6638,7 @@ _DEPLOY_DISPATCH_SERVICE_REASON_IMAGE_PULL_SECRET_NOT_REFERENCED = "image_pull_s
 _DEPLOY_DISPATCH_SERVICE_REASON_CERTIFICATE_DOMAIN_MISMATCH = "certificate_domain_mismatch"
 _DEPLOY_DISPATCH_SERVICE_REASON_STALE_MANAGED_CERTIFICATE_PRESENT = "stale_managed_certificate_present"
 _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_CERTIFICATE_MISMATCH = "ingress_certificate_mismatch"
+_DEPLOY_DISPATCH_SERVICE_REASON_DEPLOYED_CONTENT_IDENTITY_MISMATCH = "deployed_content_identity_mismatch"
 _DEPLOY_RUNTIME_REASON_BACKENDCONFIG_HEALTH_CHECK_MISMATCH = "backendconfig_health_check_mismatch"
 _DEPLOY_RUNTIME_REASON_INGRESS_BACKEND_UNHEALTHY = "ingress_backend_unhealthy"
 _DEPLOY_RUNTIME_REASON_PUBLIC_IMAGE_PULL_FAILED = "public_image_pull_failed"
@@ -6705,7 +6763,7 @@ def derive_site_preview_certificate_name(*, repo_name: object, site_id: object |
     return certificate_name, namespace_source
 
 
-def _derive_site_runtime_image_repository(*, repo_owner: object) -> str:
+def _derive_site_runtime_image_repository(*, repo_owner: object, repo_name: object) -> str:
     owner_fragment = _safe_identifier_fragment(repo_owner, fallback="", max_length=80).strip("-")
     if not owner_fragment:
         raise SEOMigrationGitHubPublisherError(
@@ -6713,7 +6771,14 @@ def _derive_site_runtime_image_repository(*, repo_owner: object) -> str:
             safe_message="Managed site runtime image repository could not be derived from target repository owner.",
             stage="workflow_provisioning",
         )
-    return f"ghcr.io/{owner_fragment}/{_MBSRN_MANAGED_SITE_WEB_IMAGE_REPO_NAME}"
+    repo_fragment = _safe_identifier_fragment(repo_name, fallback="", max_length=80).strip("-")
+    if not repo_fragment:
+        raise SEOMigrationGitHubPublisherError(
+            code="runtime_image_repository_invalid",
+            safe_message="Managed site runtime image repository could not be derived from target repository name.",
+            stage="workflow_provisioning",
+        )
+    return f"ghcr.io/{owner_fragment}/{repo_fragment}-{_MBSRN_MANAGED_SITE_WEB_IMAGE_REPO_NAME}"
 
 
 def _coerce_bool(value: object, *, default: bool) -> bool:
@@ -6861,7 +6926,10 @@ def _render_managed_deploy_workflow_yaml(
         else f"${{{{ vars.{_GKE_ENV_PROJECT_ID} || secrets.{_GKE_ENV_PROJECT_ID} }}}}"
     )
     normalized_repo_fragment = _safe_identifier_fragment(repo_name, fallback="site")
-    site_runtime_image_repository = _derive_site_runtime_image_repository(repo_owner=repo_owner)
+    site_runtime_image_repository = _derive_site_runtime_image_repository(
+        repo_owner=repo_owner,
+        repo_name=repo_name,
+    )
     normalized_site_fragment = _safe_identifier_fragment(site_id, fallback="workspace")
     normalized_namespace = _safe_identifier_fragment(kubernetes_namespace, fallback=normalized_repo_fragment, max_length=63)
     normalized_namespace_source = _safe_identifier_fragment(namespace_source, fallback="repo-name", max_length=40)
@@ -6885,7 +6953,7 @@ def _render_managed_deploy_workflow_yaml(
         "\n"
         "permissions:\n"
         "  contents: read\n"
-        "  packages: read\n"
+        "  packages: write\n"
         "  id-token: write\n"
         "\n"
         "jobs:\n"
@@ -6897,6 +6965,10 @@ def _render_managed_deploy_workflow_yaml(
         "      deployed_url: ${{ steps.resolve_live_url.outputs.deployed_url }}\n"
         "      site_runtime_image_reference: ${{ steps.resolve_site_runtime_image.outputs.site_runtime_image_reference }}\n"
         "      site_runtime_image_selection_mode: ${{ steps.resolve_site_runtime_image.outputs.site_runtime_image_selection_mode }}\n"
+        "      site_runtime_image_repository: ${{ steps.resolve_site_runtime_image.outputs.site_runtime_image_repository }}\n"
+        "      site_runtime_image_tag: ${{ steps.resolve_site_runtime_image.outputs.site_runtime_image_tag }}\n"
+        "      site_runtime_source_commit: ${{ steps.resolve_site_runtime_image.outputs.site_runtime_source_commit }}\n"
+        "      site_runtime_content_source: ${{ steps.resolve_site_runtime_image.outputs.site_runtime_content_source }}\n"
         "    environment:\n"
         f"      name: {normalized_environment_key}\n"
         "      url: ${{ steps.resolve_live_url.outputs.resolved_live_url }}\n"
@@ -6916,6 +6988,37 @@ def _render_managed_deploy_workflow_yaml(
         "    steps:\n"
         "      - name: Checkout repository\n"
         "        uses: actions/checkout@v4\n"
+        "      - name: Prepare managed site runtime build context\n"
+        "        run: |\n"
+        "          set -euo pipefail\n"
+        "          rm -rf site-runtime/context\n"
+        "          mkdir -p site-runtime/context\n"
+        "          rsync -a --delete \\\n"
+        "            --exclude '.git/' \\\n"
+        "            --exclude '.github/' \\\n"
+        "            --exclude 'k8s/' \\\n"
+        "            --exclude 'site-runtime/' \\\n"
+        "            --exclude 'mbsrn.key' \\\n"
+        "            --exclude 'README.md' \\\n"
+        "            --exclude 'LICENSE' \\\n"
+        "            --exclude '.gitignore' \\\n"
+        "            ./ site-runtime/context/\n"
+        "      - name: Login to GHCR\n"
+        "        uses: docker/login-action@v3\n"
+        "        with:\n"
+        "          registry: ghcr.io\n"
+        "          username: ${{ github.actor }}\n"
+        "          password: ${{ secrets.GITHUB_TOKEN }}\n"
+        "      - name: Build and push managed site runtime image\n"
+        "        uses: docker/build-push-action@v6\n"
+        "        with:\n"
+        "          context: site-runtime\n"
+        "          file: site-runtime/Dockerfile\n"
+        "          push: true\n"
+        "          provenance: false\n"
+        "          tags: |\n"
+        "            ${{ env.SITE_WEB_IMAGE_REPOSITORY }}:${{ github.sha }}\n"
+        "            ${{ env.SITE_WEB_IMAGE_REPOSITORY }}:latest\n"
         "      - name: Validate GCP credentials\n"
         "        run: |\n"
         "          if [ -z \"${{ secrets.GCP_DEPLOY_KEY }}\" ]; then\n"
@@ -6963,8 +7066,8 @@ def _render_managed_deploy_workflow_yaml(
         "        id: resolve_site_runtime_image\n"
         "        run: |\n"
         "          set -euo pipefail\n"
-        "          selected_mode=\"fallback_latest\"\n"
-        "          selected_image=\"${SITE_WEB_IMAGE_REPOSITORY}:latest\"\n"
+        "          selected_mode=\"immutable_sha\"\n"
+        "          selected_image=\"${SITE_WEB_IMAGE_REPOSITORY}:${GITHUB_SHA}\"\n"
         "          normalized_tag=\"$(echo \"${SITE_WEB_IMAGE_TAG:-}\" | tr -d '[:space:]')\"\n"
         "          if [ -n \"$normalized_tag\" ] && [ \"$normalized_tag\" != \"latest\" ]; then\n"
         "            if echo \"$normalized_tag\" | grep -Eq '^[A-Fa-f0-9]{7,64}$'; then\n"
@@ -6973,13 +7076,33 @@ def _render_managed_deploy_workflow_yaml(
         "              selected_mode=\"immutable_sha\"\n"
         "            else\n"
         "              echo \"Configured SITE_WEB_IMAGE_TAG '$normalized_tag' is not a SHA-like tag; falling back to latest.\"\n"
+        "              selected_image=\"${SITE_WEB_IMAGE_REPOSITORY}:latest\"\n"
+        "              selected_mode=\"fallback_latest\"\n"
         "            fi\n"
+        "          elif [ \"$normalized_tag\" = \"latest\" ]; then\n"
+        "            selected_image=\"${SITE_WEB_IMAGE_REPOSITORY}:latest\"\n"
+        "            selected_mode=\"fallback_latest\"\n"
         "          fi\n"
         "          echo \"Managed site runtime image selected: ${selected_image} (mode=${selected_mode})\"\n"
         "          kubectl set image deployment/site-web site-web=\"${selected_image}\" --namespace \"$K8S_NAMESPACE\"\n"
+        "          selected_repo=\"${selected_image}\"\n"
+        "          if echo \"$selected_repo\" | grep -q '@'; then\n"
+        "            selected_repo=\"${selected_repo%%@*}\"\n"
+        "            selected_tag=\"digest\"\n"
+        "          else\n"
+        "            selected_tag=\"latest\"\n"
+        "            if echo \"$selected_repo\" | grep -q ':'; then\n"
+        "              selected_tag=\"${selected_repo##*:}\"\n"
+        "              selected_repo=\"${selected_repo%:*}\"\n"
+        "            fi\n"
+        "          fi\n"
         "          {\n"
         "            echo \"site_runtime_image_reference=${selected_image}\"\n"
         "            echo \"site_runtime_image_selection_mode=${selected_mode}\"\n"
+        "            echo \"site_runtime_image_repository=${selected_repo}\"\n"
+        "            echo \"site_runtime_image_tag=${selected_tag}\"\n"
+        "            echo \"site_runtime_source_commit=${GITHUB_SHA}\"\n"
+        "            echo \"site_runtime_content_source=site_repo_build\"\n"
         "          } >> \"$GITHUB_OUTPUT\"\n"
         "      - name: Verify rollout\n"
         "        run: |\n"
@@ -7152,6 +7275,10 @@ def _render_managed_deploy_workflow_yaml(
         "          echo \"Preview hostname: $MBSRN_PREVIEW_HOSTNAME\"\n"
         "          echo \"Site runtime image: ${{ steps.resolve_site_runtime_image.outputs.site_runtime_image_reference }}\"\n"
         "          echo \"Site runtime image selection mode: ${{ steps.resolve_site_runtime_image.outputs.site_runtime_image_selection_mode }}\"\n"
+        "          echo \"Site runtime image repository: ${{ steps.resolve_site_runtime_image.outputs.site_runtime_image_repository }}\"\n"
+        "          echo \"Site runtime image tag: ${{ steps.resolve_site_runtime_image.outputs.site_runtime_image_tag }}\"\n"
+        "          echo \"Site runtime source commit: ${{ steps.resolve_site_runtime_image.outputs.site_runtime_source_commit }}\"\n"
+        "          echo \"Site runtime content source: ${{ steps.resolve_site_runtime_image.outputs.site_runtime_content_source }}\"\n"
     )
 
 
@@ -7168,7 +7295,10 @@ def _render_managed_gke_manifest_files(
     site_id: str | None,
     private_image_auth_required: bool = False,
 ) -> dict[str, str]:
-    site_runtime_image_repository = _derive_site_runtime_image_repository(repo_owner=repo_owner)
+    site_runtime_image_repository = _derive_site_runtime_image_repository(
+        repo_owner=repo_owner,
+        repo_name=repo_name,
+    )
     preview_certificate_name, _ = derive_site_preview_certificate_name(
         repo_name=repo_name,
         site_id=site_id,
@@ -7436,6 +7566,29 @@ def _render_managed_gke_manifest_files(
     return manifests
 
 
+def _render_managed_site_runtime_files(
+    *,
+    repo_owner: str,
+    repo_name: str,
+) -> dict[str, str]:
+    owner_fragment = _safe_identifier_fragment(repo_owner, fallback="owner", max_length=60)
+    repo_fragment = _safe_identifier_fragment(repo_name, fallback="site", max_length=60)
+    runtime_dockerfile = (
+        f"# {_MBSRN_MANAGED_MANIFEST_MARKER}\n"
+        "# Managed site runtime image build contract.\n"
+        "# This image is built from generated site content in the target repo.\n"
+        f"# content_identity: {owner_fragment}/{repo_fragment}\n"
+        "FROM caddy:2.8-alpine\n"
+        "WORKDIR /srv\n"
+        "COPY context/ /srv/\n"
+        "EXPOSE 8080\n"
+        'CMD ["caddy", "file-server", "--root", "/srv", "--listen", ":8080"]\n'
+    )
+    return {
+        _MBSRN_MANAGED_SITE_RUNTIME_DOCKERFILE_PATH: runtime_dockerfile,
+    }
+
+
 def _dedupe_strings(values: list[str]) -> list[str]:
     deduped: list[str] = []
     seen: set[str] = set()
@@ -7544,6 +7697,51 @@ def _deployment_references_image_pull_secret(
         return False
     pattern = rf"(?m)^\s*-\s*name:\s*[\"']?{re.escape(secret_name)}[\"']?\s*$"
     return re.search(pattern, content) is not None
+
+
+def _extract_deployment_image_reference(*, deployment_manifest_content: str | None) -> str | None:
+    content = str(deployment_manifest_content or "")
+    if not content:
+        return None
+    match = re.search(r"(?m)^\s*image:\s*([^\s#]+)\s*$", content)
+    if not match:
+        return None
+    return match.group(1).strip() or None
+
+
+def _container_image_identity(image_reference: str | None) -> tuple[str | None, str | None]:
+    raw = (str(image_reference or "").strip() or None)
+    if not raw:
+        return None, None
+    without_digest = raw.split("@", 1)[0]
+    if not without_digest:
+        return None, None
+    last_slash = without_digest.rfind("/")
+    last_colon = without_digest.rfind(":")
+    if last_colon > last_slash:
+        repository = without_digest[:last_colon]
+        tag = without_digest[last_colon + 1 :] or None
+    else:
+        repository = without_digest
+        tag = None
+    return repository.lower() if repository else None, tag
+
+
+def _is_legacy_generic_site_runtime_image_repository(
+    *,
+    image_repository: str | None,
+    repo_owner: object,
+) -> bool:
+    observed_repository = (str(image_repository or "").strip().lower() or None)
+    if not observed_repository:
+        return False
+    owner_fragment = _safe_identifier_fragment(repo_owner, fallback="", max_length=80).strip("-")
+    if not owner_fragment:
+        return False
+    return observed_repository in {
+        f"ghcr.io/{owner_fragment}/{_MBSRN_MANAGED_SITE_WEB_IMAGE_REPO_NAME}",
+        "ghcr.io/mhanson13/site-web",
+    }
 
 
 def _evaluate_preview_certificate_alignment(

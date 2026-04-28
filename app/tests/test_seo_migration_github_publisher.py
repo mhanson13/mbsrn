@@ -233,6 +233,7 @@ def _managed_provisioning_responses(*, missing_verify_path: str | None = None) -
                 "k8s/managedcertificate.yaml",
                 "k8s/frontendconfig.yaml",
                 "k8s/backendconfig.yaml",
+                "site-runtime/Dockerfile",
             ),
             missing_verify_path=missing_verify_path,
         )
@@ -266,6 +267,8 @@ def _managed_file_upsert_responses(
     managed_paths: tuple[str, ...],
     missing_verify_path: str | None = None,
 ) -> list[object]:
+    if "site-runtime/Dockerfile" not in managed_paths:
+        managed_paths = (*managed_paths, "site-runtime/Dockerfile")
     responses: list[object] = []
     for index, managed_path in enumerate(managed_paths, start=1):
         responses.append(
@@ -1460,16 +1463,23 @@ def test_derive_site_preview_certificate_name_is_site_scoped_and_dns1123_safe() 
     assert "_" not in certificate_name
 
 
-def test_derive_site_runtime_image_repository_uses_owner_scoped_path() -> None:
+def test_derive_site_runtime_image_repository_uses_owner_and_repo_scoped_path() -> None:
     assert (
-        _derive_site_runtime_image_repository(repo_owner="mhanson13")
-        == "ghcr.io/mhanson13/site-web"
+        _derive_site_runtime_image_repository(repo_owner="mhanson13", repo_name="scmechanical")
+        == "ghcr.io/mhanson13/scmechanical-site-web"
     )
 
 
-def test_derive_site_runtime_image_repository_rejects_empty_owner_without_mbsrn_fallback() -> None:
+def test_derive_site_runtime_image_repository_rejects_empty_owner_without_fallback() -> None:
     with pytest.raises(SEOMigrationGitHubPublisherError) as exc_info:
-        _derive_site_runtime_image_repository(repo_owner="   ")
+        _derive_site_runtime_image_repository(repo_owner="   ", repo_name="scmechanical")
+    assert exc_info.value.code == "runtime_image_repository_invalid"
+    assert exc_info.value.stage == "workflow_provisioning"
+
+
+def test_derive_site_runtime_image_repository_rejects_empty_repo_name_without_fallback() -> None:
+    with pytest.raises(SEOMigrationGitHubPublisherError) as exc_info:
+        _derive_site_runtime_image_repository(repo_owner="mhanson13", repo_name="   ")
     assert exc_info.value.code == "runtime_image_repository_invalid"
     assert exc_info.value.stage == "workflow_provisioning"
 
@@ -4262,7 +4272,7 @@ def test_ensure_deploy_workflow_creates_missing_file_and_verifies_presence(monke
     )
     assert result.provisioned is True
     assert result.workflow_path == ".github/workflows/deploy-tnmfire-www-prod.yml"
-    assert result.commit_sha == "verified-8"
+    assert result.commit_sha == "verified-9"
     assert result.kubernetes_namespace == "tnmfire"
     assert result.namespace_source == "repo_name"
     assert result.namespace_model_status == "aligned"
@@ -4283,7 +4293,7 @@ def test_ensure_deploy_workflow_creates_missing_file_and_verifies_presence(monke
     assert result.managed_network_policy_present is None
     assert result.managed_namespace_policies_aligned is True
     assert result.managed_workflow_outcome == "managed_workflow_created"
-    assert len(calls) == 30
+    assert len(calls) == 33
     assert calls[0][1].endswith("/repos/mhanson13/tnmfire")
     assert calls[1][1].endswith("/repos/mhanson13/tnmfire")
     assert calls[2][1].endswith("/repos/mhanson13/tnmfire/git/ref/heads/main")
@@ -5180,10 +5190,10 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     backend_config_yaml = base64.b64decode(encoded_backend_config_content).decode("utf-8")
     assert "workflow_dispatch" in workflow_yaml
     assert "permissions:" in workflow_yaml
-    assert "packages: read" in workflow_yaml
+    assert "packages: write" in workflow_yaml
     assert "K8S_NAMESPACE: tnmfire" in workflow_yaml
     assert "MBSRN_PREVIEW_HOSTNAME: tnmfire.site.mbsrn.com" in workflow_yaml
-    assert "SITE_WEB_IMAGE_REPOSITORY: ghcr.io/mhanson13/site-web" in workflow_yaml
+    assert "SITE_WEB_IMAGE_REPOSITORY: ghcr.io/mhanson13/tnmfire-site-web" in workflow_yaml
     assert "ghcr.io/mbsrn/site-web" not in workflow_yaml
     assert (
         "SITE_WEB_IMAGE_TAG: ${{ vars.MBSRN_SITE_WEB_IMAGE_TAG || vars.SITE_WEB_IMAGE_TAG || secrets.MBSRN_SITE_WEB_IMAGE_TAG || secrets.SITE_WEB_IMAGE_TAG || '' }}"
@@ -5204,8 +5214,9 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "Apply managed manifests" in workflow_yaml
     assert "kubectl apply -f k8s/deployment.yaml" in workflow_yaml
     assert "Resolve managed site runtime image" in workflow_yaml
+    assert "selected_mode=\"immutable_sha\"" in workflow_yaml
+    assert "selected_image=\"${SITE_WEB_IMAGE_REPOSITORY}:${GITHUB_SHA}\"" in workflow_yaml
     assert "selected_mode=\"fallback_latest\"" in workflow_yaml
-    assert "selected_image=\"${SITE_WEB_IMAGE_REPOSITORY}:latest\"" in workflow_yaml
     assert "selected_mode=\"immutable_sha\"" in workflow_yaml
     assert "kubectl set image deployment/site-web site-web=\"${selected_image}\"" in workflow_yaml
     assert "Managed site runtime image selected: ${selected_image} (mode=${selected_mode})" in workflow_yaml
@@ -5243,6 +5254,22 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     )
     assert (
         "site_runtime_image_selection_mode: ${{ steps.resolve_site_runtime_image.outputs.site_runtime_image_selection_mode }}"
+        in workflow_yaml
+    )
+    assert (
+        "site_runtime_image_repository: ${{ steps.resolve_site_runtime_image.outputs.site_runtime_image_repository }}"
+        in workflow_yaml
+    )
+    assert (
+        "site_runtime_image_tag: ${{ steps.resolve_site_runtime_image.outputs.site_runtime_image_tag }}"
+        in workflow_yaml
+    )
+    assert (
+        "site_runtime_source_commit: ${{ steps.resolve_site_runtime_image.outputs.site_runtime_source_commit }}"
+        in workflow_yaml
+    )
+    assert (
+        "site_runtime_content_source: ${{ steps.resolve_site_runtime_image.outputs.site_runtime_content_source }}"
         in workflow_yaml
     )
     assert "url: ${{ steps.resolve_live_url.outputs.resolved_live_url }}" in workflow_yaml
@@ -5320,7 +5347,7 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
         in workflow_yaml
     )
     assert "resources:" in deployment_yaml
-    assert "image: ghcr.io/mhanson13/site-web:latest" in deployment_yaml
+    assert "image: ghcr.io/mhanson13/tnmfire-site-web:latest" in deployment_yaml
     assert "ghcr.io/mbsrn/site-web" not in deployment_yaml
     assert "imagePullSecrets:" not in deployment_yaml
     assert "name: ghcr-pull-secret" not in deployment_yaml
@@ -5368,7 +5395,7 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "timeoutSec: 5" in backend_config_yaml
     assert "healthyThreshold: 1" in backend_config_yaml
     assert "unhealthyThreshold: 3" in backend_config_yaml
-    assert len(calls) == 30
+    assert len(calls) == 33
 
 
 def test_managed_site_runtime_template_includes_healthz_route() -> None:
@@ -5486,6 +5513,70 @@ def test_render_managed_gke_manifests_isolated_across_sequential_sites() -> None
     assert "sc-mechanical.site.mbsrn.com" not in tnmfire_cert
 
 
+def test_managed_site_runtime_image_identity_is_repo_scoped_across_sites() -> None:
+    tnmfire_workflow = _render_managed_deploy_workflow_yaml(
+        workflow_id="deploy-tnmfire-www-prod.yml",
+        repo_owner="mhanson13",
+        repo_name="tnmfire",
+        branch="main",
+        deploy_workflow_mode="site_repo_template_v1",
+        target_environment_key="gke_prod",
+        target_environment_source="admin_config",
+        managed_gke_config=None,
+        kubernetes_namespace="tnmfire",
+        namespace_source="repo_name",
+        preview_hostname="tnmfire.site.mbsrn.com",
+        private_image_auth_required=False,
+        site_id="site-tnmfire",
+    )
+    sc_workflow = _render_managed_deploy_workflow_yaml(
+        workflow_id="deploy-scmechanical-www-prod.yml",
+        repo_owner="mhanson13",
+        repo_name="scmechanical",
+        branch="main",
+        deploy_workflow_mode="site_repo_template_v1",
+        target_environment_key="gke_prod",
+        target_environment_source="admin_config",
+        managed_gke_config=None,
+        kubernetes_namespace="scmechanical",
+        namespace_source="repo_name",
+        preview_hostname="scmechanical.site.mbsrn.com",
+        private_image_auth_required=False,
+        site_id="site-scmechanical",
+    )
+    tnmfire_manifests = _render_managed_gke_manifest_files(
+        repo_owner="mhanson13",
+        repo_name="tnmfire",
+        target_environment_key="gke_prod",
+        target_environment_source="admin_config",
+        kubernetes_namespace="tnmfire",
+        namespace_source="repo_name",
+        preview_hostname="tnmfire.site.mbsrn.com",
+        namespace_isolation_defaults=None,
+        site_id="site-tnmfire",
+    )
+    sc_manifests = _render_managed_gke_manifest_files(
+        repo_owner="mhanson13",
+        repo_name="scmechanical",
+        target_environment_key="gke_prod",
+        target_environment_source="admin_config",
+        kubernetes_namespace="scmechanical",
+        namespace_source="repo_name",
+        preview_hostname="scmechanical.site.mbsrn.com",
+        namespace_isolation_defaults=None,
+        site_id="site-scmechanical",
+    )
+
+    assert "SITE_WEB_IMAGE_REPOSITORY: ghcr.io/mhanson13/tnmfire-site-web" in tnmfire_workflow
+    assert "SITE_WEB_IMAGE_REPOSITORY: ghcr.io/mhanson13/scmechanical-site-web" in sc_workflow
+    assert "image: ghcr.io/mhanson13/tnmfire-site-web:latest" in tnmfire_manifests["k8s/deployment.yaml"]
+    assert "image: ghcr.io/mhanson13/scmechanical-site-web:latest" in sc_manifests["k8s/deployment.yaml"]
+    assert "ghcr.io/mhanson13/site-web:latest" not in tnmfire_workflow
+    assert "ghcr.io/mhanson13/site-web:latest" not in sc_workflow
+    assert "ghcr.io/mbsrn/site-web:latest" not in tnmfire_workflow
+    assert "ghcr.io/mbsrn/site-web:latest" not in sc_workflow
+
+
 def test_ensure_deploy_workflow_renders_admin_managed_gke_values_before_repo_fallback(monkeypatch) -> None:
     calls: list[tuple[str, str]] = []
     captured_put_payload: dict[str, object] = {}
@@ -5560,7 +5651,7 @@ def test_ensure_deploy_workflow_upgrades_platform_managed_placeholder_workflow(m
         _FakeHTTPResponse(status=201, body=json.dumps({"commit": {"sha": "workflow-commit"}})),
         _managed_workflow_verify_response(sha="workflow-verified-upsert"),
     ]
-    for index in range(1, 8):
+    for index in range(1, 9):
         queue.append(
             _FakeHTTPResponse(
                 status=200,
@@ -5646,7 +5737,7 @@ def test_ensure_deploy_workflow_upgrades_legacy_platform_placeholder_workflow(mo
         _FakeHTTPResponse(status=201, body=json.dumps({"commit": {"sha": "workflow-commit"}})),
         _managed_workflow_verify_response(sha="workflow-verified-upsert"),
     ]
-    for index in range(1, 8):
+    for index in range(1, 9):
         queue.append(
             _FakeHTTPResponse(
                 status=200,
@@ -5858,7 +5949,7 @@ def test_ensure_deploy_workflow_preserves_unknown_custom_workflow(monkeypatch) -
             body=json.dumps({"sha": "custom-workflow-sha", "encoding": "base64", "content": custom_workflow_content}),
         ),
     ]
-    for index in range(1, 8):
+    for index in range(1, 9):
         queue.append(
             _FakeHTTPResponse(
                 status=200,
@@ -5997,7 +6088,7 @@ def test_ensure_deploy_workflow_fails_when_upgraded_workflow_is_not_conformant(m
         _FakeHTTPResponse(status=201, body=json.dumps({"commit": {"sha": "workflow-commit"}})),
         _managed_workflow_verify_response(sha="workflow-verified-upsert"),
     ]
-    for index in range(1, 8):
+    for index in range(1, 9):
         queue.append(
             _FakeHTTPResponse(
                 status=200,
@@ -6426,3 +6517,261 @@ def test_check_deploy_target_readiness_flags_ingress_certificate_mismatch(monkey
     assert details.get("ingress_certificate_mismatch") is True
     assert details.get("stale_managed_certificate_present") is False
     assert details.get("preview_certificate_domain_conflict") is False
+
+
+def test_check_deploy_target_readiness_flags_deployed_content_identity_mismatch(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    managed_workflow = _encode_workflow_yaml(
+        (
+            "# mbsrn-managed-template:site_repo_template_v1\n"
+            "name: Managed Deploy\n"
+            "on:\n"
+            "  workflow_dispatch:\n"
+            "jobs:\n"
+            "  deploy:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    env:\n"
+            "      K8S_NAMESPACE: tnmfire\n"
+            "    steps:\n"
+            "      - uses: google-github-actions/auth@v2\n"
+            "      - run: kubectl apply -n \"$K8S_NAMESPACE\" -f k8s/deployment.yaml\n"
+        )
+    )
+    deployment_manifest_wrong_image = _encode_workflow_yaml(
+        (
+            "# mbsrn-managed-manifest:site_repo_template_v1\n"
+            "apiVersion: apps/v1\n"
+            "kind: Deployment\n"
+            "metadata:\n"
+            "  name: site-web\n"
+            "  namespace: tnmfire\n"
+            "spec:\n"
+            "  template:\n"
+            "    spec:\n"
+            "      containers:\n"
+            "        - name: site-web\n"
+            "          image: ghcr.io/mhanson13/scmechanical-site-web:latest\n"
+        )
+    )
+    namespaced_manifest = _encode_workflow_yaml(
+        (
+            "# mbsrn-managed-manifest:site_repo_template_v1\n"
+            "apiVersion: v1\n"
+            "kind: Service\n"
+            "metadata:\n"
+            "  name: site-web\n"
+            "  namespace: tnmfire\n"
+        )
+    )
+    ingress_manifest = _encode_workflow_yaml(
+        (
+            "# mbsrn-managed-manifest:site_repo_template_v1\n"
+            "apiVersion: networking.k8s.io/v1\n"
+            "kind: Ingress\n"
+            "metadata:\n"
+            "  name: site-web\n"
+            "  namespace: tnmfire\n"
+            "  annotations:\n"
+            "    networking.gke.io/managed-certificates: site-web-preview-cert-tnmfire\n"
+            "spec:\n"
+            "  rules:\n"
+            "    - host: tnmfire.site.mbsrn.com\n"
+        )
+    )
+    certificate_manifest = _encode_workflow_yaml(
+        (
+            "# mbsrn-managed-manifest:site_repo_template_v1\n"
+            "apiVersion: networking.gke.io/v1\n"
+            "kind: ManagedCertificate\n"
+            "metadata:\n"
+            "  name: site-web-preview-cert-tnmfire\n"
+            "  namespace: tnmfire\n"
+            "spec:\n"
+            "  domains:\n"
+            "    - tnmfire.site.mbsrn.com\n"
+        )
+    )
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _FakeHTTPResponse(status=200, body="{}"),
+            _FakeHTTPResponse(status=200, body="{}"),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "wfsha", "encoding": "base64", "content": managed_workflow}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"state": "active", "path": ".github/workflows/deploy-tnmfire-www-prod.yml"}),
+            ),
+            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-namespace", "encoding": "base64", "content": namespaced_manifest})),
+            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-deployment", "encoding": "base64", "content": deployment_manifest_wrong_image})),
+            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-service", "encoding": "base64", "content": namespaced_manifest})),
+            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-ingress", "encoding": "base64", "content": ingress_manifest})),
+            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-managedcertificate", "encoding": "base64", "content": certificate_manifest})),
+            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-frontendconfig", "encoding": "base64", "content": namespaced_manifest})),
+            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-backendconfig", "encoding": "base64", "content": namespaced_manifest})),
+            *_gke_environment_config_present_responses(),
+        ],
+        calls,
+    )
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    readiness = publisher.check_deploy_target_readiness(
+        target=_dispatch_target(),
+        allow_ref_repair=False,
+        allow_workflow_repair=False,
+        dry_run=False,
+    )
+
+    assert readiness.dispatch_service_availability is False
+    assert readiness.dispatch_service_reason_code == "deployed_content_identity_mismatch"
+    details = readiness.managed_gke_config_details or {}
+    assert details.get("site_runtime_image_repository_expected") == "ghcr.io/mhanson13/tnmfire-site-web"
+    assert details.get("site_runtime_image_repository_observed") == "ghcr.io/mhanson13/scmechanical-site-web"
+    assert details.get("site_runtime_image_tag_observed") == "latest"
+    assert (
+        details.get("site_runtime_image_repository_expected")
+        != details.get("site_runtime_image_repository_observed")
+    )
+
+
+@pytest.mark.parametrize(
+    ("repo_owner", "repo_name", "workflow_id", "legacy_image_reference"),
+    [
+        (
+            "mhanson13",
+            "scmechanical",
+            "deploy-scmechanical-www-prod.yml",
+            "ghcr.io/mhanson13/site-web:latest",
+        ),
+        (
+            "acmeowner",
+            "lars-construction",
+            "deploy-lars-construction-www-prod.yml",
+            "ghcr.io/acmeowner/site-web:latest",
+        ),
+    ],
+)
+def test_check_deploy_target_readiness_flags_legacy_generic_runtime_images(
+    monkeypatch,
+    repo_owner: str,
+    repo_name: str,
+    workflow_id: str,
+    legacy_image_reference: str,
+) -> None:
+    calls: list[tuple[str, str]] = []
+    namespace, _ = derive_site_kubernetes_namespace(repo_name=repo_name, site_id="site-1")
+    preview_hostname, _ = derive_site_preview_hostname(repo_name=repo_name, site_id="site-1")
+    preview_certificate_name, _ = derive_site_preview_certificate_name(repo_name=repo_name, site_id="site-1")
+    managed_workflow = _encode_workflow_yaml(
+        (
+            "# mbsrn-managed-template:site_repo_template_v1\n"
+            "name: Managed Deploy\n"
+            "on:\n"
+            "  workflow_dispatch:\n"
+            "jobs:\n"
+            "  deploy:\n"
+            "    runs-on: ubuntu-latest\n"
+            f"    env:\n      K8S_NAMESPACE: {namespace}\n"
+            "    steps:\n"
+            "      - uses: google-github-actions/auth@v2\n"
+            "      - run: kubectl apply -n \"$K8S_NAMESPACE\" -f k8s/deployment.yaml\n"
+        )
+    )
+    deployment_manifest_legacy_image = _encode_workflow_yaml(
+        (
+            "# mbsrn-managed-manifest:site_repo_template_v1\n"
+            "apiVersion: apps/v1\n"
+            "kind: Deployment\n"
+            "metadata:\n"
+            "  name: site-web\n"
+            f"  namespace: {namespace}\n"
+            "spec:\n"
+            "  template:\n"
+            "    spec:\n"
+            "      containers:\n"
+            "        - name: site-web\n"
+            f"          image: {legacy_image_reference}\n"
+        )
+    )
+    namespaced_manifest = _encode_workflow_yaml(
+        (
+            "# mbsrn-managed-manifest:site_repo_template_v1\n"
+            "apiVersion: v1\n"
+            "kind: Service\n"
+            "metadata:\n"
+            "  name: site-web\n"
+            f"  namespace: {namespace}\n"
+        )
+    )
+    ingress_manifest = _encode_workflow_yaml(
+        (
+            "# mbsrn-managed-manifest:site_repo_template_v1\n"
+            "apiVersion: networking.k8s.io/v1\n"
+            "kind: Ingress\n"
+            "metadata:\n"
+            "  name: site-web\n"
+            f"  namespace: {namespace}\n"
+            "  annotations:\n"
+            f"    networking.gke.io/managed-certificates: {preview_certificate_name}\n"
+            "spec:\n"
+            "  rules:\n"
+            f"    - host: {preview_hostname}\n"
+        )
+    )
+    certificate_manifest = _encode_workflow_yaml(
+        (
+            "# mbsrn-managed-manifest:site_repo_template_v1\n"
+            "apiVersion: networking.gke.io/v1\n"
+            "kind: ManagedCertificate\n"
+            "metadata:\n"
+            f"  name: {preview_certificate_name}\n"
+            f"  namespace: {namespace}\n"
+            "spec:\n"
+            "  domains:\n"
+            f"    - {preview_hostname}\n"
+        )
+    )
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _FakeHTTPResponse(status=200, body="{}"),
+            _FakeHTTPResponse(status=200, body="{}"),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "wfsha", "encoding": "base64", "content": managed_workflow}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"state": "active", "path": f".github/workflows/{workflow_id}"}),
+            ),
+            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-namespace", "encoding": "base64", "content": namespaced_manifest})),
+            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-deployment", "encoding": "base64", "content": deployment_manifest_legacy_image})),
+            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-service", "encoding": "base64", "content": namespaced_manifest})),
+            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-ingress", "encoding": "base64", "content": ingress_manifest})),
+            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-managedcertificate", "encoding": "base64", "content": certificate_manifest})),
+            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-frontendconfig", "encoding": "base64", "content": namespaced_manifest})),
+            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-backendconfig", "encoding": "base64", "content": namespaced_manifest})),
+            *_gke_environment_config_present_responses(),
+        ],
+        calls,
+    )
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    readiness = publisher.check_deploy_target_readiness(
+        target=SEOMigrationGitHubDeployTarget(
+            repo_owner=repo_owner,
+            repo_name=repo_name,
+            workflow_id=workflow_id,
+            ref="main",
+            inputs={"site_id": "site-1"},
+        ),
+        allow_ref_repair=False,
+        allow_workflow_repair=False,
+        dry_run=False,
+    )
+
+    assert readiness.dispatch_service_availability is False
+    assert readiness.dispatch_service_reason_code == "deployed_content_identity_mismatch"
+    details = readiness.managed_gke_config_details or {}
+    assert details.get("site_runtime_image_legacy_generic_detected") is True
+    assert details.get("site_runtime_image_reference_observed") == legacy_image_reference

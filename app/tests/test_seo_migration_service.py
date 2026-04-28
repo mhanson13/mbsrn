@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import urllib.request
+from datetime import datetime, timezone
+from types import SimpleNamespace
 
 import pytest
 
@@ -56,6 +58,7 @@ from app.services.seo_migration import SEOMigrationService, SEOMigrationValidati
 from app.services.seo_migration_context import SEOMigrationContextAssembler
 from app.services.seo_migration_ingest import SEOMigrationSourceIngestService
 from app.services.github_publish_config import GitHubPublishConfigService
+from app.services import seo_migration as seo_migration_module
 
 _AI_DIAGNOSTICS_SUMMARY_KEYS = {
     "failure_category",
@@ -7327,6 +7330,10 @@ def test_runtime_credential_missing_reason_is_exposed_in_publish_readiness(db_se
             "image_pull_secret_not_referenced",
             "managed deployment manifest is missing required image pull secret reference",
         ),
+        (
+            "deployed_content_identity_mismatch",
+            "managed deployment manifest image identity does not match this site/repo target",
+        ),
     ],
 )
 def test_deploy_readiness_blocks_when_managed_gke_environment_config_is_missing(
@@ -7446,6 +7453,89 @@ def test_deploy_readiness_prioritizes_managed_gke_blocker_when_secret_propagatio
         for item in deploy_reasons
     )
     assert "deploy_configuration_missing" in (deploy_readiness.get("blocker_codes") or [])
+
+
+@pytest.mark.parametrize(
+    (
+        "managed_details",
+        "latest_traceability",
+        "last_published_at",
+        "last_deployed_at",
+        "expected_state",
+    ),
+    [
+        (
+            {
+                "site_runtime_image_repository_observed": "ghcr.io/mhanson13/site-web",
+                "site_runtime_image_reference_observed": "ghcr.io/mhanson13/site-web:latest",
+            },
+            {},
+            datetime(2026, 4, 28, 12, 0, tzinfo=timezone.utc),
+            datetime(2026, 4, 28, 11, 0, tzinfo=timezone.utc),
+            "managed_workflow_not_yet_republished",
+        ),
+        (
+            {
+                "site_runtime_image_repository_observed": "ghcr.io/mhanson13/scmechanical-site-web",
+                "site_runtime_image_reference_observed": "ghcr.io/mhanson13/scmechanical-site-web:latest",
+            },
+            {},
+            datetime(2026, 4, 28, 12, 0, tzinfo=timezone.utc),
+            datetime(2026, 4, 28, 11, 0, tzinfo=timezone.utc),
+            "workflow_republished_but_deploy_not_rerun",
+        ),
+        (
+            {
+                "site_runtime_image_repository_observed": "ghcr.io/mhanson13/scmechanical-site-web",
+                "site_runtime_image_reference_observed": "ghcr.io/mhanson13/scmechanical-site-web:latest",
+            },
+            {
+                "site_runtime_image_repository": "ghcr.io/mhanson13/site-web",
+                "site_runtime_image_reference": "ghcr.io/mhanson13/site-web:latest",
+            },
+            datetime(2026, 4, 28, 11, 0, tzinfo=timezone.utc),
+            datetime(2026, 4, 28, 12, 0, tzinfo=timezone.utc),
+            "deploy_running_old_generic_image",
+        ),
+        (
+            {
+                "site_runtime_image_repository_observed": "ghcr.io/mhanson13/scmechanical-site-web",
+                "site_runtime_image_reference_observed": "ghcr.io/mhanson13/scmechanical-site-web:latest",
+            },
+            {
+                "site_runtime_image_repository": "ghcr.io/mhanson13/scmechanical-site-web",
+                "site_runtime_image_reference": "ghcr.io/mhanson13/scmechanical-site-web:sha12345",
+            },
+            datetime(2026, 4, 28, 11, 0, tzinfo=timezone.utc),
+            datetime(2026, 4, 28, 12, 0, tzinfo=timezone.utc),
+            "deploy_running_expected_site_scoped_image",
+        ),
+    ],
+)
+def test_derive_managed_site_rollout_state_distinguishes_rollout_phases(
+    managed_details: dict[str, object],
+    latest_traceability: dict[str, object],
+    last_published_at: datetime,
+    last_deployed_at: datetime,
+    expected_state: str,
+) -> None:
+    workspace = SimpleNamespace(
+        last_published_at=last_published_at,
+        last_deployed_at=last_deployed_at,
+    )
+    result = seo_migration_module._derive_managed_site_rollout_state(
+        deploy_workflow_mode="site_repo_template_v1",
+        repo_owner="mhanson13",
+        repo_name="scmechanical",
+        managed_gke_config_details=managed_details,
+        latest_traceability=latest_traceability,
+        workspace=workspace,
+    )
+    assert result.get("managed_site_rollout_state") == expected_state
+    if expected_state == "deploy_running_expected_site_scoped_image":
+        assert result.get("managed_site_rollout_fix_active") is True
+    else:
+        assert result.get("managed_site_rollout_fix_active") is False
 
 
 def test_runtime_publisher_readiness_log_includes_reason_code(db_session, caplog) -> None:

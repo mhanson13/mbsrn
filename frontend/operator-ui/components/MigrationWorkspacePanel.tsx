@@ -605,7 +605,30 @@ function toManagedGkeConfigGuidance(value: string | null): string | null {
   if (normalized === "private_image_pull_forbidden") {
     return "Private image pull is forbidden. Verify private-image auth mode credentials and namespace pull-secret provisioning.";
   }
+  if (normalized === "deployed_content_identity_mismatch") {
+    return "Managed deployment image identity does not match this site target. Republish managed deploy files before redeploy so the site uses repo-specific generated content.";
+  }
   return null;
+}
+
+function formatManagedSiteRolloutStateLabel(value: string | null): string {
+  const normalized = (value || "").trim().toLowerCase();
+  if (!normalized) {
+    return "Not available";
+  }
+  if (normalized === "managed_workflow_not_yet_republished") {
+    return "Managed workflow not yet republished";
+  }
+  if (normalized === "workflow_republished_but_deploy_not_rerun") {
+    return "Workflow republished but deploy not rerun";
+  }
+  if (normalized === "deploy_running_old_generic_image") {
+    return "Deploy running old generic image";
+  }
+  if (normalized === "deploy_running_expected_site_scoped_image") {
+    return "Deploy running expected site-scoped image";
+  }
+  return normalized.replace(/_/g, " ");
 }
 
 function toRepositoryProvisioningGuidance(params: {
@@ -2359,6 +2382,18 @@ export function MigrationWorkspacePanel({
   const dispatchServiceReasonCode = dispatchServiceReasonCodeFromSelected || dispatchServiceReasonCodeFromSummary;
   const managedGkeConfigGuidance = toManagedGkeConfigGuidance(dispatchServiceReasonCode);
   const showManagedGkeConfigSourceHint = managedGkeConfigGuidance !== null;
+  const managedSiteRolloutState = asStringOrNull(deployReadiness.managed_site_rollout_state);
+  const managedSiteRolloutMessage = asStringOrNull(deployReadiness.managed_site_rollout_message);
+  const managedSiteRolloutFixActive = asBooleanOrNull(deployReadiness.managed_site_rollout_fix_active);
+  const managedSiteExpectedImageRepository = asStringOrNull(
+    deployReadiness.managed_site_rollout_expected_image_repository,
+  );
+  const managedSiteManifestImageReference = asStringOrNull(
+    deployReadiness.managed_site_rollout_manifest_image_reference,
+  );
+  const managedSiteObservedDeployImageReference =
+    asStringOrNull(deployReadiness.managed_site_rollout_observed_deploy_image_reference) ||
+    asStringOrNull(selectedDeployHistoryRecord.site_runtime_image_reference);
   const workflowConformanceChecked =
     asBooleanOrNull(selectedDeployHistoryRecord.workflow_conformance_checked) ??
     asBooleanOrNull(deployReadiness.workflow_conformance_checked);
@@ -4383,6 +4418,45 @@ export function MigrationWorkspacePanel({
                 {managedGkeConfigGuidance}
               </span>
             ) : null}
+            {managedSiteRolloutState ? (
+              <span className="hint" data-testid="migration-managed-site-rollout-state-readiness">
+                Managed site rollout state: {formatManagedSiteRolloutStateLabel(managedSiteRolloutState)}
+              </span>
+            ) : null}
+            {managedSiteRolloutMessage ? (
+              <span
+                className={managedSiteRolloutFixActive ? "hint" : "hint warning"}
+                data-testid="migration-managed-site-rollout-guidance-readiness"
+              >
+                {managedSiteRolloutMessage}
+              </span>
+            ) : null}
+            {managedSiteExpectedImageRepository ? (
+              <span className="hint" data-testid="migration-managed-site-rollout-expected-image-readiness">
+                Expected site-scoped image repository: {managedSiteExpectedImageRepository}
+              </span>
+            ) : null}
+            {managedSiteManifestImageReference ? (
+              <span className="hint" data-testid="migration-managed-site-rollout-manifest-image-readiness">
+                Managed manifest runtime image: {managedSiteManifestImageReference}
+              </span>
+            ) : null}
+            {managedSiteObservedDeployImageReference ? (
+              <span className="hint" data-testid="migration-managed-site-rollout-observed-image-readiness">
+                Last observed deploy runtime image: {managedSiteObservedDeployImageReference}
+              </span>
+            ) : null}
+            {managedSiteRolloutFixActive !== null ? (
+              <span
+                className={managedSiteRolloutFixActive ? "hint" : "hint warning"}
+                data-testid="migration-managed-site-rollout-fix-status-readiness"
+              >
+                Fix active:{" "}
+                {managedSiteRolloutFixActive
+                  ? "Yes. Observed deployment image matches expected site-scoped image."
+                  : "No. The fix is not active until observed deployment image matches expected site-scoped image."}
+              </span>
+            ) : null}
             {showManagedGkeConfigSourceHint ? (
               <span className="hint muted" data-testid="migration-managed-gke-config-source-readiness">
                 Managed deploy resolves admin platform config first; repo vars/secrets are legacy fallback only.
@@ -4731,6 +4805,45 @@ export function MigrationWorkspacePanel({
                 <span className="hint">
                   Dispatch service reason: {formatReasonCodeLabel(dispatchServiceReasonCode)}
                 </span>
+                {managedSiteRolloutState ? (
+                  <span className="hint" data-testid="migration-managed-site-rollout-state-diagnostics">
+                    Managed site rollout state: {formatManagedSiteRolloutStateLabel(managedSiteRolloutState)}
+                  </span>
+                ) : null}
+                {managedSiteRolloutMessage ? (
+                  <span
+                    className={managedSiteRolloutFixActive ? "hint" : "hint warning"}
+                    data-testid="migration-managed-site-rollout-guidance-diagnostics"
+                  >
+                    {managedSiteRolloutMessage}
+                  </span>
+                ) : null}
+                {managedSiteExpectedImageRepository ? (
+                  <span className="hint" data-testid="migration-managed-site-rollout-expected-image-diagnostics">
+                    Expected site-scoped image repository: {managedSiteExpectedImageRepository}
+                  </span>
+                ) : null}
+                {managedSiteManifestImageReference ? (
+                  <span className="hint" data-testid="migration-managed-site-rollout-manifest-image-diagnostics">
+                    Managed manifest runtime image: {managedSiteManifestImageReference}
+                  </span>
+                ) : null}
+                {managedSiteObservedDeployImageReference ? (
+                  <span className="hint" data-testid="migration-managed-site-rollout-observed-image-diagnostics">
+                    Last observed deploy runtime image: {managedSiteObservedDeployImageReference}
+                  </span>
+                ) : null}
+                {managedSiteRolloutFixActive !== null ? (
+                  <span
+                    className={managedSiteRolloutFixActive ? "hint" : "hint warning"}
+                    data-testid="migration-managed-site-rollout-fix-status-diagnostics"
+                  >
+                    Fix active:{" "}
+                    {managedSiteRolloutFixActive
+                      ? "Yes. Observed deployment image matches expected site-scoped image."
+                      : "No. The fix is not active until observed deployment image matches expected site-scoped image."}
+                  </span>
+                ) : null}
                 {managedGkeConfigGuidance ? (
                   <span className="hint warning" data-testid="migration-managed-gke-config-guidance-diagnostics">
                     {managedGkeConfigGuidance}

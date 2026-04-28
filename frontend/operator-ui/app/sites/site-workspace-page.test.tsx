@@ -694,6 +694,82 @@ describe("site migration workflow route", () => {
     );
   });
 
+  it("surfaces deployed-content-identity mismatch guidance when managed image identity targets another site", async () => {
+    const summary = buildMigrationWorkspaceSummary({
+      deploy_readiness: {
+        ready: false,
+        reasons: ["Deploy target configuration is invalid."],
+        dispatch_service_reason_code: "deployed_content_identity_mismatch",
+        target: {
+          enabled: true,
+          repo_owner: "mhanson13",
+          repo_name: "sc-mechanical",
+          workflow_id: "deploy-sc-mechanical-www-prod.yml",
+          ref: "main",
+        },
+      },
+    });
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(summary);
+    mockFetchMigrationPublishHistory.mockResolvedValueOnce({ items: [], total: 0 });
+    mockFetchMigrationDeployHistory.mockResolvedValueOnce({ items: [], total: 0 });
+
+    render(<SiteMigrationWorkflowPage />);
+
+    const deployReadinessCard = await screen.findByTestId("migration-deploy-readiness");
+    expect(within(deployReadinessCard).getByTestId("migration-managed-gke-config-guidance-readiness")).toHaveTextContent(
+      "Managed deployment image identity does not match this site target. Republish managed deploy files before redeploy so the site uses repo-specific generated content.",
+    );
+  });
+
+  it.each([
+    ["managed_workflow_not_yet_republished", "Managed workflow not yet republished", false],
+    ["workflow_republished_but_deploy_not_rerun", "Workflow republished but deploy not rerun", false],
+    ["deploy_running_old_generic_image", "Deploy running old generic image", false],
+    ["deploy_running_expected_site_scoped_image", "Deploy running expected site-scoped image", true],
+  ])(
+    "surfaces managed site rollout safety state '%s' in deploy readiness",
+    async (rolloutState, expectedLabel, fixActive) => {
+      const summary = buildMigrationWorkspaceSummary({
+        deploy_readiness: {
+          ready: fixActive,
+          reasons: fixActive ? [] : ["Deploy target configuration is invalid."],
+          managed_site_rollout_state: rolloutState,
+          managed_site_rollout_message: "Rollout guidance placeholder",
+          managed_site_rollout_fix_active: fixActive,
+          managed_site_rollout_expected_image_repository: "ghcr.io/mhanson13/sc-mechanical-site-web",
+          managed_site_rollout_manifest_image_reference: "ghcr.io/mhanson13/sc-mechanical-site-web:latest",
+          managed_site_rollout_observed_deploy_image_reference: fixActive
+            ? "ghcr.io/mhanson13/sc-mechanical-site-web:sha123"
+            : "ghcr.io/mhanson13/site-web:latest",
+          target: {
+            enabled: true,
+            repo_owner: "mhanson13",
+            repo_name: "sc-mechanical",
+            workflow_id: "deploy-sc-mechanical-www-prod.yml",
+            ref: "main",
+          },
+        },
+      });
+      mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(summary);
+      mockFetchMigrationPublishHistory.mockResolvedValueOnce({ items: [], total: 0 });
+      mockFetchMigrationDeployHistory.mockResolvedValueOnce({ items: [], total: 0 });
+
+      render(<SiteMigrationWorkflowPage />);
+
+      const deployReadinessCard = await screen.findByTestId("migration-deploy-readiness");
+      expect(within(deployReadinessCard).getByTestId("migration-managed-site-rollout-state-readiness")).toHaveTextContent(
+        `Managed site rollout state: ${expectedLabel}`,
+      );
+      expect(
+        within(deployReadinessCard).getByTestId("migration-managed-site-rollout-fix-status-readiness"),
+      ).toHaveTextContent(
+        fixActive
+          ? "Fix active: Yes. Observed deployment image matches expected site-scoped image."
+          : "Fix active: No. The fix is not active until observed deployment image matches expected site-scoped image.",
+      );
+    },
+  );
+
   it("updates selected draft diagnostics context when artifact selection changes", async () => {
     const user = userEvent.setup();
     const artifactOne = buildMigrationArtifactVersion({ id: "artifact-v1", version: 1 });

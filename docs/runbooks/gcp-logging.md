@@ -1096,8 +1096,8 @@ Common stage-aware interpretations:
         - `GIT_USERID` (production: `mhanson13`)
         - `GIT_EMAIL` (production: `mhanson13@gmail.com`)
         - `GIT_TOKEN` (PAT value must never be printed in logs)
-    - confirm the selected runtime image is owner-scoped to the target repo owner:
-      - `site_runtime_image_reference` should match `ghcr.io/<target-repo-owner>/site-web:<tag>`
+    - confirm the selected runtime image is owner+repo scoped to the exact target:
+      - `site_runtime_image_reference` should match `ghcr.io/<target-repo-owner>/<target-repo-name>-site-web:<tag>`
       - owner mismatch can produce GHCR 403/unauthorized signals even when pull-secret wiring exists
     - if managed workflow/template was recently updated, run a non-dry-run publish first so the target repo receives the latest workflow/manifests before retrying deploy
   - managed runtime image selection telemetry:
@@ -1118,14 +1118,16 @@ Controlled runtime image rollouts (managed site runtime image):
   - `SITE_WEB_IMAGE_TAG=3f2c9e7d8a6b4c1e9f0a1234567890abcdef1234`
 - effective selection order:
   1. configured SHA-like tag exists in GHCR -> `site_runtime_image_selection_mode=immutable_sha`
-  2. otherwise -> `site_runtime_image_selection_mode=fallback_latest` (`ghcr.io/<target-repo-owner>/site-web:latest`)
-- operator/admin procedure:
-  1. publish the runtime image (`.github/workflows/publish-site-web-image.yml`) so the SHA tag exists.
+  2. otherwise -> `site_runtime_image_selection_mode=fallback_latest` (`ghcr.io/<target-repo-owner>/<target-repo-name>-site-web:latest`)
+  - operator/admin procedure:
+  1. ensure target repo content has been published for the intended site revision.
   2. set `MBSRN_SITE_WEB_IMAGE_TAG` (or `SITE_WEB_IMAGE_TAG`) in the controlling GitHub Actions vars/secrets context.
-  3. republish or redeploy the managed site.
+  3. run managed deploy.
   4. verify workflow outputs/logs:
      - `site_runtime_image_reference`
      - `site_runtime_image_selection_mode`
+     - `site_runtime_image_repository`
+     - `site_runtime_source_commit`
   5. confirm controlled pinning by checking `site_runtime_image_selection_mode=immutable_sha`.
 - fallback interpretation:
   - if configured tag is missing, invalid, or unavailable in GHCR, deploy intentionally falls back to `:latest` (`fallback_latest`).
@@ -1133,16 +1135,34 @@ Controlled runtime image rollouts (managed site runtime image):
 - safety note:
   - use immutable SHA pinning for controlled rollouts and staged production validation; `:latest` is backward-compatible but less deterministic.
 
-  - if output includes `container image not found in registry`:
-    - confirm selected image exists (`site_runtime_image_reference`), or check fallback image:
-      - `docker pull ghcr.io/<target-repo-owner>/site-web:latest`
-    - confirm image publishing workflow succeeded recently:
-      - `.github/workflows/publish-site-web-image.yml`
-    - if SHA mode is intended, set `MBSRN_SITE_WEB_IMAGE_TAG`/`SITE_WEB_IMAGE_TAG` to a known published SHA and retry deploy
+    - if output includes `dispatch_service_reason_code=deployed_content_identity_mismatch`:
+      - rendered deployment image identity does not match the selected site repo tuple.
+      - republish managed files and redeploy so deployment image repository resolves to `ghcr.io/<owner>/<repo>-site-web`.
+    - if output includes `container image not found in registry`:
+      - confirm selected image exists (`site_runtime_image_reference`), or check fallback image:
+        - `docker pull ghcr.io/<target-repo-owner>/<target-repo-name>-site-web:latest`
+      - confirm target repo deploy workflow successfully completed a runtime build+push for the same repo/sha.
+      - if SHA mode is intended, set `MBSRN_SITE_WEB_IMAGE_TAG`/`SITE_WEB_IMAGE_TAG` to a known published SHA and retry deploy
     - if publish succeeds only with SHA tags, verify `latest` tag publication/retention policy before retrying deploy
     - if rollout repeatedly attempts the wrong/stale image, delete and recreate `site-web` to clear stale Deployment state:
       - `kubectl delete deployment site-web -n <namespace> --ignore-not-found`
       - `kubectl apply -f k8s/deployment.yaml`
+
+Post-fix rollout for existing managed sites:
+- For sites published before the site-scoped runtime image fix:
+  1. run non-dry-run publish (republish managed workflow/manifests)
+  2. run non-dry-run deploy
+  3. run deploy refresh/status and verify runtime image evidence
+- Verify readiness/diagnostics rollout state:
+  - `managed_workflow_not_yet_republished`: managed files still legacy; republish required
+  - `workflow_republished_but_deploy_not_rerun`: republished but not yet redeployed
+  - `deploy_running_old_generic_image`: observed deploy still on legacy generic image
+  - `deploy_running_expected_site_scoped_image`: fix active
+- Treat these as legacy generic image indicators:
+  - `ghcr.io/mhanson13/site-web:latest`
+  - `ghcr.io/<owner>/site-web:latest`
+- Treat this as expected post-fix pattern:
+  - `ghcr.io/<owner>/<repo>-site-web:<sha-or-latest>`
   - if output includes quota signatures such as `exceeded quota: site-resources` or `requested: requests.memory ... limited: requests.memory ...`:
     - inspect quota + workload requests in the same namespace:
       - `kubectl describe resourcequota site-resources -n <namespace>`

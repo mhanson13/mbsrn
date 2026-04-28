@@ -271,9 +271,14 @@ _DEPLOY_DISPATCH_SERVICE_REASON_IMAGE_PULL_SECRET_NOT_REFERENCED = "image_pull_s
 _DEPLOY_DISPATCH_SERVICE_REASON_CERTIFICATE_DOMAIN_MISMATCH = "certificate_domain_mismatch"
 _DEPLOY_DISPATCH_SERVICE_REASON_STALE_MANAGED_CERTIFICATE_PRESENT = "stale_managed_certificate_present"
 _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_CERTIFICATE_MISMATCH = "ingress_certificate_mismatch"
+_DEPLOY_DISPATCH_SERVICE_REASON_DEPLOYED_CONTENT_IDENTITY_MISMATCH = "deployed_content_identity_mismatch"
 _DEPLOY_WORKFLOW_MODE_SITE_REPO_TEMPLATE_V1 = "site_repo_template_v1"
 _DEPLOY_TARGET_ENVIRONMENT_SOURCE_ADMIN = "admin_config"
 _DEPLOY_DEFAULT_TARGET_ENVIRONMENT_KEY = "gke_prod"
+_MANAGED_SITE_ROLLOUT_STATE_WORKFLOW_NOT_REPUBLISHED = "managed_workflow_not_yet_republished"
+_MANAGED_SITE_ROLLOUT_STATE_REPUBLISHED_NOT_RERUN = "workflow_republished_but_deploy_not_rerun"
+_MANAGED_SITE_ROLLOUT_STATE_DEPLOY_RUNNING_LEGACY_GENERIC = "deploy_running_old_generic_image"
+_MANAGED_SITE_ROLLOUT_STATE_DEPLOY_RUNNING_EXPECTED = "deploy_running_expected_site_scoped_image"
 
 _DRAFT_PROVIDER_COMPAT_REASON_CODES = {
     "supported",
@@ -3511,6 +3516,7 @@ class SEOMigrationService:
             expected_publish_url_source=expected_publish_url_source,
             expected_publish_url_source_detail=expected_publish_url_source_detail,
         )
+        content_identity = self._resolve_deploy_content_identity(deploy_result=deploy_result)
         post_dispatch_state = _derive_post_dispatch_state(
             dispatch_attempted=dispatch_attempted,
             dispatch_result_stage=dispatch_result_stage,
@@ -3980,6 +3986,12 @@ class SEOMigrationService:
             "resolved_live_url": resolved_live_url,
             "url_source": resolved_live_url_source,
             "url_source_detail": resolved_live_url_source_detail,
+            "site_runtime_image_reference": content_identity.get("site_runtime_image_reference"),
+            "site_runtime_image_repository": content_identity.get("site_runtime_image_repository"),
+            "site_runtime_image_tag": content_identity.get("site_runtime_image_tag"),
+            "site_runtime_source_commit": content_identity.get("site_runtime_source_commit"),
+            "site_runtime_content_source": content_identity.get("site_runtime_content_source"),
+            "site_runtime_image_selection_mode": content_identity.get("site_runtime_image_selection_mode"),
         }
         workspace.deploy_history_json = _append_history_item(
             workspace.deploy_history_json,
@@ -5071,6 +5083,19 @@ class SEOMigrationService:
             expected_publish_url_source=_MIGRATION_URL_SOURCE_UNKNOWN,
             expected_publish_url_source_detail=None,
         )
+        refreshed_content_identity = self._resolve_deploy_content_identity(deploy_result=refresh_result)
+        for content_field in (
+            "site_runtime_image_reference",
+            "site_runtime_image_repository",
+            "site_runtime_image_tag",
+            "site_runtime_source_commit",
+            "site_runtime_content_source",
+            "site_runtime_image_selection_mode",
+        ):
+            content_value = refreshed_content_identity.get(content_field)
+            if content_value and next_item.get(content_field) != content_value:
+                next_item[content_field] = content_value
+                updated = True
         if candidate_url_source not in {_MIGRATION_URL_SOURCE_DEPLOY_RESULT, _MIGRATION_URL_SOURCE_WORKFLOW_OUTPUT}:
             candidate_live_url = None
             candidate_url_source = _MIGRATION_URL_SOURCE_UNKNOWN
@@ -5313,6 +5338,30 @@ class SEOMigrationService:
             "resolved_live_url": existing_live_url,
             "url_source": existing_url_source,
             "url_source_detail": existing_url_source_detail,
+            "site_runtime_image_reference": _normalize_string(
+                next_item.get("site_runtime_image_reference"),
+                max_length=255,
+            ),
+            "site_runtime_image_repository": _normalize_string(
+                next_item.get("site_runtime_image_repository"),
+                max_length=220,
+            ),
+            "site_runtime_image_tag": _normalize_string(
+                next_item.get("site_runtime_image_tag"),
+                max_length=120,
+            ),
+            "site_runtime_source_commit": _normalize_string(
+                next_item.get("site_runtime_source_commit"),
+                max_length=80,
+            ),
+            "site_runtime_content_source": _normalize_string(
+                next_item.get("site_runtime_content_source"),
+                max_length=80,
+            ),
+            "site_runtime_image_selection_mode": _normalize_string(
+                next_item.get("site_runtime_image_selection_mode"),
+                max_length=40,
+            ),
             "updated": updated,
         }
         if refreshed_at:
@@ -10234,6 +10283,45 @@ class SEOMigrationService:
 
         return None, _MIGRATION_URL_SOURCE_UNKNOWN, None
 
+    def _resolve_deploy_content_identity(self, *, deploy_result: object) -> dict[str, str | None]:
+        workflow_output_payload = _normalize_history_inputs(getattr(deploy_result, "workflow_output", {}))
+        if not workflow_output_payload:
+            workflow_output_payload = _normalize_history_inputs(getattr(deploy_result, "workflow_outputs", {}))
+        if not workflow_output_payload:
+            workflow_output_payload = _normalize_history_inputs(getattr(deploy_result, "outputs", {}))
+        image_reference = _normalize_string(
+            workflow_output_payload.get("site_runtime_image_reference"),
+            max_length=255,
+        )
+        image_repository = _normalize_string(
+            workflow_output_payload.get("site_runtime_image_repository"),
+            max_length=220,
+        )
+        image_tag = _normalize_string(
+            workflow_output_payload.get("site_runtime_image_tag"),
+            max_length=120,
+        )
+        source_commit = _normalize_string(
+            workflow_output_payload.get("site_runtime_source_commit"),
+            max_length=80,
+        )
+        content_source = _normalize_string(
+            workflow_output_payload.get("site_runtime_content_source"),
+            max_length=80,
+        )
+        selection_mode = _normalize_string(
+            workflow_output_payload.get("site_runtime_image_selection_mode"),
+            max_length=40,
+        )
+        return {
+            "site_runtime_image_reference": image_reference,
+            "site_runtime_image_repository": image_repository,
+            "site_runtime_image_tag": image_tag,
+            "site_runtime_source_commit": source_commit,
+            "site_runtime_content_source": content_source,
+            "site_runtime_image_selection_mode": selection_mode,
+        }
+
     def _resolve_latest_deploy_live_url(
         self,
         *,
@@ -10760,6 +10848,25 @@ class SEOMigrationService:
             ) or _derive_post_conformance_remediation_message(
                 post_conformance_stage=post_conformance_stage
             )
+            site_runtime_image_reference = _normalize_string(
+                item.get("site_runtime_image_reference"),
+                max_length=255,
+            )
+            site_runtime_image_repository = _normalize_string(
+                item.get("site_runtime_image_repository"),
+                max_length=220,
+            )
+            site_runtime_image_tag = _normalize_string(
+                item.get("site_runtime_image_tag"),
+                max_length=120,
+            )
+            if site_runtime_image_repository is None and site_runtime_image_reference:
+                (
+                    site_runtime_image_repository,
+                    derived_runtime_image_tag,
+                ) = _derive_container_image_identity(site_runtime_image_reference)
+                if site_runtime_image_tag is None:
+                    site_runtime_image_tag = derived_runtime_image_tag
             return {
                 "deploy_trace_id": _normalize_string(item.get("deploy_trace_id"), max_length=80),
                 "workflow_identifier": _derive_workflow_identifier(
@@ -10925,6 +11032,21 @@ class SEOMigrationService:
                     bool(item.get("managed_namespace_policies_aligned"))
                     if isinstance(item.get("managed_namespace_policies_aligned"), bool)
                     else None
+                ),
+                "site_runtime_image_reference": site_runtime_image_reference,
+                "site_runtime_image_repository": site_runtime_image_repository,
+                "site_runtime_image_tag": site_runtime_image_tag,
+                "site_runtime_source_commit": _normalize_string(
+                    item.get("site_runtime_source_commit"),
+                    max_length=80,
+                ),
+                "site_runtime_content_source": _normalize_string(
+                    item.get("site_runtime_content_source"),
+                    max_length=80,
+                ),
+                "site_runtime_image_selection_mode": _normalize_string(
+                    item.get("site_runtime_image_selection_mode"),
+                    max_length=40,
                 ),
             }
         return {}
@@ -11856,6 +11978,16 @@ class SEOMigrationService:
                 action="deploy",
                 blocker_codes=blocker_codes,
             )
+        managed_site_rollout = _derive_managed_site_rollout_state(
+            deploy_workflow_mode=target_summary.get("deploy_workflow_mode"),
+            repo_owner=target_summary.get("repo_owner"),
+            repo_name=target_summary.get("repo_name"),
+            managed_gke_config_details=target_summary.get("managed_gke_config_details"),
+            latest_traceability=latest_traceability,
+            workspace=workspace,
+        )
+        if managed_site_rollout:
+            target_summary.update(managed_site_rollout)
         workflow_dispatch_supported = (
             bool(latest_traceability.get("workflow_dispatch_supported"))
             if isinstance(latest_traceability.get("workflow_dispatch_supported"), bool)
@@ -11950,6 +12082,30 @@ class SEOMigrationService:
             "last_workflow_run_failure_stage": latest_traceability.get("workflow_run_failure_stage"),
             "last_workflow_run_failure_step": latest_traceability.get("workflow_run_failure_step"),
             "last_workflow_run_failure_hint": latest_traceability.get("workflow_run_failure_hint"),
+            "managed_site_rollout_state": managed_site_rollout.get("managed_site_rollout_state"),
+            "managed_site_rollout_message": managed_site_rollout.get("managed_site_rollout_message"),
+            "managed_site_rollout_fix_active": managed_site_rollout.get("managed_site_rollout_fix_active"),
+            "managed_site_rollout_expected_image_repository": managed_site_rollout.get(
+                "managed_site_rollout_expected_image_repository"
+            ),
+            "managed_site_rollout_manifest_image_reference": managed_site_rollout.get(
+                "managed_site_rollout_manifest_image_reference"
+            ),
+            "managed_site_rollout_manifest_image_repository": managed_site_rollout.get(
+                "managed_site_rollout_manifest_image_repository"
+            ),
+            "managed_site_rollout_observed_deploy_image_reference": managed_site_rollout.get(
+                "managed_site_rollout_observed_deploy_image_reference"
+            ),
+            "managed_site_rollout_observed_deploy_image_repository": managed_site_rollout.get(
+                "managed_site_rollout_observed_deploy_image_repository"
+            ),
+            "managed_site_rollout_observed_deploy_legacy_generic": managed_site_rollout.get(
+                "managed_site_rollout_observed_deploy_legacy_generic"
+            ),
+            "managed_site_rollout_published_after_last_deploy": managed_site_rollout.get(
+                "managed_site_rollout_published_after_last_deploy"
+            ),
             "target": target_summary,
             "config_prerequisites": {
                 "github_publisher_configured": self.github_publisher_configured,
@@ -12644,6 +12800,7 @@ def _normalize_dispatch_service_reason_code(value: object) -> str | None:
         _DEPLOY_DISPATCH_SERVICE_REASON_CERTIFICATE_DOMAIN_MISMATCH,
         _DEPLOY_DISPATCH_SERVICE_REASON_STALE_MANAGED_CERTIFICATE_PRESENT,
         _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_CERTIFICATE_MISMATCH,
+        _DEPLOY_DISPATCH_SERVICE_REASON_DEPLOYED_CONTENT_IDENTITY_MISMATCH,
     }:
         return normalized_lower
     if normalized_lower in {
@@ -13119,6 +13276,7 @@ def _derive_dispatch_service_reason_code(
         _DEPLOY_DISPATCH_SERVICE_REASON_CERTIFICATE_DOMAIN_MISMATCH,
         _DEPLOY_DISPATCH_SERVICE_REASON_STALE_MANAGED_CERTIFICATE_PRESENT,
         _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_CERTIFICATE_MISMATCH,
+        _DEPLOY_DISPATCH_SERVICE_REASON_DEPLOYED_CONTENT_IDENTITY_MISMATCH,
     }:
         return runtime_reason
     if not target_valid:
@@ -13187,6 +13345,11 @@ def _derive_managed_gke_dispatch_readiness_message(*, dispatch_service_reason_co
         return (
             "Ingress is referencing the wrong managed certificate for this site hostname. "
             "Republish/deploy after admin verification of ingress certificate annotations."
+        )
+    if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_DEPLOYED_CONTENT_IDENTITY_MISMATCH:
+        return (
+            "Managed deployment manifest image identity does not match this site/repo target. "
+            "Republish managed deploy files before redeploy so site-specific runtime image identity is restored."
         )
     return None
 
@@ -13257,6 +13420,11 @@ def _derive_deploy_failure_remediation_hint(
         return (
             "Ingress managed-certificate annotation does not match this site's expected certificate. "
             "Republish/deploy after correcting managed ingress/certificate resources."
+        )
+    if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_DEPLOYED_CONTENT_IDENTITY_MISMATCH:
+        return (
+            "Infrastructure may be healthy but deployed content identity is wrong for this site. "
+            "Republish managed deploy files before redeploy to restore site-specific runtime image identity."
         )
     if (
         normalized_reason == _DEPLOY_TARGET_REASON_WORKFLOW_NOT_DISPATCHABLE
@@ -14029,6 +14197,226 @@ def _parse_iso8601_datetime(value: object) -> datetime | None:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed
+
+
+def _safe_image_repo_fragment(value: object, *, max_length: int = 80) -> str | None:
+    raw = _normalize_string(value, max_length=max_length)
+    if raw is None:
+        return None
+    cleaned = "".join(character.lower() if character.isalnum() else "-" for character in raw)
+    while "--" in cleaned:
+        cleaned = cleaned.replace("--", "-")
+    cleaned = cleaned.strip("-")
+    return cleaned or None
+
+
+def _derive_expected_site_runtime_image_repository(*, repo_owner: object, repo_name: object) -> str | None:
+    owner_fragment = _safe_image_repo_fragment(repo_owner, max_length=80)
+    repo_fragment = _safe_image_repo_fragment(repo_name, max_length=80)
+    if owner_fragment is None or repo_fragment is None:
+        return None
+    return f"ghcr.io/{owner_fragment}/{repo_fragment}-site-web"
+
+
+def _derive_container_image_identity(image_reference: object) -> tuple[str | None, str | None]:
+    raw = _normalize_string(image_reference, max_length=255)
+    if raw is None:
+        return None, None
+    without_digest = raw.split("@", 1)[0]
+    if not without_digest:
+        return None, None
+    last_slash = without_digest.rfind("/")
+    last_colon = without_digest.rfind(":")
+    if last_colon > last_slash:
+        repository = without_digest[:last_colon].strip().lower() or None
+        tag = without_digest[last_colon + 1 :].strip() or None
+    else:
+        repository = without_digest.strip().lower() or None
+        tag = None
+    return repository, tag
+
+
+def _is_legacy_generic_site_runtime_image_repository(
+    *,
+    image_repository: object,
+    repo_owner: object,
+) -> bool:
+    normalized_repository = _normalize_string(image_repository, max_length=220)
+    if normalized_repository is None:
+        return False
+    repository_value = normalized_repository.lower()
+    owner_fragment = _safe_image_repo_fragment(repo_owner, max_length=80)
+    if owner_fragment is None:
+        return False
+    return repository_value in {
+        f"ghcr.io/{owner_fragment}/site-web",
+        "ghcr.io/mhanson13/site-web",
+    }
+
+
+def _is_publish_newer_than_deploy(*, workspace: SEOMigrationWorkspace) -> bool:
+    published_at_raw = workspace.last_published_at if isinstance(workspace.last_published_at, datetime) else None
+    deployed_at_raw = workspace.last_deployed_at if isinstance(workspace.last_deployed_at, datetime) else None
+    published_at = _normalize_datetime_utc(published_at_raw)
+    deployed_at = _normalize_datetime_utc(deployed_at_raw)
+    if published_at is None:
+        return False
+    if deployed_at is None:
+        return True
+    return published_at > deployed_at
+
+
+def _normalize_datetime_utc(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _derive_managed_site_rollout_state(
+    *,
+    deploy_workflow_mode: object,
+    repo_owner: object,
+    repo_name: object,
+    managed_gke_config_details: object,
+    latest_traceability: dict[str, object],
+    workspace: SEOMigrationWorkspace,
+) -> dict[str, object]:
+    normalized_mode = _normalize_string(deploy_workflow_mode, max_length=60)
+    if normalized_mode != _DEPLOY_WORKFLOW_MODE_SITE_REPO_TEMPLATE_V1:
+        return {}
+
+    managed_details = _normalize_json_dict(managed_gke_config_details)
+    expected_repository = _normalize_string(
+        managed_details.get("site_runtime_image_repository_expected"),
+        max_length=220,
+    ) or _derive_expected_site_runtime_image_repository(
+        repo_owner=repo_owner,
+        repo_name=repo_name,
+    )
+    observed_manifest_reference = _normalize_string(
+        managed_details.get("site_runtime_image_reference_observed"),
+        max_length=255,
+    )
+    observed_manifest_repository = _normalize_string(
+        managed_details.get("site_runtime_image_repository_observed"),
+        max_length=220,
+    )
+    observed_manifest_tag = _normalize_string(
+        managed_details.get("site_runtime_image_tag_observed"),
+        max_length=120,
+    )
+    if observed_manifest_repository is None and observed_manifest_reference:
+        (
+            observed_manifest_repository,
+            derived_manifest_tag,
+        ) = _derive_container_image_identity(observed_manifest_reference)
+        if observed_manifest_tag is None:
+            observed_manifest_tag = derived_manifest_tag
+
+    observed_manifest_legacy = (
+        bool(managed_details.get("site_runtime_image_legacy_generic_detected"))
+        if isinstance(managed_details.get("site_runtime_image_legacy_generic_detected"), bool)
+        else _is_legacy_generic_site_runtime_image_repository(
+            image_repository=observed_manifest_repository,
+            repo_owner=repo_owner,
+        )
+    )
+
+    observed_deploy_reference = _normalize_string(
+        latest_traceability.get("site_runtime_image_reference"),
+        max_length=255,
+    )
+    observed_deploy_repository = _normalize_string(
+        latest_traceability.get("site_runtime_image_repository"),
+        max_length=220,
+    )
+    observed_deploy_tag = _normalize_string(
+        latest_traceability.get("site_runtime_image_tag"),
+        max_length=120,
+    )
+    if observed_deploy_repository is None and observed_deploy_reference:
+        (
+            observed_deploy_repository,
+            derived_deploy_tag,
+        ) = _derive_container_image_identity(observed_deploy_reference)
+        if observed_deploy_tag is None:
+            observed_deploy_tag = derived_deploy_tag
+
+    observed_deploy_legacy = _is_legacy_generic_site_runtime_image_repository(
+        image_repository=observed_deploy_repository,
+        repo_owner=repo_owner,
+    )
+    manifest_matches_expected = bool(
+        expected_repository
+        and observed_manifest_repository
+        and observed_manifest_repository.lower() == expected_repository.lower()
+    )
+    deploy_matches_expected = bool(
+        expected_repository
+        and observed_deploy_repository
+        and observed_deploy_repository.lower() == expected_repository.lower()
+    )
+    published_after_last_deploy = _is_publish_newer_than_deploy(workspace=workspace)
+
+    rollout_state: str
+    rollout_message: str
+    if (
+        observed_manifest_repository
+        and expected_repository
+        and observed_manifest_repository.lower() != expected_repository.lower()
+    ) or observed_manifest_legacy:
+        rollout_state = _MANAGED_SITE_ROLLOUT_STATE_WORKFLOW_NOT_REPUBLISHED
+        rollout_message = (
+            "Managed workflow/manifests are still on the legacy generic runtime image path. "
+            "Republish this site before redeploy."
+        )
+    elif deploy_matches_expected:
+        rollout_state = _MANAGED_SITE_ROLLOUT_STATE_DEPLOY_RUNNING_EXPECTED
+        rollout_message = (
+            "Observed deployment image matches the expected site-scoped runtime image."
+        )
+    elif manifest_matches_expected and published_after_last_deploy:
+        rollout_state = _MANAGED_SITE_ROLLOUT_STATE_REPUBLISHED_NOT_RERUN
+        rollout_message = (
+            "Managed workflow was republished, but deploy has not been rerun since republish. "
+            "Redeploy to activate the site-scoped runtime image."
+        )
+    elif observed_deploy_legacy:
+        rollout_state = _MANAGED_SITE_ROLLOUT_STATE_DEPLOY_RUNNING_LEGACY_GENERIC
+        rollout_message = (
+            "Last observed deploy is still running a legacy generic runtime image. "
+            "Republish and redeploy this site."
+        )
+    elif manifest_matches_expected:
+        rollout_state = _MANAGED_SITE_ROLLOUT_STATE_REPUBLISHED_NOT_RERUN
+        rollout_message = (
+            "Managed workflow appears republished, but observed deploy image evidence does not yet confirm "
+            "the site-scoped runtime image. Redeploy and refresh status."
+        )
+    else:
+        rollout_state = _MANAGED_SITE_ROLLOUT_STATE_WORKFLOW_NOT_REPUBLISHED
+        rollout_message = (
+            "Managed workflow image identity does not yet match the expected site-scoped runtime image path. "
+            "Republish before redeploy."
+        )
+
+    return {
+        "managed_site_rollout_state": rollout_state,
+        "managed_site_rollout_message": rollout_message,
+        "managed_site_rollout_expected_image_repository": expected_repository,
+        "managed_site_rollout_manifest_image_reference": observed_manifest_reference,
+        "managed_site_rollout_manifest_image_repository": observed_manifest_repository,
+        "managed_site_rollout_manifest_image_tag": observed_manifest_tag,
+        "managed_site_rollout_manifest_legacy_generic": observed_manifest_legacy,
+        "managed_site_rollout_observed_deploy_image_reference": observed_deploy_reference,
+        "managed_site_rollout_observed_deploy_image_repository": observed_deploy_repository,
+        "managed_site_rollout_observed_deploy_image_tag": observed_deploy_tag,
+        "managed_site_rollout_observed_deploy_legacy_generic": observed_deploy_legacy,
+        "managed_site_rollout_published_after_last_deploy": published_after_last_deploy,
+        "managed_site_rollout_fix_active": rollout_state == _MANAGED_SITE_ROLLOUT_STATE_DEPLOY_RUNNING_EXPECTED,
+    }
 
 
 def _build_active_duplicate_deploy_message(

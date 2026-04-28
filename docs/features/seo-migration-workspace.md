@@ -1048,7 +1048,12 @@ Deploy behavior:
   - apply managed manifests (`kubectl apply -f k8s/`)
   - verify rollout (`kubectl rollout status deployment/site-web --namespace <derived-namespace>`)
   - managed `site-web` deployment template references `imagePullSecrets: [{name: ghcr-pull-secret}]` only in optional private-image auth mode
-  - managed `site-web` runtime image repository is deterministic: `ghcr.io/<target-repo-owner>/site-web`
+  - managed `site-web` runtime image repository is deterministic and site-scoped:
+    - `ghcr.io/<target-repo-owner>/<target-repo-name>-site-web`
+    - examples:
+      - `sc-mechanical.site.mbsrn.com` -> `ghcr.io/mhanson13/scmechanical-site-web`
+      - `tnmfire.site.mbsrn.com` -> `ghcr.io/mhanson13/tnmfire-site-web`
+      - `lars-construction.site.mbsrn.com` -> `ghcr.io/mhanson13/lars-construction-site-web`
   - managed `site-web` deployment template pins runtime serving env for health-check parity:
     - `HOSTNAME=0.0.0.0`
     - `PORT=8080`
@@ -1063,12 +1068,35 @@ Deploy behavior:
   - managed workflow emits and logs the selected runtime image metadata:
     - `site_runtime_image_reference`
     - `site_runtime_image_selection_mode` (`immutable_sha` or `fallback_latest`)
-  - platform CI publishes this runtime image contract on `main` for `frontend/www` changes (`publish-site-web-image.yml`) with tags:
-    - `ghcr.io/<owner>/site-web:latest`
-    - `ghcr.io/<owner>/site-web:<git-sha>`
+  - managed deploy workflow builds and pushes site runtime content from the target repository itself on each deploy run:
+    - `ghcr.io/<owner>/<repo>-site-web:latest`
+    - `ghcr.io/<owner>/<repo>-site-web:<git-sha>`
+    - this prevents cross-site content identity drift caused by shared generic runtime artifacts.
+  - deploy readiness surfaces `dispatch_service_reason_code=deployed_content_identity_mismatch` when rendered deployment image identity does not match the selected repo owner/name tuple.
+  - deploy readiness also surfaces managed-site rollout safety state for post-fix rollout tracking:
+    - `managed_workflow_not_yet_republished`
+    - `workflow_republished_but_deploy_not_rerun`
+    - `deploy_running_old_generic_image`
+    - `deploy_running_expected_site_scoped_image`
   - if rollout times out, workflow emits bounded namespace-scoped diagnostics (`get deployment/rs/pods`, `describe deployment/pods`, recent `site-web` logs) plus concise likely-blocker hints (image pull, private registry auth, crash/probe, config/secret reference, scheduling/resource)
     - hint precedence is describe-event-first: image-pull blockers suppress crash/probe hints unless direct current describe evidence shows a started container failure
   - verify service/ingress presence
+
+Post-fix rollout for existing managed sites:
+- Existing sites created before the site-scoped runtime image fix must run this sequence:
+  1. publish (non-dry-run) to republish managed workflow/manifests
+  2. deploy (non-dry-run) to apply the republished workflow and image identity
+  3. refresh deploy status to capture observed runtime image evidence
+- Do not treat the fix as active until observed deployment evidence matches expected image repository:
+  - expected: `ghcr.io/<owner>/<repo>-site-web:<sha-or-latest>`
+  - legacy generic examples to treat as not fixed:
+    - `ghcr.io/mhanson13/site-web:latest`
+    - `ghcr.io/<owner>/site-web:latest`
+- Operator diagnostics map:
+  - `managed_workflow_not_yet_republished`: republish first
+  - `workflow_republished_but_deploy_not_rerun`: redeploy after republish
+  - `deploy_running_old_generic_image`: redeploy is still on legacy generic image
+  - `deploy_running_expected_site_scoped_image`: fix is active
 - required managed deploy configuration contract for real deploy execution:
   - admin-owned managed GKE settings in MBSRN GitHub publish configuration:
     - `managed_gke_cluster_name`
