@@ -247,6 +247,10 @@ _DEPLOY_RUN_FAILURE_REASON_TIMED_OUT = "workflow_run_timed_out"
 _DEPLOY_RUN_FAILURE_REASON_GENERIC = "workflow_run_failed"
 _DEPLOY_RUN_FAILURE_REASON_TRACKING_LOST = "workflow_run_tracking_lost"
 _DEPLOY_RUN_FAILURE_REASON_RECONCILIATION_TIMEOUT = "workflow_reconciliation_timeout"
+_DEPLOY_RUN_FAILURE_REASON_BACKENDCONFIG_HEALTH_CHECK_MISMATCH = "backendconfig_health_check_mismatch"
+_DEPLOY_RUN_FAILURE_REASON_INGRESS_BACKEND_UNHEALTHY = "ingress_backend_unhealthy"
+_DEPLOY_RUN_FAILURE_REASON_PUBLIC_IMAGE_PULL_FAILED = "public_image_pull_failed"
+_DEPLOY_RUN_FAILURE_REASON_PRIVATE_IMAGE_PULL_FORBIDDEN = "private_image_pull_forbidden"
 _DEPLOY_RUN_FAILURE_STAGE_GCP_AUTH = "gcp_auth"
 _DEPLOY_RUN_FAILURE_STAGE_CLUSTER_CREDENTIALS = "cluster_credentials"
 _DEPLOY_RUN_FAILURE_STAGE_MANIFEST_APPLY = "manifest_apply"
@@ -506,6 +510,7 @@ class SEOMigrationService:
         deploy_secret_git_userid: str | None = None,
         deploy_secret_git_email: str | None = None,
         deploy_secret_git_token: str | None = None,
+        managed_site_private_image_auth_enabled: bool = False,
     ) -> None:
         self.session = session
         self.business_repository = business_repository
@@ -565,6 +570,7 @@ class SEOMigrationService:
         self.deploy_secret_git_userid = (deploy_secret_git_userid or "").strip() or None
         self.deploy_secret_git_email = (deploy_secret_git_email or "").strip() or None
         self.deploy_secret_git_token = (deploy_secret_git_token or "").strip() or None
+        self.managed_site_private_image_auth_enabled = bool(managed_site_private_image_auth_enabled)
         self.runtime_build_metadata = get_runtime_build_metadata()
         self._resolved_migration_draft_timeout_seconds = _MIGRATION_DRAFT_TIMEOUT_DEFAULT_SECONDS
         self._resolved_migration_draft_timeout_source = "default"
@@ -1286,6 +1292,9 @@ class SEOMigrationService:
                 workflow_identifier = str(
                     deploy_target_for_workflow.get("workflow_id") or self.deploy_default_workflow_id
                 )
+                managed_image_pull_secret_config_for_provision, _ = (
+                    self._resolve_managed_image_pull_secret_runtime_config()
+                )
                 workflow_path = f".github/workflows/{workflow_identifier}"
                 self._emit_structured_service_log(
                     payload={
@@ -1330,6 +1339,7 @@ class SEOMigrationService:
                     target_environment_key=target_environment_key,
                     target_environment_source=target_environment_source,
                     managed_gke_config=_normalize_json_dict(admin_deploy_metadata.get("managed_gke_config")),
+                    managed_image_pull_secret_config=managed_image_pull_secret_config_for_provision,
                     namespace_isolation_defaults=admin_deploy_metadata.get("namespace_isolation_defaults"),
                     site_id=site.id,
                     business_id=workspace.business_id,
@@ -2599,6 +2609,9 @@ class SEOMigrationService:
                 managed_image_pull_secret_config_for_dispatch,
                 _,
             ) = self._resolve_managed_image_pull_secret_runtime_config()
+            private_image_auth_required_for_dispatch = bool(
+                managed_image_pull_secret_config_for_dispatch.get("private_image_auth_required")
+            )
             if not dry_run:
                 target_readiness = self.github_publisher.check_deploy_target_readiness(
                     target=deploy_target_for_dispatch,
@@ -2780,6 +2793,7 @@ class SEOMigrationService:
                 if (
                     deploy_workflow_mode_for_dispatch == _DEPLOY_WORKFLOW_MODE_SITE_REPO_TEMPLATE_V1
                     and dispatch_namespace
+                    and private_image_auth_required_for_dispatch
                 ):
                     deploy_secret_value_for_provision, _, _ = self._resolve_deploy_secret_for_propagation()
                     self.github_publisher.provision_managed_image_pull_secret(
@@ -9194,12 +9208,17 @@ class SEOMigrationService:
         git_userid = (self.deploy_secret_git_userid or "").strip()
         git_email = (self.deploy_secret_git_email or "").strip()
         git_token = (self.deploy_secret_git_token or "").strip()
+        private_image_auth_required = bool(self.managed_site_private_image_auth_enabled)
         payload: dict[str, object] = {
             "git_userid_configured": bool(git_userid),
             "git_email_configured": bool(git_email),
             "git_token_configured": bool(git_token),
             "config_source": "control_plane_runtime",
+            "private_image_auth_required": private_image_auth_required,
+            "image_pull_auth_mode": "private" if private_image_auth_required else "public",
         }
+        if not private_image_auth_required:
+            return payload, None
         missing_fields: list[str] = []
         if not git_userid:
             missing_fields.append("git_userid")
@@ -12577,6 +12596,10 @@ def _normalize_workflow_run_failure_reason_code(value: object) -> str | None:
         _DEPLOY_RUN_FAILURE_REASON_GENERIC,
         _DEPLOY_RUN_FAILURE_REASON_TRACKING_LOST,
         _DEPLOY_RUN_FAILURE_REASON_RECONCILIATION_TIMEOUT,
+        _DEPLOY_RUN_FAILURE_REASON_BACKENDCONFIG_HEALTH_CHECK_MISMATCH,
+        _DEPLOY_RUN_FAILURE_REASON_INGRESS_BACKEND_UNHEALTHY,
+        _DEPLOY_RUN_FAILURE_REASON_PUBLIC_IMAGE_PULL_FAILED,
+        _DEPLOY_RUN_FAILURE_REASON_PRIVATE_IMAGE_PULL_FORBIDDEN,
     }
     if normalized_lower in allowed:
         return normalized_lower
@@ -13141,14 +13164,14 @@ def _derive_managed_gke_dispatch_readiness_message(*, dispatch_service_reason_co
         )
     if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_IMAGE_PULL_SECRET_MISSING:
         return (
-            "Admin action required: managed deploy target is missing required GHCR pull credentials "
-            "(GIT_USERID, GIT_EMAIL, GIT_TOKEN). Configure MBSRN control-plane deployment settings and "
-            "verify deploy-prod projects them into the API runtime secret."
+            "Admin action required: private-image auth mode is enabled but required GHCR pull credentials "
+            "(GIT_USERID, GIT_EMAIL, GIT_TOKEN) are missing. Configure MBSRN control-plane deployment settings "
+            "and verify deploy-prod projects them into the API runtime secret."
         )
     if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_IMAGE_PULL_SECRET_NOT_REFERENCED:
         return (
-            "Managed deployment manifest is missing required image pull secret reference "
-            "(ghcr-pull-secret). Republish managed deploy manifests."
+            "Private-image auth mode is enabled, but managed deployment manifest is missing required image pull "
+            "secret reference (ghcr-pull-secret). Republish managed deploy manifests."
         )
     if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_CERTIFICATE_DOMAIN_MISMATCH:
         return (
@@ -13210,14 +13233,14 @@ def _derive_deploy_failure_remediation_hint(
         )
     if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_IMAGE_PULL_SECRET_MISSING:
         return (
-            "Managed deploy target is missing required GHCR pull credentials (GIT_USERID, GIT_EMAIL, "
-            "GIT_TOKEN). Configure MBSRN control-plane deployment settings, ensure deploy-prod projects them into "
-            "the API runtime, and retry deploy."
+            "Private-image auth mode is enabled, but required GHCR pull credentials (GIT_USERID, GIT_EMAIL, "
+            "GIT_TOKEN) are missing. Configure MBSRN control-plane deployment settings, ensure deploy-prod projects "
+            "them into the API runtime, and retry deploy."
         )
     if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_IMAGE_PULL_SECRET_NOT_REFERENCED:
         return (
-            "Managed deployment manifest is missing required image pull secret reference "
-            "(ghcr-pull-secret). Republish managed deploy manifests and retry."
+            "Private-image auth mode is enabled, but managed deployment manifest is missing required image pull "
+            "secret reference (ghcr-pull-secret). Republish managed deploy manifests and retry."
         )
     if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_CERTIFICATE_DOMAIN_MISMATCH:
         return (
@@ -13272,6 +13295,25 @@ def _derive_workflow_run_failure_hint(
         return "Applying Kubernetes manifests failed in the deploy workflow run."
     if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_ROLLOUT:
         return "Deployment rollout verification failed or timed out in the deploy workflow run."
+    if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_BACKENDCONFIG_HEALTH_CHECK_MISMATCH:
+        return (
+            "GKE BackendConfig health check path/port does not match the running site-web application "
+            "health endpoint."
+        )
+    if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_INGRESS_BACKEND_UNHEALTHY:
+        return (
+            "Ingress backend is unhealthy even though workload pods may be running; verify BackendConfig, service "
+            "endpoints, and load balancer backend health."
+        )
+    if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_PUBLIC_IMAGE_PULL_FAILED:
+        return (
+            "Public GHCR image pull failed for site-web. Verify image reference/tag exists and is readable."
+        )
+    if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_PRIVATE_IMAGE_PULL_FORBIDDEN:
+        return (
+            "Private image pull is forbidden. Verify private-image auth mode credentials and namespace pull-secret "
+            "provisioning."
+        )
     if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_INGRESS_VERIFY:
         return "Service or ingress verification failed in the deploy workflow run."
     if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_INGRESS_EVIDENCE:

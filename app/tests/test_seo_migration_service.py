@@ -351,6 +351,7 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
                 str | None,
                 str | None,
                 dict[str, object] | None,
+                dict[str, object] | None,
                 str | None,
                 str | None,
                 str | None,
@@ -756,6 +757,7 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         target_environment_key: str | None = None,
         target_environment_source: str | None = None,
         managed_gke_config: dict[str, object] | None = None,
+        managed_image_pull_secret_config: dict[str, object] | None = None,
         namespace_isolation_defaults: dict[str, object] | None = None,
         site_id: str | None = None,
         business_id: str | None = None,
@@ -773,6 +775,7 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
                 target_environment_key,
                 target_environment_source,
                 managed_gke_config,
+                managed_image_pull_secret_config,
                 namespace_isolation_defaults,
                 site_id,
                 business_id,
@@ -938,6 +941,7 @@ def _build_service(
     deploy_secret_git_userid: str | None = None,
     deploy_secret_git_email: str | None = None,
     deploy_secret_git_token: str | None = None,
+    managed_site_private_image_auth_enabled: bool = False,
 ) -> SEOMigrationService:
     github_publish_config_service = GitHubPublishConfigService(
         session=db_session,
@@ -966,6 +970,7 @@ def _build_service(
         deploy_secret_git_userid=deploy_secret_git_userid,
         deploy_secret_git_email=deploy_secret_git_email,
         deploy_secret_git_token=deploy_secret_git_token,
+        managed_site_private_image_auth_enabled=managed_site_private_image_auth_enabled,
     )
 
 
@@ -1013,7 +1018,9 @@ def test_managed_image_pull_secret_runtime_config_reads_control_plane_runtime_va
     assert "missing_fields" not in payload
 
 
-def test_managed_image_pull_secret_runtime_config_reports_missing_runtime_projection(db_session) -> None:
+def test_managed_image_pull_secret_runtime_config_allows_missing_runtime_projection_in_public_mode(
+    db_session,
+) -> None:
     service = _build_service(
         db_session,
         _StaticMigrationProvider(_build_publishable_output()),
@@ -1024,11 +1031,33 @@ def test_managed_image_pull_secret_runtime_config_reports_missing_runtime_projec
 
     payload, reason_code = service._resolve_managed_image_pull_secret_runtime_config()
 
-    assert reason_code == "image_pull_secret_missing"
+    assert reason_code is None
     assert payload.get("config_source") == "control_plane_runtime"
     assert payload.get("git_userid_configured") is False
     assert payload.get("git_email_configured") is False
     assert payload.get("git_token_configured") is False
+    assert payload.get("private_image_auth_required") is False
+    assert payload.get("image_pull_auth_mode") == "public"
+    assert "missing_fields" not in payload
+
+
+def test_managed_image_pull_secret_runtime_config_requires_runtime_projection_in_private_mode(
+    db_session,
+) -> None:
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        deploy_secret_git_userid=None,
+        deploy_secret_git_email=None,
+        deploy_secret_git_token=None,
+        managed_site_private_image_auth_enabled=True,
+    )
+
+    payload, reason_code = service._resolve_managed_image_pull_secret_runtime_config()
+
+    assert reason_code == "image_pull_secret_missing"
+    assert payload.get("private_image_auth_required") is True
+    assert payload.get("image_pull_auth_mode") == "private"
     assert sorted(payload.get("missing_fields") or []) == [
         "git_email",
         "git_token",
@@ -4331,8 +4360,9 @@ def test_publish_provisions_missing_deploy_workflow_once(db_session, caplog) -> 
     )
     assert isinstance(workflow_call[8], dict)
     assert isinstance(workflow_call[9], dict)
-    assert workflow_call[10] == site_id
-    assert workflow_call[13] == artifact.id
+    assert isinstance(workflow_call[10], dict)
+    assert workflow_call[11] == site_id
+    assert workflow_call[14] == artifact.id
     assert result.result.get("deploy_workflow_provisioned") is True
     assert result.result.get("deploy_workflow_id") == "deploy-tnmfire-www-prod.yml"
     assert result.result.get("deploy_workflow_path") == ".github/workflows/deploy-tnmfire-www-prod.yml"
@@ -4480,8 +4510,9 @@ def test_publish_does_not_overwrite_existing_deploy_workflow(db_session, caplog)
     )
     assert isinstance(workflow_call[8], dict)
     assert isinstance(workflow_call[9], dict)
-    assert workflow_call[10] == site_id
-    assert workflow_call[13] == artifact.id
+    assert isinstance(workflow_call[10], dict)
+    assert workflow_call[11] == site_id
+    assert workflow_call[14] == artifact.id
     assert result.result.get("deploy_workflow_provisioned") is False
     provision_logs = [
         record
@@ -7290,7 +7321,7 @@ def test_runtime_credential_missing_reason_is_exposed_in_publish_readiness(db_se
         ),
         (
             "image_pull_secret_missing",
-            "managed deploy target is missing required ghcr pull credentials",
+            "private-image auth mode is enabled",
         ),
         (
             "image_pull_secret_not_referenced",

@@ -17,6 +17,7 @@ from app.integrations.seo_migration_github_publisher import (
     SEOMigrationGitHubPublishTarget,
     SEOMigrationGitHubPublisherError,
     _derive_site_runtime_image_repository,
+    _render_managed_deploy_workflow_yaml,
     _render_managed_gke_manifest_files,
     _classify_rollout_blocker_hints_from_describe_outputs,
     derive_site_kubernetes_namespace,
@@ -1497,7 +1498,9 @@ def test_classify_rollout_blockers_prioritizes_private_registry_auth_without_cra
             "Warning  Failed  kubelet  Failed to pull image \"ghcr.io/mhanson13/site-web:latest\": failed to fetch anonymous token: 403 Forbidden\n"
             "Warning  Failed  kubelet  pull access denied\n"
         ),
+        private_image_auth_required=True,
     )
+    assert "private_image_pull_forbidden" in hints
     assert "image_pull_forbidden" in hints
     assert "image_pull_secret_not_referenced" in hints
     assert "image_pull_failure" in hints
@@ -1512,10 +1515,24 @@ def test_classify_rollout_blockers_reports_missing_pull_secret() -> None:
             "Warning  Failed  kubelet  FailedToRetrieveImagePullSecret\n"
             "Warning  Failed  kubelet  secret \"ghcr-pull-secret\" not found for image pull\n"
         ),
+        private_image_auth_required=True,
     )
     assert "image_pull_secret_missing" in hints
     assert "image_pull_forbidden" not in hints
     assert "pod_crash_or_startup_failure" not in hints
+
+
+def test_classify_rollout_blockers_reports_public_image_pull_failed_in_public_mode() -> None:
+    hints = _classify_rollout_blocker_hints_from_describe_outputs(
+        deployment_describe_output="",
+        pods_describe_output=(
+            "Warning  Failed  kubelet  Failed to pull image \"ghcr.io/mhanson13/site-web:latest\": failed to fetch anonymous token: 403 Forbidden\n"
+            "Warning  Failed  kubelet  pull access denied\n"
+        ),
+    )
+    assert "public_image_pull_failed" in hints
+    assert "image_pull_secret_missing" not in hints
+    assert "image_pull_secret_not_referenced" not in hints
 
 
 def test_classify_rollout_blockers_reports_real_crash_after_container_start() -> None:
@@ -1565,6 +1582,19 @@ def test_classify_rollout_blockers_suppresses_crash_probe_when_current_blocker_i
     assert "container_image_not_found" in hints
     assert "pod_crash_or_startup_failure" not in hints
     assert "readiness_or_liveness_probe_failure" not in hints
+
+
+def test_classify_rollout_blockers_reports_backendconfig_and_ingress_backend_health_hints() -> None:
+    hints = _classify_rollout_blocker_hints_from_describe_outputs(
+        deployment_describe_output=(
+            "Events:\n"
+            "  Warning  Sync  ingress-gce  ingress backend service unhealthy\n"
+            "  Warning  Sync  ingress-gce  BackendConfig healthCheck path mismatch requestPath=/healthz\n"
+        ),
+        pods_describe_output="",
+    )
+    assert "ingress_backend_unhealthy" in hints
+    assert "backendconfig_health_check_mismatch" in hints
 
 
 def test_upsert_actions_secret_creates_secret_when_missing(monkeypatch) -> None:
@@ -2708,6 +2738,7 @@ def test_check_deploy_target_readiness_flags_missing_image_pull_secret_credentia
             "project_id": "mbsrn-prod",
         },
         managed_image_pull_secret_config={
+            "private_image_auth_required": True,
             "git_userid_configured": False,
             "git_email_configured": False,
             "git_token_configured": False,
@@ -2836,6 +2867,7 @@ def test_check_deploy_target_readiness_flags_image_pull_secret_not_referenced(mo
             "project_id": "mbsrn-prod",
         },
         managed_image_pull_secret_config={
+            "private_image_auth_required": True,
             "git_userid_configured": True,
             "git_email_configured": True,
             "git_token_configured": True,
@@ -2847,6 +2879,26 @@ def test_check_deploy_target_readiness_flags_image_pull_secret_not_referenced(mo
     assert details.get("image_pull_secret_name") == "ghcr-pull-secret"
     assert details.get("image_pull_secret_referenced") is False
     assert not any("/actions/secrets/" in path for _, path in calls)
+
+
+def test_validate_managed_image_pull_secret_config_public_mode_allows_missing_git_credentials() -> None:
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+
+    reason_code, missing_fields, _, details = publisher._validate_managed_image_pull_secret_config(
+        managed_image_pull_secret_config={
+            "private_image_auth_required": False,
+            "git_userid_configured": False,
+            "git_email_configured": False,
+            "git_token_configured": False,
+            "config_source": "control_plane_runtime",
+        }
+    )
+
+    assert reason_code is None
+    assert missing_fields == []
+    assert details.get("image_pull_auth_mode") == "public"
+    assert details.get("image_pull_secret_required") is False
+    assert details.get("image_pull_secret_configured") is True
 
 
 @pytest.mark.parametrize(
@@ -5140,8 +5192,8 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "Authenticate to GCP" in workflow_yaml
     assert "Get GKE credentials" in workflow_yaml
     assert "Ensure namespace exists" in workflow_yaml
-    assert "Verify GHCR image pull secret" in workflow_yaml
-    assert "kubectl get secret ghcr-pull-secret --namespace \"$K8S_NAMESPACE\"" in workflow_yaml
+    assert "Verify GHCR image pull secret" not in workflow_yaml
+    assert "kubectl get secret ghcr-pull-secret --namespace \"$K8S_NAMESPACE\"" not in workflow_yaml
     assert "Reset stale site-web deployment" in workflow_yaml
     assert "Resetting deployment to eliminate stale image references." in workflow_yaml
     assert "kubectl delete deployment site-web --namespace \"$K8S_NAMESPACE\" --ignore-not-found" in workflow_yaml
@@ -5205,10 +5257,19 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "kubectl describe pods --namespace \"$K8S_NAMESPACE\" -l app.kubernetes.io/name=site-web" in workflow_yaml
     assert "image_pull_detected=false" in workflow_yaml
     assert "image_pull_secret_missing_detected=false" in workflow_yaml
+    assert "private_image_pull_forbidden_detected=false" in workflow_yaml
+    assert "public_image_pull_failed_detected=false" in workflow_yaml
+    assert "private_image_auth_required=\"${PRIVATE_IMAGE_AUTH_REQUIRED:-false}\"" in workflow_yaml
     assert "Likely rollout blocker: image pull backoff." in workflow_yaml
     assert "Likely rollout blocker: image pull secret missing." in workflow_yaml
-    assert "Likely rollout blocker: image pull forbidden." in workflow_yaml
+    assert "Likely rollout blocker: private image pull forbidden." in workflow_yaml
+    assert "Likely rollout blocker: public image pull failed." in workflow_yaml
     assert "Likely rollout blocker: image pull secret not referenced." in workflow_yaml
+    assert "deploy_runtime_reason_code=image_pull_secret_missing" in workflow_yaml
+    assert "deploy_runtime_reason_code=private_image_pull_forbidden" in workflow_yaml
+    assert "deploy_runtime_reason_code=public_image_pull_failed" in workflow_yaml
+    assert "Likely rollout blocker: ingress backend unhealthy." in workflow_yaml
+    assert "Likely rollout blocker: backendconfig health check mismatch." in workflow_yaml
     assert "Likely rollout blocker: container image not found in registry." in workflow_yaml
     assert "container_started_evidence=false" in workflow_yaml
     assert "crash_direct_evidence=false" in workflow_yaml
@@ -5261,8 +5322,8 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "resources:" in deployment_yaml
     assert "image: ghcr.io/mhanson13/site-web:latest" in deployment_yaml
     assert "ghcr.io/mbsrn/site-web" not in deployment_yaml
-    assert "imagePullSecrets:" in deployment_yaml
-    assert "name: ghcr-pull-secret" in deployment_yaml
+    assert "imagePullSecrets:" not in deployment_yaml
+    assert "name: ghcr-pull-secret" not in deployment_yaml
     assert "containerPort: 8080" in deployment_yaml
     assert "env:" in deployment_yaml
     assert "name: HOSTNAME" in deployment_yaml
@@ -5301,7 +5362,7 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "name: site-web-backend-config" in backend_config_yaml
     assert "healthCheck:" in backend_config_yaml
     assert "type: HTTP" in backend_config_yaml
-    assert "requestPath: /healthz" in backend_config_yaml
+    assert "requestPath: /" in backend_config_yaml
     assert "port: 8080" in backend_config_yaml
     assert "checkIntervalSec: 10" in backend_config_yaml
     assert "timeoutSec: 5" in backend_config_yaml
@@ -5322,6 +5383,43 @@ def test_managed_site_runtime_template_includes_healthz_route() -> None:
     assert 'new Response("ok"' in route_content
     assert "status: 200" in route_content
     assert "export default function HomePage" in home_page_content
+
+
+def test_rendered_managed_templates_enable_pull_secret_only_for_private_image_auth_mode() -> None:
+    workflow_yaml = _render_managed_deploy_workflow_yaml(
+        workflow_id="deploy-tnmfire-www-prod.yml",
+        repo_owner="mhanson13",
+        repo_name="tnmfire",
+        branch="main",
+        deploy_workflow_mode="site_repo_template_v1",
+        target_environment_key="gke_prod",
+        target_environment_source="admin_config",
+        managed_gke_config=None,
+        kubernetes_namespace="tnmfire",
+        namespace_source="repo_name",
+        preview_hostname="tnmfire.site.mbsrn.com",
+        private_image_auth_required=True,
+        site_id="site-tnmfire",
+    )
+    manifests = _render_managed_gke_manifest_files(
+        repo_owner="mhanson13",
+        repo_name="tnmfire",
+        target_environment_key="gke_prod",
+        target_environment_source="admin_config",
+        kubernetes_namespace="tnmfire",
+        namespace_source="repo_name",
+        preview_hostname="tnmfire.site.mbsrn.com",
+        namespace_isolation_defaults=None,
+        site_id="site-tnmfire",
+        private_image_auth_required=True,
+    )
+    deployment_yaml = manifests["k8s/deployment.yaml"]
+
+    assert "PRIVATE_IMAGE_AUTH_REQUIRED: \"true\"" in workflow_yaml
+    assert "Verify GHCR image pull secret" in workflow_yaml
+    assert "kubectl get secret ghcr-pull-secret --namespace \"$K8S_NAMESPACE\"" in workflow_yaml
+    assert "imagePullSecrets:" in deployment_yaml
+    assert "name: ghcr-pull-secret" in deployment_yaml
 
 
 def test_render_managed_gke_manifests_for_sc_mechanical_is_site_scoped() -> None:

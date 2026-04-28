@@ -627,7 +627,7 @@ describe("site migration workflow route", () => {
 
     const deployReadinessCard = await screen.findByTestId("migration-deploy-readiness");
     expect(within(deployReadinessCard).getByTestId("migration-managed-gke-config-guidance-readiness")).toHaveTextContent(
-      "Managed deploy target is missing required GHCR pull credentials (GIT_USERID, GIT_EMAIL, GIT_TOKEN). Configure MBSRN control-plane deployment settings and verify deploy-prod projects them into the API runtime secret.",
+      "Private-image auth mode is enabled, but required GHCR pull credentials (GIT_USERID, GIT_EMAIL, GIT_TOKEN) are missing. Configure MBSRN control-plane deployment settings and verify deploy-prod projects them into the API runtime secret.",
     );
   });
 

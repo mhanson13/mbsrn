@@ -450,6 +450,7 @@ class SEOMigrationGitHubPublisher:
         target_environment_key: str | None = None,
         target_environment_source: str | None = None,
         managed_gke_config: dict[str, object] | None = None,
+        managed_image_pull_secret_config: dict[str, object] | None = None,
         namespace_isolation_defaults: dict[str, object] | None = None,
         site_id: str | None = None,
         business_id: str | None = None,
@@ -461,6 +462,7 @@ class SEOMigrationGitHubPublisher:
             target_environment_key,
             target_environment_source,
             managed_gke_config,
+            managed_image_pull_secret_config,
             namespace_isolation_defaults,
             site_id,
             business_id,
@@ -4343,12 +4345,13 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             "git_email_configured": bool(config_payload.get("git_email_configured")),
             "git_token_configured": bool(config_payload.get("git_token_configured")),
         }
+        image_pull_secret_required = _managed_image_pull_secret_required(config_payload)
         missing_fields: list[str] = []
-        if not presence["git_userid_configured"]:
+        if image_pull_secret_required and not presence["git_userid_configured"]:
             missing_fields.append(_GIT_ENV_USERID.lower())
-        if not presence["git_email_configured"]:
+        if image_pull_secret_required and not presence["git_email_configured"]:
             missing_fields.append(_GIT_ENV_EMAIL.lower())
-        if not presence["git_token_configured"]:
+        if image_pull_secret_required and not presence["git_token_configured"]:
             missing_fields.append(_GIT_ENV_TOKEN.lower())
         reason_code = (
             _DEPLOY_DISPATCH_SERVICE_REASON_IMAGE_PULL_SECRET_MISSING
@@ -4358,7 +4361,9 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         details = {
             "image_pull_secret_name": _MBSRN_MANAGED_IMAGE_PULL_SECRET_NAME,
             "image_pull_secret_config_reason_code": reason_code,
-            "image_pull_secret_configured": not bool(missing_fields),
+            "image_pull_secret_configured": (not bool(missing_fields)) if image_pull_secret_required else True,
+            "image_pull_secret_required": image_pull_secret_required,
+            "image_pull_auth_mode": "private" if image_pull_secret_required else "public",
             "image_pull_secret_missing_fields": list(missing_fields),
             "image_pull_secret_config_source": _IMAGE_PULL_SECRET_CONFIG_SOURCE_CONTROL_PLANE,
         }
@@ -4600,6 +4605,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         target_environment_key: str | None = None,
         target_environment_source: str | None = None,
         managed_gke_config: dict[str, object] | None = None,
+        managed_image_pull_secret_config: dict[str, object] | None = None,
         namespace_isolation_defaults: dict[str, object] | None = None,
         site_id: str | None = None,
         business_id: str | None = None,
@@ -4616,6 +4622,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         normalized_target_environment_key = _normalize_target_environment_key(target_environment_key)
         normalized_target_environment_source = _normalize_target_environment_source(target_environment_source)
         normalized_managed_gke_config = _normalize_managed_gke_config(managed_gke_config)
+        private_image_auth_required = _managed_image_pull_secret_required(managed_image_pull_secret_config)
         normalized_namespace_isolation_defaults = _normalize_namespace_isolation_defaults(namespace_isolation_defaults)
         policy_expectations = _managed_policy_expectations(normalized_namespace_isolation_defaults)
         derived_namespace, namespace_source = derive_site_kubernetes_namespace(
@@ -4830,6 +4837,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             kubernetes_namespace=derived_namespace,
             namespace_source=namespace_source,
             preview_hostname=preview_hostname,
+            private_image_auth_required=private_image_auth_required,
             site_id=site_id,
         )
         manifest_file_payloads = _render_managed_gke_manifest_files(
@@ -4840,6 +4848,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             kubernetes_namespace=derived_namespace,
             namespace_source=namespace_source,
             preview_hostname=preview_hostname,
+            private_image_auth_required=private_image_auth_required,
             namespace_isolation_defaults=normalized_namespace_isolation_defaults,
             site_id=site_id,
         )
@@ -5060,6 +5069,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 branch=target.ref,
                 workflow_id=target.workflow_id,
                 dry_run=False,
+                managed_image_pull_secret_config=managed_image_pull_secret_config,
             )
             workflow_file_payload = self._fetch_workflow_file_payload_on_ref(
                 repo_owner=target.repo_owner,
@@ -5130,6 +5140,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         image_pull_secret_missing_fields: list[str] = []
         image_pull_secret_presence: dict[str, bool] = {}
         image_pull_secret_details: dict[str, object] = {}
+        image_pull_secret_required = _managed_image_pull_secret_required(managed_image_pull_secret_config)
         namespace_model_status = _NAMESPACE_MODEL_STATUS_UNKNOWN
         certificate_alignment_details: dict[str, object] = {}
         manifest_presence_by_path: dict[str, bool] = {}
@@ -5260,6 +5271,8 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             image_pull_secret_details = {
                 "image_pull_secret_name": _MBSRN_MANAGED_IMAGE_PULL_SECRET_NAME,
                 "image_pull_secret_referenced": image_pull_secret_referenced,
+                "image_pull_secret_required": image_pull_secret_required,
+                "image_pull_auth_mode": "private" if image_pull_secret_required else "public",
             }
         if managed_workflow and namespace_model_status == _NAMESPACE_MODEL_STATUS_MISALIGNED:
             dispatch_service_availability = False
@@ -5315,8 +5328,10 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                     "image_pull_secret_config_source": "unspecified",
                     "image_pull_secret_config_reason_code": None,
                     "image_pull_secret_configured": None,
+                    "image_pull_secret_required": image_pull_secret_required,
+                    "image_pull_auth_mode": "private" if image_pull_secret_required else "public",
                 }
-            if image_pull_secret_referenced is False:
+            if image_pull_secret_required and image_pull_secret_referenced is False:
                 dispatch_service_availability = False
                 dispatch_service_reason_code = _DEPLOY_DISPATCH_SERVICE_REASON_IMAGE_PULL_SECRET_NOT_REFERENCED
         if managed_workflow and certificate_alignment_details:
@@ -6566,6 +6581,10 @@ _DEPLOY_DISPATCH_SERVICE_REASON_IMAGE_PULL_SECRET_NOT_REFERENCED = "image_pull_s
 _DEPLOY_DISPATCH_SERVICE_REASON_CERTIFICATE_DOMAIN_MISMATCH = "certificate_domain_mismatch"
 _DEPLOY_DISPATCH_SERVICE_REASON_STALE_MANAGED_CERTIFICATE_PRESENT = "stale_managed_certificate_present"
 _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_CERTIFICATE_MISMATCH = "ingress_certificate_mismatch"
+_DEPLOY_RUNTIME_REASON_BACKENDCONFIG_HEALTH_CHECK_MISMATCH = "backendconfig_health_check_mismatch"
+_DEPLOY_RUNTIME_REASON_INGRESS_BACKEND_UNHEALTHY = "ingress_backend_unhealthy"
+_DEPLOY_RUNTIME_REASON_PUBLIC_IMAGE_PULL_FAILED = "public_image_pull_failed"
+_DEPLOY_RUNTIME_REASON_PRIVATE_IMAGE_PULL_FORBIDDEN = "private_image_pull_forbidden"
 _DEPLOY_GKE_CONFIG_MISSING_REASON_PRIORITY: tuple[str, ...] = (
     _DEPLOY_DISPATCH_SERVICE_REASON_MISSING_CLUSTER_NAME,
     _DEPLOY_DISPATCH_SERVICE_REASON_MISSING_CLUSTER_LOCATION,
@@ -6621,6 +6640,12 @@ def _normalize_managed_gke_config(value: object | None) -> dict[str, str | None]
 
 def _yaml_quote_scalar(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
+
+
+def _managed_image_pull_secret_required(config_payload: dict[str, object] | None) -> bool:
+    if not isinstance(config_payload, dict):
+        return False
+    return _coerce_bool(config_payload.get("private_image_auth_required"), default=False)
 
 
 def _safe_identifier_fragment(value: object, *, fallback: str, max_length: int = 80) -> str:
@@ -6803,6 +6828,7 @@ def _render_managed_deploy_workflow_yaml(
     kubernetes_namespace: str,
     namespace_source: str,
     preview_hostname: str,
+    private_image_auth_required: bool = False,
     site_id: str | None = None,
 ) -> str:
     normalized_workflow_id = str(workflow_id or "").strip() or "deploy-www-prod.yml"
@@ -6841,6 +6867,15 @@ def _render_managed_deploy_workflow_yaml(
     normalized_namespace_source = _safe_identifier_fragment(namespace_source, fallback="repo-name", max_length=40)
     normalized_preview_hostname = (_coerce_string(preview_hostname) or "").strip().lower()
     normalized_name = f"MBSRN Deploy {normalized_repo_fragment}"
+    private_image_auth_value = "true" if private_image_auth_required else "false"
+    verify_pull_secret_step = ""
+    if private_image_auth_required:
+        verify_pull_secret_step = (
+            "      - name: Verify GHCR image pull secret\n"
+            "        run: |\n"
+            "          set -euo pipefail\n"
+            "          kubectl get secret ghcr-pull-secret --namespace \"$K8S_NAMESPACE\"\n"
+        )
     return (
         f"# {_MBSRN_MANAGED_WORKFLOW_MARKER}\n"
         f"name: {normalized_name}\n"
@@ -6874,6 +6909,7 @@ def _render_managed_deploy_workflow_yaml(
         f"      MBSRN_PREVIEW_HOSTNAME: {normalized_preview_hostname}\n"
         f"      SITE_WEB_IMAGE_REPOSITORY: {site_runtime_image_repository}\n"
         "      SITE_WEB_IMAGE_TAG: ${{ vars.MBSRN_SITE_WEB_IMAGE_TAG || vars.SITE_WEB_IMAGE_TAG || secrets.MBSRN_SITE_WEB_IMAGE_TAG || secrets.SITE_WEB_IMAGE_TAG || '' }}\n"
+        f"      PRIVATE_IMAGE_AUTH_REQUIRED: \"{private_image_auth_value}\"\n"
         f"      GKE_CLUSTER_NAME: {rendered_cluster_name}\n"
         f"      GKE_CLUSTER_LOCATION: {rendered_cluster_location}\n"
         f"      GKE_PROJECT_ID: {rendered_project_id}\n"
@@ -6914,10 +6950,7 @@ def _render_managed_deploy_workflow_yaml(
         "          project_id: ${{ env.GKE_PROJECT_ID }}\n"
         "      - name: Ensure namespace exists\n"
         "        run: kubectl apply -f k8s/namespace.yaml\n"
-        "      - name: Verify GHCR image pull secret\n"
-        "        run: |\n"
-        "          set -euo pipefail\n"
-        "          kubectl get secret ghcr-pull-secret --namespace \"$K8S_NAMESPACE\"\n"
+        f"{verify_pull_secret_step}"
         "      - name: Reset stale site-web deployment\n"
         "        run: |\n"
         "          echo \"Resetting deployment to eliminate stale image references.\"\n"
@@ -6964,21 +6997,45 @@ def _render_managed_deploy_workflow_yaml(
         "            cat \"$describe_pods_output\"\n"
         "            image_pull_detected=false\n"
         "            image_pull_secret_missing_detected=false\n"
+        "            private_image_pull_forbidden_detected=false\n"
+        "            public_image_pull_failed_detected=false\n"
+        "            private_image_auth_required=\"${PRIVATE_IMAGE_AUTH_REQUIRED:-false}\"\n"
         "            if grep -qiE 'ImagePullBackOff|ErrImagePull|pull access denied|manifest unknown|Failed to pull image' \"$describe_pods_output\"; then\n"
         "              image_pull_detected=true\n"
         "              echo \"Likely rollout blocker: image pull backoff.\"\n"
         "            fi\n"
         "            if grep -qiE 'FailedToRetrieveImagePullSecret|image pull secret.*not found|pull secret.*not found|secret \".*\" not found.*(pull|image)' \"$describe_pods_output\"; then\n"
-        "              image_pull_detected=true\n"
-        "              image_pull_secret_missing_detected=true\n"
-        "              echo \"Likely rollout blocker: image pull secret missing.\"\n"
+        "              if [ \"$private_image_auth_required\" = \"true\" ]; then\n"
+        "                image_pull_detected=true\n"
+        "                image_pull_secret_missing_detected=true\n"
+        "                echo \"Likely rollout blocker: image pull secret missing.\"\n"
+        "              fi\n"
         "            fi\n"
         "            if grep -qiE 'failed to fetch anonymous token|403[[:space:]]+Forbidden|unauthorized|authentication required' \"$describe_pods_output\"; then\n"
         "              image_pull_detected=true\n"
-        "              echo \"Likely rollout blocker: image pull forbidden.\"\n"
-        "              if [ \"$image_pull_secret_missing_detected\" = false ]; then\n"
-        "                echo \"Likely rollout blocker: image pull secret not referenced.\"\n"
+        "              if [ \"$private_image_auth_required\" = \"true\" ]; then\n"
+        "                private_image_pull_forbidden_detected=true\n"
+        "                echo \"Likely rollout blocker: private image pull forbidden.\"\n"
+        "                if [ \"$image_pull_secret_missing_detected\" = false ]; then\n"
+        "                  echo \"Likely rollout blocker: image pull secret not referenced.\"\n"
+        "                fi\n"
+        "              else\n"
+        "                public_image_pull_failed_detected=true\n"
+        "                echo \"Likely rollout blocker: public image pull failed.\"\n"
         "              fi\n"
+        "            fi\n"
+        "            if grep -qiE 'ingress backend.*unhealthy|backend service.*unhealthy|backend.*degraded mode|neg.*degraded mode|unhealthy backends' \"$deployment_describe_output\" \"$describe_pods_output\"; then\n"
+        "              echo \"Likely rollout blocker: ingress backend unhealthy.\"\n"
+        "            fi\n"
+        "            if grep -qiE 'backendconfig.*healthcheck|healthcheck.*path|health check.*path|requestpath' \"$deployment_describe_output\" \"$describe_pods_output\"; then\n"
+        "              echo \"Likely rollout blocker: backendconfig health check mismatch.\"\n"
+        "            fi\n"
+        "            if [ \"$image_pull_secret_missing_detected\" = true ]; then\n"
+        "              echo \"deploy_runtime_reason_code=image_pull_secret_missing\"\n"
+        "            elif [ \"$private_image_pull_forbidden_detected\" = true ]; then\n"
+        "              echo \"deploy_runtime_reason_code=private_image_pull_forbidden\"\n"
+        "            elif [ \"$public_image_pull_failed_detected\" = true ]; then\n"
+        "              echo \"deploy_runtime_reason_code=public_image_pull_failed\"\n"
         "            fi\n"
         "            if grep -qiE 'manifest unknown|name unknown|[Ii]magePullBackOff.*not found|[Ff]ailed to pull image.*not found|ghcr\\.io/.+:.*not found' \"$describe_pods_output\"; then\n"
         "              image_pull_detected=true\n"
@@ -7109,6 +7166,7 @@ def _render_managed_gke_manifest_files(
     preview_hostname: str,
     namespace_isolation_defaults: dict[str, object] | None,
     site_id: str | None,
+    private_image_auth_required: bool = False,
 ) -> dict[str, str]:
     site_runtime_image_repository = _derive_site_runtime_image_repository(repo_owner=repo_owner)
     preview_certificate_name, _ = derive_site_preview_certificate_name(
@@ -7123,6 +7181,12 @@ def _render_managed_gke_manifest_files(
     namespace_origin = _safe_identifier_fragment(namespace_source, fallback="repo-name", max_length=40)
     site_fragment = _safe_identifier_fragment(site_id, fallback="workspace", max_length=60)
     normalized_preview_hostname = (_coerce_string(preview_hostname) or "").strip().lower()
+    image_pull_secrets_block = ""
+    if private_image_auth_required:
+        image_pull_secrets_block = (
+            "      imagePullSecrets:\n"
+            f"        - name: {_MBSRN_MANAGED_IMAGE_PULL_SECRET_NAME}\n"
+        )
 
     labels = (
         f"    app.kubernetes.io/managed-by: {_MBSRN_MANAGED_LABEL}\n"
@@ -7164,8 +7228,7 @@ def _render_managed_gke_manifest_files(
         "        app.kubernetes.io/name: site-web\n"
         f"        app.kubernetes.io/managed-by: {_MBSRN_MANAGED_LABEL}\n"
         "    spec:\n"
-        "      imagePullSecrets:\n"
-        f"        - name: {_MBSRN_MANAGED_IMAGE_PULL_SECRET_NAME}\n"
+        f"{image_pull_secrets_block}"
         "      containers:\n"
         "        - name: site-web\n"
         f"          image: {image_repository}\n"
@@ -7278,7 +7341,7 @@ def _render_managed_gke_manifest_files(
         "spec:\n"
         "  healthCheck:\n"
         "    type: HTTP\n"
-        "    requestPath: /healthz\n"
+        "    requestPath: /\n"
         "    port: 8080\n"
         "    checkIntervalSec: 10\n"
         "    timeoutSec: 5\n"
@@ -7677,6 +7740,16 @@ def _classify_cloudsql_proxy_failure_from_log_text(
     normalized = (str(log_text or "")).strip().lower()
     if not normalized:
         return None, None
+    if "deploy_runtime_reason_code=backendconfig_health_check_mismatch" in normalized:
+        return _DEPLOY_RUNTIME_REASON_BACKENDCONFIG_HEALTH_CHECK_MISMATCH, "rollout_verify"
+    if "deploy_runtime_reason_code=ingress_backend_unhealthy" in normalized:
+        return _DEPLOY_RUNTIME_REASON_INGRESS_BACKEND_UNHEALTHY, "rollout_verify"
+    if "deploy_runtime_reason_code=public_image_pull_failed" in normalized:
+        return _DEPLOY_RUNTIME_REASON_PUBLIC_IMAGE_PULL_FAILED, "rollout_verify"
+    if "deploy_runtime_reason_code=private_image_pull_forbidden" in normalized:
+        return _DEPLOY_RUNTIME_REASON_PRIVATE_IMAGE_PULL_FORBIDDEN, "rollout_verify"
+    if "deploy_runtime_reason_code=image_pull_secret_missing" in normalized:
+        return _DEPLOY_DISPATCH_SERVICE_REASON_IMAGE_PULL_SECRET_MISSING, "rollout_verify"
     if "deploy_runtime_reason_code=cloudsql_instance_inspection_failed" in normalized:
         return "cloudsql_instance_inspection_failed", "manifest_apply"
     if "deploy_runtime_reason_code=cloudsql_instance_invalid_state" in normalized:
@@ -7705,6 +7778,7 @@ def _classify_rollout_blocker_hints_from_describe_outputs(
     *,
     deployment_describe_output: str | None,
     pods_describe_output: str | None,
+    private_image_auth_required: bool = False,
 ) -> tuple[str, ...]:
     """Classify rollout blocker hints from namespace-scoped describe output.
 
@@ -7726,16 +7800,23 @@ def _classify_rollout_blocker_hints_from_describe_outputs(
         image_pull_detected = True
         hints.append("image_pull_backoff")
         hints.append("image_pull_failure")
-    if _has(r"FailedToRetrieveImagePullSecret|image pull secret.*not found|pull secret.*not found|secret \".*\" not found.*(pull|image)", pods_text):
+    if private_image_auth_required and _has(
+        r"FailedToRetrieveImagePullSecret|image pull secret.*not found|pull secret.*not found|secret \".*\" not found.*(pull|image)",
+        pods_text,
+    ):
         image_pull_detected = True
         image_pull_secret_missing_detected = True
         hints.append("image_pull_secret_missing")
     if _has(r"failed to fetch anonymous token|403\s+Forbidden|unauthorized|authentication required", pods_text):
         image_pull_detected = True
-        hints.append("image_pull_forbidden")
-        if not image_pull_secret_missing_detected:
-            hints.append("image_pull_secret_not_referenced")
-        hints.append("private_registry_auth_failure")
+        if private_image_auth_required:
+            hints.append("private_image_pull_forbidden")
+            hints.append("image_pull_forbidden")
+            if not image_pull_secret_missing_detected:
+                hints.append("image_pull_secret_not_referenced")
+            hints.append("private_registry_auth_failure")
+        else:
+            hints.append("public_image_pull_failed")
     if _has(r"manifest unknown|name unknown|[Ii]magePullBackOff.*not found|[Ff]ailed to pull image.*not found|ghcr\.io/.+:.*not found", pods_text):
         image_pull_detected = True
         hints.append("container_image_not_found")
@@ -7752,6 +7833,20 @@ def _classify_rollout_blocker_hints_from_describe_outputs(
 
     if _has(r"FailedScheduling|Insufficient|didn.t match Pod.s node affinity|taint|node.s had", pods_text):
         hints.append("scheduling_or_resource_issue")
+
+    if _has(
+        r"ingress backend.*unhealthy|backend service.*unhealthy|backend.*degraded mode|neg.*degraded mode|unhealthy backends",
+        deployment_text,
+        pods_text,
+    ):
+        hints.append(_DEPLOY_RUNTIME_REASON_INGRESS_BACKEND_UNHEALTHY)
+
+    if _has(
+        r"backendconfig.*healthcheck|healthcheck.*path|health check.*path|requestpath",
+        deployment_text,
+        pods_text,
+    ):
+        hints.append(_DEPLOY_RUNTIME_REASON_BACKENDCONFIG_HEALTH_CHECK_MISMATCH)
 
     container_started_evidence = _has(
         r"Container ID:|Started:\s+true|State:\s+(Running|Terminated)",

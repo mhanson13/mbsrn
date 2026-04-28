@@ -105,6 +105,7 @@ class Settings:
     gcp_deploy_key: str | None = field(repr=False)
     git_userid: str | None = field(repr=False)
     git_email: str | None = field(repr=False)
+    migration_managed_site_private_image_auth_enabled: bool
     migration_github_api_base_url: str
     migration_github_timeout_seconds: int
     migration_publish_commit_message_prefix: str
@@ -471,6 +472,10 @@ def get_settings() -> Settings:
         gcp_deploy_key=os.getenv("GCP_DEPLOY_KEY"),
         git_userid=os.getenv("GIT_USERID"),
         git_email=os.getenv("GIT_EMAIL"),
+        migration_managed_site_private_image_auth_enabled=_env_bool(
+            "MIGRATION_MANAGED_SITE_PRIVATE_IMAGE_AUTH_ENABLED",
+            False,
+        ),
         migration_github_api_base_url=(
             os.getenv("MIGRATION_GITHUB_API_BASE_URL", "https://api.github.com").strip() or "https://api.github.com"
         ),

@@ -1141,6 +1141,7 @@ def get_seo_migration_service(
         deploy_secret_git_userid=settings.git_userid,
         deploy_secret_git_email=settings.git_email,
         deploy_secret_git_token=settings.git_token,
+        managed_site_private_image_auth_enabled=settings.migration_managed_site_private_image_auth_enabled,
     )
 
 

@@ -1035,15 +1035,19 @@ Deploy behavior:
   - authenticate to GCP using repository secret JSON credentials (`google-github-actions/auth` with `credentials_json`)
   - fetch GKE credentials (`google-github-actions/get-gke-credentials`)
   - apply namespace first (`kubectl apply -f k8s/namespace.yaml`)
-  - control plane provisions namespace-scoped GHCR pull secret (`ghcr-pull-secret`) before target deploy dispatch:
-    - `GIT_USERID` (production value: `mhanson13`)
-    - `GIT_EMAIL` (production value: `mhanson13@gmail.com`)
-    - `GIT_TOKEN` (personal access token; never logged or surfaced)
+  - default managed runtime image mode is public GHCR:
+    - deployment does not render `imagePullSecrets`
+    - control plane does not provision `ghcr-pull-secret`
+    - deploy readiness does not require GHCR pull credentials in this default mode
+  - optional private-image auth mode provisions namespace-scoped GHCR pull secret (`ghcr-pull-secret`) before target deploy dispatch:
+    - requires control-plane runtime `GIT_USERID` (production value: `mhanson13`)
+    - requires control-plane runtime `GIT_EMAIL` (production value: `mhanson13@gmail.com`)
+    - requires control-plane runtime `GIT_TOKEN` (personal access token; never logged or surfaced)
     - these are resolved only from the mbsrn control-plane runtime/admin deployment configuration (not target site repositories)
     - GitHub Actions repository secrets alone are not sufficient until `deploy-prod` projects them into `mbsrn-api-auth` and API runtime env (`GIT_USERID`, `GIT_EMAIL`, `GIT_TOKEN`)
   - apply managed manifests (`kubectl apply -f k8s/`)
   - verify rollout (`kubectl rollout status deployment/site-web --namespace <derived-namespace>`)
-  - managed `site-web` deployment template references `imagePullSecrets: [{name: ghcr-pull-secret}]` for private GHCR pulls
+  - managed `site-web` deployment template references `imagePullSecrets: [{name: ghcr-pull-secret}]` only in optional private-image auth mode
   - managed `site-web` runtime image repository is deterministic: `ghcr.io/<target-repo-owner>/site-web`
   - managed `site-web` deployment template pins runtime serving env for health-check parity:
     - `HOSTNAME=0.0.0.0`
@@ -1084,16 +1088,16 @@ Deploy behavior:
     - `dispatch_service_reason_code=missing_cluster_name`
     - `dispatch_service_reason_code=missing_cluster_location`
     - `dispatch_service_reason_code=missing_gcp_project_id`
-    - `dispatch_service_reason_code=image_pull_secret_missing`
-    - `dispatch_service_reason_code=image_pull_secret_not_referenced`
+    - `dispatch_service_reason_code=image_pull_secret_missing` (private-image auth mode only)
+    - `dispatch_service_reason_code=image_pull_secret_not_referenced` (private-image auth mode only)
   - readiness and dispatch now share the same managed GKE config resolution path so deploy cannot report `dispatch_service_availability=available` and then fail later with missing cluster/location/project for the same target tuple.
   - migration workspace deploy readiness/diagnostics now surface concise operator guidance for these cases:
     - `missing_cluster_name` -> set managed GKE cluster name in MBSRN admin deployment settings
     - `missing_cluster_location` -> set managed GKE cluster location in MBSRN admin deployment settings
     - `missing_gcp_project_id` -> set managed GCP project ID in MBSRN admin deployment settings
-    - `image_pull_secret_missing` -> configure `GIT_USERID`, `GIT_EMAIL`, `GIT_TOKEN` in **mbsrn control-plane** deployment settings and verify `deploy-prod` projected them into runtime before retry
-    - `image_pull_secret_not_referenced` -> republish managed deploy manifests so deployment references `ghcr-pull-secret`
-  - GHCR pull credentials are evaluated from control-plane runtime configuration and used to provision namespace-scoped Kubernetes pull secrets; target site repositories must not store `GIT_USERID`/`GIT_EMAIL`/`GIT_TOKEN` credentials.
+    - `image_pull_secret_missing` -> configure `GIT_USERID`, `GIT_EMAIL`, `GIT_TOKEN` in **mbsrn control-plane** deployment settings and verify `deploy-prod` projected them into runtime before retry (private-image auth mode only)
+    - `image_pull_secret_not_referenced` -> republish managed deploy manifests so deployment references `ghcr-pull-secret` (private-image auth mode only)
+  - GHCR pull credentials are evaluated from control-plane runtime configuration and used to provision namespace-scoped Kubernetes pull secrets only when private-image auth mode is enabled; target site repositories must not store `GIT_USERID`/`GIT_EMAIL`/`GIT_TOKEN` credentials.
   - configuration source expectation is explicit in UI copy:
     - managed deploy resolves admin platform config first; repo vars/secrets are legacy fallback only
   - troubleshooting precedence:
@@ -1131,14 +1135,14 @@ Deploy behavior:
     - `k8s/backendconfig.yaml` is generated with:
       - `kind: BackendConfig`
       - `metadata.name: site-web-backend-config`
-      - `healthCheck.requestPath: /healthz`
+      - `healthCheck.requestPath: /`
       - `healthCheck.port: 8080`
     - `k8s/ingress.yaml` includes:
       - `kubernetes.io/ingress.class: gce`
       - `networking.gke.io/v1beta1.FrontendConfig: site-web-frontend-config`
     - `k8s/frontendconfig.yaml` is generated with `networking.gke.io/v1beta1` and `redirectToHttps.enabled: true`
   - this ingress contract is generated by MBSRN-managed templates (not operator-authored), and missing/misaligned managed ingress files can leave ingress `ADDRESS` empty even when workload rollout is healthy or produce HTTP 502 when GCLB backend health checks are not aligned.
-  - managed site runtime includes a lightweight `GET /healthz` endpoint returning HTTP `200` for load-balancer health checks; homepage serving on `/` remains unchanged.
+  - default backend health-check contract probes `/` on port `8080`; `/healthz` should be used only when explicit runtime support is guaranteed.
   - workflow resolves URL from ingress status (`.status.loadBalancer.ingress[0].hostname|ip`)
   - managed site ingress now includes a host-specific preview rule and certificate wiring:
     - preview host: `<normalized-site>.site.mbsrn.com`
@@ -1235,7 +1239,7 @@ Rules:
 Migration publish/deploy paths normalize failures into stable categories:
 - `config_missing`
   - Missing/invalid migration runtime config (most commonly GitHub publisher configuration).
-  - Operator/Admin action: verify ownership-level metadata first (Admin owner + workspace repo/branch), then platform/runtime wiring (`MIGRATION_*`) if metadata is valid but runtime capability is blocked.
+  - Operator/Admin action: verify ownership-level metadata first (Admin owner + workspace repo/branch), then platform/runtime wiring (`GIT_TOKEN` plus `GIT_USERID`/`GIT_EMAIL` when private-image auth mode is enabled) if metadata is valid but runtime capability is blocked.
 - `target_invalid`
   - Publish/deploy target repo/branch/root/workflow/ref/inputs failed validation.
   - Operator action: fix site workspace target config and retry.
@@ -1525,7 +1529,7 @@ If dispatch was accepted but run evidence is not yet present, the workspace show
 
 ## Controlled Production Exercise Checklist
 Use this checklist for a bounded real-world migration exercise:
-1. Confirm migration runtime config is present (`GIT_TOKEN` and related `MIGRATION_*` values).
+1. Confirm migration runtime config is present (`GIT_TOKEN`; and `GIT_USERID`/`GIT_EMAIL` only if private-image auth mode is enabled).
 2. Confirm the target site repository uses GitHub Pages with **Source = GitHub Actions** for the selected deploy workflow path.
 3. Confirm selected workflow contract emits explicit deploy evidence keys (`resolved_live_url`, `live_url`, `deployed_url`) on successful deploy.
 4. Confirm publish target repo/branch/artifact-root is intentional for this site workspace.

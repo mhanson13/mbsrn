@@ -579,7 +579,7 @@ function toManagedGkeConfigGuidance(value: string | null): string | null {
     return "Managed deploy target is missing required admin GKE project id configuration. Update admin deployment settings.";
   }
   if (normalized === "image_pull_secret_missing") {
-    return "Managed deploy target is missing required GHCR pull credentials (GIT_USERID, GIT_EMAIL, GIT_TOKEN). Configure MBSRN control-plane deployment settings and verify deploy-prod projects them into the API runtime secret.";
+    return "Private-image auth mode is enabled, but required GHCR pull credentials (GIT_USERID, GIT_EMAIL, GIT_TOKEN) are missing. Configure MBSRN control-plane deployment settings and verify deploy-prod projects them into the API runtime secret.";
   }
   if (normalized === "image_pull_secret_not_referenced") {
     return "Managed deployment manifest is missing required image pull secret reference (ghcr-pull-secret). Republish managed deploy manifests.";
@@ -592,6 +592,18 @@ function toManagedGkeConfigGuidance(value: string | null): string | null {
   }
   if (normalized === "ingress_certificate_mismatch") {
     return "Ingress is referencing the wrong managed certificate for this site hostname. Republish/deploy after admin verification of generated ingress/certificate resources.";
+  }
+  if (normalized === "backendconfig_health_check_mismatch") {
+    return "BackendConfig health check path/port does not match the running site-web application health endpoint.";
+  }
+  if (normalized === "ingress_backend_unhealthy") {
+    return "Ingress backend is unhealthy even though pods may be running. Verify BackendConfig, service endpoints, and load balancer backend health.";
+  }
+  if (normalized === "public_image_pull_failed") {
+    return "Public image pull failed for site-web. Verify the image reference/tag exists and is readable in GHCR.";
+  }
+  if (normalized === "private_image_pull_forbidden") {
+    return "Private image pull is forbidden. Verify private-image auth mode credentials and namespace pull-secret provisioning.";
   }
   return null;
 }
