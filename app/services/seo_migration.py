@@ -515,7 +515,7 @@ class SEOMigrationService:
         deploy_secret_git_userid: str | None = None,
         deploy_secret_git_email: str | None = None,
         deploy_secret_git_token: str | None = None,
-        managed_site_private_image_auth_enabled: bool = False,
+        managed_site_private_image_auth_enabled: bool = True,
     ) -> None:
         self.session = session
         self.business_repository = business_repository
@@ -9258,6 +9258,7 @@ class SEOMigrationService:
         git_email = (self.deploy_secret_git_email or "").strip()
         git_token = (self.deploy_secret_git_token or "").strip()
         private_image_auth_required = bool(self.managed_site_private_image_auth_enabled)
+        credentials_available = bool(git_userid and git_email and git_token)
         payload: dict[str, object] = {
             "git_userid_configured": bool(git_userid),
             "git_email_configured": bool(git_email),
@@ -9265,6 +9266,10 @@ class SEOMigrationService:
             "config_source": "control_plane_runtime",
             "private_image_auth_required": private_image_auth_required,
             "image_pull_auth_mode": "private" if private_image_auth_required else "public",
+            "private_image_credentials_available_in_control_plane": credentials_available,
+            "target_repo_secrets_not_required": True,
+            "image_pull_secret_not_provisioned": bool(private_image_auth_required),
+            "image_pull_secret_provisioning_unavailable": bool(private_image_auth_required and not credentials_available),
         }
         if not private_image_auth_required:
             return payload, None
@@ -11589,9 +11594,29 @@ class SEOMigrationService:
             managed_image_pull_secret_config_for_readiness,
             managed_image_pull_secret_reason_code,
         ) = self._resolve_managed_image_pull_secret_runtime_config()
+        private_image_auth_required_for_readiness = bool(
+            managed_image_pull_secret_config_for_readiness.get("private_image_auth_required")
+        )
+        private_image_credentials_available_for_readiness = bool(
+            managed_image_pull_secret_config_for_readiness.get(
+                "private_image_credentials_available_in_control_plane"
+            )
+        )
+        target_repo_secrets_not_required = bool(
+            managed_image_pull_secret_config_for_readiness.get("target_repo_secrets_not_required", True)
+        )
         target_summary["managed_image_pull_secret_config_source"] = _normalize_string(
             managed_image_pull_secret_config_for_readiness.get("config_source"),
             max_length=80,
+        )
+        target_summary["private_image_auth_required"] = private_image_auth_required_for_readiness
+        target_summary["private_image_credentials_available_in_control_plane"] = (
+            private_image_credentials_available_for_readiness
+        )
+        target_summary["target_repo_secrets_not_required"] = target_repo_secrets_not_required
+        target_summary["image_pull_secret_not_provisioned"] = bool(private_image_auth_required_for_readiness)
+        target_summary["image_pull_secret_provisioning_unavailable"] = bool(
+            managed_image_pull_secret_config_for_readiness.get("image_pull_secret_provisioning_unavailable")
         )
         target_summary["managed_image_pull_secret_configured"] = bool(
             managed_image_pull_secret_reason_code is None
@@ -11699,10 +11724,50 @@ class SEOMigrationService:
                             ),
                         }
                     )
+                    readiness_image_pull_details = _normalize_json_dict(target_readiness.managed_gke_config_details)
+                    target_summary["private_image_auth_required"] = bool(
+                        readiness_image_pull_details.get(
+                            "image_pull_secret_required",
+                            private_image_auth_required_for_readiness,
+                        )
+                    )
+                    target_summary["private_image_credentials_available_in_control_plane"] = bool(
+                        readiness_image_pull_details.get(
+                            "private_image_credentials_available_in_control_plane",
+                            private_image_credentials_available_for_readiness,
+                        )
+                    )
+                    target_summary["target_repo_secrets_not_required"] = bool(
+                        readiness_image_pull_details.get(
+                            "target_repo_secrets_not_required",
+                            target_repo_secrets_not_required,
+                        )
+                    )
+                    target_summary["image_pull_secret_not_provisioned"] = bool(
+                        target_summary.get("private_image_auth_required")
+                    )
+                    target_summary["image_pull_secret_provisioning_unavailable"] = bool(
+                        readiness_image_pull_details.get(
+                            "image_pull_secret_provisioning_unavailable",
+                            target_summary.get("image_pull_secret_provisioning_unavailable"),
+                        )
+                    )
 
         managed_gke_dispatch_message = _derive_managed_gke_dispatch_readiness_message(
             dispatch_service_reason_code=dispatch_service_reason_code
         )
+        if bool(target_summary.get("private_image_auth_required")):
+            target_summary["image_pull_secret_provisioning_unavailable"] = bool(
+                target_summary.get("image_pull_secret_provisioning_unavailable")
+                or dispatch_service_reason_code
+                in {
+                    _DEPLOY_DISPATCH_SERVICE_REASON_IMAGE_PULL_SECRET_MISSING,
+                    _DEPLOY_DISPATCH_SERVICE_REASON_MISSING_CLUSTER_NAME,
+                    _DEPLOY_DISPATCH_SERVICE_REASON_MISSING_CLUSTER_LOCATION,
+                    _DEPLOY_DISPATCH_SERVICE_REASON_MISSING_GCP_PROJECT_ID,
+                }
+                or not managed_deploy_secret_available
+            )
         if managed_gke_dispatch_message:
             reasons.append(managed_gke_dispatch_message)
             blocker_codes.append(_DEPLOY_BLOCKER_CONFIGURATION_MISSING)
@@ -12117,6 +12182,16 @@ class SEOMigrationService:
                 "managed_deploy_secret_available": managed_deploy_secret_available,
                 "managed_deploy_secret_source": managed_deploy_secret_source,
                 "managed_deploy_secret_reason": managed_deploy_secret_reason,
+                "managed_image_pull_secret_config_source": target_summary.get("managed_image_pull_secret_config_source"),
+                "private_image_auth_required": target_summary.get("private_image_auth_required"),
+                "private_image_credentials_available_in_control_plane": target_summary.get(
+                    "private_image_credentials_available_in_control_plane"
+                ),
+                "target_repo_secrets_not_required": target_summary.get("target_repo_secrets_not_required"),
+                "image_pull_secret_not_provisioned": target_summary.get("image_pull_secret_not_provisioned"),
+                "image_pull_secret_provisioning_unavailable": target_summary.get(
+                    "image_pull_secret_provisioning_unavailable"
+                ),
                 "target_config_valid": target_valid,
                 "target_enabled": bool(target_summary.get("enabled")),
                 **admin_prerequisites,
@@ -13322,9 +13397,10 @@ def _derive_managed_gke_dispatch_readiness_message(*, dispatch_service_reason_co
         )
     if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_IMAGE_PULL_SECRET_MISSING:
         return (
-            "Admin action required: private-image auth mode is enabled but required GHCR pull credentials "
-            "(GIT_USERID, GIT_EMAIL, GIT_TOKEN) are missing. Configure MBSRN control-plane deployment settings "
-            "and verify deploy-prod projects them into the API runtime secret."
+            "Admin action required: private managed-site image auth is required but GHCR pull credentials "
+            "(GIT_USERID, GIT_EMAIL, GIT_TOKEN) are missing in MBSRN control-plane runtime. Configure MBSRN "
+            "deployment settings and verify deploy-prod projects them into the API runtime secret. "
+            "Target site repositories do not require these secrets."
         )
     if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_IMAGE_PULL_SECRET_NOT_REFERENCED:
         return (
@@ -13396,9 +13472,10 @@ def _derive_deploy_failure_remediation_hint(
         )
     if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_IMAGE_PULL_SECRET_MISSING:
         return (
-            "Private-image auth mode is enabled, but required GHCR pull credentials (GIT_USERID, GIT_EMAIL, "
-            "GIT_TOKEN) are missing. Configure MBSRN control-plane deployment settings, ensure deploy-prod projects "
-            "them into the API runtime, and retry deploy."
+            "Private managed-site image auth is required, but GHCR pull credentials (GIT_USERID, GIT_EMAIL, "
+            "GIT_TOKEN) are missing in MBSRN control-plane runtime. Configure MBSRN deployment settings, ensure "
+            "deploy-prod projects them into the API runtime, and retry deploy. Target site repositories do not "
+            "require these secrets."
         )
     if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_IMAGE_PULL_SECRET_NOT_REFERENCED:
         return (

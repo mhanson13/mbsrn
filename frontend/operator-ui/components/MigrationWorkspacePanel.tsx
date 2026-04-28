@@ -579,7 +579,7 @@ function toManagedGkeConfigGuidance(value: string | null): string | null {
     return "Managed deploy target is missing required admin GKE project id configuration. Update admin deployment settings.";
   }
   if (normalized === "image_pull_secret_missing") {
-    return "Private-image auth mode is enabled, but required GHCR pull credentials (GIT_USERID, GIT_EMAIL, GIT_TOKEN) are missing. Configure MBSRN control-plane deployment settings and verify deploy-prod projects them into the API runtime secret.";
+    return "Private managed-site image auth is required, but required GHCR pull credentials (GIT_USERID, GIT_EMAIL, GIT_TOKEN) are missing in the MBSRN control-plane runtime. Configure MBSRN deployment settings and verify deploy-prod projects them into the API runtime secret. Target site repositories do not need these secrets.";
   }
   if (normalized === "image_pull_secret_not_referenced") {
     return "Managed deployment manifest is missing required image pull secret reference (ghcr-pull-secret). Republish managed deploy manifests.";
@@ -603,7 +603,7 @@ function toManagedGkeConfigGuidance(value: string | null): string | null {
     return "Public image pull failed for site-web. Verify the image reference/tag exists and is readable in GHCR.";
   }
   if (normalized === "private_image_pull_forbidden") {
-    return "Private image pull is forbidden. Verify private-image auth mode credentials and namespace pull-secret provisioning.";
+    return "Private image pull is forbidden. Verify control-plane GHCR credentials and namespace pull-secret provisioning. Target site repositories do not need image-pull secrets.";
   }
   if (normalized === "deployed_content_identity_mismatch") {
     return "Managed deployment image identity does not match this site target. Republish managed deploy files before redeploy so the site uses repo-specific generated content.";
@@ -2394,6 +2394,21 @@ export function MigrationWorkspacePanel({
   const managedSiteObservedDeployImageReference =
     asStringOrNull(deployReadiness.managed_site_rollout_observed_deploy_image_reference) ||
     asStringOrNull(selectedDeployHistoryRecord.site_runtime_image_reference);
+  const privateImageAuthRequired =
+    asBooleanOrNull(deployTarget.private_image_auth_required) ??
+    asBooleanOrNull(deployReadiness.private_image_auth_required);
+  const privateImageCredentialsAvailableInControlPlane =
+    asBooleanOrNull(deployTarget.private_image_credentials_available_in_control_plane) ??
+    asBooleanOrNull(deployReadiness.private_image_credentials_available_in_control_plane);
+  const targetRepoSecretsNotRequired =
+    asBooleanOrNull(deployTarget.target_repo_secrets_not_required) ??
+    asBooleanOrNull(deployReadiness.target_repo_secrets_not_required);
+  const imagePullSecretNotProvisioned =
+    asBooleanOrNull(deployTarget.image_pull_secret_not_provisioned) ??
+    asBooleanOrNull(deployReadiness.image_pull_secret_not_provisioned);
+  const imagePullSecretProvisioningUnavailable =
+    asBooleanOrNull(deployTarget.image_pull_secret_provisioning_unavailable) ??
+    asBooleanOrNull(deployReadiness.image_pull_secret_provisioning_unavailable);
   const workflowConformanceChecked =
     asBooleanOrNull(selectedDeployHistoryRecord.workflow_conformance_checked) ??
     asBooleanOrNull(deployReadiness.workflow_conformance_checked);
@@ -4416,6 +4431,34 @@ export function MigrationWorkspacePanel({
             {managedGkeConfigGuidance ? (
               <span className="hint warning" data-testid="migration-managed-gke-config-guidance-readiness">
                 {managedGkeConfigGuidance}
+              </span>
+            ) : null}
+            {privateImageAuthRequired !== null ? (
+              <span className="hint" data-testid="migration-private-image-auth-required-readiness">
+                Private managed image auth required: {formatBooleanStateLabel(privateImageAuthRequired)}
+              </span>
+            ) : null}
+            {privateImageCredentialsAvailableInControlPlane !== null ? (
+              <span className="hint" data-testid="migration-private-image-credentials-control-plane-readiness">
+                Control-plane GHCR credentials available:{" "}
+                {formatBooleanStateLabel(privateImageCredentialsAvailableInControlPlane)}
+              </span>
+            ) : null}
+            {targetRepoSecretsNotRequired !== null ? (
+              <span className="hint muted" data-testid="migration-target-repo-secrets-not-required-readiness">
+                Target repo image-pull secrets required:{" "}
+                {targetRepoSecretsNotRequired ? "No (control-plane provisioned)" : "Unknown"}
+              </span>
+            ) : null}
+            {imagePullSecretNotProvisioned ? (
+              <span className="hint warning" data-testid="migration-image-pull-secret-not-provisioned-readiness">
+                Namespace pull secret is not yet confirmed. Control-plane provisioning runs before deploy.
+              </span>
+            ) : null}
+            {imagePullSecretProvisioningUnavailable ? (
+              <span className="hint warning" data-testid="migration-image-pull-secret-provisioning-unavailable-readiness">
+                Namespace pull-secret provisioning is currently unavailable. Resolve control-plane credentials or managed
+                GKE config blockers before deploy.
               </span>
             ) : null}
             {managedSiteRolloutState ? (

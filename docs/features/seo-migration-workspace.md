@@ -1035,19 +1035,17 @@ Deploy behavior:
   - authenticate to GCP using repository secret JSON credentials (`google-github-actions/auth` with `credentials_json`)
   - fetch GKE credentials (`google-github-actions/get-gke-credentials`)
   - apply namespace first (`kubectl apply -f k8s/namespace.yaml`)
-  - default managed runtime image mode is public GHCR:
-    - deployment does not render `imagePullSecrets`
-    - control plane does not provision `ghcr-pull-secret`
-    - deploy readiness does not require GHCR pull credentials in this default mode
-  - optional private-image auth mode provisions namespace-scoped GHCR pull secret (`ghcr-pull-secret`) before target deploy dispatch:
+  - default managed runtime image mode is private GHCR with control-plane-provisioned namespace pull credentials:
+    - control plane provisions namespace-scoped GHCR pull secret (`ghcr-pull-secret`) before target deploy dispatch
+    - managed `site-web` deployment template references `imagePullSecrets: [{name: ghcr-pull-secret}]`
     - requires control-plane runtime `GIT_USERID` (production value: `mhanson13`)
     - requires control-plane runtime `GIT_EMAIL` (production value: `mhanson13@gmail.com`)
     - requires control-plane runtime `GIT_TOKEN` (personal access token; never logged or surfaced)
     - these are resolved only from the mbsrn control-plane runtime/admin deployment configuration (not target site repositories)
     - GitHub Actions repository secrets alone are not sufficient until `deploy-prod` projects them into `mbsrn-api-auth` and API runtime env (`GIT_USERID`, `GIT_EMAIL`, `GIT_TOKEN`)
+  - optional public-image mode (admin/runtime override) can disable private pull-secret requirements when explicitly intended
   - apply managed manifests (`kubectl apply -f k8s/`)
   - verify rollout (`kubectl rollout status deployment/site-web --namespace <derived-namespace>`)
-  - managed `site-web` deployment template references `imagePullSecrets: [{name: ghcr-pull-secret}]` only in optional private-image auth mode
   - managed `site-web` runtime image repository is deterministic and site-scoped:
     - `ghcr.io/<target-repo-owner>/<target-repo-name>-site-web`
     - examples:
@@ -1125,7 +1123,7 @@ Post-fix rollout for existing managed sites:
     - `missing_gcp_project_id` -> set managed GCP project ID in MBSRN admin deployment settings
     - `image_pull_secret_missing` -> configure `GIT_USERID`, `GIT_EMAIL`, `GIT_TOKEN` in **mbsrn control-plane** deployment settings and verify `deploy-prod` projected them into runtime before retry (private-image auth mode only)
     - `image_pull_secret_not_referenced` -> republish managed deploy manifests so deployment references `ghcr-pull-secret` (private-image auth mode only)
-  - GHCR pull credentials are evaluated from control-plane runtime configuration and used to provision namespace-scoped Kubernetes pull secrets only when private-image auth mode is enabled; target site repositories must not store `GIT_USERID`/`GIT_EMAIL`/`GIT_TOKEN` credentials.
+  - GHCR pull credentials are evaluated from control-plane runtime configuration and used to provision namespace-scoped Kubernetes pull secrets; target site repositories must not store `GIT_USERID`/`GIT_EMAIL`/`GIT_TOKEN` credentials.
   - configuration source expectation is explicit in UI copy:
     - managed deploy resolves admin platform config first; repo vars/secrets are legacy fallback only
   - troubleshooting precedence:
@@ -1557,7 +1555,7 @@ If dispatch was accepted but run evidence is not yet present, the workspace show
 
 ## Controlled Production Exercise Checklist
 Use this checklist for a bounded real-world migration exercise:
-1. Confirm migration runtime config is present (`GIT_TOKEN`; and `GIT_USERID`/`GIT_EMAIL` only if private-image auth mode is enabled).
+1. Confirm migration runtime config is present (`GIT_TOKEN`, `GIT_USERID`, `GIT_EMAIL`) for private managed-image mode (default).
 2. Confirm the target site repository uses GitHub Pages with **Source = GitHub Actions** for the selected deploy workflow path.
 3. Confirm selected workflow contract emits explicit deploy evidence keys (`resolved_live_url`, `live_url`, `deployed_url`) on successful deploy.
 4. Confirm publish target repo/branch/artifact-root is intentional for this site workspace.

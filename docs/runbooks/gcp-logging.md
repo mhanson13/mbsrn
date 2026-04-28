@@ -790,7 +790,9 @@ Use this bounded checklist for first production exercises:
 1. Publish succeeded for the selected approved artifact.
 2. Managed workflow is present and platform-managed.
 3. Managed manifests are present and namespace-aligned.
-4. Required deploy secrets/variables are configured in the target repository.
+4. Required deploy/runtime configuration is in place:
+   - control-plane runtime secrets projected by `deploy-prod` (`GIT_USERID`, `GIT_EMAIL`, `GIT_TOKEN`) for namespace GHCR pull-secret provisioning
+   - target repo deploy prerequisites required by your managed workflow implementation
 5. Deploy started and a workflow run was created.
 6. Stage classification is clear:
    - `gcp_auth`
@@ -809,7 +811,7 @@ Use this bounded checklist for first production exercises:
 Before deploy:
 1. Verify approved + published artifact selection.
 2. Verify destination tuple (`repo`, `ref`, `workflow`, `namespace`).
-3. Verify target repo deploy prerequisites/secrets are configured.
+3. Verify control-plane deploy runtime credentials are configured (`GIT_USERID`, `GIT_EMAIL`, `GIT_TOKEN`) and target repo deploy prerequisites are present.
 
 After deploy click:
 1. Capture `deploy_trace_id`.
@@ -1007,8 +1009,9 @@ Required credential note:
   - `Missing KUBERNETES_CLUSTER_NAME variable/secret`
   - `Missing KUBERNETES_CLUSTER_LOCATION variable/secret`
   - `Missing GCP_PROJECT_ID variable/secret`
-- default managed runtime image mode is public GHCR and does not require pull-secret provisioning.
-- optional private-image auth mode provisions `ghcr-pull-secret` in the target namespace before deploy dispatch and fails early when required credentials are missing:
+- default managed runtime image mode is private GHCR and provisions `ghcr-pull-secret` in the target namespace before deploy dispatch.
+- optional public-image mode can disable this requirement only when explicitly configured.
+- private-image auth mode credential contract:
   - `GIT_USERID` (production: `mhanson13`)
   - `GIT_EMAIL` (production: `mhanson13@gmail.com`)
   - `GIT_TOKEN` (PAT never logged/surfaced)
@@ -1019,8 +1022,8 @@ Required credential note:
   - `dispatch_service_reason_code=missing_cluster_name`
   - `dispatch_service_reason_code=missing_cluster_location`
   - `dispatch_service_reason_code=missing_gcp_project_id`
-  - `dispatch_service_reason_code=image_pull_secret_missing` (private-image auth mode only)
-  - `dispatch_service_reason_code=image_pull_secret_not_referenced` (private-image auth mode only)
+  - `dispatch_service_reason_code=image_pull_secret_missing` (private-image auth mode)
+  - `dispatch_service_reason_code=image_pull_secret_not_referenced` (private-image auth mode)
 - dispatch emits `event=seo_migration_dispatch_managed_gke_config_presence` with:
   - `effective_cluster_name_present`
   - `effective_cluster_location_present`

@@ -1009,6 +1009,7 @@ def test_managed_image_pull_secret_runtime_config_reads_control_plane_runtime_va
         deploy_secret_git_userid="mhanson13",
         deploy_secret_git_email="mhanson13@gmail.com",
         deploy_secret_git_token="pat-test-value",
+        managed_site_private_image_auth_enabled=True,
     )
 
     payload, reason_code = service._resolve_managed_image_pull_secret_runtime_config()
@@ -1018,6 +1019,11 @@ def test_managed_image_pull_secret_runtime_config_reads_control_plane_runtime_va
     assert payload.get("git_userid_configured") is True
     assert payload.get("git_email_configured") is True
     assert payload.get("git_token_configured") is True
+    assert payload.get("private_image_auth_required") is True
+    assert payload.get("private_image_credentials_available_in_control_plane") is True
+    assert payload.get("target_repo_secrets_not_required") is True
+    assert payload.get("image_pull_secret_not_provisioned") is True
+    assert payload.get("image_pull_secret_provisioning_unavailable") is False
     assert "missing_fields" not in payload
 
 
@@ -1030,6 +1036,7 @@ def test_managed_image_pull_secret_runtime_config_allows_missing_runtime_project
         deploy_secret_git_userid=None,
         deploy_secret_git_email=None,
         deploy_secret_git_token=None,
+        managed_site_private_image_auth_enabled=False,
     )
 
     payload, reason_code = service._resolve_managed_image_pull_secret_runtime_config()
@@ -1040,6 +1047,10 @@ def test_managed_image_pull_secret_runtime_config_allows_missing_runtime_project
     assert payload.get("git_email_configured") is False
     assert payload.get("git_token_configured") is False
     assert payload.get("private_image_auth_required") is False
+    assert payload.get("private_image_credentials_available_in_control_plane") is False
+    assert payload.get("target_repo_secrets_not_required") is True
+    assert payload.get("image_pull_secret_not_provisioned") is False
+    assert payload.get("image_pull_secret_provisioning_unavailable") is False
     assert payload.get("image_pull_auth_mode") == "public"
     assert "missing_fields" not in payload
 
@@ -1061,11 +1072,51 @@ def test_managed_image_pull_secret_runtime_config_requires_runtime_projection_in
     assert reason_code == "image_pull_secret_missing"
     assert payload.get("private_image_auth_required") is True
     assert payload.get("image_pull_auth_mode") == "private"
+    assert payload.get("private_image_credentials_available_in_control_plane") is False
+    assert payload.get("target_repo_secrets_not_required") is True
+    assert payload.get("image_pull_secret_not_provisioned") is True
+    assert payload.get("image_pull_secret_provisioning_unavailable") is True
     assert sorted(payload.get("missing_fields") or []) == [
         "git_email",
         "git_token",
         "git_userid",
     ]
+
+
+def test_deploy_readiness_exposes_private_image_control_plane_status_flags(db_session) -> None:
+    publisher = _RecordingGitHubPublisher(
+        readiness_dispatch_service_availability=True,
+        readiness_dispatch_service_reason_code="available",
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+        deploy_secret_gcp_key='{"type":"service_account"}',
+        deploy_secret_git_userid=None,
+        deploy_secret_git_email=None,
+        deploy_secret_git_token=None,
+        managed_site_private_image_auth_enabled=True,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+    _configure_deploy_target(
+        service,
+        business_id=business_id,
+        site_id=site_id,
+        workflow_id="deploy-tnmfire-www-prod.yml",
+    )
+
+    summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
+    deploy_target_raw = summary.deploy_readiness.get("target")
+    deploy_target = deploy_target_raw if isinstance(deploy_target_raw, dict) else {}
+
+    assert deploy_target.get("private_image_auth_required") is True
+    assert deploy_target.get("private_image_credentials_available_in_control_plane") is False
+    assert deploy_target.get("target_repo_secrets_not_required") is True
+    assert deploy_target.get("image_pull_secret_not_provisioned") is True
+    assert deploy_target.get("image_pull_secret_provisioning_unavailable") is True
 
 
 def _seed_reused_context_records(db_session, *, business_id: str, site_id: str) -> None:
@@ -7324,7 +7375,7 @@ def test_runtime_credential_missing_reason_is_exposed_in_publish_readiness(db_se
         ),
         (
             "image_pull_secret_missing",
-            "private-image auth mode is enabled",
+            "private managed-site image auth is required",
         ),
         (
             "image_pull_secret_not_referenced",

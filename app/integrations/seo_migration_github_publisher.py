@@ -4358,6 +4358,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             if missing_fields
             else None
         )
+        credentials_available = (not bool(missing_fields)) if image_pull_secret_required else True
         details = {
             "image_pull_secret_name": _MBSRN_MANAGED_IMAGE_PULL_SECRET_NAME,
             "image_pull_secret_config_reason_code": reason_code,
@@ -4366,6 +4367,13 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             "image_pull_auth_mode": "private" if image_pull_secret_required else "public",
             "image_pull_secret_missing_fields": list(missing_fields),
             "image_pull_secret_config_source": _IMAGE_PULL_SECRET_CONFIG_SOURCE_CONTROL_PLANE,
+            "private_image_auth_required": image_pull_secret_required,
+            "private_image_credentials_available_in_control_plane": credentials_available,
+            "target_repo_secrets_not_required": True,
+            "image_pull_secret_not_provisioned": bool(image_pull_secret_required),
+            "image_pull_secret_provisioning_unavailable": bool(
+                image_pull_secret_required and bool(missing_fields)
+            ),
         }
         return reason_code, missing_fields, presence, details
 
@@ -5386,6 +5394,11 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                     "image_pull_secret_configured": None,
                     "image_pull_secret_required": image_pull_secret_required,
                     "image_pull_auth_mode": "private" if image_pull_secret_required else "public",
+                    "private_image_auth_required": image_pull_secret_required,
+                    "private_image_credentials_available_in_control_plane": None,
+                    "target_repo_secrets_not_required": True,
+                    "image_pull_secret_not_provisioned": bool(image_pull_secret_required),
+                    "image_pull_secret_provisioning_unavailable": bool(image_pull_secret_required),
                 }
             if image_pull_secret_required and image_pull_secret_referenced is False:
                 dispatch_service_availability = False
@@ -6702,8 +6715,8 @@ def _yaml_quote_scalar(value: str) -> str:
 
 def _managed_image_pull_secret_required(config_payload: dict[str, object] | None) -> bool:
     if not isinstance(config_payload, dict):
-        return False
-    return _coerce_bool(config_payload.get("private_image_auth_required"), default=False)
+        return True
+    return _coerce_bool(config_payload.get("private_image_auth_required"), default=True)
 
 
 def _safe_identifier_fragment(value: object, *, fallback: str, max_length: int = 80) -> str:

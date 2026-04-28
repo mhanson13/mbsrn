@@ -474,7 +474,7 @@ def get_settings() -> Settings:
         git_email=os.getenv("GIT_EMAIL"),
         migration_managed_site_private_image_auth_enabled=_env_bool(
             "MIGRATION_MANAGED_SITE_PRIVATE_IMAGE_AUTH_ENABLED",
-            False,
+            True,
         ),
         migration_github_api_base_url=(
             os.getenv("MIGRATION_GITHUB_API_BASE_URL", "https://api.github.com").strip() or "https://api.github.com"

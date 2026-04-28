@@ -610,6 +610,11 @@ describe("site migration workflow route", () => {
         ready: false,
         reasons: ["Deploy target is not enabled."],
         dispatch_service_reason_code: "image_pull_secret_missing",
+        private_image_auth_required: true,
+        private_image_credentials_available_in_control_plane: false,
+        target_repo_secrets_not_required: true,
+        image_pull_secret_not_provisioned: true,
+        image_pull_secret_provisioning_unavailable: true,
         target: {
           enabled: true,
           repo_owner: "mhanson13",
@@ -627,8 +632,23 @@ describe("site migration workflow route", () => {
 
     const deployReadinessCard = await screen.findByTestId("migration-deploy-readiness");
     expect(within(deployReadinessCard).getByTestId("migration-managed-gke-config-guidance-readiness")).toHaveTextContent(
-      "Private-image auth mode is enabled, but required GHCR pull credentials (GIT_USERID, GIT_EMAIL, GIT_TOKEN) are missing. Configure MBSRN control-plane deployment settings and verify deploy-prod projects them into the API runtime secret.",
+      "Private managed-site image auth is required, but required GHCR pull credentials (GIT_USERID, GIT_EMAIL, GIT_TOKEN) are missing in the MBSRN control-plane runtime. Configure MBSRN deployment settings and verify deploy-prod projects them into the API runtime secret. Target site repositories do not need these secrets.",
     );
+    expect(within(deployReadinessCard).getByTestId("migration-private-image-auth-required-readiness")).toHaveTextContent(
+      "Private managed image auth required: Yes",
+    );
+    expect(
+      within(deployReadinessCard).getByTestId("migration-private-image-credentials-control-plane-readiness"),
+    ).toHaveTextContent("Control-plane GHCR credentials available: No");
+    expect(
+      within(deployReadinessCard).getByTestId("migration-target-repo-secrets-not-required-readiness"),
+    ).toHaveTextContent("Target repo image-pull secrets required: No");
+    expect(
+      within(deployReadinessCard).getByTestId("migration-image-pull-secret-not-provisioned-readiness"),
+    ).toHaveTextContent("Namespace pull secret is not yet confirmed.");
+    expect(
+      within(deployReadinessCard).getByTestId("migration-image-pull-secret-provisioning-unavailable-readiness"),
+    ).toHaveTextContent("Namespace pull-secret provisioning is currently unavailable.");
   });
 
   it("surfaces certificate-domain mismatch guidance when deploy target manifests point to another hostname", async () => {

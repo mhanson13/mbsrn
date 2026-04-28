@@ -291,7 +291,7 @@ It transforms a business's website and market context into structured insights a
 - Runtime publisher credentials remain environment-managed (`GIT_TOKEN`) and are never exposed through Admin/workspace payloads.
 - Local development uses the same `GIT_TOKEN` env var name (with a local test token value when needed) to avoid test/runtime naming drift.
 - Production deployment injects `GIT_TOKEN` into `mbsrn-api` through existing `mbsrn-api-auth` secret wiring; the token is not stored/editable in application UI.
-- Managed site runtime image pulls default to public GHCR mode (no pull-secret requirement). Optional private-image auth mode uses control-plane `GIT_USERID`, `GIT_EMAIL`, and `GIT_TOKEN` to provision namespace-scoped `ghcr-pull-secret`.
+- Managed site runtime image pulls default to private GHCR mode with control-plane-provisioned namespace pull credentials (`ghcr-pull-secret`). Optional public-image mode can disable this requirement only when explicitly configured.
 - `GIT_TOKEN` must include required GitHub repository/API scopes and `read:packages` when private-image auth mode is enabled.
 - Hybrid deploy-secret bridge model:
   - `GCP_DEPLOY_KEY` is admin-owned and managed through MBSRN admin GitHub publish configuration.

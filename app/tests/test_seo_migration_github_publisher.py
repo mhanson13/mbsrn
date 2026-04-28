@@ -2759,6 +2759,11 @@ def test_check_deploy_target_readiness_flags_missing_image_pull_secret_credentia
     details = readiness.managed_gke_config_details or {}
     assert details.get("image_pull_secret_name") == "ghcr-pull-secret"
     assert details.get("image_pull_secret_referenced") is True
+    assert details.get("private_image_auth_required") is True
+    assert details.get("private_image_credentials_available_in_control_plane") is False
+    assert details.get("target_repo_secrets_not_required") is True
+    assert details.get("image_pull_secret_not_provisioned") is True
+    assert details.get("image_pull_secret_provisioning_unavailable") is True
     assert sorted(details.get("image_pull_secret_missing_fields") or []) == [
         "git_email",
         "git_token",
@@ -2888,6 +2893,11 @@ def test_check_deploy_target_readiness_flags_image_pull_secret_not_referenced(mo
     details = readiness.managed_gke_config_details or {}
     assert details.get("image_pull_secret_name") == "ghcr-pull-secret"
     assert details.get("image_pull_secret_referenced") is False
+    assert details.get("private_image_auth_required") is True
+    assert details.get("private_image_credentials_available_in_control_plane") is True
+    assert details.get("target_repo_secrets_not_required") is True
+    assert details.get("image_pull_secret_not_provisioned") is True
+    assert details.get("image_pull_secret_provisioning_unavailable") is False
     assert not any("/actions/secrets/" in path for _, path in calls)
 
 
@@ -2909,6 +2919,33 @@ def test_validate_managed_image_pull_secret_config_public_mode_allows_missing_gi
     assert details.get("image_pull_auth_mode") == "public"
     assert details.get("image_pull_secret_required") is False
     assert details.get("image_pull_secret_configured") is True
+    assert details.get("private_image_auth_required") is False
+    assert details.get("private_image_credentials_available_in_control_plane") is True
+    assert details.get("target_repo_secrets_not_required") is True
+    assert details.get("image_pull_secret_not_provisioned") is False
+    assert details.get("image_pull_secret_provisioning_unavailable") is False
+
+
+def test_validate_managed_image_pull_secret_config_private_mode_flags_control_plane_missing_credentials() -> None:
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+
+    reason_code, missing_fields, _, details = publisher._validate_managed_image_pull_secret_config(
+        managed_image_pull_secret_config={
+            "private_image_auth_required": True,
+            "git_userid_configured": True,
+            "git_email_configured": False,
+            "git_token_configured": False,
+            "config_source": "control_plane_runtime",
+        }
+    )
+
+    assert reason_code == "image_pull_secret_missing"
+    assert missing_fields == ["git_email", "git_token"]
+    assert details.get("private_image_auth_required") is True
+    assert details.get("private_image_credentials_available_in_control_plane") is False
+    assert details.get("target_repo_secrets_not_required") is True
+    assert details.get("image_pull_secret_not_provisioned") is True
+    assert details.get("image_pull_secret_provisioning_unavailable") is True
 
 
 @pytest.mark.parametrize(
@@ -5195,6 +5232,7 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "MBSRN_PREVIEW_HOSTNAME: tnmfire.site.mbsrn.com" in workflow_yaml
     assert "SITE_WEB_IMAGE_REPOSITORY: ghcr.io/mhanson13/tnmfire-site-web" in workflow_yaml
     assert "ghcr.io/mbsrn/site-web" not in workflow_yaml
+    assert "PRIVATE_IMAGE_AUTH_REQUIRED: \"true\"" in workflow_yaml
     assert (
         "SITE_WEB_IMAGE_TAG: ${{ vars.MBSRN_SITE_WEB_IMAGE_TAG || vars.SITE_WEB_IMAGE_TAG || secrets.MBSRN_SITE_WEB_IMAGE_TAG || secrets.SITE_WEB_IMAGE_TAG || '' }}"
         in workflow_yaml
@@ -5202,14 +5240,18 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "Authenticate to GCP" in workflow_yaml
     assert "Get GKE credentials" in workflow_yaml
     assert "Ensure namespace exists" in workflow_yaml
-    assert "Verify GHCR image pull secret" not in workflow_yaml
-    assert "kubectl get secret ghcr-pull-secret --namespace \"$K8S_NAMESPACE\"" not in workflow_yaml
+    assert "Verify GHCR image pull secret" in workflow_yaml
+    assert "kubectl get secret ghcr-pull-secret --namespace \"$K8S_NAMESPACE\"" in workflow_yaml
     assert "Reset stale site-web deployment" in workflow_yaml
     assert "Resetting deployment to eliminate stale image references." in workflow_yaml
     assert "kubectl delete deployment site-web --namespace \"$K8S_NAMESPACE\" --ignore-not-found" in workflow_yaml
     assert "GIT_USERID: ${{ secrets.GIT_USERID }}" not in workflow_yaml
     assert "GIT_EMAIL: ${{ secrets.GIT_EMAIL }}" not in workflow_yaml
     assert "GIT_TOKEN: ${{ secrets.GIT_TOKEN }}" not in workflow_yaml
+    assert "DOCKER_USERID" not in workflow_yaml
+    assert "DOCKER_EMAIL" not in workflow_yaml
+    assert "DOCKER_PAT" not in workflow_yaml
+    assert "MIGRATION_GITHUB_TOKEN" not in workflow_yaml
     assert "kubectl create secret docker-registry ghcr-pull-secret" not in workflow_yaml
     assert "Apply managed manifests" in workflow_yaml
     assert "kubectl apply -f k8s/deployment.yaml" in workflow_yaml
@@ -5349,8 +5391,8 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "resources:" in deployment_yaml
     assert "image: ghcr.io/mhanson13/tnmfire-site-web:latest" in deployment_yaml
     assert "ghcr.io/mbsrn/site-web" not in deployment_yaml
-    assert "imagePullSecrets:" not in deployment_yaml
-    assert "name: ghcr-pull-secret" not in deployment_yaml
+    assert "imagePullSecrets:" in deployment_yaml
+    assert "name: ghcr-pull-secret" in deployment_yaml
     assert "containerPort: 8080" in deployment_yaml
     assert "env:" in deployment_yaml
     assert "name: HOSTNAME" in deployment_yaml
