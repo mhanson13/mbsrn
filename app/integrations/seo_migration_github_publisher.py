@@ -5340,13 +5340,13 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             dispatch_service_reason_code = "target_configuration_invalid"
         if managed_workflow and certificate_domain_mismatch is True:
             dispatch_service_availability = False
-            dispatch_service_reason_code = _DEPLOY_DISPATCH_SERVICE_REASON_CERTIFICATE_DOMAIN_MISMATCH
+            dispatch_service_reason_code = _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_BOUND_TO_WRONG_SITE
         elif managed_workflow and stale_managed_certificate_present is True:
             dispatch_service_availability = False
-            dispatch_service_reason_code = _DEPLOY_DISPATCH_SERVICE_REASON_STALE_MANAGED_CERTIFICATE_PRESENT
+            dispatch_service_reason_code = _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_IDENTITY_MISMATCH
         elif managed_workflow and ingress_certificate_mismatch is True:
             dispatch_service_availability = False
-            dispatch_service_reason_code = _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_CERTIFICATE_MISMATCH
+            dispatch_service_reason_code = _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_CERTIFICATE_ANNOTATION_MISMATCH
         elif managed_workflow and content_identity_mismatch is True:
             dispatch_service_availability = False
             dispatch_service_reason_code = _DEPLOY_DISPATCH_SERVICE_REASON_DEPLOYED_CONTENT_IDENTITY_MISMATCH
@@ -6586,6 +6586,8 @@ _MBSRN_MANAGED_INGRESS_FILE_PATH = "k8s/ingress.yaml"
 _MBSRN_MANAGED_CERTIFICATE_FILE_PATH = "k8s/managedcertificate.yaml"
 _MBSRN_MANAGED_FRONTEND_CONFIG_FILE_PATH = "k8s/frontendconfig.yaml"
 _MBSRN_MANAGED_BACKEND_CONFIG_FILE_PATH = "k8s/backendconfig.yaml"
+_MBSRN_MANAGED_FRONTEND_CONFIG_NAME_PREFIX = "site-web-frontend-config"
+_MBSRN_MANAGED_BACKEND_CONFIG_NAME_PREFIX = "site-web-backend-config"
 _MBSRN_MANAGED_RESOURCE_QUOTA_FILE_PATH = "k8s/resourcequota.yaml"
 _MBSRN_MANAGED_LIMIT_RANGE_FILE_PATH = "k8s/limitrange.yaml"
 _MBSRN_MANAGED_NETWORK_POLICY_FILE_PATH = "k8s/networkpolicy.yaml"
@@ -6651,11 +6653,19 @@ _DEPLOY_DISPATCH_SERVICE_REASON_IMAGE_PULL_SECRET_NOT_REFERENCED = "image_pull_s
 _DEPLOY_DISPATCH_SERVICE_REASON_CERTIFICATE_DOMAIN_MISMATCH = "certificate_domain_mismatch"
 _DEPLOY_DISPATCH_SERVICE_REASON_STALE_MANAGED_CERTIFICATE_PRESENT = "stale_managed_certificate_present"
 _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_CERTIFICATE_MISMATCH = "ingress_certificate_mismatch"
+_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_IDENTITY_MISMATCH = "managed_certificate_identity_mismatch"
+_DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_CERTIFICATE_ANNOTATION_MISMATCH = "ingress_certificate_annotation_mismatch"
+_DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_BOUND_TO_WRONG_SITE = "tls_certificate_bound_to_wrong_site"
 _DEPLOY_DISPATCH_SERVICE_REASON_DEPLOYED_CONTENT_IDENTITY_MISMATCH = "deployed_content_identity_mismatch"
 _DEPLOY_RUNTIME_REASON_BACKENDCONFIG_HEALTH_CHECK_MISMATCH = "backendconfig_health_check_mismatch"
 _DEPLOY_RUNTIME_REASON_INGRESS_BACKEND_UNHEALTHY = "ingress_backend_unhealthy"
+_DEPLOY_RUNTIME_REASON_INGRESS_BACKEND_502 = "ingress_backend_502"
+_DEPLOY_RUNTIME_REASON_SERVICE_HAS_NO_READY_ENDPOINTS = "service_has_no_ready_endpoints"
+_DEPLOY_RUNTIME_REASON_POD_READY_BUT_INGRESS_BACKEND_UNHEALTHY = "pod_ready_but_ingress_backend_unhealthy"
 _DEPLOY_RUNTIME_REASON_PUBLIC_IMAGE_PULL_FAILED = "public_image_pull_failed"
 _DEPLOY_RUNTIME_REASON_PRIVATE_IMAGE_PULL_FORBIDDEN = "private_image_pull_forbidden"
+_DEPLOY_RUNTIME_REASON_REACHABLE_BUT_TLS_MISMATCH = "reachable_but_tls_certificate_mismatch"
+_DEPLOY_RUNTIME_REASON_INGRESS_PENDING_BUT_HOST_REACHABLE = "ingress_address_pending_but_hostname_reachable"
 _DEPLOY_GKE_CONFIG_MISSING_REASON_PRIORITY: tuple[str, ...] = (
     _DEPLOY_DISPATCH_SERVICE_REASON_MISSING_CLUSTER_NAME,
     _DEPLOY_DISPATCH_SERVICE_REASON_MISSING_CLUSTER_LOCATION,
@@ -6774,6 +6784,47 @@ def derive_site_preview_certificate_name(*, repo_name: object, site_id: object |
             stage="workflow_provisioning",
         )
     return certificate_name, namespace_source
+
+
+def _derive_site_scoped_resource_name(
+    *,
+    prefix: str,
+    repo_name: object,
+    site_id: object | None = None,
+) -> tuple[str, str]:
+    namespace, namespace_source = derive_site_kubernetes_namespace(repo_name=repo_name, site_id=site_id)
+    suffix_budget = 63 - len(prefix) - 1
+    suffix = _safe_identifier_fragment(namespace, fallback="", max_length=max(suffix_budget, 1)).strip("-")
+    if not suffix:
+        raise SEOMigrationGitHubPublisherError(
+            code="managed_resource_name_invalid",
+            safe_message="Managed resource name could not be derived from deploy target metadata.",
+            stage="workflow_provisioning",
+        )
+    resource_name = f"{prefix}-{suffix}"[:63].strip("-")
+    if not resource_name:
+        raise SEOMigrationGitHubPublisherError(
+            code="managed_resource_name_invalid",
+            safe_message="Managed resource name could not be derived from deploy target metadata.",
+            stage="workflow_provisioning",
+        )
+    return resource_name, namespace_source
+
+
+def derive_site_preview_frontend_config_name(*, repo_name: object, site_id: object | None = None) -> tuple[str, str]:
+    return _derive_site_scoped_resource_name(
+        prefix=_MBSRN_MANAGED_FRONTEND_CONFIG_NAME_PREFIX,
+        repo_name=repo_name,
+        site_id=site_id,
+    )
+
+
+def derive_site_preview_backend_config_name(*, repo_name: object, site_id: object | None = None) -> tuple[str, str]:
+    return _derive_site_scoped_resource_name(
+        prefix=_MBSRN_MANAGED_BACKEND_CONFIG_NAME_PREFIX,
+        repo_name=repo_name,
+        site_id=site_id,
+    )
 
 
 def _derive_site_runtime_image_repository(*, repo_owner: object, repo_name: object) -> str:
@@ -6947,6 +6998,18 @@ def _render_managed_deploy_workflow_yaml(
     normalized_namespace = _safe_identifier_fragment(kubernetes_namespace, fallback=normalized_repo_fragment, max_length=63)
     normalized_namespace_source = _safe_identifier_fragment(namespace_source, fallback="repo-name", max_length=40)
     normalized_preview_hostname = (_coerce_string(preview_hostname) or "").strip().lower()
+    preview_certificate_name, _ = derive_site_preview_certificate_name(
+        repo_name=repo_name,
+        site_id=site_id,
+    )
+    frontend_config_name, _ = derive_site_preview_frontend_config_name(
+        repo_name=repo_name,
+        site_id=site_id,
+    )
+    backend_config_name, _ = derive_site_preview_backend_config_name(
+        repo_name=repo_name,
+        site_id=site_id,
+    )
     normalized_name = f"MBSRN Deploy {normalized_repo_fragment}"
     private_image_auth_value = "true" if private_image_auth_required else "false"
     verify_pull_secret_step = ""
@@ -6992,6 +7055,9 @@ def _render_managed_deploy_workflow_yaml(
         f"      MBSRN_TARGET_ENVIRONMENT_SOURCE: {normalized_environment_source}\n"
         f"      MBSRN_SITE_IDENTITY: {normalized_site_fragment}\n"
         f"      MBSRN_PREVIEW_HOSTNAME: {normalized_preview_hostname}\n"
+        f"      MBSRN_PREVIEW_CERTIFICATE_NAME: {preview_certificate_name}\n"
+        f"      MBSRN_FRONTEND_CONFIG_NAME: {frontend_config_name}\n"
+        f"      MBSRN_BACKEND_CONFIG_NAME: {backend_config_name}\n"
         f"      SITE_WEB_IMAGE_REPOSITORY: {site_runtime_image_repository}\n"
         "      SITE_WEB_IMAGE_TAG: ${{ vars.MBSRN_SITE_WEB_IMAGE_TAG || vars.SITE_WEB_IMAGE_TAG || secrets.MBSRN_SITE_WEB_IMAGE_TAG || secrets.SITE_WEB_IMAGE_TAG || '' }}\n"
         f"      PRIVATE_IMAGE_AUTH_REQUIRED: \"{private_image_auth_value}\"\n"
@@ -7125,16 +7191,40 @@ def _render_managed_deploy_workflow_yaml(
         "            kubectl get deployment site-web --namespace \"$K8S_NAMESPACE\" -o wide || true\n"
         "            kubectl get rs --namespace \"$K8S_NAMESPACE\" -o wide || true\n"
         "            kubectl get pods --namespace \"$K8S_NAMESPACE\" -o wide || true\n"
+        "            kubectl get service site-web --namespace \"$K8S_NAMESPACE\" -o wide || true\n"
+        "            kubectl get endpoints site-web --namespace \"$K8S_NAMESPACE\" -o wide || true\n"
+        "            kubectl get endpointslice --namespace \"$K8S_NAMESPACE\" -l kubernetes.io/service-name=site-web -o wide || true\n"
         "            deployment_describe_output=\"$(mktemp)\"\n"
         "            kubectl describe deployment site-web --namespace \"$K8S_NAMESPACE\" > \"$deployment_describe_output\" 2>&1 || true\n"
         "            cat \"$deployment_describe_output\"\n"
         "            describe_pods_output=\"$(mktemp)\"\n"
         "            kubectl describe pods --namespace \"$K8S_NAMESPACE\" -l app.kubernetes.io/name=site-web > \"$describe_pods_output\" 2>&1 || true\n"
         "            cat \"$describe_pods_output\"\n"
+        "            service_describe_output=\"$(mktemp)\"\n"
+        "            kubectl describe service site-web --namespace \"$K8S_NAMESPACE\" > \"$service_describe_output\" 2>&1 || true\n"
+        "            cat \"$service_describe_output\"\n"
+        "            ingress_describe_output=\"$(mktemp)\"\n"
+        "            kubectl describe ingress site-web --namespace \"$K8S_NAMESPACE\" > \"$ingress_describe_output\" 2>&1 || true\n"
+        "            cat \"$ingress_describe_output\"\n"
+        "            managedcertificate_describe_output=\"$(mktemp)\"\n"
+        "            kubectl describe managedcertificate \"$MBSRN_PREVIEW_CERTIFICATE_NAME\" --namespace \"$K8S_NAMESPACE\" > \"$managedcertificate_describe_output\" 2>&1 || true\n"
+        "            cat \"$managedcertificate_describe_output\"\n"
+        "            backendconfig_describe_output=\"$(mktemp)\"\n"
+        "            kubectl describe backendconfig \"$MBSRN_BACKEND_CONFIG_NAME\" --namespace \"$K8S_NAMESPACE\" > \"$backendconfig_describe_output\" 2>&1 || true\n"
+        "            cat \"$backendconfig_describe_output\"\n"
+        "            endpoints_output=\"$(mktemp)\"\n"
+        "            kubectl get endpoints site-web --namespace \"$K8S_NAMESPACE\" -o yaml > \"$endpoints_output\" 2>&1 || true\n"
+        "            cat \"$endpoints_output\"\n"
+        "            endpointslice_output=\"$(mktemp)\"\n"
+        "            kubectl get endpointslice --namespace \"$K8S_NAMESPACE\" -l kubernetes.io/service-name=site-web -o yaml > \"$endpointslice_output\" 2>&1 || true\n"
+        "            cat \"$endpointslice_output\"\n"
         "            image_pull_detected=false\n"
         "            image_pull_secret_missing_detected=false\n"
         "            private_image_pull_forbidden_detected=false\n"
         "            public_image_pull_failed_detected=false\n"
+        "            service_no_ready_endpoints_detected=false\n"
+        "            ingress_backend_unhealthy_detected=false\n"
+        "            pod_ready_detected=false\n"
         "            private_image_auth_required=\"${PRIVATE_IMAGE_AUTH_REQUIRED:-false}\"\n"
         "            if grep -qiE 'ImagePullBackOff|ErrImagePull|pull access denied|manifest unknown|Failed to pull image' \"$describe_pods_output\"; then\n"
         "              image_pull_detected=true\n"
@@ -7160,11 +7250,30 @@ def _render_managed_deploy_workflow_yaml(
         "                echo \"Likely rollout blocker: public image pull failed.\"\n"
         "              fi\n"
         "            fi\n"
-        "            if grep -qiE 'ingress backend.*unhealthy|backend service.*unhealthy|backend.*degraded mode|neg.*degraded mode|unhealthy backends' \"$deployment_describe_output\" \"$describe_pods_output\"; then\n"
-        "              echo \"Likely rollout blocker: ingress backend unhealthy.\"\n"
+        "            if grep -qiE 'Ready:[[:space:]]+True|ContainersReady[[:space:]]+True|Condition[[:space:]]+Ready[[:space:]]+True' \"$describe_pods_output\"; then\n"
+        "              pod_ready_detected=true\n"
         "            fi\n"
-        "            if grep -qiE 'backendconfig.*healthcheck|healthcheck.*path|health check.*path|requestpath' \"$deployment_describe_output\" \"$describe_pods_output\"; then\n"
+        "            if grep -qiE 'endpoints:[[:space:]]*<none>|subsets:[[:space:]]*\\[\\]|addresses:[[:space:]]*\\[\\]|notreadyaddresses|no endpoints available' \"$service_describe_output\" \"$endpoints_output\" \"$endpointslice_output\"; then\n"
+        "              service_no_ready_endpoints_detected=true\n"
+        "              echo \"Likely rollout blocker: service has no ready endpoints.\"\n"
+        "              echo \"deploy_runtime_reason_code=service_has_no_ready_endpoints\"\n"
+        "            fi\n"
+        "            if grep -qiE 'ingress backend.*unhealthy|backend service.*unhealthy|backend.*degraded mode|neg.*degraded mode|unhealthy backends' \"$deployment_describe_output\" \"$describe_pods_output\" \"$ingress_describe_output\"; then\n"
+        "              ingress_backend_unhealthy_detected=true\n"
+        "              echo \"Likely rollout blocker: ingress backend unhealthy.\"\n"
+        "              echo \"deploy_runtime_reason_code=ingress_backend_unhealthy\"\n"
+        "            fi\n"
+        "            if grep -qiE '502|bad gateway' \"$ingress_describe_output\" \"$service_describe_output\"; then\n"
+        "              echo \"Likely rollout blocker: ingress backend 502.\"\n"
+        "              echo \"deploy_runtime_reason_code=ingress_backend_502\"\n"
+        "            fi\n"
+        "            if [ \"$pod_ready_detected\" = true ] && [ \"$ingress_backend_unhealthy_detected\" = true ]; then\n"
+        "              echo \"Likely rollout blocker: pod ready but ingress backend unhealthy.\"\n"
+        "              echo \"deploy_runtime_reason_code=pod_ready_but_ingress_backend_unhealthy\"\n"
+        "            fi\n"
+        "            if grep -qiE 'backendconfig.*healthcheck|healthcheck.*path|health check.*path|requestpath' \"$deployment_describe_output\" \"$describe_pods_output\" \"$backendconfig_describe_output\"; then\n"
         "              echo \"Likely rollout blocker: backendconfig health check mismatch.\"\n"
+        "              echo \"deploy_runtime_reason_code=backendconfig_health_check_mismatch\"\n"
         "            fi\n"
         "            if [ \"$image_pull_secret_missing_detected\" = true ]; then\n"
         "              echo \"deploy_runtime_reason_code=image_pull_secret_missing\"\n"
@@ -7207,6 +7316,12 @@ def _render_managed_deploy_workflow_yaml(
         "            fi\n"
         "            rm -f \"$deployment_describe_output\"\n"
         "            rm -f \"$describe_pods_output\"\n"
+        "            rm -f \"$service_describe_output\"\n"
+        "            rm -f \"$ingress_describe_output\"\n"
+        "            rm -f \"$managedcertificate_describe_output\"\n"
+        "            rm -f \"$backendconfig_describe_output\"\n"
+        "            rm -f \"$endpoints_output\"\n"
+        "            rm -f \"$endpointslice_output\"\n"
         "            recent_pods=\"$(kubectl get pods --namespace \"$K8S_NAMESPACE\" -l app.kubernetes.io/name=site-web --sort-by=.metadata.creationTimestamp -o name 2>/dev/null | tail -n 3)\"\n"
         "            if [ -n \"$recent_pods\" ]; then\n"
         "              for pod in $recent_pods; do\n"
@@ -7232,10 +7347,61 @@ def _render_managed_deploy_workflow_yaml(
         "          ingress_ip=\"\"\n"
         "          ingress_spec_host=\"\"\n"
         "          preview_host=\"$MBSRN_PREVIEW_HOSTNAME\"\n"
+        "          host_reachable=false\n"
+        "          host_reachability_scheme=\"\"\n"
+        "          tls_mismatch_detected=false\n"
+        "          backend_502_detected=false\n"
         "          for attempt in $(seq 1 \"$max_attempts\"); do\n"
         "            ingress_host=\"$(kubectl get ingress site-web --namespace \"$K8S_NAMESPACE\" -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)\"\n"
         "            ingress_ip=\"$(kubectl get ingress site-web --namespace \"$K8S_NAMESPACE\" -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)\"\n"
         "            ingress_spec_host=\"$(kubectl get ingress site-web --namespace \"$K8S_NAMESPACE\" -o jsonpath='{.spec.rules[0].host}' 2>/dev/null || true)\"\n"
+        "            if [ -z \"$preview_host\" ] && [ -n \"$ingress_spec_host\" ]; then\n"
+        "              preview_host=\"$ingress_spec_host\"\n"
+        "            fi\n"
+        "            if [ -n \"$preview_host\" ]; then\n"
+        "              https_probe_output=\"$(mktemp)\"\n"
+        "              if https_code=\"$(curl --silent --show-error --connect-timeout 5 --max-time 10 --output /dev/null --write-out '%{http_code}' \"https://$preview_host\" 2>\"$https_probe_output\")\"; then\n"
+        "                if echo \"$https_code\" | grep -Eq '^[1-5][0-9][0-9]$'; then\n"
+        "                  if echo \"$https_code\" | grep -Eq '^5[0-9][0-9]$'; then\n"
+        "                    backend_502_detected=true\n"
+        "                    echo \"deploy_runtime_reason_code=ingress_backend_502\"\n"
+        "                    echo \"Expected preview hostname responded with ${https_code} over HTTPS, indicating backend unhealthy state.\"\n"
+        "                    rm -f \"$https_probe_output\"\n"
+        "                    break\n"
+        "                  fi\n"
+        "                  host_reachable=true\n"
+        "                  host_reachability_scheme=\"https\"\n"
+        "                  rm -f \"$https_probe_output\"\n"
+        "                  echo \"Expected preview hostname responded over HTTPS on attempt ${attempt}/${max_attempts} with status ${https_code}.\"\n"
+        "                  break\n"
+        "                fi\n"
+        "              else\n"
+        "                https_exit=$?\n"
+        "                if [ \"$https_exit\" -eq 60 ] || grep -qiE 'SSL certificate problem|SSL_ERROR_BAD_CERT_DOMAIN|certificate subject name|no alternative certificate subject name' \"$https_probe_output\"; then\n"
+        "                  tls_mismatch_detected=true\n"
+        "                  echo \"Expected preview hostname is reachable but TLS certificate does not match.\"\n"
+        "                  echo \"deploy_runtime_reason_code=reachable_but_tls_certificate_mismatch\"\n"
+        "                  cat \"$https_probe_output\"\n"
+        "                  rm -f \"$https_probe_output\"\n"
+        "                  break\n"
+        "                fi\n"
+        "              fi\n"
+        "              rm -f \"$https_probe_output\"\n"
+        "              http_code=\"$(curl --silent --show-error --connect-timeout 5 --max-time 10 --output /dev/null --write-out '%{http_code}' \"http://$preview_host\" 2>/dev/null || true)\"\n"
+        "              if echo \"$http_code\" | grep -Eq '^[1-5][0-9][0-9]$'; then\n"
+        "                if echo \"$http_code\" | grep -Eq '^5[0-9][0-9]$'; then\n"
+        "                  backend_502_detected=true\n"
+        "                  echo \"deploy_runtime_reason_code=ingress_backend_502\"\n"
+        "                  echo \"Expected preview hostname responded with ${http_code} over HTTP, indicating backend unhealthy state.\"\n"
+        "                  break\n"
+        "                fi\n"
+        "                host_reachable=true\n"
+        "                host_reachability_scheme=\"http\"\n"
+        "                echo \"Expected preview hostname responded over HTTP on attempt ${attempt}/${max_attempts} with status ${http_code}.\"\n"
+        "                echo \"deploy_runtime_reason_code=ingress_address_pending_but_hostname_reachable\"\n"
+        "                break\n"
+        "              fi\n"
+        "            fi\n"
         "            if [ -n \"$ingress_host\" ] || [ -n \"$ingress_ip\" ]; then\n"
         "              echo \"Ingress external address resolved on attempt ${attempt}/${max_attempts}.\"\n"
         "              break\n"
@@ -7246,10 +7412,30 @@ def _render_managed_deploy_workflow_yaml(
         "            fi\n"
         "          done\n"
         "          live_url=\"\"\n"
-        "          if [ -z \"$preview_host\" ] && [ -n \"$ingress_spec_host\" ]; then\n"
-        "            preview_host=\"$ingress_spec_host\"\n"
+        "          if [ \"$tls_mismatch_detected\" = true ]; then\n"
+            "            echo \"deploy_runtime_reason_message=Expected hostname is reachable but TLS certificate is bound to another site.\"\n"
+            "            kubectl get ingress site-web --namespace \"$K8S_NAMESPACE\" -o wide || true\n"
+            "            kubectl describe ingress site-web --namespace \"$K8S_NAMESPACE\" || true\n"
+            "            kubectl describe managedcertificate \"$MBSRN_PREVIEW_CERTIFICATE_NAME\" --namespace \"$K8S_NAMESPACE\" || true\n"
+            "            exit 1\n"
         "          fi\n"
-        "          if [ -n \"$preview_host\" ]; then\n"
+        "          if [ \"$backend_502_detected\" = true ]; then\n"
+        "            echo \"deploy_runtime_reason_message=Ingress hostname is reachable but backend returned 5xx.\"\n"
+        "            kubectl get service site-web --namespace \"$K8S_NAMESPACE\" -o wide || true\n"
+        "            kubectl describe service site-web --namespace \"$K8S_NAMESPACE\" || true\n"
+        "            kubectl get endpoints site-web --namespace \"$K8S_NAMESPACE\" -o wide || true\n"
+        "            kubectl get endpointslice --namespace \"$K8S_NAMESPACE\" -l kubernetes.io/service-name=site-web -o wide || true\n"
+        "            kubectl describe ingress site-web --namespace \"$K8S_NAMESPACE\" || true\n"
+        "            kubectl describe backendconfig \"$MBSRN_BACKEND_CONFIG_NAME\" --namespace \"$K8S_NAMESPACE\" || true\n"
+        "            exit 1\n"
+        "          fi\n"
+        "          if [ \"$host_reachable\" = true ] && [ -n \"$preview_host\" ]; then\n"
+        "            if [ \"$host_reachability_scheme\" = \"http\" ]; then\n"
+        "              live_url=\"http://$preview_host\"\n"
+        "            else\n"
+        "              live_url=\"https://$preview_host\"\n"
+        "            fi\n"
+        "          elif [ -n \"$preview_host\" ]; then\n"
         "            live_url=\"https://$preview_host\"\n"
         "          elif [ -n \"$ingress_host\" ]; then\n"
         "            live_url=\"https://$ingress_host\"\n"
@@ -7266,9 +7452,11 @@ def _render_managed_deploy_workflow_yaml(
         "            kubectl describe ingress site-web --namespace \"$K8S_NAMESPACE\" || true\n"
         "            kubectl get service site-web --namespace \"$K8S_NAMESPACE\" -o wide || true\n"
         "            kubectl get endpoints site-web --namespace \"$K8S_NAMESPACE\" -o wide || true\n"
-        "            kubectl get managedcertificate --namespace \"$K8S_NAMESPACE\" || true\n"
-        "            kubectl get frontendconfig --namespace \"$K8S_NAMESPACE\" || true\n"
-        "            exit 1\n"
+        "            kubectl get endpointslice --namespace \"$K8S_NAMESPACE\" -l kubernetes.io/service-name=site-web -o wide || true\n"
+        "            kubectl get managedcertificate \"$MBSRN_PREVIEW_CERTIFICATE_NAME\" --namespace \"$K8S_NAMESPACE\" || true\n"
+        "            kubectl get frontendconfig \"$MBSRN_FRONTEND_CONFIG_NAME\" --namespace \"$K8S_NAMESPACE\" || true\n"
+        "            kubectl get backendconfig \"$MBSRN_BACKEND_CONFIG_NAME\" --namespace \"$K8S_NAMESPACE\" || true\n"
+            "            exit 1\n"
         "          fi\n"
         "          {\n"
         "            echo \"live_url=$live_url\"\n"
@@ -7286,6 +7474,9 @@ def _render_managed_deploy_workflow_yaml(
         f'          echo "Target environment source: {normalized_environment_source}"\n'
         f'          echo "Site identity: {normalized_site_fragment}"\n'
         "          echo \"Preview hostname: $MBSRN_PREVIEW_HOSTNAME\"\n"
+        "          echo \"Preview certificate name: $MBSRN_PREVIEW_CERTIFICATE_NAME\"\n"
+        "          echo \"FrontendConfig name: $MBSRN_FRONTEND_CONFIG_NAME\"\n"
+        "          echo \"BackendConfig name: $MBSRN_BACKEND_CONFIG_NAME\"\n"
         "          echo \"Site runtime image: ${{ steps.resolve_site_runtime_image.outputs.site_runtime_image_reference }}\"\n"
         "          echo \"Site runtime image selection mode: ${{ steps.resolve_site_runtime_image.outputs.site_runtime_image_selection_mode }}\"\n"
         "          echo \"Site runtime image repository: ${{ steps.resolve_site_runtime_image.outputs.site_runtime_image_repository }}\"\n"
@@ -7316,6 +7507,14 @@ def _render_managed_gke_manifest_files(
         repo_name=repo_name,
         site_id=site_id,
     )
+    frontend_config_name, _ = derive_site_preview_frontend_config_name(
+        repo_name=repo_name,
+        site_id=site_id,
+    )
+    backend_config_name, _ = derive_site_preview_backend_config_name(
+        repo_name=repo_name,
+        site_id=site_id,
+    )
     repo_owner_fragment = _safe_identifier_fragment(repo_owner, fallback="mbsrn", max_length=40)
     repo_fragment = _safe_identifier_fragment(repo_name, fallback="site", max_length=40)
     env_key = _safe_identifier_fragment(target_environment_key, fallback="gke-prod", max_length=40)
@@ -7339,6 +7538,7 @@ def _render_managed_gke_manifest_files(
         f"    mbsrn.io/environment-source: {env_source}\n"
         f"    mbsrn.io/site-id: {site_fragment}\n"
         f"    mbsrn.io/namespace-source: {namespace_origin}\n"
+        f"    mbsrn.io/preview-hostname: {normalized_preview_hostname}\n"
     )
 
     namespace_manifest = (
@@ -7408,7 +7608,7 @@ def _render_managed_gke_manifest_files(
         f"{labels}"
         "  annotations:\n"
         "    cloud.google.com/neg: '{\"ingress\": true}'\n"
-        "    cloud.google.com/backend-config: '{\"default\": \"site-web-backend-config\"}'\n"
+        f"    cloud.google.com/backend-config: '{{\"default\": \"{backend_config_name}\"}}'\n"
         "spec:\n"
         "  selector:\n"
         "    app.kubernetes.io/name: site-web\n"
@@ -7431,7 +7631,7 @@ def _render_managed_gke_manifest_files(
         "    kubernetes.io/ingress.class: gce\n"
         "    kubernetes.io/ingress.global-static-ip-name: mbsrn-site-lb-ip\n"
         f"    networking.gke.io/managed-certificates: {preview_certificate_name}\n"
-        "    networking.gke.io/v1beta1.FrontendConfig: site-web-frontend-config\n"
+        f"    networking.gke.io/v1beta1.FrontendConfig: {frontend_config_name}\n"
         "spec:\n"
         "  ingressClassName: gce\n"
         "  rules:\n"
@@ -7464,7 +7664,7 @@ def _render_managed_gke_manifest_files(
         "apiVersion: networking.gke.io/v1beta1\n"
         "kind: FrontendConfig\n"
         "metadata:\n"
-        "  name: site-web-frontend-config\n"
+        f"  name: {frontend_config_name}\n"
         f"  namespace: {namespace}\n"
         "  labels:\n"
         f"{labels}"
@@ -7477,7 +7677,7 @@ def _render_managed_gke_manifest_files(
         "apiVersion: cloud.google.com/v1\n"
         "kind: BackendConfig\n"
         "metadata:\n"
-        "  name: site-web-backend-config\n"
+        f"  name: {backend_config_name}\n"
         f"  namespace: {namespace}\n"
         "  labels:\n"
         f"{labels}"
@@ -7866,6 +8066,9 @@ def _evaluate_preview_certificate_alignment(
         "stale_managed_certificate_present": stale_managed_certificate_present,
         "stale_managed_certificate_names": stale_managed_certificate_names,
         "certificate_domain_mismatch": certificate_domain_mismatch,
+        "managed_certificate_identity_mismatch": stale_managed_certificate_present,
+        "ingress_certificate_annotation_mismatch": ingress_certificate_mismatch,
+        "tls_certificate_bound_to_wrong_site": certificate_domain_mismatch,
         "preview_certificate_alignment_status": alignment_status,
     }
 
@@ -7955,10 +8158,20 @@ def _classify_cloudsql_proxy_failure_from_log_text(
         return _DEPLOY_RUNTIME_REASON_BACKENDCONFIG_HEALTH_CHECK_MISMATCH, "rollout_verify"
     if "deploy_runtime_reason_code=ingress_backend_unhealthy" in normalized:
         return _DEPLOY_RUNTIME_REASON_INGRESS_BACKEND_UNHEALTHY, "rollout_verify"
+    if "deploy_runtime_reason_code=ingress_backend_502" in normalized:
+        return _DEPLOY_RUNTIME_REASON_INGRESS_BACKEND_502, "rollout_verify"
+    if "deploy_runtime_reason_code=service_has_no_ready_endpoints" in normalized:
+        return _DEPLOY_RUNTIME_REASON_SERVICE_HAS_NO_READY_ENDPOINTS, "rollout_verify"
+    if "deploy_runtime_reason_code=pod_ready_but_ingress_backend_unhealthy" in normalized:
+        return _DEPLOY_RUNTIME_REASON_POD_READY_BUT_INGRESS_BACKEND_UNHEALTHY, "rollout_verify"
     if "deploy_runtime_reason_code=public_image_pull_failed" in normalized:
         return _DEPLOY_RUNTIME_REASON_PUBLIC_IMAGE_PULL_FAILED, "rollout_verify"
     if "deploy_runtime_reason_code=private_image_pull_forbidden" in normalized:
         return _DEPLOY_RUNTIME_REASON_PRIVATE_IMAGE_PULL_FORBIDDEN, "rollout_verify"
+    if "deploy_runtime_reason_code=reachable_but_tls_certificate_mismatch" in normalized:
+        return _DEPLOY_RUNTIME_REASON_REACHABLE_BUT_TLS_MISMATCH, "ingress_evidence"
+    if "deploy_runtime_reason_code=ingress_address_pending_but_hostname_reachable" in normalized:
+        return _DEPLOY_RUNTIME_REASON_INGRESS_PENDING_BUT_HOST_REACHABLE, "ingress_evidence"
     if "deploy_runtime_reason_code=image_pull_secret_missing" in normalized:
         return _DEPLOY_DISPATCH_SERVICE_REASON_IMAGE_PULL_SECRET_MISSING, "rollout_verify"
     if "deploy_runtime_reason_code=cloudsql_instance_inspection_failed" in normalized:
@@ -8046,11 +8259,20 @@ def _classify_rollout_blocker_hints_from_describe_outputs(
         hints.append("scheduling_or_resource_issue")
 
     if _has(
+        r"endpoints:\s*<none>|subsets:\s*\[\]|addresses:\s*\[\]|notreadyaddresses|no endpoints available",
+        deployment_text,
+        pods_text,
+    ):
+        hints.append(_DEPLOY_RUNTIME_REASON_SERVICE_HAS_NO_READY_ENDPOINTS)
+
+    if _has(
         r"ingress backend.*unhealthy|backend service.*unhealthy|backend.*degraded mode|neg.*degraded mode|unhealthy backends",
         deployment_text,
         pods_text,
     ):
         hints.append(_DEPLOY_RUNTIME_REASON_INGRESS_BACKEND_UNHEALTHY)
+    if _has(r"502|bad gateway", deployment_text, pods_text):
+        hints.append(_DEPLOY_RUNTIME_REASON_INGRESS_BACKEND_502)
 
     if _has(
         r"backendconfig.*healthcheck|healthcheck.*path|health check.*path|requestpath",
@@ -8076,6 +8298,8 @@ def _classify_rollout_blocker_hints_from_describe_outputs(
         hints.append("pod_crash_or_startup_failure")
     if not image_pull_detected and container_started_evidence and probe_direct_evidence:
         hints.append("readiness_or_liveness_probe_failure")
+    if container_started_evidence and _DEPLOY_RUNTIME_REASON_INGRESS_BACKEND_UNHEALTHY in hints:
+        hints.append(_DEPLOY_RUNTIME_REASON_POD_READY_BUT_INGRESS_BACKEND_UNHEALTHY)
 
     return tuple(dict.fromkeys(hints))
 

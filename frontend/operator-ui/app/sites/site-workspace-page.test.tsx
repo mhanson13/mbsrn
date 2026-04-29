@@ -913,7 +913,7 @@ describe("site migration workflow route", () => {
           path: "index.html",
           media_type: "text/html",
           content:
-            "<html><head><title>Artifact One Home</title></head><body><a href=\"about.html\">About</a></body></html>",
+            "<html><head><title>Artifact One Home</title></head><body><a href=\"about.html\">About</a><a href=\"/sites/site-1\">Workspace</a></body></html>",
           size_bytes: 100,
         },
         {
@@ -956,6 +956,10 @@ describe("site migration workflow route", () => {
     const pageSelect = await screen.findByTestId("migration-draft-preview-page-select");
     const previewFrame = screen.getByTestId("migration-draft-preview-iframe");
     expect(previewFrame).toHaveAttribute("srcDoc", expect.stringContaining("Artifact One Home"));
+    expect(previewFrame).toHaveAttribute("srcDoc", expect.stringContaining("data-preview-link-blocked=\"true\""));
+    expect(screen.getByTestId("migration-draft-preview-auth-guidance")).toHaveTextContent(
+      "Draft preview route requires operator session context.",
+    );
 
     await user.selectOptions(pageSelect, "about.html");
     expect(screen.getByTestId("migration-draft-preview-iframe")).toHaveAttribute(

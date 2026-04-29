@@ -587,17 +587,47 @@ function toManagedGkeConfigGuidance(value: string | null): string | null {
   if (normalized === "certificate_domain_mismatch") {
     return "The deployed certificate does not match the site hostname. This usually means the managed certificate or ingress points at another site's hostname. Republish/deploy after admin verification of generated ingress/certificate resources.";
   }
+  if (normalized === "tls_certificate_bound_to_wrong_site") {
+    return "The deployed TLS certificate is bound to another site hostname. Republish/deploy after admin verification of generated ingress and managed certificate resources.";
+  }
   if (normalized === "stale_managed_certificate_present") {
     return "A previous site's certificate is still present in this environment. This may cause incorrect SSL certificates to be served. Redeploy or remove stale certificates.";
   }
+  if (normalized === "managed_certificate_identity_mismatch") {
+    return "Managed certificate identity in this namespace does not match the current site. Redeploy or remove stale certificates after admin verification.";
+  }
   if (normalized === "ingress_certificate_mismatch") {
     return "Ingress is referencing the wrong managed certificate for this site hostname. Republish/deploy after admin verification of generated ingress/certificate resources.";
+  }
+  if (normalized === "ingress_certificate_annotation_mismatch") {
+    return "Ingress managed-certificate annotation does not match the expected site certificate. Republish/deploy after admin verification.";
   }
   if (normalized === "backendconfig_health_check_mismatch") {
     return "BackendConfig health check path/port does not match the running site-web application health endpoint.";
   }
   if (normalized === "ingress_backend_unhealthy") {
     return "Ingress backend is unhealthy even though pods may be running. Verify BackendConfig, service endpoints, and load balancer backend health.";
+  }
+  if (normalized === "ingress_backend_502") {
+    return "Ingress is returning 502 for this site. Verify service endpoints, EndpointSlices, BackendConfig, and load balancer backend health.";
+  }
+  if (normalized === "service_has_no_ready_endpoints") {
+    return "Service has no ready endpoints for site-web. Verify pod readiness, service selectors, and endpoint population.";
+  }
+  if (normalized === "pod_ready_but_ingress_backend_unhealthy") {
+    return "Pods are ready but ingress backend remains unhealthy. Verify NEG/backend health and load balancer checks.";
+  }
+  if (normalized === "reachable_but_tls_certificate_mismatch") {
+    return "Expected hostname is reachable, but TLS certificate is bound to another site. Verify managed certificate identity and ingress annotation alignment.";
+  }
+  if (normalized === "ingress_address_pending_but_hostname_reachable") {
+    return "Expected hostname is reachable before ingress external address is populated. Continue monitoring ingress status and certificate activation.";
+  }
+  if (normalized === "draft_preview_auth_context_missing") {
+    return "Draft preview route requires an authenticated operator session. Re-open preview from the migration workspace.";
+  }
+  if (normalized === "draft_preview_route_requires_operator_session") {
+    return "Draft preview links that require operator session are blocked inside iframe preview. Use in-app preview navigation controls.";
   }
   if (normalized === "public_image_pull_failed") {
     return "Public image pull failed for site-web. Verify the image reference/tag exists and is readable in GHCR.";
@@ -1882,15 +1912,19 @@ function buildDraftPreviewEvaluation(artifact: MigrationArtifactVersion | null):
     html = html.replace(
       /<a\b([^>]*)\bhref=["']([^"']+)["']([^>]*)>/gi,
       (full, prefix: string, hrefValue: string, suffix: string) => {
-        const resolvedPath = resolveArtifactRelativePath(path, hrefValue);
-        if (!resolvedPath || !resolvedPath.endsWith(".html") || !fileMap.has(resolvedPath)) {
+        const trimmedHref = hrefValue.trim().toLowerCase();
+        if (!trimmedHref || trimmedHref.startsWith("#")) {
           return full;
         }
-        return `<a${prefix}href="#draft-preview-page=${encodeURIComponent(resolvedPath)}"${suffix}>`;
+        const resolvedPath = resolveArtifactRelativePath(path, hrefValue);
+        if (resolvedPath && resolvedPath.endsWith(".html") && fileMap.has(resolvedPath)) {
+          return `<a${prefix}href="#draft-preview-page=${encodeURIComponent(resolvedPath)}"${suffix}>`;
+        }
+        return `<a${prefix}href="#" data-preview-link-blocked="true"${suffix}>`;
       },
     );
     const previewBanner =
-      '<div style="position:sticky;top:0;z-index:2147483646;padding:10px 14px;border-bottom:1px solid #d6e4ff;background:#eef4ff;color:#12316b;font:600 12px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;">Draft preview only. Not published. Not deployed. Use page selector above to navigate this draft site.</div>';
+      '<div style="position:sticky;top:0;z-index:2147483646;padding:10px 14px;border-bottom:1px solid #d6e4ff;background:#eef4ff;color:#12316b;font:600 12px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;">Draft preview only. Not published. Not deployed. Use page selector above to navigate this draft site. External/app-auth links are blocked in preview.</div>';
     if (/<body[^>]*>/i.test(html)) {
       html = html.replace(/<body([^>]*)>/i, `<body$1>${previewBanner}`);
     } else {
@@ -3030,7 +3064,7 @@ export function MigrationWorkspacePanel({
         publish_config: payload,
       });
       setStatusMessage("Publish repository settings saved.");
-      await loadWorkspaceData(false);
+      await loadWorkspaceData(true);
     } catch (error) {
       setErrorHint(null);
       setErrorMessage(toErrorMessage(error, "Failed to save publish repository settings."));
@@ -3059,7 +3093,7 @@ export function MigrationWorkspacePanel({
         },
       });
       setStatusMessage("Deploy availability saved.");
-      await loadWorkspaceData(false);
+      await loadWorkspaceData(true);
     } catch (error) {
       setErrorHint(null);
       setErrorMessage(toErrorMessage(error, "Failed to save deploy target."));
@@ -4135,6 +4169,9 @@ export function MigrationWorkspacePanel({
                 <strong>Draft Preview (Read-only)</strong>
                 <span className="hint muted">
                   Entry file: {draftPreview.entryPath || "index.html"} | This preview is sandboxed and not live.
+                </span>
+                <span className="hint muted" data-testid="migration-draft-preview-auth-guidance">
+                  Draft preview route requires operator session context. External or app-auth links are blocked inside preview.
                 </span>
                 {draftPreview.pages.length > 1 ? (
                   <label className="stack-tight">

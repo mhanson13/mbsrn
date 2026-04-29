@@ -249,8 +249,13 @@ _DEPLOY_RUN_FAILURE_REASON_TRACKING_LOST = "workflow_run_tracking_lost"
 _DEPLOY_RUN_FAILURE_REASON_RECONCILIATION_TIMEOUT = "workflow_reconciliation_timeout"
 _DEPLOY_RUN_FAILURE_REASON_BACKENDCONFIG_HEALTH_CHECK_MISMATCH = "backendconfig_health_check_mismatch"
 _DEPLOY_RUN_FAILURE_REASON_INGRESS_BACKEND_UNHEALTHY = "ingress_backend_unhealthy"
+_DEPLOY_RUN_FAILURE_REASON_INGRESS_BACKEND_502 = "ingress_backend_502"
+_DEPLOY_RUN_FAILURE_REASON_SERVICE_HAS_NO_READY_ENDPOINTS = "service_has_no_ready_endpoints"
+_DEPLOY_RUN_FAILURE_REASON_POD_READY_BUT_INGRESS_BACKEND_UNHEALTHY = "pod_ready_but_ingress_backend_unhealthy"
 _DEPLOY_RUN_FAILURE_REASON_PUBLIC_IMAGE_PULL_FAILED = "public_image_pull_failed"
 _DEPLOY_RUN_FAILURE_REASON_PRIVATE_IMAGE_PULL_FORBIDDEN = "private_image_pull_forbidden"
+_DEPLOY_RUN_FAILURE_REASON_REACHABLE_BUT_TLS_MISMATCH = "reachable_but_tls_certificate_mismatch"
+_DEPLOY_RUN_FAILURE_REASON_INGRESS_PENDING_BUT_HOST_REACHABLE = "ingress_address_pending_but_hostname_reachable"
 _DEPLOY_RUN_FAILURE_STAGE_GCP_AUTH = "gcp_auth"
 _DEPLOY_RUN_FAILURE_STAGE_CLUSTER_CREDENTIALS = "cluster_credentials"
 _DEPLOY_RUN_FAILURE_STAGE_MANIFEST_APPLY = "manifest_apply"
@@ -271,6 +276,9 @@ _DEPLOY_DISPATCH_SERVICE_REASON_IMAGE_PULL_SECRET_NOT_REFERENCED = "image_pull_s
 _DEPLOY_DISPATCH_SERVICE_REASON_CERTIFICATE_DOMAIN_MISMATCH = "certificate_domain_mismatch"
 _DEPLOY_DISPATCH_SERVICE_REASON_STALE_MANAGED_CERTIFICATE_PRESENT = "stale_managed_certificate_present"
 _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_CERTIFICATE_MISMATCH = "ingress_certificate_mismatch"
+_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_IDENTITY_MISMATCH = "managed_certificate_identity_mismatch"
+_DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_CERTIFICATE_ANNOTATION_MISMATCH = "ingress_certificate_annotation_mismatch"
+_DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_BOUND_TO_WRONG_SITE = "tls_certificate_bound_to_wrong_site"
 _DEPLOY_DISPATCH_SERVICE_REASON_DEPLOYED_CONTENT_IDENTITY_MISMATCH = "deployed_content_identity_mismatch"
 _DEPLOY_WORKFLOW_MODE_SITE_REPO_TEMPLATE_V1 = "site_repo_template_v1"
 _DEPLOY_TARGET_ENVIRONMENT_SOURCE_ADMIN = "admin_config"
@@ -12829,8 +12837,13 @@ def _normalize_workflow_run_failure_reason_code(value: object) -> str | None:
         _DEPLOY_RUN_FAILURE_REASON_RECONCILIATION_TIMEOUT,
         _DEPLOY_RUN_FAILURE_REASON_BACKENDCONFIG_HEALTH_CHECK_MISMATCH,
         _DEPLOY_RUN_FAILURE_REASON_INGRESS_BACKEND_UNHEALTHY,
+        _DEPLOY_RUN_FAILURE_REASON_INGRESS_BACKEND_502,
+        _DEPLOY_RUN_FAILURE_REASON_SERVICE_HAS_NO_READY_ENDPOINTS,
+        _DEPLOY_RUN_FAILURE_REASON_POD_READY_BUT_INGRESS_BACKEND_UNHEALTHY,
         _DEPLOY_RUN_FAILURE_REASON_PUBLIC_IMAGE_PULL_FAILED,
         _DEPLOY_RUN_FAILURE_REASON_PRIVATE_IMAGE_PULL_FORBIDDEN,
+        _DEPLOY_RUN_FAILURE_REASON_REACHABLE_BUT_TLS_MISMATCH,
+        _DEPLOY_RUN_FAILURE_REASON_INGRESS_PENDING_BUT_HOST_REACHABLE,
     }
     if normalized_lower in allowed:
         return normalized_lower
@@ -12875,6 +12888,9 @@ def _normalize_dispatch_service_reason_code(value: object) -> str | None:
         _DEPLOY_DISPATCH_SERVICE_REASON_CERTIFICATE_DOMAIN_MISMATCH,
         _DEPLOY_DISPATCH_SERVICE_REASON_STALE_MANAGED_CERTIFICATE_PRESENT,
         _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_CERTIFICATE_MISMATCH,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_IDENTITY_MISMATCH,
+        _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_CERTIFICATE_ANNOTATION_MISMATCH,
+        _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_BOUND_TO_WRONG_SITE,
         _DEPLOY_DISPATCH_SERVICE_REASON_DEPLOYED_CONTENT_IDENTITY_MISMATCH,
     }:
         return normalized_lower
@@ -13351,6 +13367,9 @@ def _derive_dispatch_service_reason_code(
         _DEPLOY_DISPATCH_SERVICE_REASON_CERTIFICATE_DOMAIN_MISMATCH,
         _DEPLOY_DISPATCH_SERVICE_REASON_STALE_MANAGED_CERTIFICATE_PRESENT,
         _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_CERTIFICATE_MISMATCH,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_IDENTITY_MISMATCH,
+        _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_CERTIFICATE_ANNOTATION_MISMATCH,
+        _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_BOUND_TO_WRONG_SITE,
         _DEPLOY_DISPATCH_SERVICE_REASON_DEPLOYED_CONTENT_IDENTITY_MISMATCH,
     }:
         return runtime_reason
@@ -13407,17 +13426,26 @@ def _derive_managed_gke_dispatch_readiness_message(*, dispatch_service_reason_co
             "Private-image auth mode is enabled, but managed deployment manifest is missing required image pull "
             "secret reference (ghcr-pull-secret). Republish managed deploy manifests."
         )
-    if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_CERTIFICATE_DOMAIN_MISMATCH:
+    if normalized_dispatch_reason in {
+        _DEPLOY_DISPATCH_SERVICE_REASON_CERTIFICATE_DOMAIN_MISMATCH,
+        _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_BOUND_TO_WRONG_SITE,
+    }:
         return (
             "Managed deploy target manifests are misaligned: the ingress host and managed certificate domain do not "
             "match this site hostname. Republish/deploy after admin verification of generated ingress/certificate resources."
         )
-    if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_STALE_MANAGED_CERTIFICATE_PRESENT:
+    if normalized_dispatch_reason in {
+        _DEPLOY_DISPATCH_SERVICE_REASON_STALE_MANAGED_CERTIFICATE_PRESENT,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_IDENTITY_MISMATCH,
+    }:
         return (
             "A previous site's certificate is still present in this environment. "
             "Redeploy or remove stale managed certificates after admin verification."
         )
-    if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_CERTIFICATE_MISMATCH:
+    if normalized_dispatch_reason in {
+        _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_CERTIFICATE_MISMATCH,
+        _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_CERTIFICATE_ANNOTATION_MISMATCH,
+    }:
         return (
             "Ingress is referencing the wrong managed certificate for this site hostname. "
             "Republish/deploy after admin verification of ingress certificate annotations."
@@ -13482,18 +13510,27 @@ def _derive_deploy_failure_remediation_hint(
             "Private-image auth mode is enabled, but managed deployment manifest is missing required image pull "
             "secret reference (ghcr-pull-secret). Republish managed deploy manifests and retry."
         )
-    if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_CERTIFICATE_DOMAIN_MISMATCH:
+    if normalized_dispatch_reason in {
+        _DEPLOY_DISPATCH_SERVICE_REASON_CERTIFICATE_DOMAIN_MISMATCH,
+        _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_BOUND_TO_WRONG_SITE,
+    }:
         return (
             "The deployed certificate does not match the site hostname. This usually means ingress or managed "
             "certificate resources point to another site's hostname. Republish/deploy after admin verification "
             "of generated ingress/certificate resources."
         )
-    if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_STALE_MANAGED_CERTIFICATE_PRESENT:
+    if normalized_dispatch_reason in {
+        _DEPLOY_DISPATCH_SERVICE_REASON_STALE_MANAGED_CERTIFICATE_PRESENT,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_IDENTITY_MISMATCH,
+    }:
         return (
             "A previous site's certificate is still present in this environment. "
             "Remove stale managed certificates and redeploy this site."
         )
-    if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_CERTIFICATE_MISMATCH:
+    if normalized_dispatch_reason in {
+        _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_CERTIFICATE_MISMATCH,
+        _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_CERTIFICATE_ANNOTATION_MISMATCH,
+    }:
         return (
             "Ingress managed-certificate annotation does not match this site's expected certificate. "
             "Republish/deploy after correcting managed ingress/certificate resources."
@@ -13550,6 +13587,20 @@ def _derive_workflow_run_failure_hint(
             "Ingress backend is unhealthy even though workload pods may be running; verify BackendConfig, service "
             "endpoints, and load balancer backend health."
         )
+    if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_INGRESS_BACKEND_502:
+        return (
+            "Ingress is returning 502 for this site. Verify service endpoints, EndpointSlices, BackendConfig, "
+            "and load balancer backend health."
+        )
+    if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_SERVICE_HAS_NO_READY_ENDPOINTS:
+        return (
+            "Service has no ready endpoints for site-web. Verify pod readiness, selector labels, and endpoint "
+            "population before retry."
+        )
+    if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_POD_READY_BUT_INGRESS_BACKEND_UNHEALTHY:
+        return (
+            "Pods report ready but ingress backend remains unhealthy. Verify NEG/backend health and GCLB checks."
+        )
     if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_PUBLIC_IMAGE_PULL_FAILED:
         return (
             "Public GHCR image pull failed for site-web. Verify image reference/tag exists and is readable."
@@ -13563,6 +13614,16 @@ def _derive_workflow_run_failure_hint(
         return "Service or ingress verification failed in the deploy workflow run."
     if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_INGRESS_EVIDENCE:
         return "Ingress endpoint was not available before workflow evidence timeout."
+    if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_REACHABLE_BUT_TLS_MISMATCH:
+        return (
+            "Expected hostname is reachable but TLS certificate is bound to another site. "
+            "Verify managed certificate identity and ingress annotations."
+        )
+    if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_INGRESS_PENDING_BUT_HOST_REACHABLE:
+        return (
+            "Ingress address is still pending, but expected hostname is already reachable. "
+            "Verify ingress address assignment and continue with bounded monitoring."
+        )
     if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_CLOUDSQL_INVALID_STATE:
         return (
             "Cloud SQL proxy could not fetch an ephemeral certificate because the instance reported invalidState. "

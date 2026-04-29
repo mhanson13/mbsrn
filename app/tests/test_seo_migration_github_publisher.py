@@ -5230,6 +5230,9 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "packages: write" in workflow_yaml
     assert "K8S_NAMESPACE: tnmfire" in workflow_yaml
     assert "MBSRN_PREVIEW_HOSTNAME: tnmfire.site.mbsrn.com" in workflow_yaml
+    assert "MBSRN_PREVIEW_CERTIFICATE_NAME: site-web-preview-cert-tnmfire" in workflow_yaml
+    assert "MBSRN_FRONTEND_CONFIG_NAME: site-web-frontend-config-tnmfire" in workflow_yaml
+    assert "MBSRN_BACKEND_CONFIG_NAME: site-web-backend-config-tnmfire" in workflow_yaml
     assert "SITE_WEB_IMAGE_REPOSITORY: ghcr.io/mhanson13/tnmfire-site-web" in workflow_yaml
     assert "ghcr.io/mbsrn/site-web" not in workflow_yaml
     assert "PRIVATE_IMAGE_AUTH_REQUIRED: \"true\"" in workflow_yaml
@@ -5337,8 +5340,16 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "deploy_runtime_reason_code=image_pull_secret_missing" in workflow_yaml
     assert "deploy_runtime_reason_code=private_image_pull_forbidden" in workflow_yaml
     assert "deploy_runtime_reason_code=public_image_pull_failed" in workflow_yaml
+    assert "Likely rollout blocker: service has no ready endpoints." in workflow_yaml
+    assert "deploy_runtime_reason_code=service_has_no_ready_endpoints" in workflow_yaml
     assert "Likely rollout blocker: ingress backend unhealthy." in workflow_yaml
+    assert "deploy_runtime_reason_code=ingress_backend_unhealthy" in workflow_yaml
+    assert "Likely rollout blocker: ingress backend 502." in workflow_yaml
+    assert "deploy_runtime_reason_code=ingress_backend_502" in workflow_yaml
+    assert "Likely rollout blocker: pod ready but ingress backend unhealthy." in workflow_yaml
+    assert "deploy_runtime_reason_code=pod_ready_but_ingress_backend_unhealthy" in workflow_yaml
     assert "Likely rollout blocker: backendconfig health check mismatch." in workflow_yaml
+    assert "deploy_runtime_reason_code=backendconfig_health_check_mismatch" in workflow_yaml
     assert "Likely rollout blocker: container image not found in registry." in workflow_yaml
     assert "container_started_evidence=false" in workflow_yaml
     assert "crash_direct_evidence=false" in workflow_yaml
@@ -5365,8 +5376,18 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "kubectl get ingress site-web --namespace \"$K8S_NAMESPACE\"" in workflow_yaml
     assert "ingress_spec_host=\"$(kubectl get ingress site-web --namespace \"$K8S_NAMESPACE\" -o jsonpath='{.spec.rules[0].host}' 2>/dev/null || true)\"" in workflow_yaml
     assert "preview_host=\"$MBSRN_PREVIEW_HOSTNAME\"" in workflow_yaml
+    assert "host_reachable=false" in workflow_yaml
+    assert "tls_mismatch_detected=false" in workflow_yaml
+    assert "backend_502_detected=false" in workflow_yaml
     assert "if [ -z \"$preview_host\" ] && [ -n \"$ingress_spec_host\" ]; then" in workflow_yaml
-    assert "if [ -n \"$preview_host\" ]; then" in workflow_yaml
+    assert "Expected preview hostname responded over HTTPS" in workflow_yaml
+    assert "Expected preview hostname responded over HTTP" in workflow_yaml
+    assert "deploy_runtime_reason_code=reachable_but_tls_certificate_mismatch" in workflow_yaml
+    assert "deploy_runtime_reason_code=ingress_address_pending_but_hostname_reachable" in workflow_yaml
+    assert "if [ \"$tls_mismatch_detected\" = true ]; then" in workflow_yaml
+    assert "if [ \"$backend_502_detected\" = true ]; then" in workflow_yaml
+    assert "kubectl describe managedcertificate \"$MBSRN_PREVIEW_CERTIFICATE_NAME\" --namespace \"$K8S_NAMESPACE\" || true" in workflow_yaml
+    assert "kubectl describe backendconfig \"$MBSRN_BACKEND_CONFIG_NAME\" --namespace \"$K8S_NAMESPACE\" || true" in workflow_yaml
     assert "Ingress created but external address is not assigned yet for namespace $K8S_NAMESPACE." in workflow_yaml
     assert "Likely rollout blocker: ingress/load balancer provisioning still in progress." in workflow_yaml
     assert "This may take several minutes on GKE." in workflow_yaml
@@ -5374,8 +5395,10 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "kubectl describe ingress site-web --namespace \"$K8S_NAMESPACE\" || true" in workflow_yaml
     assert "kubectl get service site-web --namespace \"$K8S_NAMESPACE\" -o wide || true" in workflow_yaml
     assert "kubectl get endpoints site-web --namespace \"$K8S_NAMESPACE\" -o wide || true" in workflow_yaml
-    assert "kubectl get managedcertificate --namespace \"$K8S_NAMESPACE\" || true" in workflow_yaml
-    assert "kubectl get frontendconfig --namespace \"$K8S_NAMESPACE\" || true" in workflow_yaml
+    assert "kubectl get endpointslice --namespace \"$K8S_NAMESPACE\" -l kubernetes.io/service-name=site-web -o wide || true" in workflow_yaml
+    assert "kubectl get managedcertificate \"$MBSRN_PREVIEW_CERTIFICATE_NAME\" --namespace \"$K8S_NAMESPACE\" || true" in workflow_yaml
+    assert "kubectl get frontendconfig \"$MBSRN_FRONTEND_CONFIG_NAME\" --namespace \"$K8S_NAMESPACE\" || true" in workflow_yaml
+    assert "kubectl get backendconfig \"$MBSRN_BACKEND_CONFIG_NAME\" --namespace \"$K8S_NAMESPACE\" || true" in workflow_yaml
     assert "exit 1" in workflow_yaml
     assert "echo \"resolved_live_url=$live_url\"" in workflow_yaml
     assert "echo \"live_url=$live_url\"" in workflow_yaml
@@ -5411,24 +5434,25 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "memory: 512Mi" in deployment_yaml
     assert "targetPort: 8080" in service_yaml
     assert "cloud.google.com/neg: '{\"ingress\": true}'" in service_yaml
-    assert "cloud.google.com/backend-config: '{\"default\": \"site-web-backend-config\"}'" in service_yaml
+    assert "cloud.google.com/backend-config: '{\"default\": \"site-web-backend-config-tnmfire\"}'" in service_yaml
     assert "kubernetes.io/ingress.class: gce" in ingress_yaml
     assert "kubernetes.io/ingress.global-static-ip-name: mbsrn-site-lb-ip" in ingress_yaml
     assert "networking.gke.io/managed-certificates: site-web-preview-cert-tnmfire" in ingress_yaml
     assert "networking.gke.io/managed-certificates: site-web-preview-cert-tnmfire," not in ingress_yaml
-    assert "networking.gke.io/v1beta1.FrontendConfig: site-web-frontend-config" in ingress_yaml
+    assert "networking.gke.io/v1beta1.FrontendConfig: site-web-frontend-config-tnmfire" in ingress_yaml
     assert "ingressClassName: gce" in ingress_yaml
     assert "host: tnmfire.site.mbsrn.com" in ingress_yaml
     assert "kind: ManagedCertificate" in managed_certificate_yaml
     assert "name: site-web-preview-cert-tnmfire" in managed_certificate_yaml
     assert "domains:" in managed_certificate_yaml
     assert "- tnmfire.site.mbsrn.com" in managed_certificate_yaml
+    assert "mbsrn.io/preview-hostname: tnmfire.site.mbsrn.com" in managed_certificate_yaml
     assert "kind: FrontendConfig" in frontend_config_yaml
-    assert "name: site-web-frontend-config" in frontend_config_yaml
+    assert "name: site-web-frontend-config-tnmfire" in frontend_config_yaml
     assert "redirectToHttps:" in frontend_config_yaml
     assert "enabled: true" in frontend_config_yaml
     assert "kind: BackendConfig" in backend_config_yaml
-    assert "name: site-web-backend-config" in backend_config_yaml
+    assert "name: site-web-backend-config-tnmfire" in backend_config_yaml
     assert "healthCheck:" in backend_config_yaml
     assert "type: HTTP" in backend_config_yaml
     assert "requestPath: /" in backend_config_yaml
@@ -5505,11 +5529,19 @@ def test_render_managed_gke_manifests_for_sc_mechanical_is_site_scoped() -> None
     )
     ingress_yaml = manifests["k8s/ingress.yaml"]
     managed_certificate_yaml = manifests["k8s/managedcertificate.yaml"]
+    service_yaml = manifests["k8s/service.yaml"]
+    frontend_config_yaml = manifests["k8s/frontendconfig.yaml"]
+    backend_config_yaml = manifests["k8s/backendconfig.yaml"]
 
     assert "host: sc-mechanical.site.mbsrn.com" in ingress_yaml
     assert "networking.gke.io/managed-certificates: site-web-preview-cert-sc-mechanical" in ingress_yaml
+    assert "networking.gke.io/v1beta1.FrontendConfig: site-web-frontend-config-sc-mechanical" in ingress_yaml
     assert "name: site-web-preview-cert-sc-mechanical" in managed_certificate_yaml
     assert "- sc-mechanical.site.mbsrn.com" in managed_certificate_yaml
+    assert "mbsrn.io/preview-hostname: sc-mechanical.site.mbsrn.com" in managed_certificate_yaml
+    assert "cloud.google.com/backend-config: '{\"default\": \"site-web-backend-config-sc-mechanical\"}'" in service_yaml
+    assert "name: site-web-frontend-config-sc-mechanical" in frontend_config_yaml
+    assert "name: site-web-backend-config-sc-mechanical" in backend_config_yaml
     assert "tnmfire.site.mbsrn.com" not in ingress_yaml
     assert "tnmfire.site.mbsrn.com" not in managed_certificate_yaml
     assert "site-web-preview-cert-tnmfire" not in ingress_yaml
@@ -5544,11 +5576,17 @@ def test_render_managed_gke_manifests_isolated_across_sequential_sites() -> None
     sc_mechanical_ingress = sc_mechanical_manifests["k8s/ingress.yaml"]
     tnmfire_cert = tnmfire_manifests["k8s/managedcertificate.yaml"]
     sc_mechanical_cert = sc_mechanical_manifests["k8s/managedcertificate.yaml"]
+    tnmfire_service = tnmfire_manifests["k8s/service.yaml"]
+    sc_mechanical_service = sc_mechanical_manifests["k8s/service.yaml"]
 
     assert "host: tnmfire.site.mbsrn.com" in tnmfire_ingress
     assert "host: sc-mechanical.site.mbsrn.com" in sc_mechanical_ingress
     assert "site-web-preview-cert-tnmfire" in tnmfire_ingress
     assert "site-web-preview-cert-sc-mechanical" in sc_mechanical_ingress
+    assert "site-web-frontend-config-tnmfire" in tnmfire_ingress
+    assert "site-web-frontend-config-sc-mechanical" in sc_mechanical_ingress
+    assert "site-web-backend-config-tnmfire" in tnmfire_service
+    assert "site-web-backend-config-sc-mechanical" in sc_mechanical_service
     assert "site-web-preview-cert-sc-mechanical" not in tnmfire_cert
     assert "site-web-preview-cert-tnmfire" not in sc_mechanical_cert
     assert "tnmfire.site.mbsrn.com" not in sc_mechanical_cert
@@ -6359,7 +6397,7 @@ def test_check_deploy_target_readiness_flags_certificate_domain_mismatch(monkeyp
     )
 
     assert readiness.dispatch_service_availability is False
-    assert readiness.dispatch_service_reason_code == "certificate_domain_mismatch"
+    assert readiness.dispatch_service_reason_code == "tls_certificate_bound_to_wrong_site"
     details = readiness.managed_gke_config_details or {}
     assert details.get("preview_certificate_alignment_status") == "mismatched"
     assert details.get("expected_preview_hostname") == "tnmfire.site.mbsrn.com"
@@ -6455,7 +6493,7 @@ def test_check_deploy_target_readiness_flags_stale_managed_certificate_present(m
     )
 
     assert readiness.dispatch_service_availability is False
-    assert readiness.dispatch_service_reason_code == "stale_managed_certificate_present"
+    assert readiness.dispatch_service_reason_code == "managed_certificate_identity_mismatch"
     details = readiness.managed_gke_config_details or {}
     assert details.get("stale_managed_certificate_present") is True
     assert details.get("stale_managed_certificate_names") == ["site-web-preview-cert-sc-mechanical"]
@@ -6554,7 +6592,7 @@ def test_check_deploy_target_readiness_flags_ingress_certificate_mismatch(monkey
     )
 
     assert readiness.dispatch_service_availability is False
-    assert readiness.dispatch_service_reason_code == "ingress_certificate_mismatch"
+    assert readiness.dispatch_service_reason_code == "ingress_certificate_annotation_mismatch"
     details = readiness.managed_gke_config_details or {}
     assert details.get("ingress_certificate_mismatch") is True
     assert details.get("stale_managed_certificate_present") is False
