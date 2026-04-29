@@ -5342,14 +5342,18 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "deploy_runtime_reason_code=public_image_pull_failed" in workflow_yaml
     assert "Likely rollout blocker: service has no ready endpoints." in workflow_yaml
     assert "deploy_runtime_reason_code=service_has_no_ready_endpoints" in workflow_yaml
+    assert "deploy_runtime_reason_code=service_endpoint_missing" in workflow_yaml
     assert "Likely rollout blocker: ingress backend unhealthy." in workflow_yaml
     assert "deploy_runtime_reason_code=ingress_backend_unhealthy" in workflow_yaml
+    assert "deploy_runtime_reason_code=ingress_backend_unhealthy_after_rollout" in workflow_yaml
     assert "Likely rollout blocker: ingress backend 502." in workflow_yaml
     assert "deploy_runtime_reason_code=ingress_backend_502" in workflow_yaml
     assert "Likely rollout blocker: pod ready but ingress backend unhealthy." in workflow_yaml
     assert "deploy_runtime_reason_code=pod_ready_but_ingress_backend_unhealthy" in workflow_yaml
+    assert "deploy_runtime_reason_code=service_endpoint_unhealthy" in workflow_yaml
     assert "Likely rollout blocker: backendconfig health check mismatch." in workflow_yaml
     assert "deploy_runtime_reason_code=backendconfig_health_check_mismatch" in workflow_yaml
+    assert "deploy_runtime_reason_code=backend_config_healthcheck_unhealthy" in workflow_yaml
     assert "Likely rollout blocker: container image not found in registry." in workflow_yaml
     assert "container_started_evidence=false" in workflow_yaml
     assert "crash_direct_evidence=false" in workflow_yaml
@@ -5374,6 +5378,17 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "sleep_seconds=15" in workflow_yaml
     assert "Waiting up to ${wait_seconds}s for ingress external address assignment in namespace $K8S_NAMESPACE." in workflow_yaml
     assert "kubectl get ingress site-web --namespace \"$K8S_NAMESPACE\"" in workflow_yaml
+    assert "kubectl get service site-web --namespace \"$K8S_NAMESPACE\" -o yaml" in workflow_yaml
+    assert "kubectl get endpoints site-web --namespace \"$K8S_NAMESPACE\" -o yaml" in workflow_yaml
+    assert (
+        "kubectl get endpointslice --namespace \"$K8S_NAMESPACE\" -l kubernetes.io/service-name=site-web -o yaml || true"
+        in workflow_yaml
+    )
+    assert "kubectl describe service site-web --namespace \"$K8S_NAMESPACE\" || true" in workflow_yaml
+    assert "kubectl describe ingress site-web --namespace \"$K8S_NAMESPACE\" || true" in workflow_yaml
+    assert "kubectl describe managedcertificate \"$MBSRN_PREVIEW_CERTIFICATE_NAME\" --namespace \"$K8S_NAMESPACE\" || true" in workflow_yaml
+    assert "kubectl describe backendconfig \"$MBSRN_BACKEND_CONFIG_NAME\" --namespace \"$K8S_NAMESPACE\" || true" in workflow_yaml
+    assert "deploy_runtime_reason_code=in_cluster_service_curl_failed" in workflow_yaml
     assert "ingress_spec_host=\"$(kubectl get ingress site-web --namespace \"$K8S_NAMESPACE\" -o jsonpath='{.spec.rules[0].host}' 2>/dev/null || true)\"" in workflow_yaml
     assert "preview_host=\"$MBSRN_PREVIEW_HOSTNAME\"" in workflow_yaml
     assert "host_reachable=false" in workflow_yaml
@@ -5436,7 +5451,8 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "cloud.google.com/neg: '{\"ingress\": true}'" in service_yaml
     assert "cloud.google.com/backend-config: '{\"default\": \"site-web-backend-config-tnmfire\"}'" in service_yaml
     assert "kubernetes.io/ingress.class: gce" in ingress_yaml
-    assert "kubernetes.io/ingress.global-static-ip-name: mbsrn-site-lb-ip" in ingress_yaml
+    assert "kubernetes.io/ingress.global-static-ip-name" not in ingress_yaml
+    assert "ingress.gcp.kubernetes.io/pre-shared-cert" not in ingress_yaml
     assert "networking.gke.io/managed-certificates: site-web-preview-cert-tnmfire" in ingress_yaml
     assert "networking.gke.io/managed-certificates: site-web-preview-cert-tnmfire," not in ingress_yaml
     assert "networking.gke.io/v1beta1.FrontendConfig: site-web-frontend-config-tnmfire" in ingress_yaml
@@ -6597,6 +6613,199 @@ def test_check_deploy_target_readiness_flags_ingress_certificate_mismatch(monkey
     assert details.get("ingress_certificate_mismatch") is True
     assert details.get("stale_managed_certificate_present") is False
     assert details.get("preview_certificate_domain_conflict") is False
+
+
+def test_check_deploy_target_readiness_flags_shared_static_ip_conflict(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    managed_workflow = _encode_workflow_yaml(
+        (
+            "# mbsrn-managed-template:site_repo_template_v1\n"
+            "name: Managed Deploy\n"
+            "on:\n"
+            "  workflow_dispatch:\n"
+            "jobs:\n"
+            "  deploy:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    env:\n"
+            "      K8S_NAMESPACE: tnmfire\n"
+            "    steps:\n"
+            "      - uses: google-github-actions/auth@v2\n"
+            "      - run: kubectl apply -n \"$K8S_NAMESPACE\" -f k8s/deployment.yaml\n"
+        )
+    )
+    namespaced_manifest = _encode_workflow_yaml(
+        (
+            "# mbsrn-managed-manifest:site_repo_template_v1\n"
+            "apiVersion: v1\n"
+            "kind: Service\n"
+            "metadata:\n"
+            "  name: site-web\n"
+            "  namespace: tnmfire\n"
+        )
+    )
+    ingress_manifest_with_shared_ip = _encode_workflow_yaml(
+        (
+            "# mbsrn-managed-manifest:site_repo_template_v1\n"
+            "apiVersion: networking.k8s.io/v1\n"
+            "kind: Ingress\n"
+            "metadata:\n"
+            "  name: site-web\n"
+            "  namespace: tnmfire\n"
+            "  annotations:\n"
+            "    kubernetes.io/ingress.global-static-ip-name: mbsrn-site-lb-ip\n"
+            "    networking.gke.io/managed-certificates: site-web-preview-cert-tnmfire\n"
+            "spec:\n"
+            "  rules:\n"
+            "    - host: tnmfire.site.mbsrn.com\n"
+        )
+    )
+    certificate_manifest_expected = _encode_workflow_yaml(
+        (
+            "# mbsrn-managed-manifest:site_repo_template_v1\n"
+            "apiVersion: networking.gke.io/v1\n"
+            "kind: ManagedCertificate\n"
+            "metadata:\n"
+            "  name: site-web-preview-cert-tnmfire\n"
+            "  namespace: tnmfire\n"
+            "spec:\n"
+            "  domains:\n"
+            "    - tnmfire.site.mbsrn.com\n"
+        )
+    )
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _FakeHTTPResponse(status=200, body="{}"),
+            _FakeHTTPResponse(status=200, body="{}"),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "wfsha", "encoding": "base64", "content": managed_workflow}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"state": "active", "path": ".github/workflows/deploy-tnmfire-www-prod.yml"}),
+            ),
+            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-namespace", "encoding": "base64", "content": namespaced_manifest})),
+            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-deployment", "encoding": "base64", "content": namespaced_manifest})),
+            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-service", "encoding": "base64", "content": namespaced_manifest})),
+            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-ingress", "encoding": "base64", "content": ingress_manifest_with_shared_ip})),
+            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-managedcertificate", "encoding": "base64", "content": certificate_manifest_expected})),
+            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-frontendconfig", "encoding": "base64", "content": namespaced_manifest})),
+            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-backendconfig", "encoding": "base64", "content": namespaced_manifest})),
+            *_gke_environment_config_present_responses(),
+        ],
+        calls,
+    )
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    readiness = publisher.check_deploy_target_readiness(
+        target=_dispatch_target(),
+        allow_ref_repair=False,
+        allow_workflow_repair=False,
+        dry_run=False,
+    )
+
+    assert readiness.dispatch_service_availability is False
+    assert readiness.dispatch_service_reason_code == "shared_static_ip_not_allowed_for_per_site_ingress"
+    details = readiness.managed_gke_config_details or {}
+    assert details.get("ingress_static_ip_conflict") is True
+    assert details.get("shared_static_ip_not_allowed_for_per_site_ingress") is True
+    assert details.get("preview_certificate_ingress_static_ip_name") == "mbsrn-site-lb-ip"
+
+
+def test_check_deploy_target_readiness_flags_stale_pre_shared_certificate_binding(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    managed_workflow = _encode_workflow_yaml(
+        (
+            "# mbsrn-managed-template:site_repo_template_v1\n"
+            "name: Managed Deploy\n"
+            "on:\n"
+            "  workflow_dispatch:\n"
+            "jobs:\n"
+            "  deploy:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    env:\n"
+            "      K8S_NAMESPACE: tnmfire\n"
+            "    steps:\n"
+            "      - uses: google-github-actions/auth@v2\n"
+            "      - run: kubectl apply -n \"$K8S_NAMESPACE\" -f k8s/deployment.yaml\n"
+        )
+    )
+    namespaced_manifest = _encode_workflow_yaml(
+        (
+            "# mbsrn-managed-manifest:site_repo_template_v1\n"
+            "apiVersion: v1\n"
+            "kind: Service\n"
+            "metadata:\n"
+            "  name: site-web\n"
+            "  namespace: tnmfire\n"
+        )
+    )
+    ingress_manifest_with_pre_shared = _encode_workflow_yaml(
+        (
+            "# mbsrn-managed-manifest:site_repo_template_v1\n"
+            "apiVersion: networking.k8s.io/v1\n"
+            "kind: Ingress\n"
+            "metadata:\n"
+            "  name: site-web\n"
+            "  namespace: tnmfire\n"
+            "  annotations:\n"
+            "    networking.gke.io/managed-certificates: site-web-preview-cert-tnmfire\n"
+            "    ingress.gcp.kubernetes.io/pre-shared-cert: stale-cert-binding\n"
+            "spec:\n"
+            "  rules:\n"
+            "    - host: tnmfire.site.mbsrn.com\n"
+        )
+    )
+    certificate_manifest_expected = _encode_workflow_yaml(
+        (
+            "# mbsrn-managed-manifest:site_repo_template_v1\n"
+            "apiVersion: networking.gke.io/v1\n"
+            "kind: ManagedCertificate\n"
+            "metadata:\n"
+            "  name: site-web-preview-cert-tnmfire\n"
+            "  namespace: tnmfire\n"
+            "spec:\n"
+            "  domains:\n"
+            "    - tnmfire.site.mbsrn.com\n"
+        )
+    )
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _FakeHTTPResponse(status=200, body="{}"),
+            _FakeHTTPResponse(status=200, body="{}"),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "wfsha", "encoding": "base64", "content": managed_workflow}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"state": "active", "path": ".github/workflows/deploy-tnmfire-www-prod.yml"}),
+            ),
+            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-namespace", "encoding": "base64", "content": namespaced_manifest})),
+            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-deployment", "encoding": "base64", "content": namespaced_manifest})),
+            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-service", "encoding": "base64", "content": namespaced_manifest})),
+            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-ingress", "encoding": "base64", "content": ingress_manifest_with_pre_shared})),
+            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-managedcertificate", "encoding": "base64", "content": certificate_manifest_expected})),
+            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-frontendconfig", "encoding": "base64", "content": namespaced_manifest})),
+            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-backendconfig", "encoding": "base64", "content": namespaced_manifest})),
+            *_gke_environment_config_present_responses(),
+        ],
+        calls,
+    )
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    readiness = publisher.check_deploy_target_readiness(
+        target=_dispatch_target(),
+        allow_ref_repair=False,
+        allow_workflow_repair=False,
+        dry_run=False,
+    )
+
+    assert readiness.dispatch_service_availability is False
+    assert readiness.dispatch_service_reason_code == "stale_pre_shared_cert_binding_detected"
+    details = readiness.managed_gke_config_details or {}
+    assert details.get("stale_pre_shared_cert_binding_detected") is True
+    assert details.get("preview_certificate_ingress_pre_shared_cert_annotation") == "stale-cert-binding"
 
 
 def test_check_deploy_target_readiness_flags_deployed_content_identity_mismatch(monkeypatch) -> None:

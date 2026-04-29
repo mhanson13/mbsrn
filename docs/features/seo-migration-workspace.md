@@ -1177,11 +1177,16 @@ Post-fix rollout for existing managed sites:
     - managed certificate resource: `k8s/managedcertificate.yaml`
     - managed certificate name: `site-web-preview-cert-<normalized-site>`
     - ingress annotation: `networking.gke.io/managed-certificates: site-web-preview-cert-<normalized-site>`
+    - per-site ingress manifests intentionally omit `kubernetes.io/ingress.global-static-ip-name` by default in this model (shared static IP reuse can cause cross-site load balancer conflicts)
+    - generated manifests must not include `ingress.gcp.kubernetes.io/pre-shared-cert`; `ManagedCertificate` remains the only certificate binding source
     - certificate domain and ingress host must match the same site-specific preview hostname.
     - mismatch classifications:
       - `tls_certificate_bound_to_wrong_site` when ingress host/certificate domain disagree
       - `ingress_certificate_annotation_mismatch` when ingress annotation references the wrong certificate name
       - `managed_certificate_identity_mismatch` when ingress annotation includes stale cross-site certificate names
+      - `shared_static_ip_not_allowed_for_per_site_ingress` when shared static IP binding is detected for per-site ingress
+      - `stale_pre_shared_cert_binding_detected` when pre-shared certificate metadata is detected
+      - `managed_certificate_failed_not_visible` when certificate visibility checks fail for the expected hostname
     - stale certificate resources are never auto-deleted; readiness/diagnostics provide manual cleanup guidance.
   - ingress address resolution uses a bounded wait loop (10-minute max: `40 x 15s`) because GKE load balancer provisioning can lag successful rollout
   - workflow URL resolution now short-circuits when the expected preview hostname is already reachable even if ingress status address lags:
@@ -1193,6 +1198,9 @@ Post-fix rollout for existing managed sites:
     - `resolved_live_url`
     - `deployed_url`
   - no URL output is emitted when ingress status has no concrete endpoint; workflow fails after bounded wait and emits ingress-specific diagnostics (`get/describe ingress`, `get service`, `get endpoints`, optional `managedcertificate` / `frontendconfig`)
+  - deploy image digest metadata is optional in diagnostics/history:
+    - if digest is unavailable, UI shows `Digest not reported`
+    - image repository/tag/source commit remain valid traceability evidence
 - post-dispatch workflow run diagnostics now distinguish execution-stage failures:
   - `workflow_run_failure_reason_code`
   - `workflow_run_failure_stage`
@@ -1202,7 +1210,12 @@ Post-fix rollout for existing managed sites:
   - `ingress_endpoint_not_ready` indicates ingress exists but external hostname/IP evidence was not assigned before bounded timeout (workflow logs include `deploy_runtime_reason_code=ingress_address_pending` marker for troubleshooting)
   - additional runtime reason codes now surface backend-vs-TLS-vs-address lag explicitly:
     - `service_has_no_ready_endpoints`
+    - `service_endpoint_missing`
+    - `service_endpoint_unhealthy`
+    - `in_cluster_service_curl_failed`
     - `pod_ready_but_ingress_backend_unhealthy`
+    - `ingress_backend_unhealthy_after_rollout`
+    - `backend_config_healthcheck_unhealthy`
     - `ingress_backend_502`
     - `ingress_address_pending_but_hostname_reachable`
     - `reachable_but_tls_certificate_mismatch`

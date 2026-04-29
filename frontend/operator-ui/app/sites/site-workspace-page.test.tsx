@@ -714,6 +714,33 @@ describe("site migration workflow route", () => {
     );
   });
 
+  it("surfaces shared static IP conflict guidance for per-site managed ingress", async () => {
+    const summary = buildMigrationWorkspaceSummary({
+      deploy_readiness: {
+        ready: false,
+        reasons: ["Deploy target configuration is invalid."],
+        dispatch_service_reason_code: "shared_static_ip_not_allowed_for_per_site_ingress",
+        target: {
+          enabled: true,
+          repo_owner: "mhanson13",
+          repo_name: "sc-mechanical",
+          workflow_id: "deploy-sc-mechanical-www-prod.yml",
+          ref: "main",
+        },
+      },
+    });
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(summary);
+    mockFetchMigrationPublishHistory.mockResolvedValueOnce({ items: [], total: 0 });
+    mockFetchMigrationDeployHistory.mockResolvedValueOnce({ items: [], total: 0 });
+
+    render(<SiteMigrationWorkflowPage />);
+
+    const deployReadinessCard = await screen.findByTestId("migration-deploy-readiness");
+    expect(within(deployReadinessCard).getByTestId("migration-managed-gke-config-guidance-readiness")).toHaveTextContent(
+      "Per-site managed ingress cannot safely reuse one shared static IP. Republish managed ingress without shared static IP binding and redeploy.",
+    );
+  });
+
   it("surfaces deployed-content-identity mismatch guidance when managed image identity targets another site", async () => {
     const summary = buildMigrationWorkspaceSummary({
       deploy_readiness: {
@@ -787,8 +814,56 @@ describe("site migration workflow route", () => {
           ? "Fix active: Yes. Observed deployment image matches expected site-scoped image."
           : "Fix active: No. The fix is not active until observed deployment image matches expected site-scoped image.",
       );
+      expect(
+        within(deployReadinessCard).getByTestId("migration-managed-site-rollout-observed-digest-readiness"),
+      ).toHaveTextContent("Last observed deploy image digest: Digest not reported");
     },
   );
+
+  it("renders deploy image digest safely when identity object is null", async () => {
+    const user = userEvent.setup();
+    const summary = buildMigrationWorkspaceSummary({
+      deploy_readiness: {
+        ready: false,
+        reasons: ["Deploy target configuration is invalid."],
+        managed_site_rollout_state: "deploy_running_old_generic_image",
+        managed_site_rollout_message: "Rollout guidance placeholder",
+        managed_site_rollout_fix_active: false,
+        managed_site_rollout_expected_image_repository: "ghcr.io/mhanson13/sc-mechanical-site-web",
+        managed_site_rollout_manifest_image_reference: "ghcr.io/mhanson13/sc-mechanical-site-web:latest",
+        managed_site_rollout_observed_deploy_image_reference: "ghcr.io/mhanson13/site-web:latest",
+        target: {
+          enabled: true,
+          repo_owner: "mhanson13",
+          repo_name: "sc-mechanical",
+          workflow_id: "deploy-sc-mechanical-www-prod.yml",
+          ref: "main",
+        },
+      },
+    });
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(summary);
+    mockFetchMigrationPublishHistory.mockResolvedValueOnce({ items: [], total: 0 });
+    mockFetchMigrationDeployHistory.mockResolvedValueOnce({
+      items: [
+        {
+          timestamp: "2026-04-20T00:01:00Z",
+          status: "failed",
+          artifact_version_id: "artifact-v7",
+          site_runtime_image_reference: "ghcr.io/mhanson13/site-web:latest",
+          site_runtime_image_identity: null,
+        },
+      ],
+      total: 1,
+    });
+
+    render(<SiteMigrationWorkflowPage />);
+    await user.click(await screen.findByText("Show detailed migration failure diagnostics"));
+
+    const diagnostics = screen.getByTestId("migration-deploy-diagnostics");
+    expect(within(diagnostics).getByTestId("migration-managed-site-rollout-observed-digest-diagnostics")).toHaveTextContent(
+      "Last observed deploy image digest: Digest not reported",
+    );
+  });
 
   it("updates selected draft diagnostics context when artifact selection changes", async () => {
     const user = userEvent.setup();

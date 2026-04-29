@@ -602,6 +602,15 @@ function toManagedGkeConfigGuidance(value: string | null): string | null {
   if (normalized === "ingress_certificate_annotation_mismatch") {
     return "Ingress managed-certificate annotation does not match the expected site certificate. Republish/deploy after admin verification.";
   }
+  if (normalized === "shared_static_ip_not_allowed_for_per_site_ingress" || normalized === "ingress_static_ip_conflict") {
+    return "Per-site managed ingress cannot safely reuse one shared static IP. Republish managed ingress without shared static IP binding and redeploy.";
+  }
+  if (normalized === "stale_pre_shared_cert_binding_detected") {
+    return "Ingress includes stale pre-shared certificate binding metadata. Republish managed ingress resources so ManagedCertificate remains the only certificate binding source.";
+  }
+  if (normalized === "managed_certificate_failed_not_visible") {
+    return "ManagedCertificate is not visible for this hostname yet. Verify DNS/ingress exposure and certificate visibility before retry.";
+  }
   if (normalized === "backendconfig_health_check_mismatch") {
     return "BackendConfig health check path/port does not match the running site-web application health endpoint.";
   }
@@ -616,6 +625,21 @@ function toManagedGkeConfigGuidance(value: string | null): string | null {
   }
   if (normalized === "pod_ready_but_ingress_backend_unhealthy") {
     return "Pods are ready but ingress backend remains unhealthy. Verify NEG/backend health and load balancer checks.";
+  }
+  if (normalized === "service_endpoint_missing") {
+    return "Service has no ready endpoint addresses after rollout. Verify service selectors and endpoint population.";
+  }
+  if (normalized === "service_endpoint_unhealthy") {
+    return "Service endpoint health checks failed after rollout. Verify in-cluster service response and endpoint health.";
+  }
+  if (normalized === "in_cluster_service_curl_failed") {
+    return "In-cluster curl to site-web service failed after rollout. Verify service routing and container HTTP response.";
+  }
+  if (normalized === "ingress_backend_unhealthy_after_rollout") {
+    return "Ingress backend stayed unhealthy after rollout. Verify endpoints, BackendConfig health checks, and NEG backend state.";
+  }
+  if (normalized === "backend_config_healthcheck_unhealthy") {
+    return "BackendConfig health checks are unhealthy for site-web. Verify request path/port and backend service health.";
   }
   if (normalized === "reachable_but_tls_certificate_mismatch") {
     return "Expected hostname is reachable, but TLS certificate is bound to another site. Verify managed certificate identity and ingress annotation alignment.";
@@ -659,6 +683,38 @@ function formatManagedSiteRolloutStateLabel(value: string | null): string {
     return "Deploy running expected site-scoped image";
   }
   return normalized.replace(/_/g, " ");
+}
+
+function parseImageDigest(value: unknown): string | null {
+  if (typeof value === "string") {
+    const normalized = value.trim();
+    return normalized.length > 0 ? normalized : null;
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const digestValue = (value as Record<string, unknown>).digest;
+  if (typeof digestValue !== "string") {
+    return null;
+  }
+  const normalized = digestValue.trim();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function extractDigestFromImageReference(value: string | null): string | null {
+  if (!value) {
+    return null;
+  }
+  const normalized = value.trim();
+  if (!normalized) {
+    return null;
+  }
+  const atIndex = normalized.indexOf("@");
+  if (atIndex < 0 || atIndex + 1 >= normalized.length) {
+    return null;
+  }
+  const digest = normalized.slice(atIndex + 1).trim();
+  return digest.length > 0 ? digest : null;
 }
 
 function toRepositoryProvisioningGuidance(params: {
@@ -2428,6 +2484,15 @@ export function MigrationWorkspacePanel({
   const managedSiteObservedDeployImageReference =
     asStringOrNull(deployReadiness.managed_site_rollout_observed_deploy_image_reference) ||
     asStringOrNull(selectedDeployHistoryRecord.site_runtime_image_reference);
+  const managedSiteObservedDeployImageDigest =
+    asStringOrNull(deployReadiness.managed_site_rollout_observed_deploy_image_digest) ||
+    asStringOrNull(selectedDeployHistoryRecord.site_runtime_image_digest) ||
+    parseImageDigest(selectedDeployHistoryRecord.site_runtime_image_identity) ||
+    extractDigestFromImageReference(managedSiteObservedDeployImageReference);
+  const managedSiteObservedDeployImageDigestDisplay =
+    managedSiteObservedDeployImageReference || managedSiteManifestImageReference
+      ? managedSiteObservedDeployImageDigest || "Digest not reported"
+      : null;
   const privateImageAuthRequired =
     asBooleanOrNull(deployTarget.private_image_auth_required) ??
     asBooleanOrNull(deployReadiness.private_image_auth_required);
@@ -4526,6 +4591,11 @@ export function MigrationWorkspacePanel({
                 Last observed deploy runtime image: {managedSiteObservedDeployImageReference}
               </span>
             ) : null}
+            {managedSiteObservedDeployImageDigestDisplay ? (
+              <span className="hint" data-testid="migration-managed-site-rollout-observed-digest-readiness">
+                Last observed deploy image digest: {managedSiteObservedDeployImageDigestDisplay}
+              </span>
+            ) : null}
             {managedSiteRolloutFixActive !== null ? (
               <span
                 className={managedSiteRolloutFixActive ? "hint" : "hint warning"}
@@ -4911,6 +4981,11 @@ export function MigrationWorkspacePanel({
                 {managedSiteObservedDeployImageReference ? (
                   <span className="hint" data-testid="migration-managed-site-rollout-observed-image-diagnostics">
                     Last observed deploy runtime image: {managedSiteObservedDeployImageReference}
+                  </span>
+                ) : null}
+                {managedSiteObservedDeployImageDigestDisplay ? (
+                  <span className="hint" data-testid="migration-managed-site-rollout-observed-digest-diagnostics">
+                    Last observed deploy image digest: {managedSiteObservedDeployImageDigestDisplay}
                   </span>
                 ) : null}
                 {managedSiteRolloutFixActive !== null ? (

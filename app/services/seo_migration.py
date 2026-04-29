@@ -252,6 +252,11 @@ _DEPLOY_RUN_FAILURE_REASON_INGRESS_BACKEND_UNHEALTHY = "ingress_backend_unhealth
 _DEPLOY_RUN_FAILURE_REASON_INGRESS_BACKEND_502 = "ingress_backend_502"
 _DEPLOY_RUN_FAILURE_REASON_SERVICE_HAS_NO_READY_ENDPOINTS = "service_has_no_ready_endpoints"
 _DEPLOY_RUN_FAILURE_REASON_POD_READY_BUT_INGRESS_BACKEND_UNHEALTHY = "pod_ready_but_ingress_backend_unhealthy"
+_DEPLOY_RUN_FAILURE_REASON_SERVICE_ENDPOINT_UNHEALTHY = "service_endpoint_unhealthy"
+_DEPLOY_RUN_FAILURE_REASON_SERVICE_ENDPOINT_MISSING = "service_endpoint_missing"
+_DEPLOY_RUN_FAILURE_REASON_BACKEND_CONFIG_HEALTHCHECK_UNHEALTHY = "backend_config_healthcheck_unhealthy"
+_DEPLOY_RUN_FAILURE_REASON_IN_CLUSTER_SERVICE_CURL_FAILED = "in_cluster_service_curl_failed"
+_DEPLOY_RUN_FAILURE_REASON_INGRESS_BACKEND_UNHEALTHY_AFTER_ROLLOUT = "ingress_backend_unhealthy_after_rollout"
 _DEPLOY_RUN_FAILURE_REASON_PUBLIC_IMAGE_PULL_FAILED = "public_image_pull_failed"
 _DEPLOY_RUN_FAILURE_REASON_PRIVATE_IMAGE_PULL_FORBIDDEN = "private_image_pull_forbidden"
 _DEPLOY_RUN_FAILURE_REASON_REACHABLE_BUT_TLS_MISMATCH = "reachable_but_tls_certificate_mismatch"
@@ -279,6 +284,10 @@ _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_CERTIFICATE_MISMATCH = "ingress_certific
 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_IDENTITY_MISMATCH = "managed_certificate_identity_mismatch"
 _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_CERTIFICATE_ANNOTATION_MISMATCH = "ingress_certificate_annotation_mismatch"
 _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_BOUND_TO_WRONG_SITE = "tls_certificate_bound_to_wrong_site"
+_DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_STATIC_IP_CONFLICT = "ingress_static_ip_conflict"
+_DEPLOY_DISPATCH_SERVICE_REASON_SHARED_STATIC_IP_NOT_ALLOWED = "shared_static_ip_not_allowed_for_per_site_ingress"
+_DEPLOY_DISPATCH_SERVICE_REASON_STALE_PRE_SHARED_CERT_BINDING = "stale_pre_shared_cert_binding_detected"
+_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_FAILED_NOT_VISIBLE = "managed_certificate_failed_not_visible"
 _DEPLOY_DISPATCH_SERVICE_REASON_DEPLOYED_CONTENT_IDENTITY_MISMATCH = "deployed_content_identity_mismatch"
 _DEPLOY_WORKFLOW_MODE_SITE_REPO_TEMPLATE_V1 = "site_repo_template_v1"
 _DEPLOY_TARGET_ENVIRONMENT_SOURCE_ADMIN = "admin_config"
@@ -12840,6 +12849,15 @@ def _normalize_workflow_run_failure_reason_code(value: object) -> str | None:
         _DEPLOY_RUN_FAILURE_REASON_INGRESS_BACKEND_502,
         _DEPLOY_RUN_FAILURE_REASON_SERVICE_HAS_NO_READY_ENDPOINTS,
         _DEPLOY_RUN_FAILURE_REASON_POD_READY_BUT_INGRESS_BACKEND_UNHEALTHY,
+        _DEPLOY_RUN_FAILURE_REASON_SERVICE_ENDPOINT_UNHEALTHY,
+        _DEPLOY_RUN_FAILURE_REASON_SERVICE_ENDPOINT_MISSING,
+        _DEPLOY_RUN_FAILURE_REASON_BACKEND_CONFIG_HEALTHCHECK_UNHEALTHY,
+        _DEPLOY_RUN_FAILURE_REASON_IN_CLUSTER_SERVICE_CURL_FAILED,
+        _DEPLOY_RUN_FAILURE_REASON_INGRESS_BACKEND_UNHEALTHY_AFTER_ROLLOUT,
+        _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_STATIC_IP_CONFLICT,
+        _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_STATIC_IP_NOT_ALLOWED,
+        _DEPLOY_DISPATCH_SERVICE_REASON_STALE_PRE_SHARED_CERT_BINDING,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_FAILED_NOT_VISIBLE,
         _DEPLOY_RUN_FAILURE_REASON_PUBLIC_IMAGE_PULL_FAILED,
         _DEPLOY_RUN_FAILURE_REASON_PRIVATE_IMAGE_PULL_FORBIDDEN,
         _DEPLOY_RUN_FAILURE_REASON_REACHABLE_BUT_TLS_MISMATCH,
@@ -12891,6 +12909,10 @@ def _normalize_dispatch_service_reason_code(value: object) -> str | None:
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_IDENTITY_MISMATCH,
         _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_CERTIFICATE_ANNOTATION_MISMATCH,
         _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_BOUND_TO_WRONG_SITE,
+        _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_STATIC_IP_CONFLICT,
+        _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_STATIC_IP_NOT_ALLOWED,
+        _DEPLOY_DISPATCH_SERVICE_REASON_STALE_PRE_SHARED_CERT_BINDING,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_FAILED_NOT_VISIBLE,
         _DEPLOY_DISPATCH_SERVICE_REASON_DEPLOYED_CONTENT_IDENTITY_MISMATCH,
     }:
         return normalized_lower
@@ -13370,6 +13392,10 @@ def _derive_dispatch_service_reason_code(
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_IDENTITY_MISMATCH,
         _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_CERTIFICATE_ANNOTATION_MISMATCH,
         _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_BOUND_TO_WRONG_SITE,
+        _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_STATIC_IP_CONFLICT,
+        _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_STATIC_IP_NOT_ALLOWED,
+        _DEPLOY_DISPATCH_SERVICE_REASON_STALE_PRE_SHARED_CERT_BINDING,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_FAILED_NOT_VISIBLE,
         _DEPLOY_DISPATCH_SERVICE_REASON_DEPLOYED_CONTENT_IDENTITY_MISMATCH,
     }:
         return runtime_reason
@@ -13449,6 +13475,24 @@ def _derive_managed_gke_dispatch_readiness_message(*, dispatch_service_reason_co
         return (
             "Ingress is referencing the wrong managed certificate for this site hostname. "
             "Republish/deploy after admin verification of ingress certificate annotations."
+        )
+    if normalized_dispatch_reason in {
+        _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_STATIC_IP_CONFLICT,
+        _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_STATIC_IP_NOT_ALLOWED,
+    }:
+        return (
+            "Per-site managed ingress cannot safely reuse a shared global static IP. "
+            "Republish managed ingress without shared static IP binding and redeploy."
+        )
+    if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_STALE_PRE_SHARED_CERT_BINDING:
+        return (
+            "Ingress includes stale pre-shared certificate binding metadata. "
+            "Republish managed ingress resources so ManagedCertificate is the only certificate binding source."
+        )
+    if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_FAILED_NOT_VISIBLE:
+        return (
+            "ManagedCertificate is not visible for this hostname yet. Verify DNS/ingress exposure and certificate "
+            "visibility before retry."
         )
     if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_DEPLOYED_CONTENT_IDENTITY_MISMATCH:
         return (
@@ -13535,6 +13579,24 @@ def _derive_deploy_failure_remediation_hint(
             "Ingress managed-certificate annotation does not match this site's expected certificate. "
             "Republish/deploy after correcting managed ingress/certificate resources."
         )
+    if normalized_dispatch_reason in {
+        _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_STATIC_IP_CONFLICT,
+        _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_STATIC_IP_NOT_ALLOWED,
+    }:
+        return (
+            "Per-site ingress is configured with a shared static IP binding that can conflict across sites. "
+            "Republish managed ingress resources without shared static IP reuse."
+        )
+    if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_STALE_PRE_SHARED_CERT_BINDING:
+        return (
+            "Ingress contains stale pre-shared certificate bindings. "
+            "Republish managed ingress resources and clear stale certificate attachments."
+        )
+    if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_FAILED_NOT_VISIBLE:
+        return (
+            "ManagedCertificate reports visibility failure for this site hostname. "
+            "Verify DNS visibility and ingress exposure, then retry deploy."
+        )
     if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_DEPLOYED_CONTENT_IDENTITY_MISMATCH:
         return (
             "Infrastructure may be healthy but deployed content identity is wrong for this site. "
@@ -13601,6 +13663,27 @@ def _derive_workflow_run_failure_hint(
         return (
             "Pods report ready but ingress backend remains unhealthy. Verify NEG/backend health and GCLB checks."
         )
+    if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_SERVICE_ENDPOINT_MISSING:
+        return (
+            "Service has no ready endpoint addresses after rollout. Verify service selectors and endpoint population."
+        )
+    if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_SERVICE_ENDPOINT_UNHEALTHY:
+        return (
+            "Service endpoint health checks failed after rollout. Verify in-cluster service response and endpoint health."
+        )
+    if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_IN_CLUSTER_SERVICE_CURL_FAILED:
+        return (
+            "In-cluster curl to site-web service failed after rollout. Verify service routing and container HTTP response."
+        )
+    if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_INGRESS_BACKEND_UNHEALTHY_AFTER_ROLLOUT:
+        return (
+            "Ingress backend remained unhealthy after workload rollout. Verify endpoints, BackendConfig health checks, "
+            "and NEG backend status."
+        )
+    if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_BACKEND_CONFIG_HEALTHCHECK_UNHEALTHY:
+        return (
+            "BackendConfig health checks are unhealthy for site-web. Verify request path/port and backend service health."
+        )
     if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_PUBLIC_IMAGE_PULL_FAILED:
         return (
             "Public GHCR image pull failed for site-web. Verify image reference/tag exists and is readable."
@@ -13623,6 +13706,24 @@ def _derive_workflow_run_failure_hint(
         return (
             "Ingress address is still pending, but expected hostname is already reachable. "
             "Verify ingress address assignment and continue with bounded monitoring."
+        )
+    if normalized_reason in {
+        _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_STATIC_IP_CONFLICT,
+        _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_STATIC_IP_NOT_ALLOWED,
+    }:
+        return (
+            "Per-site managed ingress cannot safely reuse one shared static IP. "
+            "Republish managed ingress without shared static IP binding and redeploy."
+        )
+    if normalized_reason == _DEPLOY_DISPATCH_SERVICE_REASON_STALE_PRE_SHARED_CERT_BINDING:
+        return (
+            "Ingress includes stale pre-shared certificate binding metadata. "
+            "Republish managed ingress resources so ManagedCertificate remains the only certificate binding source."
+        )
+    if normalized_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_FAILED_NOT_VISIBLE:
+        return (
+            "ManagedCertificate is not visible for this hostname yet. Verify DNS/ingress exposure and certificate "
+            "visibility before retry."
         )
     if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_CLOUDSQL_INVALID_STATE:
         return (

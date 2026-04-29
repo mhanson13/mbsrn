@@ -5165,6 +5165,8 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         certificate_domain_mismatch: bool | None = None
         stale_managed_certificate_present: bool | None = None
         ingress_certificate_mismatch: bool | None = None
+        ingress_static_ip_conflict: bool | None = None
+        stale_pre_shared_cert_binding_detected: bool | None = None
         content_identity_mismatch: bool | None = None
         image_pull_secret_referenced: bool | None = None
         image_pull_secret_reason_code: str | None = None
@@ -5213,6 +5215,12 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             certificate_domain_mismatch = bool(
                 certificate_alignment_details.get("certificate_domain_mismatch")
             )
+            ingress_static_ip_conflict = bool(
+                certificate_alignment_details.get("ingress_static_ip_conflict")
+            )
+            stale_pre_shared_cert_binding_detected = bool(
+                certificate_alignment_details.get("stale_pre_shared_cert_binding_detected")
+            )
             managed_resource_quota_present = (
                 bool(manifest_presence_by_path.get(_MBSRN_MANAGED_RESOURCE_QUOTA_FILE_PATH))
                 if policy_expectations.get("resource_quota_expected")
@@ -5259,6 +5267,8 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             certificate_domain_mismatch = None
             stale_managed_certificate_present = None
             ingress_certificate_mismatch = None
+            ingress_static_ip_conflict = None
+            stale_pre_shared_cert_binding_detected = None
         dispatch_service_availability = True
         dispatch_service_reason_code = "available"
         gke_config_missing_reason_codes: list[str] = []
@@ -5347,6 +5357,12 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         elif managed_workflow and ingress_certificate_mismatch is True:
             dispatch_service_availability = False
             dispatch_service_reason_code = _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_CERTIFICATE_ANNOTATION_MISMATCH
+        elif managed_workflow and ingress_static_ip_conflict is True:
+            dispatch_service_availability = False
+            dispatch_service_reason_code = _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_STATIC_IP_NOT_ALLOWED
+        elif managed_workflow and stale_pre_shared_cert_binding_detected is True:
+            dispatch_service_availability = False
+            dispatch_service_reason_code = _DEPLOY_DISPATCH_SERVICE_REASON_STALE_PRE_SHARED_CERT_BINDING
         elif managed_workflow and content_identity_mismatch is True:
             dispatch_service_availability = False
             dispatch_service_reason_code = _DEPLOY_DISPATCH_SERVICE_REASON_DEPLOYED_CONTENT_IDENTITY_MISMATCH
@@ -6656,12 +6672,21 @@ _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_CERTIFICATE_MISMATCH = "ingress_certific
 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_IDENTITY_MISMATCH = "managed_certificate_identity_mismatch"
 _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_CERTIFICATE_ANNOTATION_MISMATCH = "ingress_certificate_annotation_mismatch"
 _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_BOUND_TO_WRONG_SITE = "tls_certificate_bound_to_wrong_site"
+_DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_STATIC_IP_CONFLICT = "ingress_static_ip_conflict"
+_DEPLOY_DISPATCH_SERVICE_REASON_SHARED_STATIC_IP_NOT_ALLOWED = "shared_static_ip_not_allowed_for_per_site_ingress"
+_DEPLOY_DISPATCH_SERVICE_REASON_STALE_PRE_SHARED_CERT_BINDING = "stale_pre_shared_cert_binding_detected"
+_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_FAILED_NOT_VISIBLE = "managed_certificate_failed_not_visible"
 _DEPLOY_DISPATCH_SERVICE_REASON_DEPLOYED_CONTENT_IDENTITY_MISMATCH = "deployed_content_identity_mismatch"
 _DEPLOY_RUNTIME_REASON_BACKENDCONFIG_HEALTH_CHECK_MISMATCH = "backendconfig_health_check_mismatch"
 _DEPLOY_RUNTIME_REASON_INGRESS_BACKEND_UNHEALTHY = "ingress_backend_unhealthy"
 _DEPLOY_RUNTIME_REASON_INGRESS_BACKEND_502 = "ingress_backend_502"
 _DEPLOY_RUNTIME_REASON_SERVICE_HAS_NO_READY_ENDPOINTS = "service_has_no_ready_endpoints"
 _DEPLOY_RUNTIME_REASON_POD_READY_BUT_INGRESS_BACKEND_UNHEALTHY = "pod_ready_but_ingress_backend_unhealthy"
+_DEPLOY_RUNTIME_REASON_SERVICE_ENDPOINT_UNHEALTHY = "service_endpoint_unhealthy"
+_DEPLOY_RUNTIME_REASON_SERVICE_ENDPOINT_MISSING = "service_endpoint_missing"
+_DEPLOY_RUNTIME_REASON_BACKEND_CONFIG_HEALTHCHECK_UNHEALTHY = "backend_config_healthcheck_unhealthy"
+_DEPLOY_RUNTIME_REASON_IN_CLUSTER_SERVICE_CURL_FAILED = "in_cluster_service_curl_failed"
+_DEPLOY_RUNTIME_REASON_INGRESS_BACKEND_UNHEALTHY_AFTER_ROLLOUT = "ingress_backend_unhealthy_after_rollout"
 _DEPLOY_RUNTIME_REASON_PUBLIC_IMAGE_PULL_FAILED = "public_image_pull_failed"
 _DEPLOY_RUNTIME_REASON_PRIVATE_IMAGE_PULL_FORBIDDEN = "private_image_pull_forbidden"
 _DEPLOY_RUNTIME_REASON_REACHABLE_BUT_TLS_MISMATCH = "reachable_but_tls_certificate_mismatch"
@@ -7257,11 +7282,13 @@ def _render_managed_deploy_workflow_yaml(
         "              service_no_ready_endpoints_detected=true\n"
         "              echo \"Likely rollout blocker: service has no ready endpoints.\"\n"
         "              echo \"deploy_runtime_reason_code=service_has_no_ready_endpoints\"\n"
+        "              echo \"deploy_runtime_reason_code=service_endpoint_missing\"\n"
         "            fi\n"
         "            if grep -qiE 'ingress backend.*unhealthy|backend service.*unhealthy|backend.*degraded mode|neg.*degraded mode|unhealthy backends' \"$deployment_describe_output\" \"$describe_pods_output\" \"$ingress_describe_output\"; then\n"
         "              ingress_backend_unhealthy_detected=true\n"
         "              echo \"Likely rollout blocker: ingress backend unhealthy.\"\n"
         "              echo \"deploy_runtime_reason_code=ingress_backend_unhealthy\"\n"
+        "              echo \"deploy_runtime_reason_code=ingress_backend_unhealthy_after_rollout\"\n"
         "            fi\n"
         "            if grep -qiE '502|bad gateway' \"$ingress_describe_output\" \"$service_describe_output\"; then\n"
         "              echo \"Likely rollout blocker: ingress backend 502.\"\n"
@@ -7270,10 +7297,24 @@ def _render_managed_deploy_workflow_yaml(
         "            if [ \"$pod_ready_detected\" = true ] && [ \"$ingress_backend_unhealthy_detected\" = true ]; then\n"
         "              echo \"Likely rollout blocker: pod ready but ingress backend unhealthy.\"\n"
         "              echo \"deploy_runtime_reason_code=pod_ready_but_ingress_backend_unhealthy\"\n"
+        "              echo \"deploy_runtime_reason_code=service_endpoint_unhealthy\"\n"
         "            fi\n"
         "            if grep -qiE 'backendconfig.*healthcheck|healthcheck.*path|health check.*path|requestpath' \"$deployment_describe_output\" \"$describe_pods_output\" \"$backendconfig_describe_output\"; then\n"
         "              echo \"Likely rollout blocker: backendconfig health check mismatch.\"\n"
         "              echo \"deploy_runtime_reason_code=backendconfig_health_check_mismatch\"\n"
+        "              echo \"deploy_runtime_reason_code=backend_config_healthcheck_unhealthy\"\n"
+        "            fi\n"
+        "            if grep -qiE 'failednotvisible' \"$managedcertificate_describe_output\"; then\n"
+        "              echo \"Likely rollout blocker: managed certificate failed visibility checks.\"\n"
+        "              echo \"deploy_runtime_reason_code=managed_certificate_failed_not_visible\"\n"
+        "            fi\n"
+        "            if grep -qiE 'in-use and would result in a conflict|global static ip.*conflict|specified ip address is in-use' \"$ingress_describe_output\"; then\n"
+        "              echo \"Likely rollout blocker: ingress static IP conflict.\"\n"
+        "              echo \"deploy_runtime_reason_code=ingress_static_ip_conflict\"\n"
+        "            fi\n"
+        "            if grep -qiE 'ingress\\.gcp\\.kubernetes\\.io/pre-shared-cert' \"$ingress_describe_output\"; then\n"
+        "              echo \"Likely rollout blocker: stale pre-shared certificate binding detected.\"\n"
+        "              echo \"deploy_runtime_reason_code=stale_pre_shared_cert_binding_detected\"\n"
         "            fi\n"
         "            if [ \"$image_pull_secret_missing_detected\" = true ]; then\n"
         "              echo \"deploy_runtime_reason_code=image_pull_secret_missing\"\n"
@@ -7333,8 +7374,38 @@ def _render_managed_deploy_workflow_yaml(
         "          fi\n"
         "      - name: Verify service and ingress\n"
         "        run: |\n"
+        "          set -euo pipefail\n"
         "          kubectl get service site-web --namespace \"$K8S_NAMESPACE\"\n"
         "          kubectl get ingress site-web --namespace \"$K8S_NAMESPACE\"\n"
+        "          kubectl get service site-web --namespace \"$K8S_NAMESPACE\" -o yaml\n"
+        "          kubectl get endpoints site-web --namespace \"$K8S_NAMESPACE\" -o yaml\n"
+        "          kubectl get endpointslice --namespace \"$K8S_NAMESPACE\" -l kubernetes.io/service-name=site-web -o yaml || true\n"
+        "          kubectl describe service site-web --namespace \"$K8S_NAMESPACE\" || true\n"
+        "          kubectl describe ingress site-web --namespace \"$K8S_NAMESPACE\" || true\n"
+        "          kubectl describe managedcertificate \"$MBSRN_PREVIEW_CERTIFICATE_NAME\" --namespace \"$K8S_NAMESPACE\" || true\n"
+        "          kubectl describe backendconfig \"$MBSRN_BACKEND_CONFIG_NAME\" --namespace \"$K8S_NAMESPACE\" || true\n"
+        "          endpoint_count=\"$(kubectl get endpoints site-web --namespace \"$K8S_NAMESPACE\" -o jsonpath='{range .subsets[*].addresses[*]}x{end}' 2>/dev/null | wc -c | tr -d '[:space:]')\"\n"
+        "          if [ -z \"$endpoint_count\" ] || [ \"$endpoint_count\" -eq 0 ]; then\n"
+        "            echo \"deploy_runtime_reason_code=service_endpoint_missing\"\n"
+        "            echo \"deploy_runtime_reason_code=service_has_no_ready_endpoints\"\n"
+        "            echo \"deploy_runtime_reason_message=Service has no ready endpoints after rollout.\"\n"
+        "            exit 1\n"
+        "          fi\n"
+        "          probe_pod=\"site-web-healthcheck-${GITHUB_RUN_ID:-run}-${GITHUB_RUN_ATTEMPT:-1}\"\n"
+        "          probe_pod=\"$(echo \"$probe_pod\" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9-' | cut -c1-63)\"\n"
+        "          if [ -z \"$probe_pod\" ]; then\n"
+        "            probe_pod=\"site-web-healthcheck\"\n"
+        "          fi\n"
+        "          if ! kubectl run \"$probe_pod\" --namespace \"$K8S_NAMESPACE\" --image=curlimages/curl:8.10.1 --restart=Never --attach --command -- sh -c \"curl -sS -f --connect-timeout 5 --max-time 15 http://site-web.${K8S_NAMESPACE}.svc.cluster.local:80/ >/dev/null\"; then\n"
+        "            echo \"deploy_runtime_reason_code=in_cluster_service_curl_failed\"\n"
+        "            echo \"deploy_runtime_reason_code=service_endpoint_unhealthy\"\n"
+        "            echo \"deploy_runtime_reason_code=ingress_backend_unhealthy_after_rollout\"\n"
+        "            echo \"deploy_runtime_reason_message=In-cluster service endpoint check failed after rollout.\"\n"
+        "            kubectl logs \"$probe_pod\" --namespace \"$K8S_NAMESPACE\" --tail=200 || true\n"
+        "            kubectl delete pod \"$probe_pod\" --namespace \"$K8S_NAMESPACE\" --ignore-not-found || true\n"
+        "            exit 1\n"
+        "          fi\n"
+        "          kubectl delete pod \"$probe_pod\" --namespace \"$K8S_NAMESPACE\" --ignore-not-found || true\n"
         "      - name: Resolve live URL from ingress status\n"
         "        id: resolve_live_url\n"
         "        run: |\n"
@@ -7454,6 +7525,23 @@ def _render_managed_deploy_workflow_yaml(
         "            kubectl get endpoints site-web --namespace \"$K8S_NAMESPACE\" -o wide || true\n"
         "            kubectl get endpointslice --namespace \"$K8S_NAMESPACE\" -l kubernetes.io/service-name=site-web -o wide || true\n"
         "            kubectl get managedcertificate \"$MBSRN_PREVIEW_CERTIFICATE_NAME\" --namespace \"$K8S_NAMESPACE\" || true\n"
+        "            managedcertificate_pending_output=\"$(mktemp)\"\n"
+        "            kubectl describe managedcertificate \"$MBSRN_PREVIEW_CERTIFICATE_NAME\" --namespace \"$K8S_NAMESPACE\" > \"$managedcertificate_pending_output\" 2>&1 || true\n"
+        "            cat \"$managedcertificate_pending_output\"\n"
+        "            if grep -qiE 'failednotvisible' \"$managedcertificate_pending_output\"; then\n"
+        "              echo \"deploy_runtime_reason_code=managed_certificate_failed_not_visible\"\n"
+        "            fi\n"
+        "            rm -f \"$managedcertificate_pending_output\"\n"
+        "            ingress_pending_output=\"$(mktemp)\"\n"
+        "            kubectl describe ingress site-web --namespace \"$K8S_NAMESPACE\" > \"$ingress_pending_output\" 2>&1 || true\n"
+        "            cat \"$ingress_pending_output\"\n"
+        "            if grep -qiE 'in-use and would result in a conflict|global static ip.*conflict|specified ip address is in-use' \"$ingress_pending_output\"; then\n"
+        "              echo \"deploy_runtime_reason_code=ingress_static_ip_conflict\"\n"
+        "            fi\n"
+        "            if grep -qiE 'ingress\\.gcp\\.kubernetes\\.io/pre-shared-cert' \"$ingress_pending_output\"; then\n"
+        "              echo \"deploy_runtime_reason_code=stale_pre_shared_cert_binding_detected\"\n"
+        "            fi\n"
+        "            rm -f \"$ingress_pending_output\"\n"
         "            kubectl get frontendconfig \"$MBSRN_FRONTEND_CONFIG_NAME\" --namespace \"$K8S_NAMESPACE\" || true\n"
         "            kubectl get backendconfig \"$MBSRN_BACKEND_CONFIG_NAME\" --namespace \"$K8S_NAMESPACE\" || true\n"
             "            exit 1\n"
@@ -7629,7 +7717,6 @@ def _render_managed_gke_manifest_files(
         f"{labels}"
         "  annotations:\n"
         "    kubernetes.io/ingress.class: gce\n"
-        "    kubernetes.io/ingress.global-static-ip-name: mbsrn-site-lb-ip\n"
         f"    networking.gke.io/managed-certificates: {preview_certificate_name}\n"
         f"    networking.gke.io/v1beta1.FrontendConfig: {frontend_config_name}\n"
         "spec:\n"
@@ -7981,6 +8068,8 @@ def _evaluate_preview_certificate_alignment(
     ingress_host: str | None = None
     ingress_cert_annotation: str | None = None
     ingress_cert_annotation_values: tuple[str, ...] = ()
+    ingress_static_ip_annotation: str | None = None
+    ingress_pre_shared_cert_annotation: str | None = None
     if ingress_kind == "ingress":
         ingress_host = _extract_manifest_scalar(
             ingress_content,
@@ -7991,6 +8080,14 @@ def _evaluate_preview_certificate_alignment(
             pattern=r"(?m)^\s*networking\.gke\.io/managed-certificates:\s*([^\n#]+)$",
         )
         ingress_cert_annotation_values = _extract_comma_separated_values(ingress_cert_annotation)
+        ingress_static_ip_annotation = _extract_manifest_scalar(
+            ingress_content,
+            pattern=r"(?m)^\s*kubernetes\.io/ingress\.global-static-ip-name:\s*([^\n#]+)$",
+        )
+        ingress_pre_shared_cert_annotation = _extract_manifest_scalar(
+            ingress_content,
+            pattern=r"(?m)^\s*ingress\.gcp\.kubernetes\.io/pre-shared-cert:\s*([^\n#]+)$",
+        )
 
     certificate_name: str | None = None
     certificate_domains: tuple[str, ...] = ()
@@ -8027,6 +8124,9 @@ def _evaluate_preview_certificate_alignment(
         )
     stale_managed_certificate_names = list(dict.fromkeys(stale_managed_certificate_names))
     stale_managed_certificate_present = bool(stale_managed_certificate_names)
+    ingress_static_ip_conflict = bool(ingress_static_ip_annotation)
+    shared_static_ip_not_allowed_for_per_site_ingress = ingress_static_ip_conflict
+    stale_pre_shared_cert_binding_detected = bool(ingress_pre_shared_cert_annotation)
     ingress_certificate_mismatch = bool(annotation_conflict or certificate_name_conflict)
     certificate_domain_mismatch = bool(host_conflict or domain_conflict)
 
@@ -8043,6 +8143,8 @@ def _evaluate_preview_certificate_alignment(
         certificate_domain_mismatch
         or ingress_certificate_mismatch
         or stale_managed_certificate_present
+        or shared_static_ip_not_allowed_for_per_site_ingress
+        or stale_pre_shared_cert_binding_detected
     )
     all_aligned = not has_conflict
     if has_conflict:
@@ -8056,6 +8158,8 @@ def _evaluate_preview_certificate_alignment(
         "preview_certificate_ingress_host": ingress_host,
         "preview_certificate_ingress_annotation": ingress_cert_annotation,
         "preview_certificate_ingress_annotation_values": list(ingress_cert_annotation_values),
+        "preview_certificate_ingress_static_ip_name": ingress_static_ip_annotation,
+        "preview_certificate_ingress_pre_shared_cert_annotation": ingress_pre_shared_cert_annotation,
         "preview_certificate_name": certificate_name,
         "preview_certificate_domains": list(certificate_domains),
         "preview_certificate_ingress_host_conflict": host_conflict,
@@ -8065,10 +8169,14 @@ def _evaluate_preview_certificate_alignment(
         "ingress_certificate_mismatch": ingress_certificate_mismatch,
         "stale_managed_certificate_present": stale_managed_certificate_present,
         "stale_managed_certificate_names": stale_managed_certificate_names,
+        "ingress_static_ip_conflict": ingress_static_ip_conflict,
+        "shared_static_ip_not_allowed_for_per_site_ingress": shared_static_ip_not_allowed_for_per_site_ingress,
+        "stale_pre_shared_cert_binding_detected": stale_pre_shared_cert_binding_detected,
         "certificate_domain_mismatch": certificate_domain_mismatch,
         "managed_certificate_identity_mismatch": stale_managed_certificate_present,
         "ingress_certificate_annotation_mismatch": ingress_certificate_mismatch,
         "tls_certificate_bound_to_wrong_site": certificate_domain_mismatch,
+        "managed_certificate_failed_not_visible": False,
         "preview_certificate_alignment_status": alignment_status,
     }
 
@@ -8162,8 +8270,24 @@ def _classify_cloudsql_proxy_failure_from_log_text(
         return _DEPLOY_RUNTIME_REASON_INGRESS_BACKEND_502, "rollout_verify"
     if "deploy_runtime_reason_code=service_has_no_ready_endpoints" in normalized:
         return _DEPLOY_RUNTIME_REASON_SERVICE_HAS_NO_READY_ENDPOINTS, "rollout_verify"
+    if "deploy_runtime_reason_code=service_endpoint_missing" in normalized:
+        return _DEPLOY_RUNTIME_REASON_SERVICE_ENDPOINT_MISSING, "rollout_verify"
+    if "deploy_runtime_reason_code=service_endpoint_unhealthy" in normalized:
+        return _DEPLOY_RUNTIME_REASON_SERVICE_ENDPOINT_UNHEALTHY, "rollout_verify"
+    if "deploy_runtime_reason_code=in_cluster_service_curl_failed" in normalized:
+        return _DEPLOY_RUNTIME_REASON_IN_CLUSTER_SERVICE_CURL_FAILED, "rollout_verify"
     if "deploy_runtime_reason_code=pod_ready_but_ingress_backend_unhealthy" in normalized:
         return _DEPLOY_RUNTIME_REASON_POD_READY_BUT_INGRESS_BACKEND_UNHEALTHY, "rollout_verify"
+    if "deploy_runtime_reason_code=ingress_backend_unhealthy_after_rollout" in normalized:
+        return _DEPLOY_RUNTIME_REASON_INGRESS_BACKEND_UNHEALTHY_AFTER_ROLLOUT, "rollout_verify"
+    if "deploy_runtime_reason_code=backend_config_healthcheck_unhealthy" in normalized:
+        return _DEPLOY_RUNTIME_REASON_BACKEND_CONFIG_HEALTHCHECK_UNHEALTHY, "rollout_verify"
+    if "deploy_runtime_reason_code=managed_certificate_failed_not_visible" in normalized:
+        return _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_FAILED_NOT_VISIBLE, "ingress_evidence"
+    if "deploy_runtime_reason_code=ingress_static_ip_conflict" in normalized:
+        return _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_STATIC_IP_CONFLICT, "ingress_evidence"
+    if "deploy_runtime_reason_code=stale_pre_shared_cert_binding_detected" in normalized:
+        return _DEPLOY_DISPATCH_SERVICE_REASON_STALE_PRE_SHARED_CERT_BINDING, "ingress_evidence"
     if "deploy_runtime_reason_code=public_image_pull_failed" in normalized:
         return _DEPLOY_RUNTIME_REASON_PUBLIC_IMAGE_PULL_FAILED, "rollout_verify"
     if "deploy_runtime_reason_code=private_image_pull_forbidden" in normalized:
@@ -8264,6 +8388,7 @@ def _classify_rollout_blocker_hints_from_describe_outputs(
         pods_text,
     ):
         hints.append(_DEPLOY_RUNTIME_REASON_SERVICE_HAS_NO_READY_ENDPOINTS)
+        hints.append(_DEPLOY_RUNTIME_REASON_SERVICE_ENDPOINT_MISSING)
 
     if _has(
         r"ingress backend.*unhealthy|backend service.*unhealthy|backend.*degraded mode|neg.*degraded mode|unhealthy backends",
@@ -8271,6 +8396,7 @@ def _classify_rollout_blocker_hints_from_describe_outputs(
         pods_text,
     ):
         hints.append(_DEPLOY_RUNTIME_REASON_INGRESS_BACKEND_UNHEALTHY)
+        hints.append(_DEPLOY_RUNTIME_REASON_INGRESS_BACKEND_UNHEALTHY_AFTER_ROLLOUT)
     if _has(r"502|bad gateway", deployment_text, pods_text):
         hints.append(_DEPLOY_RUNTIME_REASON_INGRESS_BACKEND_502)
 
@@ -8280,6 +8406,7 @@ def _classify_rollout_blocker_hints_from_describe_outputs(
         pods_text,
     ):
         hints.append(_DEPLOY_RUNTIME_REASON_BACKENDCONFIG_HEALTH_CHECK_MISMATCH)
+        hints.append(_DEPLOY_RUNTIME_REASON_BACKEND_CONFIG_HEALTHCHECK_UNHEALTHY)
 
     container_started_evidence = _has(
         r"Container ID:|Started:\s+true|State:\s+(Running|Terminated)",
@@ -8300,6 +8427,7 @@ def _classify_rollout_blocker_hints_from_describe_outputs(
         hints.append("readiness_or_liveness_probe_failure")
     if container_started_evidence and _DEPLOY_RUNTIME_REASON_INGRESS_BACKEND_UNHEALTHY in hints:
         hints.append(_DEPLOY_RUNTIME_REASON_POD_READY_BUT_INGRESS_BACKEND_UNHEALTHY)
+        hints.append(_DEPLOY_RUNTIME_REASON_SERVICE_ENDPOINT_UNHEALTHY)
 
     return tuple(dict.fromkeys(hints))
 
