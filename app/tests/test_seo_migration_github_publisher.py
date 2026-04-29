@@ -5388,7 +5388,17 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "kubectl describe ingress site-web --namespace \"$K8S_NAMESPACE\" || true" in workflow_yaml
     assert "kubectl describe managedcertificate \"$MBSRN_PREVIEW_CERTIFICATE_NAME\" --namespace \"$K8S_NAMESPACE\" || true" in workflow_yaml
     assert "kubectl describe backendconfig \"$MBSRN_BACKEND_CONFIG_NAME\" --namespace \"$K8S_NAMESPACE\" || true" in workflow_yaml
+    assert "probe_max_attempts=20" in workflow_yaml
+    assert "probe_sleep_seconds=15" in workflow_yaml
+    assert "while [ \"$probe_attempt\" -le \"$probe_max_attempts\" ]; do" in workflow_yaml
+    assert "if [ \"$probe_attempt\" -lt \"$probe_max_attempts\" ]; then" in workflow_yaml
+    assert "sleep \"$probe_sleep_seconds\"" in workflow_yaml
+    assert "deploy_runtime_reason_code=service_probe_waiting_for_convergence" in workflow_yaml
+    assert "deploy_runtime_reason_code=ingress_neg_convergence_pending" in workflow_yaml
+    assert "deploy_runtime_reason_code=in_cluster_service_curl_failed_after_retries" in workflow_yaml
     assert "deploy_runtime_reason_code=in_cluster_service_curl_failed" in workflow_yaml
+    assert "kubectl delete pod \"$probe_pod\" --namespace \"$K8S_NAMESPACE\" --ignore-not-found || true" in workflow_yaml
+    assert "if ! kubectl run \"$probe_pod\"" not in workflow_yaml
     assert "ingress_spec_host=\"$(kubectl get ingress site-web --namespace \"$K8S_NAMESPACE\" -o jsonpath='{.spec.rules[0].host}' 2>/dev/null || true)\"" in workflow_yaml
     assert "preview_host=\"$MBSRN_PREVIEW_HOSTNAME\"" in workflow_yaml
     assert "host_reachable=false" in workflow_yaml

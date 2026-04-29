@@ -256,6 +256,13 @@ _DEPLOY_RUN_FAILURE_REASON_SERVICE_ENDPOINT_UNHEALTHY = "service_endpoint_unheal
 _DEPLOY_RUN_FAILURE_REASON_SERVICE_ENDPOINT_MISSING = "service_endpoint_missing"
 _DEPLOY_RUN_FAILURE_REASON_BACKEND_CONFIG_HEALTHCHECK_UNHEALTHY = "backend_config_healthcheck_unhealthy"
 _DEPLOY_RUN_FAILURE_REASON_IN_CLUSTER_SERVICE_CURL_FAILED = "in_cluster_service_curl_failed"
+_DEPLOY_RUN_FAILURE_REASON_IN_CLUSTER_SERVICE_CURL_FAILED_AFTER_RETRIES = (
+    "in_cluster_service_curl_failed_after_retries"
+)
+_DEPLOY_RUN_FAILURE_REASON_SERVICE_PROBE_WAITING_FOR_CONVERGENCE = (
+    "service_probe_waiting_for_convergence"
+)
+_DEPLOY_RUN_FAILURE_REASON_INGRESS_NEG_CONVERGENCE_PENDING = "ingress_neg_convergence_pending"
 _DEPLOY_RUN_FAILURE_REASON_INGRESS_BACKEND_UNHEALTHY_AFTER_ROLLOUT = "ingress_backend_unhealthy_after_rollout"
 _DEPLOY_RUN_FAILURE_REASON_PUBLIC_IMAGE_PULL_FAILED = "public_image_pull_failed"
 _DEPLOY_RUN_FAILURE_REASON_PRIVATE_IMAGE_PULL_FORBIDDEN = "private_image_pull_forbidden"
@@ -12853,6 +12860,9 @@ def _normalize_workflow_run_failure_reason_code(value: object) -> str | None:
         _DEPLOY_RUN_FAILURE_REASON_SERVICE_ENDPOINT_MISSING,
         _DEPLOY_RUN_FAILURE_REASON_BACKEND_CONFIG_HEALTHCHECK_UNHEALTHY,
         _DEPLOY_RUN_FAILURE_REASON_IN_CLUSTER_SERVICE_CURL_FAILED,
+        _DEPLOY_RUN_FAILURE_REASON_IN_CLUSTER_SERVICE_CURL_FAILED_AFTER_RETRIES,
+        _DEPLOY_RUN_FAILURE_REASON_SERVICE_PROBE_WAITING_FOR_CONVERGENCE,
+        _DEPLOY_RUN_FAILURE_REASON_INGRESS_NEG_CONVERGENCE_PENDING,
         _DEPLOY_RUN_FAILURE_REASON_INGRESS_BACKEND_UNHEALTHY_AFTER_ROLLOUT,
         _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_STATIC_IP_CONFLICT,
         _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_STATIC_IP_NOT_ALLOWED,
@@ -13674,6 +13684,20 @@ def _derive_workflow_run_failure_hint(
     if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_IN_CLUSTER_SERVICE_CURL_FAILED:
         return (
             "In-cluster curl to site-web service failed after rollout. Verify service routing and container HTTP response."
+        )
+    if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_IN_CLUSTER_SERVICE_CURL_FAILED_AFTER_RETRIES:
+        return (
+            "In-cluster curl to site-web service failed after bounded retries. "
+            "NEG/load balancer convergence did not complete within the retry window."
+        )
+    if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_SERVICE_PROBE_WAITING_FOR_CONVERGENCE:
+        return (
+            "Service probe failed during early convergence checks. Wait for NEG/load balancer attachment and refresh deploy status."
+        )
+    if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_INGRESS_NEG_CONVERGENCE_PENDING:
+        return (
+            "Ingress and NEG convergence was still in progress during service probe retries. "
+            "Retry deploy status refresh after convergence."
         )
     if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_INGRESS_BACKEND_UNHEALTHY_AFTER_ROLLOUT:
         return (

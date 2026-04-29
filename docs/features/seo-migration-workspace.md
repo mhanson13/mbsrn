@@ -1193,6 +1193,10 @@ Post-fix rollout for existing managed sites:
     - `ingress_address_pending_but_hostname_reachable` indicates address propagation lag while host is reachable
     - `reachable_but_tls_certificate_mismatch` indicates the host responds but serves the wrong certificate identity
     - `ingress_backend_502` indicates ingress path is reachable but backend service is unhealthy
+  - in-cluster service probing is convergence-aware:
+    - first probe failures emit `service_probe_waiting_for_convergence`
+    - NEG/ingress convergence signals emit `ingress_neg_convergence_pending`
+    - workflow retries probes in a bounded loop before terminal backend failure classification
   - workflow emits all three output keys on success:
     - `live_url`
     - `resolved_live_url`
@@ -1212,6 +1216,9 @@ Post-fix rollout for existing managed sites:
     - `service_has_no_ready_endpoints`
     - `service_endpoint_missing`
     - `service_endpoint_unhealthy`
+    - `service_probe_waiting_for_convergence`
+    - `ingress_neg_convergence_pending`
+    - `in_cluster_service_curl_failed_after_retries`
     - `in_cluster_service_curl_failed`
     - `pod_ready_but_ingress_backend_unhealthy`
     - `ingress_backend_unhealthy_after_rollout`

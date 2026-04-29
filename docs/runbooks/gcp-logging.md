@@ -985,12 +985,16 @@ If TLS is valid but preview URL returns HTTP 502:
    - `kubectl get endpoints site-web -n <namespace> -o yaml`
    - `kubectl get endpointslice -n <namespace> -l kubernetes.io/service-name=site-web -o yaml`
    - `kubectl run tmp-curl --rm -i --restart=Never --image=curlimages/curl:8.10.1 -n <namespace> -- sh -c "curl -sS -f http://site-web.<namespace>.svc.cluster.local:80/"`
+7. Note: the managed deploy workflow now retries the in-cluster service curl check for a bounded convergence window (about 5 minutes) before terminal failure. Early curl timeouts can be transient while NEG and load-balancer backend sync is still converging.
 
 Runtime reason-code hints for 502/backend-health classes:
 - `service_has_no_ready_endpoints`: service selector/endpoints are not ready for ingress traffic.
 - `service_endpoint_missing`: no endpoint addresses were available after rollout verification.
 - `service_endpoint_unhealthy`: endpoint exists but health remained unhealthy after rollout.
-- `in_cluster_service_curl_failed`: in-cluster curl check to service failed after rollout.
+- `service_probe_waiting_for_convergence`: first in-cluster probe failed and workflow is waiting for convergence retries.
+- `ingress_neg_convergence_pending`: ingress/NEG convergence evidence was observed during retry window.
+- `in_cluster_service_curl_failed_after_retries`: in-cluster curl still failed after bounded retry budget.
+- `in_cluster_service_curl_failed`: in-cluster curl check to service failed after rollout (terminal evidence code retained).
 - `pod_ready_but_ingress_backend_unhealthy`: pod probes pass but GCLB backend still fails health checks.
 - `ingress_backend_unhealthy_after_rollout`: ingress backend remained unhealthy after successful deployment rollout.
 - `ingress_backend_502`: ingress host is reachable but returns backend 502.
