@@ -4250,6 +4250,56 @@ def test_refresh_deploy_status_records_run_failure_classification(db_session) ->
     )
 
 
+def test_refresh_deploy_status_records_in_cluster_probe_timeout_hint(db_session) -> None:
+    publisher = _RecordingGitHubPublisher(
+        deploy_workflow_run_id=998880,
+        deploy_workflow_run_status="in_progress",
+        deploy_workflow_run_conclusion=None,
+        refresh_workflow_run_id=998880,
+        refresh_workflow_run_status="completed",
+        refresh_workflow_run_conclusion="failure",
+        refresh_workflow_run_failure_reason_code="in_cluster_service_probe_timeout",
+        refresh_workflow_run_failure_stage="rollout_verify",
+        refresh_workflow_run_failure_step="Verify service and ingress",
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    artifact = _prepare_published_artifact(service, business_id=business_id, site_id=site_id)
+    service.deploy_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        principal_id="principal-1",
+    )
+
+    refresh_result = service.refresh_deploy_run_status(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        principal_id="principal-1",
+    )
+    assert refresh_result.result.get("workflow_run_failure_reason_code") == "in_cluster_service_probe_timeout"
+    assert refresh_result.result.get("workflow_run_failure_stage") == "rollout_verify"
+    assert refresh_result.result.get("workflow_run_failure_step") == "Verify service and ingress"
+    assert refresh_result.result.get("workflow_run_failure_hint") == (
+        "In-cluster service probe timed out reaching site-web on cluster-local DNS. "
+        "Likely causes are NetworkPolicy ingress blocking, selector/port mismatch, or pod listener readiness."
+    )
+
+    summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
+    deploy_readiness = summary.deploy_readiness or {}
+    assert deploy_readiness.get("last_workflow_run_failure_reason_code") == "in_cluster_service_probe_timeout"
+    assert deploy_readiness.get("last_workflow_run_failure_hint") == (
+        "In-cluster service probe timed out reaching site-web on cluster-local DNS. "
+        "Likely causes are NetworkPolicy ingress blocking, selector/port mismatch, or pod listener readiness."
+    )
+
+
 def test_refresh_deploy_status_records_cloudsql_proxy_invalid_state_hint(db_session) -> None:
     publisher = _RecordingGitHubPublisher(
         deploy_workflow_run_id=998878,

@@ -259,6 +259,10 @@ _DEPLOY_RUN_FAILURE_REASON_IN_CLUSTER_SERVICE_CURL_FAILED = "in_cluster_service_
 _DEPLOY_RUN_FAILURE_REASON_IN_CLUSTER_SERVICE_CURL_FAILED_AFTER_RETRIES = (
     "in_cluster_service_curl_failed_after_retries"
 )
+_DEPLOY_RUN_FAILURE_REASON_IN_CLUSTER_SERVICE_PROBE_TIMEOUT = "in_cluster_service_probe_timeout"
+_DEPLOY_RUN_FAILURE_REASON_NETWORK_POLICY_MAY_BLOCK_SERVICE_PROBE = (
+    "network_policy_may_block_service_probe"
+)
 _DEPLOY_RUN_FAILURE_REASON_SERVICE_PROBE_WAITING_FOR_CONVERGENCE = (
     "service_probe_waiting_for_convergence"
 )
@@ -13341,6 +13345,8 @@ def _normalize_workflow_run_failure_reason_code(value: object) -> str | None:
         _DEPLOY_RUN_FAILURE_REASON_BACKEND_CONFIG_HEALTHCHECK_UNHEALTHY,
         _DEPLOY_RUN_FAILURE_REASON_IN_CLUSTER_SERVICE_CURL_FAILED,
         _DEPLOY_RUN_FAILURE_REASON_IN_CLUSTER_SERVICE_CURL_FAILED_AFTER_RETRIES,
+        _DEPLOY_RUN_FAILURE_REASON_IN_CLUSTER_SERVICE_PROBE_TIMEOUT,
+        _DEPLOY_RUN_FAILURE_REASON_NETWORK_POLICY_MAY_BLOCK_SERVICE_PROBE,
         _DEPLOY_RUN_FAILURE_REASON_SERVICE_PROBE_WAITING_FOR_CONVERGENCE,
         _DEPLOY_RUN_FAILURE_REASON_INGRESS_NEG_CONVERGENCE_PENDING,
         _DEPLOY_RUN_FAILURE_REASON_INGRESS_BACKEND_UNHEALTHY_AFTER_ROLLOUT,
@@ -14240,16 +14246,27 @@ def _derive_workflow_run_failure_hint(
     if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_IN_CLUSTER_SERVICE_CURL_FAILED_AFTER_RETRIES:
         return (
             "In-cluster curl to site-web service failed after bounded retries. "
-            "NEG/load balancer convergence did not complete within the retry window."
+            "Verify NetworkPolicy, service selector/targetPort, pod listener binding, and endpoint readiness."
+        )
+    if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_IN_CLUSTER_SERVICE_PROBE_TIMEOUT:
+        return (
+            "In-cluster service probe timed out reaching site-web on cluster-local DNS. "
+            "Likely causes are NetworkPolicy ingress blocking, selector/port mismatch, or pod listener readiness."
+        )
+    if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_NETWORK_POLICY_MAY_BLOCK_SERVICE_PROBE:
+        return (
+            "NetworkPolicy may be blocking same-namespace probe traffic to site-web. "
+            "Verify allow rules for namespace-local ingress to pod port 8080."
         )
     if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_SERVICE_PROBE_WAITING_FOR_CONVERGENCE:
         return (
-            "Service probe failed during early convergence checks. Wait for NEG/load balancer attachment and refresh deploy status."
+            "Service probe failed during retry window before terminal classification. "
+            "Refresh deploy status after checking in-cluster service connectivity."
         )
     if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_INGRESS_NEG_CONVERGENCE_PENDING:
         return (
-            "Ingress and NEG convergence was still in progress during service probe retries. "
-            "Retry deploy status refresh after convergence."
+            "Ingress and NEG convergence was still in progress during external ingress readiness checks. "
+            "Retry deploy status refresh after load balancer convergence."
         )
     if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_INGRESS_BACKEND_UNHEALTHY_AFTER_ROLLOUT:
         return (

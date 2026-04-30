@@ -402,8 +402,8 @@ UI-to-log troubleshooting mapping (Deploy consistency block):
 - `Deployment rollout`, `Service endpoints`, `Backend health`:
   - triage via run failure stage/reason:
     - rollout: `workflow_run_failure_stage=rollout_verify`, `rollout_verification_failed`
-    - service endpoints: `service_has_no_ready_endpoints`, `service_endpoint_missing`, `service_endpoint_unhealthy`, `in_cluster_service_curl_failed`
-    - backend health: `backendconfig_health_check_mismatch`, `backend_config_healthcheck_unhealthy`, `ingress_backend_unhealthy`, `ingress_backend_502`, `ingress_backend_unhealthy_after_rollout`
+    - service endpoints/in-cluster probe: `service_has_no_ready_endpoints`, `service_endpoint_missing`, `service_endpoint_unhealthy`, `in_cluster_service_probe_timeout`, `network_policy_may_block_service_probe`, `in_cluster_service_curl_failed_after_retries`, `in_cluster_service_curl_failed`
+    - backend/ingress health: `backendconfig_health_check_mismatch`, `backend_config_healthcheck_unhealthy`, `ingress_backend_unhealthy`, `ingress_backend_502`, `ingress_backend_unhealthy_after_rollout`, `ingress_neg_convergence_pending`
   - logs: `seo_migration_workflow_run_result_captured` and deploy failure history entries
 
 Key non-secret fields:
@@ -1047,16 +1047,24 @@ If TLS is valid but preview URL returns HTTP 502:
    - `kubectl get endpoints site-web -n <namespace> -o yaml`
    - `kubectl get endpointslice -n <namespace> -l kubernetes.io/service-name=site-web -o yaml`
    - `kubectl run tmp-curl --rm -i --restart=Never --image=curlimages/curl:8.10.1 -n <namespace> -- sh -c "curl -sS -f http://site-web.<namespace>.svc.cluster.local:80/"`
-7. Note: the managed deploy workflow now retries the in-cluster service curl check for a bounded convergence window (about 5 minutes) before terminal failure. Early curl timeouts can be transient while NEG and load-balancer backend sync is still converging.
+7. Inspect network policy and selector/label alignment when in-cluster curl fails:
+   - `kubectl get networkpolicy -n <namespace> -o yaml`
+   - `kubectl describe networkpolicy -n <namespace>`
+   - `kubectl get pods -n <namespace> -l app.kubernetes.io/name=site-web --sort-by=.metadata.creationTimestamp --show-labels`
+   - `kubectl get service site-web -n <namespace> -o jsonpath='selector={.spec.selector}{"\n"}ports={range .spec.ports[*]}{.name}:{.port}->{.targetPort}{"\n"}{end}'`
+8. Note: the managed deploy workflow retries the in-cluster service curl check for a bounded window (about 5 minutes). Timeouts to `site-web.<namespace>.svc.cluster.local:80` are in-cluster service/connectivity issues (NetworkPolicy, selector/port mismatch, readiness/listener), not external NEG/LB convergence.
+9. External ingress/NEG convergence is evaluated separately during ingress address/backend readiness checks and can emit `ingress_neg_convergence_pending` there.
 
 Runtime reason-code hints for 502/backend-health classes:
 - `service_has_no_ready_endpoints`: service selector/endpoints are not ready for ingress traffic.
 - `service_endpoint_missing`: no endpoint addresses were available after rollout verification.
 - `service_endpoint_unhealthy`: endpoint exists but health remained unhealthy after rollout.
+- `in_cluster_service_probe_timeout`: cluster-local curl probe timed out reaching `site-web.<namespace>.svc.cluster.local`.
+- `network_policy_may_block_service_probe`: NetworkPolicy may be blocking same-namespace probe traffic to `site-web` pod port `8080`.
 - `service_probe_waiting_for_convergence`: first in-cluster probe failed and workflow is waiting for convergence retries.
-- `ingress_neg_convergence_pending`: ingress/NEG convergence evidence was observed during retry window.
 - `in_cluster_service_curl_failed_after_retries`: in-cluster curl still failed after bounded retry budget.
 - `in_cluster_service_curl_failed`: in-cluster curl check to service failed after rollout (terminal evidence code retained).
+- `ingress_neg_convergence_pending`: ingress/NEG convergence evidence was observed during external ingress/LB readiness checks.
 - `pod_ready_but_ingress_backend_unhealthy`: pod probes pass but GCLB backend still fails health checks.
 - `ingress_backend_unhealthy_after_rollout`: ingress backend remained unhealthy after successful deployment rollout.
 - `ingress_backend_502`: ingress host is reachable but returns backend 502.
@@ -1067,6 +1075,11 @@ Quick namespace-scoped verification commands:
 - `kubectl describe ingress site-web -n <namespace>`
 - `kubectl describe svc site-web -n <namespace>`
 - `kubectl get endpoints site-web -n <namespace> -o yaml`
+- `kubectl get endpointslice -n <namespace> -l kubernetes.io/service-name=site-web -o yaml`
+- `kubectl get networkpolicy -n <namespace> -o yaml`
+- `kubectl describe networkpolicy -n <namespace>`
+- `kubectl get pods -n <namespace> -l app.kubernetes.io/name=site-web --sort-by=.metadata.creationTimestamp --show-labels`
+- `kubectl get service site-web -n <namespace> -o jsonpath='selector={.spec.selector}{"\n"}ports={range .spec.ports[*]}{.name}:{.port}->{.targetPort}{"\n"}{end}'`
 - `kubectl get backendconfig -n <namespace> -o yaml`
 - `kubectl logs -n <namespace> deploy/site-web --tail=200`
 

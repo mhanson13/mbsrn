@@ -4539,6 +4539,40 @@ def test_classify_cloudsql_proxy_failure_maps_tls_provisioning_reason() -> None:
     assert failure_stage == "ingress_evidence"
 
 
+def test_classify_cloudsql_proxy_failure_prefers_in_cluster_probe_timeout_over_generic_curl_failure() -> None:
+    reason_code, failure_stage = _classify_cloudsql_proxy_failure_from_log_text(
+        "\n".join(
+            [
+                "deploy_runtime_reason_code=service_endpoint_unhealthy",
+                "deploy_runtime_reason_code=in_cluster_service_curl_failed_after_retries",
+                "deploy_runtime_reason_code=in_cluster_service_probe_timeout",
+                "deploy_runtime_reason_code=in_cluster_service_curl_failed",
+            ]
+        )
+    )
+
+    assert reason_code == "in_cluster_service_probe_timeout"
+    assert failure_stage == "rollout_verify"
+
+
+def test_classify_cloudsql_proxy_failure_maps_network_policy_probe_hint_reason() -> None:
+    reason_code, failure_stage = _classify_cloudsql_proxy_failure_from_log_text(
+        "deploy_runtime_reason_code=network_policy_may_block_service_probe"
+    )
+
+    assert reason_code == "network_policy_may_block_service_probe"
+    assert failure_stage == "rollout_verify"
+
+
+def test_classify_cloudsql_proxy_failure_maps_ingress_neg_convergence_to_ingress_evidence_stage() -> None:
+    reason_code, failure_stage = _classify_cloudsql_proxy_failure_from_log_text(
+        "deploy_runtime_reason_code=ingress_neg_convergence_pending"
+    )
+
+    assert reason_code == "ingress_neg_convergence_pending"
+    assert failure_stage == "ingress_evidence"
+
+
 def test_ensure_deploy_workflow_creates_missing_file_and_verifies_presence(monkeypatch) -> None:
     calls: list[tuple[str, str]] = []
     _install_urlopen_stub(monkeypatch, _managed_provisioning_responses(), calls)
@@ -5721,10 +5755,28 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "while [ \"$probe_attempt\" -le \"$probe_max_attempts\" ]; do" in workflow_yaml
     assert "if [ \"$probe_attempt\" -lt \"$probe_max_attempts\" ]; then" in workflow_yaml
     assert "sleep \"$probe_sleep_seconds\"" in workflow_yaml
-    assert "deploy_runtime_reason_code=service_probe_waiting_for_convergence" in workflow_yaml
+    verify_service_step_yaml = workflow_yaml.split("      - name: Verify service and ingress", 1)[1].split(
+        "      - name: Resolve live URL from ingress status",
+        1,
+    )[0]
+    assert "deploy_runtime_reason_code=service_probe_waiting_for_convergence" in verify_service_step_yaml
+    assert "deploy_runtime_reason_code=ingress_neg_convergence_pending" not in verify_service_step_yaml
+    assert "deploy_runtime_reason_code=in_cluster_service_probe_timeout" in verify_service_step_yaml
+    assert "deploy_runtime_reason_code=network_policy_may_block_service_probe" in verify_service_step_yaml
+    assert "deploy_runtime_reason_code=in_cluster_service_curl_failed_after_retries" in verify_service_step_yaml
+    assert "deploy_runtime_reason_code=in_cluster_service_curl_failed" in verify_service_step_yaml
+    assert "kubectl get networkpolicy --namespace \"$K8S_NAMESPACE\" -o yaml || true" in verify_service_step_yaml
+    assert "kubectl describe networkpolicy --namespace \"$K8S_NAMESPACE\" || true" in verify_service_step_yaml
+    assert "kubectl get pod \"$latest_site_web_pod\" --namespace \"$K8S_NAMESPACE\" --show-labels || true" in verify_service_step_yaml
+    assert (
+        "kubectl get service site-web --namespace \"$K8S_NAMESPACE\" -o jsonpath='selector={.spec.selector}"
+        in verify_service_step_yaml
+    )
+    assert (
+        "In-cluster service probe attempt ${probe_attempt}/${probe_max_attempts} failed; waiting for NEG/LB convergence before retrying."
+        not in verify_service_step_yaml
+    )
     assert "deploy_runtime_reason_code=ingress_neg_convergence_pending" in workflow_yaml
-    assert "deploy_runtime_reason_code=in_cluster_service_curl_failed_after_retries" in workflow_yaml
-    assert "deploy_runtime_reason_code=in_cluster_service_curl_failed" in workflow_yaml
     assert "kubectl delete pod \"$probe_pod\" --namespace \"$K8S_NAMESPACE\" --ignore-not-found || true" in workflow_yaml
     assert "if ! kubectl run \"$probe_pod\"" not in workflow_yaml
     assert "ingress_spec_host=\"$(kubectl get ingress site-web --namespace \"$K8S_NAMESPACE\" -o jsonpath='{.spec.rules[0].host}' 2>/dev/null || true)\"" in workflow_yaml
@@ -5881,6 +5933,54 @@ def test_rendered_managed_templates_enable_pull_secret_only_for_private_image_au
     assert "kubectl get secret ghcr-pull-secret --namespace \"$K8S_NAMESPACE\"" in workflow_yaml
     assert "imagePullSecrets:" in deployment_yaml
     assert "name: ghcr-pull-secret" in deployment_yaml
+
+
+def test_render_managed_gke_manifests_network_policy_allows_site_web_probe_without_broad_ingress() -> None:
+    manifests = _render_managed_gke_manifest_files(
+        repo_owner="mhanson13",
+        repo_name="tnmfire",
+        target_environment_key="gke-prod",
+        target_environment_source="admin_config",
+        kubernetes_namespace="tnmfire",
+        namespace_source="repo_name",
+        preview_hostname="tnmfire.site.mbsrn.com",
+        namespace_isolation_defaults={
+            "network_policy": {"enabled": True, "mode": "default_deny_ingress"},
+        },
+        site_id="site-tnmfire",
+    )
+    network_policy_yaml = manifests["k8s/networkpolicy.yaml"]
+    parsed_docs = [doc for doc in yaml.safe_load_all(network_policy_yaml) if isinstance(doc, dict)]
+    assert len(parsed_docs) == 2
+    policies_by_name = {
+        str((doc.get("metadata") or {}).get("name") or ""): doc
+        for doc in parsed_docs
+    }
+
+    default_deny_policy = policies_by_name.get("site-default-deny-ingress")
+    assert isinstance(default_deny_policy, dict)
+    assert (default_deny_policy.get("spec") or {}).get("podSelector") == {}
+    assert (default_deny_policy.get("spec") or {}).get("policyTypes") == ["Ingress"]
+    assert (default_deny_policy.get("spec") or {}).get("ingress") in (None, [])
+
+    allow_policy = policies_by_name.get("site-web-allow-managed-ingress")
+    assert isinstance(allow_policy, dict)
+    allow_spec = allow_policy.get("spec") or {}
+    assert allow_spec.get("podSelector") == {"matchLabels": {"app.kubernetes.io/name": "site-web"}}
+    assert allow_spec.get("policyTypes") == ["Ingress"]
+    ingress_rules = allow_spec.get("ingress") or []
+    assert len(ingress_rules) == 2
+    assert (ingress_rules[0].get("from") or []) == [{"podSelector": {}}]
+    assert (ingress_rules[0].get("ports") or []) == [{"protocol": "TCP", "port": 8080}]
+    health_check_sources = sorted(
+        str((source.get("ipBlock") or {}).get("cidr") or "")
+        for source in (ingress_rules[1].get("from") or [])
+        if isinstance(source, dict)
+    )
+    assert health_check_sources == ["130.211.0.0/22", "35.191.0.0/16"]
+    assert (ingress_rules[1].get("ports") or []) == [{"protocol": "TCP", "port": 8080}]
+    assert "namespaceSelector" not in network_policy_yaml
+    assert "0.0.0.0/0" not in network_policy_yaml
 
 
 def test_rendered_managed_workflow_yaml_parses_embedded_certificate_evaluation_script() -> None:
