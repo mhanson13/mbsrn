@@ -865,6 +865,229 @@ describe("site migration workflow route", () => {
     );
   });
 
+  it("renders DNS mismatch as blocked in deploy consistency diagnostics", async () => {
+    const user = userEvent.setup();
+    const summary = buildMigrationWorkspaceSummary({
+      deploy_readiness: {
+        ready: false,
+        reasons: ["DNS record mismatch for managed ingress."],
+        dispatch_service_reason_code: "dns_record_mismatch",
+        dns_record_matches_ingress: false,
+        dns_expected_ip: "34.102.120.10",
+        dns_observed_ip: "34.102.120.11",
+        ingress_ip: "34.102.120.10",
+        deploy_https_ready: false,
+        target: {
+          enabled: true,
+          repo_owner: "mhanson13",
+          repo_name: "sc-mechanical",
+          workflow_id: "deploy-sc-mechanical-www-prod.yml",
+          ref: "main",
+        },
+      },
+    });
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(summary);
+    mockFetchMigrationPublishHistory.mockResolvedValueOnce({ items: [], total: 0 });
+    mockFetchMigrationDeployHistory.mockResolvedValueOnce({ items: [], total: 0 });
+
+    render(<SiteMigrationWorkflowPage />);
+    await user.click(await screen.findByText("Show detailed migration failure diagnostics"));
+
+    const consistency = screen.getByTestId("migration-deploy-consistency");
+    expect(within(consistency).getByTestId("migration-deploy-consistency-gate-dns_matches_ingress")).toHaveTextContent(
+      "Blocked",
+    );
+    expect(within(consistency).getByTestId("migration-deploy-consistency-dns-expected-ip")).toHaveTextContent(
+      "dns_expected_ip: 34.102.120.10",
+    );
+    expect(within(consistency).getByTestId("migration-deploy-consistency-dns-observed-ip")).toHaveTextContent(
+      "dns_observed_ip: 34.102.120.11",
+    );
+    expect(within(consistency).getByTestId("migration-deploy-consistency-remediation")).toHaveTextContent(
+      "DNS mismatch: update DNS A record to the observed ingress IP.",
+    );
+  });
+
+  it("renders FAILED_NOT_VISIBLE with DNS/TLS context in deploy consistency diagnostics", async () => {
+    const user = userEvent.setup();
+    const summary = buildMigrationWorkspaceSummary({
+      deploy_readiness: {
+        ready: false,
+        reasons: ["Certificate is not visible to Google validation."],
+        dispatch_service_reason_code: "managed_certificate_failed_not_visible",
+        dns_record_matches_ingress: false,
+        dns_expected_ip: "34.102.120.10",
+        dns_observed_ip: "34.102.120.11",
+        tls_certificate_status: "FAILED_NOT_VISIBLE",
+        tls_domain_status: "FAILED_NOT_VISIBLE",
+        ingress_ip: "34.102.120.10",
+        deploy_https_ready: false,
+        target: {
+          enabled: true,
+          repo_owner: "mhanson13",
+          repo_name: "sc-mechanical",
+          workflow_id: "deploy-sc-mechanical-www-prod.yml",
+          ref: "main",
+        },
+      },
+    });
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(summary);
+    mockFetchMigrationPublishHistory.mockResolvedValueOnce({ items: [], total: 0 });
+    mockFetchMigrationDeployHistory.mockResolvedValueOnce({ items: [], total: 0 });
+
+    render(<SiteMigrationWorkflowPage />);
+    await user.click(await screen.findByText("Show detailed migration failure diagnostics"));
+
+    const consistency = screen.getByTestId("migration-deploy-consistency");
+    expect(
+      within(consistency).getByTestId("migration-deploy-consistency-gate-managed_certificate_active"),
+    ).toHaveTextContent("Blocked");
+    expect(within(consistency).getByTestId("migration-deploy-consistency-tls-certificate-status")).toHaveTextContent(
+      "tls_certificate_status: FAILED_NOT_VISIBLE",
+    );
+    expect(within(consistency).getByTestId("migration-deploy-consistency-tls-domain-status")).toHaveTextContent(
+      "tls_domain_status: FAILED_NOT_VISIBLE",
+    );
+    expect(within(consistency).getByTestId("migration-deploy-consistency-remediation")).toHaveTextContent(
+      "FAILED_NOT_VISIBLE: DNS is not visible to Google certificate validation yet.",
+    );
+  });
+
+  it("does not present deploy_https_ready=false as successful in deploy consistency diagnostics", async () => {
+    const user = userEvent.setup();
+    const summary = buildMigrationWorkspaceSummary({
+      deploy_readiness: {
+        ready: false,
+        reasons: ["HTTPS verification has not passed."],
+        dns_record_matches_ingress: true,
+        dns_expected_ip: "34.102.120.10",
+        dns_observed_ip: "34.102.120.10",
+        tls_certificate_status: "ACTIVE",
+        tls_domain_status: "ACTIVE",
+        ingress_ip: "34.102.120.10",
+        ingress_conflict_detected: false,
+        cert_identity_valid: true,
+        deploy_https_ready: false,
+        target: {
+          enabled: true,
+          repo_owner: "mhanson13",
+          repo_name: "sc-mechanical",
+          workflow_id: "deploy-sc-mechanical-www-prod.yml",
+          ref: "main",
+        },
+      },
+    });
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(summary);
+    mockFetchMigrationPublishHistory.mockResolvedValueOnce({ items: [], total: 0 });
+    mockFetchMigrationDeployHistory.mockResolvedValueOnce({ items: [], total: 0 });
+
+    render(<SiteMigrationWorkflowPage />);
+    await user.click(await screen.findByText("Show detailed migration failure diagnostics"));
+
+    const consistency = screen.getByTestId("migration-deploy-consistency");
+    expect(within(consistency).getByTestId("migration-deploy-consistency-https-ready")).toHaveTextContent(
+      "deploy_https_ready: No",
+    );
+    expect(within(consistency).getByTestId("migration-deploy-consistency-gate-https_probe")).toHaveTextContent(
+      "Blocked",
+    );
+    expect(within(consistency).getByTestId("migration-deploy-consistency-gate-https_probe")).not.toHaveTextContent("Pass");
+  });
+
+  it("renders missing consistency fields as pending/unknown without crashing", async () => {
+    const user = userEvent.setup();
+    const summary = buildMigrationWorkspaceSummary({
+      deploy_readiness: {
+        ready: false,
+        reasons: ["Awaiting runtime evidence."],
+        ingress_ip: "34.102.120.10",
+        target: {
+          enabled: true,
+          repo_owner: "mhanson13",
+          repo_name: "sc-mechanical",
+          workflow_id: "deploy-sc-mechanical-www-prod.yml",
+          ref: "main",
+        },
+      },
+    });
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(summary);
+    mockFetchMigrationPublishHistory.mockResolvedValueOnce({ items: [], total: 0 });
+    mockFetchMigrationDeployHistory.mockResolvedValueOnce({ items: [], total: 0 });
+
+    render(<SiteMigrationWorkflowPage />);
+    await user.click(await screen.findByText("Show detailed migration failure diagnostics"));
+
+    const consistency = screen.getByTestId("migration-deploy-consistency");
+    expect(within(consistency).getByTestId("migration-deploy-consistency-gate-dns_matches_ingress")).toHaveTextContent(
+      "Pending",
+    );
+    expect(
+      within(consistency).getByTestId("migration-deploy-consistency-gate-managed_certificate_active"),
+    ).toHaveTextContent("Unknown");
+    expect(within(consistency).getByTestId("migration-deploy-consistency-gate-certificate_identity")).toHaveTextContent(
+      "Unknown",
+    );
+    expect(within(consistency).getByTestId("migration-deploy-consistency-gate-ingress_conflict")).toHaveTextContent(
+      "Unknown",
+    );
+    expect(within(consistency).getByTestId("migration-deploy-consistency-gate-https_probe")).toHaveTextContent(
+      "Pending",
+    );
+    expect(within(consistency).getByTestId("migration-deploy-consistency-tls-certificate-status")).toHaveTextContent(
+      "tls_certificate_status: Not available",
+    );
+  });
+
+  it("uses selected deploy consistency fields first and backfills missing values from latest summary", async () => {
+    const user = userEvent.setup();
+    const summary = buildMigrationWorkspaceSummary({
+      deploy_readiness: {
+        ready: false,
+        reasons: ["Deploy evidence is incomplete."],
+        dns_record_matches_ingress: false,
+        dns_expected_ip: "34.102.120.10",
+        dns_observed_ip: "34.102.120.11",
+        tls_certificate_status: "PROVISIONING",
+        deploy_https_ready: false,
+        target: {
+          enabled: true,
+          repo_owner: "mhanson13",
+          repo_name: "sc-mechanical",
+          workflow_id: "deploy-sc-mechanical-www-prod.yml",
+          ref: "main",
+        },
+      },
+    });
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(summary);
+    mockFetchMigrationDeployHistory.mockResolvedValueOnce({
+      items: [
+        {
+          timestamp: "2026-04-21T00:10:00Z",
+          status: "failed",
+          artifact_version_id: "migration-artifact-1",
+          dns_record_matches_ingress: true,
+          dns_expected_ip: "35.201.10.20",
+        },
+      ],
+      total: 1,
+    });
+
+    render(<SiteMigrationWorkflowPage />);
+    await user.click(await screen.findByText("Show detailed migration failure diagnostics"));
+
+    const consistency = screen.getByTestId("migration-deploy-consistency");
+    expect(within(consistency).getByTestId("migration-deploy-consistency-dns-match")).toHaveTextContent(
+      "dns_record_matches_ingress: Yes",
+    );
+    expect(within(consistency).getByTestId("migration-deploy-consistency-dns-expected-ip")).toHaveTextContent(
+      "dns_expected_ip: 35.201.10.20",
+    );
+    expect(within(consistency).getByTestId("migration-deploy-consistency-dns-observed-ip")).toHaveTextContent(
+      "dns_observed_ip: 34.102.120.11",
+    );
+    expect(screen.getByTestId("migration-deploy-diagnostics-fallback-note")).toBeInTheDocument();
+  });
+
   it("updates selected draft diagnostics context when artifact selection changes", async () => {
     const user = userEvent.setup();
     const artifactOne = buildMigrationArtifactVersion({ id: "artifact-v1", version: 1 });

@@ -13,6 +13,8 @@ import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
 
+import yaml
+
 from app.core.time import utc_now
 from app.core.runtime_metadata import get_runtime_build_metadata
 
@@ -36,6 +38,7 @@ _GITHUB_REASON_REPO_BOOTSTRAP_MARKER_WRITE_FAILED = "github_repo_bootstrap_marke
 _GITHUB_REASON_REPO_BASELINE_RECONCILIATION_FAILED = "github_repo_baseline_reconciliation_failed"
 _GITHUB_REASON_REPO_INITIALIZATION_FAILED = "github_repo_initialization_failed"
 _GITHUB_REASON_REPO_REQUIRES_MANUAL_INITIALIZATION = "github_repo_requires_manual_initialization"
+_GITHUB_REASON_MANAGED_WORKFLOW_TEMPLATE_INVALID = "managed_workflow_template_invalid"
 _MBSRN_REPO_MANAGEMENT_MARKER_PATH = "mbsrn.key"
 
 
@@ -289,6 +292,12 @@ class SEOMigrationGitHubWorkflowConformanceResult:
     conformance_status: str
     conformance_reasons: tuple[str, ...]
     evidence_summary: str | None = None
+
+
+@dataclass(frozen=True)
+class SEOMigrationManagedWorkflowTemplateValidationResult:
+    is_valid: bool
+    validation_errors: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -4857,6 +4866,50 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             private_image_auth_required=private_image_auth_required,
             site_id=site_id,
         )
+        template_validation = _validate_managed_workflow_template_before_publish(
+            workflow_yaml=workflow_yaml,
+        )
+        if not template_validation.is_valid:
+            _emit_structured_publisher_log(
+                payload={
+                    "event": "seo_migration_managed_workflow_template_validation",
+                    "operation_status": "failed",
+                    "template_name": _MANAGED_WORKFLOW_TEMPLATE_NAME,
+                    "repo_owner": repo_owner,
+                    "repo_name": repo_name,
+                    "ref": branch,
+                    "workflow_id": normalized_workflow_id,
+                    "workflow_path": workflow_path,
+                    "site_id": _normalize_repo_management_id(site_id),
+                    "reason_code": _GITHUB_REASON_MANAGED_WORKFLOW_TEMPLATE_INVALID,
+                    "validation_errors": list(template_validation.validation_errors),
+                },
+                fallback_message="seo_migration_managed_workflow_template_validation",
+                level=logging.WARNING,
+            )
+            raise SEOMigrationGitHubPublisherError(
+                code=_GITHUB_REASON_MANAGED_WORKFLOW_TEMPLATE_INVALID,
+                safe_message="Managed deploy workflow template is invalid and publish is blocked.",
+                stage="workflow_provisioning",
+                provider_message=";".join(template_validation.validation_errors),
+            )
+        _emit_structured_publisher_log(
+            payload={
+                "event": "seo_migration_managed_workflow_template_validation",
+                "operation_status": "passed",
+                "template_name": _MANAGED_WORKFLOW_TEMPLATE_NAME,
+                "repo_owner": repo_owner,
+                "repo_name": repo_name,
+                "ref": branch,
+                "workflow_id": normalized_workflow_id,
+                "workflow_path": workflow_path,
+                "site_id": _normalize_repo_management_id(site_id),
+                "reason_code": None,
+                "validation_errors": [],
+            },
+            fallback_message="seo_migration_managed_workflow_template_validation",
+            level=logging.INFO,
+        )
         manifest_file_payloads = _render_managed_gke_manifest_files(
             repo_owner=repo_owner,
             repo_name=repo_name,
@@ -7775,50 +7828,50 @@ def _render_managed_deploy_workflow_yaml(
         "            exit 1\n"
         "          fi\n"
         "          cert_eval_output=\"$(printf '%s' \"$managed_certificate_json\" | EXPECTED_PREVIEW_HOST=\"$preview_host\" python - <<'PY'\n"
-        "import json\n"
-        "import os\n"
-        "import sys\n"
+        "          import json\n"
+        "          import os\n"
+        "          import sys\n"
         "\n"
-        "raw = sys.stdin.read().strip()\n"
-        "expected_host = str(os.environ.get('EXPECTED_PREVIEW_HOST') or '').strip().lower()\n"
-        "payload = json.loads(raw) if raw else {}\n"
-        "spec_domains = [\n"
-        "    str(item).strip().lower()\n"
-        "    for item in (payload.get('spec', {}).get('domains') or [])\n"
-        "    if str(item).strip()\n"
-        "]\n"
-        "status_payload = payload.get('status') if isinstance(payload.get('status'), dict) else {}\n"
-        "cert_status = str(status_payload.get('certificateStatus') or '').strip().upper()\n"
-        "domain_status_payload = status_payload.get('domainStatus')\n"
-        "domain_status_map = {}\n"
-        "if isinstance(domain_status_payload, list):\n"
-        "    for item in domain_status_payload:\n"
-        "        if not isinstance(item, dict):\n"
-        "            continue\n"
-        "        domain = str(item.get('domain') or '').strip().lower()\n"
-        "        status = str(item.get('status') or '').strip().upper()\n"
-        "        if domain:\n"
-        "            domain_status_map[domain] = status\n"
-        "elif isinstance(domain_status_payload, dict):\n"
-        "    for key, value in domain_status_payload.items():\n"
-        "        domain = str(key or '').strip().lower()\n"
-        "        if not domain:\n"
-        "            continue\n"
-        "        if isinstance(value, dict):\n"
-        "            status = str(value.get('status') or '').strip().upper()\n"
-        "        else:\n"
-        "            status = str(value or '').strip().upper()\n"
-        "        domain_status_map[domain] = status\n"
+        "          raw = sys.stdin.read().strip()\n"
+        "          expected_host = str(os.environ.get('EXPECTED_PREVIEW_HOST') or '').strip().lower()\n"
+        "          payload = json.loads(raw) if raw else {}\n"
+        "          spec_domains = [\n"
+        "              str(item).strip().lower()\n"
+        "              for item in (payload.get('spec', {}).get('domains') or [])\n"
+        "              if str(item).strip()\n"
+        "          ]\n"
+        "          status_payload = payload.get('status') if isinstance(payload.get('status'), dict) else {}\n"
+        "          cert_status = str(status_payload.get('certificateStatus') or '').strip().upper()\n"
+        "          domain_status_payload = status_payload.get('domainStatus')\n"
+        "          domain_status_map = {}\n"
+        "          if isinstance(domain_status_payload, list):\n"
+        "              for item in domain_status_payload:\n"
+        "                  if not isinstance(item, dict):\n"
+        "                      continue\n"
+        "                  domain = str(item.get('domain') or '').strip().lower()\n"
+        "                  status = str(item.get('status') or '').strip().upper()\n"
+        "                  if domain:\n"
+        "                      domain_status_map[domain] = status\n"
+        "          elif isinstance(domain_status_payload, dict):\n"
+        "              for key, value in domain_status_payload.items():\n"
+        "                  domain = str(key or '').strip().lower()\n"
+        "                  if not domain:\n"
+        "                      continue\n"
+        "                  if isinstance(value, dict):\n"
+        "                      status = str(value.get('status') or '').strip().upper()\n"
+        "                  else:\n"
+        "                      status = str(value or '').strip().upper()\n"
+        "                  domain_status_map[domain] = status\n"
         "\n"
-        "domain_status = domain_status_map.get(expected_host, '')\n"
-        "domain_exact_match = len(spec_domains) == 1 and spec_domains[0] == expected_host\n"
-        "print(f'cert_status={cert_status}')\n"
-        "print(f'domain_status={domain_status}')\n"
-        "print('domain_exact_match=' + ('true' if domain_exact_match else 'false'))\n"
-        "print('domain_count=' + str(len(spec_domains)))\n"
-        "print('spec_domains=' + ','.join(spec_domains))\n"
-        "PY\n"
-        ")\"\n"
+        "          domain_status = domain_status_map.get(expected_host, '')\n"
+        "          domain_exact_match = len(spec_domains) == 1 and spec_domains[0] == expected_host\n"
+        "          print(f'cert_status={cert_status}')\n"
+        "          print(f'domain_status={domain_status}')\n"
+        "          print('domain_exact_match=' + ('true' if domain_exact_match else 'false'))\n"
+        "          print('domain_count=' + str(len(spec_domains)))\n"
+        "          print('spec_domains=' + ','.join(spec_domains))\n"
+        "          PY\n"
+        "          )\"\n"
         "          domain_exact_match=false\n"
         "          while IFS='=' read -r key value; do\n"
         "            case \"$key\" in\n"
@@ -7834,7 +7887,7 @@ def _render_managed_deploy_workflow_yaml(
         "            esac\n"
         "          done <<EOF\n"
         "          $cert_eval_output\n"
-        "EOF\n"
+        "          EOF\n"
         "          normalized_cert_status=\"$(echo \"$tls_certificate_status\" | tr '[:lower:]' '[:upper:]' | tr -d '[:space:]')\"\n"
         "          normalized_domain_status=\"$(echo \"$tls_domain_status\" | tr '[:lower:]' '[:upper:]' | tr -d '[:space:]')\"\n"
         "          if [ \"$domain_exact_match\" != \"true\" ]; then\n"
@@ -8830,6 +8883,23 @@ _WORKFLOW_CONFORMANCE_STATUS_WORKFLOW_PLACEHOLDER_DETECTED = "workflow_placehold
 _WORKFLOW_CONFORMANCE_STATUS_WORKFLOW_CONTRACT_INCOMPLETE = "workflow_contract_incomplete"
 _WORKFLOW_CONFORMANCE_STATUS_WORKFLOW_CONFORMANCE_UNKNOWN = "workflow_conformance_unknown"
 
+_MANAGED_WORKFLOW_TEMPLATE_NAME = "managed_deploy_workflow_yaml"
+_MANAGED_WORKFLOW_REQUIRED_STEP_NAME = "Resolve live URL from ingress status"
+_MANAGED_WORKFLOW_REQUIRED_DEPLOY_OUTPUTS: tuple[str, ...] = (
+    "live_url",
+    "resolved_live_url",
+    "deployed_url",
+    "dns_record_matches_ingress",
+    "dns_expected_ip",
+    "dns_observed_ip",
+    "tls_certificate_status",
+    "tls_domain_status",
+    "ingress_ip",
+    "ingress_conflict_detected",
+    "cert_identity_valid",
+    "deploy_https_ready",
+)
+
 _WORKFLOW_CONFORMANCE_REQUIRED_DEPLOY_MARKERS: tuple[str, ...] = (
     "google-github-actions/auth",
     "google-github-actions/get-gke-credentials",
@@ -9397,6 +9467,104 @@ def _evaluate_workflow_conformance(
         conformance_reasons=(),
         evidence_summary=("workflow_dispatch=true;" f"required_deploy_markers={','.join(required_marker_hits)}"),
     )
+
+
+def _validate_managed_workflow_template_before_publish(
+    *,
+    workflow_yaml: str,
+) -> SEOMigrationManagedWorkflowTemplateValidationResult:
+    normalized_yaml = str(workflow_yaml or "").strip()
+    if not normalized_yaml:
+        return SEOMigrationManagedWorkflowTemplateValidationResult(
+            is_valid=False,
+            validation_errors=("workflow_yaml_empty",),
+        )
+    try:
+        parsed = yaml.safe_load(normalized_yaml)
+    except yaml.YAMLError:
+        return SEOMigrationManagedWorkflowTemplateValidationResult(
+            is_valid=False,
+            validation_errors=("workflow_yaml_parse_failed",),
+        )
+
+    validation_errors: list[str] = []
+    if not isinstance(parsed, dict):
+        return SEOMigrationManagedWorkflowTemplateValidationResult(
+            is_valid=False,
+            validation_errors=("workflow_yaml_root_not_mapping",),
+        )
+
+    trigger_config = _extract_workflow_trigger_config(parsed)
+    if not _workflow_has_dispatch_trigger(trigger_config):
+        validation_errors.append("workflow_dispatch_missing")
+
+    jobs_config = parsed.get("jobs")
+    deploy_config: object = None
+    if isinstance(jobs_config, dict):
+        deploy_config = jobs_config.get("deploy")
+    else:
+        validation_errors.append("jobs_deploy_missing")
+    if not isinstance(deploy_config, dict):
+        if "jobs_deploy_missing" not in validation_errors:
+            validation_errors.append("jobs_deploy_missing")
+        return SEOMigrationManagedWorkflowTemplateValidationResult(
+            is_valid=False,
+            validation_errors=tuple(validation_errors),
+        )
+
+    outputs_config = deploy_config.get("outputs")
+    missing_outputs: list[str] = []
+    if isinstance(outputs_config, dict):
+        for output_name in _MANAGED_WORKFLOW_REQUIRED_DEPLOY_OUTPUTS:
+            if output_name not in outputs_config:
+                missing_outputs.append(output_name)
+    else:
+        missing_outputs = list(_MANAGED_WORKFLOW_REQUIRED_DEPLOY_OUTPUTS)
+    if missing_outputs:
+        validation_errors.append("deploy_outputs_missing:" + ",".join(missing_outputs))
+
+    steps_config = deploy_config.get("steps")
+    has_required_step = False
+    if isinstance(steps_config, list):
+        for step in steps_config:
+            if not isinstance(step, dict):
+                continue
+            step_name = str(step.get("name") or "").strip()
+            if step_name == _MANAGED_WORKFLOW_REQUIRED_STEP_NAME:
+                has_required_step = True
+                break
+    if not has_required_step:
+        validation_errors.append("resolve_live_url_step_missing")
+
+    return SEOMigrationManagedWorkflowTemplateValidationResult(
+        is_valid=(not validation_errors),
+        validation_errors=tuple(validation_errors),
+    )
+
+
+def _extract_workflow_trigger_config(workflow_payload: dict[str, object]) -> object | None:
+    if "on" in workflow_payload:
+        return workflow_payload.get("on")
+    if True in workflow_payload:
+        return workflow_payload.get(True)
+    for key, value in workflow_payload.items():
+        if str(key).strip().lower() == "on":
+            return value
+    return None
+
+
+def _workflow_has_dispatch_trigger(trigger_config: object) -> bool:
+    if isinstance(trigger_config, dict):
+        for key in trigger_config.keys():
+            if str(key).strip() == "workflow_dispatch":
+                return True
+        return False
+    if isinstance(trigger_config, list):
+        for item in trigger_config:
+            if str(item).strip() == "workflow_dispatch":
+                return True
+        return False
+    return str(trigger_config or "").strip() == "workflow_dispatch"
 
 
 def _extract_workflow_trigger_types(workflow_file_payload: dict[str, object] | None) -> set[str]:

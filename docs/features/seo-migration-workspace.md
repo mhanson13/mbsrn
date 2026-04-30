@@ -867,6 +867,17 @@ Publish behavior:
   - dispatch trigger: `on.workflow_dispatch`
   - real deploy steps: GCP auth, GKE credentials, `kubectl apply -f k8s/`, rollout verification, ingress-based URL resolution
   - explicit evidence outputs: `resolved_live_url` (preferred), plus `live_url` and `deployed_url`
+- publish-time managed workflow conformance guard now validates the rendered template YAML before any repo write:
+  - YAML must parse successfully.
+  - `on.workflow_dispatch` must be present.
+  - `jobs.deploy` must exist.
+  - `jobs.deploy.outputs` must include deploy evidence outputs:
+    - `live_url`, `resolved_live_url`, `deployed_url`
+    - `dns_record_matches_ingress`, `dns_expected_ip`, `dns_observed_ip`
+    - `tls_certificate_status`, `tls_domain_status`
+    - `ingress_ip`, `ingress_conflict_detected`, `cert_identity_valid`, `deploy_https_ready`
+  - deploy job must include step `Resolve live URL from ingress status`.
+  - validation failure blocks publish-time workflow provisioning with reason code `managed_workflow_template_invalid` before workflow file write.
 - publish-time workflow provisioning now resolves workflow identity using the same precedence used by deploy dispatch candidate selection (`site_specific_workflow` → `publish_history_workflow` → workspace/default fallback) before writing.
 - deploy readiness/dispatch then validates the same resolved workflow file path on the same resolved ref.
 
@@ -1619,6 +1630,39 @@ Isolation rules:
 - Shared ingress static IP binding is blocked for per-site ingress.
 - Cross-site certificate bindings are blocked.
 - `ingress.gcp.kubernetes.io/pre-shared-cert` is only non-fatal when it matches the expected managed certificate for the same site; stale/foreign/multi-cert bindings block deploy readiness.
+
+### Deploy Consistency Block (Operator UI)
+
+`Advanced Diagnostics -> Deploy Diagnostics` includes a compact **Deploy consistency** block for per-site deploy contract visibility.
+
+Gate labels and status model:
+- `Deployment rollout`
+- `Service endpoints`
+- `Backend health`
+- `DNS matches ingress IP`
+- `Managed certificate active`
+- `Certificate identity valid`
+- `Ingress/static IP conflict check`
+- `HTTPS probe`
+
+Each gate renders one of:
+- `Pass`
+- `Blocked`
+- `Pending`
+- `Unknown`
+
+Field rendering and precedence:
+- selected deploy-attempt fields are authoritative when present
+- latest deploy summary backfills only missing selected-attempt values
+- existing diagnostics fallback note remains the operator cue when summary backfill is used
+- network/TLS fields are always null-safe in UI (`dns_record_matches_ingress`, `dns_expected_ip`, `dns_observed_ip`, `tls_certificate_status`, `tls_domain_status`, `ingress_ip`, `ingress_conflict_detected`, `cert_identity_valid`, `deploy_https_ready`)
+
+Blocked-state operator remediation text surfaced in UI:
+- DNS mismatch: update DNS A record to the observed ingress IP
+- `FAILED_NOT_VISIBLE`: DNS is not visible to Google certificate validation yet
+- cert bound to wrong site: certificate identity mismatch or stale binding
+- ingress conflict: static IP or ingress ownership conflict detected
+- HTTPS not ready: wait for DNS/TLS/LB convergence or inspect deploy evidence
 
 ## Controlled Production Exercise Checklist
 Use this checklist for a bounded real-world migration exercise:

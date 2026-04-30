@@ -10779,6 +10779,7 @@ class SEOMigrationService:
             "github_repo_adoption_failed",
             "github_repo_bootstrap_marker_write_failed",
             "github_repo_baseline_reconciliation_failed",
+            "managed_workflow_template_invalid",
             _DEPLOY_TARGET_REASON_REPO_NOT_FOUND,
             _DEPLOY_TARGET_REASON_WORKFLOW_NOT_FOUND,
             _DEPLOY_TARGET_REASON_REF_INVALID,

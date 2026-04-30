@@ -8,6 +8,7 @@ import urllib.request
 from pathlib import Path
 
 import pytest
+import yaml
 
 from app.core.time import utc_now
 from app.integrations.seo_migration_github_publisher import (
@@ -4385,6 +4386,91 @@ def test_ensure_deploy_workflow_creates_missing_file_and_verifies_presence(monke
     assert any(call[1].endswith("/contents/k8s/backendconfig.yaml?ref=main") for call in calls)
 
 
+def test_ensure_deploy_workflow_blocks_invalid_rendered_yaml_before_workflow_write(monkeypatch, caplog) -> None:
+    calls: list[tuple[str, str]] = []
+    _install_urlopen_stub(monkeypatch, _managed_provisioning_responses(), calls)
+
+    def _render_invalid_workflow(**kwargs) -> str:
+        del kwargs
+        return "name: broken-workflow\non:\n  workflow_dispatch:\njobs:\n  deploy:\n    steps:\n      - name: broken\n        run: |\n          echo \"oops\"\n    outputs: ["
+
+    monkeypatch.setattr(
+        "app.integrations.seo_migration_github_publisher._render_managed_deploy_workflow_yaml",
+        _render_invalid_workflow,
+    )
+    caplog.set_level("INFO", logger="app.integrations.seo_migration_github_publisher")
+
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    with pytest.raises(SEOMigrationGitHubPublisherError) as exc_info:
+        publisher.ensure_deploy_workflow(
+            repo_owner="mhanson13",
+            repo_name="tnmfire",
+            branch="main",
+            workflow_id="deploy-tnmfire-www-prod.yml",
+            dry_run=False,
+            site_id="site-1",
+        )
+
+    assert exc_info.value.code == "managed_workflow_template_invalid"
+    assert exc_info.value.stage == "workflow_provisioning"
+    assert not any(
+        method == "PUT" and "/contents/.github/workflows/deploy-tnmfire-www-prod.yml" in url
+        for method, url in calls
+    )
+    validation_logs = [
+        record.msg
+        for record in caplog.records
+        if isinstance(record.msg, str) and '"event": "seo_migration_managed_workflow_template_validation"' in record.msg
+    ]
+    assert validation_logs
+    latest_log = validation_logs[-1]
+    assert '"operation_status": "failed"' in latest_log
+    assert '"template_name": "managed_deploy_workflow_yaml"' in latest_log
+    assert '"workflow_path": ".github/workflows/deploy-tnmfire-www-prod.yml"' in latest_log
+    assert '"site_id": "site-1"' in latest_log
+    assert '"reason_code": "managed_workflow_template_invalid"' in latest_log
+    assert "test-token" not in latest_log
+
+
+def test_ensure_deploy_workflow_blocks_missing_required_outputs_before_workflow_write(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    _install_urlopen_stub(monkeypatch, _managed_provisioning_responses(), calls)
+
+    original_renderer = _render_managed_deploy_workflow_yaml
+
+    def _render_missing_output(**kwargs) -> str:
+        rendered = original_renderer(**kwargs)
+        return rendered.replace(
+            "      deploy_https_ready: ${{ steps.resolve_live_url.outputs.deploy_https_ready }}\n",
+            "",
+            1,
+        )
+
+    monkeypatch.setattr(
+        "app.integrations.seo_migration_github_publisher._render_managed_deploy_workflow_yaml",
+        _render_missing_output,
+    )
+
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    with pytest.raises(SEOMigrationGitHubPublisherError) as exc_info:
+        publisher.ensure_deploy_workflow(
+            repo_owner="mhanson13",
+            repo_name="tnmfire",
+            branch="main",
+            workflow_id="deploy-tnmfire-www-prod.yml",
+            dry_run=False,
+            site_id="site-1",
+        )
+
+    assert exc_info.value.code == "managed_workflow_template_invalid"
+    assert exc_info.value.stage == "workflow_provisioning"
+    assert "deploy_outputs_missing:deploy_https_ready" in str(exc_info.value.provider_message or "")
+    assert not any(
+        method == "PUT" and "/contents/.github/workflows/deploy-tnmfire-www-prod.yml" in url
+        for method, url in calls
+    )
+
+
 def test_ensure_deploy_workflow_existing_empty_repo_requires_manual_initialization(monkeypatch) -> None:
     calls: list[tuple[str, str]] = []
     queue: list[object] = [
@@ -5591,6 +5677,51 @@ def test_rendered_managed_templates_enable_pull_secret_only_for_private_image_au
     assert "kubectl get secret ghcr-pull-secret --namespace \"$K8S_NAMESPACE\"" in workflow_yaml
     assert "imagePullSecrets:" in deployment_yaml
     assert "name: ghcr-pull-secret" in deployment_yaml
+
+
+def test_rendered_managed_workflow_yaml_parses_embedded_certificate_evaluation_script() -> None:
+    workflow_yaml = _render_managed_deploy_workflow_yaml(
+        workflow_id="deploy-tnmfire-www-prod.yml",
+        repo_owner="mhanson13",
+        repo_name="tnmfire",
+        branch="main",
+        deploy_workflow_mode="site_repo_template_v1",
+        target_environment_key="gke_prod",
+        target_environment_source="admin_config",
+        managed_gke_config=None,
+        kubernetes_namespace="tnmfire",
+        namespace_source="repo_name",
+        preview_hostname="tnmfire.site.mbsrn.com",
+        private_image_auth_required=True,
+        site_id="site-tnmfire",
+    )
+
+    parsed_workflow = yaml.safe_load(workflow_yaml)
+    assert isinstance(parsed_workflow, dict)
+    top_level_keys = {str(key) for key in parsed_workflow.keys()}
+    for unexpected_python_key in ("import", "raw", "expected_host", "payload", "spec_domains"):
+        assert unexpected_python_key not in top_level_keys
+
+    jobs = parsed_workflow.get("jobs")
+    assert isinstance(jobs, dict)
+    deploy_job = jobs.get("deploy")
+    assert isinstance(deploy_job, dict)
+    steps = deploy_job.get("steps")
+    assert isinstance(steps, list)
+    resolve_live_url_step = next(
+        (
+            step
+            for step in steps
+            if isinstance(step, dict) and str(step.get("name") or "") == "Resolve live URL from ingress status"
+        ),
+        None,
+    )
+    assert isinstance(resolve_live_url_step, dict)
+    run_script = str(resolve_live_url_step.get("run") or "")
+    assert "python - <<'PY'" in run_script
+    assert "import json" in run_script
+    assert "expected_host = str(os.environ.get('EXPECTED_PREVIEW_HOST') or '').strip().lower()" in run_script
+    assert "payload = json.loads(raw) if raw else {}" in run_script
 
 
 def test_render_managed_gke_manifests_for_sc_mechanical_is_site_scoped() -> None:

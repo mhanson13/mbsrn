@@ -374,6 +374,31 @@ Per-site success gate (managed ingress deploys):
 - per-site ingress isolation blockers:
   - `shared_static_ip_not_allowed_for_per_site_ingress`
   - `stale_pre_shared_cert_binding_detected`
+- workflow template validation coverage now includes YAML parsing of rendered managed deploy workflows so embedded diagnostics scripts (including ManagedCertificate evaluation) remain inside the `run` script block.
+
+UI-to-log troubleshooting mapping (Deploy consistency block):
+- `DNS matches ingress IP` (Blocked/Pending):
+  - UI fields: `dns_record_matches_ingress`, `dns_expected_ip`, `dns_observed_ip`, `ingress_ip`
+  - reason codes: `dns_record_mismatch`, `dns_points_to_old_ingress_ip`, `ingress_ip_assigned_but_dns_not_updated`
+  - logs: `seo_migration_target_readiness_check`, `seo_migration_workflow_run_result_captured`, deploy failure entries with the same reason code
+- `Managed certificate active` and `Certificate identity valid`:
+  - UI fields: `tls_certificate_status`, `tls_domain_status`, `cert_identity_valid`
+  - reason codes: `tls_certificate_provisioning`, `managed_certificate_failed_not_visible`, `tls_certificate_bound_to_wrong_site`, `managed_certificate_identity_mismatch`, `ingress_certificate_mismatch`
+  - logs: `seo_migration_target_readiness_check`, ingress-evidence failure records, `dispatch_service_reason_code`
+- `Ingress/static IP conflict check`:
+  - UI field: `ingress_conflict_detected`
+  - reason codes: `ingress_static_ip_conflict`, `shared_static_ip_not_allowed_for_per_site_ingress`, `stale_pre_shared_cert_binding_detected`
+  - logs: target-readiness and dispatch failure records with matching `dispatch_service_reason_code`
+- `HTTPS probe`:
+  - UI field: `deploy_https_ready`
+  - requires DNS/TLS/ingress convergence and explicit HTTPS-ready evidence for `Pass`
+  - logs: `seo_migration_workflow_output_url_captured`, `seo_migration_workflow_output_url_captured_via_refresh`, and workflow run capture events
+- `Deployment rollout`, `Service endpoints`, `Backend health`:
+  - triage via run failure stage/reason:
+    - rollout: `workflow_run_failure_stage=rollout_verify`, `rollout_verification_failed`
+    - service endpoints: `service_has_no_ready_endpoints`, `service_endpoint_missing`, `service_endpoint_unhealthy`, `in_cluster_service_curl_failed`
+    - backend health: `backendconfig_health_check_mismatch`, `backend_config_healthcheck_unhealthy`, `ingress_backend_unhealthy`, `ingress_backend_502`, `ingress_backend_unhealthy_after_rollout`
+  - logs: `seo_migration_workflow_run_result_captured` and deploy failure history entries
 
 Key non-secret fields:
 
@@ -533,6 +558,7 @@ Reason-code guidance:
 - `workflow_not_production_ready`: workflow exists and is dispatchable, but is still scaffold/placeholder content and is blocked before dispatch.
 - `token_not_authorized`: runtime token lacks required repository/workflow permissions.
 - `workflow_provisioning_failed`: publish could not verify workflow file presence after provisioning attempt.
+- `managed_workflow_template_invalid`: publish-time managed workflow template conformance validation failed before workflow write (YAML parse/contract mismatch such as missing required deploy outputs or missing `Resolve live URL from ingress status` step).
 
 Repository auto-create observability (publish path):
 - compare publish events:
@@ -596,6 +622,13 @@ Workflow bootstrap observability (publish path):
 - compare:
   - `seo_migration_workflow_provisioning` (service-level control-plane event)
   - `seo_migration_workflow_provisioning_operation` (publisher operation trace)
+  - `seo_migration_managed_workflow_template_validation` (publisher template conformance guard before workflow write)
+- template-validation event fields:
+  - `template_name`
+  - `workflow_path`
+  - `site_id`
+  - `reason_code` (`managed_workflow_template_invalid` on failure)
+  - `validation_errors` (operator-safe contract failure diagnostics)
 
 Repository Initialization Phase:
 - repository initialization phase (always before workflow write/ref provisioning):

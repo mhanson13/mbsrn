@@ -224,6 +224,8 @@ interface DraftPreviewEvaluation {
   reason: string | null;
 }
 
+type DeployConsistencyGateStatus = "pass" | "blocked" | "pending" | "unknown";
+
 interface MigrationSummaryCardProps {
   label: string;
   emphasis?: boolean;
@@ -528,6 +530,45 @@ function formatDispatchStageLabel(value: string | null): string {
     return "repo lookup";
   }
   return normalized.replace(/_/g, " ");
+}
+
+function toDeployConsistencyStatusLabel(value: DeployConsistencyGateStatus): string {
+  if (value === "pass") {
+    return "Pass";
+  }
+  if (value === "blocked") {
+    return "Blocked";
+  }
+  if (value === "pending") {
+    return "Pending";
+  }
+  return "Unknown";
+}
+
+function deployConsistencyStatusBadgeClass(value: DeployConsistencyGateStatus): string {
+  if (value === "pass") {
+    return "badge badge-success";
+  }
+  if (value === "blocked") {
+    return "badge badge-error";
+  }
+  if (value === "pending") {
+    return "badge badge-warn";
+  }
+  return "badge badge-muted";
+}
+
+function normalizeUpperOrNull(value: string | null): string | null {
+  if (!value) {
+    return null;
+  }
+  const normalized = value.trim().toUpperCase();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function isPendingWorkflowRunStatus(value: string | null): boolean {
+  const normalized = (value || "").trim().toLowerCase();
+  return normalized === "queued" || normalized === "in_progress" || normalized === "pending" || normalized === "requested";
 }
 
 function formatWorkflowRemediationOutcomeLabel(value: string | null): string {
@@ -2674,6 +2715,258 @@ export function MigrationWorkspacePanel({
   const deployFailureRemediationHint =
     deployFailureRemediationHintFromSelected || deployFailureRemediationHintFromSummary;
   const deployFailureRemediationHintDisplay = managedGkeConfigGuidance ? null : deployFailureRemediationHint;
+  const deploymentRolledOutFromSelected =
+    asBooleanOrNull(selectedDeployHistoryRecord.deployment_rolled_out) ??
+    asBooleanOrNull(selectedDeployHistoryRecord.rollout_verified);
+  const deploymentRolledOutFromSummary =
+    asBooleanOrNull(deployReadiness.deployment_rolled_out) ?? asBooleanOrNull(deployReadiness.rollout_verified);
+  const deploymentRolledOut = deploymentRolledOutFromSelected ?? deploymentRolledOutFromSummary;
+  const serviceHasReadyEndpointsFromSelected =
+    asBooleanOrNull(selectedDeployHistoryRecord.service_has_ready_endpoints) ??
+    asBooleanOrNull(selectedDeployHistoryRecord.service_ready_endpoints);
+  const serviceHasReadyEndpointsFromSummary =
+    asBooleanOrNull(deployReadiness.service_has_ready_endpoints) ??
+    asBooleanOrNull(deployReadiness.service_ready_endpoints);
+  const serviceHasReadyEndpoints = serviceHasReadyEndpointsFromSelected ?? serviceHasReadyEndpointsFromSummary;
+  const backendHealthHealthyFromSelected =
+    asBooleanOrNull(selectedDeployHistoryRecord.gce_backend_healthy) ??
+    asBooleanOrNull(selectedDeployHistoryRecord.backend_healthy);
+  const backendHealthHealthyFromSummary =
+    asBooleanOrNull(deployReadiness.gce_backend_healthy) ?? asBooleanOrNull(deployReadiness.backend_healthy);
+  const backendHealthHealthy = backendHealthHealthyFromSelected ?? backendHealthHealthyFromSummary;
+  const dnsRecordMatchesIngressFromSelected = asBooleanOrNull(selectedDeployHistoryRecord.dns_record_matches_ingress);
+  const dnsRecordMatchesIngressFromSummary = asBooleanOrNull(deployReadiness.dns_record_matches_ingress);
+  const dnsRecordMatchesIngress = dnsRecordMatchesIngressFromSelected ?? dnsRecordMatchesIngressFromSummary;
+  const dnsExpectedIpFromSelected = asStringOrNull(selectedDeployHistoryRecord.dns_expected_ip);
+  const dnsExpectedIpFromSummary = asStringOrNull(deployReadiness.dns_expected_ip);
+  const dnsExpectedIp = dnsExpectedIpFromSelected || dnsExpectedIpFromSummary;
+  const dnsObservedIpFromSelected = asStringOrNull(selectedDeployHistoryRecord.dns_observed_ip);
+  const dnsObservedIpFromSummary = asStringOrNull(deployReadiness.dns_observed_ip);
+  const dnsObservedIp = dnsObservedIpFromSelected || dnsObservedIpFromSummary;
+  const tlsCertificateStatusFromSelected = asStringOrNull(selectedDeployHistoryRecord.tls_certificate_status);
+  const tlsCertificateStatusFromSummary = asStringOrNull(deployReadiness.tls_certificate_status);
+  const tlsCertificateStatus = tlsCertificateStatusFromSelected || tlsCertificateStatusFromSummary;
+  const tlsDomainStatusFromSelected = asStringOrNull(selectedDeployHistoryRecord.tls_domain_status);
+  const tlsDomainStatusFromSummary = asStringOrNull(deployReadiness.tls_domain_status);
+  const tlsDomainStatus = tlsDomainStatusFromSelected || tlsDomainStatusFromSummary;
+  const ingressIpFromSelected = asStringOrNull(selectedDeployHistoryRecord.ingress_ip);
+  const ingressIpFromSummary = asStringOrNull(deployReadiness.ingress_ip);
+  const ingressIp = ingressIpFromSelected || ingressIpFromSummary;
+  const ingressConflictDetectedFromSelected = asBooleanOrNull(selectedDeployHistoryRecord.ingress_conflict_detected);
+  const ingressConflictDetectedFromSummary = asBooleanOrNull(deployReadiness.ingress_conflict_detected);
+  const ingressConflictDetected = ingressConflictDetectedFromSelected ?? ingressConflictDetectedFromSummary;
+  const certIdentityValidFromSelected = asBooleanOrNull(selectedDeployHistoryRecord.cert_identity_valid);
+  const certIdentityValidFromSummary = asBooleanOrNull(deployReadiness.cert_identity_valid);
+  const certIdentityValid = certIdentityValidFromSelected ?? certIdentityValidFromSummary;
+  const deployHttpsReadyFromSelected = asBooleanOrNull(selectedDeployHistoryRecord.deploy_https_ready);
+  const deployHttpsReadyFromSummary = asBooleanOrNull(deployReadiness.deploy_https_ready);
+  const deployHttpsReady = deployHttpsReadyFromSelected ?? deployHttpsReadyFromSummary;
+  const normalizedDispatchServiceReasonCode = (dispatchServiceReasonCode || "").trim().toLowerCase();
+  const normalizedDeployFailureReasonCode = (deployFailureReasonCode || "").trim().toLowerCase();
+  const normalizedDeployRunFailureReasonCode = (deployRunFailureReasonCode || "").trim().toLowerCase();
+  const normalizedDeployRunFailureStage = (deployRunFailureStage || "").trim().toLowerCase();
+  const normalizedPostConformanceStage = (postConformanceStage || "").trim().toLowerCase();
+  const normalizedTlsCertificateStatus = normalizeUpperOrNull(tlsCertificateStatus);
+  const normalizedTlsDomainStatus = normalizeUpperOrNull(tlsDomainStatus);
+  const deployConsistencyReasonCodeSet = new Set(
+    [normalizedDispatchServiceReasonCode, normalizedDeployFailureReasonCode, normalizedDeployRunFailureReasonCode]
+      .map((value) => value.trim())
+      .filter((value) => value.length > 0),
+  );
+  const hasDeployConsistencyReasonCode = (code: string): boolean => deployConsistencyReasonCodeSet.has(code);
+  const dnsMismatchReasonCodes = new Set([
+    "dns_record_mismatch",
+    "dns_points_to_old_ingress_ip",
+    "ingress_ip_assigned_but_dns_not_updated",
+  ]);
+  const serviceEndpointReasonCodes = new Set([
+    "service_has_no_ready_endpoints",
+    "service_endpoint_missing",
+    "service_endpoint_unhealthy",
+    "in_cluster_service_curl_failed",
+    "in_cluster_service_curl_failed_after_retries",
+  ]);
+  const backendHealthReasonCodes = new Set([
+    "backendconfig_health_check_mismatch",
+    "backend_config_healthcheck_unhealthy",
+    "ingress_backend_unhealthy",
+    "ingress_backend_502",
+    "pod_ready_but_ingress_backend_unhealthy",
+    "ingress_backend_unhealthy_after_rollout",
+  ]);
+  const certIdentityMismatchReasonCodes = new Set([
+    "certificate_domain_mismatch",
+    "tls_certificate_bound_to_wrong_site",
+    "stale_managed_certificate_present",
+    "managed_certificate_identity_mismatch",
+    "ingress_certificate_mismatch",
+    "ingress_certificate_annotation_mismatch",
+    "stale_pre_shared_cert_binding_detected",
+    "reachable_but_tls_certificate_mismatch",
+  ]);
+  const ingressConflictReasonCodes = new Set([
+    "ingress_static_ip_conflict",
+    "shared_static_ip_not_allowed_for_per_site_ingress",
+    "stale_pre_shared_cert_binding_detected",
+  ]);
+  const hasDnsMismatchReason = Array.from(dnsMismatchReasonCodes).some((code) => hasDeployConsistencyReasonCode(code));
+  const hasServiceEndpointReason = Array.from(serviceEndpointReasonCodes).some((code) => hasDeployConsistencyReasonCode(code));
+  const hasBackendHealthReason = Array.from(backendHealthReasonCodes).some((code) => hasDeployConsistencyReasonCode(code));
+  const hasCertIdentityMismatchReason = Array.from(certIdentityMismatchReasonCodes).some((code) =>
+    hasDeployConsistencyReasonCode(code),
+  );
+  const hasIngressConflictReason = Array.from(ingressConflictReasonCodes).some((code) =>
+    hasDeployConsistencyReasonCode(code),
+  );
+  const tlsFailedNotVisible =
+    normalizedTlsCertificateStatus === "FAILED_NOT_VISIBLE" ||
+    normalizedTlsDomainStatus === "FAILED_NOT_VISIBLE" ||
+    hasDeployConsistencyReasonCode("managed_certificate_failed_not_visible");
+  const tlsProvisioning =
+    normalizedTlsCertificateStatus === "PROVISIONING" ||
+    normalizedTlsDomainStatus === "PROVISIONING" ||
+    hasDeployConsistencyReasonCode("tls_certificate_provisioning");
+  const deployWorkflowConvergencePending =
+    isPendingWorkflowRunStatus(workflowRunStatus) ||
+    normalizedPostConformanceStage === "workflow_dispatch_attempted" ||
+    normalizedPostConformanceStage === "workflow_dispatch_succeeded_waiting_for_run" ||
+    (dispatchAttempted === true && workflowRunFound === false);
+  const deploymentRolloutGateStatus: DeployConsistencyGateStatus = (() => {
+    if (deploymentRolledOut === true || deployHttpsReady === true) {
+      return "pass";
+    }
+    if (
+      deploymentRolledOut === false ||
+      normalizedDeployRunFailureStage === "rollout_verify" ||
+      hasDeployConsistencyReasonCode("rollout_verification_failed")
+    ) {
+      return "blocked";
+    }
+    if (deployWorkflowConvergencePending) {
+      return "pending";
+    }
+    return "unknown";
+  })();
+  const serviceEndpointsGateStatus: DeployConsistencyGateStatus = (() => {
+    if (serviceHasReadyEndpoints === true || deployHttpsReady === true) {
+      return "pass";
+    }
+    if (serviceHasReadyEndpoints === false || hasServiceEndpointReason) {
+      return "blocked";
+    }
+    if (deployWorkflowConvergencePending) {
+      return "pending";
+    }
+    return "unknown";
+  })();
+  const backendHealthGateStatus: DeployConsistencyGateStatus = (() => {
+    if (backendHealthHealthy === true || deployHttpsReady === true) {
+      return "pass";
+    }
+    if (backendHealthHealthy === false || hasBackendHealthReason) {
+      return "blocked";
+    }
+    if (
+      deployWorkflowConvergencePending ||
+      hasDeployConsistencyReasonCode("service_probe_waiting_for_convergence") ||
+      hasDeployConsistencyReasonCode("ingress_neg_convergence_pending")
+    ) {
+      return "pending";
+    }
+    return "unknown";
+  })();
+  const dnsMatchesIngressGateStatus: DeployConsistencyGateStatus = (() => {
+    if (dnsRecordMatchesIngress === true) {
+      return "pass";
+    }
+    if (dnsRecordMatchesIngress === false || hasDnsMismatchReason) {
+      return "blocked";
+    }
+    if (ingressIp || dnsExpectedIp) {
+      return "pending";
+    }
+    return "unknown";
+  })();
+  const managedCertificateActiveGateStatus: DeployConsistencyGateStatus = (() => {
+    if (deployHttpsReady === true || (normalizedTlsCertificateStatus === "ACTIVE" && normalizedTlsDomainStatus === "ACTIVE")) {
+      return "pass";
+    }
+    if (tlsFailedNotVisible) {
+      return "blocked";
+    }
+    if (tlsProvisioning) {
+      return "pending";
+    }
+    if (normalizedTlsCertificateStatus || normalizedTlsDomainStatus) {
+      return "blocked";
+    }
+    return "unknown";
+  })();
+  const certificateIdentityGateStatus: DeployConsistencyGateStatus = (() => {
+    if (certIdentityValid === true || deployHttpsReady === true) {
+      return "pass";
+    }
+    if (certIdentityValid === false || hasCertIdentityMismatchReason) {
+      return "blocked";
+    }
+    if (tlsProvisioning) {
+      return "pending";
+    }
+    return "unknown";
+  })();
+  const ingressConflictGateStatus: DeployConsistencyGateStatus = (() => {
+    if (ingressConflictDetected === true || hasIngressConflictReason) {
+      return "blocked";
+    }
+    if (ingressConflictDetected === false || deployHttpsReady === true) {
+      return "pass";
+    }
+    if (deployWorkflowConvergencePending) {
+      return "pending";
+    }
+    return "unknown";
+  })();
+  const httpsProbeGateStatus: DeployConsistencyGateStatus = (() => {
+    if (deployHttpsReady === true) {
+      return "pass";
+    }
+    if (deployHttpsReady === false) {
+      return "blocked";
+    }
+    if (deployWorkflowConvergencePending || tlsProvisioning || dnsMatchesIngressGateStatus === "pending") {
+      return "pending";
+    }
+    return "unknown";
+  })();
+  const deployConsistencyGates: Array<{ key: string; label: string; status: DeployConsistencyGateStatus }> = [
+    { key: "deployment_rollout", label: "Deployment rollout", status: deploymentRolloutGateStatus },
+    { key: "service_endpoints", label: "Service endpoints", status: serviceEndpointsGateStatus },
+    { key: "backend_health", label: "Backend health", status: backendHealthGateStatus },
+    { key: "dns_matches_ingress", label: "DNS matches ingress IP", status: dnsMatchesIngressGateStatus },
+    { key: "managed_certificate_active", label: "Managed certificate active", status: managedCertificateActiveGateStatus },
+    { key: "certificate_identity", label: "Certificate identity valid", status: certificateIdentityGateStatus },
+    { key: "ingress_conflict", label: "Ingress/static IP conflict check", status: ingressConflictGateStatus },
+    { key: "https_probe", label: "HTTPS probe", status: httpsProbeGateStatus },
+  ];
+  const deployConsistencyRemediationHints = (() => {
+    const hints = new Set<string>();
+    if (dnsMatchesIngressGateStatus === "blocked") {
+      hints.add("DNS mismatch: update DNS A record to the observed ingress IP.");
+    }
+    if (tlsFailedNotVisible) {
+      hints.add("FAILED_NOT_VISIBLE: DNS is not visible to Google certificate validation yet.");
+    }
+    if (certificateIdentityGateStatus === "blocked" && hasCertIdentityMismatchReason) {
+      hints.add("Cert bound to wrong site: certificate identity mismatch or stale binding detected.");
+    }
+    if (ingressConflictGateStatus === "blocked") {
+      hints.add("Ingress conflict: static IP or ingress ownership conflict detected.");
+    }
+    if (httpsProbeGateStatus === "blocked") {
+      hints.add("HTTPS not ready: wait for DNS/TLS/LB convergence or inspect deploy evidence.");
+    }
+    return Array.from(hints);
+  })();
   const deployDiagnosticsUsingSummaryFallback =
     hasSelectedDeployAttempt &&
     ((!deployFailureCategoryFromSelected && !!deployFailureCategoryFromSummary) ||
@@ -2692,7 +2985,19 @@ export function MigrationWorkspacePanel({
       (!deployRunFailureHintFromSelected && !!deployRunFailureHintFromSummary) ||
       (!postConformanceStageFromSelected && !!postConformanceStageFromSummary) ||
       (!postConformanceReasonTextFromSelected && !!postConformanceReasonTextFromSummary) ||
-      (!postConformanceGuidanceFromSelected && !!postConformanceGuidanceFromSummary));
+      (!postConformanceGuidanceFromSelected && !!postConformanceGuidanceFromSummary) ||
+      (deploymentRolledOutFromSelected === null && deploymentRolledOutFromSummary !== null) ||
+      (serviceHasReadyEndpointsFromSelected === null && serviceHasReadyEndpointsFromSummary !== null) ||
+      (backendHealthHealthyFromSelected === null && backendHealthHealthyFromSummary !== null) ||
+      (dnsRecordMatchesIngressFromSelected === null && dnsRecordMatchesIngressFromSummary !== null) ||
+      (!dnsExpectedIpFromSelected && !!dnsExpectedIpFromSummary) ||
+      (!dnsObservedIpFromSelected && !!dnsObservedIpFromSummary) ||
+      (!tlsCertificateStatusFromSelected && !!tlsCertificateStatusFromSummary) ||
+      (!tlsDomainStatusFromSelected && !!tlsDomainStatusFromSummary) ||
+      (!ingressIpFromSelected && !!ingressIpFromSummary) ||
+      (ingressConflictDetectedFromSelected === null && ingressConflictDetectedFromSummary !== null) ||
+      (certIdentityValidFromSelected === null && certIdentityValidFromSummary !== null) ||
+      (deployHttpsReadyFromSelected === null && deployHttpsReadyFromSummary !== null));
   const draftReadiness = parseDraftReadiness(contextSummary);
   const draftProviderCompatibility = parseDraftProviderCompatibility(contextSummary, migrationDiagnostics);
   const draftGenerationState = parseDraftGenerationState({
@@ -4999,6 +5304,66 @@ export function MigrationWorkspacePanel({
                       : "No. The fix is not active until observed deployment image matches expected site-scoped image."}
                   </span>
                 ) : null}
+                <div className="panel panel-compact stack-tight" data-testid="migration-deploy-consistency">
+                  <strong>Deploy consistency</strong>
+                  <span className="hint muted">
+                    Per-site deploy gates are evaluated from selected-attempt evidence first, with latest summary backfill for
+                    missing fields.
+                  </span>
+                  <div className="stack-tight">
+                    {deployConsistencyGates.map((gate) => (
+                      <span
+                        key={`deploy-consistency-${gate.key}`}
+                        className="row-wrap-tight"
+                        data-testid={`migration-deploy-consistency-gate-${gate.key}`}
+                      >
+                        <span>{gate.label}</span>
+                        <span className={deployConsistencyStatusBadgeClass(gate.status)}>
+                          {toDeployConsistencyStatusLabel(gate.status)}
+                        </span>
+                      </span>
+                    ))}
+                  </div>
+                  <span className="hint" data-testid="migration-deploy-consistency-dns-match">
+                    dns_record_matches_ingress: {formatBooleanStateLabel(dnsRecordMatchesIngress)}
+                  </span>
+                  <span className="hint" data-testid="migration-deploy-consistency-dns-expected-ip">
+                    dns_expected_ip: {dnsExpectedIp || "Not available"}
+                  </span>
+                  <span className="hint" data-testid="migration-deploy-consistency-dns-observed-ip">
+                    dns_observed_ip: {dnsObservedIp || "Not available"}
+                  </span>
+                  <span className="hint" data-testid="migration-deploy-consistency-tls-certificate-status">
+                    tls_certificate_status: {tlsCertificateStatus || "Not available"}
+                  </span>
+                  <span className="hint" data-testid="migration-deploy-consistency-tls-domain-status">
+                    tls_domain_status: {tlsDomainStatus || "Not available"}
+                  </span>
+                  <span className="hint" data-testid="migration-deploy-consistency-ingress-ip">
+                    ingress_ip: {ingressIp || "Not available"}
+                  </span>
+                  <span className="hint" data-testid="migration-deploy-consistency-ingress-conflict">
+                    ingress_conflict_detected: {formatBooleanStateLabel(ingressConflictDetected)}
+                  </span>
+                  <span className="hint" data-testid="migration-deploy-consistency-cert-identity">
+                    cert_identity_valid: {formatBooleanStateLabel(certIdentityValid)}
+                  </span>
+                  <span className="hint" data-testid="migration-deploy-consistency-https-ready">
+                    deploy_https_ready: {formatBooleanStateLabel(deployHttpsReady)}
+                  </span>
+                  {deployConsistencyRemediationHints.length > 0 ? (
+                    <div className="stack-tight" data-testid="migration-deploy-consistency-remediation">
+                      <span className="hint warning">Operator remediation</span>
+                      <ul>
+                        {deployConsistencyRemediationHints.map((hint, index) => (
+                          <li key={`deploy-consistency-remediation-${index}`} className="hint warning">
+                            {hint}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
+                </div>
                 {managedGkeConfigGuidance ? (
                   <span className="hint warning" data-testid="migration-managed-gke-config-guidance-diagnostics">
                     {managedGkeConfigGuidance}
