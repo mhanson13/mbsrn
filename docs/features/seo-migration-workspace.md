@@ -1189,14 +1189,16 @@ Post-fix rollout for existing managed sites:
     - managed certificate name: `site-web-preview-cert-<normalized-site>`
     - ingress annotation: `networking.gke.io/managed-certificates: site-web-preview-cert-<normalized-site>`
     - per-site ingress manifests intentionally omit `kubernetes.io/ingress.global-static-ip-name` by default in this model (shared static IP reuse can cause cross-site load balancer conflicts)
-    - generated manifests must not include `ingress.gcp.kubernetes.io/pre-shared-cert`; `ManagedCertificate` remains the only certificate binding source
+    - generated manifests must not include `ingress.gcp.kubernetes.io/pre-shared-cert`; `ManagedCertificate` remains the desired-state certificate binding source
+    - GKE may still add `ingress.gcp.kubernetes.io/pre-shared-cert` at runtime as controller metadata
     - certificate domain and ingress host must match the same site-specific preview hostname.
     - mismatch classifications:
       - `tls_certificate_bound_to_wrong_site` when ingress host/certificate domain disagree
       - `ingress_certificate_annotation_mismatch` when ingress annotation references the wrong certificate name
       - `managed_certificate_identity_mismatch` when ingress annotation includes stale cross-site certificate names
       - `shared_static_ip_not_allowed_for_per_site_ingress` when shared static IP binding is detected for per-site ingress
-      - `stale_pre_shared_cert_binding_detected` when pre-shared certificate metadata is detected
+      - `pre_shared_cert_metadata_mismatch` when controller-generated pre-shared certificate metadata differs from expected managed-certificate name (advisory; non-blocking by itself)
+      - `stale_pre_shared_cert_binding_detected` only when stale/cross-site pre-shared metadata is corroborated by desired-state annotation/domain mismatch or HTTPS/TLS identity mismatch
       - `managed_certificate_failed_not_visible` when certificate visibility checks fail for the expected hostname
     - stale certificate resources are never auto-deleted; readiness/diagnostics provide manual cleanup guidance.
   - ingress address resolution uses a bounded wait loop (10-minute max: `40 x 15s`) because GKE load balancer provisioning can lag successful rollout
@@ -1647,7 +1649,8 @@ Blocking reason-code examples:
 Isolation rules:
 - Shared ingress static IP binding is blocked for per-site ingress.
 - Cross-site certificate bindings are blocked.
-- `ingress.gcp.kubernetes.io/pre-shared-cert` is only non-fatal when it matches the expected managed certificate for the same site; stale/foreign/multi-cert bindings block deploy readiness.
+- `ingress.gcp.kubernetes.io/pre-shared-cert` is controller metadata and does not block deploy readiness by itself (including single-value name mismatch or multiple values).
+- blocking cert-identity decisions rely on desired-state managed-certificate annotation, ManagedCertificate domain/status, and HTTPS/TLS probe identity evidence.
 
 ### Deploy Consistency Block (Operator UI)
 

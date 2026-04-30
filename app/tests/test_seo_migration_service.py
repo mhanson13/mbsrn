@@ -4138,6 +4138,39 @@ def test_refresh_deploy_status_stale_pre_shared_cert_binding_blocks_success(db_s
     assert refresh_result.result.get("deploy_https_ready") is False
 
 
+def test_refresh_deploy_status_pre_shared_cert_metadata_mismatch_is_advisory(db_session) -> None:
+    publisher = _RecordingGitHubPublisher(
+        deploy_workflow_run_id=910005,
+        deploy_workflow_run_status="in_progress",
+        refresh_workflow_run_id=910005,
+        refresh_workflow_run_status="completed",
+        refresh_workflow_run_conclusion="failure",
+        refresh_workflow_run_failure_reason_code="pre_shared_cert_metadata_mismatch",
+        refresh_workflow_run_failure_stage="ingress_evidence",
+        refresh_workflow_run_failure_step="Inspect pre-shared certificate metadata",
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    artifact = _prepare_and_request_deploy(service, business_id=business_id, site_id=site_id)
+
+    refresh_result = service.refresh_deploy_run_status(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        principal_id="principal-1",
+    )
+    assert refresh_result.result.get("workflow_run_failure_reason_code") == "pre_shared_cert_metadata_mismatch"
+    assert refresh_result.result.get("workflow_run_failure_stage") == "ingress_evidence"
+    assert "advisory by itself" in str(refresh_result.result.get("workflow_run_failure_hint") or "").lower()
+    assert refresh_result.result.get("ingress_conflict_detected") is not True
+    assert refresh_result.result.get("deploy_https_ready") is False
+
+
 def test_deploy_completed_success_requires_https_live_url_for_https_ready(db_session) -> None:
     publisher = _RecordingGitHubPublisher(
         deploy_workflow_run_id=910006,

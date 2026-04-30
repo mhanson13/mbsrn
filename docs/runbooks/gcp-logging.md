@@ -374,7 +374,9 @@ Per-site success gate (managed ingress deploys):
 - `managed_certificate_failed_not_visible` should be triaged as DNS/LB visibility mismatch first.
 - per-site ingress isolation blockers:
   - `shared_static_ip_not_allowed_for_per_site_ingress`
-  - `stale_pre_shared_cert_binding_detected`
+  - `stale_pre_shared_cert_binding_detected` (confirmed stale/cross-site cert evidence)
+- advisory cert metadata signal:
+  - `pre_shared_cert_metadata_mismatch` (controller metadata mismatch only; non-blocking by itself)
 - workflow template validation coverage now includes YAML parsing of rendered managed deploy workflows so embedded diagnostics scripts (including ManagedCertificate evaluation) remain inside the `run` script block.
 
 UI-to-log troubleshooting mapping (Deploy consistency block):
@@ -390,6 +392,10 @@ UI-to-log troubleshooting mapping (Deploy consistency block):
   - UI field: `ingress_conflict_detected`
   - reason codes: `ingress_static_ip_conflict`, `shared_static_ip_not_allowed_for_per_site_ingress`, `stale_pre_shared_cert_binding_detected`
   - logs: target-readiness and dispatch failure records with matching `dispatch_service_reason_code`
+- `Managed certificate active` / metadata diagnostics:
+  - advisory reason code: `pre_shared_cert_metadata_mismatch`
+  - interpretation: controller-generated `ingress.gcp.kubernetes.io/pre-shared-cert` differs from expected managed certificate name, but hard-failure decisions still come from managed-certificate annotation/domain/TLS identity checks
+  - logs: ingress-evidence run-failure records and workflow diagnostic lines with managed certificate annotation/domain context
 - `HTTPS probe`:
   - UI field: `deploy_https_ready`
   - requires DNS/TLS/ingress convergence and explicit HTTPS-ready evidence for `Pass`
@@ -1019,8 +1025,12 @@ Managed certificate mismatch reason-code interpretation:
 - `dispatch_service_reason_code=shared_static_ip_not_allowed_for_per_site_ingress` or `ingress_static_ip_conflict`
   - per-site ingress is using shared static IP binding and GKE reports IP conflict/in-use conditions.
   - republish managed ingress manifests without shared static IP annotation.
+- `workflow_run_failure_reason_code=pre_shared_cert_metadata_mismatch`
+  - controller-generated pre-shared certificate metadata does not match expected managed-certificate name.
+  - advisory by itself; confirm desired-state annotation, ManagedCertificate domain/status, and HTTPS/TLS identity before treating as blocking.
 - `dispatch_service_reason_code=stale_pre_shared_cert_binding_detected`
-  - ingress still contains pre-shared certificate annotation metadata; remove stale binding and republish.
+  - confirmed stale/cross-site certificate evidence (metadata mismatch plus desired-state annotation/domain mismatch or TLS identity mismatch).
+  - republish and verify site-scoped managed certificate/domain alignment before retry.
 - `dispatch_service_reason_code=managed_certificate_failed_not_visible`
   - managed certificate visibility failed for the expected hostname (`FailedNotVisible`).
 

@@ -6855,6 +6855,7 @@ _DEPLOY_RUNTIME_REASON_IN_CLUSTER_SERVICE_PROBE_TIMEOUT = "in_cluster_service_pr
 _DEPLOY_RUNTIME_REASON_NETWORK_POLICY_MAY_BLOCK_SERVICE_PROBE = (
     "network_policy_may_block_service_probe"
 )
+_DEPLOY_RUNTIME_REASON_PRE_SHARED_CERT_METADATA_MISMATCH = "pre_shared_cert_metadata_mismatch"
 _DEPLOY_RUNTIME_REASON_SERVICE_PROBE_WAITING_FOR_CONVERGENCE = (
     "service_probe_waiting_for_convergence"
 )
@@ -7548,8 +7549,8 @@ def _render_managed_deploy_workflow_yaml(
         "              echo \"deploy_runtime_reason_code=ingress_static_ip_conflict\"\n"
         "            fi\n"
         "            if grep -qiE 'ingress\\.gcp\\.kubernetes\\.io/pre-shared-cert' \"$ingress_describe_output\"; then\n"
-        "              echo \"Likely rollout blocker: stale pre-shared certificate binding detected.\"\n"
-        "              echo \"deploy_runtime_reason_code=stale_pre_shared_cert_binding_detected\"\n"
+        "              echo \"Observed ingress pre-shared certificate controller metadata; verify managed-certificate desired-state evidence.\"\n"
+        "              echo \"deploy_runtime_reason_code=pre_shared_cert_metadata_mismatch\"\n"
         "            fi\n"
         "            if [ \"$image_pull_secret_missing_detected\" = true ]; then\n"
         "              echo \"deploy_runtime_reason_code=image_pull_secret_missing\"\n"
@@ -7842,12 +7843,17 @@ def _render_managed_deploy_workflow_yaml(
         "            fi\n"
         "            pre_shared_pending_annotation=\"$(kubectl get ingress site-web --namespace \"$K8S_NAMESPACE\" -o jsonpath='{.metadata.annotations.ingress\\.gcp\\.kubernetes\\.io/pre-shared-cert}' 2>/dev/null || true)\"\n"
         "            if [ -n \"$pre_shared_pending_annotation\" ]; then\n"
+        "              echo \"Observed ingress pre-shared certificate controller metadata: $pre_shared_pending_annotation\"\n"
         "              expected_cert_name_pending=\"$(echo \"$MBSRN_PREVIEW_CERTIFICATE_NAME\" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')\"\n"
         "              pre_shared_pending_values=\"$(echo \"$pre_shared_pending_annotation\" | tr ',' '\\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | sed '/^$/d' | tr '[:upper:]' '[:lower:]')\"\n"
         "              pre_shared_pending_count=\"$(echo \"$pre_shared_pending_values\" | sed '/^$/d' | wc -l | tr -d '[:space:]')\"\n"
         "              pre_shared_pending_first=\"$(echo \"$pre_shared_pending_values\" | head -n1 | tr -d '[:space:]')\"\n"
+        "              pre_shared_pending_metadata_mismatch=false\n"
         "              if [ \"$pre_shared_pending_count\" -ne 1 ] || [ \"$pre_shared_pending_first\" != \"$expected_cert_name_pending\" ]; then\n"
-        "                echo \"deploy_runtime_reason_code=stale_pre_shared_cert_binding_detected\"\n"
+        "                pre_shared_pending_metadata_mismatch=true\n"
+        "              fi\n"
+        "              if [ \"$pre_shared_pending_metadata_mismatch\" = true ]; then\n"
+        "                echo \"deploy_runtime_reason_code=pre_shared_cert_metadata_mismatch\"\n"
         "              fi\n"
         "            fi\n"
         "            rm -f \"$ingress_pending_output\"\n"
@@ -7885,7 +7891,13 @@ def _render_managed_deploy_workflow_yaml(
         "          fi\n"
         "          rm -f \"$ingress_validation_output\"\n"
         "          expected_cert_name=\"$(echo \"$MBSRN_PREVIEW_CERTIFICATE_NAME\" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')\"\n"
+        "          pre_shared_cert_metadata_mismatch=false\n"
+        "          pre_shared_cert_controller_cross_site_evidence=false\n"
         "          managed_cert_annotation=\"$(kubectl get ingress site-web --namespace \"$K8S_NAMESPACE\" -o jsonpath='{.metadata.annotations.networking\\.gke\\.io/managed-certificates}' 2>/dev/null || true)\"\n"
+        "          echo \"managed_certificate_resource_name=$MBSRN_PREVIEW_CERTIFICATE_NAME\"\n"
+        "          echo \"expected_preview_hostname=$preview_host\"\n"
+        "          echo \"expected_managed_certificate_name=$expected_cert_name\"\n"
+        "          echo \"observed_managed_certificate_annotation=$managed_cert_annotation\"\n"
         "          managed_cert_annotation_values=\"$(echo \"$managed_cert_annotation\" | tr ',' '\\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | sed '/^$/d' | tr '[:upper:]' '[:lower:]')\"\n"
         "          managed_cert_annotation_count=\"$(echo \"$managed_cert_annotation_values\" | sed '/^$/d' | wc -l | tr -d '[:space:]')\"\n"
         "          managed_cert_annotation_first=\"$(echo \"$managed_cert_annotation_values\" | head -n1 | tr -d '[:space:]')\"\n"
@@ -7906,16 +7918,21 @@ def _render_managed_deploy_workflow_yaml(
         "          fi\n"
         "          pre_shared_cert_annotation=\"$(kubectl get ingress site-web --namespace \"$K8S_NAMESPACE\" -o jsonpath='{.metadata.annotations.ingress\\.gcp\\.kubernetes\\.io/pre-shared-cert}' 2>/dev/null || true)\"\n"
         "          if [ -n \"$pre_shared_cert_annotation\" ]; then\n"
+        "            echo \"observed_pre_shared_cert_annotation=$pre_shared_cert_annotation\"\n"
         "            pre_shared_values=\"$(echo \"$pre_shared_cert_annotation\" | tr ',' '\\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | sed '/^$/d' | tr '[:upper:]' '[:lower:]')\"\n"
         "            pre_shared_count=\"$(echo \"$pre_shared_values\" | sed '/^$/d' | wc -l | tr -d '[:space:]')\"\n"
         "            pre_shared_first=\"$(echo \"$pre_shared_values\" | head -n1 | tr -d '[:space:]')\"\n"
-        "            if [ \"$pre_shared_count\" -eq 1 ] && [ \"$pre_shared_first\" = \"$expected_cert_name\" ]; then\n"
-        "              echo \"Pre-shared cert metadata matches expected managed certificate; treating as non-fatal.\"\n"
-        "            else\n"
-        "              ingress_conflict_detected=true\n"
-        "              echo \"deploy_runtime_reason_code=stale_pre_shared_cert_binding_detected\"\n"
-        "              echo \"deploy_runtime_reason_message=Ingress pre-shared certificate metadata references stale or cross-site certificate bindings.\"\n"
-        "              exit 1\n"
+        "            if [ \"$pre_shared_count\" -ne 1 ] || [ \"$pre_shared_first\" != \"$expected_cert_name\" ]; then\n"
+        "              pre_shared_cert_metadata_mismatch=true\n"
+        "            fi\n"
+        "            if echo \"$pre_shared_values\" | grep -qiE '^site-web-preview-cert-'; then\n"
+        "              if ! echo \"$pre_shared_values\" | grep -qx \"$expected_cert_name\"; then\n"
+        "                pre_shared_cert_controller_cross_site_evidence=true\n"
+        "              fi\n"
+        "            fi\n"
+        "            if [ \"$pre_shared_cert_metadata_mismatch\" = true ]; then\n"
+        "              echo \"deploy_runtime_reason_code=pre_shared_cert_metadata_mismatch\"\n"
+        "              echo \"Pre-shared cert annotation is controller metadata and does not block deploy by itself; relying on managed-certificate annotation/domain/TLS checks.\"\n"
         "            fi\n"
         "          fi\n"
         "          dns_ip=\"\"\n"
@@ -8012,6 +8029,9 @@ def _render_managed_deploy_workflow_yaml(
         "          normalized_domain_status=\"$(echo \"$tls_domain_status\" | tr '[:lower:]' '[:upper:]' | tr -d '[:space:]')\"\n"
         "          if [ \"$domain_exact_match\" != \"true\" ]; then\n"
         "            cert_identity_valid=false\n"
+        "            if [ \"$pre_shared_cert_controller_cross_site_evidence\" = true ]; then\n"
+        "              echo \"deploy_runtime_reason_code=stale_pre_shared_cert_binding_detected\"\n"
+        "            fi\n"
         "            echo \"deploy_runtime_reason_code=tls_certificate_bound_to_wrong_site\"\n"
         "            echo \"deploy_runtime_reason_message=ManagedCertificate domain list does not match expected preview hostname.\"\n"
         "            exit 1\n"
@@ -8044,6 +8064,9 @@ def _render_managed_deploy_workflow_yaml(
         "          if ! https_verify_code=\"$(curl --silent --show-error --connect-timeout 5 --max-time 10 --output /dev/null --write-out '%{http_code}' \"https://$preview_host\" 2>\"$https_verify_output\")\"; then\n"
         "            https_verify_exit=$?\n"
         "            if [ \"$https_verify_exit\" -eq 60 ] || grep -qiE 'SSL certificate problem|SSL_ERROR_BAD_CERT_DOMAIN|certificate subject name|no alternative certificate subject name' \"$https_verify_output\"; then\n"
+        "              if [ \"$pre_shared_cert_controller_cross_site_evidence\" = true ]; then\n"
+        "                echo \"deploy_runtime_reason_code=stale_pre_shared_cert_binding_detected\"\n"
+        "              fi\n"
         "              echo \"deploy_runtime_reason_code=reachable_but_tls_certificate_mismatch\"\n"
         "            else\n"
         "              echo \"deploy_runtime_reason_code=ingress_address_pending\"\n"
@@ -8691,11 +8714,28 @@ def _evaluate_preview_certificate_alignment(
         and len(ingress_pre_shared_cert_annotation_values) == 1
         and ingress_pre_shared_cert_annotation_values[0] == expected_cert_name
     )
-    stale_pre_shared_cert_binding_detected = bool(
+    pre_shared_cert_metadata_mismatch = bool(
         ingress_pre_shared_cert_annotation_values and not valid_pre_shared_cert_binding
+    )
+    pre_shared_cert_metadata_multiple_values = bool(len(ingress_pre_shared_cert_annotation_values) > 1)
+    pre_shared_cert_known_managed_site_name_mismatch = bool(
+        expected_cert_name
+        and any(
+            value.startswith(f"{_MBSRN_MANAGED_PREVIEW_CERTIFICATE_NAME_PREFIX}-")
+            and value != expected_cert_name
+            for value in ingress_pre_shared_cert_annotation_values
+        )
     )
     ingress_certificate_mismatch = bool(annotation_conflict or certificate_name_conflict)
     certificate_domain_mismatch = bool(host_conflict or domain_conflict)
+    stale_pre_shared_cert_binding_detected = bool(
+        pre_shared_cert_metadata_mismatch
+        and (
+            ingress_certificate_mismatch
+            or certificate_domain_mismatch
+            or stale_managed_certificate_present
+        )
+    )
 
     observed_evidence = any(
         value
@@ -8731,6 +8771,9 @@ def _evaluate_preview_certificate_alignment(
             ingress_pre_shared_cert_annotation_values
         ),
         "preview_certificate_valid_pre_shared_cert_binding": valid_pre_shared_cert_binding,
+        "pre_shared_cert_metadata_mismatch": pre_shared_cert_metadata_mismatch,
+        "pre_shared_cert_metadata_multiple_values": pre_shared_cert_metadata_multiple_values,
+        "pre_shared_cert_known_managed_site_name_mismatch": pre_shared_cert_known_managed_site_name_mismatch,
         "preview_certificate_name": certificate_name,
         "preview_certificate_domains": list(certificate_domains),
         "preview_certificate_ingress_host_conflict": host_conflict,
@@ -8885,6 +8928,8 @@ def _classify_cloudsql_proxy_failure_from_log_text(
         return _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_STATIC_IP_CONFLICT, "ingress_evidence"
     if "deploy_runtime_reason_code=stale_pre_shared_cert_binding_detected" in normalized:
         return _DEPLOY_DISPATCH_SERVICE_REASON_STALE_PRE_SHARED_CERT_BINDING, "ingress_evidence"
+    if "deploy_runtime_reason_code=pre_shared_cert_metadata_mismatch" in normalized:
+        return _DEPLOY_RUNTIME_REASON_PRE_SHARED_CERT_METADATA_MISMATCH, "ingress_evidence"
     if "deploy_runtime_reason_code=public_image_pull_failed" in normalized:
         return _DEPLOY_RUNTIME_REASON_PUBLIC_IMAGE_PULL_FAILED, "rollout_verify"
     if "deploy_runtime_reason_code=private_image_pull_forbidden" in normalized:
