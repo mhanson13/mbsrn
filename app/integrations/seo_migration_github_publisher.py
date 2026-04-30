@@ -5222,6 +5222,10 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             repo_name=target.repo_name,
             site_id=None,
         )
+        preview_static_ip_name, _ = derive_site_preview_static_ip_name(
+            repo_name=target.repo_name,
+            site_id=None,
+        )
         workflow_content = _decode_workflow_file_content(workflow_file_payload) or ""
         expected_workflow_signature = _extract_managed_workflow_signature(workflow_yaml=workflow_content)
         observed_workflow_signature = _compute_managed_workflow_signature(workflow_yaml=workflow_content)
@@ -5316,6 +5320,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 ),
                 expected_preview_hostname=preview_hostname,
                 expected_certificate_name=preview_certificate_name,
+                expected_static_ip_name=preview_static_ip_name,
             )
             stale_managed_certificate_present = bool(
                 certificate_alignment_details.get("stale_managed_certificate_present")
@@ -5536,6 +5541,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 **certificate_alignment_details,
                 "expected_preview_certificate_name": preview_certificate_name,
                 "expected_preview_hostname": preview_hostname,
+                "expected_preview_static_ip_name": preview_static_ip_name,
             }
             ingress_conflict_detected = bool(certificate_alignment_details.get("ingress_static_ip_conflict"))
             cert_identity_valid = bool(
@@ -6755,6 +6761,7 @@ _MBSRN_MANAGED_FRONTEND_CONFIG_FILE_PATH = "k8s/frontendconfig.yaml"
 _MBSRN_MANAGED_BACKEND_CONFIG_FILE_PATH = "k8s/backendconfig.yaml"
 _MBSRN_MANAGED_FRONTEND_CONFIG_NAME_PREFIX = "site-web-frontend-config"
 _MBSRN_MANAGED_BACKEND_CONFIG_NAME_PREFIX = "site-web-backend-config"
+_MBSRN_MANAGED_PREVIEW_STATIC_IP_NAME_PREFIX = "site-web-preview-ip"
 _MBSRN_MANAGED_RESOURCE_QUOTA_FILE_PATH = "k8s/resourcequota.yaml"
 _MBSRN_MANAGED_LIMIT_RANGE_FILE_PATH = "k8s/limitrange.yaml"
 _MBSRN_MANAGED_NETWORK_POLICY_FILE_PATH = "k8s/networkpolicy.yaml"
@@ -6825,6 +6832,10 @@ _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_CERTIFICATE_ANNOTATION_MISMATCH = "ingre
 _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_BOUND_TO_WRONG_SITE = "tls_certificate_bound_to_wrong_site"
 _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_STATIC_IP_CONFLICT = "ingress_static_ip_conflict"
 _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_STATIC_IP_NOT_ALLOWED = "shared_static_ip_not_allowed_for_per_site_ingress"
+_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_MISSING = "managed_site_static_ip_missing"
+_DEPLOY_DISPATCH_SERVICE_REASON_EXPECTED_STATIC_IP_NOT_BOUND_TO_INGRESS = (
+    "expected_static_ip_not_bound_to_ingress"
+)
 _DEPLOY_DISPATCH_SERVICE_REASON_STALE_PRE_SHARED_CERT_BINDING = "stale_pre_shared_cert_binding_detected"
 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_FAILED_NOT_VISIBLE = "managed_certificate_failed_not_visible"
 _DEPLOY_DISPATCH_SERVICE_REASON_DEPLOYED_CONTENT_IDENTITY_MISMATCH = "deployed_content_identity_mismatch"
@@ -7021,6 +7032,14 @@ def derive_site_preview_frontend_config_name(*, repo_name: object, site_id: obje
 def derive_site_preview_backend_config_name(*, repo_name: object, site_id: object | None = None) -> tuple[str, str]:
     return _derive_site_scoped_resource_name(
         prefix=_MBSRN_MANAGED_BACKEND_CONFIG_NAME_PREFIX,
+        repo_name=repo_name,
+        site_id=site_id,
+    )
+
+
+def derive_site_preview_static_ip_name(*, repo_name: object, site_id: object | None = None) -> tuple[str, str]:
+    return _derive_site_scoped_resource_name(
+        prefix=_MBSRN_MANAGED_PREVIEW_STATIC_IP_NAME_PREFIX,
         repo_name=repo_name,
         site_id=site_id,
     )
@@ -7262,6 +7281,10 @@ def _render_managed_deploy_workflow_yaml(
         repo_name=repo_name,
         site_id=site_id,
     )
+    preview_static_ip_name, _ = derive_site_preview_static_ip_name(
+        repo_name=repo_name,
+        site_id=site_id,
+    )
     normalized_name = f"MBSRN Deploy {normalized_repo_fragment}"
     private_image_auth_value = "true" if private_image_auth_required else "false"
     verify_pull_secret_step = ""
@@ -7317,6 +7340,7 @@ def _render_managed_deploy_workflow_yaml(
         f"      MBSRN_SITE_IDENTITY: {normalized_site_fragment}\n"
         f"      MBSRN_PREVIEW_HOSTNAME: {normalized_preview_hostname}\n"
         f"      MBSRN_PREVIEW_CERTIFICATE_NAME: {preview_certificate_name}\n"
+        f"      MBSRN_PREVIEW_STATIC_IP_NAME: {preview_static_ip_name}\n"
         f"      MBSRN_FRONTEND_CONFIG_NAME: {frontend_config_name}\n"
         f"      MBSRN_BACKEND_CONFIG_NAME: {backend_config_name}\n"
         f"      SITE_WEB_IMAGE_REPOSITORY: {site_runtime_image_repository}\n"
@@ -7391,6 +7415,16 @@ def _render_managed_deploy_workflow_yaml(
         "          cluster_name: ${{ env.GKE_CLUSTER_NAME }}\n"
         "          location: ${{ env.GKE_CLUSTER_LOCATION }}\n"
         "          project_id: ${{ env.GKE_PROJECT_ID }}\n"
+        "      - name: Verify expected per-site static IP exists\n"
+        "        run: |\n"
+        "          set -euo pipefail\n"
+        "          if ! gcloud compute addresses describe \"$MBSRN_PREVIEW_STATIC_IP_NAME\" --global --project \"$GKE_PROJECT_ID\" >/dev/null 2>&1; then\n"
+        "            echo \"deploy_runtime_reason_code=managed_site_static_ip_missing\"\n"
+        "            echo \"deploy_runtime_reason_message=Expected per-site static IP must be created and assigned by admin before deploy.\"\n"
+        "            echo \"expected_static_ip_name=$MBSRN_PREVIEW_STATIC_IP_NAME\"\n"
+        "            echo \"gcp_project_id=$GKE_PROJECT_ID\"\n"
+        "            exit 1\n"
+        "          fi\n"
         "      - name: Ensure namespace exists\n"
         "        run: kubectl apply -f k8s/namespace.yaml\n"
         f"{verify_pull_secret_step}"
@@ -7872,12 +7906,22 @@ def _render_managed_deploy_workflow_yaml(
         "            exit 1\n"
         "          fi\n"
         "          dns_expected_ip=\"$ingress_ip\"\n"
+        "          expected_static_ip_name=\"$(echo \"$MBSRN_PREVIEW_STATIC_IP_NAME\" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')\"\n"
         "          ingress_static_ip_annotation=\"$(kubectl get ingress site-web --namespace \"$K8S_NAMESPACE\" -o jsonpath='{.metadata.annotations.kubernetes\\.io/ingress\\.global-static-ip-name}' 2>/dev/null || true)\"\n"
-        "          if [ -n \"$ingress_static_ip_annotation\" ]; then\n"
+        "          normalized_ingress_static_ip_annotation=\"$(echo \"$ingress_static_ip_annotation\" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')\"\n"
+        "          echo \"expected_static_ip_name=$expected_static_ip_name\"\n"
+        "          echo \"observed_ingress_static_ip_annotation=$ingress_static_ip_annotation\"\n"
+        "          if [ -z \"$normalized_ingress_static_ip_annotation\" ]; then\n"
+        "            ingress_conflict_detected=true\n"
+        "            echo \"deploy_runtime_reason_code=expected_static_ip_not_bound_to_ingress\"\n"
+        "            echo \"deploy_runtime_reason_message=Ingress is missing expected per-site static IP annotation binding.\"\n"
+        "            exit 1\n"
+        "          fi\n"
+        "          if [ \"$normalized_ingress_static_ip_annotation\" != \"$expected_static_ip_name\" ]; then\n"
         "            ingress_conflict_detected=true\n"
         "            echo \"deploy_runtime_reason_code=ingress_static_ip_conflict\"\n"
         "            echo \"deploy_runtime_reason_code=shared_static_ip_not_allowed_for_per_site_ingress\"\n"
-        "            echo \"deploy_runtime_reason_message=Per-site ingress model does not allow shared static IP binding.\"\n"
+        "            echo \"deploy_runtime_reason_message=Ingress static IP annotation does not match expected per-site static IP name.\"\n"
         "            exit 1\n"
         "          fi\n"
         "          ingress_validation_output=\"$(mktemp)\"\n"
@@ -8155,6 +8199,10 @@ def _render_managed_gke_manifest_files(
         repo_name=repo_name,
         site_id=site_id,
     )
+    preview_static_ip_name, _ = derive_site_preview_static_ip_name(
+        repo_name=repo_name,
+        site_id=site_id,
+    )
     repo_owner_fragment = _safe_identifier_fragment(repo_owner, fallback="mbsrn", max_length=40)
     repo_fragment = _safe_identifier_fragment(repo_name, fallback="site", max_length=40)
     env_key = _safe_identifier_fragment(target_environment_key, fallback="gke-prod", max_length=40)
@@ -8269,6 +8317,7 @@ def _render_managed_gke_manifest_files(
         f"{labels}"
         "  annotations:\n"
         "    kubernetes.io/ingress.class: gce\n"
+        f"    kubernetes.io/ingress.global-static-ip-name: {preview_static_ip_name}\n"
         f"    networking.gke.io/managed-certificates: {preview_certificate_name}\n"
         f"    networking.gke.io/v1beta1.FrontendConfig: {frontend_config_name}\n"
         "spec:\n"
@@ -8631,11 +8680,13 @@ def _evaluate_preview_certificate_alignment(
     managed_certificate_manifest_content: str | None,
     expected_preview_hostname: str,
     expected_certificate_name: str,
+    expected_static_ip_name: str | None = None,
 ) -> tuple[bool, dict[str, object]]:
     ingress_content = str(ingress_manifest_content or "")
     certificate_content = str(managed_certificate_manifest_content or "")
     expected_host = (str(expected_preview_hostname or "").strip().lower() or None)
     expected_cert_name = (str(expected_certificate_name or "").strip().lower() or None)
+    expected_static_ip = (str(expected_static_ip_name or "").strip().lower() or None)
 
     ingress_kind = _extract_manifest_scalar(
         ingress_content,
@@ -8707,8 +8758,14 @@ def _evaluate_preview_certificate_alignment(
         )
     stale_managed_certificate_names = list(dict.fromkeys(stale_managed_certificate_names))
     stale_managed_certificate_present = bool(stale_managed_certificate_names)
-    ingress_static_ip_conflict = bool(ingress_static_ip_annotation)
-    shared_static_ip_not_allowed_for_per_site_ingress = ingress_static_ip_conflict
+    ingress_static_ip_matches_expected = bool(
+        expected_static_ip and ingress_static_ip_annotation and ingress_static_ip_annotation == expected_static_ip
+    )
+    ingress_static_ip_name_mismatch = bool(
+        expected_static_ip and ingress_static_ip_annotation and ingress_static_ip_annotation != expected_static_ip
+    )
+    ingress_static_ip_conflict = ingress_static_ip_name_mismatch
+    shared_static_ip_not_allowed_for_per_site_ingress = ingress_static_ip_name_mismatch
     valid_pre_shared_cert_binding = bool(
         expected_cert_name
         and len(ingress_pre_shared_cert_annotation_values) == 1
@@ -8766,6 +8823,9 @@ def _evaluate_preview_certificate_alignment(
         "preview_certificate_ingress_annotation": ingress_cert_annotation,
         "preview_certificate_ingress_annotation_values": list(ingress_cert_annotation_values),
         "preview_certificate_ingress_static_ip_name": ingress_static_ip_annotation,
+        "expected_preview_static_ip_name": expected_static_ip,
+        "preview_certificate_ingress_static_ip_matches_expected": ingress_static_ip_matches_expected,
+        "preview_certificate_ingress_static_ip_name_mismatch": ingress_static_ip_name_mismatch,
         "preview_certificate_ingress_pre_shared_cert_annotation": ingress_pre_shared_cert_annotation,
         "preview_certificate_ingress_pre_shared_cert_annotation_values": list(
             ingress_pre_shared_cert_annotation_values
@@ -8912,6 +8972,10 @@ def _classify_cloudsql_proxy_failure_from_log_text(
         return _DEPLOY_DISPATCH_SERVICE_REASON_DNS_POINTS_TO_OLD_INGRESS_IP, "ingress_evidence"
     if "deploy_runtime_reason_code=dns_record_mismatch" in normalized:
         return _DEPLOY_DISPATCH_SERVICE_REASON_DNS_RECORD_MISMATCH, "ingress_evidence"
+    if "deploy_runtime_reason_code=managed_site_static_ip_missing" in normalized:
+        return _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_MISSING, "ingress_verify"
+    if "deploy_runtime_reason_code=expected_static_ip_not_bound_to_ingress" in normalized:
+        return _DEPLOY_DISPATCH_SERVICE_REASON_EXPECTED_STATIC_IP_NOT_BOUND_TO_INGRESS, "ingress_evidence"
     if "deploy_runtime_reason_code=tls_certificate_provisioning" in normalized:
         return _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_PROVISIONING, "ingress_evidence"
     if "deploy_runtime_reason_code=tls_certificate_bound_to_wrong_site" in normalized:

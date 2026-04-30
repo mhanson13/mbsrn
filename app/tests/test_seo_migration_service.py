@@ -7,7 +7,7 @@ from pathlib import Path
 import subprocess
 import sys
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -4107,6 +4107,104 @@ def test_refresh_deploy_status_static_ip_conflict_blocks_success(db_session) -> 
     assert refresh_result.result.get("deploy_https_ready") is False
 
 
+def test_refresh_deploy_status_managed_site_static_ip_missing_sets_actionable_hint(db_session) -> None:
+    publisher = _RecordingGitHubPublisher(
+        deploy_workflow_run_id=910004,
+        deploy_workflow_run_status="in_progress",
+        refresh_workflow_run_id=910004,
+        refresh_workflow_run_status="completed",
+        refresh_workflow_run_conclusion="failure",
+        refresh_workflow_run_failure_reason_code="managed_site_static_ip_missing",
+        refresh_workflow_run_failure_stage="ingress_verify",
+        refresh_workflow_run_failure_step="Verify expected per-site static IP exists",
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    artifact = _prepare_and_request_deploy(service, business_id=business_id, site_id=site_id)
+
+    refresh_result = service.refresh_deploy_run_status(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        principal_id="principal-1",
+    )
+    assert refresh_result.result.get("workflow_run_failure_reason_code") == "managed_site_static_ip_missing"
+    assert "expected per-site global static ip" in str(
+        refresh_result.result.get("workflow_run_failure_hint") or ""
+    ).lower()
+
+
+def test_refresh_deploy_status_expected_static_ip_not_bound_flags_ingress_conflict(db_session) -> None:
+    publisher = _RecordingGitHubPublisher(
+        deploy_workflow_run_id=910004,
+        deploy_workflow_run_status="in_progress",
+        refresh_workflow_run_id=910004,
+        refresh_workflow_run_status="completed",
+        refresh_workflow_run_conclusion="failure",
+        refresh_workflow_run_failure_reason_code="expected_static_ip_not_bound_to_ingress",
+        refresh_workflow_run_failure_stage="ingress_evidence",
+        refresh_workflow_run_failure_step="Validate ingress static IP binding",
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    artifact = _prepare_and_request_deploy(service, business_id=business_id, site_id=site_id)
+
+    refresh_result = service.refresh_deploy_run_status(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        principal_id="principal-1",
+    )
+    assert refresh_result.result.get("workflow_run_failure_reason_code") == "expected_static_ip_not_bound_to_ingress"
+    assert refresh_result.result.get("ingress_conflict_detected") is True
+    assert "expected per-site static ip annotation binding" in str(
+        refresh_result.result.get("workflow_run_failure_hint") or ""
+    ).lower()
+
+
+def test_static_ip_reason_code_hint_mappings_cover_missing_and_not_bound() -> None:
+    assert "Expected per-site global static IP" in str(
+        seo_migration_module._derive_managed_gke_dispatch_readiness_message(
+            dispatch_service_reason_code="managed_site_static_ip_missing"
+        )
+        or ""
+    )
+    assert "missing the expected per-site static ip annotation binding" in str(
+        seo_migration_module._derive_managed_gke_dispatch_readiness_message(
+            dispatch_service_reason_code="expected_static_ip_not_bound_to_ingress"
+        )
+        or ""
+    ).lower()
+    assert "create/reserve the deterministic site static ip" in str(
+        seo_migration_module._derive_deploy_failure_remediation_hint(
+            failure_reason=None,
+            failure_stage=None,
+            workflow_exists=None,
+            dispatch_service_reason_code="managed_site_static_ip_missing",
+        )
+        or ""
+    ).lower()
+    assert "missing the expected per-site static ip annotation binding" in str(
+        seo_migration_module._derive_deploy_failure_remediation_hint(
+            failure_reason=None,
+            failure_stage=None,
+            workflow_exists=None,
+            dispatch_service_reason_code="expected_static_ip_not_bound_to_ingress",
+        )
+        or ""
+    ).lower()
+
+
 def test_refresh_deploy_status_stale_pre_shared_cert_binding_blocks_success(db_session) -> None:
     publisher = _RecordingGitHubPublisher(
         deploy_workflow_run_id=910005,
@@ -6019,7 +6117,7 @@ def test_deploy_duplicate_blocks_for_active_workflow_run_status(db_session, acti
 
 
 @pytest.mark.parametrize("active_run_status", ("pending", "in_progress", "running"))
-def test_deploy_retry_allowed_when_active_workflow_run_is_stale(
+def test_deploy_stale_pending_blocker_is_reconciled_and_still_active_blocks_duplicate(
     db_session,
     caplog,
     active_run_status: str,
@@ -6029,6 +6127,9 @@ def test_deploy_retry_allowed_when_active_workflow_run_is_stale(
         deploy_workflow_run_id=445566,
         deploy_workflow_run_status=active_run_status,
         deploy_workflow_run_conclusion=None,
+        refresh_workflow_run_id=445566,
+        refresh_workflow_run_status=active_run_status,
+        refresh_workflow_run_conclusion=None,
     )
     service = _build_service(
         db_session,
@@ -6082,11 +6183,125 @@ def test_deploy_retry_allowed_when_active_workflow_run_is_stale(
     assert latest_deploy_item is not None
     stale_trace_id = str(latest_deploy_item.get("deploy_trace_id") or "")
     assert stale_trace_id
-    latest_deploy_item["refreshed_at"] = None
-    latest_deploy_item["dispatched_at"] = "2000-01-01T00:00:00+00:00"
-    latest_deploy_item["occurred_at"] = "2000-01-01T00:00:00+00:00"
-    latest_deploy_item["timestamp"] = "2000-01-01T00:00:00+00:00"
+    stale_activity_at = (utc_now() - timedelta(minutes=15)).isoformat()
+    latest_deploy_item["refreshed_at"] = stale_activity_at
+    latest_deploy_item["dispatched_at"] = stale_activity_at
+    latest_deploy_item["occurred_at"] = stale_activity_at
+    latest_deploy_item["timestamp"] = stale_activity_at
     workspace.deploy_history_json = [latest_deploy_item]
+    service.seo_migration_repository.save_workspace(workspace)
+    db_session.commit()
+
+    with pytest.raises(SEOMigrationValidationError, match="already in progress"):
+        service.deploy_artifact_version(
+            business_id=business_id,
+            site_id=site_id,
+            artifact_version_id=artifact.id,
+            dry_run=False,
+            principal_id="principal-1",
+        )
+    assert len(publisher.deploy_calls) == 1
+    assert len(publisher.refresh_calls) == 1
+
+    duplicate_failure_payloads = [
+        record.__dict__.get("json_fields")
+        for record in caplog.records
+        if isinstance(record.__dict__.get("json_fields"), dict)
+        and record.__dict__["json_fields"].get("event") == "seo_migration_control_plane_action"
+        and record.__dict__["json_fields"].get("action") == "deploy"
+        and record.__dict__["json_fields"].get("failure_category") == "duplicate_request"
+    ]
+    assert duplicate_failure_payloads
+    duplicate_target = duplicate_failure_payloads[-1].get("target") or {}
+    assert duplicate_target.get("blocking_deploy_trace_id") == stale_trace_id
+    assert duplicate_target.get("blocking_reconciliation_attempted") is True
+    assert duplicate_target.get("blocking_reconciliation_result") == "active"
+    assert duplicate_target.get("blocking_reconciliation_reason_code") == "duplicate_request"
+
+    reconciliation_payloads = [
+        record.__dict__.get("json_fields")
+        for record in caplog.records
+        if isinstance(record.__dict__.get("json_fields"), dict)
+        and record.__dict__["json_fields"].get("event")
+        == "seo_migration_deploy_duplicate_blocker_reconciliation"
+    ]
+    assert reconciliation_payloads
+    assert reconciliation_payloads[-1].get("blocking_deploy_trace_id") == stale_trace_id
+    assert reconciliation_payloads[-1].get("reconciliation_result") == "active"
+    assert reconciliation_payloads[-1].get("reason_code") == "duplicate_request"
+
+
+def test_deploy_retry_allowed_when_duplicate_blocker_reconciles_to_terminal(db_session, caplog) -> None:
+    caplog.set_level("INFO", logger="app.services.seo_migration")
+    publisher = _RecordingGitHubPublisher(
+        deploy_workflow_run_id=445566,
+        deploy_workflow_run_status="in_progress",
+        deploy_workflow_run_conclusion=None,
+        refresh_workflow_run_id=445566,
+        refresh_workflow_run_status="completed",
+        refresh_workflow_run_conclusion="failure",
+        refresh_workflow_run_failure_reason_code="rollout_verification_failed",
+        refresh_workflow_run_failure_stage="rollout_verify",
+        refresh_workflow_run_failure_step="Verify rollout",
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+    _configure_deploy_target(service, business_id=business_id, site_id=site_id)
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes=None,
+        principal_id="principal-1",
+    )
+    service.publish_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        commit_message=None,
+        analytics_measurement_id=None,
+        principal_id="principal-1",
+    )
+    service.deploy_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        principal_id="principal-1",
+    )
+
+    workspace = service.get_workspace(business_id=business_id, site_id=site_id)
+    history = workspace.deploy_history_json or []
+    stale_deploy_item = next(
+        (
+            dict(item)
+            for item in reversed(history)
+            if str(item.get("action") or "").strip().lower() == "deploy"
+            and str(item.get("status") or "").strip().lower() == "deploy_requested"
+        ),
+        None,
+    )
+    assert stale_deploy_item is not None
+    stale_trace_id = str(stale_deploy_item.get("deploy_trace_id") or "")
+    assert stale_trace_id
+    stale_activity_at = (utc_now() - timedelta(minutes=15)).isoformat()
+    stale_deploy_item["refreshed_at"] = stale_activity_at
+    stale_deploy_item["dispatched_at"] = stale_activity_at
+    stale_deploy_item["occurred_at"] = stale_activity_at
+    stale_deploy_item["timestamp"] = stale_activity_at
+    workspace.deploy_history_json = [stale_deploy_item]
     service.seo_migration_repository.save_workspace(workspace)
     db_session.commit()
 
@@ -6098,8 +6313,10 @@ def test_deploy_retry_allowed_when_active_workflow_run_is_stale(
         principal_id="principal-1",
     )
     assert len(publisher.deploy_calls) == 2
+    assert len(publisher.refresh_calls) == 1
+
     workspace = service.get_workspace(business_id=business_id, site_id=site_id)
-    stale_entry = next(
+    reconciled_entry = next(
         (
             item
             for item in workspace.deploy_history_json or []
@@ -6107,16 +6324,267 @@ def test_deploy_retry_allowed_when_active_workflow_run_is_stale(
         ),
         None,
     )
-    assert stale_entry is not None
-    assert stale_entry.get("post_dispatch_state") == "workflow_run_failed"
-    assert stale_entry.get("workflow_run_status") == "completed"
-    assert stale_entry.get("workflow_run_conclusion") == "failure"
-    assert stale_entry.get("workflow_run_failure_reason_code") == "workflow_reconciliation_timeout"
-    assert stale_entry.get("workflow_run_failure_stage") == "workflow_execution"
-    assert stale_entry.get("workflow_job_failure_detected") is True
-    deploy_logs = [record.msg for record in caplog.records if isinstance(record.msg, str)]
-    assert any('"event": "downgrade_to_stale_active_deploy_blocker"' in item for item in deploy_logs)
-    assert any('"event": "stale_duplicate_blocker_reconciled"' in item for item in deploy_logs)
+    assert reconciled_entry is not None
+    assert reconciled_entry.get("workflow_run_status") == "completed"
+    assert reconciled_entry.get("workflow_run_conclusion") == "failure"
+    assert reconciled_entry.get("post_dispatch_state") == "workflow_run_failed"
+    assert reconciled_entry.get("workflow_run_failure_reason_code") == "rollout_verification_failed"
+    assert reconciled_entry.get("workflow_run_failure_stage") == "rollout_verify"
+    assert reconciled_entry.get("workflow_run_failure_step") == "Verify rollout"
+
+    reconciliation_payloads = [
+        record.__dict__.get("json_fields")
+        for record in caplog.records
+        if isinstance(record.__dict__.get("json_fields"), dict)
+        and record.__dict__["json_fields"].get("event")
+        == "seo_migration_deploy_duplicate_blocker_reconciliation"
+        and record.__dict__["json_fields"].get("blocking_deploy_trace_id") == stale_trace_id
+    ]
+    assert reconciliation_payloads
+    assert reconciliation_payloads[-1].get("reconciliation_result") == "terminal_cleared"
+
+
+def test_duplicate_blocker_reconciliation_failure_returns_deploy_error(db_session, caplog) -> None:
+    caplog.set_level("INFO", logger="app.services.seo_migration")
+    secret_token = "ghp_super_secret_token_for_test"
+    secret_private_key = "-----BEGIN PRIVATE KEY-----\\nsecret\\n-----END PRIVATE KEY-----"
+    publisher = _RecordingGitHubPublisher(
+        deploy_workflow_run_id=445566,
+        deploy_workflow_run_status="in_progress",
+        deploy_workflow_run_conclusion=None,
+        fail_refresh=True,
+        refresh_error_code="github_timeout",
+        refresh_error_message="Simulated refresh timeout.",
+        refresh_error_stage="workflow_run_lookup",
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+        deploy_secret_gcp_key=json.dumps({"type": "service_account", "private_key": secret_private_key}),
+        deploy_secret_git_token=secret_token,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+    _configure_deploy_target(service, business_id=business_id, site_id=site_id)
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes=None,
+        principal_id="principal-1",
+    )
+    service.publish_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        commit_message=None,
+        analytics_measurement_id=None,
+        principal_id="principal-1",
+    )
+    service.deploy_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        principal_id="principal-1",
+    )
+
+    workspace = service.get_workspace(business_id=business_id, site_id=site_id)
+    history = workspace.deploy_history_json or []
+    blocking_item = next(
+        (
+            dict(item)
+            for item in reversed(history)
+            if str(item.get("action") or "").strip().lower() == "deploy"
+            and str(item.get("status") or "").strip().lower() == "deploy_requested"
+        ),
+        None,
+    )
+    assert blocking_item is not None
+    stale_activity_at = (utc_now() - timedelta(minutes=15)).isoformat()
+    blocking_item["refreshed_at"] = stale_activity_at
+    blocking_item["dispatched_at"] = stale_activity_at
+    blocking_item["occurred_at"] = stale_activity_at
+    blocking_item["timestamp"] = stale_activity_at
+    workspace.deploy_history_json = [blocking_item]
+    service.seo_migration_repository.save_workspace(workspace)
+    db_session.commit()
+
+    with pytest.raises(SEOMigrationValidationError, match="Unable to reconcile previous deploy blocker with GitHub") as exc:
+        service.deploy_artifact_version(
+            business_id=business_id,
+            site_id=site_id,
+            artifact_version_id=artifact.id,
+            dry_run=False,
+            principal_id="principal-1",
+        )
+    assert exc.value.failure_category == "deploy_error"
+    assert exc.value.failure_reason == "deploy_blocker_reconciliation_failed"
+    assert len(publisher.deploy_calls) == 1
+    assert len(publisher.refresh_calls) == 1
+
+    deploy_failure_payloads = [
+        record.__dict__.get("json_fields")
+        for record in caplog.records
+        if isinstance(record.__dict__.get("json_fields"), dict)
+        and record.__dict__["json_fields"].get("event") == "seo_migration_control_plane_action"
+        and record.__dict__["json_fields"].get("action") == "deploy"
+        and record.__dict__["json_fields"].get("failure_category") == "deploy_error"
+    ]
+    assert deploy_failure_payloads
+    failure_payload = deploy_failure_payloads[-1]
+    target_payload = failure_payload.get("target") or {}
+    assert failure_payload.get("failure_reason") == "deploy_blocker_reconciliation_failed"
+    assert target_payload.get("blocking_reconciliation_result") == "refresh_failed"
+    assert target_payload.get("blocking_reconciliation_reason_code") == "deploy_blocker_reconciliation_failed"
+
+    target_blob = json.dumps(target_payload, sort_keys=True)
+    assert secret_token not in target_blob
+    assert secret_private_key not in target_blob
+    assert "deploy_secret_git_token" not in target_blob
+    assert "deploy_secret_gcp_key" not in target_blob
+
+    logged_messages = "\n".join(record.msg for record in caplog.records if isinstance(record.msg, str))
+    assert secret_token not in logged_messages
+    assert secret_private_key not in logged_messages
+
+    assert seo_migration_module._derive_deploy_failure_remediation_hint(
+        failure_reason="deploy_blocker_reconciliation_failed",
+        failure_stage="workflow_dispatch",
+        workflow_exists=None,
+        dispatch_service_reason_code=None,
+    ) == (
+        "Previous deploy may still be active, but blocker reconciliation with GitHub failed. "
+        "Refresh deploy status and retry after run state is confirmed."
+    )
+
+
+def test_stale_duplicate_blocker_refresh_failure_requires_manual_refresh(db_session, caplog) -> None:
+    caplog.set_level("INFO", logger="app.services.seo_migration")
+    publisher = _RecordingGitHubPublisher(
+        deploy_workflow_run_id=445566,
+        deploy_workflow_run_status="in_progress",
+        deploy_workflow_run_conclusion=None,
+        fail_refresh=True,
+        refresh_error_code="github_timeout",
+        refresh_error_message="Simulated stale refresh timeout.",
+        refresh_error_stage="workflow_run_lookup",
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+    _configure_deploy_target(service, business_id=business_id, site_id=site_id)
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes=None,
+        principal_id="principal-1",
+    )
+    service.publish_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        commit_message=None,
+        analytics_measurement_id=None,
+        principal_id="principal-1",
+    )
+    service.deploy_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        principal_id="principal-1",
+    )
+
+    workspace = service.get_workspace(business_id=business_id, site_id=site_id)
+    history = workspace.deploy_history_json or []
+    stale_item = next(
+        (
+            dict(item)
+            for item in reversed(history)
+            if str(item.get("action") or "").strip().lower() == "deploy"
+            and str(item.get("status") or "").strip().lower() == "deploy_requested"
+        ),
+        None,
+    )
+    assert stale_item is not None
+    stale_item["refreshed_at"] = None
+    stale_item["dispatched_at"] = "2000-01-01T00:00:00+00:00"
+    stale_item["occurred_at"] = "2000-01-01T00:00:00+00:00"
+    stale_item["timestamp"] = "2000-01-01T00:00:00+00:00"
+    workspace.deploy_history_json = [stale_item]
+    service.seo_migration_repository.save_workspace(workspace)
+    db_session.commit()
+
+    with pytest.raises(
+        SEOMigrationValidationError,
+        match="Previous deploy appears stale; refresh deploy status and retry deploy",
+    ) as exc:
+        service.deploy_artifact_version(
+            business_id=business_id,
+            site_id=site_id,
+            artifact_version_id=artifact.id,
+            dry_run=False,
+            principal_id="principal-1",
+        )
+    assert exc.value.failure_category == "deploy_error"
+    assert exc.value.failure_reason == "stale_deploy_blocker_requires_refresh"
+    assert len(publisher.deploy_calls) == 1
+    assert len(publisher.refresh_calls) == 1
+
+    deploy_failure_payloads = [
+        record.__dict__.get("json_fields")
+        for record in caplog.records
+        if isinstance(record.__dict__.get("json_fields"), dict)
+        and record.__dict__["json_fields"].get("event") == "seo_migration_control_plane_action"
+        and record.__dict__["json_fields"].get("action") == "deploy"
+        and record.__dict__["json_fields"].get("failure_category") == "deploy_error"
+    ]
+    assert deploy_failure_payloads
+    target_payload = deploy_failure_payloads[-1].get("target") or {}
+    assert target_payload.get("blocking_reconciliation_result") == "stale_requires_manual_refresh"
+    assert target_payload.get("blocking_reconciliation_reason_code") == "stale_deploy_blocker_requires_refresh"
+
+    reconciliation_payloads = [
+        record.__dict__.get("json_fields")
+        for record in caplog.records
+        if isinstance(record.__dict__.get("json_fields"), dict)
+        and record.__dict__["json_fields"].get("event")
+        == "seo_migration_deploy_duplicate_blocker_reconciliation"
+    ]
+    assert reconciliation_payloads
+    assert reconciliation_payloads[-1].get("reconciliation_result") == "stale_requires_manual_refresh"
+    assert reconciliation_payloads[-1].get("reason_code") == "stale_deploy_blocker_requires_refresh"
+
+    assert seo_migration_module._derive_deploy_failure_remediation_hint(
+        failure_reason="stale_deploy_blocker_requires_refresh",
+        failure_stage="workflow_dispatch",
+        workflow_exists=None,
+        dispatch_service_reason_code=None,
+    ) == (
+        "Previous deploy blocker appears stale and could not be safely reconciled automatically. "
+        "Run deploy status refresh, confirm terminal state, then retry deploy."
+    )
 
 
 def test_deploy_duplicate_active_run_uses_most_recent_activity_timestamp(db_session) -> None:

@@ -1037,8 +1037,13 @@ Deploy behavior:
   - active blockers include confirmed non-terminal run states such as `workflow_run_pending`, `workflow_run_in_progress`, and `workflow_run_observed` (run-id backed)
   - run-backed active blockers are freshness-bound (30-minute stale window based on newest activity timestamp: `refreshed_at` -> `dispatched_at` -> `occurred_at` -> `timestamp`)
   - unverified dispatch states without run evidence (`dispatch_accepted_no_run` / `dispatch_unverified_no_run`) are weak blockers with a short 2-minute stale window
+  - for run-backed blockers older than 12 minutes (but still inside the 30-minute active freshness window), control plane refreshes workflow run evidence from GitHub before returning `duplicate_request`
+  - if refresh confirms terminal run state, the prior attempt is normalized to terminal and retry proceeds
+  - if refresh confirms the run is still active, duplicate blocking remains in place with refreshed blocker metadata
+  - if refresh fails while blocker evidence is still inside the active freshness window, deploy fails closed with `deploy_blocker_reconciliation_failed` (operator must refresh status and retry)
+  - if refresh fails after blocker evidence is beyond the larger stale window, deploy fails with `stale_deploy_blocker_requires_refresh` (operator must refresh status and confirm terminal state)
+  - stale unverified-dispatch blockers continue to reconcile to terminal timeout (`workflow_run_failure_reason_code=workflow_reconciliation_timeout`) after the 2-minute no-run threshold
   - if refresh hits `workflow_not_found` after dispatch was attempted, control plane marks the attempt terminal with `workflow_run_failure_reason_code=workflow_run_tracking_lost` so retries are not deadlocked
-  - if duplicate-gate evaluation finds a stale active blocker (including stale `workflow_run_pending`/`workflow_run_in_progress` with no recent activity evidence), control plane reconciles that prior attempt to terminal failure with `workflow_run_failure_reason_code=workflow_reconciliation_timeout` before allowing retry
   - terminal/stale historical records (`workflow_run_failed`, `workflow_run_succeeded_without_live_url`, `workflow_run_succeeded_with_live_url`, cancelled/completed non-active, or stale no-run records) do not block a new deploy retry
   - stale no-run detection uses deterministic activity precedence: `refreshed_at` -> `dispatched_at` -> `occurred_at` -> `timestamp` with a 2-minute threshold for unverified dispatch records
 - retry after a failed deploy is supported and recorded as a new history event
@@ -1149,6 +1154,10 @@ Post-fix rollout for existing managed sites:
       admin/runtime credential-source blocker for deploy-secret propagation (separate from managed cluster vars)
     - `duplicate_request`:
       operator-visible concurrency/history blocker; does not replace configuration ownership blockers
+    - `deploy_blocker_reconciliation_failed`:
+      aged duplicate blocker could not be refreshed from GitHub while still potentially active
+    - `stale_deploy_blocker_requires_refresh`:
+      stale duplicate blocker requires manual refresh confirmation before safe retry
   - readiness normalization now prefers managed GKE configuration blockers before dispatch so deploy does not appear dispatchable when required cluster config is incomplete
   - after applying missing config values, retry deploy from the migration workspace (no workflow template change required)
 - hybrid deploy-secret propagation (bridge model):
@@ -1188,7 +1197,10 @@ Post-fix rollout for existing managed sites:
     - managed certificate resource: `k8s/managedcertificate.yaml`
     - managed certificate name: `site-web-preview-cert-<normalized-site>`
     - ingress annotation: `networking.gke.io/managed-certificates: site-web-preview-cert-<normalized-site>`
-    - per-site ingress manifests intentionally omit `kubernetes.io/ingress.global-static-ip-name` by default in this model (shared static IP reuse can cause cross-site load balancer conflicts)
+    - ingress requires deterministic per-site static IP binding:
+      - annotation: `kubernetes.io/ingress.global-static-ip-name: site-web-preview-ip-<normalized-site>`
+      - static IP names are site-scoped and must not be shared across sites
+      - expected global address must exist before deploy (`gcloud compute addresses describe site-web-preview-ip-<normalized-site> --global`)
     - generated manifests must not include `ingress.gcp.kubernetes.io/pre-shared-cert`; `ManagedCertificate` remains the desired-state certificate binding source
     - GKE may still add `ingress.gcp.kubernetes.io/pre-shared-cert` at runtime as controller metadata
     - certificate domain and ingress host must match the same site-specific preview hostname.
@@ -1196,7 +1208,9 @@ Post-fix rollout for existing managed sites:
       - `tls_certificate_bound_to_wrong_site` when ingress host/certificate domain disagree
       - `ingress_certificate_annotation_mismatch` when ingress annotation references the wrong certificate name
       - `managed_certificate_identity_mismatch` when ingress annotation includes stale cross-site certificate names
-      - `shared_static_ip_not_allowed_for_per_site_ingress` when shared static IP binding is detected for per-site ingress
+      - `managed_site_static_ip_missing` when the expected per-site global static IP does not exist in GCP
+      - `expected_static_ip_not_bound_to_ingress` when ingress is missing the expected per-site static IP annotation binding
+      - `shared_static_ip_not_allowed_for_per_site_ingress` when ingress static IP annotation is present but does not match the expected per-site static IP name
       - `pre_shared_cert_metadata_mismatch` when controller-generated pre-shared certificate metadata differs from expected managed-certificate name (advisory; non-blocking by itself)
       - `stale_pre_shared_cert_binding_detected` only when stale/cross-site pre-shared metadata is corroborated by desired-state annotation/domain mismatch or HTTPS/TLS identity mismatch
       - `managed_certificate_failed_not_visible` when certificate visibility checks fail for the expected hostname
@@ -1363,7 +1377,13 @@ Migration publish/deploy paths normalize failures into stable categories:
 - `duplicate_request`
   - Duplicate publish/deploy request for same artifact + equivalent target context.
   - Deploy duplicate blocking now applies to active in-flight attempts only, not all historical records.
-  - Operator action: if blocked, refresh deploy status and retry after the prior attempt reaches a terminal/stale state.
+  - Operator action: if blocked, refresh deploy status and retry after the prior attempt reaches a terminal state.
+- `deploy_blocker_reconciliation_failed`
+  - Control plane could not refresh GitHub run evidence for an aged duplicate deploy blocker that still appears active.
+  - Operator action: run `Refresh Deploy Status`, confirm the prior workflow run state, then retry deploy.
+- `stale_deploy_blocker_requires_refresh`
+  - Control plane could not safely reconcile an old duplicate deploy blocker and requires manual status refresh confirmation.
+  - Operator action: refresh deploy status, confirm prior run is terminal, then retry deploy.
 - `artifact_invalid`
   - Selected artifact files were not publishable under bounded static-file rules.
   - Operator action: regenerate/re-approve a valid artifact version.
@@ -1643,11 +1663,14 @@ Blocking reason-code examples:
   - `managed_certificate_failed_not_visible` (usually DNS/LB visibility mismatch)
   - `tls_certificate_bound_to_wrong_site`
 - Ingress isolation:
+  - `managed_site_static_ip_missing`
+  - `expected_static_ip_not_bound_to_ingress`
   - `shared_static_ip_not_allowed_for_per_site_ingress`
   - `stale_pre_shared_cert_binding_detected`
 
 Isolation rules:
-- Shared ingress static IP binding is blocked for per-site ingress.
+- Per-site ingress must bind only its deterministic static IP name (`site-web-preview-ip-<normalized-site>`).
+- Shared ingress static IP binding across sites is blocked.
 - Cross-site certificate bindings are blocked.
 - `ingress.gcp.kubernetes.io/pre-shared-cert` is controller metadata and does not block deploy readiness by itself (including single-value name mismatch or multiple values).
 - blocking cert-identity decisions rely on desired-state managed-certificate annotation, ManagedCertificate domain/status, and HTTPS/TLS probe identity evidence.
@@ -1731,8 +1754,12 @@ Use this short checklist for the first production shakeout cycle:
    - `ingress_evidence`
 7. Duplicate blocker interpretation is correct:
    - run-backed active blocker = block
+   - aged run-backed blocker (>=12 minutes) = reconcile with GitHub before final duplicate decision
    - unverified dispatch blocker = short 2-minute TTL
-   - stale/terminal records = retry allowed
+   - terminal prior run after reconciliation = retry allowed
+   - reconciliation failure reason codes:
+     - `deploy_blocker_reconciliation_failed`
+     - `stale_deploy_blocker_requires_refresh`
 8. `resolved_live_url` is confirmed only when explicit deploy evidence is present (`workflow_output` or `deploy_result`).
 
 ## First Production Deploy (Operator Path)
@@ -1792,6 +1819,11 @@ Deploy failures:
 - inspect deploy history inputs and workflow execution status
 - if duplicate deploy is reported, verify whether the prior deploy request already covers the same artifact+target+inputs
   - duplicate blocking means an active in-flight attempt exists; completed/failed/cancelled/stale historical attempts should not block retry
+  - run-backed blockers older than 12 minutes are reconciled against GitHub run state before final duplicate rejection
+  - use reason codes to route action:
+    - `duplicate_request` -> prior run still active
+    - `deploy_blocker_reconciliation_failed` -> refresh failed while blocker may still be active
+    - `stale_deploy_blocker_requires_refresh` -> stale blocker could not be safely reconciled automatically
 - if readiness is blocked, use deploy blocker class + message to identify the owning actor:
   - `published_artifact_missing` -> Operator must publish first
   - `deploy_configuration_missing` / `deploy_configuration_invalid` -> Operator/Admin must fix target config

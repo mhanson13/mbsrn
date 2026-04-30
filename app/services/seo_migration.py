@@ -76,6 +76,7 @@ _MAX_CONTENT_FOR_STORAGE = 120_000
 _MAX_HISTORY_ITEMS = 80
 _DUPLICATE_DEPLOY_ACTIVE_BLOCKER_STALE_SECONDS = 30 * 60
 _DUPLICATE_DEPLOY_UNVERIFIED_DISPATCH_STALE_SECONDS = 2 * 60
+_DUPLICATE_DEPLOY_ACTIVE_BLOCKER_RECONCILIATION_SECONDS = 12 * 60
 _ALLOWED_FILE_EXTENSIONS = (
     ".html",
     ".css",
@@ -232,6 +233,8 @@ _DEPLOY_TARGET_REASON_DISPATCH_UNSUPPORTED = "workflow_dispatch_not_supported"
 _DEPLOY_TARGET_REASON_TOKEN_UNAUTHORIZED = "token_not_authorized"
 _DEPLOY_TARGET_REASON_WORKFLOW_NOT_DISPATCHABLE = "workflow_not_dispatchable"
 _DEPLOY_TARGET_REASON_WORKFLOW_NOT_PRODUCTION_READY = "workflow_not_production_ready"
+_DEPLOY_TARGET_REASON_DEPLOY_BLOCKER_RECONCILIATION_FAILED = "deploy_blocker_reconciliation_failed"
+_DEPLOY_TARGET_REASON_STALE_DEPLOY_BLOCKER_REQUIRES_REFRESH = "stale_deploy_blocker_requires_refresh"
 _DEPLOY_RUN_FAILURE_REASON_GCP_AUTH = "gcp_auth_failed"
 _DEPLOY_RUN_FAILURE_REASON_CLUSTER_CREDENTIALS = "gke_credentials_failed"
 _DEPLOY_RUN_FAILURE_REASON_MANIFEST_APPLY = "kubectl_apply_failed"
@@ -298,6 +301,10 @@ _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_CERTIFICATE_ANNOTATION_MISMATCH = "ingre
 _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_BOUND_TO_WRONG_SITE = "tls_certificate_bound_to_wrong_site"
 _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_STATIC_IP_CONFLICT = "ingress_static_ip_conflict"
 _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_STATIC_IP_NOT_ALLOWED = "shared_static_ip_not_allowed_for_per_site_ingress"
+_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_MISSING = "managed_site_static_ip_missing"
+_DEPLOY_DISPATCH_SERVICE_REASON_EXPECTED_STATIC_IP_NOT_BOUND_TO_INGRESS = (
+    "expected_static_ip_not_bound_to_ingress"
+)
 _DEPLOY_DISPATCH_SERVICE_REASON_STALE_PRE_SHARED_CERT_BINDING = "stale_pre_shared_cert_binding_detected"
 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_FAILED_NOT_VISIBLE = "managed_certificate_failed_not_visible"
 _DEPLOY_DISPATCH_SERVICE_REASON_DEPLOYED_CONTENT_IDENTITY_MISMATCH = "deployed_content_identity_mismatch"
@@ -2457,7 +2464,205 @@ class SEOMigrationService:
             )
             duplicate_is_stale = bool(duplicate_stale_observability.get("blocking_stale_is_stale"))
             duplicate_stale_observability["blocking_treated_as_stale"] = duplicate_is_stale
-            if duplicate_is_stale:
+            duplicate_workflow_run_url = _build_workflow_run_url(
+                repo_owner=duplicate_active_record.get("repo_owner"),
+                repo_name=duplicate_active_record.get("repo_name"),
+                workflow_run_id=duplicate_workflow_run_id,
+            )
+            duplicate_reconciliation_attempted = False
+            duplicate_reconciliation_result: str | None = None
+            duplicate_reconciliation_reason_code: str | None = None
+            duplicate_reconciliation_prior_state: str | None = duplicate_post_dispatch_state
+            duplicate_reconciliation_refreshed_state: str | None = duplicate_post_dispatch_state
+            duplicate_reconciliation_threshold_seconds: int | None = None
+            duplicate_reconciliation_observability: dict[str, object] = {}
+
+            if duplicate_workflow_run_id is not None:
+                duplicate_reconciliation_threshold_seconds = _derive_duplicate_blocker_reconciliation_threshold_seconds(
+                    item=duplicate_active_record
+                )
+                duplicate_reconciliation_observability = _build_deploy_history_stale_observability(
+                    item=duplicate_active_record,
+                    now=utc_now(),
+                    stale_after_seconds=duplicate_reconciliation_threshold_seconds,
+                )
+                duplicate_reconciliation_due = bool(
+                    duplicate_reconciliation_observability.get("blocking_stale_is_stale")
+                )
+                if duplicate_reconciliation_due:
+                    duplicate_reconciliation_attempted = True
+                    reconciliation = self._refresh_duplicate_deploy_blocker_from_github(
+                        workspace=workspace,
+                        site=site,
+                        history_item=duplicate_active_record,
+                        principal_id=principal_id,
+                    )
+                    duplicate_reconciliation_result = _normalize_string(
+                        reconciliation.get("reconciliation_result"),
+                        max_length=80,
+                    ) or "refresh_failed"
+                    duplicate_reconciliation_reason_code = _normalize_string(
+                        reconciliation.get("reason_code"),
+                        max_length=80,
+                    )
+                    duplicate_reconciliation_prior_state = _normalize_string(
+                        reconciliation.get("prior_state"),
+                        max_length=80,
+                    ) or duplicate_post_dispatch_state
+                    duplicate_reconciliation_refreshed_state = _normalize_string(
+                        reconciliation.get("refreshed_state"),
+                        max_length=80,
+                    ) or duplicate_post_dispatch_state
+                    if duplicate_reconciliation_result == "refresh_failed" and duplicate_is_stale:
+                        duplicate_reconciliation_result = "stale_requires_manual_refresh"
+                        duplicate_reconciliation_reason_code = (
+                            _DEPLOY_TARGET_REASON_STALE_DEPLOY_BLOCKER_REQUIRES_REFRESH
+                        )
+                    self._emit_structured_service_log(
+                        payload={
+                            "event": "seo_migration_deploy_duplicate_blocker_reconciliation",
+                            "business_id": business_id,
+                            "site_id": site_id,
+                            "workspace_id": workspace.id,
+                            "artifact_version_id": artifact.id,
+                            "target_environment_key": _normalize_string(
+                                deploy_target.get("target_environment_key"),
+                                max_length=80,
+                            ),
+                            "blocking_deploy_trace_id": duplicate_deploy_trace_id,
+                            "blocking_dispatched_at": _normalize_string(
+                                duplicate_active_record.get("dispatched_at"),
+                                max_length=64,
+                            ),
+                            "prior_state": duplicate_reconciliation_prior_state,
+                            "refreshed_state": duplicate_reconciliation_refreshed_state,
+                            "reconciliation_result": duplicate_reconciliation_result,
+                            "reason_code": duplicate_reconciliation_reason_code,
+                        },
+                        fallback_message="seo_migration_deploy_duplicate_blocker_reconciliation",
+                        level=(
+                            logging.INFO
+                            if duplicate_reconciliation_result in {"active", "terminal_cleared"}
+                            else logging.WARNING
+                        ),
+                    )
+                    if duplicate_reconciliation_result == "terminal_cleared":
+                        duplicate_active_record = None
+                    elif duplicate_reconciliation_result in {"refresh_failed", "stale_requires_manual_refresh"}:
+                        reconciliation_reason_code = (
+                            duplicate_reconciliation_reason_code
+                            or _DEPLOY_TARGET_REASON_DEPLOY_BLOCKER_RECONCILIATION_FAILED
+                        )
+                        failure_message = (
+                            "Previous deploy appears stale; refresh deploy status and retry deploy."
+                            if reconciliation_reason_code == _DEPLOY_TARGET_REASON_STALE_DEPLOY_BLOCKER_REQUIRES_REFRESH
+                            else (
+                                "Unable to reconcile previous deploy blocker with GitHub. "
+                                "Refresh deploy status and retry after workflow state is verified."
+                            )
+                        )
+                        self._log_control_plane_action(
+                            action="deploy",
+                            status="failed",
+                            business_id=business_id,
+                            site_id=site_id,
+                            workspace_id=workspace.id,
+                            artifact_version_id=artifact.id,
+                            artifact_version=artifact.version,
+                            principal_id=principal_id,
+                            dry_run=dry_run,
+                            target_summary={
+                                **deploy_target,
+                                "inputs": _normalize_history_inputs(deploy_inputs),
+                                "resolved_workflow_source": workflow_resolution.get("source"),
+                                "workflow_identifier": workflow_identifier,
+                                "deploy_trace_id": deploy_trace_id,
+                                "blocking_post_dispatch_state": duplicate_post_dispatch_state,
+                                "blocking_dispatch_result_stage": duplicate_dispatch_result_stage,
+                                "blocking_workflow_run_id": duplicate_workflow_run_id,
+                                "blocking_workflow_run_status": duplicate_workflow_run_status,
+                                "blocking_workflow_run_conclusion": duplicate_workflow_run_conclusion,
+                                "blocking_workflow_run_url": duplicate_workflow_run_url,
+                                "blocking_deploy_trace_id": duplicate_deploy_trace_id,
+                                "blocking_timestamp": _normalize_string(
+                                    duplicate_active_record.get("timestamp"),
+                                    max_length=64,
+                                ),
+                                "blocking_dispatched_at": _normalize_string(
+                                    duplicate_active_record.get("dispatched_at"),
+                                    max_length=64,
+                                ),
+                                "blocking_refreshed_at": _normalize_string(
+                                    duplicate_active_record.get("refreshed_at"),
+                                    max_length=64,
+                                ),
+                                "blocking_reconciliation_attempted": duplicate_reconciliation_attempted,
+                                "blocking_reconciliation_result": duplicate_reconciliation_result,
+                                "blocking_reconciliation_reason_code": duplicate_reconciliation_reason_code,
+                                "blocking_reconciliation_prior_state": duplicate_reconciliation_prior_state,
+                                "blocking_reconciliation_refreshed_state": duplicate_reconciliation_refreshed_state,
+                                "blocking_reconciliation_threshold_seconds": duplicate_reconciliation_threshold_seconds,
+                                **duplicate_stale_observability,
+                                **duplicate_reconciliation_observability,
+                            },
+                            failure_category="deploy_error",
+                            failure_reason=reconciliation_reason_code,
+                            duration_ms=self._duration_ms(started_at),
+                            correlation_id=deploy_trace_id,
+                        )
+                        raise SEOMigrationValidationError(
+                            failure_message,
+                            failure_category="deploy_error",
+                            failure_reason=reconciliation_reason_code,
+                        )
+                    else:
+                        duplicate_active_record = _normalize_json_dict(
+                            reconciliation.get("history_item")
+                        ) or duplicate_active_record
+                        duplicate_post_dispatch_state = _normalize_string(
+                            duplicate_active_record.get("post_dispatch_state"),
+                            max_length=80,
+                        ) or _derive_post_dispatch_state(
+                            dispatch_attempted=duplicate_active_record.get("dispatch_attempted"),
+                            dispatch_result_stage=duplicate_active_record.get("dispatch_result_stage"),
+                            workflow_run_id=duplicate_active_record.get("workflow_run_id"),
+                            workflow_run_status=duplicate_active_record.get("workflow_run_status"),
+                            workflow_run_conclusion=duplicate_active_record.get("workflow_run_conclusion"),
+                            resolved_live_url=duplicate_active_record.get("resolved_live_url"),
+                            workflow_run_lookup_attempted=duplicate_active_record.get(
+                                "workflow_run_lookup_attempted"
+                            ),
+                            workflow_run_found=duplicate_active_record.get("workflow_run_found"),
+                        )
+                        duplicate_dispatch_result_stage = _normalize_deploy_failure_stage(
+                            duplicate_active_record.get("dispatch_result_stage")
+                        )
+                        duplicate_workflow_run_id = _coerce_int(duplicate_active_record.get("workflow_run_id"))
+                        duplicate_workflow_run_status = _normalize_string(
+                            duplicate_active_record.get("workflow_run_status"),
+                            max_length=40,
+                        )
+                        duplicate_workflow_run_conclusion = _normalize_string(
+                            duplicate_active_record.get("workflow_run_conclusion"),
+                            max_length=40,
+                        )
+                        duplicate_workflow_run_url = _build_workflow_run_url(
+                            repo_owner=duplicate_active_record.get("repo_owner"),
+                            repo_name=duplicate_active_record.get("repo_name"),
+                            workflow_run_id=duplicate_workflow_run_id,
+                        )
+                        stale_threshold_seconds = _derive_duplicate_blocker_stale_threshold_seconds(
+                            item=duplicate_active_record
+                        )
+                        duplicate_stale_observability = _build_deploy_history_stale_observability(
+                            item=duplicate_active_record,
+                            now=utc_now(),
+                            stale_after_seconds=stale_threshold_seconds,
+                        )
+                        duplicate_is_stale = bool(duplicate_stale_observability.get("blocking_stale_is_stale"))
+                        duplicate_stale_observability["blocking_treated_as_stale"] = duplicate_is_stale
+
+            if duplicate_is_stale and duplicate_active_record is not None:
                 self._emit_structured_service_log(
                     payload={
                         "event": "downgrade_to_stale_active_deploy_blocker",
@@ -2517,6 +2722,7 @@ class SEOMigrationService:
                         "blocking_workflow_run_id": duplicate_workflow_run_id,
                         "blocking_workflow_run_status": duplicate_workflow_run_status,
                         "blocking_workflow_run_conclusion": duplicate_workflow_run_conclusion,
+                        "blocking_workflow_run_url": duplicate_workflow_run_url,
                         "blocking_deploy_trace_id": duplicate_deploy_trace_id,
                         "blocking_timestamp": _normalize_string(
                             duplicate_active_record.get("timestamp"),
@@ -2530,7 +2736,14 @@ class SEOMigrationService:
                             duplicate_active_record.get("refreshed_at"),
                             max_length=64,
                         ),
+                        "blocking_reconciliation_attempted": duplicate_reconciliation_attempted,
+                        "blocking_reconciliation_result": duplicate_reconciliation_result,
+                        "blocking_reconciliation_reason_code": duplicate_reconciliation_reason_code,
+                        "blocking_reconciliation_prior_state": duplicate_reconciliation_prior_state,
+                        "blocking_reconciliation_refreshed_state": duplicate_reconciliation_refreshed_state,
+                        "blocking_reconciliation_threshold_seconds": duplicate_reconciliation_threshold_seconds,
                         **duplicate_stale_observability,
+                        **duplicate_reconciliation_observability,
                     },
                     failure_category="duplicate_request",
                     failure_reason=failure_message,
@@ -2579,18 +2792,204 @@ class SEOMigrationService:
                 fallback_message="downgrade_to_stale_active_deploy_blocker",
                 level=logging.INFO,
             )
-            self._reconcile_stale_duplicate_deploy_history_item(
+            stale_blocker_reconciliation = self._refresh_duplicate_deploy_blocker_from_github(
                 workspace=workspace,
                 site=site,
                 history_item=stale_active_dispatch_record,
                 principal_id=principal_id,
-                failure_reason_code=_DEPLOY_RUN_FAILURE_REASON_RECONCILIATION_TIMEOUT,
-                event_name="stale_duplicate_blocker_reconciled",
-                business_id=business_id,
-                site_id=site_id,
-                artifact_version_id=artifact.id,
-                artifact_version=artifact.version,
             )
+            stale_reconciliation_result = _normalize_string(
+                stale_blocker_reconciliation.get("reconciliation_result"),
+                max_length=80,
+            ) or "refresh_failed"
+            stale_reconciliation_reason_code = _normalize_string(
+                stale_blocker_reconciliation.get("reason_code"),
+                max_length=80,
+            )
+            if stale_reconciliation_result == "refresh_failed":
+                stale_reconciliation_result = "stale_requires_manual_refresh"
+                stale_reconciliation_reason_code = _DEPLOY_TARGET_REASON_STALE_DEPLOY_BLOCKER_REQUIRES_REFRESH
+            stale_reconciliation_prior_state = _normalize_string(
+                stale_blocker_reconciliation.get("prior_state"),
+                max_length=80,
+            )
+            stale_reconciliation_refreshed_state = _normalize_string(
+                stale_blocker_reconciliation.get("refreshed_state"),
+                max_length=80,
+            )
+            stale_reconciliation_history_item = _normalize_json_dict(
+                stale_blocker_reconciliation.get("history_item")
+            ) or stale_active_dispatch_record
+            stale_reconciliation_workflow_run_id = _coerce_int(
+                stale_blocker_reconciliation.get("workflow_run_id")
+            )
+            stale_reconciliation_workflow_run_status = _normalize_string(
+                stale_blocker_reconciliation.get("workflow_run_status"),
+                max_length=40,
+            )
+            stale_reconciliation_workflow_run_conclusion = _normalize_string(
+                stale_blocker_reconciliation.get("workflow_run_conclusion"),
+                max_length=40,
+            )
+            stale_reconciliation_workflow_run_url = _normalize_string(
+                stale_blocker_reconciliation.get("workflow_run_url"),
+                max_length=300,
+            ) or _build_workflow_run_url(
+                repo_owner=stale_reconciliation_history_item.get("repo_owner"),
+                repo_name=stale_reconciliation_history_item.get("repo_name"),
+                workflow_run_id=stale_reconciliation_workflow_run_id,
+            )
+            self._emit_structured_service_log(
+                payload={
+                    "event": "seo_migration_deploy_duplicate_blocker_reconciliation",
+                    "business_id": business_id,
+                    "site_id": site_id,
+                    "workspace_id": workspace.id,
+                    "artifact_version_id": artifact.id,
+                    "target_environment_key": _normalize_string(
+                        deploy_target.get("target_environment_key"),
+                        max_length=80,
+                    ),
+                    "blocking_deploy_trace_id": _normalize_string(
+                        stale_active_dispatch_record.get("deploy_trace_id"),
+                        max_length=80,
+                    ),
+                    "blocking_dispatched_at": _normalize_string(
+                        stale_active_dispatch_record.get("dispatched_at"),
+                        max_length=64,
+                    ),
+                    "prior_state": stale_reconciliation_prior_state,
+                    "refreshed_state": stale_reconciliation_refreshed_state,
+                    "reconciliation_result": stale_reconciliation_result,
+                    "reason_code": stale_reconciliation_reason_code,
+                },
+                fallback_message="seo_migration_deploy_duplicate_blocker_reconciliation",
+                level=(
+                    logging.INFO
+                    if stale_reconciliation_result in {"active", "terminal_cleared"}
+                    else logging.WARNING
+                ),
+            )
+            if stale_reconciliation_result == "terminal_cleared":
+                stale_active_dispatch_record = None
+            elif stale_reconciliation_result == "active":
+                stale_failure_message = _build_active_duplicate_deploy_message(
+                    post_dispatch_state=stale_reconciliation_refreshed_state,
+                    dispatch_result_stage=_normalize_deploy_failure_stage(
+                        stale_reconciliation_history_item.get("dispatch_result_stage")
+                    ),
+                )
+                self._log_control_plane_action(
+                    action="deploy",
+                    status="failed",
+                    business_id=business_id,
+                    site_id=site_id,
+                    workspace_id=workspace.id,
+                    artifact_version_id=artifact.id,
+                    artifact_version=artifact.version,
+                    principal_id=principal_id,
+                    dry_run=dry_run,
+                    target_summary={
+                        **deploy_target,
+                        "inputs": _normalize_history_inputs(deploy_inputs),
+                        "resolved_workflow_source": workflow_resolution.get("source"),
+                        "workflow_identifier": workflow_identifier,
+                        "deploy_trace_id": deploy_trace_id,
+                        "blocking_post_dispatch_state": stale_reconciliation_refreshed_state,
+                        "blocking_dispatch_result_stage": _normalize_deploy_failure_stage(
+                            stale_reconciliation_history_item.get("dispatch_result_stage")
+                        ),
+                        "blocking_workflow_run_id": stale_reconciliation_workflow_run_id,
+                        "blocking_workflow_run_status": stale_reconciliation_workflow_run_status,
+                        "blocking_workflow_run_conclusion": stale_reconciliation_workflow_run_conclusion,
+                        "blocking_workflow_run_url": stale_reconciliation_workflow_run_url,
+                        "blocking_deploy_trace_id": _normalize_string(
+                            stale_reconciliation_history_item.get("deploy_trace_id"),
+                            max_length=80,
+                        ),
+                        "blocking_timestamp": _normalize_string(
+                            stale_reconciliation_history_item.get("timestamp"),
+                            max_length=64,
+                        ),
+                        "blocking_dispatched_at": _normalize_string(
+                            stale_reconciliation_history_item.get("dispatched_at"),
+                            max_length=64,
+                        ),
+                        "blocking_refreshed_at": _normalize_string(
+                            stale_reconciliation_history_item.get("refreshed_at"),
+                            max_length=64,
+                        ),
+                        "blocking_reconciliation_attempted": True,
+                        "blocking_reconciliation_result": stale_reconciliation_result,
+                        "blocking_reconciliation_reason_code": stale_reconciliation_reason_code,
+                        "blocking_reconciliation_prior_state": stale_reconciliation_prior_state,
+                        "blocking_reconciliation_refreshed_state": stale_reconciliation_refreshed_state,
+                        **stale_active_observability,
+                    },
+                    failure_category="duplicate_request",
+                    failure_reason=stale_failure_message,
+                    duration_ms=self._duration_ms(started_at),
+                    correlation_id=deploy_trace_id,
+                )
+                raise SEOMigrationValidationError(stale_failure_message)
+            else:
+                stale_reason_code = (
+                    stale_reconciliation_reason_code
+                    or _DEPLOY_TARGET_REASON_STALE_DEPLOY_BLOCKER_REQUIRES_REFRESH
+                )
+                stale_failure_message = (
+                    "Previous deploy appears stale; refresh deploy status and retry deploy."
+                )
+                self._log_control_plane_action(
+                    action="deploy",
+                    status="failed",
+                    business_id=business_id,
+                    site_id=site_id,
+                    workspace_id=workspace.id,
+                    artifact_version_id=artifact.id,
+                    artifact_version=artifact.version,
+                    principal_id=principal_id,
+                    dry_run=dry_run,
+                    target_summary={
+                        **deploy_target,
+                        "inputs": _normalize_history_inputs(deploy_inputs),
+                        "resolved_workflow_source": workflow_resolution.get("source"),
+                        "workflow_identifier": workflow_identifier,
+                        "deploy_trace_id": deploy_trace_id,
+                        "blocking_post_dispatch_state": stale_reconciliation_refreshed_state,
+                        "blocking_workflow_run_id": stale_reconciliation_workflow_run_id,
+                        "blocking_workflow_run_status": stale_reconciliation_workflow_run_status,
+                        "blocking_workflow_run_conclusion": stale_reconciliation_workflow_run_conclusion,
+                        "blocking_workflow_run_url": stale_reconciliation_workflow_run_url,
+                        "blocking_deploy_trace_id": _normalize_string(
+                            stale_reconciliation_history_item.get("deploy_trace_id"),
+                            max_length=80,
+                        ),
+                        "blocking_dispatched_at": _normalize_string(
+                            stale_reconciliation_history_item.get("dispatched_at"),
+                            max_length=64,
+                        ),
+                        "blocking_refreshed_at": _normalize_string(
+                            stale_reconciliation_history_item.get("refreshed_at"),
+                            max_length=64,
+                        ),
+                        "blocking_reconciliation_attempted": True,
+                        "blocking_reconciliation_result": stale_reconciliation_result,
+                        "blocking_reconciliation_reason_code": stale_reason_code,
+                        "blocking_reconciliation_prior_state": stale_reconciliation_prior_state,
+                        "blocking_reconciliation_refreshed_state": stale_reconciliation_refreshed_state,
+                        **stale_active_observability,
+                    },
+                    failure_category="deploy_error",
+                    failure_reason=stale_reason_code,
+                    duration_ms=self._duration_ms(started_at),
+                    correlation_id=deploy_trace_id,
+                )
+                raise SEOMigrationValidationError(
+                    stale_failure_message,
+                    failure_category="deploy_error",
+                    failure_reason=stale_reason_code,
+                )
         if stale_unverified_dispatch_record is not None:
             stale_reference_field, stale_reference_at = _resolve_deploy_history_activity_reference(
                 item=stale_unverified_dispatch_record
@@ -4264,6 +4663,306 @@ class SEOMigrationService:
             result=history_payload,
         )
 
+    def _refresh_duplicate_deploy_blocker_from_github(
+        self,
+        *,
+        workspace: SEOMigrationWorkspace,
+        site: Site,
+        history_item: dict[str, object],
+        principal_id: str | None,
+    ) -> dict[str, object]:
+        normalized_history = _normalize_history_list(workspace.deploy_history_json)
+        history_index = _find_duplicate_deploy_history_item_index(
+            history=normalized_history,
+            item=history_item,
+        )
+        if history_index is None:
+            prior_state = _normalize_string(history_item.get("post_dispatch_state"), max_length=80) or _derive_post_dispatch_state(
+                dispatch_attempted=history_item.get("dispatch_attempted"),
+                dispatch_result_stage=history_item.get("dispatch_result_stage"),
+                workflow_run_id=history_item.get("workflow_run_id"),
+                workflow_run_status=history_item.get("workflow_run_status"),
+                workflow_run_conclusion=history_item.get("workflow_run_conclusion"),
+                resolved_live_url=history_item.get("resolved_live_url"),
+                workflow_run_lookup_attempted=history_item.get("workflow_run_lookup_attempted"),
+                workflow_run_found=history_item.get("workflow_run_found"),
+            )
+            return {
+                "reconciliation_result": "refresh_failed",
+                "reason_code": _DEPLOY_TARGET_REASON_DEPLOY_BLOCKER_RECONCILIATION_FAILED,
+                "prior_state": prior_state,
+                "refreshed_state": prior_state,
+                "blocking_refreshed_at": _normalize_string(history_item.get("refreshed_at"), max_length=64),
+                "workflow_run_id": _coerce_int(history_item.get("workflow_run_id")),
+                "workflow_run_status": _normalize_string(history_item.get("workflow_run_status"), max_length=40),
+                "workflow_run_conclusion": _normalize_string(history_item.get("workflow_run_conclusion"), max_length=40),
+                "workflow_run_url": _build_workflow_run_url(
+                    repo_owner=history_item.get("repo_owner"),
+                    repo_name=history_item.get("repo_name"),
+                    workflow_run_id=history_item.get("workflow_run_id"),
+                ),
+                "history_item": history_item,
+            }
+
+        next_item = _normalize_json_dict(normalized_history[history_index])
+        dispatch_attempted = (
+            bool(next_item.get("dispatch_attempted"))
+            if isinstance(next_item.get("dispatch_attempted"), bool)
+            else _coerce_bool(next_item.get("dispatch_attempted"), default=False)
+        )
+        dispatch_result_stage = _normalize_string(next_item.get("dispatch_result_stage"), max_length=40)
+        workflow_run_lookup_attempted = (
+            bool(next_item.get("workflow_run_lookup_attempted"))
+            if isinstance(next_item.get("workflow_run_lookup_attempted"), bool)
+            else None
+        )
+        workflow_run_found = (
+            bool(next_item.get("workflow_run_found"))
+            if isinstance(next_item.get("workflow_run_found"), bool)
+            else None
+        )
+        prior_state = _normalize_string(next_item.get("post_dispatch_state"), max_length=80) or _derive_post_dispatch_state(
+            dispatch_attempted=dispatch_attempted,
+            dispatch_result_stage=dispatch_result_stage,
+            workflow_run_id=next_item.get("workflow_run_id"),
+            workflow_run_status=next_item.get("workflow_run_status"),
+            workflow_run_conclusion=next_item.get("workflow_run_conclusion"),
+            resolved_live_url=next_item.get("resolved_live_url"),
+            workflow_run_lookup_attempted=workflow_run_lookup_attempted,
+            workflow_run_found=workflow_run_found,
+        )
+        deploy_target = _build_deploy_target_from_history_item(item=next_item)
+        if deploy_target is None:
+            return {
+                "reconciliation_result": "refresh_failed",
+                "reason_code": _DEPLOY_TARGET_REASON_DEPLOY_BLOCKER_RECONCILIATION_FAILED,
+                "prior_state": prior_state,
+                "refreshed_state": prior_state,
+                "blocking_refreshed_at": _normalize_string(next_item.get("refreshed_at"), max_length=64),
+                "workflow_run_id": _coerce_int(next_item.get("workflow_run_id")),
+                "workflow_run_status": _normalize_string(next_item.get("workflow_run_status"), max_length=40),
+                "workflow_run_conclusion": _normalize_string(next_item.get("workflow_run_conclusion"), max_length=40),
+                "workflow_run_url": _build_workflow_run_url(
+                    repo_owner=next_item.get("repo_owner"),
+                    repo_name=next_item.get("repo_name"),
+                    workflow_run_id=next_item.get("workflow_run_id"),
+                ),
+                "history_item": next_item,
+            }
+
+        dispatched_at = _normalize_string(next_item.get("dispatched_at"), max_length=64)
+        workflow_run_id = _coerce_int(next_item.get("workflow_run_id"))
+        resolved_live_url = _normalize_url_candidate(next_item.get("resolved_live_url"))
+        refresh_result = None
+        refreshed_at = utc_now().isoformat()
+        try:
+            if workflow_run_id is None:
+                workflow_run_lookup_attempted = True
+                lookup_result = self.github_publisher.lookup_deploy_run_status_after_dispatch(
+                    target=deploy_target,
+                    dispatched_at=dispatched_at,
+                )
+                if lookup_result is not None:
+                    refresh_result = lookup_result
+                    workflow_run_id = _coerce_int(lookup_result.workflow_run_id)
+                    workflow_run_found = workflow_run_id is not None
+                else:
+                    workflow_run_found = False
+            if refresh_result is None and workflow_run_id is not None:
+                refresh_result = self.github_publisher.refresh_deploy_run_status(
+                    target=deploy_target,
+                    workflow_run_id=workflow_run_id,
+                    dispatched_at=dispatched_at,
+                )
+                workflow_run_lookup_attempted = True
+                workflow_run_found = _coerce_int(refresh_result.workflow_run_id) is not None
+        except SEOMigrationGitHubPublisherError as exc:
+            return {
+                "reconciliation_result": "refresh_failed",
+                "reason_code": _DEPLOY_TARGET_REASON_DEPLOY_BLOCKER_RECONCILIATION_FAILED,
+                "prior_state": prior_state,
+                "refreshed_state": prior_state,
+                "blocking_refreshed_at": _normalize_string(next_item.get("refreshed_at"), max_length=64),
+                "workflow_run_id": _coerce_int(next_item.get("workflow_run_id")),
+                "workflow_run_status": _normalize_string(next_item.get("workflow_run_status"), max_length=40),
+                "workflow_run_conclusion": _normalize_string(next_item.get("workflow_run_conclusion"), max_length=40),
+                "workflow_run_url": _build_workflow_run_url(
+                    repo_owner=next_item.get("repo_owner"),
+                    repo_name=next_item.get("repo_name"),
+                    workflow_run_id=next_item.get("workflow_run_id"),
+                ),
+                "refresh_failure_reason_code": _normalize_deploy_failure_reason_code(exc.code),
+                "refresh_failure_stage": _normalize_deploy_failure_stage(exc.stage),
+                "refresh_failure_message": exc.safe_message,
+                "history_item": next_item,
+            }
+
+        updated = False
+        workflow_run_failure_reason_code = _normalize_workflow_run_failure_reason_code(
+            next_item.get("workflow_run_failure_reason_code")
+        )
+        workflow_run_failure_stage = _normalize_workflow_run_failure_stage(
+            next_item.get("workflow_run_failure_stage")
+        )
+        workflow_run_failure_step = _normalize_string(next_item.get("workflow_run_failure_step"), max_length=200)
+        workflow_job_failure_detected = (
+            bool(next_item.get("workflow_job_failure_detected"))
+            if isinstance(next_item.get("workflow_job_failure_detected"), bool)
+            else None
+        )
+        refreshed_state = prior_state
+
+        if refresh_result is None:
+            workflow_run_lookup_attempted = True
+            workflow_run_found = False
+            refreshed_state = _derive_post_dispatch_state(
+                dispatch_attempted=dispatch_attempted,
+                dispatch_result_stage=dispatch_result_stage,
+                workflow_run_id=None,
+                workflow_run_status=None,
+                workflow_run_conclusion=None,
+                resolved_live_url=resolved_live_url,
+                workflow_run_lookup_attempted=workflow_run_lookup_attempted,
+                workflow_run_found=workflow_run_found,
+            )
+            updates: dict[str, object] = {
+                "workflow_run_lookup_attempted": workflow_run_lookup_attempted,
+                "workflow_run_found": workflow_run_found,
+                "dispatch_verification_state": _derive_dispatch_verification_state(
+                    dispatch_attempted=dispatch_attempted,
+                    workflow_run_id=None,
+                    workflow_run_lookup_attempted=workflow_run_lookup_attempted,
+                    workflow_run_found=workflow_run_found,
+                ),
+                "post_dispatch_state": refreshed_state,
+                "refreshed_at": refreshed_at,
+            }
+        else:
+            refreshed_at = _normalize_string(refresh_result.refreshed_at, max_length=64) or refreshed_at
+            workflow_run_lookup_attempted = True
+            workflow_run_found = _coerce_int(refresh_result.workflow_run_id) is not None
+            workflow_job_failure_detected = _derive_workflow_job_failure_detected(
+                workflow_run_status=refresh_result.workflow_run_status,
+                workflow_run_conclusion=refresh_result.workflow_run_conclusion,
+            )
+            workflow_run_failure_reason_code = _normalize_workflow_run_failure_reason_code(
+                refresh_result.workflow_run_failure_reason_code
+            )
+            workflow_run_failure_stage = _normalize_workflow_run_failure_stage(
+                refresh_result.workflow_run_failure_stage
+            )
+            workflow_run_failure_step = _normalize_string(
+                refresh_result.workflow_run_failure_step,
+                max_length=200,
+            )
+            if workflow_job_failure_detected and workflow_run_failure_reason_code is None:
+                workflow_run_failure_reason_code = _DEPLOY_RUN_FAILURE_REASON_GENERIC
+            if workflow_job_failure_detected and workflow_run_failure_stage is None:
+                workflow_run_failure_stage = _DEPLOY_RUN_FAILURE_STAGE_WORKFLOW_EXECUTION
+            refreshed_state = _derive_post_dispatch_state(
+                dispatch_attempted=dispatch_attempted,
+                dispatch_result_stage=dispatch_result_stage,
+                workflow_run_id=refresh_result.workflow_run_id,
+                workflow_run_status=refresh_result.workflow_run_status,
+                workflow_run_conclusion=refresh_result.workflow_run_conclusion,
+                resolved_live_url=resolved_live_url,
+                workflow_run_lookup_attempted=workflow_run_lookup_attempted,
+                workflow_run_found=workflow_run_found,
+            )
+            updates = {
+                "workflow_run_id": refresh_result.workflow_run_id,
+                "workflow_run_status": _normalize_string(refresh_result.workflow_run_status, max_length=40),
+                "workflow_run_conclusion": _normalize_string(refresh_result.workflow_run_conclusion, max_length=40),
+                "workflow_run_lookup_attempted": workflow_run_lookup_attempted,
+                "workflow_run_found": workflow_run_found,
+                "dispatch_verification_state": _derive_dispatch_verification_state(
+                    dispatch_attempted=dispatch_attempted,
+                    workflow_run_id=refresh_result.workflow_run_id,
+                    workflow_run_lookup_attempted=workflow_run_lookup_attempted,
+                    workflow_run_found=workflow_run_found,
+                ),
+                "workflow_job_failure_detected": workflow_job_failure_detected,
+                "workflow_run_failure_reason_code": workflow_run_failure_reason_code,
+                "workflow_run_failure_stage": workflow_run_failure_stage,
+                "workflow_run_failure_step": workflow_run_failure_step,
+                "workflow_run_failure_hint": _derive_workflow_run_failure_hint(
+                    failure_reason=workflow_run_failure_reason_code,
+                    post_dispatch_state=refreshed_state,
+                ),
+                "post_dispatch_state": refreshed_state,
+                "refreshed_at": refreshed_at,
+            }
+
+        (
+            deploy_evidence_contract_status,
+            deploy_evidence_contract_reasons,
+            workflow_contract_advisory,
+        ) = _derive_deploy_evidence_contract(
+            workflow_conformance_status=next_item.get("workflow_conformance_status"),
+            post_dispatch_state=refreshed_state,
+            resolved_live_url=resolved_live_url,
+            url_source=next_item.get("url_source"),
+        )
+        updates["deploy_evidence_contract_status"] = deploy_evidence_contract_status
+        updates["deploy_evidence_contract_reasons"] = list(deploy_evidence_contract_reasons)
+        updates["workflow_contract_advisory"] = workflow_contract_advisory
+        post_conformance_stage = _derive_post_conformance_stage(
+            workflow_conformance_status=next_item.get("workflow_conformance_status"),
+            dispatch_attempted=dispatch_attempted,
+            dispatch_result_stage=dispatch_result_stage,
+            failure_stage=next_item.get("failure_stage"),
+            post_dispatch_state=refreshed_state,
+            workflow_run_lookup_attempted=workflow_run_lookup_attempted,
+            workflow_run_failure_stage=workflow_run_failure_stage,
+            deploy_evidence_contract_status=deploy_evidence_contract_status,
+        )
+        updates["post_conformance_stage"] = post_conformance_stage
+        updates["post_conformance_reason_text"] = _derive_post_conformance_reason_text(
+            post_conformance_stage=post_conformance_stage,
+            workflow_run_failure_reason_code=workflow_run_failure_reason_code,
+            workflow_run_failure_stage=workflow_run_failure_stage,
+            post_dispatch_state=refreshed_state,
+        )
+        updates["post_conformance_remediation_message"] = _derive_post_conformance_remediation_message(
+            post_conformance_stage=post_conformance_stage
+        )
+
+        for field_name, field_value in updates.items():
+            if next_item.get(field_name) != field_value:
+                next_item[field_name] = field_value
+                updated = True
+        if updated:
+            normalized_history[history_index] = _normalize_json_dict(next_item)
+            workspace.deploy_history_json = normalized_history
+            workspace.updated_by_principal_id = principal_id
+            self._update_workspace_readiness_statuses(workspace=workspace, site=site)
+            self.seo_migration_repository.save_workspace(workspace)
+            self.session.commit()
+            self.session.refresh(workspace)
+            next_item = _normalize_json_dict(workspace.deploy_history_json[history_index])
+
+        refreshed_state = _normalize_string(next_item.get("post_dispatch_state"), max_length=80) or refreshed_state
+        terminal = _is_post_dispatch_state_terminal(post_dispatch_state=refreshed_state)
+        reason_code = "duplicate_request"
+        if terminal:
+            reason_code = workflow_run_failure_reason_code or "workflow_run_terminal_state_observed"
+        return {
+            "reconciliation_result": "terminal_cleared" if terminal else "active",
+            "reason_code": reason_code,
+            "prior_state": prior_state,
+            "refreshed_state": refreshed_state,
+            "blocking_refreshed_at": _normalize_string(next_item.get("refreshed_at"), max_length=64),
+            "workflow_run_id": _coerce_int(next_item.get("workflow_run_id")),
+            "workflow_run_status": _normalize_string(next_item.get("workflow_run_status"), max_length=40),
+            "workflow_run_conclusion": _normalize_string(next_item.get("workflow_run_conclusion"), max_length=40),
+            "workflow_run_url": _build_workflow_run_url(
+                repo_owner=next_item.get("repo_owner"),
+                repo_name=next_item.get("repo_name"),
+                workflow_run_id=next_item.get("workflow_run_id"),
+            ),
+            "history_item": next_item,
+        }
+
     def _reconcile_stale_duplicate_deploy_history_item(
         self,
         *,
@@ -5324,6 +6023,8 @@ class SEOMigrationService:
         ingress_conflict_reasons = {
             _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_STATIC_IP_CONFLICT,
             _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_STATIC_IP_NOT_ALLOWED,
+            _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_MISSING,
+            _DEPLOY_DISPATCH_SERVICE_REASON_EXPECTED_STATIC_IP_NOT_BOUND_TO_INGRESS,
             _DEPLOY_DISPATCH_SERVICE_REASON_STALE_PRE_SHARED_CERT_BINDING,
         }
         if not isinstance(next_item.get("dns_record_matches_ingress"), bool):
@@ -12519,6 +13220,8 @@ class SEOMigrationService:
         ingress_conflict_reasons = {
             _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_STATIC_IP_CONFLICT,
             _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_STATIC_IP_NOT_ALLOWED,
+            _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_MISSING,
+            _DEPLOY_DISPATCH_SERVICE_REASON_EXPECTED_STATIC_IP_NOT_BOUND_TO_INGRESS,
             _DEPLOY_DISPATCH_SERVICE_REASON_STALE_PRE_SHARED_CERT_BINDING,
         }
         if dns_record_matches_ingress is None:
@@ -13279,6 +13982,8 @@ def _normalize_deploy_failure_reason_code(value: object) -> str | None:
         _DEPLOY_TARGET_REASON_TOKEN_UNAUTHORIZED,
         _DEPLOY_TARGET_REASON_WORKFLOW_NOT_DISPATCHABLE,
         _DEPLOY_TARGET_REASON_WORKFLOW_NOT_PRODUCTION_READY,
+        _DEPLOY_TARGET_REASON_DEPLOY_BLOCKER_RECONCILIATION_FAILED,
+        _DEPLOY_TARGET_REASON_STALE_DEPLOY_BLOCKER_REQUIRES_REFRESH,
         "github_target_not_found",
         "github_request_failed",
         "github_temporal_failure",
@@ -13354,6 +14059,8 @@ def _normalize_workflow_run_failure_reason_code(value: object) -> str | None:
         _DEPLOY_RUN_FAILURE_REASON_INGRESS_BACKEND_UNHEALTHY_AFTER_ROLLOUT,
         _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_STATIC_IP_CONFLICT,
         _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_STATIC_IP_NOT_ALLOWED,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_MISSING,
+        _DEPLOY_DISPATCH_SERVICE_REASON_EXPECTED_STATIC_IP_NOT_BOUND_TO_INGRESS,
         _DEPLOY_DISPATCH_SERVICE_REASON_STALE_PRE_SHARED_CERT_BINDING,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_FAILED_NOT_VISIBLE,
         _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_BOUND_TO_WRONG_SITE,
@@ -13414,6 +14121,8 @@ def _normalize_dispatch_service_reason_code(value: object) -> str | None:
         _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_BOUND_TO_WRONG_SITE,
         _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_STATIC_IP_CONFLICT,
         _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_STATIC_IP_NOT_ALLOWED,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_MISSING,
+        _DEPLOY_DISPATCH_SERVICE_REASON_EXPECTED_STATIC_IP_NOT_BOUND_TO_INGRESS,
         _DEPLOY_DISPATCH_SERVICE_REASON_STALE_PRE_SHARED_CERT_BINDING,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_FAILED_NOT_VISIBLE,
         _DEPLOY_DISPATCH_SERVICE_REASON_DEPLOYED_CONTENT_IDENTITY_MISMATCH,
@@ -13932,6 +14641,8 @@ def _derive_dispatch_service_reason_code(
         _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_BOUND_TO_WRONG_SITE,
         _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_STATIC_IP_CONFLICT,
         _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_STATIC_IP_NOT_ALLOWED,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_MISSING,
+        _DEPLOY_DISPATCH_SERVICE_REASON_EXPECTED_STATIC_IP_NOT_BOUND_TO_INGRESS,
         _DEPLOY_DISPATCH_SERVICE_REASON_STALE_PRE_SHARED_CERT_BINDING,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_FAILED_NOT_VISIBLE,
         _DEPLOY_DISPATCH_SERVICE_REASON_DEPLOYED_CONTENT_IDENTITY_MISMATCH,
@@ -14023,8 +14734,18 @@ def _derive_managed_gke_dispatch_readiness_message(*, dispatch_service_reason_co
         _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_STATIC_IP_NOT_ALLOWED,
     }:
         return (
-            "Per-site managed ingress cannot safely reuse a shared global static IP. "
-            "Republish managed ingress without shared static IP binding and redeploy."
+            "Ingress static IP annotation does not match this site's deterministic per-site static IP name. "
+            "Republish managed ingress resources with the expected per-site static IP binding."
+        )
+    if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_MISSING:
+        return (
+            "Expected per-site global static IP does not exist in GCP. "
+            "Admin must create/reserve the deterministic site static IP before deploy."
+        )
+    if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_EXPECTED_STATIC_IP_NOT_BOUND_TO_INGRESS:
+        return (
+            "Ingress is missing the expected per-site static IP annotation binding. "
+            "Republish managed ingress resources so the deterministic static IP name is bound."
         )
     if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_STALE_PRE_SHARED_CERT_BINDING:
         return (
@@ -14140,8 +14861,18 @@ def _derive_deploy_failure_remediation_hint(
         _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_STATIC_IP_NOT_ALLOWED,
     }:
         return (
-            "Per-site ingress is configured with a shared static IP binding that can conflict across sites. "
-            "Republish managed ingress resources without shared static IP reuse."
+            "Ingress static IP annotation does not match this site's deterministic per-site static IP name. "
+            "Republish managed ingress resources so the expected per-site static IP is bound."
+        )
+    if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_MISSING:
+        return (
+            "Expected per-site global static IP is missing in GCP. "
+            "Create/reserve the deterministic site static IP and retry deploy."
+        )
+    if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_EXPECTED_STATIC_IP_NOT_BOUND_TO_INGRESS:
+        return (
+            "Ingress is missing the expected per-site static IP annotation binding. "
+            "Republish managed ingress manifests and redeploy."
         )
     if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_STALE_PRE_SHARED_CERT_BINDING:
         return (
@@ -14187,6 +14918,16 @@ def _derive_deploy_failure_remediation_hint(
         return "Selected workflow file could not be found in the target repository/ref."
     if normalized_reason == _DEPLOY_TARGET_REASON_DISPATCH_UNSUPPORTED:
         return "Selected workflow does not support workflow_dispatch for this target."
+    if normalized_reason == _DEPLOY_TARGET_REASON_DEPLOY_BLOCKER_RECONCILIATION_FAILED:
+        return (
+            "Previous deploy may still be active, but blocker reconciliation with GitHub failed. "
+            "Refresh deploy status and retry after run state is confirmed."
+        )
+    if normalized_reason == _DEPLOY_TARGET_REASON_STALE_DEPLOY_BLOCKER_REQUIRES_REFRESH:
+        return (
+            "Previous deploy blocker appears stale and could not be safely reconciled automatically. "
+            "Run deploy status refresh, confirm terminal state, then retry deploy."
+        )
     if (
         normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_TARGET_CONFIG_INVALID
         and normalized_stage == "workflow_lookup"
@@ -14313,8 +15054,18 @@ def _derive_workflow_run_failure_hint(
         _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_STATIC_IP_NOT_ALLOWED,
     }:
         return (
-            "Per-site managed ingress cannot safely reuse one shared static IP. "
-            "Republish managed ingress without shared static IP binding and redeploy."
+            "Ingress static IP annotation does not match this site's deterministic per-site static IP name. "
+            "Republish managed ingress with the expected static IP binding and redeploy."
+        )
+    if normalized_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_MISSING:
+        return (
+            "Expected per-site global static IP was not found in GCP. "
+            "Create/reserve the deterministic static IP and retry deploy."
+        )
+    if normalized_reason == _DEPLOY_DISPATCH_SERVICE_REASON_EXPECTED_STATIC_IP_NOT_BOUND_TO_INGRESS:
+        return (
+            "Ingress is missing the expected per-site static IP annotation binding. "
+            "Republish managed ingress resources and retry deploy."
         )
     if normalized_reason == _DEPLOY_DISPATCH_SERVICE_REASON_STALE_PRE_SHARED_CERT_BINDING:
         return (
@@ -15276,6 +16027,59 @@ def _derive_managed_site_rollout_state(
         "managed_site_rollout_published_after_last_deploy": published_after_last_deploy,
         "managed_site_rollout_fix_active": rollout_state == _MANAGED_SITE_ROLLOUT_STATE_DEPLOY_RUNNING_EXPECTED,
     }
+
+
+def _is_post_dispatch_state_terminal(*, post_dispatch_state: object) -> bool:
+    normalized_state = _normalize_string(post_dispatch_state, max_length=80)
+    if not normalized_state:
+        return False
+    if normalized_state.startswith("dispatch_blocked_"):
+        return True
+    return normalized_state in {
+        "dispatch_not_attempted",
+        "workflow_run_failed",
+        "workflow_run_completed",
+        "workflow_run_succeeded_without_live_url",
+        "workflow_run_succeeded_with_live_url",
+    }
+
+
+def _build_workflow_run_url(*, repo_owner: object, repo_name: object, workflow_run_id: object) -> str | None:
+    owner = _normalize_string(repo_owner, max_length=80)
+    name = _normalize_string(repo_name, max_length=120)
+    run_id = _coerce_int(workflow_run_id)
+    if owner is None or name is None or run_id is None or run_id <= 0:
+        return None
+    return f"https://github.com/{owner}/{name}/actions/runs/{run_id}"
+
+
+def _build_deploy_target_from_history_item(*, item: dict[str, object]) -> SEOMigrationGitHubDeployTarget | None:
+    repo_owner = _normalize_string(item.get("repo_owner"), max_length=80)
+    repo_name = _normalize_string(item.get("repo_name"), max_length=120)
+    workflow_id = (
+        _normalize_workflow_path_for_deploy(item.get("actual_dispatch_identifier_sent"))
+        or _normalize_workflow_path_for_deploy(item.get("workflow_identifier_used"))
+        or _normalize_workflow_path_for_deploy(item.get("workflow_id"))
+        or _normalize_workflow_id_for_deploy(item.get("actual_dispatch_identifier_sent"))
+        or _normalize_workflow_id_for_deploy(item.get("workflow_identifier_used"))
+        or _normalize_workflow_id_for_deploy(item.get("workflow_id"))
+    )
+    ref = _normalize_string(item.get("ref"), max_length=120)
+    if repo_owner is None or repo_name is None or workflow_id is None or ref is None:
+        return None
+    return SEOMigrationGitHubDeployTarget(
+        repo_owner=repo_owner,
+        repo_name=repo_name,
+        workflow_id=workflow_id,
+        ref=ref,
+        inputs=_normalize_history_inputs(item.get("inputs")),
+    )
+
+
+def _derive_duplicate_blocker_reconciliation_threshold_seconds(*, item: dict[str, object]) -> int:
+    if _is_unverified_dispatch_history_entry(item=item):
+        return _DUPLICATE_DEPLOY_UNVERIFIED_DISPATCH_STALE_SECONDS
+    return _DUPLICATE_DEPLOY_ACTIVE_BLOCKER_RECONCILIATION_SECONDS
 
 
 def _build_active_duplicate_deploy_message(

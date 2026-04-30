@@ -26,6 +26,7 @@ from app.integrations.seo_migration_github_publisher import (
     derive_site_kubernetes_namespace,
     derive_site_preview_certificate_name,
     derive_site_preview_hostname,
+    derive_site_preview_static_ip_name,
 )
 
 
@@ -1464,6 +1465,15 @@ def test_derive_site_preview_certificate_name_is_site_scoped_and_dns1123_safe() 
     assert len(certificate_name) <= 63
     assert certificate_name.lower() == certificate_name
     assert "_" not in certificate_name
+
+
+def test_derive_site_preview_static_ip_name_is_site_scoped_and_dns1123_safe() -> None:
+    static_ip_name, source = derive_site_preview_static_ip_name(repo_name="Sc Mechanical", site_id=None)
+    assert source == "repo_name"
+    assert static_ip_name == "site-web-preview-ip-sc-mechanical"
+    assert len(static_ip_name) <= 63
+    assert static_ip_name.lower() == static_ip_name
+    assert "_" not in static_ip_name
 
 
 def test_derive_site_runtime_image_repository_uses_owner_and_repo_scoped_path() -> None:
@@ -4539,6 +4549,24 @@ def test_classify_cloudsql_proxy_failure_maps_tls_provisioning_reason() -> None:
     assert failure_stage == "ingress_evidence"
 
 
+def test_classify_cloudsql_proxy_failure_maps_managed_site_static_ip_missing_reason() -> None:
+    reason_code, failure_stage = _classify_cloudsql_proxy_failure_from_log_text(
+        "deploy_runtime_reason_code=managed_site_static_ip_missing"
+    )
+
+    assert reason_code == "managed_site_static_ip_missing"
+    assert failure_stage == "ingress_verify"
+
+
+def test_classify_cloudsql_proxy_failure_maps_expected_static_ip_not_bound_reason() -> None:
+    reason_code, failure_stage = _classify_cloudsql_proxy_failure_from_log_text(
+        "deploy_runtime_reason_code=expected_static_ip_not_bound_to_ingress"
+    )
+
+    assert reason_code == "expected_static_ip_not_bound_to_ingress"
+    assert failure_stage == "ingress_evidence"
+
+
 def test_classify_cloudsql_proxy_failure_prefers_in_cluster_probe_timeout_over_generic_curl_failure() -> None:
     reason_code, failure_stage = _classify_cloudsql_proxy_failure_from_log_text(
         "\n".join(
@@ -5602,6 +5630,7 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "K8S_NAMESPACE: tnmfire" in workflow_yaml
     assert "MBSRN_PREVIEW_HOSTNAME: tnmfire.site.mbsrn.com" in workflow_yaml
     assert "MBSRN_PREVIEW_CERTIFICATE_NAME: site-web-preview-cert-tnmfire" in workflow_yaml
+    assert "MBSRN_PREVIEW_STATIC_IP_NAME: site-web-preview-ip-tnmfire" in workflow_yaml
     assert "MBSRN_FRONTEND_CONFIG_NAME: site-web-frontend-config-tnmfire" in workflow_yaml
     assert "MBSRN_BACKEND_CONFIG_NAME: site-web-backend-config-tnmfire" in workflow_yaml
     assert "SITE_WEB_IMAGE_REPOSITORY: ghcr.io/mhanson13/tnmfire-site-web" in workflow_yaml
@@ -5613,6 +5642,12 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     )
     assert "Authenticate to GCP" in workflow_yaml
     assert "Get GKE credentials" in workflow_yaml
+    assert "Verify expected per-site static IP exists" in workflow_yaml
+    assert (
+        "gcloud compute addresses describe \"$MBSRN_PREVIEW_STATIC_IP_NAME\" --global --project \"$GKE_PROJECT_ID\""
+        in workflow_yaml
+    )
+    assert "deploy_runtime_reason_code=managed_site_static_ip_missing" in workflow_yaml
     assert "Ensure namespace exists" in workflow_yaml
     assert "Verify GHCR image pull secret" in workflow_yaml
     assert "kubectl get secret ghcr-pull-secret --namespace \"$K8S_NAMESPACE\"" in workflow_yaml
@@ -5836,6 +5871,7 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "deploy_runtime_reason_code=dns_points_to_old_ingress_ip" in workflow_yaml
     assert "deploy_runtime_reason_code=ingress_ip_assigned_but_dns_not_updated" in workflow_yaml
     assert "deploy_runtime_reason_code=tls_certificate_provisioning" in workflow_yaml
+    assert "deploy_runtime_reason_code=expected_static_ip_not_bound_to_ingress" in workflow_yaml
     assert "deploy_runtime_reason_code=shared_static_ip_not_allowed_for_per_site_ingress" in workflow_yaml
     assert (
         "echo \"Site runtime image: ${{ steps.resolve_site_runtime_image.outputs.site_runtime_image_reference }}\""
@@ -5870,7 +5906,7 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "cloud.google.com/neg: '{\"ingress\": true}'" in service_yaml
     assert "cloud.google.com/backend-config: '{\"default\": \"site-web-backend-config-tnmfire\"}'" in service_yaml
     assert "kubernetes.io/ingress.class: gce" in ingress_yaml
-    assert "kubernetes.io/ingress.global-static-ip-name" not in ingress_yaml
+    assert "kubernetes.io/ingress.global-static-ip-name: site-web-preview-ip-tnmfire" in ingress_yaml
     assert "ingress.gcp.kubernetes.io/pre-shared-cert" not in ingress_yaml
     assert "networking.gke.io/managed-certificates: site-web-preview-cert-tnmfire" in ingress_yaml
     assert "networking.gke.io/managed-certificates: site-web-preview-cert-tnmfire," not in ingress_yaml
@@ -6062,6 +6098,7 @@ def test_render_managed_gke_manifests_for_sc_mechanical_is_site_scoped() -> None
     backend_config_yaml = manifests["k8s/backendconfig.yaml"]
 
     assert "host: sc-mechanical.site.mbsrn.com" in ingress_yaml
+    assert "kubernetes.io/ingress.global-static-ip-name: site-web-preview-ip-sc-mechanical" in ingress_yaml
     assert "networking.gke.io/managed-certificates: site-web-preview-cert-sc-mechanical" in ingress_yaml
     assert "networking.gke.io/v1beta1.FrontendConfig: site-web-frontend-config-sc-mechanical" in ingress_yaml
     assert "name: site-web-preview-cert-sc-mechanical" in managed_certificate_yaml
@@ -7226,6 +7263,128 @@ def test_check_deploy_target_readiness_flags_shared_static_ip_conflict(monkeypat
     assert details.get("ingress_static_ip_conflict") is True
     assert details.get("shared_static_ip_not_allowed_for_per_site_ingress") is True
     assert details.get("preview_certificate_ingress_static_ip_name") == "mbsrn-site-lb-ip"
+
+
+def test_check_deploy_target_readiness_allows_expected_per_site_static_ip_name(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    managed_workflow = _encode_workflow_yaml(
+        (
+            "# mbsrn-managed-template:site_repo_template_v1\n"
+            "name: Managed Deploy\n"
+            "on:\n"
+            "  workflow_dispatch:\n"
+            "jobs:\n"
+            "  deploy:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    env:\n"
+            "      K8S_NAMESPACE: tnmfire\n"
+            "    steps:\n"
+            "      - uses: google-github-actions/auth@v2\n"
+            "      - run: kubectl apply -n \"$K8S_NAMESPACE\" -f k8s/deployment.yaml\n"
+        )
+    )
+    namespace_manifest = _encode_workflow_yaml(
+        (
+            "# mbsrn-managed-manifest:site_repo_template_v1\n"
+            "apiVersion: v1\n"
+            "kind: Namespace\n"
+            "metadata:\n"
+            "  name: tnmfire\n"
+        )
+    )
+    deployment_manifest = _encode_workflow_yaml(
+        (
+            "# mbsrn-managed-manifest:site_repo_template_v1\n"
+            "apiVersion: apps/v1\n"
+            "kind: Deployment\n"
+            "metadata:\n"
+            "  name: site-web\n"
+            "  namespace: tnmfire\n"
+            "spec:\n"
+            "  template:\n"
+            "    spec:\n"
+            "      imagePullSecrets:\n"
+            "        - name: ghcr-pull-secret\n"
+        )
+    )
+    namespaced_manifest = _encode_workflow_yaml(
+        (
+            "# mbsrn-managed-manifest:site_repo_template_v1\n"
+            "apiVersion: v1\n"
+            "kind: Service\n"
+            "metadata:\n"
+            "  name: site-web\n"
+            "  namespace: tnmfire\n"
+        )
+    )
+    ingress_manifest_with_expected_static_ip = _encode_workflow_yaml(
+        (
+            "# mbsrn-managed-manifest:site_repo_template_v1\n"
+            "apiVersion: networking.k8s.io/v1\n"
+            "kind: Ingress\n"
+            "metadata:\n"
+            "  name: site-web\n"
+            "  namespace: tnmfire\n"
+            "  annotations:\n"
+            "    kubernetes.io/ingress.global-static-ip-name: site-web-preview-ip-tnmfire\n"
+            "    networking.gke.io/managed-certificates: site-web-preview-cert-tnmfire\n"
+            "spec:\n"
+            "  rules:\n"
+            "    - host: tnmfire.site.mbsrn.com\n"
+        )
+    )
+    certificate_manifest_expected = _encode_workflow_yaml(
+        (
+            "# mbsrn-managed-manifest:site_repo_template_v1\n"
+            "apiVersion: networking.gke.io/v1\n"
+            "kind: ManagedCertificate\n"
+            "metadata:\n"
+            "  name: site-web-preview-cert-tnmfire\n"
+            "  namespace: tnmfire\n"
+            "spec:\n"
+            "  domains:\n"
+            "    - tnmfire.site.mbsrn.com\n"
+        )
+    )
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _FakeHTTPResponse(status=200, body="{}"),
+            _FakeHTTPResponse(status=200, body="{}"),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "wfsha", "encoding": "base64", "content": managed_workflow}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"state": "active", "path": ".github/workflows/deploy-tnmfire-www-prod.yml"}),
+            ),
+            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-namespace", "encoding": "base64", "content": namespace_manifest})),
+            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-deployment", "encoding": "base64", "content": deployment_manifest})),
+            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-service", "encoding": "base64", "content": namespaced_manifest})),
+            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-ingress", "encoding": "base64", "content": ingress_manifest_with_expected_static_ip})),
+            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-managedcertificate", "encoding": "base64", "content": certificate_manifest_expected})),
+            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-frontendconfig", "encoding": "base64", "content": namespaced_manifest})),
+            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-backendconfig", "encoding": "base64", "content": namespaced_manifest})),
+            *_gke_environment_config_present_responses(),
+        ],
+        calls,
+    )
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    readiness = publisher.check_deploy_target_readiness(
+        target=_dispatch_target(),
+        allow_ref_repair=False,
+        allow_workflow_repair=False,
+        dry_run=False,
+    )
+
+    assert readiness.dispatch_service_availability is True
+    assert readiness.dispatch_service_reason_code == "available"
+    details = readiness.managed_gke_config_details or {}
+    assert details.get("ingress_static_ip_conflict") is False
+    assert details.get("shared_static_ip_not_allowed_for_per_site_ingress") is False
+    assert details.get("preview_certificate_ingress_static_ip_name") == "site-web-preview-ip-tnmfire"
+    assert details.get("preview_certificate_ingress_static_ip_matches_expected") is True
 
 
 def test_check_deploy_target_readiness_allows_single_pre_shared_controller_metadata_mismatch(monkeypatch) -> None:

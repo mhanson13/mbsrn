@@ -373,6 +373,8 @@ Per-site success gate (managed ingress deploys):
 - managed workflow signature drift detection is non-blocking and reported separately through `workflow_integrity_status` (`match`/`mismatch`/`missing`).
 - `managed_certificate_failed_not_visible` should be triaged as DNS/LB visibility mismatch first.
 - per-site ingress isolation blockers:
+  - `managed_site_static_ip_missing`
+  - `expected_static_ip_not_bound_to_ingress`
   - `shared_static_ip_not_allowed_for_per_site_ingress`
   - `stale_pre_shared_cert_binding_detected` (confirmed stale/cross-site cert evidence)
 - advisory cert metadata signal:
@@ -390,7 +392,7 @@ UI-to-log troubleshooting mapping (Deploy consistency block):
   - logs: `seo_migration_target_readiness_check`, ingress-evidence failure records, `dispatch_service_reason_code`
 - `Ingress/static IP conflict check`:
   - UI field: `ingress_conflict_detected`
-  - reason codes: `ingress_static_ip_conflict`, `shared_static_ip_not_allowed_for_per_site_ingress`, `stale_pre_shared_cert_binding_detected`
+  - reason codes: `ingress_static_ip_conflict`, `shared_static_ip_not_allowed_for_per_site_ingress`, `managed_site_static_ip_missing`, `expected_static_ip_not_bound_to_ingress`, `stale_pre_shared_cert_binding_detected`
   - logs: target-readiness and dispatch failure records with matching `dispatch_service_reason_code`
 - `Managed certificate active` / metadata diagnostics:
   - advisory reason code: `pre_shared_cert_metadata_mismatch`
@@ -424,10 +426,16 @@ Key non-secret fields:
   - `target.blocking_workflow_run_id`
   - `target.blocking_workflow_run_status`
   - `target.blocking_workflow_run_conclusion`
+  - `target.blocking_workflow_run_url`
   - `target.blocking_deploy_trace_id`
   - `target.blocking_timestamp`
   - `target.blocking_dispatched_at`
   - `target.blocking_refreshed_at`
+  - `target.blocking_reconciliation_attempted`
+  - `target.blocking_reconciliation_result`
+  - `target.blocking_reconciliation_reason_code`
+  - `target.blocking_reconciliation_prior_state`
+  - `target.blocking_reconciliation_refreshed_state`
 - `workflow_id`, optional `workflow_path`, `ref`, `repo_owner`, `repo_name`
 - `workflow_identifier_requested`, `workflow_identifier_used`
 - `workflow_identifier_type_requested`, `workflow_identifier_type_used`
@@ -771,23 +779,26 @@ Use `post_conformance_reason_text` as the concise operator-safe explanation for 
 Duplicate deploy blocking interpretation:
 - `failure_category=duplicate_request` on deploy means a prior active in-flight deploy attempt for the same artifact+target+inputs was detected.
 - this is intentionally narrow concurrency protection; it is not a blanket "history exists" block.
-- retries are expected to be allowed once prior attempts become terminal/stale.
-- stale no-run evaluation is deterministic and uses this timestamp precedence:
+- stale/activity evaluation is deterministic and uses this timestamp precedence:
   - `refreshed_at` (if present)
   - else `dispatched_at`
   - else `occurred_at`
   - else `timestamp`
-  - run-backed active blockers (`workflow_run_pending`, `workflow_run_in_progress`, `workflow_run_observed`, and active run statuses) use a 30-minute stale window
-  - with a 2-minute stale threshold for unverified dispatch blockers (`dispatch_accepted_no_run` / `dispatch_unverified_no_run`)
+  - run-backed active blockers (`workflow_run_pending`, `workflow_run_in_progress`, `workflow_run_observed`, and active run statuses) use a 30-minute active freshness window
+  - unverified dispatch blockers (`dispatch_accepted_no_run` / `dispatch_unverified_no_run`) use a 2-minute weak-blocker window
+- run-backed blockers that are older than 12 minutes are reconciled against GitHub run status before final duplicate rejection.
+- reconciliation outcomes:
+  - `reconciliation_result=terminal_cleared`: prior run reached terminal state, blocker cleared, retry can proceed
+  - `reconciliation_result=active`: prior run still active, duplicate blocking remains
+  - `reconciliation_result=refresh_failed` with reason `deploy_blocker_reconciliation_failed`: refresh failed while blocker still appears active (fail closed)
+  - `reconciliation_result=stale_requires_manual_refresh` with reason `stale_deploy_blocker_requires_refresh`: refresh failed for a stale blocker; manual status refresh required
 - quick triage:
   - use `target.blocking_post_dispatch_state` and blocker run fields to confirm whether the prior attempt is still active.
   - use `target.blocking_stale_reference_field`, `target.blocking_stale_reference_at`, `target.blocking_stale_age_seconds`, `target.blocking_stale_threshold_seconds`, `target.blocking_stale_evaluated`, `target.blocking_stale_is_stale`, and `target.blocking_treated_as_stale` to validate stale classification.
-  - if blocker state is `dispatch_accepted_no_run` or `dispatch_unverified_no_run`, run **Refresh Deploy Status** and retry after status transitions to terminal/stale.
-  - if blocker state is run-backed (`workflow_run_pending` / `workflow_run_in_progress` / `workflow_run_observed`) and stale fields show old activity with no recent refresh evidence, retry is expected to become available.
-  - stale duplicate blockers are reconciled to terminal failure before retry proceeds; check for:
-    - `event=stale_duplicate_blocker_reconciled`
-    - `workflow_run_failure_reason_code=workflow_reconciliation_timeout`
-    - `post_dispatch_state=workflow_run_failed`
+  - if blocker state is run-backed and old enough for reconciliation, run **Refresh Deploy Status** (or retry deploy) to force GitHub reconciliation evidence capture.
+  - if reason code is `duplicate_request`, wait for terminal state or cancel/complete the run externally.
+  - if reason code is `deploy_blocker_reconciliation_failed`, retry refresh and validate GitHub Actions/API health before reattempting deploy.
+  - if reason code is `stale_deploy_blocker_requires_refresh`, perform manual status refresh and confirm terminal evidence before retrying.
   - observe unverified-dispatch reconciliation events:
     - `dispatch_attempted_without_run`
     - `no_run_observed_after_refresh`
@@ -798,6 +809,7 @@ Duplicate deploy blocking interpretation:
     - `no_change_reason=workflow_run_tracking_lost`
   - observe stale active-blocker reconciliation event:
     - `downgrade_to_stale_active_deploy_blocker`
+    - followed by `seo_migration_deploy_duplicate_blocker_reconciliation`
 
 Deploy evidence contract interpretation:
 - `deploy_evidence_contract_status=confirmed_live_evidence` means explicit deploy evidence set `resolved_live_url`.
@@ -871,8 +883,12 @@ Use this bounded checklist for first production exercises:
    - `ingress_evidence`
 7. Duplicate blocker interpretation:
    - run-backed active blocker: keep blocked
+   - aged run-backed blocker (>=12 minutes): reconcile against GitHub before final duplicate decision
    - unverified dispatch blocker (`dispatch_accepted_no_run` / `dispatch_unverified_no_run`): short 2-minute TTL
-   - stale/terminal attempts: retry allowed
+   - terminal reconciled blocker: retry allowed
+   - reconciliation failure reason codes:
+     - `deploy_blocker_reconciliation_failed`
+     - `stale_deploy_blocker_requires_refresh`
 8. `resolved_live_url` is only confirmed when explicit evidence exists (`url_source=workflow_output` or `url_source=deploy_result`).
 
 ### First Production Deploy Quick Path
@@ -984,10 +1000,13 @@ Managed-site ingress resource contract (generated by MBSRN templates):
   - `spec.healthCheck.port: 8080`
 - `k8s/ingress.yaml` must include GKE ingress annotations:
   - `kubernetes.io/ingress.class: gce`
+  - `kubernetes.io/ingress.global-static-ip-name: site-web-preview-ip-<normalized-site>`
   - `networking.gke.io/managed-certificates: site-web-preview-cert-<normalized-site>`
   - `networking.gke.io/v1beta1.FrontendConfig: site-web-frontend-config-<normalized-site>`
   - do not render `ingress.gcp.kubernetes.io/pre-shared-cert` in managed templates
   - do not reuse a single shared `kubernetes.io/ingress.global-static-ip-name` value for per-site ingresses
+  - expected global static IP name is deterministic per site: `site-web-preview-ip-<normalized-site>`
+  - expected global static IP must exist before deploy (`gcloud compute addresses describe site-web-preview-ip-<normalized-site> --global --project <project-id>`)
 - `k8s/managedcertificate.yaml` must exist and include the platform preview host:
   - `metadata.name: site-web-preview-cert-<normalized-site>`
   - `<normalized-site>.site.mbsrn.com`
@@ -1022,9 +1041,15 @@ Managed certificate mismatch reason-code interpretation:
 - `dispatch_service_reason_code=managed_certificate_identity_mismatch`
   - ingress annotation references multiple certificates and includes stale cross-site names.
   - check and remove stale certificates after confirming only one site-scoped certificate should remain attached.
+- `workflow_run_failure_reason_code=managed_site_static_ip_missing`
+  - expected deterministic per-site global static IP does not exist in GCP.
+  - create/reserve `site-web-preview-ip-<normalized-site>` and retry deploy.
+- `workflow_run_failure_reason_code=expected_static_ip_not_bound_to_ingress`
+  - ingress is missing expected per-site static IP annotation binding.
+  - republish managed ingress manifests so `kubernetes.io/ingress.global-static-ip-name` equals `site-web-preview-ip-<normalized-site>`.
 - `dispatch_service_reason_code=shared_static_ip_not_allowed_for_per_site_ingress` or `ingress_static_ip_conflict`
-  - per-site ingress is using shared static IP binding and GKE reports IP conflict/in-use conditions.
-  - republish managed ingress manifests without shared static IP annotation.
+  - ingress static IP annotation is present but does not match this site's deterministic per-site static IP name.
+  - republish managed ingress manifests with the expected per-site static IP annotation.
 - `workflow_run_failure_reason_code=pre_shared_cert_metadata_mismatch`
   - controller-generated pre-shared certificate metadata does not match expected managed-certificate name.
   - advisory by itself; confirm desired-state annotation, ManagedCertificate domain/status, and HTTPS/TLS identity before treating as blocking.
@@ -1152,7 +1177,11 @@ Required credential note:
   - `runtime_credential_missing` with `secret_name=GCP_DEPLOY_KEY`:
     admin-owned managed deploy secret blocker (configure/rotate secret in MBSRN Admin first, then republish to propagate)
   - `duplicate_request`:
-    active/stale concurrency blocker for the selected deploy tuple, not a replacement for config blockers
+    prior workflow run is still active for the selected deploy tuple
+  - `deploy_blocker_reconciliation_failed`:
+    GitHub reconciliation for an aged active blocker failed; run status must be refreshed/verified
+  - `stale_deploy_blocker_requires_refresh`:
+    stale blocker could not be reconciled automatically; manual refresh confirmation required
 - readiness precedence:
   - when `missing_cluster_*`/`missing_gcp_project_id` is present, treat that as the authoritative blocker before dispatch/workflow troubleshooting
   - only move to GitHub workflow runtime diagnostics after readiness reports managed target configuration blockers cleared
