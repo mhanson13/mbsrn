@@ -224,7 +224,7 @@ interface DraftPreviewEvaluation {
   reason: string | null;
 }
 
-type DeployConsistencyGateStatus = "pass" | "blocked" | "pending" | "unknown";
+type DeployConsistencyGateStatus = "pass" | "blocked" | "pending" | "warning" | "unknown";
 
 interface MigrationSummaryCardProps {
   label: string;
@@ -542,6 +542,9 @@ function toDeployConsistencyStatusLabel(value: DeployConsistencyGateStatus): str
   if (value === "pending") {
     return "Pending";
   }
+  if (value === "warning") {
+    return "Warning";
+  }
   return "Unknown";
 }
 
@@ -553,6 +556,9 @@ function deployConsistencyStatusBadgeClass(value: DeployConsistencyGateStatus): 
     return "badge badge-error";
   }
   if (value === "pending") {
+    return "badge badge-warn";
+  }
+  if (value === "warning") {
     return "badge badge-warn";
   }
   return "badge badge-muted";
@@ -2761,6 +2767,17 @@ export function MigrationWorkspacePanel({
   const deployHttpsReadyFromSelected = asBooleanOrNull(selectedDeployHistoryRecord.deploy_https_ready);
   const deployHttpsReadyFromSummary = asBooleanOrNull(deployReadiness.deploy_https_ready);
   const deployHttpsReady = deployHttpsReadyFromSelected ?? deployHttpsReadyFromSummary;
+  const workflowIntegrityStatusFromSelected = asStringOrNull(selectedDeployHistoryRecord.workflow_integrity_status);
+  const workflowIntegrityStatusFromSummary = asStringOrNull(deployReadiness.workflow_integrity_status);
+  const workflowIntegrityStatus =
+    ((workflowIntegrityStatusFromSelected || workflowIntegrityStatusFromSummary || "").trim().toLowerCase() || null);
+  const workflowIntegrityReasonCodeFromSelected = asStringOrNull(
+    selectedDeployHistoryRecord.workflow_integrity_reason_code,
+  );
+  const workflowIntegrityReasonCodeFromSummary = asStringOrNull(deployReadiness.workflow_integrity_reason_code);
+  const workflowIntegrityReasonCode =
+    ((workflowIntegrityReasonCodeFromSelected || workflowIntegrityReasonCodeFromSummary || "").trim().toLowerCase() ||
+      null);
   const normalizedDispatchServiceReasonCode = (dispatchServiceReasonCode || "").trim().toLowerCase();
   const normalizedDeployFailureReasonCode = (deployFailureReasonCode || "").trim().toLowerCase();
   const normalizedDeployRunFailureReasonCode = (deployRunFailureReasonCode || "").trim().toLowerCase();
@@ -2938,6 +2955,18 @@ export function MigrationWorkspacePanel({
     }
     return "unknown";
   })();
+  const workflowIntegrityGateStatus: DeployConsistencyGateStatus = (() => {
+    if (workflowIntegrityStatus === "match") {
+      return "pass";
+    }
+    if (workflowIntegrityStatus === "mismatch") {
+      return "warning";
+    }
+    if (workflowIntegrityStatus === "missing") {
+      return "unknown";
+    }
+    return "unknown";
+  })();
   const deployConsistencyGates: Array<{ key: string; label: string; status: DeployConsistencyGateStatus }> = [
     { key: "deployment_rollout", label: "Deployment rollout", status: deploymentRolloutGateStatus },
     { key: "service_endpoints", label: "Service endpoints", status: serviceEndpointsGateStatus },
@@ -2947,6 +2976,7 @@ export function MigrationWorkspacePanel({
     { key: "certificate_identity", label: "Certificate identity valid", status: certificateIdentityGateStatus },
     { key: "ingress_conflict", label: "Ingress/static IP conflict check", status: ingressConflictGateStatus },
     { key: "https_probe", label: "HTTPS probe", status: httpsProbeGateStatus },
+    { key: "workflow_integrity", label: "Workflow integrity", status: workflowIntegrityGateStatus },
   ];
   const deployConsistencyRemediationHints = (() => {
     const hints = new Set<string>();
@@ -2964,6 +2994,14 @@ export function MigrationWorkspacePanel({
     }
     if (httpsProbeGateStatus === "blocked") {
       hints.add("HTTPS not ready: wait for DNS/TLS/LB convergence or inspect deploy evidence.");
+    }
+    if (
+      workflowIntegrityGateStatus === "warning" ||
+      workflowIntegrityReasonCode === "managed_workflow_signature_mismatch"
+    ) {
+      hints.add(
+        "Workflow has been modified outside managed template; behavior may differ from expected deploy contract.",
+      );
     }
     return Array.from(hints);
   })();
@@ -2997,7 +3035,9 @@ export function MigrationWorkspacePanel({
       (!ingressIpFromSelected && !!ingressIpFromSummary) ||
       (ingressConflictDetectedFromSelected === null && ingressConflictDetectedFromSummary !== null) ||
       (certIdentityValidFromSelected === null && certIdentityValidFromSummary !== null) ||
-      (deployHttpsReadyFromSelected === null && deployHttpsReadyFromSummary !== null));
+      (deployHttpsReadyFromSelected === null && deployHttpsReadyFromSummary !== null) ||
+      (!workflowIntegrityStatusFromSelected && !!workflowIntegrityStatusFromSummary) ||
+      (!workflowIntegrityReasonCodeFromSelected && !!workflowIntegrityReasonCodeFromSummary));
   const draftReadiness = parseDraftReadiness(contextSummary);
   const draftProviderCompatibility = parseDraftProviderCompatibility(contextSummary, migrationDiagnostics);
   const draftGenerationState = parseDraftGenerationState({
@@ -5350,6 +5390,12 @@ export function MigrationWorkspacePanel({
                   </span>
                   <span className="hint" data-testid="migration-deploy-consistency-https-ready">
                     deploy_https_ready: {formatBooleanStateLabel(deployHttpsReady)}
+                  </span>
+                  <span className="hint" data-testid="migration-deploy-consistency-workflow-integrity-status">
+                    workflow_integrity_status: {workflowIntegrityStatus || "Not available"}
+                  </span>
+                  <span className="hint" data-testid="migration-deploy-consistency-workflow-integrity-reason-code">
+                    workflow_integrity_reason_code: {workflowIntegrityReasonCode || "Not available"}
                   </span>
                   {deployConsistencyRemediationHints.length > 0 ? (
                     <div className="stack-tight" data-testid="migration-deploy-consistency-remediation">

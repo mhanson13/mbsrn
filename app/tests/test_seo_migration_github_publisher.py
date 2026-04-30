@@ -17,6 +17,7 @@ from app.integrations.seo_migration_github_publisher import (
     SEOMigrationGitHubPublishFile,
     SEOMigrationGitHubPublishTarget,
     SEOMigrationGitHubPublisherError,
+    _compute_managed_workflow_signature,
     _derive_site_runtime_image_repository,
     _render_managed_deploy_workflow_yaml,
     _render_managed_gke_manifest_files,
@@ -2139,6 +2140,209 @@ def test_check_deploy_target_readiness_marks_workflow_conformant_when_managed_co
     assert readiness.workflow_conformance_reasons == ()
     assert "required_deploy_markers" in str(readiness.workflow_conformance_evidence_summary or "")
     assert len(calls) == 4
+
+
+def test_check_deploy_target_readiness_reports_workflow_integrity_match_with_valid_signature(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    unsigned_workflow = (
+        "name: Deploy Site\n"
+        "on:\n"
+        "  workflow_dispatch:\n"
+        "jobs:\n"
+        "  deploy:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    steps:\n"
+        "      - run: echo deploy\n"
+    )
+    workflow_signature = _compute_managed_workflow_signature(workflow_yaml=unsigned_workflow)
+    signed_workflow = f"# mbsrn-workflow-signature: {workflow_signature}\n{unsigned_workflow}"
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _FakeHTTPResponse(status=200, body="{}"),
+            _FakeHTTPResponse(status=200, body="{}"),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps(
+                    {
+                        "sha": "wfsha",
+                        "encoding": "base64",
+                        "content": _encode_workflow_yaml(signed_workflow),
+                    }
+                ),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"state": "active", "path": ".github/workflows/deploy-tnmfire-www-prod.yml"}),
+            ),
+        ],
+        calls,
+    )
+
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    readiness = publisher.check_deploy_target_readiness(
+        target=_dispatch_target(),
+        allow_ref_repair=False,
+        allow_workflow_repair=False,
+        dry_run=False,
+    )
+
+    assert readiness.workflow_integrity_status == "match"
+    assert readiness.workflow_integrity_reason_code is None
+    assert readiness.dispatch_service_availability is True
+    assert len(calls) == 4
+
+
+def test_check_deploy_target_readiness_reports_workflow_integrity_missing_without_signature(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    unsigned_workflow = (
+        "name: Deploy Site\n"
+        "on:\n"
+        "  workflow_dispatch:\n"
+        "jobs:\n"
+        "  deploy:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    steps:\n"
+        "      - run: echo deploy\n"
+    )
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _FakeHTTPResponse(status=200, body="{}"),
+            _FakeHTTPResponse(status=200, body="{}"),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps(
+                    {
+                        "sha": "wfsha",
+                        "encoding": "base64",
+                        "content": _encode_workflow_yaml(unsigned_workflow),
+                    }
+                ),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"state": "active", "path": ".github/workflows/deploy-tnmfire-www-prod.yml"}),
+            ),
+        ],
+        calls,
+    )
+
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    readiness = publisher.check_deploy_target_readiness(
+        target=_dispatch_target(),
+        allow_ref_repair=False,
+        allow_workflow_repair=False,
+        dry_run=False,
+    )
+
+    assert readiness.workflow_integrity_status == "missing"
+    assert readiness.workflow_integrity_reason_code == "managed_workflow_signature_missing"
+    assert readiness.dispatch_service_availability is True
+    assert len(calls) == 4
+
+
+def test_check_deploy_target_readiness_reports_workflow_integrity_mismatch_for_modified_workflow(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    unsigned_workflow = (
+        "name: Deploy Site\n"
+        "on:\n"
+        "  workflow_dispatch:\n"
+        "jobs:\n"
+        "  deploy:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    steps:\n"
+        "      - run: echo deploy\n"
+    )
+    mismatched_workflow = f"# mbsrn-workflow-signature: {'0' * 64}\n{unsigned_workflow}"
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _FakeHTTPResponse(status=200, body="{}"),
+            _FakeHTTPResponse(status=200, body="{}"),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps(
+                    {
+                        "sha": "wfsha",
+                        "encoding": "base64",
+                        "content": _encode_workflow_yaml(mismatched_workflow),
+                    }
+                ),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"state": "active", "path": ".github/workflows/deploy-tnmfire-www-prod.yml"}),
+            ),
+        ],
+        calls,
+    )
+
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    readiness = publisher.check_deploy_target_readiness(
+        target=_dispatch_target(),
+        allow_ref_repair=False,
+        allow_workflow_repair=False,
+        dry_run=False,
+    )
+
+    assert readiness.workflow_integrity_status == "mismatch"
+    assert readiness.workflow_integrity_reason_code == "managed_workflow_signature_mismatch"
+    assert readiness.dispatch_service_availability is True
+    assert len(calls) == 4
+
+
+def test_dispatch_deploy_allows_workflow_integrity_mismatch_without_blocking(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    unsigned_workflow = (
+        "name: Deploy Site\n"
+        "on:\n"
+        "  workflow_dispatch:\n"
+        "jobs:\n"
+        "  deploy:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    steps:\n"
+        "      - run: echo deploy\n"
+    )
+    mismatched_workflow = f"# mbsrn-workflow-signature: {'0' * 64}\n{unsigned_workflow}"
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _FakeHTTPResponse(status=200, body="{}"),
+            _FakeHTTPResponse(status=200, body="{}"),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps(
+                    {
+                        "sha": "wfsha",
+                        "encoding": "base64",
+                        "content": _encode_workflow_yaml(mismatched_workflow),
+                    }
+                ),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps(
+                    {
+                        "state": "active",
+                        "path": ".github/workflows/deploy-tnmfire-www-prod.yml",
+                    }
+                ),
+            ),
+            _FakeHTTPResponse(status=204),
+            _FakeHTTPResponse(status=200, body=json.dumps({"workflow_runs": []})),
+            _FakeHTTPResponse(status=200, body=json.dumps([])),
+            _FakeHTTPResponse(status=200, body=json.dumps([])),
+        ],
+        calls,
+    )
+
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    result = publisher.dispatch_deploy(target=_dispatch_target(), dry_run=False)
+
+    assert result.repo_owner == "mhanson13"
+    assert result.repo_name == "tnmfire"
+    assert any(call[1].endswith("/actions/workflows/deploy-tnmfire-www-prod.yml/dispatches") for call in calls)
 
 
 def test_check_deploy_target_readiness_blocks_placeholder_workflow_as_not_production_ready(monkeypatch) -> None:

@@ -370,6 +370,7 @@ Per-site success gate (managed ingress deploys):
   - `cert_identity_valid=true`
   - `ingress_conflict_detected=false`
   - `deploy_https_ready=true` and `resolved_live_url` uses `https://`
+- managed workflow signature drift detection is non-blocking and reported separately through `workflow_integrity_status` (`match`/`mismatch`/`missing`).
 - `managed_certificate_failed_not_visible` should be triaged as DNS/LB visibility mismatch first.
 - per-site ingress isolation blockers:
   - `shared_static_ip_not_allowed_for_per_site_ingress`
@@ -393,6 +394,11 @@ UI-to-log troubleshooting mapping (Deploy consistency block):
   - UI field: `deploy_https_ready`
   - requires DNS/TLS/ingress convergence and explicit HTTPS-ready evidence for `Pass`
   - logs: `seo_migration_workflow_output_url_captured`, `seo_migration_workflow_output_url_captured_via_refresh`, and workflow run capture events
+- `Workflow integrity`:
+  - UI fields: `workflow_integrity_status`, `workflow_integrity_reason_code`
+  - reason codes: `managed_workflow_signature_missing`, `managed_workflow_signature_mismatch`
+  - logs: `seo_migration_managed_workflow_signature_validation` with `integrity_status`, `expected_signature` (truncated), `observed_signature` (truncated), `site_id`, `workflow_path`
+  - mismatch is non-blocking but should be treated as contract drift risk before relying on deploy diagnostics
 - `Deployment rollout`, `Service endpoints`, `Backend health`:
   - triage via run failure stage/reason:
     - rollout: `workflow_run_failure_stage=rollout_verify`, `rollout_verification_failed`
@@ -450,6 +456,9 @@ Key non-secret fields:
   - `dns_record_matches_ingress`, `dns_expected_ip`, `dns_observed_ip`
   - `tls_certificate_status`, `tls_domain_status`
   - `ingress_ip`, `ingress_conflict_detected`, `cert_identity_valid`, `deploy_https_ready`
+- workflow integrity fields:
+  - `workflow_integrity_status` (`match`, `mismatch`, `missing`)
+  - `workflow_integrity_reason_code` (`managed_workflow_signature_missing`, `managed_workflow_signature_mismatch`)
 - readiness check fields:
   - `requested_ref`, `resolved_ref`, `ref_source`
   - `repo_exists`, `ref_exists`, `workflow_exists`, `workflow_dispatch_ready`
@@ -498,6 +507,10 @@ Key non-secret fields:
 
 Managed workflow contract quick check:
 - `workflow_dispatch` trigger present
+
+Dependency troubleshooting:
+- `ModuleNotFoundError: No module named 'yaml'` indicates backend dependency installation drift (missing `PyYAML`) in runtime/CI image setup.
+- This is a backend environment dependency issue, not a managed deploy DNS/TLS/HTTPS contract failure.
 - production deploy markers present (`google-github-actions/auth`, `google-github-actions/get-gke-credentials`, `kubectl apply`, `kubectl rollout`)
 - explicit evidence outputs emitted (`resolved_live_url`, `live_url`, `deployed_url`)
 - if missing, deploy remains blocked as `workflow_not_production_ready`

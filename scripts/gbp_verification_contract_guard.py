@@ -1,20 +1,21 @@
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 import sys
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+if not os.environ.get("APP_ENV"):
+    os.environ["APP_ENV"] = "test"
+
+DEFAULT_CONTRACT_ARTIFACT_PATH = PROJECT_ROOT / "docs" / "contracts" / "gbp-verification-contract.schema.json"
+DEFAULT_FRONTEND_TYPES_PATH = PROJECT_ROOT / "frontend" / "operator-ui" / "lib" / "api" / "types.ts"
 
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
-    from app.services.google_business_profile_verification_contract_guard import (
-        DEFAULT_CONTRACT_ARTIFACT_PATH,
-        DEFAULT_FRONTEND_TYPES_PATH,
-    )
-
     parser = argparse.ArgumentParser(
         description="Generate/check the GBP verification contract artifact and drift guard."
     )

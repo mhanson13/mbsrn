@@ -302,6 +302,11 @@ _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_IP_ASSIGNED_BUT_DNS_NOT_UPDATED = (
     "ingress_ip_assigned_but_dns_not_updated"
 )
 _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_PROVISIONING = "tls_certificate_provisioning"
+_DEPLOY_WORKFLOW_INTEGRITY_STATUS_MATCH = "match"
+_DEPLOY_WORKFLOW_INTEGRITY_STATUS_MISMATCH = "mismatch"
+_DEPLOY_WORKFLOW_INTEGRITY_STATUS_MISSING = "missing"
+_DEPLOY_WORKFLOW_INTEGRITY_REASON_SIGNATURE_MISSING = "managed_workflow_signature_missing"
+_DEPLOY_WORKFLOW_INTEGRITY_REASON_SIGNATURE_MISMATCH = "managed_workflow_signature_mismatch"
 _DEPLOY_WORKFLOW_MODE_SITE_REPO_TEMPLATE_V1 = "site_repo_template_v1"
 _DEPLOY_TARGET_ENVIRONMENT_SOURCE_ADMIN = "admin_config"
 _DEPLOY_DEFAULT_TARGET_ENVIRONMENT_KEY = "gke_prod"
@@ -3310,6 +3315,16 @@ class SEOMigrationService:
                     ),
                     "cert_identity_valid": target_readiness.cert_identity_valid if target_readiness is not None else None,
                     "deploy_https_ready": target_readiness.deploy_https_ready if target_readiness is not None else None,
+                    "workflow_integrity_status": (
+                        _normalize_workflow_integrity_status(target_readiness.workflow_integrity_status)
+                        if target_readiness is not None
+                        else None
+                    ),
+                    "workflow_integrity_reason_code": (
+                        _normalize_workflow_integrity_reason_code(target_readiness.workflow_integrity_reason_code)
+                        if target_readiness is not None
+                        else None
+                    ),
                 },
             )
             self._update_workspace_readiness_statuses(workspace=workspace, site=site)
@@ -3582,6 +3597,8 @@ class SEOMigrationService:
         ingress_conflict_detected = runtime_network_readiness.get("ingress_conflict_detected")
         cert_identity_valid = runtime_network_readiness.get("cert_identity_valid")
         deploy_https_ready = runtime_network_readiness.get("deploy_https_ready")
+        workflow_integrity_status = None
+        workflow_integrity_reason_code = None
         if target_readiness is not None:
             if dns_record_matches_ingress is None:
                 dns_record_matches_ingress = target_readiness.dns_record_matches_ingress
@@ -3601,6 +3618,12 @@ class SEOMigrationService:
                 cert_identity_valid = target_readiness.cert_identity_valid
             if deploy_https_ready is None:
                 deploy_https_ready = target_readiness.deploy_https_ready
+            workflow_integrity_status = _normalize_workflow_integrity_status(
+                target_readiness.workflow_integrity_status
+            )
+            workflow_integrity_reason_code = _normalize_workflow_integrity_reason_code(
+                target_readiness.workflow_integrity_reason_code
+            )
         derived_https_ready = bool(
             post_dispatch_state == "workflow_run_succeeded_with_live_url"
             and resolved_live_url
@@ -4067,6 +4090,8 @@ class SEOMigrationService:
             "ingress_conflict_detected": ingress_conflict_detected,
             "cert_identity_valid": cert_identity_valid,
             "deploy_https_ready": deploy_https_ready,
+            "workflow_integrity_status": workflow_integrity_status,
+            "workflow_integrity_reason_code": workflow_integrity_reason_code,
             "workflow_run_id": getattr(deploy_result, "workflow_run_id", None),
             "workflow_run_status": getattr(deploy_result, "workflow_run_status", None),
             "workflow_run_conclusion": getattr(deploy_result, "workflow_run_conclusion", None),
@@ -5199,6 +5224,8 @@ class SEOMigrationService:
             "ingress_conflict_detected",
             "cert_identity_valid",
             "deploy_https_ready",
+            "workflow_integrity_status",
+            "workflow_integrity_reason_code",
         ):
             readiness_value = refreshed_network_readiness.get(readiness_field)
             if readiness_value is None:
@@ -5550,6 +5577,12 @@ class SEOMigrationService:
                 bool(next_item.get("deploy_https_ready"))
                 if isinstance(next_item.get("deploy_https_ready"), bool)
                 else None
+            ),
+            "workflow_integrity_status": _normalize_workflow_integrity_status(
+                next_item.get("workflow_integrity_status")
+            ),
+            "workflow_integrity_reason_code": _normalize_workflow_integrity_reason_code(
+                next_item.get("workflow_integrity_reason_code")
             ),
             "site_runtime_image_reference": _normalize_string(
                 next_item.get("site_runtime_image_reference"),
@@ -5963,6 +5996,12 @@ class SEOMigrationService:
                 bool(history_item.get("deploy_https_ready"))
                 if isinstance(history_item.get("deploy_https_ready"), bool)
                 else None
+            ),
+            "workflow_integrity_status": _normalize_workflow_integrity_status(
+                history_item.get("workflow_integrity_status")
+            ),
+            "workflow_integrity_reason_code": _normalize_workflow_integrity_reason_code(
+                history_item.get("workflow_integrity_reason_code")
             ),
             "post_dispatch_state": _normalize_string(history_item.get("post_dispatch_state"), max_length=80)
             or _derive_post_dispatch_state(
@@ -11262,6 +11301,12 @@ class SEOMigrationService:
                     if isinstance(item.get("deploy_https_ready"), bool)
                     else None
                 ),
+                "workflow_integrity_status": _normalize_workflow_integrity_status(
+                    item.get("workflow_integrity_status")
+                ),
+                "workflow_integrity_reason_code": _normalize_workflow_integrity_reason_code(
+                    item.get("workflow_integrity_reason_code")
+                ),
                 "repo_exists": (bool(item.get("repo_exists")) if isinstance(item.get("repo_exists"), bool) else None),
                 "ref_exists": (bool(item.get("ref_exists")) if isinstance(item.get("ref_exists"), bool) else None),
                 "workflow_exists": (
@@ -12017,6 +12062,12 @@ class SEOMigrationService:
                             "ingress_conflict_detected": target_readiness.ingress_conflict_detected,
                             "cert_identity_valid": target_readiness.cert_identity_valid,
                             "deploy_https_ready": target_readiness.deploy_https_ready,
+                            "workflow_integrity_status": _normalize_workflow_integrity_status(
+                                target_readiness.workflow_integrity_status
+                            ),
+                            "workflow_integrity_reason_code": _normalize_workflow_integrity_reason_code(
+                                target_readiness.workflow_integrity_reason_code
+                            ),
                             "managed_gke_config_details": _normalize_json_dict(
                                 target_readiness.managed_gke_config_details
                             ),
@@ -12425,6 +12476,12 @@ class SEOMigrationService:
                 else None
             )
         )
+        workflow_integrity_status = _normalize_workflow_integrity_status(
+            latest_traceability.get("workflow_integrity_status")
+        ) or _normalize_workflow_integrity_status(target_summary.get("workflow_integrity_status"))
+        workflow_integrity_reason_code = _normalize_workflow_integrity_reason_code(
+            latest_traceability.get("workflow_integrity_reason_code")
+        ) or _normalize_workflow_integrity_reason_code(target_summary.get("workflow_integrity_reason_code"))
         latest_resolved_live_url = _normalize_url_candidate(latest_traceability.get("resolved_live_url"))
         latest_post_dispatch_state = _normalize_string(latest_traceability.get("post_dispatch_state"), max_length=80)
         derived_https_ready = bool(
@@ -12518,6 +12575,8 @@ class SEOMigrationService:
             "ingress_conflict_detected": ingress_conflict_detected,
             "cert_identity_valid": cert_identity_valid,
             "deploy_https_ready": deploy_https_ready,
+            "workflow_integrity_status": workflow_integrity_status,
+            "workflow_integrity_reason_code": workflow_integrity_reason_code,
             "workflow_conformance_checked": workflow_conformance_checked,
             "workflow_conformance_status": workflow_conformance_status,
             "workflow_conformance_reasons": workflow_conformance_reasons,
@@ -12622,6 +12681,8 @@ class SEOMigrationService:
                 "ingress_conflict_detected": ingress_conflict_detected,
                 "cert_identity_valid": cert_identity_valid,
                 "deploy_https_ready": deploy_https_ready,
+                "workflow_integrity_status": workflow_integrity_status,
+                "workflow_integrity_reason_code": workflow_integrity_reason_code,
                 "managed_deploy_secret_available": managed_deploy_secret_available,
                 "managed_deploy_secret_source": managed_deploy_secret_source,
                 "managed_deploy_secret_reason": managed_deploy_secret_reason,
@@ -13362,6 +13423,33 @@ def _normalize_dispatch_service_reason_code(value: object) -> str | None:
         "publisher_not_configured",
     }:
         return _DEPLOY_DISPATCH_SERVICE_REASON_RUNTIME_UNAVAILABLE
+    return None
+
+
+def _normalize_workflow_integrity_status(value: object) -> str | None:
+    normalized = _normalize_string(value, max_length=40)
+    if not normalized:
+        return None
+    normalized_lower = normalized.lower()
+    if normalized_lower in {
+        _DEPLOY_WORKFLOW_INTEGRITY_STATUS_MATCH,
+        _DEPLOY_WORKFLOW_INTEGRITY_STATUS_MISMATCH,
+        _DEPLOY_WORKFLOW_INTEGRITY_STATUS_MISSING,
+    }:
+        return normalized_lower
+    return None
+
+
+def _normalize_workflow_integrity_reason_code(value: object) -> str | None:
+    normalized = _normalize_string(value, max_length=80)
+    if not normalized:
+        return None
+    normalized_lower = normalized.lower()
+    if normalized_lower in {
+        _DEPLOY_WORKFLOW_INTEGRITY_REASON_SIGNATURE_MISSING,
+        _DEPLOY_WORKFLOW_INTEGRITY_REASON_SIGNATURE_MISMATCH,
+    }:
+        return normalized_lower
     return None
 
 

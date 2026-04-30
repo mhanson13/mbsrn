@@ -1644,18 +1644,25 @@ Gate labels and status model:
 - `Certificate identity valid`
 - `Ingress/static IP conflict check`
 - `HTTPS probe`
+- `Workflow integrity`
 
-Each gate renders one of:
+Primary runtime gates render one of:
 - `Pass`
 - `Blocked`
 - `Pending`
 - `Unknown`
+
+Workflow integrity gate renders:
+- `Pass` (`workflow_integrity_status=match`)
+- `Warning` (`workflow_integrity_status=mismatch`)
+- `Unknown` (`workflow_integrity_status=missing` or unavailable)
 
 Field rendering and precedence:
 - selected deploy-attempt fields are authoritative when present
 - latest deploy summary backfills only missing selected-attempt values
 - existing diagnostics fallback note remains the operator cue when summary backfill is used
 - network/TLS fields are always null-safe in UI (`dns_record_matches_ingress`, `dns_expected_ip`, `dns_observed_ip`, `tls_certificate_status`, `tls_domain_status`, `ingress_ip`, `ingress_conflict_detected`, `cert_identity_valid`, `deploy_https_ready`)
+- workflow integrity fields are null-safe and surfaced with the same selected-attempt-first precedence (`workflow_integrity_status`, `workflow_integrity_reason_code`)
 
 Blocked-state operator remediation text surfaced in UI:
 - DNS mismatch: update DNS A record to the observed ingress IP
@@ -1663,6 +1670,10 @@ Blocked-state operator remediation text surfaced in UI:
 - cert bound to wrong site: certificate identity mismatch or stale binding
 - ingress conflict: static IP or ingress ownership conflict detected
 - HTTPS not ready: wait for DNS/TLS/LB convergence or inspect deploy evidence
+- workflow integrity mismatch: workflow has been modified outside the managed template; behavior may differ from expected deploy contract
+
+Backend runtime dependency note:
+- `PyYAML` is required in backend runtime and CI environments for managed workflow conformance validation and workflow signature drift detection.
 
 ## Controlled Production Exercise Checklist
 Use this checklist for a bounded real-world migration exercise:

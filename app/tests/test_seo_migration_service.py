@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+import importlib
 import json
+import os
+from pathlib import Path
+import subprocess
+import sys
 import urllib.request
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -207,6 +212,8 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         readiness_workflow_conformance_status: str = "conformant",
         readiness_workflow_conformance_reasons: tuple[str, ...] | None = None,
         readiness_workflow_conformance_evidence_summary: str | None = "managed_contract_markers_present",
+        readiness_workflow_integrity_status: str | None = None,
+        readiness_workflow_integrity_reason_code: str | None = None,
         available_workflow_paths: set[str] | None = None,
         non_dispatchable_workflow_paths: set[str] | None = None,
         non_production_ready_workflow_paths: set[str] | None = None,
@@ -289,6 +296,8 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         self.readiness_workflow_conformance_status = readiness_workflow_conformance_status
         self.readiness_workflow_conformance_reasons = readiness_workflow_conformance_reasons or ()
         self.readiness_workflow_conformance_evidence_summary = readiness_workflow_conformance_evidence_summary
+        self.readiness_workflow_integrity_status = readiness_workflow_integrity_status
+        self.readiness_workflow_integrity_reason_code = readiness_workflow_integrity_reason_code
         self.available_workflow_paths = (
             {str(item).strip() for item in available_workflow_paths if str(item).strip()}
             if available_workflow_paths is not None
@@ -891,6 +900,8 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
             workflow_conformance_status=self.readiness_workflow_conformance_status,
             workflow_conformance_reasons=tuple(self.readiness_workflow_conformance_reasons),
             workflow_conformance_evidence_summary=self.readiness_workflow_conformance_evidence_summary,
+            workflow_integrity_status=self.readiness_workflow_integrity_status,
+            workflow_integrity_reason_code=self.readiness_workflow_integrity_reason_code,
         )
 
 
@@ -1329,6 +1340,35 @@ def _set_admin_repo_auto_create_enabled(db_session, *, enabled: bool) -> None:
     assert config is not None
     config.github_repository_auto_create_enabled = bool(enabled)
     db_session.commit()
+
+
+def test_yaml_dependency_import_available() -> None:
+    yaml_module = importlib.import_module("yaml")
+    assert hasattr(yaml_module, "safe_load")
+
+
+def test_app_main_import_succeeds() -> None:
+    main_module = importlib.import_module("app.main")
+    assert getattr(main_module, "app", None) is not None
+
+
+def test_gbp_contract_guard_script_check_succeeds() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    env = os.environ.copy()
+    env.setdefault("APP_ENV", "test")
+    result = subprocess.run(
+        [sys.executable, "scripts/gbp_verification_contract_guard.py", "--check"],
+        cwd=repo_root,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, (
+        "GBP verification contract guard --check failed.\n"
+        f"stdout:\n{result.stdout}\n"
+        f"stderr:\n{result.stderr}"
+    )
 
 
 def test_update_deploy_config_rejects_operator_updates_to_admin_owned_fields(db_session) -> None:
@@ -7782,6 +7822,61 @@ def test_deploy_readiness_prioritizes_managed_gke_blocker_when_secret_propagatio
         for item in deploy_reasons
     )
     assert "deploy_configuration_missing" in (deploy_readiness.get("blocker_codes") or [])
+
+
+def test_deploy_readiness_surfaces_workflow_integrity_mismatch_without_blocking_dispatch(db_session) -> None:
+    publisher = _RecordingGitHubPublisher(
+        readiness_dispatch_service_availability=True,
+        readiness_dispatch_service_reason_code="available",
+        readiness_workflow_integrity_status="mismatch",
+        readiness_workflow_integrity_reason_code="managed_workflow_signature_mismatch",
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    artifact = _prepare_published_artifact(service, business_id=business_id, site_id=site_id)
+
+    deploy_result = service.deploy_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        principal_id="principal-1",
+    )
+    assert deploy_result.result.get("workflow_integrity_status") == "mismatch"
+    assert deploy_result.result.get("workflow_integrity_reason_code") == "managed_workflow_signature_mismatch"
+    assert deploy_result.result.get("dispatch_service_reason_code") == "available"
+    assert publisher.deploy_calls
+
+    summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
+    deploy_readiness = summary.deploy_readiness or {}
+    assert deploy_readiness.get("workflow_integrity_status") == "mismatch"
+    assert deploy_readiness.get("workflow_integrity_reason_code") == "managed_workflow_signature_mismatch"
+    assert deploy_readiness.get("dispatch_service_reason_code") == "available"
+
+
+def test_deploy_readiness_surfaces_workflow_integrity_missing_for_unsigned_workflow(db_session) -> None:
+    publisher = _RecordingGitHubPublisher(
+        readiness_dispatch_service_availability=True,
+        readiness_dispatch_service_reason_code="available",
+        readiness_workflow_integrity_status="missing",
+        readiness_workflow_integrity_reason_code="managed_workflow_signature_missing",
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _prepare_published_artifact(service, business_id=business_id, site_id=site_id)
+
+    summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
+    deploy_readiness = summary.deploy_readiness or {}
+    assert deploy_readiness.get("workflow_integrity_status") == "missing"
+    assert deploy_readiness.get("workflow_integrity_reason_code") == "managed_workflow_signature_missing"
 
 
 @pytest.mark.parametrize(

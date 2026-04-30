@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import base64
+import hashlib
 import json
 import logging
 import re
@@ -283,6 +284,8 @@ class SEOMigrationGitHubTargetReadinessResult:
     ingress_conflict_detected: bool | None = None
     cert_identity_valid: bool | None = None
     deploy_https_ready: bool | None = None
+    workflow_integrity_status: str | None = None
+    workflow_integrity_reason_code: str | None = None
     managed_gke_config_details: dict[str, object] | None = None
 
 
@@ -5220,6 +5223,43 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             site_id=None,
         )
         workflow_content = _decode_workflow_file_content(workflow_file_payload) or ""
+        expected_workflow_signature = _extract_managed_workflow_signature(workflow_yaml=workflow_content)
+        observed_workflow_signature = _compute_managed_workflow_signature(workflow_yaml=workflow_content)
+        workflow_integrity_status = _DEPLOY_WORKFLOW_INTEGRITY_STATUS_MISSING
+        workflow_integrity_reason_code: str | None = _DEPLOY_WORKFLOW_INTEGRITY_REASON_SIGNATURE_MISSING
+        if expected_workflow_signature:
+            if expected_workflow_signature == observed_workflow_signature:
+                workflow_integrity_status = _DEPLOY_WORKFLOW_INTEGRITY_STATUS_MATCH
+                workflow_integrity_reason_code = None
+            else:
+                workflow_integrity_status = _DEPLOY_WORKFLOW_INTEGRITY_STATUS_MISMATCH
+                workflow_integrity_reason_code = _DEPLOY_WORKFLOW_INTEGRITY_REASON_SIGNATURE_MISMATCH
+        site_id_for_signature_log = (
+            _normalize_repo_management_id(target.inputs.get("site_id"))
+            if isinstance(target.inputs, dict)
+            else None
+        )
+        _emit_structured_publisher_log(
+            payload={
+                "event": "seo_migration_managed_workflow_signature_validation",
+                "repo_owner": target.repo_owner,
+                "repo_name": target.repo_name,
+                "requested_ref": target.ref,
+                "workflow_id": target.workflow_id,
+                "workflow_path": workflow_path,
+                "site_id": site_id_for_signature_log,
+                "integrity_status": workflow_integrity_status,
+                "reason_code": workflow_integrity_reason_code,
+                "expected_signature": _truncate_workflow_signature_for_log(expected_workflow_signature),
+                "observed_signature": _truncate_workflow_signature_for_log(observed_workflow_signature),
+            },
+            fallback_message="seo_migration_managed_workflow_signature_validation",
+            level=(
+                logging.WARNING
+                if workflow_integrity_status == _DEPLOY_WORKFLOW_INTEGRITY_STATUS_MISMATCH
+                else logging.INFO
+            ),
+        )
         managed_workflow = _MBSRN_MANAGED_WORKFLOW_MARKER in workflow_content.lower()
         workflow_namespace_aligned: bool | None = None
         manifest_namespace_aligned: bool | None = None
@@ -5526,6 +5566,11 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 **image_pull_secret_details,
                 **image_pull_secret_presence,
             }
+        gke_config_details = {
+            **gke_config_details,
+            "workflow_integrity_status": workflow_integrity_status,
+            "workflow_integrity_reason_code": workflow_integrity_reason_code,
+        }
         return SEOMigrationGitHubTargetReadinessResult(
             repo_owner=target.repo_owner,
             repo_name=target.repo_name,
@@ -5570,6 +5615,8 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             ingress_conflict_detected=ingress_conflict_detected,
             cert_identity_valid=cert_identity_valid,
             deploy_https_ready=deploy_https_ready,
+            workflow_integrity_status=workflow_integrity_status,
+            workflow_integrity_reason_code=workflow_integrity_reason_code,
             managed_gke_config_details=(gke_config_details or None),
         )
 
@@ -6695,6 +6742,7 @@ def _normalize_target_environment_source(value: object) -> str:
 
 _MBSRN_MANAGED_TEMPLATE_VERSION = "site_repo_template_v1"
 _MBSRN_MANAGED_WORKFLOW_MARKER = f"mbsrn-managed-template:{_MBSRN_MANAGED_TEMPLATE_VERSION}"
+_MBSRN_MANAGED_WORKFLOW_SIGNATURE_MARKER = "mbsrn-workflow-signature:"
 _MBSRN_MANAGED_MANIFEST_MARKER = f"mbsrn-managed-manifest:{_MBSRN_MANAGED_TEMPLATE_VERSION}"
 _MBSRN_MANAGED_TEMPLATE_MARKER_PREFIX = "mbsrn-managed-template:"
 _MBSRN_MANAGED_LABEL = "mbsrn"
@@ -6786,6 +6834,11 @@ _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_IP_ASSIGNED_BUT_DNS_NOT_UPDATED = (
     "ingress_ip_assigned_but_dns_not_updated"
 )
 _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_PROVISIONING = "tls_certificate_provisioning"
+_DEPLOY_WORKFLOW_INTEGRITY_STATUS_MATCH = "match"
+_DEPLOY_WORKFLOW_INTEGRITY_STATUS_MISMATCH = "mismatch"
+_DEPLOY_WORKFLOW_INTEGRITY_STATUS_MISSING = "missing"
+_DEPLOY_WORKFLOW_INTEGRITY_REASON_SIGNATURE_MISSING = "managed_workflow_signature_missing"
+_DEPLOY_WORKFLOW_INTEGRITY_REASON_SIGNATURE_MISMATCH = "managed_workflow_signature_mismatch"
 _DEPLOY_RUNTIME_REASON_BACKENDCONFIG_HEALTH_CHECK_MISMATCH = "backendconfig_health_check_mismatch"
 _DEPLOY_RUNTIME_REASON_INGRESS_BACKEND_UNHEALTHY = "ingress_backend_unhealthy"
 _DEPLOY_RUNTIME_REASON_INGRESS_BACKEND_502 = "ingress_backend_502"
@@ -7085,6 +7138,59 @@ def _expected_managed_manifest_paths(namespace_isolation_defaults: dict[str, obj
     return tuple(expected_paths)
 
 
+def _normalize_workflow_yaml_for_signature(*, workflow_yaml: str) -> str:
+    normalized = str(workflow_yaml or "").replace("\r\n", "\n").replace("\r", "\n")
+    signature_line_prefix = f"# {_MBSRN_MANAGED_WORKFLOW_SIGNATURE_MARKER}".lower()
+    normalized_lines: list[str] = []
+    for raw_line in normalized.split("\n"):
+        if raw_line.strip().lower().startswith(signature_line_prefix):
+            continue
+        normalized_lines.append(raw_line.rstrip())
+    while normalized_lines and normalized_lines[-1] == "":
+        normalized_lines.pop()
+    return "\n".join(normalized_lines)
+
+
+def _compute_managed_workflow_signature(*, workflow_yaml: str) -> str:
+    normalized_for_signature = _normalize_workflow_yaml_for_signature(workflow_yaml=workflow_yaml)
+    return hashlib.sha256(normalized_for_signature.encode("utf-8")).hexdigest()
+
+
+def _embed_managed_workflow_signature(*, workflow_yaml: str) -> str:
+    normalized_yaml = str(workflow_yaml or "")
+    if not normalized_yaml:
+        return normalized_yaml
+    signature = _compute_managed_workflow_signature(workflow_yaml=normalized_yaml)
+    signature_line = f"# {_MBSRN_MANAGED_WORKFLOW_SIGNATURE_MARKER} {signature}\n"
+    marker_line = f"# {_MBSRN_MANAGED_WORKFLOW_MARKER}\n"
+    if normalized_yaml.startswith(marker_line):
+        return marker_line + signature_line + normalized_yaml[len(marker_line) :]
+    return signature_line + normalized_yaml
+
+
+def _extract_managed_workflow_signature(*, workflow_yaml: str) -> str | None:
+    signature_line_prefix = f"# {_MBSRN_MANAGED_WORKFLOW_SIGNATURE_MARKER}".lower()
+    for raw_line in str(workflow_yaml or "").replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+        stripped = raw_line.strip()
+        if not stripped.lower().startswith(signature_line_prefix):
+            continue
+        signature_value = stripped[len(signature_line_prefix) :].strip().lower()
+        if re.fullmatch(r"[0-9a-f]{64}", signature_value):
+            return signature_value
+        return None
+    return None
+
+
+def _truncate_workflow_signature_for_log(value: object) -> str | None:
+    normalized = _coerce_string(value)
+    if not normalized:
+        return None
+    lowered = normalized.strip().lower()
+    if len(lowered) <= 12:
+        return lowered
+    return lowered[:12]
+
+
 def _render_managed_deploy_workflow_yaml(
     *,
     workflow_id: str,
@@ -7161,7 +7267,7 @@ def _render_managed_deploy_workflow_yaml(
             "          set -euo pipefail\n"
             "          kubectl get secret ghcr-pull-secret --namespace \"$K8S_NAMESPACE\"\n"
         )
-    return (
+    workflow_yaml_unsigned = (
         f"# {_MBSRN_MANAGED_WORKFLOW_MARKER}\n"
         f"name: {normalized_name}\n"
         "\n"
@@ -7980,6 +8086,7 @@ def _render_managed_deploy_workflow_yaml(
         "          echo \"Site runtime source commit: ${{ steps.resolve_site_runtime_image.outputs.site_runtime_source_commit }}\"\n"
         "          echo \"Site runtime content source: ${{ steps.resolve_site_runtime_image.outputs.site_runtime_content_source }}\"\n"
     )
+    return _embed_managed_workflow_signature(workflow_yaml=workflow_yaml_unsigned)
 
 
 def _render_managed_gke_manifest_files(
