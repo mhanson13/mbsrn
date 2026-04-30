@@ -1267,6 +1267,63 @@ def _configure_deploy_target(
     )
 
 
+def _prepare_published_artifact(
+    service: SEOMigrationService,
+    *,
+    business_id: str,
+    site_id: str,
+    workflow_id: str = "deploy-www-prod.yml",
+) -> object:
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+    _configure_deploy_target(service, business_id=business_id, site_id=site_id, workflow_id=workflow_id)
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes=None,
+        principal_id="principal-1",
+    )
+    service.publish_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        commit_message=None,
+        analytics_measurement_id=None,
+        principal_id="principal-1",
+    )
+    return artifact
+
+
+def _prepare_and_request_deploy(
+    service: SEOMigrationService,
+    *,
+    business_id: str,
+    site_id: str,
+    workflow_id: str = "deploy-www-prod.yml",
+) -> object:
+    artifact = _prepare_published_artifact(
+        service,
+        business_id=business_id,
+        site_id=site_id,
+        workflow_id=workflow_id,
+    )
+    service.deploy_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        principal_id="principal-1",
+    )
+    return artifact
+
+
 def _set_admin_repo_auto_create_enabled(db_session, *, enabled: bool) -> None:
     config = db_session.query(GitHubPublishConfig).first()
     assert config is not None
@@ -3823,6 +3880,7 @@ def test_refresh_deploy_status_updates_run_metadata_and_captures_workflow_output
     assert refresh_result.result.get("workflow_run_found") is True
     assert refresh_result.result.get("workflow_job_failure_detected") is False
     assert refresh_result.result.get("post_dispatch_state") == "workflow_run_succeeded_with_live_url"
+    assert refresh_result.result.get("deploy_https_ready") is True
     assert refresh_result.result.get("deploy_trace_id") == deploy_result.result.get("deploy_trace_id")
     assert publisher.refresh_calls
 
@@ -3853,6 +3911,226 @@ def test_refresh_deploy_status_updates_run_metadata_and_captures_workflow_output
     assert any('"event": "seo_migration_deploy_status_refresh_completed"' in item for item in refresh_logs)
     assert "GIT_TOKEN" not in " ".join(refresh_logs)
 
+
+def test_refresh_deploy_status_dns_mismatch_sets_dns_failure_and_blocks_https_ready(db_session) -> None:
+    publisher = _RecordingGitHubPublisher(
+        deploy_workflow_run_id=910001,
+        deploy_workflow_run_status="in_progress",
+        refresh_workflow_run_id=910001,
+        refresh_workflow_run_status="completed",
+        refresh_workflow_run_conclusion="failure",
+        refresh_workflow_run_failure_reason_code="dns_record_mismatch",
+        refresh_workflow_run_failure_stage="ingress_verify",
+        refresh_workflow_run_failure_step="Validate DNS against ingress IP",
+        refresh_workflow_output={
+            "dns_expected_ip": "34.120.10.20",
+            "dns_observed_ip": "34.120.10.99",
+            "ingress_ip": "34.120.10.20",
+        },
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    artifact = _prepare_and_request_deploy(service, business_id=business_id, site_id=site_id)
+
+    refresh_result = service.refresh_deploy_run_status(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        principal_id="principal-1",
+    )
+    assert refresh_result.result.get("workflow_run_failure_reason_code") == "dns_record_mismatch"
+    assert refresh_result.result.get("dns_record_matches_ingress") is False
+    assert refresh_result.result.get("dns_expected_ip") == "34.120.10.20"
+    assert refresh_result.result.get("dns_observed_ip") == "34.120.10.99"
+    assert refresh_result.result.get("ingress_ip") == "34.120.10.20"
+    assert refresh_result.result.get("deploy_https_ready") is False
+    assert refresh_result.result.get("post_dispatch_state") == "workflow_run_failed"
+
+    summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
+    deploy_readiness = summary.deploy_readiness or {}
+    assert deploy_readiness.get("dns_record_matches_ingress") is False
+    assert deploy_readiness.get("deploy_https_ready") is False
+
+
+def test_refresh_deploy_status_certificate_domain_mismatch_blocks_https_ready(db_session) -> None:
+    publisher = _RecordingGitHubPublisher(
+        deploy_workflow_run_id=910002,
+        deploy_workflow_run_status="in_progress",
+        refresh_workflow_run_id=910002,
+        refresh_workflow_run_status="completed",
+        refresh_workflow_run_conclusion="failure",
+        refresh_workflow_run_failure_reason_code="tls_certificate_bound_to_wrong_site",
+        refresh_workflow_run_failure_stage="ingress_verify",
+        refresh_workflow_run_failure_step="Validate certificate domain",
+        refresh_workflow_output={
+            "tls_certificate_status": "ACTIVE",
+            "tls_domain_status": "MISMATCHED",
+        },
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    artifact = _prepare_and_request_deploy(service, business_id=business_id, site_id=site_id)
+
+    refresh_result = service.refresh_deploy_run_status(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        principal_id="principal-1",
+    )
+    assert refresh_result.result.get("workflow_run_failure_reason_code") == "tls_certificate_bound_to_wrong_site"
+    assert refresh_result.result.get("cert_identity_valid") is False
+    assert refresh_result.result.get("tls_certificate_status") == "ACTIVE"
+    assert refresh_result.result.get("tls_domain_status") == "MISMATCHED"
+    assert refresh_result.result.get("deploy_https_ready") is False
+    assert refresh_result.result.get("post_dispatch_state") == "workflow_run_failed"
+
+
+def test_refresh_deploy_status_failed_not_visible_sets_dns_and_tls_failure_context(db_session) -> None:
+    publisher = _RecordingGitHubPublisher(
+        deploy_workflow_run_id=910003,
+        deploy_workflow_run_status="in_progress",
+        refresh_workflow_run_id=910003,
+        refresh_workflow_run_status="completed",
+        refresh_workflow_run_conclusion="failure",
+        refresh_workflow_run_failure_reason_code="managed_certificate_failed_not_visible",
+        refresh_workflow_run_failure_stage="ingress_verify",
+        refresh_workflow_run_failure_step="Validate managed certificate domain visibility",
+        refresh_workflow_output={
+            "dns_expected_ip": "34.120.10.20",
+            "dns_observed_ip": "34.120.10.99",
+            "ingress_ip": "34.120.10.20",
+        },
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    artifact = _prepare_and_request_deploy(service, business_id=business_id, site_id=site_id)
+
+    refresh_result = service.refresh_deploy_run_status(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        principal_id="principal-1",
+    )
+    assert refresh_result.result.get("workflow_run_failure_reason_code") == "managed_certificate_failed_not_visible"
+    assert refresh_result.result.get("dns_record_matches_ingress") is False
+    assert refresh_result.result.get("tls_certificate_status") == "FAILED_NOT_VISIBLE"
+    assert refresh_result.result.get("tls_domain_status") == "FAILED_NOT_VISIBLE"
+    assert refresh_result.result.get("deploy_https_ready") is False
+    assert "dns/ingress exposure" in str(refresh_result.result.get("workflow_run_failure_hint") or "").lower()
+
+
+def test_refresh_deploy_status_static_ip_conflict_blocks_success(db_session) -> None:
+    publisher = _RecordingGitHubPublisher(
+        deploy_workflow_run_id=910004,
+        deploy_workflow_run_status="in_progress",
+        refresh_workflow_run_id=910004,
+        refresh_workflow_run_status="completed",
+        refresh_workflow_run_conclusion="failure",
+        refresh_workflow_run_failure_reason_code="shared_static_ip_not_allowed_for_per_site_ingress",
+        refresh_workflow_run_failure_stage="ingress_verify",
+        refresh_workflow_run_failure_step="Validate ingress static IP isolation",
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    artifact = _prepare_and_request_deploy(service, business_id=business_id, site_id=site_id)
+
+    refresh_result = service.refresh_deploy_run_status(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        principal_id="principal-1",
+    )
+    assert refresh_result.result.get("workflow_run_failure_reason_code") == (
+        "shared_static_ip_not_allowed_for_per_site_ingress"
+    )
+    assert refresh_result.result.get("ingress_conflict_detected") is True
+    assert refresh_result.result.get("deploy_https_ready") is False
+
+
+def test_refresh_deploy_status_stale_pre_shared_cert_binding_blocks_success(db_session) -> None:
+    publisher = _RecordingGitHubPublisher(
+        deploy_workflow_run_id=910005,
+        deploy_workflow_run_status="in_progress",
+        refresh_workflow_run_id=910005,
+        refresh_workflow_run_status="completed",
+        refresh_workflow_run_conclusion="failure",
+        refresh_workflow_run_failure_reason_code="stale_pre_shared_cert_binding_detected",
+        refresh_workflow_run_failure_stage="ingress_verify",
+        refresh_workflow_run_failure_step="Validate pre-shared certificate annotation",
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    artifact = _prepare_and_request_deploy(service, business_id=business_id, site_id=site_id)
+
+    refresh_result = service.refresh_deploy_run_status(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        principal_id="principal-1",
+    )
+    assert refresh_result.result.get("workflow_run_failure_reason_code") == "stale_pre_shared_cert_binding_detected"
+    assert refresh_result.result.get("ingress_conflict_detected") is True
+    assert refresh_result.result.get("deploy_https_ready") is False
+
+
+def test_deploy_completed_success_requires_https_live_url_for_https_ready(db_session) -> None:
+    publisher = _RecordingGitHubPublisher(
+        deploy_workflow_run_id=910006,
+        deploy_workflow_run_status="completed",
+        deploy_workflow_run_conclusion="success",
+        deploy_workflow_output={
+            "live_url": "http://tnmfire.site.mbsrn.com",
+            "deploy_https_ready": "true",
+            "dns_record_matches_ingress": "true",
+            "cert_identity_valid": "true",
+        },
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    artifact = _prepare_published_artifact(service, business_id=business_id, site_id=site_id)
+
+    deploy_result = service.deploy_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        principal_id="principal-1",
+    )
+    assert deploy_result.result.get("workflow_run_status") == "completed"
+    assert deploy_result.result.get("workflow_run_conclusion") == "success"
+    assert deploy_result.result.get("resolved_live_url") == "http://tnmfire.site.mbsrn.com"
+    assert deploy_result.result.get("post_dispatch_state") == "workflow_run_succeeded_without_live_url"
+    assert deploy_result.result.get("deploy_https_ready") is False
 
 def test_refresh_deploy_status_records_run_failure_classification(db_session) -> None:
     publisher = _RecordingGitHubPublisher(

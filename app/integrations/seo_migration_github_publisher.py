@@ -271,6 +271,15 @@ class SEOMigrationGitHubTargetReadinessResult:
     managed_network_policy_expected: bool = False
     managed_network_policy_present: bool | None = None
     managed_namespace_policies_aligned: bool | None = None
+    dns_record_matches_ingress: bool | None = None
+    dns_expected_ip: str | None = None
+    dns_observed_ip: str | None = None
+    tls_certificate_status: str | None = None
+    tls_domain_status: str | None = None
+    ingress_ip: str | None = None
+    ingress_conflict_detected: bool | None = None
+    cert_identity_valid: bool | None = None
+    deploy_https_ready: bool | None = None
     managed_gke_config_details: dict[str, object] | None = None
 
 
@@ -5176,6 +5185,15 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         image_pull_secret_required = _managed_image_pull_secret_required(managed_image_pull_secret_config)
         namespace_model_status = _NAMESPACE_MODEL_STATUS_UNKNOWN
         certificate_alignment_details: dict[str, object] = {}
+        dns_record_matches_ingress: bool | None = None
+        dns_expected_ip: str | None = None
+        dns_observed_ip: str | None = None
+        tls_certificate_status: str | None = None
+        tls_domain_status: str | None = None
+        ingress_ip: str | None = None
+        ingress_conflict_detected: bool | None = None
+        cert_identity_valid: bool | None = None
+        deploy_https_ready: bool | None = None
         manifest_presence_by_path: dict[str, bool] = {}
         manifest_content_by_path: dict[str, str | None] = {}
         if managed_workflow:
@@ -5426,6 +5444,29 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 "expected_preview_certificate_name": preview_certificate_name,
                 "expected_preview_hostname": preview_hostname,
             }
+            ingress_conflict_detected = bool(certificate_alignment_details.get("ingress_static_ip_conflict"))
+            cert_identity_valid = bool(
+                (certificate_domain_aligned is True)
+                and (not bool(stale_managed_certificate_present))
+                and (not bool(ingress_certificate_mismatch))
+            )
+            tls_domain_status = (
+                "active"
+                if cert_identity_valid is True
+                else ("mismatched" if certificate_domain_mismatch is True else None)
+            )
+            gke_config_details = {
+                **gke_config_details,
+                "dns_record_matches_ingress": dns_record_matches_ingress,
+                "dns_expected_ip": dns_expected_ip,
+                "dns_observed_ip": dns_observed_ip,
+                "tls_certificate_status": tls_certificate_status,
+                "tls_domain_status": tls_domain_status,
+                "ingress_ip": ingress_ip,
+                "ingress_conflict_detected": ingress_conflict_detected,
+                "cert_identity_valid": cert_identity_valid,
+                "deploy_https_ready": deploy_https_ready,
+            }
         if managed_workflow and image_pull_secret_details:
             gke_config_details = {
                 **gke_config_details,
@@ -5467,6 +5508,15 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             managed_network_policy_expected=bool(policy_expectations.get("network_policy_expected")),
             managed_network_policy_present=managed_network_policy_present,
             managed_namespace_policies_aligned=managed_namespace_policies_aligned,
+            dns_record_matches_ingress=dns_record_matches_ingress,
+            dns_expected_ip=dns_expected_ip,
+            dns_observed_ip=dns_observed_ip,
+            tls_certificate_status=tls_certificate_status,
+            tls_domain_status=tls_domain_status,
+            ingress_ip=ingress_ip,
+            ingress_conflict_detected=ingress_conflict_detected,
+            cert_identity_valid=cert_identity_valid,
+            deploy_https_ready=deploy_https_ready,
             managed_gke_config_details=(gke_config_details or None),
         )
 
@@ -6677,6 +6727,12 @@ _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_STATIC_IP_NOT_ALLOWED = "shared_static_ip
 _DEPLOY_DISPATCH_SERVICE_REASON_STALE_PRE_SHARED_CERT_BINDING = "stale_pre_shared_cert_binding_detected"
 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_FAILED_NOT_VISIBLE = "managed_certificate_failed_not_visible"
 _DEPLOY_DISPATCH_SERVICE_REASON_DEPLOYED_CONTENT_IDENTITY_MISMATCH = "deployed_content_identity_mismatch"
+_DEPLOY_DISPATCH_SERVICE_REASON_DNS_RECORD_MISMATCH = "dns_record_mismatch"
+_DEPLOY_DISPATCH_SERVICE_REASON_DNS_POINTS_TO_OLD_INGRESS_IP = "dns_points_to_old_ingress_ip"
+_DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_IP_ASSIGNED_BUT_DNS_NOT_UPDATED = (
+    "ingress_ip_assigned_but_dns_not_updated"
+)
+_DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_PROVISIONING = "tls_certificate_provisioning"
 _DEPLOY_RUNTIME_REASON_BACKENDCONFIG_HEALTH_CHECK_MISMATCH = "backendconfig_health_check_mismatch"
 _DEPLOY_RUNTIME_REASON_INGRESS_BACKEND_UNHEALTHY = "ingress_backend_unhealthy"
 _DEPLOY_RUNTIME_REASON_INGRESS_BACKEND_502 = "ingress_backend_502"
@@ -7071,6 +7127,15 @@ def _render_managed_deploy_workflow_yaml(
         "      live_url: ${{ steps.resolve_live_url.outputs.live_url }}\n"
         "      resolved_live_url: ${{ steps.resolve_live_url.outputs.resolved_live_url }}\n"
         "      deployed_url: ${{ steps.resolve_live_url.outputs.deployed_url }}\n"
+        "      dns_record_matches_ingress: ${{ steps.resolve_live_url.outputs.dns_record_matches_ingress }}\n"
+        "      dns_expected_ip: ${{ steps.resolve_live_url.outputs.dns_expected_ip }}\n"
+        "      dns_observed_ip: ${{ steps.resolve_live_url.outputs.dns_observed_ip }}\n"
+        "      tls_certificate_status: ${{ steps.resolve_live_url.outputs.tls_certificate_status }}\n"
+        "      tls_domain_status: ${{ steps.resolve_live_url.outputs.tls_domain_status }}\n"
+        "      ingress_ip: ${{ steps.resolve_live_url.outputs.ingress_ip }}\n"
+        "      ingress_conflict_detected: ${{ steps.resolve_live_url.outputs.ingress_conflict_detected }}\n"
+        "      cert_identity_valid: ${{ steps.resolve_live_url.outputs.cert_identity_valid }}\n"
+        "      deploy_https_ready: ${{ steps.resolve_live_url.outputs.deploy_https_ready }}\n"
         "      site_runtime_image_reference: ${{ steps.resolve_site_runtime_image.outputs.site_runtime_image_reference }}\n"
         "      site_runtime_image_selection_mode: ${{ steps.resolve_site_runtime_image.outputs.site_runtime_image_selection_mode }}\n"
         "      site_runtime_image_repository: ${{ steps.resolve_site_runtime_image.outputs.site_runtime_image_repository }}\n"
@@ -7478,6 +7543,14 @@ def _render_managed_deploy_workflow_yaml(
         "          host_reachability_scheme=\"\"\n"
         "          tls_mismatch_detected=false\n"
         "          backend_502_detected=false\n"
+        "          dns_record_matches_ingress=false\n"
+        "          dns_expected_ip=\"\"\n"
+        "          dns_observed_ip=\"\"\n"
+        "          tls_certificate_status=\"\"\n"
+        "          tls_domain_status=\"\"\n"
+        "          ingress_conflict_detected=false\n"
+        "          cert_identity_valid=false\n"
+        "          deploy_https_ready=false\n"
         "          for attempt in $(seq 1 \"$max_attempts\"); do\n"
         "            ingress_host=\"$(kubectl get ingress site-web --namespace \"$K8S_NAMESPACE\" -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)\"\n"
         "            ingress_ip=\"$(kubectl get ingress site-web --namespace \"$K8S_NAMESPACE\" -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)\"\n"
@@ -7594,18 +7667,244 @@ def _render_managed_deploy_workflow_yaml(
         "            if grep -qiE 'in-use and would result in a conflict|global static ip.*conflict|specified ip address is in-use' \"$ingress_pending_output\"; then\n"
         "              echo \"deploy_runtime_reason_code=ingress_static_ip_conflict\"\n"
         "            fi\n"
-        "            if grep -qiE 'ingress\\.gcp\\.kubernetes\\.io/pre-shared-cert' \"$ingress_pending_output\"; then\n"
-        "              echo \"deploy_runtime_reason_code=stale_pre_shared_cert_binding_detected\"\n"
+        "            pre_shared_pending_annotation=\"$(kubectl get ingress site-web --namespace \"$K8S_NAMESPACE\" -o jsonpath='{.metadata.annotations.ingress\\.gcp\\.kubernetes\\.io/pre-shared-cert}' 2>/dev/null || true)\"\n"
+        "            if [ -n \"$pre_shared_pending_annotation\" ]; then\n"
+        "              expected_cert_name_pending=\"$(echo \"$MBSRN_PREVIEW_CERTIFICATE_NAME\" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')\"\n"
+        "              pre_shared_pending_values=\"$(echo \"$pre_shared_pending_annotation\" | tr ',' '\\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | sed '/^$/d' | tr '[:upper:]' '[:lower:]')\"\n"
+        "              pre_shared_pending_count=\"$(echo \"$pre_shared_pending_values\" | sed '/^$/d' | wc -l | tr -d '[:space:]')\"\n"
+        "              pre_shared_pending_first=\"$(echo \"$pre_shared_pending_values\" | head -n1 | tr -d '[:space:]')\"\n"
+        "              if [ \"$pre_shared_pending_count\" -ne 1 ] || [ \"$pre_shared_pending_first\" != \"$expected_cert_name_pending\" ]; then\n"
+        "                echo \"deploy_runtime_reason_code=stale_pre_shared_cert_binding_detected\"\n"
+        "              fi\n"
         "            fi\n"
         "            rm -f \"$ingress_pending_output\"\n"
         "            kubectl get frontendconfig \"$MBSRN_FRONTEND_CONFIG_NAME\" --namespace \"$K8S_NAMESPACE\" || true\n"
         "            kubectl get backendconfig \"$MBSRN_BACKEND_CONFIG_NAME\" --namespace \"$K8S_NAMESPACE\" || true\n"
             "            exit 1\n"
         "          fi\n"
+        "          if [ -z \"$preview_host\" ]; then\n"
+        "            echo \"deploy_runtime_reason_code=ingress_address_pending\"\n"
+        "            echo \"deploy_runtime_reason_message=Preview hostname is missing; cannot validate DNS/TLS identity.\"\n"
+        "            exit 1\n"
+        "          fi\n"
+        "          if [ -z \"$ingress_ip\" ]; then\n"
+        "            echo \"deploy_runtime_reason_code=ingress_address_pending\"\n"
+        "            echo \"deploy_runtime_reason_message=Ingress external IP is required before DNS/TLS validation.\"\n"
+        "            exit 1\n"
+        "          fi\n"
+        "          dns_expected_ip=\"$ingress_ip\"\n"
+        "          ingress_static_ip_annotation=\"$(kubectl get ingress site-web --namespace \"$K8S_NAMESPACE\" -o jsonpath='{.metadata.annotations.kubernetes\\.io/ingress\\.global-static-ip-name}' 2>/dev/null || true)\"\n"
+        "          if [ -n \"$ingress_static_ip_annotation\" ]; then\n"
+        "            ingress_conflict_detected=true\n"
+        "            echo \"deploy_runtime_reason_code=ingress_static_ip_conflict\"\n"
+        "            echo \"deploy_runtime_reason_code=shared_static_ip_not_allowed_for_per_site_ingress\"\n"
+        "            echo \"deploy_runtime_reason_message=Per-site ingress model does not allow shared static IP binding.\"\n"
+        "            exit 1\n"
+        "          fi\n"
+        "          ingress_validation_output=\"$(mktemp)\"\n"
+        "          kubectl describe ingress site-web --namespace \"$K8S_NAMESPACE\" > \"$ingress_validation_output\" 2>&1 || true\n"
+        "          if grep -qiE 'in-use and would result in a conflict|global static ip.*conflict|specified ip address is in-use' \"$ingress_validation_output\"; then\n"
+        "            ingress_conflict_detected=true\n"
+        "            echo \"deploy_runtime_reason_code=ingress_static_ip_conflict\"\n"
+        "            cat \"$ingress_validation_output\"\n"
+        "            rm -f \"$ingress_validation_output\"\n"
+        "            exit 1\n"
+        "          fi\n"
+        "          rm -f \"$ingress_validation_output\"\n"
+        "          expected_cert_name=\"$(echo \"$MBSRN_PREVIEW_CERTIFICATE_NAME\" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')\"\n"
+        "          managed_cert_annotation=\"$(kubectl get ingress site-web --namespace \"$K8S_NAMESPACE\" -o jsonpath='{.metadata.annotations.networking\\.gke\\.io/managed-certificates}' 2>/dev/null || true)\"\n"
+        "          managed_cert_annotation_values=\"$(echo \"$managed_cert_annotation\" | tr ',' '\\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | sed '/^$/d' | tr '[:upper:]' '[:lower:]')\"\n"
+        "          managed_cert_annotation_count=\"$(echo \"$managed_cert_annotation_values\" | sed '/^$/d' | wc -l | tr -d '[:space:]')\"\n"
+        "          managed_cert_annotation_first=\"$(echo \"$managed_cert_annotation_values\" | head -n1 | tr -d '[:space:]')\"\n"
+        "          if [ \"$managed_cert_annotation_count\" -le 0 ]; then\n"
+        "            echo \"deploy_runtime_reason_code=ingress_certificate_annotation_mismatch\"\n"
+        "            echo \"deploy_runtime_reason_message=Ingress is missing managed certificate annotation.\"\n"
+        "            exit 1\n"
+        "          fi\n"
+        "          if [ \"$managed_cert_annotation_count\" -gt 1 ]; then\n"
+        "            echo \"deploy_runtime_reason_code=managed_certificate_identity_mismatch\"\n"
+        "            echo \"deploy_runtime_reason_message=Ingress annotation references multiple managed certificates.\"\n"
+        "            exit 1\n"
+        "          fi\n"
+        "          if [ \"$managed_cert_annotation_first\" != \"$expected_cert_name\" ]; then\n"
+        "            echo \"deploy_runtime_reason_code=ingress_certificate_annotation_mismatch\"\n"
+        "            echo \"deploy_runtime_reason_message=Ingress managed certificate annotation does not match expected site certificate.\"\n"
+        "            exit 1\n"
+        "          fi\n"
+        "          pre_shared_cert_annotation=\"$(kubectl get ingress site-web --namespace \"$K8S_NAMESPACE\" -o jsonpath='{.metadata.annotations.ingress\\.gcp\\.kubernetes\\.io/pre-shared-cert}' 2>/dev/null || true)\"\n"
+        "          if [ -n \"$pre_shared_cert_annotation\" ]; then\n"
+        "            pre_shared_values=\"$(echo \"$pre_shared_cert_annotation\" | tr ',' '\\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | sed '/^$/d' | tr '[:upper:]' '[:lower:]')\"\n"
+        "            pre_shared_count=\"$(echo \"$pre_shared_values\" | sed '/^$/d' | wc -l | tr -d '[:space:]')\"\n"
+        "            pre_shared_first=\"$(echo \"$pre_shared_values\" | head -n1 | tr -d '[:space:]')\"\n"
+        "            if [ \"$pre_shared_count\" -eq 1 ] && [ \"$pre_shared_first\" = \"$expected_cert_name\" ]; then\n"
+        "              echo \"Pre-shared cert metadata matches expected managed certificate; treating as non-fatal.\"\n"
+        "            else\n"
+        "              ingress_conflict_detected=true\n"
+        "              echo \"deploy_runtime_reason_code=stale_pre_shared_cert_binding_detected\"\n"
+        "              echo \"deploy_runtime_reason_message=Ingress pre-shared certificate metadata references stale or cross-site certificate bindings.\"\n"
+        "              exit 1\n"
+        "            fi\n"
+        "          fi\n"
+        "          dns_ip=\"\"\n"
+        "          if command -v dig >/dev/null 2>&1; then\n"
+        "            dns_ip=\"$(dig +short \"$preview_host\" A | grep -E '^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$' | head -n1 | tr -d '[:space:]')\"\n"
+        "          fi\n"
+        "          if [ -z \"$dns_ip\" ] && command -v nslookup >/dev/null 2>&1; then\n"
+        "            dns_ip=\"$(nslookup \"$preview_host\" 2>/dev/null | awk '/^Address: / {print $2}' | tail -n1 | tr -d '[:space:]')\"\n"
+        "          fi\n"
+        "          dns_observed_ip=\"$dns_ip\"\n"
+        "          if [ -z \"$dns_observed_ip\" ] || [ \"$dns_observed_ip\" != \"$dns_expected_ip\" ]; then\n"
+        "            dns_record_matches_ingress=false\n"
+        "            echo \"deploy_runtime_reason_code=dns_record_mismatch\"\n"
+        "            if [ -z \"$dns_observed_ip\" ]; then\n"
+        "              echo \"deploy_runtime_reason_code=ingress_ip_assigned_but_dns_not_updated\"\n"
+        "            else\n"
+        "              echo \"deploy_runtime_reason_code=dns_points_to_old_ingress_ip\"\n"
+        "            fi\n"
+        "            echo \"deploy_runtime_reason_message=DNS A record does not match ingress IP for preview hostname.\"\n"
+        "            echo \"expected_hostname=$preview_host\"\n"
+        "            echo \"ingress_ip=$dns_expected_ip\"\n"
+        "            echo \"observed_dns_ip=$dns_observed_ip\"\n"
+        "            exit 1\n"
+        "          fi\n"
+        "          dns_record_matches_ingress=true\n"
+        "          managed_certificate_json=\"$(kubectl get managedcertificate \"$MBSRN_PREVIEW_CERTIFICATE_NAME\" --namespace \"$K8S_NAMESPACE\" -o json 2>/dev/null || true)\"\n"
+        "          if [ -z \"$managed_certificate_json\" ]; then\n"
+        "            echo \"deploy_runtime_reason_code=ingress_certificate_annotation_mismatch\"\n"
+        "            echo \"deploy_runtime_reason_message=Expected ManagedCertificate resource was not found in namespace.\"\n"
+        "            exit 1\n"
+        "          fi\n"
+        "          cert_eval_output=\"$(printf '%s' \"$managed_certificate_json\" | EXPECTED_PREVIEW_HOST=\"$preview_host\" python - <<'PY'\n"
+        "import json\n"
+        "import os\n"
+        "import sys\n"
+        "\n"
+        "raw = sys.stdin.read().strip()\n"
+        "expected_host = str(os.environ.get('EXPECTED_PREVIEW_HOST') or '').strip().lower()\n"
+        "payload = json.loads(raw) if raw else {}\n"
+        "spec_domains = [\n"
+        "    str(item).strip().lower()\n"
+        "    for item in (payload.get('spec', {}).get('domains') or [])\n"
+        "    if str(item).strip()\n"
+        "]\n"
+        "status_payload = payload.get('status') if isinstance(payload.get('status'), dict) else {}\n"
+        "cert_status = str(status_payload.get('certificateStatus') or '').strip().upper()\n"
+        "domain_status_payload = status_payload.get('domainStatus')\n"
+        "domain_status_map = {}\n"
+        "if isinstance(domain_status_payload, list):\n"
+        "    for item in domain_status_payload:\n"
+        "        if not isinstance(item, dict):\n"
+        "            continue\n"
+        "        domain = str(item.get('domain') or '').strip().lower()\n"
+        "        status = str(item.get('status') or '').strip().upper()\n"
+        "        if domain:\n"
+        "            domain_status_map[domain] = status\n"
+        "elif isinstance(domain_status_payload, dict):\n"
+        "    for key, value in domain_status_payload.items():\n"
+        "        domain = str(key or '').strip().lower()\n"
+        "        if not domain:\n"
+        "            continue\n"
+        "        if isinstance(value, dict):\n"
+        "            status = str(value.get('status') or '').strip().upper()\n"
+        "        else:\n"
+        "            status = str(value or '').strip().upper()\n"
+        "        domain_status_map[domain] = status\n"
+        "\n"
+        "domain_status = domain_status_map.get(expected_host, '')\n"
+        "domain_exact_match = len(spec_domains) == 1 and spec_domains[0] == expected_host\n"
+        "print(f'cert_status={cert_status}')\n"
+        "print(f'domain_status={domain_status}')\n"
+        "print('domain_exact_match=' + ('true' if domain_exact_match else 'false'))\n"
+        "print('domain_count=' + str(len(spec_domains)))\n"
+        "print('spec_domains=' + ','.join(spec_domains))\n"
+        "PY\n"
+        ")\"\n"
+        "          domain_exact_match=false\n"
+        "          while IFS='=' read -r key value; do\n"
+        "            case \"$key\" in\n"
+        "              cert_status)\n"
+        "                tls_certificate_status=\"$value\"\n"
+        "                ;;\n"
+        "              domain_status)\n"
+        "                tls_domain_status=\"$value\"\n"
+        "                ;;\n"
+        "              domain_exact_match)\n"
+        "                domain_exact_match=\"$value\"\n"
+        "                ;;\n"
+        "            esac\n"
+        "          done <<EOF\n"
+        "          $cert_eval_output\n"
+        "EOF\n"
+        "          normalized_cert_status=\"$(echo \"$tls_certificate_status\" | tr '[:lower:]' '[:upper:]' | tr -d '[:space:]')\"\n"
+        "          normalized_domain_status=\"$(echo \"$tls_domain_status\" | tr '[:lower:]' '[:upper:]' | tr -d '[:space:]')\"\n"
+        "          if [ \"$domain_exact_match\" != \"true\" ]; then\n"
+        "            cert_identity_valid=false\n"
+        "            echo \"deploy_runtime_reason_code=tls_certificate_bound_to_wrong_site\"\n"
+        "            echo \"deploy_runtime_reason_message=ManagedCertificate domain list does not match expected preview hostname.\"\n"
+        "            exit 1\n"
+        "          fi\n"
+        "          cert_identity_valid=true\n"
+        "          if [ \"$normalized_domain_status\" = \"FAILED_NOT_VISIBLE\" ] || [ \"$normalized_cert_status\" = \"FAILED_NOT_VISIBLE\" ]; then\n"
+        "            echo \"deploy_runtime_reason_code=managed_certificate_failed_not_visible\"\n"
+        "            echo \"deploy_runtime_reason_message=ManagedCertificate is not visible; verify DNS and load balancer exposure.\"\n"
+        "            if [ \"$dns_record_matches_ingress\" != \"true\" ]; then\n"
+        "              echo \"deploy_runtime_reason_code=dns_record_mismatch\"\n"
+        "            fi\n"
+        "            exit 1\n"
+        "          fi\n"
+        "          if [ \"$normalized_domain_status\" = \"PROVISIONING\" ] || [ \"$normalized_cert_status\" = \"PROVISIONING\" ]; then\n"
+        "            echo \"deploy_runtime_reason_code=tls_certificate_provisioning\"\n"
+        "            echo \"deploy_runtime_reason_message=ManagedCertificate provisioning is still in progress for expected hostname.\"\n"
+        "            exit 1\n"
+        "          fi\n"
+        "          if [ \"$normalized_domain_status\" != \"ACTIVE\" ]; then\n"
+        "            echo \"deploy_runtime_reason_code=tls_certificate_provisioning\"\n"
+        "            echo \"deploy_runtime_reason_message=ManagedCertificate domain status is not ACTIVE for expected hostname.\"\n"
+        "            exit 1\n"
+        "          fi\n"
+        "          if [ -n \"$normalized_cert_status\" ] && [ \"$normalized_cert_status\" != \"ACTIVE\" ]; then\n"
+        "            echo \"deploy_runtime_reason_code=tls_certificate_provisioning\"\n"
+        "            echo \"deploy_runtime_reason_message=ManagedCertificate status is not ACTIVE yet.\"\n"
+        "            exit 1\n"
+        "          fi\n"
+        "          https_verify_output=\"$(mktemp)\"\n"
+        "          if ! https_verify_code=\"$(curl --silent --show-error --connect-timeout 5 --max-time 10 --output /dev/null --write-out '%{http_code}' \"https://$preview_host\" 2>\"$https_verify_output\")\"; then\n"
+        "            https_verify_exit=$?\n"
+        "            if [ \"$https_verify_exit\" -eq 60 ] || grep -qiE 'SSL certificate problem|SSL_ERROR_BAD_CERT_DOMAIN|certificate subject name|no alternative certificate subject name' \"$https_verify_output\"; then\n"
+        "              echo \"deploy_runtime_reason_code=reachable_but_tls_certificate_mismatch\"\n"
+        "            else\n"
+        "              echo \"deploy_runtime_reason_code=ingress_address_pending\"\n"
+        "            fi\n"
+        "            cat \"$https_verify_output\"\n"
+        "            rm -f \"$https_verify_output\"\n"
+        "            exit 1\n"
+        "          fi\n"
+        "          rm -f \"$https_verify_output\"\n"
+        "          if ! echo \"$https_verify_code\" | grep -Eq '^[1-5][0-9][0-9]$'; then\n"
+        "            echo \"deploy_runtime_reason_code=ingress_address_pending\"\n"
+        "            echo \"deploy_runtime_reason_message=HTTPS probe did not return an HTTP status code.\"\n"
+        "            exit 1\n"
+        "          fi\n"
+        "          if echo \"$https_verify_code\" | grep -Eq '^5[0-9][0-9]$'; then\n"
+        "            echo \"deploy_runtime_reason_code=ingress_backend_502\"\n"
+        "            echo \"deploy_runtime_reason_message=HTTPS probe reached ingress but backend returned 5xx.\"\n"
+        "            exit 1\n"
+        "          fi\n"
+        "          deploy_https_ready=true\n"
+        "          live_url=\"https://$preview_host\"\n"
         "          {\n"
         "            echo \"live_url=$live_url\"\n"
         "            echo \"resolved_live_url=$live_url\"\n"
         "            echo \"deployed_url=$live_url\"\n"
+        "            echo \"dns_record_matches_ingress=$dns_record_matches_ingress\"\n"
+        "            echo \"dns_expected_ip=$dns_expected_ip\"\n"
+        "            echo \"dns_observed_ip=$dns_observed_ip\"\n"
+        "            echo \"tls_certificate_status=$tls_certificate_status\"\n"
+        "            echo \"tls_domain_status=$tls_domain_status\"\n"
+        "            echo \"ingress_ip=$ingress_ip\"\n"
+        "            echo \"ingress_conflict_detected=$ingress_conflict_detected\"\n"
+        "            echo \"cert_identity_valid=$cert_identity_valid\"\n"
+        "            echo \"deploy_https_ready=$deploy_https_ready\"\n"
         "          } >> \"$GITHUB_OUTPUT\"\n"
         "      - name: Emit managed deployment metadata\n"
         "        run: |\n"
@@ -8126,6 +8425,7 @@ def _evaluate_preview_certificate_alignment(
     ingress_cert_annotation_values: tuple[str, ...] = ()
     ingress_static_ip_annotation: str | None = None
     ingress_pre_shared_cert_annotation: str | None = None
+    ingress_pre_shared_cert_annotation_values: tuple[str, ...] = ()
     if ingress_kind == "ingress":
         ingress_host = _extract_manifest_scalar(
             ingress_content,
@@ -8144,6 +8444,7 @@ def _evaluate_preview_certificate_alignment(
             ingress_content,
             pattern=r"(?m)^\s*ingress\.gcp\.kubernetes\.io/pre-shared-cert:\s*([^\n#]+)$",
         )
+        ingress_pre_shared_cert_annotation_values = _extract_comma_separated_values(ingress_pre_shared_cert_annotation)
 
     certificate_name: str | None = None
     certificate_domains: tuple[str, ...] = ()
@@ -8182,7 +8483,14 @@ def _evaluate_preview_certificate_alignment(
     stale_managed_certificate_present = bool(stale_managed_certificate_names)
     ingress_static_ip_conflict = bool(ingress_static_ip_annotation)
     shared_static_ip_not_allowed_for_per_site_ingress = ingress_static_ip_conflict
-    stale_pre_shared_cert_binding_detected = bool(ingress_pre_shared_cert_annotation)
+    valid_pre_shared_cert_binding = bool(
+        expected_cert_name
+        and len(ingress_pre_shared_cert_annotation_values) == 1
+        and ingress_pre_shared_cert_annotation_values[0] == expected_cert_name
+    )
+    stale_pre_shared_cert_binding_detected = bool(
+        ingress_pre_shared_cert_annotation_values and not valid_pre_shared_cert_binding
+    )
     ingress_certificate_mismatch = bool(annotation_conflict or certificate_name_conflict)
     certificate_domain_mismatch = bool(host_conflict or domain_conflict)
 
@@ -8216,6 +8524,10 @@ def _evaluate_preview_certificate_alignment(
         "preview_certificate_ingress_annotation_values": list(ingress_cert_annotation_values),
         "preview_certificate_ingress_static_ip_name": ingress_static_ip_annotation,
         "preview_certificate_ingress_pre_shared_cert_annotation": ingress_pre_shared_cert_annotation,
+        "preview_certificate_ingress_pre_shared_cert_annotation_values": list(
+            ingress_pre_shared_cert_annotation_values
+        ),
+        "preview_certificate_valid_pre_shared_cert_binding": valid_pre_shared_cert_binding,
         "preview_certificate_name": certificate_name,
         "preview_certificate_domains": list(certificate_domains),
         "preview_certificate_ingress_host_conflict": host_conflict,
@@ -8344,6 +8656,22 @@ def _classify_cloudsql_proxy_failure_from_log_text(
         return _DEPLOY_RUNTIME_REASON_INGRESS_BACKEND_UNHEALTHY_AFTER_ROLLOUT, "rollout_verify"
     if "deploy_runtime_reason_code=backend_config_healthcheck_unhealthy" in normalized:
         return _DEPLOY_RUNTIME_REASON_BACKEND_CONFIG_HEALTHCHECK_UNHEALTHY, "rollout_verify"
+    if "deploy_runtime_reason_code=ingress_ip_assigned_but_dns_not_updated" in normalized:
+        return _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_IP_ASSIGNED_BUT_DNS_NOT_UPDATED, "ingress_evidence"
+    if "deploy_runtime_reason_code=dns_points_to_old_ingress_ip" in normalized:
+        return _DEPLOY_DISPATCH_SERVICE_REASON_DNS_POINTS_TO_OLD_INGRESS_IP, "ingress_evidence"
+    if "deploy_runtime_reason_code=dns_record_mismatch" in normalized:
+        return _DEPLOY_DISPATCH_SERVICE_REASON_DNS_RECORD_MISMATCH, "ingress_evidence"
+    if "deploy_runtime_reason_code=tls_certificate_provisioning" in normalized:
+        return _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_PROVISIONING, "ingress_evidence"
+    if "deploy_runtime_reason_code=tls_certificate_bound_to_wrong_site" in normalized:
+        return _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_BOUND_TO_WRONG_SITE, "ingress_evidence"
+    if "deploy_runtime_reason_code=ingress_certificate_annotation_mismatch" in normalized:
+        return _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_CERTIFICATE_ANNOTATION_MISMATCH, "ingress_evidence"
+    if "deploy_runtime_reason_code=managed_certificate_identity_mismatch" in normalized:
+        return _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_IDENTITY_MISMATCH, "ingress_evidence"
+    if "deploy_runtime_reason_code=shared_static_ip_not_allowed_for_per_site_ingress" in normalized:
+        return _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_STATIC_IP_NOT_ALLOWED, "ingress_evidence"
     if "deploy_runtime_reason_code=managed_certificate_failed_not_visible" in normalized:
         return _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_FAILED_NOT_VISIBLE, "ingress_evidence"
     if "deploy_runtime_reason_code=ingress_static_ip_conflict" in normalized:

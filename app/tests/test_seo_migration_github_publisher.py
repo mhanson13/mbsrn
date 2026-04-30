@@ -19,6 +19,7 @@ from app.integrations.seo_migration_github_publisher import (
     _derive_site_runtime_image_repository,
     _render_managed_deploy_workflow_yaml,
     _render_managed_gke_manifest_files,
+    _classify_cloudsql_proxy_failure_from_log_text,
     _classify_rollout_blocker_hints_from_describe_outputs,
     derive_site_kubernetes_namespace,
     derive_site_preview_certificate_name,
@@ -4296,6 +4297,43 @@ def test_refresh_deploy_run_status_classifies_failed_run_step(monkeypatch) -> No
     assert len(calls) == 2
 
 
+def test_classify_cloudsql_proxy_failure_prefers_specific_dns_sub_reason() -> None:
+    reason_code, failure_stage = _classify_cloudsql_proxy_failure_from_log_text(
+        "\n".join(
+            [
+                "deploy_runtime_reason_code=dns_record_mismatch",
+                "deploy_runtime_reason_code=dns_points_to_old_ingress_ip",
+            ]
+        )
+    )
+
+    assert reason_code == "dns_points_to_old_ingress_ip"
+    assert failure_stage == "ingress_evidence"
+
+
+def test_classify_cloudsql_proxy_failure_maps_failed_not_visible_to_dns_context_when_present() -> None:
+    reason_code, failure_stage = _classify_cloudsql_proxy_failure_from_log_text(
+        "\n".join(
+            [
+                "deploy_runtime_reason_code=managed_certificate_failed_not_visible",
+                "deploy_runtime_reason_code=dns_record_mismatch",
+            ]
+        )
+    )
+
+    assert reason_code == "dns_record_mismatch"
+    assert failure_stage == "ingress_evidence"
+
+
+def test_classify_cloudsql_proxy_failure_maps_tls_provisioning_reason() -> None:
+    reason_code, failure_stage = _classify_cloudsql_proxy_failure_from_log_text(
+        "deploy_runtime_reason_code=tls_certificate_provisioning"
+    )
+
+    assert reason_code == "tls_certificate_provisioning"
+    assert failure_stage == "ingress_evidence"
+
+
 def test_ensure_deploy_workflow_creates_missing_file_and_verifies_presence(monkeypatch) -> None:
     calls: list[tuple[str, str]] = []
     _install_urlopen_stub(monkeypatch, _managed_provisioning_responses(), calls)
@@ -5428,6 +5466,20 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "echo \"resolved_live_url=$live_url\"" in workflow_yaml
     assert "echo \"live_url=$live_url\"" in workflow_yaml
     assert "echo \"deployed_url=$live_url\"" in workflow_yaml
+    assert "echo \"dns_record_matches_ingress=$dns_record_matches_ingress\"" in workflow_yaml
+    assert "echo \"dns_expected_ip=$dns_expected_ip\"" in workflow_yaml
+    assert "echo \"dns_observed_ip=$dns_observed_ip\"" in workflow_yaml
+    assert "echo \"tls_certificate_status=$tls_certificate_status\"" in workflow_yaml
+    assert "echo \"tls_domain_status=$tls_domain_status\"" in workflow_yaml
+    assert "echo \"ingress_ip=$ingress_ip\"" in workflow_yaml
+    assert "echo \"ingress_conflict_detected=$ingress_conflict_detected\"" in workflow_yaml
+    assert "echo \"cert_identity_valid=$cert_identity_valid\"" in workflow_yaml
+    assert "echo \"deploy_https_ready=$deploy_https_ready\"" in workflow_yaml
+    assert "deploy_runtime_reason_code=dns_record_mismatch" in workflow_yaml
+    assert "deploy_runtime_reason_code=dns_points_to_old_ingress_ip" in workflow_yaml
+    assert "deploy_runtime_reason_code=ingress_ip_assigned_but_dns_not_updated" in workflow_yaml
+    assert "deploy_runtime_reason_code=tls_certificate_provisioning" in workflow_yaml
+    assert "deploy_runtime_reason_code=shared_static_ip_not_allowed_for_per_site_ingress" in workflow_yaml
     assert (
         "echo \"Site runtime image: ${{ steps.resolve_site_runtime_image.outputs.site_runtime_image_reference }}\""
         in workflow_yaml
@@ -5675,6 +5727,10 @@ def test_managed_site_runtime_image_identity_is_repo_scoped_across_sites() -> No
 
     assert "SITE_WEB_IMAGE_REPOSITORY: ghcr.io/mhanson13/tnmfire-site-web" in tnmfire_workflow
     assert "SITE_WEB_IMAGE_REPOSITORY: ghcr.io/mhanson13/scmechanical-site-web" in sc_workflow
+    assert "MBSRN_PREVIEW_HOSTNAME: tnmfire.site.mbsrn.com" in tnmfire_workflow
+    assert "MBSRN_PREVIEW_HOSTNAME: scmechanical.site.mbsrn.com" in sc_workflow
+    assert "dig +short \"$preview_host\" A" in tnmfire_workflow
+    assert "dig +short \"$preview_host\" A" in sc_workflow
     assert "image: ghcr.io/mhanson13/tnmfire-site-web:latest" in tnmfire_manifests["k8s/deployment.yaml"]
     assert "image: ghcr.io/mhanson13/scmechanical-site-web:latest" in sc_manifests["k8s/deployment.yaml"]
     assert "ghcr.io/mhanson13/site-web:latest" not in tnmfire_workflow
@@ -6816,6 +6872,140 @@ def test_check_deploy_target_readiness_flags_stale_pre_shared_certificate_bindin
     details = readiness.managed_gke_config_details or {}
     assert details.get("stale_pre_shared_cert_binding_detected") is True
     assert details.get("preview_certificate_ingress_pre_shared_cert_annotation") == "stale-cert-binding"
+
+
+def test_check_deploy_target_readiness_allows_expected_pre_shared_certificate_metadata(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    managed_workflow = _encode_workflow_yaml(
+        (
+            "# mbsrn-managed-template:site_repo_template_v1\n"
+            "name: Managed Deploy\n"
+            "on:\n"
+            "  workflow_dispatch:\n"
+            "jobs:\n"
+            "  deploy:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    env:\n"
+            "      K8S_NAMESPACE: tnmfire\n"
+            "    steps:\n"
+            "      - uses: google-github-actions/auth@v2\n"
+            "      - run: kubectl apply -n \"$K8S_NAMESPACE\" -f k8s/deployment.yaml\n"
+        )
+    )
+    namespace_manifest = _encode_workflow_yaml(
+        (
+            "# mbsrn-managed-manifest:site_repo_template_v1\n"
+            "apiVersion: v1\n"
+            "kind: Namespace\n"
+            "metadata:\n"
+            "  name: tnmfire\n"
+        )
+    )
+    namespaced_manifest = _encode_workflow_yaml(
+        (
+            "# mbsrn-managed-manifest:site_repo_template_v1\n"
+            "apiVersion: apps/v1\n"
+            "kind: Deployment\n"
+            "metadata:\n"
+            "  name: site-web\n"
+            "  namespace: tnmfire\n"
+            "spec:\n"
+            "  template:\n"
+            "    spec:\n"
+            "      imagePullSecrets:\n"
+            "        - name: ghcr-pull-secret\n"
+        )
+    )
+    deployment_manifest = _encode_workflow_yaml(
+        (
+            "# mbsrn-managed-manifest:site_repo_template_v1\n"
+            "apiVersion: apps/v1\n"
+            "kind: Deployment\n"
+            "metadata:\n"
+            "  name: site-web\n"
+            "  namespace: tnmfire\n"
+            "spec:\n"
+            "  template:\n"
+            "    spec:\n"
+            "      imagePullSecrets:\n"
+            "        - name: ghcr-pull-secret\n"
+        )
+    )
+    ingress_manifest_with_expected_pre_shared = _encode_workflow_yaml(
+        (
+            "# mbsrn-managed-manifest:site_repo_template_v1\n"
+            "apiVersion: networking.k8s.io/v1\n"
+            "kind: Ingress\n"
+            "metadata:\n"
+            "  name: site-web\n"
+            "  namespace: tnmfire\n"
+            "  annotations:\n"
+            "    networking.gke.io/managed-certificates: site-web-preview-cert-tnmfire\n"
+            "    ingress.gcp.kubernetes.io/pre-shared-cert: site-web-preview-cert-tnmfire\n"
+            "spec:\n"
+            "  rules:\n"
+            "    - host: tnmfire.site.mbsrn.com\n"
+        )
+    )
+    certificate_manifest_expected = _encode_workflow_yaml(
+        (
+            "# mbsrn-managed-manifest:site_repo_template_v1\n"
+            "apiVersion: networking.gke.io/v1\n"
+            "kind: ManagedCertificate\n"
+            "metadata:\n"
+            "  name: site-web-preview-cert-tnmfire\n"
+            "  namespace: tnmfire\n"
+            "spec:\n"
+            "  domains:\n"
+            "    - tnmfire.site.mbsrn.com\n"
+        )
+    )
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _FakeHTTPResponse(status=200, body="{}"),
+            _FakeHTTPResponse(status=200, body="{}"),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "wfsha", "encoding": "base64", "content": managed_workflow}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"state": "active", "path": ".github/workflows/deploy-tnmfire-www-prod.yml"}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-namespace", "encoding": "base64", "content": namespace_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-deployment", "encoding": "base64", "content": deployment_manifest}),
+            ),
+            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-service", "encoding": "base64", "content": namespaced_manifest})),
+            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-ingress", "encoding": "base64", "content": ingress_manifest_with_expected_pre_shared})),
+            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-managedcertificate", "encoding": "base64", "content": certificate_manifest_expected})),
+            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-frontendconfig", "encoding": "base64", "content": namespaced_manifest})),
+            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-backendconfig", "encoding": "base64", "content": namespaced_manifest})),
+            *_gke_environment_config_present_responses(),
+        ],
+        calls,
+    )
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    readiness = publisher.check_deploy_target_readiness(
+        target=_dispatch_target(),
+        allow_ref_repair=False,
+        allow_workflow_repair=False,
+        dry_run=False,
+    )
+
+    assert readiness.dispatch_service_availability is True
+    assert readiness.dispatch_service_reason_code == "available"
+    details = readiness.managed_gke_config_details or {}
+    assert details.get("stale_pre_shared_cert_binding_detected") is False
+    assert details.get("preview_certificate_valid_pre_shared_cert_binding") is True
+    assert details.get("preview_certificate_ingress_pre_shared_cert_annotation_values") == [
+        "site-web-preview-cert-tnmfire"
+    ]
 
 
 def test_check_deploy_target_readiness_flags_deployed_content_identity_mismatch(monkeypatch) -> None:

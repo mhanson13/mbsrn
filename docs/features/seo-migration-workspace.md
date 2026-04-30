@@ -1591,6 +1591,35 @@ Deploy history and latest failure summary preserve the same deploy truth model:
 
 If dispatch was accepted but run evidence is not yet present, the workspace shows a no-run-yet message and instructs operators to use **Refresh deploy status** after eventual consistency delay.
 
+### Managed Per-Site Deploy Contract
+
+Managed-site deploy validation is site-isolated and evaluated per deploy attempt, per site hostname (`<repo>.site.mbsrn.com`).
+
+Deploy is not considered HTTPS-ready unless all runtime checks agree:
+- DNS A record matches the current ingress IP (`dns_record_matches_ingress=true`, `dns_expected_ip == dns_observed_ip`)
+- managed certificate identity matches the site hostname (`cert_identity_valid=true`)
+- certificate domain status is active (`tls_certificate_status=ACTIVE`, `tls_domain_status=ACTIVE`)
+- no ingress/static-ip or certificate cross-site conflict (`ingress_conflict_detected=false`)
+- explicit HTTPS live URL evidence is present (`deploy_https_ready=true` and `resolved_live_url` starts with `https://`)
+
+Blocking reason-code examples:
+- DNS mismatch:
+  - `dns_record_mismatch`
+  - `dns_points_to_old_ingress_ip`
+  - `ingress_ip_assigned_but_dns_not_updated`
+- TLS/certificate:
+  - `tls_certificate_provisioning`
+  - `managed_certificate_failed_not_visible` (usually DNS/LB visibility mismatch)
+  - `tls_certificate_bound_to_wrong_site`
+- Ingress isolation:
+  - `shared_static_ip_not_allowed_for_per_site_ingress`
+  - `stale_pre_shared_cert_binding_detected`
+
+Isolation rules:
+- Shared ingress static IP binding is blocked for per-site ingress.
+- Cross-site certificate bindings are blocked.
+- `ingress.gcp.kubernetes.io/pre-shared-cert` is only non-fatal when it matches the expected managed certificate for the same site; stale/foreign/multi-cert bindings block deploy readiness.
+
 ## Controlled Production Exercise Checklist
 Use this checklist for a bounded real-world migration exercise:
 1. Confirm migration runtime config is present (`GIT_TOKEN`, `GIT_USERID`, `GIT_EMAIL`) for private managed-image mode (default).

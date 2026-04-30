@@ -363,6 +363,18 @@ Stage model to follow during triage:
 6. `workflow_run_evidence`
 7. `resolved_live_url_evidence`
 
+Per-site success gate (managed ingress deploys):
+- treat deploy as successful only when all are true for the same site hostname:
+  - `dns_record_matches_ingress=true`
+  - `tls_certificate_status=ACTIVE` and `tls_domain_status=ACTIVE`
+  - `cert_identity_valid=true`
+  - `ingress_conflict_detected=false`
+  - `deploy_https_ready=true` and `resolved_live_url` uses `https://`
+- `managed_certificate_failed_not_visible` should be triaged as DNS/LB visibility mismatch first.
+- per-site ingress isolation blockers:
+  - `shared_static_ip_not_allowed_for_per_site_ingress`
+  - `stale_pre_shared_cert_binding_detected`
+
 Key non-secret fields:
 
 - `target.resolved_workflow_source` (`publish_history_workflow`, `workspace_config_workflow`, `default_workflow`)
@@ -409,6 +421,10 @@ Key non-secret fields:
 - `workflow_contract_advisory`
 - `workflow_run_id`, `workflow_run_status`, `workflow_run_conclusion`
 - `resolved_live_url`, `url_source`, `url_source_detail`
+- per-site network/TLS readiness fields:
+  - `dns_record_matches_ingress`, `dns_expected_ip`, `dns_observed_ip`
+  - `tls_certificate_status`, `tls_domain_status`
+  - `ingress_ip`, `ingress_conflict_detected`, `cert_identity_valid`, `deploy_https_ready`
 - readiness check fields:
   - `requested_ref`, `resolved_ref`, `ref_source`
   - `repo_exists`, `ref_exists`, `workflow_exists`, `workflow_dispatch_ready`

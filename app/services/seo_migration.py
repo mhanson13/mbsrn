@@ -296,6 +296,12 @@ _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_STATIC_IP_NOT_ALLOWED = "shared_static_ip
 _DEPLOY_DISPATCH_SERVICE_REASON_STALE_PRE_SHARED_CERT_BINDING = "stale_pre_shared_cert_binding_detected"
 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_FAILED_NOT_VISIBLE = "managed_certificate_failed_not_visible"
 _DEPLOY_DISPATCH_SERVICE_REASON_DEPLOYED_CONTENT_IDENTITY_MISMATCH = "deployed_content_identity_mismatch"
+_DEPLOY_DISPATCH_SERVICE_REASON_DNS_RECORD_MISMATCH = "dns_record_mismatch"
+_DEPLOY_DISPATCH_SERVICE_REASON_DNS_POINTS_TO_OLD_INGRESS_IP = "dns_points_to_old_ingress_ip"
+_DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_IP_ASSIGNED_BUT_DNS_NOT_UPDATED = (
+    "ingress_ip_assigned_but_dns_not_updated"
+)
+_DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_PROVISIONING = "tls_certificate_provisioning"
 _DEPLOY_WORKFLOW_MODE_SITE_REPO_TEMPLATE_V1 = "site_repo_template_v1"
 _DEPLOY_TARGET_ENVIRONMENT_SOURCE_ADMIN = "admin_config"
 _DEPLOY_DEFAULT_TARGET_ENVIRONMENT_KEY = "gke_prod"
@@ -3289,6 +3295,21 @@ class SEOMigrationService:
                     "managed_namespace_policies_aligned": (
                         target_readiness.managed_namespace_policies_aligned if target_readiness is not None else None
                     ),
+                    "dns_record_matches_ingress": (
+                        target_readiness.dns_record_matches_ingress if target_readiness is not None else None
+                    ),
+                    "dns_expected_ip": target_readiness.dns_expected_ip if target_readiness is not None else None,
+                    "dns_observed_ip": target_readiness.dns_observed_ip if target_readiness is not None else None,
+                    "tls_certificate_status": (
+                        target_readiness.tls_certificate_status if target_readiness is not None else None
+                    ),
+                    "tls_domain_status": target_readiness.tls_domain_status if target_readiness is not None else None,
+                    "ingress_ip": target_readiness.ingress_ip if target_readiness is not None else None,
+                    "ingress_conflict_detected": (
+                        target_readiness.ingress_conflict_detected if target_readiness is not None else None
+                    ),
+                    "cert_identity_valid": target_readiness.cert_identity_valid if target_readiness is not None else None,
+                    "deploy_https_ready": target_readiness.deploy_https_ready if target_readiness is not None else None,
                 },
             )
             self._update_workspace_readiness_statuses(workspace=workspace, site=site)
@@ -3541,6 +3562,7 @@ class SEOMigrationService:
             expected_publish_url_source_detail=expected_publish_url_source_detail,
         )
         content_identity = self._resolve_deploy_content_identity(deploy_result=deploy_result)
+        runtime_network_readiness = self._resolve_deploy_runtime_network_readiness(deploy_result=deploy_result)
         post_dispatch_state = _derive_post_dispatch_state(
             dispatch_attempted=dispatch_attempted,
             dispatch_result_stage=dispatch_result_stage,
@@ -3551,6 +3573,43 @@ class SEOMigrationService:
             workflow_run_lookup_attempted=workflow_run_lookup_attempted,
             workflow_run_found=workflow_run_found,
         )
+        dns_record_matches_ingress = runtime_network_readiness.get("dns_record_matches_ingress")
+        dns_expected_ip = runtime_network_readiness.get("dns_expected_ip")
+        dns_observed_ip = runtime_network_readiness.get("dns_observed_ip")
+        tls_certificate_status = runtime_network_readiness.get("tls_certificate_status")
+        tls_domain_status = runtime_network_readiness.get("tls_domain_status")
+        ingress_ip = runtime_network_readiness.get("ingress_ip")
+        ingress_conflict_detected = runtime_network_readiness.get("ingress_conflict_detected")
+        cert_identity_valid = runtime_network_readiness.get("cert_identity_valid")
+        deploy_https_ready = runtime_network_readiness.get("deploy_https_ready")
+        if target_readiness is not None:
+            if dns_record_matches_ingress is None:
+                dns_record_matches_ingress = target_readiness.dns_record_matches_ingress
+            if dns_expected_ip is None:
+                dns_expected_ip = target_readiness.dns_expected_ip
+            if dns_observed_ip is None:
+                dns_observed_ip = target_readiness.dns_observed_ip
+            if tls_certificate_status is None:
+                tls_certificate_status = target_readiness.tls_certificate_status
+            if tls_domain_status is None:
+                tls_domain_status = target_readiness.tls_domain_status
+            if ingress_ip is None:
+                ingress_ip = target_readiness.ingress_ip
+            if ingress_conflict_detected is None:
+                ingress_conflict_detected = target_readiness.ingress_conflict_detected
+            if cert_identity_valid is None:
+                cert_identity_valid = target_readiness.cert_identity_valid
+            if deploy_https_ready is None:
+                deploy_https_ready = target_readiness.deploy_https_ready
+        derived_https_ready = bool(
+            post_dispatch_state == "workflow_run_succeeded_with_live_url"
+            and resolved_live_url
+            and resolved_live_url.lower().startswith("https://")
+        )
+        if deploy_https_ready is None:
+            deploy_https_ready = derived_https_ready
+        else:
+            deploy_https_ready = bool(deploy_https_ready and derived_https_ready)
         (
             deploy_evidence_contract_status,
             deploy_evidence_contract_reasons,
@@ -3999,6 +4058,15 @@ class SEOMigrationService:
             "managed_namespace_policies_aligned": (
                 target_readiness.managed_namespace_policies_aligned if target_readiness is not None else None
             ),
+            "dns_record_matches_ingress": dns_record_matches_ingress,
+            "dns_expected_ip": dns_expected_ip,
+            "dns_observed_ip": dns_observed_ip,
+            "tls_certificate_status": tls_certificate_status,
+            "tls_domain_status": tls_domain_status,
+            "ingress_ip": ingress_ip,
+            "ingress_conflict_detected": ingress_conflict_detected,
+            "cert_identity_valid": cert_identity_valid,
+            "deploy_https_ready": deploy_https_ready,
             "workflow_run_id": getattr(deploy_result, "workflow_run_id", None),
             "workflow_run_status": getattr(deploy_result, "workflow_run_status", None),
             "workflow_run_conclusion": getattr(deploy_result, "workflow_run_conclusion", None),
@@ -5108,6 +5176,7 @@ class SEOMigrationService:
             expected_publish_url_source_detail=None,
         )
         refreshed_content_identity = self._resolve_deploy_content_identity(deploy_result=refresh_result)
+        refreshed_network_readiness = self._resolve_deploy_runtime_network_readiness(deploy_result=refresh_result)
         for content_field in (
             "site_runtime_image_reference",
             "site_runtime_image_repository",
@@ -5119,6 +5188,23 @@ class SEOMigrationService:
             content_value = refreshed_content_identity.get(content_field)
             if content_value and next_item.get(content_field) != content_value:
                 next_item[content_field] = content_value
+                updated = True
+        for readiness_field in (
+            "dns_record_matches_ingress",
+            "dns_expected_ip",
+            "dns_observed_ip",
+            "tls_certificate_status",
+            "tls_domain_status",
+            "ingress_ip",
+            "ingress_conflict_detected",
+            "cert_identity_valid",
+            "deploy_https_ready",
+        ):
+            readiness_value = refreshed_network_readiness.get(readiness_field)
+            if readiness_value is None:
+                continue
+            if next_item.get(readiness_field) != readiness_value:
+                next_item[readiness_field] = readiness_value
                 updated = True
         if candidate_url_source not in {_MIGRATION_URL_SOURCE_DEPLOY_RESULT, _MIGRATION_URL_SOURCE_WORKFLOW_OUTPUT}:
             candidate_live_url = None
@@ -5181,6 +5267,84 @@ class SEOMigrationService:
         if next_item.get("post_dispatch_state") != post_dispatch_state:
             next_item["post_dispatch_state"] = post_dispatch_state
             updated = True
+        derived_deploy_https_ready = bool(
+            post_dispatch_state == "workflow_run_succeeded_with_live_url"
+            and existing_live_url
+            and existing_live_url.lower().startswith("https://")
+        )
+        if next_item.get("deploy_https_ready") != derived_deploy_https_ready:
+            next_item["deploy_https_ready"] = derived_deploy_https_ready
+            updated = True
+        runtime_reason_code = _normalize_workflow_run_failure_reason_code(workflow_run_failure_reason_code)
+        dns_failure_reasons = {
+            _DEPLOY_DISPATCH_SERVICE_REASON_DNS_RECORD_MISMATCH,
+            _DEPLOY_DISPATCH_SERVICE_REASON_DNS_POINTS_TO_OLD_INGRESS_IP,
+            _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_IP_ASSIGNED_BUT_DNS_NOT_UPDATED,
+            _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_FAILED_NOT_VISIBLE,
+        }
+        cert_failure_reasons = {
+            _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_BOUND_TO_WRONG_SITE,
+            _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_IDENTITY_MISMATCH,
+            _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_CERTIFICATE_ANNOTATION_MISMATCH,
+            _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_FAILED_NOT_VISIBLE,
+            _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_PROVISIONING,
+        }
+        ingress_conflict_reasons = {
+            _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_STATIC_IP_CONFLICT,
+            _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_STATIC_IP_NOT_ALLOWED,
+            _DEPLOY_DISPATCH_SERVICE_REASON_STALE_PRE_SHARED_CERT_BINDING,
+        }
+        if not isinstance(next_item.get("dns_record_matches_ingress"), bool):
+            inferred_dns_match: bool | None = None
+            if runtime_reason_code in dns_failure_reasons:
+                inferred_dns_match = False
+            elif derived_deploy_https_ready:
+                inferred_dns_match = True
+            if inferred_dns_match is not None:
+                next_item["dns_record_matches_ingress"] = inferred_dns_match
+                updated = True
+        if not isinstance(next_item.get("ingress_conflict_detected"), bool):
+            inferred_ingress_conflict: bool | None = None
+            if runtime_reason_code in ingress_conflict_reasons:
+                inferred_ingress_conflict = True
+            elif derived_deploy_https_ready:
+                inferred_ingress_conflict = False
+            if inferred_ingress_conflict is not None:
+                next_item["ingress_conflict_detected"] = inferred_ingress_conflict
+                updated = True
+        if not isinstance(next_item.get("cert_identity_valid"), bool):
+            inferred_cert_identity: bool | None = None
+            if runtime_reason_code in cert_failure_reasons:
+                inferred_cert_identity = False
+            elif derived_deploy_https_ready:
+                inferred_cert_identity = True
+            if inferred_cert_identity is not None:
+                next_item["cert_identity_valid"] = inferred_cert_identity
+                updated = True
+        normalized_tls_status = (_normalize_string(next_item.get("tls_certificate_status"), max_length=64) or "").upper()
+        normalized_tls_domain_status = (_normalize_string(next_item.get("tls_domain_status"), max_length=64) or "").upper()
+        if not normalized_tls_status:
+            inferred_tls_status: str | None = None
+            if runtime_reason_code == _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_PROVISIONING:
+                inferred_tls_status = "PROVISIONING"
+            elif runtime_reason_code == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_FAILED_NOT_VISIBLE:
+                inferred_tls_status = "FAILED_NOT_VISIBLE"
+            elif derived_deploy_https_ready:
+                inferred_tls_status = "ACTIVE"
+            if inferred_tls_status:
+                next_item["tls_certificate_status"] = inferred_tls_status
+                updated = True
+        if not normalized_tls_domain_status:
+            inferred_tls_domain_status: str | None = None
+            if runtime_reason_code == _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_PROVISIONING:
+                inferred_tls_domain_status = "PROVISIONING"
+            elif runtime_reason_code == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_FAILED_NOT_VISIBLE:
+                inferred_tls_domain_status = "FAILED_NOT_VISIBLE"
+            elif derived_deploy_https_ready:
+                inferred_tls_domain_status = "ACTIVE"
+            if inferred_tls_domain_status:
+                next_item["tls_domain_status"] = inferred_tls_domain_status
+                updated = True
         workflow_run_failure_hint = _derive_workflow_run_failure_hint(
             failure_reason=workflow_run_failure_reason_code,
             post_dispatch_state=post_dispatch_state,
@@ -5362,6 +5526,31 @@ class SEOMigrationService:
             "resolved_live_url": existing_live_url,
             "url_source": existing_url_source,
             "url_source_detail": existing_url_source_detail,
+            "dns_record_matches_ingress": (
+                bool(next_item.get("dns_record_matches_ingress"))
+                if isinstance(next_item.get("dns_record_matches_ingress"), bool)
+                else None
+            ),
+            "dns_expected_ip": _normalize_string(next_item.get("dns_expected_ip"), max_length=64),
+            "dns_observed_ip": _normalize_string(next_item.get("dns_observed_ip"), max_length=64),
+            "tls_certificate_status": _normalize_string(next_item.get("tls_certificate_status"), max_length=64),
+            "tls_domain_status": _normalize_string(next_item.get("tls_domain_status"), max_length=64),
+            "ingress_ip": _normalize_string(next_item.get("ingress_ip"), max_length=64),
+            "ingress_conflict_detected": (
+                bool(next_item.get("ingress_conflict_detected"))
+                if isinstance(next_item.get("ingress_conflict_detected"), bool)
+                else None
+            ),
+            "cert_identity_valid": (
+                bool(next_item.get("cert_identity_valid"))
+                if isinstance(next_item.get("cert_identity_valid"), bool)
+                else None
+            ),
+            "deploy_https_ready": (
+                bool(next_item.get("deploy_https_ready"))
+                if isinstance(next_item.get("deploy_https_ready"), bool)
+                else None
+            ),
             "site_runtime_image_reference": _normalize_string(
                 next_item.get("site_runtime_image_reference"),
                 max_length=255,
@@ -5750,6 +5939,31 @@ class SEOMigrationService:
             "resolved_live_url": _normalize_url_candidate(history_item.get("resolved_live_url")),
             "url_source": _normalize_migration_url_source(history_item.get("url_source")),
             "url_source_detail": _normalize_string(history_item.get("url_source_detail"), max_length=120),
+            "dns_record_matches_ingress": (
+                bool(history_item.get("dns_record_matches_ingress"))
+                if isinstance(history_item.get("dns_record_matches_ingress"), bool)
+                else None
+            ),
+            "dns_expected_ip": _normalize_string(history_item.get("dns_expected_ip"), max_length=64),
+            "dns_observed_ip": _normalize_string(history_item.get("dns_observed_ip"), max_length=64),
+            "tls_certificate_status": _normalize_string(history_item.get("tls_certificate_status"), max_length=64),
+            "tls_domain_status": _normalize_string(history_item.get("tls_domain_status"), max_length=64),
+            "ingress_ip": _normalize_string(history_item.get("ingress_ip"), max_length=64),
+            "ingress_conflict_detected": (
+                bool(history_item.get("ingress_conflict_detected"))
+                if isinstance(history_item.get("ingress_conflict_detected"), bool)
+                else None
+            ),
+            "cert_identity_valid": (
+                bool(history_item.get("cert_identity_valid"))
+                if isinstance(history_item.get("cert_identity_valid"), bool)
+                else None
+            ),
+            "deploy_https_ready": (
+                bool(history_item.get("deploy_https_ready"))
+                if isinstance(history_item.get("deploy_https_ready"), bool)
+                else None
+            ),
             "post_dispatch_state": _normalize_string(history_item.get("post_dispatch_state"), max_length=80)
             or _derive_post_dispatch_state(
                 dispatch_attempted=history_item.get("dispatch_attempted"),
@@ -10351,6 +10565,31 @@ class SEOMigrationService:
             "site_runtime_image_selection_mode": selection_mode,
         }
 
+    def _resolve_deploy_runtime_network_readiness(self, *, deploy_result: object) -> dict[str, object]:
+        workflow_output_payload = _normalize_history_inputs(getattr(deploy_result, "workflow_output", {}))
+        if not workflow_output_payload:
+            workflow_output_payload = _normalize_history_inputs(getattr(deploy_result, "workflow_outputs", {}))
+        if not workflow_output_payload:
+            workflow_output_payload = _normalize_history_inputs(getattr(deploy_result, "outputs", {}))
+        return {
+            "dns_record_matches_ingress": _coerce_optional_bool(
+                workflow_output_payload.get("dns_record_matches_ingress")
+            ),
+            "dns_expected_ip": _normalize_string(workflow_output_payload.get("dns_expected_ip"), max_length=64),
+            "dns_observed_ip": _normalize_string(workflow_output_payload.get("dns_observed_ip"), max_length=64),
+            "tls_certificate_status": _normalize_string(
+                workflow_output_payload.get("tls_certificate_status"),
+                max_length=64,
+            ),
+            "tls_domain_status": _normalize_string(workflow_output_payload.get("tls_domain_status"), max_length=64),
+            "ingress_ip": _normalize_string(workflow_output_payload.get("ingress_ip"), max_length=64),
+            "ingress_conflict_detected": _coerce_optional_bool(
+                workflow_output_payload.get("ingress_conflict_detected")
+            ),
+            "cert_identity_valid": _coerce_optional_bool(workflow_output_payload.get("cert_identity_valid")),
+            "deploy_https_ready": _coerce_optional_bool(workflow_output_payload.get("deploy_https_ready")),
+        }
+
     def _resolve_latest_deploy_live_url(
         self,
         *,
@@ -10997,6 +11236,31 @@ class SEOMigrationService:
                 ),
                 "deploy_evidence_contract_reasons": deploy_evidence_contract_reasons,
                 "workflow_contract_advisory": workflow_contract_advisory,
+                "dns_record_matches_ingress": (
+                    bool(item.get("dns_record_matches_ingress"))
+                    if isinstance(item.get("dns_record_matches_ingress"), bool)
+                    else None
+                ),
+                "dns_expected_ip": _normalize_string(item.get("dns_expected_ip"), max_length=64),
+                "dns_observed_ip": _normalize_string(item.get("dns_observed_ip"), max_length=64),
+                "tls_certificate_status": _normalize_string(item.get("tls_certificate_status"), max_length=64),
+                "tls_domain_status": _normalize_string(item.get("tls_domain_status"), max_length=64),
+                "ingress_ip": _normalize_string(item.get("ingress_ip"), max_length=64),
+                "ingress_conflict_detected": (
+                    bool(item.get("ingress_conflict_detected"))
+                    if isinstance(item.get("ingress_conflict_detected"), bool)
+                    else None
+                ),
+                "cert_identity_valid": (
+                    bool(item.get("cert_identity_valid"))
+                    if isinstance(item.get("cert_identity_valid"), bool)
+                    else None
+                ),
+                "deploy_https_ready": (
+                    bool(item.get("deploy_https_ready"))
+                    if isinstance(item.get("deploy_https_ready"), bool)
+                    else None
+                ),
                 "repo_exists": (bool(item.get("repo_exists")) if isinstance(item.get("repo_exists"), bool) else None),
                 "ref_exists": (bool(item.get("ref_exists")) if isinstance(item.get("ref_exists"), bool) else None),
                 "workflow_exists": (
@@ -11743,6 +12007,15 @@ class SEOMigrationService:
                             "managed_network_policy_expected": target_readiness.managed_network_policy_expected,
                             "managed_network_policy_present": target_readiness.managed_network_policy_present,
                             "managed_namespace_policies_aligned": target_readiness.managed_namespace_policies_aligned,
+                            "dns_record_matches_ingress": target_readiness.dns_record_matches_ingress,
+                            "dns_expected_ip": target_readiness.dns_expected_ip,
+                            "dns_observed_ip": target_readiness.dns_observed_ip,
+                            "tls_certificate_status": target_readiness.tls_certificate_status,
+                            "tls_domain_status": target_readiness.tls_domain_status,
+                            "ingress_ip": target_readiness.ingress_ip,
+                            "ingress_conflict_detected": target_readiness.ingress_conflict_detected,
+                            "cert_identity_valid": target_readiness.cert_identity_valid,
+                            "deploy_https_ready": target_readiness.deploy_https_ready,
                             "managed_gke_config_details": _normalize_json_dict(
                                 target_readiness.managed_gke_config_details
                             ),
@@ -12089,6 +12362,133 @@ class SEOMigrationService:
         workflow_trigger_types = _normalize_workflow_trigger_types_for_summary(
             latest_traceability.get("workflow_trigger_types")
         ) or _normalize_workflow_trigger_types_for_summary(target_summary.get("workflow_trigger_types"))
+        dns_record_matches_ingress = (
+            bool(latest_traceability.get("dns_record_matches_ingress"))
+            if isinstance(latest_traceability.get("dns_record_matches_ingress"), bool)
+            else (
+                bool(target_summary.get("dns_record_matches_ingress"))
+                if isinstance(target_summary.get("dns_record_matches_ingress"), bool)
+                else None
+            )
+        )
+        dns_expected_ip = _normalize_string(latest_traceability.get("dns_expected_ip"), max_length=64) or _normalize_string(
+            target_summary.get("dns_expected_ip"),
+            max_length=64,
+        )
+        dns_observed_ip = _normalize_string(latest_traceability.get("dns_observed_ip"), max_length=64) or _normalize_string(
+            target_summary.get("dns_observed_ip"),
+            max_length=64,
+        )
+        tls_certificate_status = _normalize_string(
+            latest_traceability.get("tls_certificate_status"),
+            max_length=64,
+        ) or _normalize_string(
+            target_summary.get("tls_certificate_status"),
+            max_length=64,
+        )
+        tls_domain_status = _normalize_string(
+            latest_traceability.get("tls_domain_status"),
+            max_length=64,
+        ) or _normalize_string(
+            target_summary.get("tls_domain_status"),
+            max_length=64,
+        )
+        ingress_ip = _normalize_string(latest_traceability.get("ingress_ip"), max_length=64) or _normalize_string(
+            target_summary.get("ingress_ip"),
+            max_length=64,
+        )
+        ingress_conflict_detected = (
+            bool(latest_traceability.get("ingress_conflict_detected"))
+            if isinstance(latest_traceability.get("ingress_conflict_detected"), bool)
+            else (
+                bool(target_summary.get("ingress_conflict_detected"))
+                if isinstance(target_summary.get("ingress_conflict_detected"), bool)
+                else None
+            )
+        )
+        cert_identity_valid = (
+            bool(latest_traceability.get("cert_identity_valid"))
+            if isinstance(latest_traceability.get("cert_identity_valid"), bool)
+            else (
+                bool(target_summary.get("cert_identity_valid"))
+                if isinstance(target_summary.get("cert_identity_valid"), bool)
+                else None
+            )
+        )
+        deploy_https_ready = (
+            bool(latest_traceability.get("deploy_https_ready"))
+            if isinstance(latest_traceability.get("deploy_https_ready"), bool)
+            else (
+                bool(target_summary.get("deploy_https_ready"))
+                if isinstance(target_summary.get("deploy_https_ready"), bool)
+                else None
+            )
+        )
+        latest_resolved_live_url = _normalize_url_candidate(latest_traceability.get("resolved_live_url"))
+        latest_post_dispatch_state = _normalize_string(latest_traceability.get("post_dispatch_state"), max_length=80)
+        derived_https_ready = bool(
+            latest_post_dispatch_state == "workflow_run_succeeded_with_live_url"
+            and latest_resolved_live_url
+            and latest_resolved_live_url.lower().startswith("https://")
+        )
+        if deploy_https_ready is None:
+            deploy_https_ready = derived_https_ready
+        else:
+            deploy_https_ready = bool(deploy_https_ready and derived_https_ready)
+        reason_candidates = {
+            _normalize_dispatch_service_reason_code(dispatch_service_reason_code),
+            _normalize_dispatch_service_reason_code(last_failure_dispatch_service_reason_code),
+            _normalize_workflow_run_failure_reason_code(latest_traceability.get("workflow_run_failure_reason_code")),
+        }
+        dns_failure_reasons = {
+            _DEPLOY_DISPATCH_SERVICE_REASON_DNS_RECORD_MISMATCH,
+            _DEPLOY_DISPATCH_SERVICE_REASON_DNS_POINTS_TO_OLD_INGRESS_IP,
+            _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_IP_ASSIGNED_BUT_DNS_NOT_UPDATED,
+            _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_FAILED_NOT_VISIBLE,
+        }
+        cert_failure_reasons = {
+            _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_BOUND_TO_WRONG_SITE,
+            _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_IDENTITY_MISMATCH,
+            _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_CERTIFICATE_ANNOTATION_MISMATCH,
+            _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_FAILED_NOT_VISIBLE,
+            _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_PROVISIONING,
+        }
+        ingress_conflict_reasons = {
+            _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_STATIC_IP_CONFLICT,
+            _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_STATIC_IP_NOT_ALLOWED,
+            _DEPLOY_DISPATCH_SERVICE_REASON_STALE_PRE_SHARED_CERT_BINDING,
+        }
+        if dns_record_matches_ingress is None:
+            if any(candidate in dns_failure_reasons for candidate in reason_candidates if candidate):
+                dns_record_matches_ingress = False
+            elif deploy_https_ready:
+                dns_record_matches_ingress = True
+        if ingress_conflict_detected is None:
+            if any(candidate in ingress_conflict_reasons for candidate in reason_candidates if candidate):
+                ingress_conflict_detected = True
+            elif deploy_https_ready:
+                ingress_conflict_detected = False
+        if cert_identity_valid is None:
+            if any(candidate in cert_failure_reasons for candidate in reason_candidates if candidate):
+                cert_identity_valid = False
+            elif deploy_https_ready:
+                cert_identity_valid = True
+        normalized_tls_status = (tls_certificate_status or "").strip().upper()
+        normalized_tls_domain_status = (tls_domain_status or "").strip().upper()
+        if not normalized_tls_status:
+            if _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_PROVISIONING in reason_candidates:
+                tls_certificate_status = "PROVISIONING"
+            elif _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_FAILED_NOT_VISIBLE in reason_candidates:
+                tls_certificate_status = "FAILED_NOT_VISIBLE"
+            elif deploy_https_ready:
+                tls_certificate_status = "ACTIVE"
+        if not normalized_tls_domain_status:
+            if _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_PROVISIONING in reason_candidates:
+                tls_domain_status = "PROVISIONING"
+            elif _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_FAILED_NOT_VISIBLE in reason_candidates:
+                tls_domain_status = "FAILED_NOT_VISIBLE"
+            elif deploy_https_ready:
+                tls_domain_status = "ACTIVE"
 
         return {
             "ready": not reasons,
@@ -12108,6 +12508,15 @@ class SEOMigrationService:
             "workflow_trigger_types": workflow_trigger_types,
             "dispatch_service_availability": dispatch_service_availability,
             "dispatch_service_reason_code": dispatch_service_reason_code,
+            "dns_record_matches_ingress": dns_record_matches_ingress,
+            "dns_expected_ip": dns_expected_ip,
+            "dns_observed_ip": dns_observed_ip,
+            "tls_certificate_status": tls_certificate_status,
+            "tls_domain_status": tls_domain_status,
+            "ingress_ip": ingress_ip,
+            "ingress_conflict_detected": ingress_conflict_detected,
+            "cert_identity_valid": cert_identity_valid,
+            "deploy_https_ready": deploy_https_ready,
             "workflow_conformance_checked": workflow_conformance_checked,
             "workflow_conformance_status": workflow_conformance_status,
             "workflow_conformance_reasons": workflow_conformance_reasons,
@@ -12203,6 +12612,15 @@ class SEOMigrationService:
                 "deploy_runtime_available": bool(runtime_diagnostics.get("configured")),
                 "dispatch_service_availability": dispatch_service_availability,
                 "dispatch_service_reason_code": dispatch_service_reason_code,
+                "dns_record_matches_ingress": dns_record_matches_ingress,
+                "dns_expected_ip": dns_expected_ip,
+                "dns_observed_ip": dns_observed_ip,
+                "tls_certificate_status": tls_certificate_status,
+                "tls_domain_status": tls_domain_status,
+                "ingress_ip": ingress_ip,
+                "ingress_conflict_detected": ingress_conflict_detected,
+                "cert_identity_valid": cert_identity_valid,
+                "deploy_https_ready": deploy_https_ready,
                 "managed_deploy_secret_available": managed_deploy_secret_available,
                 "managed_deploy_secret_source": managed_deploy_secret_source,
                 "managed_deploy_secret_reason": managed_deploy_secret_reason,
@@ -12868,6 +13286,11 @@ def _normalize_workflow_run_failure_reason_code(value: object) -> str | None:
         _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_STATIC_IP_NOT_ALLOWED,
         _DEPLOY_DISPATCH_SERVICE_REASON_STALE_PRE_SHARED_CERT_BINDING,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_FAILED_NOT_VISIBLE,
+        _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_BOUND_TO_WRONG_SITE,
+        _DEPLOY_DISPATCH_SERVICE_REASON_DNS_RECORD_MISMATCH,
+        _DEPLOY_DISPATCH_SERVICE_REASON_DNS_POINTS_TO_OLD_INGRESS_IP,
+        _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_IP_ASSIGNED_BUT_DNS_NOT_UPDATED,
+        _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_PROVISIONING,
         _DEPLOY_RUN_FAILURE_REASON_PUBLIC_IMAGE_PULL_FAILED,
         _DEPLOY_RUN_FAILURE_REASON_PRIVATE_IMAGE_PULL_FORBIDDEN,
         _DEPLOY_RUN_FAILURE_REASON_REACHABLE_BUT_TLS_MISMATCH,
@@ -12924,6 +13347,10 @@ def _normalize_dispatch_service_reason_code(value: object) -> str | None:
         _DEPLOY_DISPATCH_SERVICE_REASON_STALE_PRE_SHARED_CERT_BINDING,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_FAILED_NOT_VISIBLE,
         _DEPLOY_DISPATCH_SERVICE_REASON_DEPLOYED_CONTENT_IDENTITY_MISMATCH,
+        _DEPLOY_DISPATCH_SERVICE_REASON_DNS_RECORD_MISMATCH,
+        _DEPLOY_DISPATCH_SERVICE_REASON_DNS_POINTS_TO_OLD_INGRESS_IP,
+        _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_IP_ASSIGNED_BUT_DNS_NOT_UPDATED,
+        _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_PROVISIONING,
     }:
         return normalized_lower
     if normalized_lower in {
@@ -13000,6 +13427,9 @@ def _derive_post_dispatch_state(
     run_status = (_normalize_string(workflow_run_status, max_length=40) or "").strip().lower()
     run_conclusion = (_normalize_string(workflow_run_conclusion, max_length=40) or "").strip().lower()
     confirmed_live_url = _normalize_url_candidate(resolved_live_url)
+    confirmed_https_live_url = (
+        confirmed_live_url if confirmed_live_url and confirmed_live_url.lower().startswith("https://") else None
+    )
 
     if attempted is False:
         return "dispatch_not_attempted"
@@ -13023,13 +13453,13 @@ def _derive_post_dispatch_state(
         return "workflow_run_in_progress"
     if run_status == "completed":
         if run_conclusion == "success":
-            if confirmed_live_url:
+            if confirmed_https_live_url:
                 return "workflow_run_succeeded_with_live_url"
             return "workflow_run_succeeded_without_live_url"
         if run_conclusion:
             return "workflow_run_failed"
         return "workflow_run_completed"
-    if confirmed_live_url:
+    if confirmed_https_live_url:
         return "workflow_run_succeeded_with_live_url"
     return "workflow_run_observed"
 
@@ -13226,9 +13656,10 @@ def _derive_deploy_evidence_contract(
     conformance_status = _normalize_string(workflow_conformance_status, max_length=80)
     post_state = _normalize_string(post_dispatch_state, max_length=80)
     resolved_live = _normalize_url_candidate(resolved_live_url)
+    resolved_live_https = resolved_live if resolved_live and resolved_live.lower().startswith("https://") else None
     normalized_url_source = _normalize_migration_url_source(url_source)
 
-    if resolved_live and normalized_url_source in {
+    if resolved_live_https and normalized_url_source in {
         _MIGRATION_URL_SOURCE_WORKFLOW_OUTPUT,
         _MIGRATION_URL_SOURCE_DEPLOY_RESULT,
     }:
@@ -13407,6 +13838,10 @@ def _derive_dispatch_service_reason_code(
         _DEPLOY_DISPATCH_SERVICE_REASON_STALE_PRE_SHARED_CERT_BINDING,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_FAILED_NOT_VISIBLE,
         _DEPLOY_DISPATCH_SERVICE_REASON_DEPLOYED_CONTENT_IDENTITY_MISMATCH,
+        _DEPLOY_DISPATCH_SERVICE_REASON_DNS_RECORD_MISMATCH,
+        _DEPLOY_DISPATCH_SERVICE_REASON_DNS_POINTS_TO_OLD_INGRESS_IP,
+        _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_IP_ASSIGNED_BUT_DNS_NOT_UPDATED,
+        _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_PROVISIONING,
     }:
         return runtime_reason
     if not target_valid:
@@ -13503,6 +13938,20 @@ def _derive_managed_gke_dispatch_readiness_message(*, dispatch_service_reason_co
         return (
             "ManagedCertificate is not visible for this hostname yet. Verify DNS/ingress exposure and certificate "
             "visibility before retry."
+        )
+    if normalized_dispatch_reason in {
+        _DEPLOY_DISPATCH_SERVICE_REASON_DNS_RECORD_MISMATCH,
+        _DEPLOY_DISPATCH_SERVICE_REASON_DNS_POINTS_TO_OLD_INGRESS_IP,
+        _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_IP_ASSIGNED_BUT_DNS_NOT_UPDATED,
+    }:
+        return (
+            "DNS for this site hostname does not match the current ingress IP. "
+            "Update the A record and wait for propagation before retrying deploy."
+        )
+    if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_PROVISIONING:
+        return (
+            "ManagedCertificate provisioning is still in progress for this site hostname. "
+            "Wait for ACTIVE certificate status before treating deploy as successful."
         )
     if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_DEPLOYED_CONTENT_IDENTITY_MISMATCH:
         return (
@@ -13606,6 +14055,20 @@ def _derive_deploy_failure_remediation_hint(
         return (
             "ManagedCertificate reports visibility failure for this site hostname. "
             "Verify DNS visibility and ingress exposure, then retry deploy."
+        )
+    if normalized_dispatch_reason in {
+        _DEPLOY_DISPATCH_SERVICE_REASON_DNS_RECORD_MISMATCH,
+        _DEPLOY_DISPATCH_SERVICE_REASON_DNS_POINTS_TO_OLD_INGRESS_IP,
+        _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_IP_ASSIGNED_BUT_DNS_NOT_UPDATED,
+    }:
+        return (
+            "DNS A record does not match the current ingress IP for this site hostname. "
+            "Correct DNS and wait for propagation before retrying deploy."
+        )
+    if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_PROVISIONING:
+        return (
+            "ManagedCertificate is still provisioning for this hostname. "
+            "Wait for ACTIVE domain status and retry deploy refresh."
         )
     if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_DEPLOYED_CONTENT_IDENTITY_MISMATCH:
         return (
@@ -13748,6 +14211,25 @@ def _derive_workflow_run_failure_hint(
         return (
             "ManagedCertificate is not visible for this hostname yet. Verify DNS/ingress exposure and certificate "
             "visibility before retry."
+        )
+    if normalized_reason == _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_BOUND_TO_WRONG_SITE:
+        return (
+            "ManagedCertificate domain identity does not match this site hostname. "
+            "Republish managed ingress/certificate resources for the correct site."
+        )
+    if normalized_reason in {
+        _DEPLOY_DISPATCH_SERVICE_REASON_DNS_RECORD_MISMATCH,
+        _DEPLOY_DISPATCH_SERVICE_REASON_DNS_POINTS_TO_OLD_INGRESS_IP,
+        _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_IP_ASSIGNED_BUT_DNS_NOT_UPDATED,
+    }:
+        return (
+            "DNS does not match the ingress IP for this site hostname. "
+            "Update DNS A record and retry once propagation completes."
+        )
+    if normalized_reason == _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_PROVISIONING:
+        return (
+            "ManagedCertificate provisioning is still in progress. "
+            "Wait for ACTIVE status before marking deploy successful."
         )
     if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_CLOUDSQL_INVALID_STATE:
         return (
@@ -14958,6 +15440,19 @@ def _coerce_bool(value: object, *, default: bool) -> bool:
     if normalized in {"0", "false", "no", "off"}:
         return False
     return default
+
+
+def _coerce_optional_bool(value: object) -> bool | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    normalized = str(value).strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    return None
 
 
 def _coerce_int(value: object) -> int | None:
