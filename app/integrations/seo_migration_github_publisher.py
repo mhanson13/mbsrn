@@ -93,6 +93,29 @@ class SEOMigrationGitHubImagePullSecretProvisionResult:
 
 
 @dataclass(frozen=True)
+class SEOMigrationGitHubManagedSiteStaticIPEnsureResult:
+    static_ip_name: str
+    static_ip_address: str | None
+    static_ip_created: bool
+    gcp_project_id: str
+    result: str
+
+
+@dataclass(frozen=True)
+class SEOMigrationGitHubManagedSiteDnsEnsureResult:
+    dns_record_name: str
+    dns_record_type: str
+    dns_managed_zone: str
+    dns_project_id: str
+    dns_expected_ip: str
+    dns_previous_ips: tuple[str, ...]
+    dns_updated: bool
+    dns_created: bool
+    dns_ttl: int
+    result: str
+
+
+@dataclass(frozen=True)
 class SEOMigrationGitHubRepositoryEnsureResult:
     repo_owner: str
     repo_name: str
@@ -417,6 +440,48 @@ class SEOMigrationGitHubPublisher:
         )
         raise NotImplementedError
 
+    def ensure_managed_site_static_ip(
+        self,
+        *,
+        repo_owner: str,
+        repo_name: str,
+        site_id: str | None,
+        managed_gke_config: dict[str, object] | None,
+        gcp_deploy_key: str | None,
+        dry_run: bool = False,
+    ) -> SEOMigrationGitHubManagedSiteStaticIPEnsureResult:
+        del (
+            repo_owner,
+            repo_name,
+            site_id,
+            managed_gke_config,
+            gcp_deploy_key,
+            dry_run,
+        )
+        raise NotImplementedError
+
+    def ensure_managed_site_dns_a_record(
+        self,
+        *,
+        preview_hostname: str,
+        expected_ip_address: str,
+        dns_managed_zone: str,
+        dns_project_id: str,
+        gcp_deploy_key: str | None,
+        ttl: int = 300,
+        dry_run: bool = False,
+    ) -> SEOMigrationGitHubManagedSiteDnsEnsureResult:
+        del (
+            preview_hostname,
+            expected_ip_address,
+            dns_managed_zone,
+            dns_project_id,
+            gcp_deploy_key,
+            ttl,
+            dry_run,
+        )
+        raise NotImplementedError
+
     def adopt_repository(
         self,
         *,
@@ -686,6 +751,47 @@ class MisconfiguredSEOMigrationGitHubPublisher(SEOMigrationGitHubPublisher):
             git_email,
             git_token,
             gcp_deploy_key,
+            dry_run,
+        )
+        raise SEOMigrationGitHubPublisherError(
+            code=self.reason_code,
+            safe_message=self.safe_message,
+        )
+
+    def ensure_managed_site_static_ip(
+        self,
+        *,
+        repo_owner: str,
+        repo_name: str,
+        site_id: str | None,
+        managed_gke_config: dict[str, object] | None,
+        gcp_deploy_key: str | None,
+        dry_run: bool = False,
+    ) -> SEOMigrationGitHubManagedSiteStaticIPEnsureResult:
+        del repo_owner, repo_name, site_id, managed_gke_config, gcp_deploy_key, dry_run
+        raise SEOMigrationGitHubPublisherError(
+            code=self.reason_code,
+            safe_message=self.safe_message,
+        )
+
+    def ensure_managed_site_dns_a_record(
+        self,
+        *,
+        preview_hostname: str,
+        expected_ip_address: str,
+        dns_managed_zone: str,
+        dns_project_id: str,
+        gcp_deploy_key: str | None,
+        ttl: int = 300,
+        dry_run: bool = False,
+    ) -> SEOMigrationGitHubManagedSiteDnsEnsureResult:
+        del (
+            preview_hostname,
+            expected_ip_address,
+            dns_managed_zone,
+            dns_project_id,
+            gcp_deploy_key,
+            ttl,
             dry_run,
         )
         raise SEOMigrationGitHubPublisherError(
@@ -2392,6 +2498,192 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             namespace=normalized_namespace,
             secret_name=_MBSRN_MANAGED_IMAGE_PULL_SECRET_NAME,
             action=action,
+        )
+
+    def ensure_managed_site_static_ip(
+        self,
+        *,
+        repo_owner: str,
+        repo_name: str,
+        site_id: str | None,
+        managed_gke_config: dict[str, object] | None,
+        gcp_deploy_key: str | None,
+        dry_run: bool = False,
+    ) -> SEOMigrationGitHubManagedSiteStaticIPEnsureResult:
+        del repo_owner
+        static_ip_name, _ = derive_site_preview_static_ip_name(
+            repo_name=repo_name,
+            site_id=site_id,
+        )
+        normalized_managed_gke_config = _normalize_managed_gke_config(managed_gke_config)
+        project_id = _coerce_string(
+            normalized_managed_gke_config.get(_MANAGED_GKE_CONFIG_PROJECT_ID)
+        )
+        if not project_id:
+            raise SEOMigrationGitHubPublisherError(
+                code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFIG_MISSING,
+                safe_message=(
+                    "Managed deploy target is missing required GKE project id configuration "
+                    "for static IP provisioning."
+                ),
+                stage="static_ip_provision",
+            )
+        if not _coerce_string(gcp_deploy_key):
+            raise SEOMigrationGitHubPublisherError(
+                code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFIG_MISSING,
+                safe_message=(
+                    "Managed deploy runtime credential is unavailable for static IP provisioning."
+                ),
+                stage="static_ip_provision",
+            )
+        if dry_run:
+            return SEOMigrationGitHubManagedSiteStaticIPEnsureResult(
+                static_ip_name=static_ip_name,
+                static_ip_address=None,
+                static_ip_created=False,
+                gcp_project_id=project_id,
+                result="dry_run",
+            )
+        try:
+            ensure_result = _ensure_managed_site_global_static_ip(
+                gcp_deploy_key=str(gcp_deploy_key),
+                project_id=project_id,
+                static_ip_name=static_ip_name,
+                timeout_seconds=self.timeout_seconds,
+            )
+        except SEOMigrationGitHubPublisherError as exc:
+            if exc.code in {
+                _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFIG_MISSING,
+                _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROVISIONING_FAILED,
+            }:
+                raise
+            raise SEOMigrationGitHubPublisherError(
+                code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROVISIONING_FAILED,
+                safe_message="Managed site static IP provisioning failed before deploy dispatch.",
+                status_code=exc.status_code,
+                stage=exc.stage or "static_ip_provision",
+                provider_message=exc.provider_message,
+            ) from exc
+        return SEOMigrationGitHubManagedSiteStaticIPEnsureResult(
+            static_ip_name=static_ip_name,
+            static_ip_address=_coerce_string(ensure_result.get("static_ip_address")),
+            static_ip_created=bool(ensure_result.get("static_ip_created")),
+            gcp_project_id=project_id,
+            result=_coerce_string(ensure_result.get("result")) or "exists",
+        )
+
+    def ensure_managed_site_dns_a_record(
+        self,
+        *,
+        preview_hostname: str,
+        expected_ip_address: str,
+        dns_managed_zone: str,
+        dns_project_id: str,
+        gcp_deploy_key: str | None,
+        ttl: int = 300,
+        dry_run: bool = False,
+    ) -> SEOMigrationGitHubManagedSiteDnsEnsureResult:
+        normalized_preview_hostname = (_coerce_string(preview_hostname) or "").strip().lower().rstrip(".")
+        if not normalized_preview_hostname:
+            raise SEOMigrationGitHubPublisherError(
+                code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFIG_MISSING,
+                safe_message="Managed-site DNS provisioning requires a preview hostname.",
+                stage="dns_provision",
+            )
+        expected_suffix = f".{_MBSRN_MANAGED_PREVIEW_DOMAIN_SUFFIX}"
+        if not normalized_preview_hostname.endswith(expected_suffix):
+            raise SEOMigrationGitHubPublisherError(
+                code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFIG_MISSING,
+                safe_message=(
+                    "Managed-site DNS provisioning is restricted to preview hostnames under "
+                    f"{_MBSRN_MANAGED_PREVIEW_DOMAIN_SUFFIX}."
+                ),
+                stage="dns_provision",
+            )
+        normalized_record_name = f"{normalized_preview_hostname}."
+        normalized_expected_ip = _coerce_string(expected_ip_address)
+        if not normalized_expected_ip:
+            raise SEOMigrationGitHubPublisherError(
+                code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFIG_MISSING,
+                safe_message="Managed-site DNS provisioning requires an expected static IP address.",
+                stage="dns_provision",
+            )
+        normalized_zone = (_coerce_string(dns_managed_zone) or "").strip().lower()
+        normalized_project_id = (_coerce_string(dns_project_id) or "").strip().lower()
+        if not normalized_zone or not normalized_project_id:
+            raise SEOMigrationGitHubPublisherError(
+                code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFIG_MISSING,
+                safe_message=(
+                    "Managed-site DNS provisioning requires managed zone and project configuration."
+                ),
+                stage="dns_provision",
+            )
+        normalized_ttl = _coerce_int(ttl)
+        if normalized_ttl is None or normalized_ttl <= 0:
+            normalized_ttl = _MBSRN_MANAGED_PREVIEW_DNS_TTL_DEFAULT
+        if not _coerce_string(gcp_deploy_key):
+            raise SEOMigrationGitHubPublisherError(
+                code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFIG_MISSING,
+                safe_message="Managed deploy runtime credential is unavailable for DNS provisioning.",
+                stage="dns_provision",
+            )
+        if dry_run:
+            return SEOMigrationGitHubManagedSiteDnsEnsureResult(
+                dns_record_name=normalized_record_name,
+                dns_record_type="A",
+                dns_managed_zone=normalized_zone,
+                dns_project_id=normalized_project_id,
+                dns_expected_ip=normalized_expected_ip,
+                dns_previous_ips=(),
+                dns_updated=False,
+                dns_created=False,
+                dns_ttl=normalized_ttl,
+                result="dry_run",
+            )
+        try:
+            ensure_result = _ensure_managed_site_dns_a_record(
+                gcp_deploy_key=str(gcp_deploy_key),
+                dns_project_id=normalized_project_id,
+                dns_managed_zone=normalized_zone,
+                record_name=normalized_record_name,
+                expected_ip_address=normalized_expected_ip,
+                ttl=normalized_ttl,
+                timeout_seconds=self.timeout_seconds,
+            )
+        except SEOMigrationGitHubPublisherError as exc:
+            if exc.code in {
+                _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFIG_MISSING,
+                _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PROVISIONING_FAILED,
+                _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFLICTING_RECORD,
+                _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PERMISSION_DENIED,
+                _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_TRANSACTION_CONFLICT,
+            }:
+                raise
+            raise SEOMigrationGitHubPublisherError(
+                code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PROVISIONING_FAILED,
+                safe_message="Managed-site DNS provisioning failed before deploy dispatch.",
+                status_code=exc.status_code,
+                stage=exc.stage or "dns_provision",
+                provider_message=exc.provider_message,
+            ) from exc
+        previous_ips_raw = ensure_result.get("dns_previous_ips")
+        previous_ips: list[str] = []
+        if isinstance(previous_ips_raw, list):
+            for raw in previous_ips_raw:
+                candidate = _coerce_string(raw)
+                if candidate:
+                    previous_ips.append(candidate)
+        return SEOMigrationGitHubManagedSiteDnsEnsureResult(
+            dns_record_name=_coerce_string(ensure_result.get("dns_record_name")) or normalized_record_name,
+            dns_record_type="A",
+            dns_managed_zone=normalized_zone,
+            dns_project_id=normalized_project_id,
+            dns_expected_ip=normalized_expected_ip,
+            dns_previous_ips=tuple(_dedupe_strings(previous_ips)),
+            dns_updated=bool(ensure_result.get("dns_updated")),
+            dns_created=bool(ensure_result.get("dns_created")),
+            dns_ttl=_coerce_int(ensure_result.get("dns_ttl")) or normalized_ttl,
+            result=_coerce_string(ensure_result.get("result")) or "exists",
         )
 
     def dispatch_deploy(
@@ -6435,30 +6727,461 @@ def _upsert_namespace_scoped_ghcr_pull_secret(
     return "created"
 
 
-def _resolve_google_access_token_from_service_account_json(*, credentials_json: str) -> str:
+def _ensure_managed_site_global_static_ip(
+    *,
+    gcp_deploy_key: str,
+    project_id: str,
+    static_ip_name: str,
+    timeout_seconds: int,
+) -> dict[str, object]:
+    normalized_project_id = _coerce_string(project_id)
+    normalized_static_ip_name = _coerce_string(static_ip_name)
+    if not normalized_project_id or not normalized_static_ip_name:
+        raise SEOMigrationGitHubPublisherError(
+            code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFIG_MISSING,
+            safe_message="Managed site static IP provisioning is missing required project or static IP name.",
+            stage="static_ip_provision",
+        )
+    access_token = _resolve_google_access_token_from_service_account_json(
+        credentials_json=gcp_deploy_key,
+        missing_code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFIG_MISSING,
+        missing_safe_message=(
+            "Managed deploy runtime credential is unavailable for static IP provisioning."
+        ),
+        invalid_code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFIG_MISSING,
+        invalid_safe_message=(
+            "Managed deploy runtime credential is invalid for static IP provisioning."
+        ),
+        integration_code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROVISIONING_FAILED,
+        integration_safe_message=(
+            "Google auth runtime dependency is unavailable for static IP provisioning."
+        ),
+        stage="static_ip_provision",
+    )
+    encoded_project = urllib.parse.quote(normalized_project_id, safe="")
+    encoded_static_ip_name = urllib.parse.quote(normalized_static_ip_name, safe="")
+    describe_url = (
+        "https://compute.googleapis.com/compute/v1/projects/"
+        f"{encoded_project}/global/addresses/{encoded_static_ip_name}"
+    )
+    create_url = (
+        "https://compute.googleapis.com/compute/v1/projects/"
+        f"{encoded_project}/global/addresses"
+    )
+    request_kwargs = {
+        "access_token": access_token,
+        "timeout_seconds": timeout_seconds,
+        "error_stage": "static_ip_provision",
+        "code_on_failure": _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROVISIONING_FAILED,
+        "safe_message_on_failure": "Managed site static IP provisioning request to Google APIs failed.",
+        "safe_message_on_timeout": "Managed site static IP provisioning request timed out.",
+    }
+    existing_payload = _request_google_json(
+        method="GET",
+        url=describe_url,
+        allow_404=True,
+        **request_kwargs,
+    )
+    if isinstance(existing_payload, dict):
+        return {
+            "static_ip_address": _coerce_string(existing_payload.get("address")),
+            "static_ip_created": False,
+            "result": "exists",
+        }
+
+    try:
+        _request_google_json(
+            method="POST",
+            url=create_url,
+            payload={
+                "name": normalized_static_ip_name,
+                "addressType": "EXTERNAL",
+                "ipVersion": "IPV4",
+            },
+            expected_statuses=(200, 201),
+            **request_kwargs,
+        )
+    except SEOMigrationGitHubPublisherError as exc:
+        if exc.status_code == 409:
+            raced_payload = _request_google_json(
+                method="GET",
+                url=describe_url,
+                allow_404=True,
+                **request_kwargs,
+            )
+            if isinstance(raced_payload, dict):
+                return {
+                    "static_ip_address": _coerce_string(raced_payload.get("address")),
+                    "static_ip_created": False,
+                    "result": "already_exists_after_race",
+                }
+            raise SEOMigrationGitHubPublisherError(
+                code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROVISIONING_FAILED,
+                safe_message=(
+                    "Managed site static IP provisioning reported already exists but the address could not be confirmed."
+                ),
+                stage="static_ip_provision",
+            ) from exc
+        raise
+
+    last_payload: dict[str, object] | None = None
+    for attempt in range(5):
+        created_payload = _request_google_json(
+            method="GET",
+            url=describe_url,
+            allow_404=True,
+            **request_kwargs,
+        )
+        if isinstance(created_payload, dict):
+            last_payload = created_payload
+            break
+        if attempt < 4:
+            time.sleep(1)
+    if last_payload is None:
+        raise SEOMigrationGitHubPublisherError(
+            code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROVISIONING_FAILED,
+            safe_message=(
+                "Managed site static IP creation was requested but the resulting address was not visible."
+            ),
+            stage="static_ip_provision",
+        )
+    return {
+        "static_ip_address": _coerce_string(last_payload.get("address")),
+        "static_ip_created": True,
+        "result": "created",
+    }
+
+
+def _ensure_managed_site_dns_a_record(
+    *,
+    gcp_deploy_key: str,
+    dns_project_id: str,
+    dns_managed_zone: str,
+    record_name: str,
+    expected_ip_address: str,
+    ttl: int,
+    timeout_seconds: int,
+) -> dict[str, object]:
+    normalized_project_id = _coerce_string(dns_project_id)
+    normalized_zone = _coerce_string(dns_managed_zone)
+    normalized_record_name = (_coerce_string(record_name) or "").strip().lower()
+    normalized_expected_ip = _coerce_string(expected_ip_address)
+    normalized_ttl = _coerce_int(ttl)
+    if normalized_ttl is None or normalized_ttl <= 0:
+        normalized_ttl = _MBSRN_MANAGED_PREVIEW_DNS_TTL_DEFAULT
+    if (
+        not normalized_project_id
+        or not normalized_zone
+        or not normalized_record_name
+        or not normalized_expected_ip
+    ):
+        raise SEOMigrationGitHubPublisherError(
+            code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFIG_MISSING,
+            safe_message="Managed-site DNS provisioning is missing required DNS project/zone/record/ip config.",
+            stage="dns_provision",
+        )
+    access_token = _resolve_google_access_token_from_service_account_json(
+        credentials_json=gcp_deploy_key,
+        missing_code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFIG_MISSING,
+        missing_safe_message=(
+            "Managed deploy runtime credential is unavailable for DNS provisioning."
+        ),
+        invalid_code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFIG_MISSING,
+        invalid_safe_message=(
+            "Managed deploy runtime credential is invalid for DNS provisioning."
+        ),
+        integration_code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PROVISIONING_FAILED,
+        integration_safe_message=(
+            "Google auth runtime dependency is unavailable for DNS provisioning."
+        ),
+        stage="dns_provision",
+    )
+    encoded_project = urllib.parse.quote(normalized_project_id, safe="")
+    encoded_zone = urllib.parse.quote(normalized_zone, safe="")
+    rrsets_url = (
+        "https://dns.googleapis.com/dns/v1/projects/"
+        f"{encoded_project}/managedZones/{encoded_zone}/rrsets"
+    )
+    changes_url = (
+        "https://dns.googleapis.com/dns/v1/projects/"
+        f"{encoded_project}/managedZones/{encoded_zone}/changes"
+    )
+    request_kwargs = {
+        "access_token": access_token,
+        "timeout_seconds": timeout_seconds,
+        "error_stage": "dns_provision",
+        "code_on_failure": _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PROVISIONING_FAILED,
+        "safe_message_on_failure": "Managed-site DNS provisioning request to Google Cloud DNS failed.",
+        "safe_message_on_timeout": "Managed-site DNS provisioning request timed out.",
+    }
+
+    def _rrset_url(record_type: str) -> str:
+        query = urllib.parse.urlencode(
+            {
+                "name": normalized_record_name,
+                "type": record_type,
+            }
+        )
+        return f"{rrsets_url}?{query}"
+
+    def _fetch_rrset(record_type: str) -> dict[str, object] | None:
+        try:
+            payload = _request_google_json(
+                method="GET",
+                url=_rrset_url(record_type),
+                **request_kwargs,
+            )
+        except SEOMigrationGitHubPublisherError as exc:
+            if exc.status_code == 403:
+                raise SEOMigrationGitHubPublisherError(
+                    code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PERMISSION_DENIED,
+                    safe_message="Managed-site DNS provisioning is not authorized for the configured DNS project/zone.",
+                    status_code=exc.status_code,
+                    stage="dns_provision",
+                    provider_message=exc.provider_message,
+                ) from exc
+            if exc.status_code == 404:
+                raise SEOMigrationGitHubPublisherError(
+                    code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFIG_MISSING,
+                    safe_message=(
+                        "Managed-site DNS managed zone configuration is invalid or not accessible."
+                    ),
+                    status_code=exc.status_code,
+                    stage="dns_provision",
+                    provider_message=exc.provider_message,
+                ) from exc
+            raise
+        if not isinstance(payload, dict):
+            return None
+        rrsets = payload.get("rrsets")
+        if not isinstance(rrsets, list):
+            return None
+        expected_type = record_type.strip().upper()
+        for raw_rrset in rrsets:
+            if not isinstance(raw_rrset, dict):
+                continue
+            rrset_name = (_coerce_string(raw_rrset.get("name")) or "").strip().lower()
+            rrset_type = (_coerce_string(raw_rrset.get("type")) or "").strip().upper()
+            if rrset_name != normalized_record_name or rrset_type != expected_type:
+                continue
+            rrset_ttl = _coerce_int(raw_rrset.get("ttl")) or normalized_ttl
+            rrset_rrdatas_raw = raw_rrset.get("rrdatas")
+            rrset_rrdatas: list[str] = []
+            if isinstance(rrset_rrdatas_raw, list):
+                for raw_rrdata in rrset_rrdatas_raw:
+                    candidate = _coerce_string(raw_rrdata)
+                    if candidate:
+                        rrset_rrdatas.append(candidate)
+            return {
+                "name": normalized_record_name,
+                "type": expected_type,
+                "ttl": rrset_ttl,
+                "rrdatas": _dedupe_strings(rrset_rrdatas),
+            }
+        return None
+
+    def _extract_rrdatas(rrset: dict[str, object] | None) -> list[str]:
+        if not isinstance(rrset, dict):
+            return []
+        raw_rrdatas = rrset.get("rrdatas")
+        if not isinstance(raw_rrdatas, list):
+            return []
+        values: list[str] = []
+        for raw in raw_rrdatas:
+            candidate = _coerce_string(raw)
+            if candidate:
+                values.append(candidate)
+        return _dedupe_strings(values)
+
+    def _is_expected_rrset(rrset: dict[str, object] | None) -> bool:
+        rrset_ips = _extract_rrdatas(rrset)
+        return len(rrset_ips) == 1 and rrset_ips[0] == normalized_expected_ip
+
+    cname_rrset = _fetch_rrset("CNAME")
+    if cname_rrset is not None and _extract_rrdatas(cname_rrset):
+        raise SEOMigrationGitHubPublisherError(
+            code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFLICTING_RECORD,
+            safe_message=(
+                "Managed-site DNS hostname has a conflicting CNAME record and cannot be managed as an A record."
+            ),
+            stage="dns_provision",
+        )
+
+    existing_a_rrset = _fetch_rrset("A")
+    previous_ips = _extract_rrdatas(existing_a_rrset)
+    existing_ttl = _coerce_int(existing_a_rrset.get("ttl")) if isinstance(existing_a_rrset, dict) else None
+    if _is_expected_rrset(existing_a_rrset):
+        return {
+            "dns_record_name": normalized_record_name,
+            "dns_record_type": "A",
+            "dns_managed_zone": normalized_zone,
+            "dns_project_id": normalized_project_id,
+            "dns_expected_ip": normalized_expected_ip,
+            "dns_previous_ips": previous_ips,
+            "dns_created": False,
+            "dns_updated": False,
+            "dns_ttl": existing_ttl or normalized_ttl,
+            "result": "exists",
+        }
+
+    saw_transaction_conflict = False
+    for attempt in range(2):
+        had_existing_before_change = existing_a_rrset is not None
+        addition = {
+            "name": normalized_record_name,
+            "type": "A",
+            "ttl": normalized_ttl,
+            "rrdatas": [normalized_expected_ip],
+        }
+        payload: dict[str, object] = {"additions": [addition]}
+        if isinstance(existing_a_rrset, dict):
+            payload["deletions"] = [
+                {
+                    "name": normalized_record_name,
+                    "type": "A",
+                    "ttl": _coerce_int(existing_a_rrset.get("ttl")) or normalized_ttl,
+                    "rrdatas": _extract_rrdatas(existing_a_rrset),
+                }
+            ]
+        try:
+            _request_google_json(
+                method="POST",
+                url=changes_url,
+                payload=payload,
+                expected_statuses=(200, 201),
+                **request_kwargs,
+            )
+        except SEOMigrationGitHubPublisherError as exc:
+            if exc.status_code == 403:
+                raise SEOMigrationGitHubPublisherError(
+                    code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PERMISSION_DENIED,
+                    safe_message="Managed-site DNS provisioning is not authorized for the configured DNS project/zone.",
+                    status_code=exc.status_code,
+                    stage="dns_provision",
+                    provider_message=exc.provider_message,
+                ) from exc
+            if exc.status_code == 404:
+                raise SEOMigrationGitHubPublisherError(
+                    code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFIG_MISSING,
+                    safe_message=(
+                        "Managed-site DNS managed zone configuration is invalid or not accessible."
+                    ),
+                    status_code=exc.status_code,
+                    stage="dns_provision",
+                    provider_message=exc.provider_message,
+                ) from exc
+            if exc.status_code == 409:
+                saw_transaction_conflict = True
+                refreshed_rrset = _fetch_rrset("A")
+                if _is_expected_rrset(refreshed_rrset):
+                    return {
+                        "dns_record_name": normalized_record_name,
+                        "dns_record_type": "A",
+                        "dns_managed_zone": normalized_zone,
+                        "dns_project_id": normalized_project_id,
+                        "dns_expected_ip": normalized_expected_ip,
+                        "dns_previous_ips": previous_ips,
+                        "dns_created": False,
+                        "dns_updated": False,
+                        "dns_ttl": _coerce_int(refreshed_rrset.get("ttl")) or normalized_ttl,
+                        "result": "already_correct_after_race",
+                    }
+                if attempt == 0:
+                    existing_a_rrset = refreshed_rrset
+                    refreshed_ips = _extract_rrdatas(refreshed_rrset)
+                    if refreshed_ips:
+                        previous_ips = refreshed_ips
+                    continue
+                raise SEOMigrationGitHubPublisherError(
+                    code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_TRANSACTION_CONFLICT,
+                    safe_message=(
+                        "Managed-site DNS update encountered a concurrent transaction conflict."
+                    ),
+                    status_code=exc.status_code,
+                    stage="dns_provision",
+                    provider_message=exc.provider_message,
+                ) from exc
+            raise
+
+        final_rrset: dict[str, object] | None = None
+        for poll_index in range(3):
+            final_rrset = _fetch_rrset("A")
+            if _is_expected_rrset(final_rrset):
+                break
+            if poll_index < 2:
+                time.sleep(1)
+        if _is_expected_rrset(final_rrset):
+            return {
+                "dns_record_name": normalized_record_name,
+                "dns_record_type": "A",
+                "dns_managed_zone": normalized_zone,
+                "dns_project_id": normalized_project_id,
+                "dns_expected_ip": normalized_expected_ip,
+                "dns_previous_ips": previous_ips,
+                "dns_created": not had_existing_before_change,
+                "dns_updated": had_existing_before_change,
+                "dns_ttl": _coerce_int(final_rrset.get("ttl")) or normalized_ttl,
+                "result": "updated" if had_existing_before_change else "created",
+            }
+        if saw_transaction_conflict:
+            raise SEOMigrationGitHubPublisherError(
+                code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_TRANSACTION_CONFLICT,
+                safe_message=(
+                    "Managed-site DNS update encountered a concurrent transaction conflict."
+                ),
+                stage="dns_provision",
+            )
+        break
+
+    raise SEOMigrationGitHubPublisherError(
+        code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PROVISIONING_FAILED,
+        safe_message=(
+            "Managed-site DNS change was requested but the expected A record was not observed."
+        ),
+        stage="dns_provision",
+    )
+
+
+def _resolve_google_access_token_from_service_account_json(
+    *,
+    credentials_json: str,
+    missing_code: str = "runtime_credential_missing",
+    missing_safe_message: str = (
+        "Managed deploy runtime credential is unavailable for image pull secret provisioning."
+    ),
+    invalid_code: str = "runtime_configuration_invalid",
+    invalid_safe_message: str = (
+        "Managed deploy runtime credential is invalid for image pull secret provisioning."
+    ),
+    integration_code: str = "runtime_integration_unavailable",
+    integration_safe_message: str = (
+        "Google auth runtime dependency is unavailable for image pull secret provisioning."
+    ),
+    stage: str = "image_pull_secret_provision",
+) -> str:
     normalized_credentials_json = _coerce_string(credentials_json)
     if not normalized_credentials_json:
         raise SEOMigrationGitHubPublisherError(
-            code="runtime_credential_missing",
-            safe_message="Managed deploy runtime credential is unavailable for image pull secret provisioning.",
-            stage="image_pull_secret_provision",
+            code=missing_code,
+            safe_message=missing_safe_message,
+            stage=stage,
         )
     try:
         parsed_credentials = json.loads(normalized_credentials_json)
     except json.JSONDecodeError as exc:
         raise SEOMigrationGitHubPublisherError(
-            code="runtime_configuration_invalid",
-            safe_message="Managed deploy runtime credential is invalid for image pull secret provisioning.",
-            stage="image_pull_secret_provision",
+            code=invalid_code,
+            safe_message=invalid_safe_message,
+            stage=stage,
         ) from exc
     try:
         from google.auth.transport.requests import Request as GoogleAuthRequest
         from google.oauth2 import service_account
     except ImportError as exc:  # pragma: no cover - environment dependent
         raise SEOMigrationGitHubPublisherError(
-            code="runtime_integration_unavailable",
-            safe_message="Google auth runtime dependency is unavailable for image pull secret provisioning.",
-            stage="image_pull_secret_provision",
+            code=integration_code,
+            safe_message=integration_safe_message,
+            stage=stage,
         ) from exc
     try:
         credentials = service_account.Credentials.from_service_account_info(
@@ -6469,15 +7192,15 @@ def _resolve_google_access_token_from_service_account_json(*, credentials_json: 
         token = _coerce_string(getattr(credentials, "token", None))
     except Exception as exc:
         raise SEOMigrationGitHubPublisherError(
-            code="runtime_configuration_invalid",
-            safe_message="Managed deploy runtime credential could not be refreshed for image pull secret provisioning.",
-            stage="image_pull_secret_provision",
+            code=invalid_code,
+            safe_message=invalid_safe_message,
+            stage=stage,
         ) from exc
     if not token:
         raise SEOMigrationGitHubPublisherError(
-            code="runtime_configuration_invalid",
-            safe_message="Managed deploy runtime credential did not return an access token for image pull secret provisioning.",
-            stage="image_pull_secret_provision",
+            code=invalid_code,
+            safe_message=invalid_safe_message,
+            stage=stage,
         )
     return token
 
@@ -6488,23 +7211,33 @@ def _request_google_json(
     url: str,
     access_token: str,
     timeout_seconds: int,
+    payload: dict[str, object] | None = None,
     expected_statuses: tuple[int, ...] = (200,),
+    allow_404: bool = False,
     error_stage: str | None = None,
+    code_on_failure: str = "image_pull_secret_provisioning_failed",
+    safe_message_on_failure: str = "Managed image pull secret provisioning request to Google APIs failed.",
+    safe_message_on_timeout: str = "Managed image pull secret provisioning request timed out.",
 ) -> dict[str, object] | list[object] | None:
+    body: bytes | None = None
     headers = {
         "Accept": "application/json",
         "Authorization": f"Bearer {access_token}",
         "User-Agent": "MBSRN-MigrationPublisher/1.0",
     }
-    request = urllib.request.Request(url=url, method=method, headers=headers)
+    if payload is not None:
+        body = json.dumps(payload, ensure_ascii=True).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    request = urllib.request.Request(url=url, data=body, method=method, headers=headers)
     return _request_json_via_urllib(
         request=request,
         timeout_seconds=timeout_seconds,
         expected_statuses=expected_statuses,
-        allow_404=False,
+        allow_404=allow_404,
         error_stage=error_stage,
-        code_on_failure="image_pull_secret_provisioning_failed",
-        safe_message_on_failure="Managed image pull secret provisioning request to Google APIs failed.",
+        code_on_failure=code_on_failure,
+        safe_message_on_failure=safe_message_on_failure,
+        safe_message_on_timeout=safe_message_on_timeout,
     )
 
 
@@ -6544,6 +7277,7 @@ def _request_kubernetes_json(
         error_stage=error_stage,
         code_on_failure="image_pull_secret_provisioning_failed",
         safe_message_on_failure="Managed image pull secret provisioning request to Kubernetes API failed.",
+        safe_message_on_timeout="Managed image pull secret provisioning request timed out.",
         ssl_context=ssl_context,
     )
 
@@ -6557,14 +7291,22 @@ def _request_json_via_urllib(
     error_stage: str | None,
     code_on_failure: str,
     safe_message_on_failure: str,
+    safe_message_on_timeout: str,
     ssl_context: ssl.SSLContext | None = None,
 ) -> dict[str, object] | list[object] | None:
     try:
-        with urllib.request.urlopen(
-            request,
-            timeout=timeout_seconds,
-            context=ssl_context,
-        ) as response:
+        if ssl_context is None:
+            response_context = urllib.request.urlopen(
+                request,
+                timeout=timeout_seconds,
+            )
+        else:
+            response_context = urllib.request.urlopen(
+                request,
+                timeout=timeout_seconds,
+                context=ssl_context,
+            )
+        with response_context as response:
             status_code = int(getattr(response, "status", 0) or 0)
             if status_code not in expected_statuses:
                 raise SEOMigrationGitHubPublisherError(
@@ -6601,14 +7343,14 @@ def _request_json_via_urllib(
     except (TimeoutError, socket.timeout) as exc:
         raise SEOMigrationGitHubPublisherError(
             code="github_timeout",
-            safe_message="Managed image pull secret provisioning request timed out.",
+            safe_message=safe_message_on_timeout,
             stage=error_stage,
         ) from exc
     except urllib.error.URLError as exc:
         if isinstance(exc.reason, TimeoutError) or isinstance(exc.reason, socket.timeout):
             raise SEOMigrationGitHubPublisherError(
                 code="github_timeout",
-                safe_message="Managed image pull secret provisioning request timed out.",
+                safe_message=safe_message_on_timeout,
                 stage=error_stage,
             ) from exc
         raise SEOMigrationGitHubPublisherError(
@@ -6770,6 +7512,8 @@ _MBSRN_MANAGED_SITE_WEB_IMAGE_REPO_NAME = "site-web"
 _MBSRN_MANAGED_SITE_RUNTIME_DOCKERFILE_PATH = "site-runtime/Dockerfile"
 _MBSRN_MANAGED_PREVIEW_CERTIFICATE_NAME_PREFIX = "site-web-preview-cert"
 _MBSRN_MANAGED_PREVIEW_DOMAIN_SUFFIX = "site.mbsrn.com"
+_MBSRN_MANAGED_PREVIEW_DNS_ZONE_DEFAULT = "sites"
+_MBSRN_MANAGED_PREVIEW_DNS_TTL_DEFAULT = 300
 _MBSRN_MANAGED_REPO_BASELINE_README_PATH = "README.md"
 _MBSRN_MANAGED_REPO_BASELINE_GITIGNORE_PATH = ".gitignore"
 _MBSRN_MANAGED_REPO_BASELINE_LICENSE_PATH = "LICENSE"
@@ -6832,7 +7576,26 @@ _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_CERTIFICATE_ANNOTATION_MISMATCH = "ingre
 _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_BOUND_TO_WRONG_SITE = "tls_certificate_bound_to_wrong_site"
 _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_STATIC_IP_CONFLICT = "ingress_static_ip_conflict"
 _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_STATIC_IP_NOT_ALLOWED = "shared_static_ip_not_allowed_for_per_site_ingress"
+_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROVISIONING_FAILED = (
+    "managed_site_static_ip_provisioning_failed"
+)
+_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFIG_MISSING = (
+    "managed_site_static_ip_config_missing"
+)
 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_MISSING = "managed_site_static_ip_missing"
+_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFIG_MISSING = "managed_site_dns_config_missing"
+_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PROVISIONING_FAILED = (
+    "managed_site_dns_provisioning_failed"
+)
+_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFLICTING_RECORD = (
+    "managed_site_dns_conflicting_record"
+)
+_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PERMISSION_DENIED = (
+    "managed_site_dns_permission_denied"
+)
+_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_TRANSACTION_CONFLICT = (
+    "managed_site_dns_transaction_conflict"
+)
 _DEPLOY_DISPATCH_SERVICE_REASON_EXPECTED_STATIC_IP_NOT_BOUND_TO_INGRESS = (
     "expected_static_ip_not_bound_to_ingress"
 )

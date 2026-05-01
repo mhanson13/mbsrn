@@ -28,6 +28,8 @@ from app.integrations.seo_migration_github_publisher import (
     SEOMigrationGitHubDeployRunStatusResult,
     SEOMigrationGitHubDeployTarget,
     SEOMigrationGitHubImagePullSecretProvisionResult,
+    SEOMigrationGitHubManagedSiteDnsEnsureResult,
+    SEOMigrationGitHubManagedSiteStaticIPEnsureResult,
     SEOMigrationGitHubPublishFile,
     SEOMigrationGitHubPublishPreflightResult,
     SEOMigrationGitHubPublishResult,
@@ -38,6 +40,7 @@ from app.integrations.seo_migration_github_publisher import (
     SEOMigrationGitHubRepositoryEnsureResult,
     SEOMigrationGitHubTargetReadinessResult,
     SEOMigrationGitHubWorkflowProvisionResult,
+    derive_site_preview_static_ip_name,
 )
 from app.models.business import Business
 from app.models.github_publish_config import GitHubPublishConfig
@@ -237,6 +240,28 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         adoption_marker_written: bool = True,
         adoption_outcome: str = "marker_written",
         adoption_management_status: str = "managed_marker_match",
+        fail_static_ip_ensure: bool = False,
+        static_ip_ensure_error_code: str | None = None,
+        static_ip_ensure_error_message: str | None = None,
+        static_ip_ensure_error_stage: str | None = None,
+        ensure_static_ip_name: str | None = None,
+        ensure_static_ip_address: str | None = "34.149.170.250",
+        ensure_static_ip_created: bool = False,
+        ensure_static_ip_result: str = "exists",
+        ensure_static_ip_project_id: str | None = None,
+        fail_dns_ensure: bool = False,
+        dns_ensure_error_code: str | None = None,
+        dns_ensure_error_message: str | None = None,
+        dns_ensure_error_stage: str | None = None,
+        ensure_dns_hostname: str | None = None,
+        ensure_dns_managed_zone: str = "sites",
+        ensure_dns_project_id: str | None = None,
+        ensure_dns_expected_ip: str | None = None,
+        ensure_dns_previous_ips: tuple[str, ...] | list[str] | None = None,
+        ensure_dns_created: bool = False,
+        ensure_dns_updated: bool = False,
+        ensure_dns_ttl: int = 300,
+        ensure_dns_result: str = "exists",
     ) -> None:
         self.existing_repository = existing_repository
         self.ensure_repository_error_code = ensure_repository_error_code
@@ -333,6 +358,28 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         self.adoption_marker_written = adoption_marker_written
         self.adoption_outcome = adoption_outcome
         self.adoption_management_status = adoption_management_status
+        self.fail_static_ip_ensure = fail_static_ip_ensure
+        self.static_ip_ensure_error_code = static_ip_ensure_error_code
+        self.static_ip_ensure_error_message = static_ip_ensure_error_message
+        self.static_ip_ensure_error_stage = static_ip_ensure_error_stage
+        self.ensure_static_ip_name = ensure_static_ip_name
+        self.ensure_static_ip_address = ensure_static_ip_address
+        self.ensure_static_ip_created = ensure_static_ip_created
+        self.ensure_static_ip_result = ensure_static_ip_result
+        self.ensure_static_ip_project_id = ensure_static_ip_project_id
+        self.fail_dns_ensure = fail_dns_ensure
+        self.dns_ensure_error_code = dns_ensure_error_code
+        self.dns_ensure_error_message = dns_ensure_error_message
+        self.dns_ensure_error_stage = dns_ensure_error_stage
+        self.ensure_dns_hostname = ensure_dns_hostname
+        self.ensure_dns_managed_zone = ensure_dns_managed_zone
+        self.ensure_dns_project_id = ensure_dns_project_id
+        self.ensure_dns_expected_ip = ensure_dns_expected_ip
+        self.ensure_dns_previous_ips = tuple(ensure_dns_previous_ips or ())
+        self.ensure_dns_created = ensure_dns_created
+        self.ensure_dns_updated = ensure_dns_updated
+        self.ensure_dns_ttl = ensure_dns_ttl
+        self.ensure_dns_result = ensure_dns_result
         self.publish_calls: list[
             tuple[SEOMigrationGitHubPublishTarget, list[SEOMigrationGitHubPublishFile], str, bool]
         ] = []
@@ -343,6 +390,13 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         self.provision_managed_image_pull_secret_calls: list[
             tuple[str, str, str, str, dict[str, object] | None, str | None, str | None, str | None, str | None, bool]
         ] = []
+        self.ensure_managed_site_static_ip_calls: list[
+            tuple[str, str, str | None, dict[str, object] | None, str | None, bool]
+        ] = []
+        self.ensure_managed_site_dns_calls: list[
+            tuple[str, str, str, str, str | None, int, bool]
+        ] = []
+        self.deploy_call_order: list[str] = []
         self.refresh_calls: list[tuple[SEOMigrationGitHubDeployTarget, int, str | None]] = []
         self.lookup_calls: list[tuple[SEOMigrationGitHubDeployTarget, str | None]] = []
         self.secret_upsert_calls: list[tuple[str, str, str, str]] = []
@@ -638,6 +692,7 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
             dict(managed_image_pull_secret_config or {}) or None
         )
         self.deploy_calls.append((target, dry_run))
+        self.deploy_call_order.append("dispatch_deploy")
         if self.fail_deploy:
             raise SEOMigrationGitHubPublisherError(
                 code=self.deploy_error_code or "deploy_failed",
@@ -696,6 +751,95 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
             namespace=kubernetes_namespace,
             secret_name="ghcr-pull-secret",
             action="dry_run" if dry_run else "updated",
+        )
+
+    def ensure_managed_site_static_ip(
+        self,
+        *,
+        repo_owner: str,
+        repo_name: str,
+        site_id: str | None,
+        managed_gke_config: dict[str, object] | None,
+        gcp_deploy_key: str | None,
+        dry_run: bool = False,
+    ) -> SEOMigrationGitHubManagedSiteStaticIPEnsureResult:
+        self.ensure_managed_site_static_ip_calls.append(
+            (
+                repo_owner,
+                repo_name,
+                site_id,
+                dict(managed_gke_config or {}) or None,
+                gcp_deploy_key,
+                bool(dry_run),
+            )
+        )
+        self.deploy_call_order.append("ensure_static_ip")
+        if self.fail_static_ip_ensure or self.static_ip_ensure_error_code:
+            raise SEOMigrationGitHubPublisherError(
+                code=self.static_ip_ensure_error_code or "managed_site_static_ip_provisioning_failed",
+                safe_message=self.static_ip_ensure_error_message or "Simulated managed-site static IP ensure failure.",
+                stage=self.static_ip_ensure_error_stage or "static_ip_provision",
+            )
+        static_ip_name = self.ensure_static_ip_name
+        if not static_ip_name:
+            static_ip_name, _ = derive_site_preview_static_ip_name(
+                repo_name=repo_name,
+                site_id=site_id,
+            )
+        project_id = self.ensure_static_ip_project_id or str((managed_gke_config or {}).get("project_id") or "")
+        if not project_id:
+            project_id = "mbsrn-prod"
+        return SEOMigrationGitHubManagedSiteStaticIPEnsureResult(
+            static_ip_name=static_ip_name,
+            static_ip_address=self.ensure_static_ip_address,
+            static_ip_created=bool(self.ensure_static_ip_created),
+            gcp_project_id=project_id,
+            result=self.ensure_static_ip_result,
+        )
+
+    def ensure_managed_site_dns_a_record(
+        self,
+        *,
+        preview_hostname: str,
+        expected_ip_address: str,
+        dns_managed_zone: str,
+        dns_project_id: str,
+        gcp_deploy_key: str | None,
+        ttl: int = 300,
+        dry_run: bool = False,
+    ) -> SEOMigrationGitHubManagedSiteDnsEnsureResult:
+        self.ensure_managed_site_dns_calls.append(
+            (
+                preview_hostname,
+                expected_ip_address,
+                dns_managed_zone,
+                dns_project_id,
+                gcp_deploy_key,
+                int(ttl),
+                bool(dry_run),
+            )
+        )
+        self.deploy_call_order.append("ensure_dns")
+        if self.fail_dns_ensure or self.dns_ensure_error_code:
+            raise SEOMigrationGitHubPublisherError(
+                code=self.dns_ensure_error_code or "managed_site_dns_provisioning_failed",
+                safe_message=self.dns_ensure_error_message or "Simulated managed-site DNS ensure failure.",
+                stage=self.dns_ensure_error_stage or "dns_provision",
+            )
+        dns_record_name = str((self.ensure_dns_hostname or preview_hostname).strip() or preview_hostname).rstrip(".")
+        dns_record_name = f"{dns_record_name}."
+        dns_expected_ip = str((self.ensure_dns_expected_ip or expected_ip_address).strip() or expected_ip_address)
+        return SEOMigrationGitHubManagedSiteDnsEnsureResult(
+            dns_record_name=dns_record_name,
+            dns_record_type="A",
+            dns_managed_zone=str((self.ensure_dns_managed_zone or dns_managed_zone).strip() or dns_managed_zone),
+            dns_project_id=str((self.ensure_dns_project_id or dns_project_id).strip() or dns_project_id),
+            dns_expected_ip=dns_expected_ip,
+            dns_previous_ips=tuple(self.ensure_dns_previous_ips),
+            dns_updated=bool(self.ensure_dns_updated),
+            dns_created=bool(self.ensure_dns_created),
+            dns_ttl=int(self.ensure_dns_ttl),
+            result=str(self.ensure_dns_result or "exists"),
         )
 
     def refresh_deploy_run_status(
@@ -3041,6 +3185,376 @@ def test_publish_and_deploy_flow_records_status_and_analytics(db_session) -> Non
     assert "ga_measurement_id" not in deploy_target.inputs
 
 
+def test_deploy_ensures_managed_site_static_ip_before_dispatch_and_records_metadata(db_session, caplog) -> None:
+    publisher = _RecordingGitHubPublisher(
+        ensure_static_ip_created=True,
+        ensure_static_ip_result="created",
+        ensure_static_ip_address="34.160.224.212",
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    artifact = _prepare_published_artifact(service, business_id=business_id, site_id=site_id)
+
+    caplog.set_level("INFO", logger="app.services.seo_migration")
+    deploy_result = service.deploy_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        principal_id="principal-1",
+    )
+
+    assert publisher.ensure_managed_site_static_ip_calls
+    assert publisher.deploy_calls
+    ensure_call = publisher.ensure_managed_site_static_ip_calls[-1]
+    assert ensure_call[0] == "acme"
+    assert ensure_call[1] == "tnmfire-site"
+    assert ensure_call[2] == site_id
+    assert ensure_call[5] is False
+    expected_static_ip_name, _ = derive_site_preview_static_ip_name(
+        repo_name="tnmfire-site",
+        site_id=site_id,
+    )
+    assert deploy_result.result.get("expected_static_ip_name") == expected_static_ip_name
+    assert deploy_result.result.get("expected_static_ip_address") == "34.160.224.212"
+    assert deploy_result.result.get("static_ip_created") is True
+    assert deploy_result.result.get("static_ip_ensure_result") == "created"
+    assert deploy_result.result.get("static_ip_project_id")
+    ensure_logs = [
+        record.__dict__.get("json_fields")
+        for record in caplog.records
+        if isinstance(record.__dict__.get("json_fields"), dict)
+        and record.__dict__["json_fields"].get("event") == "seo_migration_managed_site_static_ip_ensure"
+    ]
+    assert ensure_logs
+    assert ensure_logs[-1].get("result") == "created"
+    assert "gcp_deploy_key" not in json.dumps(ensure_logs[-1]).lower()
+
+
+def test_deploy_ensures_managed_site_static_ip_existing_before_dispatch(db_session) -> None:
+    publisher = _RecordingGitHubPublisher(
+        ensure_static_ip_created=False,
+        ensure_static_ip_result="exists",
+        ensure_static_ip_address="34.149.170.250",
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    artifact = _prepare_published_artifact(service, business_id=business_id, site_id=site_id)
+
+    deploy_result = service.deploy_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        principal_id="principal-1",
+    )
+
+    assert publisher.ensure_managed_site_static_ip_calls
+    assert publisher.deploy_calls
+    assert deploy_result.result.get("static_ip_created") is False
+    assert deploy_result.result.get("static_ip_ensure_result") == "exists"
+
+
+def test_deploy_ensures_managed_site_static_ip_handles_already_exists_race(db_session) -> None:
+    publisher = _RecordingGitHubPublisher(
+        ensure_static_ip_created=False,
+        ensure_static_ip_result="already_exists_after_race",
+        ensure_static_ip_address="34.149.170.250",
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    artifact = _prepare_published_artifact(service, business_id=business_id, site_id=site_id)
+
+    deploy_result = service.deploy_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        principal_id="principal-1",
+    )
+
+    assert publisher.ensure_managed_site_static_ip_calls
+    assert publisher.deploy_calls
+    assert deploy_result.result.get("static_ip_created") is False
+    assert deploy_result.result.get("static_ip_ensure_result") == "already_exists_after_race"
+
+
+def test_deploy_blocks_dispatch_when_managed_site_static_ip_ensure_fails(db_session, caplog) -> None:
+    publisher = _RecordingGitHubPublisher(
+        fail_static_ip_ensure=True,
+        static_ip_ensure_error_code="managed_site_static_ip_provisioning_failed",
+        static_ip_ensure_error_message="Simulated static IP provisioning failure.",
+        static_ip_ensure_error_stage="static_ip_provision",
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    artifact = _prepare_published_artifact(service, business_id=business_id, site_id=site_id)
+
+    caplog.set_level("INFO", logger="app.services.seo_migration")
+    with pytest.raises(SEOMigrationValidationError, match="Simulated static IP provisioning failure."):
+        service.deploy_artifact_version(
+            business_id=business_id,
+            site_id=site_id,
+            artifact_version_id=artifact.id,
+            dry_run=False,
+            principal_id="principal-1",
+        )
+
+    assert publisher.ensure_managed_site_static_ip_calls
+    assert not publisher.deploy_calls
+    workspace = service.get_workspace(business_id=business_id, site_id=site_id)
+    deploy_history = workspace.deploy_history_json or []
+    assert deploy_history
+    latest = deploy_history[-1]
+    assert latest.get("failure_reason") == "managed_site_static_ip_provisioning_failed"
+    assert latest.get("dispatch_service_reason_code") == "managed_site_static_ip_provisioning_failed"
+    assert latest.get("dispatch_result_stage") == "static_ip_provision"
+    ensure_logs = [
+        record.__dict__.get("json_fields")
+        for record in caplog.records
+        if isinstance(record.__dict__.get("json_fields"), dict)
+        and record.__dict__["json_fields"].get("event") == "seo_migration_managed_site_static_ip_ensure"
+    ]
+    assert ensure_logs
+    assert ensure_logs[-1].get("result") == "failed"
+    assert ensure_logs[-1].get("reason_code") == "managed_site_static_ip_provisioning_failed"
+    assert "gcp_deploy_key" not in json.dumps(ensure_logs[-1]).lower()
+
+
+def test_deploy_blocks_dispatch_when_managed_site_static_ip_config_is_missing(db_session) -> None:
+    publisher = _RecordingGitHubPublisher(
+        fail_static_ip_ensure=True,
+        static_ip_ensure_error_code="managed_site_static_ip_config_missing",
+        static_ip_ensure_error_message="Simulated static IP config missing.",
+        static_ip_ensure_error_stage="static_ip_provision",
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    artifact = _prepare_published_artifact(service, business_id=business_id, site_id=site_id)
+
+    with pytest.raises(SEOMigrationValidationError, match="Simulated static IP config missing."):
+        service.deploy_artifact_version(
+            business_id=business_id,
+            site_id=site_id,
+            artifact_version_id=artifact.id,
+            dry_run=False,
+            principal_id="principal-1",
+        )
+
+    assert publisher.ensure_managed_site_static_ip_calls
+    assert not publisher.deploy_calls
+    workspace = service.get_workspace(business_id=business_id, site_id=site_id)
+    deploy_history = workspace.deploy_history_json or []
+    assert deploy_history
+    latest = deploy_history[-1]
+    assert latest.get("failure_reason") == "managed_site_static_ip_config_missing"
+    assert latest.get("dispatch_service_reason_code") == "managed_site_static_ip_config_missing"
+
+
+def test_deploy_ensures_managed_site_dns_after_static_ip_and_before_dispatch(db_session, caplog) -> None:
+    publisher = _RecordingGitHubPublisher(
+        ensure_static_ip_created=True,
+        ensure_static_ip_result="created",
+        ensure_static_ip_address="34.160.224.212",
+        ensure_dns_created=True,
+        ensure_dns_updated=False,
+        ensure_dns_result="created",
+        ensure_dns_expected_ip="34.160.224.212",
+        ensure_dns_previous_ips=(),
+        ensure_dns_ttl=300,
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    artifact = _prepare_published_artifact(service, business_id=business_id, site_id=site_id)
+
+    caplog.set_level("INFO", logger="app.services.seo_migration")
+    deploy_result = service.deploy_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        principal_id="principal-1",
+    )
+
+    assert publisher.ensure_managed_site_static_ip_calls
+    assert publisher.ensure_managed_site_dns_calls
+    assert publisher.deploy_calls
+    assert publisher.deploy_call_order[:3] == ["ensure_static_ip", "ensure_dns", "dispatch_deploy"]
+    dns_call = publisher.ensure_managed_site_dns_calls[-1]
+    assert dns_call[0].endswith(".site.mbsrn.com")
+    assert dns_call[1] == "34.160.224.212"
+    assert dns_call[2] == "sites"
+    assert dns_call[6] is False
+    assert deploy_result.result.get("expected_dns_hostname")
+    assert deploy_result.result.get("expected_dns_hostname").endswith(".site.mbsrn.com")
+    assert deploy_result.result.get("expected_dns_managed_zone") == "sites"
+    assert deploy_result.result.get("expected_dns_project_id")
+    assert deploy_result.result.get("expected_dns_ip") == "34.160.224.212"
+    assert deploy_result.result.get("dns_record_created") is True
+    assert deploy_result.result.get("dns_record_updated") is False
+    assert deploy_result.result.get("dns_previous_ips") == []
+    assert deploy_result.result.get("dns_ttl") == 300
+    assert deploy_result.result.get("dns_ensure_result") == "created"
+    ensure_logs = [
+        record.__dict__.get("json_fields")
+        for record in caplog.records
+        if isinstance(record.__dict__.get("json_fields"), dict)
+        and record.__dict__["json_fields"].get("event") == "seo_migration_managed_site_dns_ensure"
+    ]
+    assert ensure_logs
+    assert ensure_logs[-1].get("result") == "created"
+    assert "gcp_deploy_key" not in json.dumps(ensure_logs[-1]).lower()
+
+
+def test_deploy_ensures_managed_site_dns_updates_old_ips_before_dispatch(db_session) -> None:
+    publisher = _RecordingGitHubPublisher(
+        ensure_static_ip_created=False,
+        ensure_static_ip_result="exists",
+        ensure_static_ip_address="34.160.224.212",
+        ensure_dns_created=False,
+        ensure_dns_updated=True,
+        ensure_dns_result="updated",
+        ensure_dns_expected_ip="34.160.224.212",
+        ensure_dns_previous_ips=("34.149.170.250", "34.149.170.251"),
+        ensure_dns_ttl=300,
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    artifact = _prepare_published_artifact(service, business_id=business_id, site_id=site_id)
+
+    deploy_result = service.deploy_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        principal_id="principal-1",
+    )
+
+    assert publisher.ensure_managed_site_dns_calls
+    assert publisher.deploy_calls
+    assert deploy_result.result.get("dns_record_created") is False
+    assert deploy_result.result.get("dns_record_updated") is True
+    assert deploy_result.result.get("dns_previous_ips") == ["34.149.170.250", "34.149.170.251"]
+    assert deploy_result.result.get("dns_ensure_result") == "updated"
+
+
+def test_deploy_blocks_dispatch_when_managed_site_dns_conflicting_record(db_session, caplog) -> None:
+    publisher = _RecordingGitHubPublisher(
+        ensure_static_ip_created=False,
+        ensure_static_ip_result="exists",
+        ensure_static_ip_address="34.160.224.212",
+        fail_dns_ensure=True,
+        dns_ensure_error_code="managed_site_dns_conflicting_record",
+        dns_ensure_error_message="Simulated DNS conflicting record.",
+        dns_ensure_error_stage="dns_provision",
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    artifact = _prepare_published_artifact(service, business_id=business_id, site_id=site_id)
+
+    caplog.set_level("INFO", logger="app.services.seo_migration")
+    with pytest.raises(SEOMigrationValidationError, match="Simulated DNS conflicting record."):
+        service.deploy_artifact_version(
+            business_id=business_id,
+            site_id=site_id,
+            artifact_version_id=artifact.id,
+            dry_run=False,
+            principal_id="principal-1",
+        )
+
+    assert publisher.ensure_managed_site_static_ip_calls
+    assert publisher.ensure_managed_site_dns_calls
+    assert not publisher.deploy_calls
+    workspace = service.get_workspace(business_id=business_id, site_id=site_id)
+    deploy_history = workspace.deploy_history_json or []
+    assert deploy_history
+    latest = deploy_history[-1]
+    assert latest.get("failure_reason") == "managed_site_dns_conflicting_record"
+    assert latest.get("dispatch_service_reason_code") == "managed_site_dns_conflicting_record"
+    assert latest.get("dispatch_result_stage") == "dns_provision"
+    ensure_logs = [
+        record.__dict__.get("json_fields")
+        for record in caplog.records
+        if isinstance(record.__dict__.get("json_fields"), dict)
+        and record.__dict__["json_fields"].get("event") == "seo_migration_managed_site_dns_ensure"
+    ]
+    assert ensure_logs
+    assert ensure_logs[-1].get("result") == "failed"
+    assert ensure_logs[-1].get("reason_code") == "managed_site_dns_conflicting_record"
+    assert "gcp_deploy_key" not in json.dumps(ensure_logs[-1]).lower()
+
+
+def test_deploy_blocks_dispatch_when_managed_site_dns_permission_denied(db_session) -> None:
+    publisher = _RecordingGitHubPublisher(
+        ensure_static_ip_created=False,
+        ensure_static_ip_result="exists",
+        ensure_static_ip_address="34.160.224.212",
+        fail_dns_ensure=True,
+        dns_ensure_error_code="managed_site_dns_permission_denied",
+        dns_ensure_error_message="Simulated DNS permission denied.",
+        dns_ensure_error_stage="dns_provision",
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    artifact = _prepare_published_artifact(service, business_id=business_id, site_id=site_id)
+
+    with pytest.raises(SEOMigrationValidationError, match="Simulated DNS permission denied."):
+        service.deploy_artifact_version(
+            business_id=business_id,
+            site_id=site_id,
+            artifact_version_id=artifact.id,
+            dry_run=False,
+            principal_id="principal-1",
+        )
+
+    assert publisher.ensure_managed_site_static_ip_calls
+    assert publisher.ensure_managed_site_dns_calls
+    assert not publisher.deploy_calls
+    workspace = service.get_workspace(business_id=business_id, site_id=site_id)
+    deploy_history = workspace.deploy_history_json or []
+    assert deploy_history
+    latest = deploy_history[-1]
+    assert latest.get("failure_reason") == "managed_site_dns_permission_denied"
+    assert latest.get("dispatch_service_reason_code") == "managed_site_dns_permission_denied"
+    assert latest.get("dispatch_result_stage") == "dns_provision"
+
+
 def test_deploy_dispatch_payload_uses_explicit_configured_inputs_only(db_session) -> None:
     publisher = _RecordingGitHubPublisher()
     service = _build_service(
@@ -4200,6 +4714,117 @@ def test_static_ip_reason_code_hint_mappings_cover_missing_and_not_bound() -> No
             failure_stage=None,
             workflow_exists=None,
             dispatch_service_reason_code="expected_static_ip_not_bound_to_ingress",
+        )
+        or ""
+    ).lower()
+
+
+def test_static_ip_pre_dispatch_reason_code_hint_mappings_cover_config_and_provisioning_failures() -> None:
+    assert "configuration is incomplete" in str(
+        seo_migration_module._derive_managed_gke_dispatch_readiness_message(
+            dispatch_service_reason_code="managed_site_static_ip_config_missing"
+        )
+        or ""
+    ).lower()
+    assert "provisioning failed in control plane" in str(
+        seo_migration_module._derive_managed_gke_dispatch_readiness_message(
+            dispatch_service_reason_code="managed_site_static_ip_provisioning_failed"
+        )
+        or ""
+    ).lower()
+    assert "config is missing" in str(
+        seo_migration_module._derive_deploy_failure_remediation_hint(
+            failure_reason=None,
+            failure_stage=None,
+            workflow_exists=None,
+            dispatch_service_reason_code="managed_site_static_ip_config_missing",
+        )
+        or ""
+    ).lower()
+    assert "provisioning failed before workflow dispatch" in str(
+        seo_migration_module._derive_deploy_failure_remediation_hint(
+            failure_reason=None,
+            failure_stage=None,
+            workflow_exists=None,
+            dispatch_service_reason_code="managed_site_static_ip_provisioning_failed",
+        )
+        or ""
+    ).lower()
+
+
+def test_dns_pre_dispatch_reason_code_hint_mappings_cover_config_conflict_permission_and_conflict_retry() -> None:
+    assert "dns provisioning configuration is incomplete" in str(
+        seo_migration_module._derive_managed_gke_dispatch_readiness_message(
+            dispatch_service_reason_code="managed_site_dns_config_missing"
+        )
+        or ""
+    ).lower()
+    assert "dns a-record provisioning failed in control plane" in str(
+        seo_migration_module._derive_managed_gke_dispatch_readiness_message(
+            dispatch_service_reason_code="managed_site_dns_provisioning_failed"
+        )
+        or ""
+    ).lower()
+    assert "conflicting dns record type" in str(
+        seo_migration_module._derive_managed_gke_dispatch_readiness_message(
+            dispatch_service_reason_code="managed_site_dns_conflicting_record"
+        )
+        or ""
+    ).lower()
+    assert "not authorized" in str(
+        seo_migration_module._derive_managed_gke_dispatch_readiness_message(
+            dispatch_service_reason_code="managed_site_dns_permission_denied"
+        )
+        or ""
+    ).lower()
+    assert "transaction conflict" in str(
+        seo_migration_module._derive_managed_gke_dispatch_readiness_message(
+            dispatch_service_reason_code="managed_site_dns_transaction_conflict"
+        )
+        or ""
+    ).lower()
+    assert "config is missing" in str(
+        seo_migration_module._derive_deploy_failure_remediation_hint(
+            failure_reason=None,
+            failure_stage=None,
+            workflow_exists=None,
+            dispatch_service_reason_code="managed_site_dns_config_missing",
+        )
+        or ""
+    ).lower()
+    assert "dns a-record provisioning failed" in str(
+        seo_migration_module._derive_deploy_failure_remediation_hint(
+            failure_reason=None,
+            failure_stage=None,
+            workflow_exists=None,
+            dispatch_service_reason_code="managed_site_dns_provisioning_failed",
+        )
+        or ""
+    ).lower()
+    assert "conflicting non-a dns record" in str(
+        seo_migration_module._derive_deploy_failure_remediation_hint(
+            failure_reason=None,
+            failure_stage=None,
+            workflow_exists=None,
+            dispatch_service_reason_code="managed_site_dns_conflicting_record",
+        )
+        or ""
+    ).lower()
+    assert "cloud dns permissions" in str(
+        seo_migration_module._derive_deploy_failure_remediation_hint(
+            failure_reason=None,
+            failure_stage=None,
+            workflow_exists=None,
+            dispatch_service_reason_code="managed_site_dns_permission_denied",
+        )
+        or ""
+    ).lower()
+    assert "concurrent transaction conflict" in str(
+        seo_migration_module._derive_deploy_failure_remediation_hint(
+            failure_reason=None,
+            failure_stage=None,
+            workflow_exists=None,
+            dispatch_service_reason_code="managed_site_dns_transaction_conflict",
         )
         or ""
     ).lower()

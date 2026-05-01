@@ -57,6 +57,26 @@ def _http_error(url: str, *, status_code: int, message: str) -> urllib.error.HTT
     )
 
 
+def _dns_rrsets_response(
+    *,
+    name: str,
+    record_type: str,
+    rrdatas: list[str] | tuple[str, ...] | None,
+    ttl: int = 300,
+) -> _FakeHTTPResponse:
+    rrsets: list[dict[str, object]] = []
+    if rrdatas is not None:
+        rrsets.append(
+            {
+                "name": name,
+                "type": record_type,
+                "ttl": ttl,
+                "rrdatas": list(rrdatas),
+            }
+        )
+    return _FakeHTTPResponse(status=200, body=json.dumps({"rrsets": rrsets}))
+
+
 def _dispatch_target() -> SEOMigrationGitHubDeployTarget:
     return SEOMigrationGitHubDeployTarget(
         repo_owner="mhanson13",
@@ -4066,6 +4086,565 @@ def test_dispatch_deploy_uses_repo_fallback_when_admin_managed_gke_config_missin
     assert result.workflow_run_id is None
     assert any("/actions/variables/KUBERNETES_CLUSTER_NAME" in url for _, url in calls)
     assert any(method == "POST" and url.endswith("/dispatches") for method, url in calls)
+
+
+def test_ensure_managed_site_static_ip_reuses_existing_address(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps(
+                    {
+                        "name": "site-web-preview-ip-tnmfire",
+                        "address": "34.149.170.250",
+                    }
+                ),
+            ),
+        ],
+        calls,
+    )
+    monkeypatch.setattr(
+        "app.integrations.seo_migration_github_publisher._resolve_google_access_token_from_service_account_json",
+        lambda **kwargs: "token",
+    )
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    result = publisher.ensure_managed_site_static_ip(
+        repo_owner="mhanson13",
+        repo_name="tnmfire",
+        site_id="site-1",
+        managed_gke_config={"project_id": "mbsrn-prod"},
+        gcp_deploy_key="{\"type\":\"service_account\"}",
+        dry_run=False,
+    )
+
+    assert result.static_ip_name == "site-web-preview-ip-tnmfire"
+    assert result.static_ip_address == "34.149.170.250"
+    assert result.static_ip_created is False
+    assert result.gcp_project_id == "mbsrn-prod"
+    assert result.result == "exists"
+    assert calls == [
+        (
+            "GET",
+            "https://compute.googleapis.com/compute/v1/projects/mbsrn-prod/global/addresses/site-web-preview-ip-tnmfire",
+        )
+    ]
+
+
+def test_ensure_managed_site_static_ip_creates_missing_address_before_dispatch(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _http_error(
+                "https://compute.googleapis.com/compute/v1/projects/mbsrn-prod/global/addresses/site-web-preview-ip-tnmfire",
+                status_code=404,
+                message="Not Found",
+            ),
+            _FakeHTTPResponse(status=200, body=json.dumps({"name": "operation-1"})),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps(
+                    {
+                        "name": "site-web-preview-ip-tnmfire",
+                        "address": "34.160.224.212",
+                    }
+                ),
+            ),
+        ],
+        calls,
+    )
+    monkeypatch.setattr(
+        "app.integrations.seo_migration_github_publisher._resolve_google_access_token_from_service_account_json",
+        lambda **kwargs: "token",
+    )
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    result = publisher.ensure_managed_site_static_ip(
+        repo_owner="mhanson13",
+        repo_name="tnmfire",
+        site_id="site-1",
+        managed_gke_config={"project_id": "mbsrn-prod"},
+        gcp_deploy_key="{\"type\":\"service_account\"}",
+        dry_run=False,
+    )
+
+    assert result.static_ip_name == "site-web-preview-ip-tnmfire"
+    assert result.static_ip_address == "34.160.224.212"
+    assert result.static_ip_created is True
+    assert result.result == "created"
+    assert calls == [
+        (
+            "GET",
+            "https://compute.googleapis.com/compute/v1/projects/mbsrn-prod/global/addresses/site-web-preview-ip-tnmfire",
+        ),
+        (
+            "POST",
+            "https://compute.googleapis.com/compute/v1/projects/mbsrn-prod/global/addresses",
+        ),
+        (
+            "GET",
+            "https://compute.googleapis.com/compute/v1/projects/mbsrn-prod/global/addresses/site-web-preview-ip-tnmfire",
+        ),
+    ]
+
+
+def test_ensure_managed_site_static_ip_handles_already_exists_race(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _http_error(
+                "https://compute.googleapis.com/compute/v1/projects/mbsrn-prod/global/addresses/site-web-preview-ip-tnmfire",
+                status_code=404,
+                message="Not Found",
+            ),
+            _http_error(
+                "https://compute.googleapis.com/compute/v1/projects/mbsrn-prod/global/addresses",
+                status_code=409,
+                message="Already exists",
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps(
+                    {
+                        "name": "site-web-preview-ip-tnmfire",
+                        "address": "34.149.170.250",
+                    }
+                ),
+            ),
+        ],
+        calls,
+    )
+    monkeypatch.setattr(
+        "app.integrations.seo_migration_github_publisher._resolve_google_access_token_from_service_account_json",
+        lambda **kwargs: "token",
+    )
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    result = publisher.ensure_managed_site_static_ip(
+        repo_owner="mhanson13",
+        repo_name="tnmfire",
+        site_id="site-1",
+        managed_gke_config={"project_id": "mbsrn-prod"},
+        gcp_deploy_key="{\"type\":\"service_account\"}",
+        dry_run=False,
+    )
+
+    assert result.static_ip_name == "site-web-preview-ip-tnmfire"
+    assert result.static_ip_address == "34.149.170.250"
+    assert result.static_ip_created is False
+    assert result.result == "already_exists_after_race"
+    assert calls == [
+        (
+            "GET",
+            "https://compute.googleapis.com/compute/v1/projects/mbsrn-prod/global/addresses/site-web-preview-ip-tnmfire",
+        ),
+        (
+            "POST",
+            "https://compute.googleapis.com/compute/v1/projects/mbsrn-prod/global/addresses",
+        ),
+        (
+            "GET",
+            "https://compute.googleapis.com/compute/v1/projects/mbsrn-prod/global/addresses/site-web-preview-ip-tnmfire",
+        ),
+    ]
+
+
+def test_ensure_managed_site_static_ip_requires_project_config(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    _install_urlopen_stub(monkeypatch, [], calls)
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    with pytest.raises(SEOMigrationGitHubPublisherError) as exc_info:
+        publisher.ensure_managed_site_static_ip(
+            repo_owner="mhanson13",
+            repo_name="tnmfire",
+            site_id="site-1",
+            managed_gke_config={},
+            gcp_deploy_key="{\"type\":\"service_account\"}",
+            dry_run=False,
+        )
+
+    assert exc_info.value.code == "managed_site_static_ip_config_missing"
+    assert exc_info.value.stage == "static_ip_provision"
+    assert calls == []
+
+
+def test_ensure_managed_site_static_ip_permission_failure_is_classified(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _http_error(
+                "https://compute.googleapis.com/compute/v1/projects/mbsrn-prod/global/addresses/site-web-preview-ip-tnmfire",
+                status_code=404,
+                message="Not Found",
+            ),
+            _http_error(
+                "https://compute.googleapis.com/compute/v1/projects/mbsrn-prod/global/addresses",
+                status_code=403,
+                message="Forbidden",
+            ),
+        ],
+        calls,
+    )
+    monkeypatch.setattr(
+        "app.integrations.seo_migration_github_publisher._resolve_google_access_token_from_service_account_json",
+        lambda **kwargs: "token",
+    )
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    with pytest.raises(SEOMigrationGitHubPublisherError) as exc_info:
+        publisher.ensure_managed_site_static_ip(
+            repo_owner="mhanson13",
+            repo_name="tnmfire",
+            site_id="site-1",
+            managed_gke_config={"project_id": "mbsrn-prod"},
+            gcp_deploy_key="{\"type\":\"service_account\"}",
+            dry_run=False,
+        )
+
+    assert exc_info.value.code == "managed_site_static_ip_provisioning_failed"
+    assert exc_info.value.stage == "static_ip_provision"
+    assert calls == [
+        (
+            "GET",
+            "https://compute.googleapis.com/compute/v1/projects/mbsrn-prod/global/addresses/site-web-preview-ip-tnmfire",
+        ),
+        (
+            "POST",
+            "https://compute.googleapis.com/compute/v1/projects/mbsrn-prod/global/addresses",
+        ),
+    ]
+
+
+def test_ensure_managed_site_dns_creates_missing_record_before_dispatch(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _dns_rrsets_response(name="tnmfire.site.mbsrn.com.", record_type="CNAME", rrdatas=None),
+            _dns_rrsets_response(name="tnmfire.site.mbsrn.com.", record_type="A", rrdatas=None),
+            _FakeHTTPResponse(status=200, body=json.dumps({"id": "change-1", "status": "pending"})),
+            _dns_rrsets_response(
+                name="tnmfire.site.mbsrn.com.",
+                record_type="A",
+                rrdatas=["34.160.224.212"],
+                ttl=300,
+            ),
+        ],
+        calls,
+    )
+    monkeypatch.setattr(
+        "app.integrations.seo_migration_github_publisher._resolve_google_access_token_from_service_account_json",
+        lambda **kwargs: "token",
+    )
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    result = publisher.ensure_managed_site_dns_a_record(
+        preview_hostname="tnmfire.site.mbsrn.com",
+        expected_ip_address="34.160.224.212",
+        dns_managed_zone="sites",
+        dns_project_id="mbsrn-prod",
+        gcp_deploy_key="{\"type\":\"service_account\"}",
+        ttl=300,
+        dry_run=False,
+    )
+
+    assert result.dns_record_name == "tnmfire.site.mbsrn.com."
+    assert result.dns_record_type == "A"
+    assert result.dns_managed_zone == "sites"
+    assert result.dns_project_id == "mbsrn-prod"
+    assert result.dns_expected_ip == "34.160.224.212"
+    assert result.dns_previous_ips == ()
+    assert result.dns_created is True
+    assert result.dns_updated is False
+    assert result.dns_ttl == 300
+    assert result.result == "created"
+    assert calls == [
+        (
+            "GET",
+            "https://dns.googleapis.com/dns/v1/projects/mbsrn-prod/managedZones/sites/rrsets?name=tnmfire.site.mbsrn.com.&type=CNAME",
+        ),
+        (
+            "GET",
+            "https://dns.googleapis.com/dns/v1/projects/mbsrn-prod/managedZones/sites/rrsets?name=tnmfire.site.mbsrn.com.&type=A",
+        ),
+        (
+            "POST",
+            "https://dns.googleapis.com/dns/v1/projects/mbsrn-prod/managedZones/sites/changes",
+        ),
+        (
+            "GET",
+            "https://dns.googleapis.com/dns/v1/projects/mbsrn-prod/managedZones/sites/rrsets?name=tnmfire.site.mbsrn.com.&type=A",
+        ),
+    ]
+
+
+def test_ensure_managed_site_dns_reuses_existing_correct_record(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _dns_rrsets_response(name="tnmfire.site.mbsrn.com.", record_type="CNAME", rrdatas=None),
+            _dns_rrsets_response(
+                name="tnmfire.site.mbsrn.com.",
+                record_type="A",
+                rrdatas=["34.160.224.212"],
+                ttl=300,
+            ),
+        ],
+        calls,
+    )
+    monkeypatch.setattr(
+        "app.integrations.seo_migration_github_publisher._resolve_google_access_token_from_service_account_json",
+        lambda **kwargs: "token",
+    )
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    result = publisher.ensure_managed_site_dns_a_record(
+        preview_hostname="tnmfire.site.mbsrn.com",
+        expected_ip_address="34.160.224.212",
+        dns_managed_zone="sites",
+        dns_project_id="mbsrn-prod",
+        gcp_deploy_key="{\"type\":\"service_account\"}",
+        ttl=300,
+        dry_run=False,
+    )
+
+    assert result.dns_created is False
+    assert result.dns_updated is False
+    assert result.result == "exists"
+    assert calls == [
+        (
+            "GET",
+            "https://dns.googleapis.com/dns/v1/projects/mbsrn-prod/managedZones/sites/rrsets?name=tnmfire.site.mbsrn.com.&type=CNAME",
+        ),
+        (
+            "GET",
+            "https://dns.googleapis.com/dns/v1/projects/mbsrn-prod/managedZones/sites/rrsets?name=tnmfire.site.mbsrn.com.&type=A",
+        ),
+    ]
+
+
+def test_ensure_managed_site_dns_updates_old_and_multiple_ips(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _dns_rrsets_response(name="tnmfire.site.mbsrn.com.", record_type="CNAME", rrdatas=None),
+            _dns_rrsets_response(
+                name="tnmfire.site.mbsrn.com.",
+                record_type="A",
+                rrdatas=["34.149.170.250", "34.149.170.251"],
+                ttl=300,
+            ),
+            _FakeHTTPResponse(status=200, body=json.dumps({"id": "change-2", "status": "pending"})),
+            _dns_rrsets_response(
+                name="tnmfire.site.mbsrn.com.",
+                record_type="A",
+                rrdatas=["34.160.224.212"],
+                ttl=300,
+            ),
+        ],
+        calls,
+    )
+    monkeypatch.setattr(
+        "app.integrations.seo_migration_github_publisher._resolve_google_access_token_from_service_account_json",
+        lambda **kwargs: "token",
+    )
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    result = publisher.ensure_managed_site_dns_a_record(
+        preview_hostname="tnmfire.site.mbsrn.com",
+        expected_ip_address="34.160.224.212",
+        dns_managed_zone="sites",
+        dns_project_id="mbsrn-prod",
+        gcp_deploy_key="{\"type\":\"service_account\"}",
+        ttl=300,
+        dry_run=False,
+    )
+
+    assert result.dns_created is False
+    assert result.dns_updated is True
+    assert result.dns_previous_ips == ("34.149.170.250", "34.149.170.251")
+    assert result.result == "updated"
+    assert calls == [
+        (
+            "GET",
+            "https://dns.googleapis.com/dns/v1/projects/mbsrn-prod/managedZones/sites/rrsets?name=tnmfire.site.mbsrn.com.&type=CNAME",
+        ),
+        (
+            "GET",
+            "https://dns.googleapis.com/dns/v1/projects/mbsrn-prod/managedZones/sites/rrsets?name=tnmfire.site.mbsrn.com.&type=A",
+        ),
+        (
+            "POST",
+            "https://dns.googleapis.com/dns/v1/projects/mbsrn-prod/managedZones/sites/changes",
+        ),
+        (
+            "GET",
+            "https://dns.googleapis.com/dns/v1/projects/mbsrn-prod/managedZones/sites/rrsets?name=tnmfire.site.mbsrn.com.&type=A",
+        ),
+    ]
+
+
+def test_ensure_managed_site_dns_conflicting_cname_blocks_before_dispatch(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _dns_rrsets_response(
+                name="tnmfire.site.mbsrn.com.",
+                record_type="CNAME",
+                rrdatas=["legacy.example.net."],
+                ttl=300,
+            ),
+        ],
+        calls,
+    )
+    monkeypatch.setattr(
+        "app.integrations.seo_migration_github_publisher._resolve_google_access_token_from_service_account_json",
+        lambda **kwargs: "token",
+    )
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    with pytest.raises(SEOMigrationGitHubPublisherError) as exc_info:
+        publisher.ensure_managed_site_dns_a_record(
+            preview_hostname="tnmfire.site.mbsrn.com",
+            expected_ip_address="34.160.224.212",
+            dns_managed_zone="sites",
+            dns_project_id="mbsrn-prod",
+            gcp_deploy_key="{\"type\":\"service_account\"}",
+            ttl=300,
+            dry_run=False,
+        )
+
+    assert exc_info.value.code == "managed_site_dns_conflicting_record"
+    assert exc_info.value.stage == "dns_provision"
+    assert calls == [
+        (
+            "GET",
+            "https://dns.googleapis.com/dns/v1/projects/mbsrn-prod/managedZones/sites/rrsets?name=tnmfire.site.mbsrn.com.&type=CNAME",
+        ),
+    ]
+
+
+def test_ensure_managed_site_dns_permission_denied_is_classified(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _http_error(
+                "https://dns.googleapis.com/dns/v1/projects/mbsrn-prod/managedZones/sites/rrsets?name=tnmfire.site.mbsrn.com.&type=CNAME",
+                status_code=403,
+                message="Forbidden",
+            ),
+        ],
+        calls,
+    )
+    monkeypatch.setattr(
+        "app.integrations.seo_migration_github_publisher._resolve_google_access_token_from_service_account_json",
+        lambda **kwargs: "token",
+    )
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    with pytest.raises(SEOMigrationGitHubPublisherError) as exc_info:
+        publisher.ensure_managed_site_dns_a_record(
+            preview_hostname="tnmfire.site.mbsrn.com",
+            expected_ip_address="34.160.224.212",
+            dns_managed_zone="sites",
+            dns_project_id="mbsrn-prod",
+            gcp_deploy_key="{\"type\":\"service_account\"}",
+            ttl=300,
+            dry_run=False,
+        )
+
+    assert exc_info.value.code == "managed_site_dns_permission_denied"
+    assert exc_info.value.stage == "dns_provision"
+    assert calls == [
+        (
+            "GET",
+            "https://dns.googleapis.com/dns/v1/projects/mbsrn-prod/managedZones/sites/rrsets?name=tnmfire.site.mbsrn.com.&type=CNAME",
+        ),
+    ]
+
+
+def test_ensure_managed_site_dns_requires_config(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    _install_urlopen_stub(monkeypatch, [], calls)
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    with pytest.raises(SEOMigrationGitHubPublisherError) as exc_info:
+        publisher.ensure_managed_site_dns_a_record(
+            preview_hostname="tnmfire.site.mbsrn.com",
+            expected_ip_address="34.160.224.212",
+            dns_managed_zone="",
+            dns_project_id="mbsrn-prod",
+            gcp_deploy_key="{\"type\":\"service_account\"}",
+            ttl=300,
+            dry_run=False,
+        )
+
+    assert exc_info.value.code == "managed_site_dns_config_missing"
+    assert exc_info.value.stage == "dns_provision"
+    assert calls == []
+
+
+def test_ensure_managed_site_dns_transaction_conflict_retries_and_accepts_already_correct(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _dns_rrsets_response(name="tnmfire.site.mbsrn.com.", record_type="CNAME", rrdatas=None),
+            _dns_rrsets_response(
+                name="tnmfire.site.mbsrn.com.",
+                record_type="A",
+                rrdatas=["34.149.170.250"],
+                ttl=300,
+            ),
+            _http_error(
+                "https://dns.googleapis.com/dns/v1/projects/mbsrn-prod/managedZones/sites/changes",
+                status_code=409,
+                message="Conflict",
+            ),
+            _dns_rrsets_response(
+                name="tnmfire.site.mbsrn.com.",
+                record_type="A",
+                rrdatas=["34.160.224.212"],
+                ttl=300,
+            ),
+        ],
+        calls,
+    )
+    monkeypatch.setattr(
+        "app.integrations.seo_migration_github_publisher._resolve_google_access_token_from_service_account_json",
+        lambda **kwargs: "token",
+    )
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    result = publisher.ensure_managed_site_dns_a_record(
+        preview_hostname="tnmfire.site.mbsrn.com",
+        expected_ip_address="34.160.224.212",
+        dns_managed_zone="sites",
+        dns_project_id="mbsrn-prod",
+        gcp_deploy_key="{\"type\":\"service_account\"}",
+        ttl=300,
+        dry_run=False,
+    )
+
+    assert result.dns_created is False
+    assert result.dns_updated is False
+    assert result.result == "already_correct_after_race"
+    assert calls == [
+        (
+            "GET",
+            "https://dns.googleapis.com/dns/v1/projects/mbsrn-prod/managedZones/sites/rrsets?name=tnmfire.site.mbsrn.com.&type=CNAME",
+        ),
+        (
+            "GET",
+            "https://dns.googleapis.com/dns/v1/projects/mbsrn-prod/managedZones/sites/rrsets?name=tnmfire.site.mbsrn.com.&type=A",
+        ),
+        (
+            "POST",
+            "https://dns.googleapis.com/dns/v1/projects/mbsrn-prod/managedZones/sites/changes",
+        ),
+        (
+            "GET",
+            "https://dns.googleapis.com/dns/v1/projects/mbsrn-prod/managedZones/sites/rrsets?name=tnmfire.site.mbsrn.com.&type=A",
+        ),
+    ]
 
 
 def test_dispatch_deploy_captures_workflow_output_live_url_from_completion_metadata(monkeypatch) -> None:

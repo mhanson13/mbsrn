@@ -1200,7 +1200,17 @@ Post-fix rollout for existing managed sites:
     - ingress requires deterministic per-site static IP binding:
       - annotation: `kubernetes.io/ingress.global-static-ip-name: site-web-preview-ip-<normalized-site>`
       - static IP names are site-scoped and must not be shared across sites
-      - expected global address must exist before deploy (`gcloud compute addresses describe site-web-preview-ip-<normalized-site> --global`)
+      - control plane ensures the expected global address exists before workflow dispatch using admin-managed deploy credentials
+      - generated target workflow still performs a preflight existence check (`gcloud compute addresses describe site-web-preview-ip-<normalized-site> --global --project "$GKE_PROJECT_ID"`) as a drift safety check
+      - `managed_site_static_ip_config_missing` blocks dispatch when control-plane static IP ensure is missing required project/deploy-key config
+      - `managed_site_static_ip_provisioning_failed` blocks dispatch when control-plane static IP describe/create fails
+    - preview DNS A record is control-plane managed before dispatch:
+      - hostname: `<normalized-site>.site.mbsrn.com`
+      - managed zone default: `sites`
+      - DNS project default: effective managed deploy/static-IP project
+      - exact-hostname scope only: control plane manages only the `A` record for this preview hostname
+      - generated target workflow still validates DNS/ingress parity as deploy-contract evidence
+      - `managed_site_dns_config_missing`, `managed_site_dns_provisioning_failed`, `managed_site_dns_conflicting_record`, `managed_site_dns_permission_denied`, `managed_site_dns_transaction_conflict` block dispatch before workflow run
     - generated manifests must not include `ingress.gcp.kubernetes.io/pre-shared-cert`; `ManagedCertificate` remains the desired-state certificate binding source
     - GKE may still add `ingress.gcp.kubernetes.io/pre-shared-cert` at runtime as controller metadata
     - certificate domain and ingress host must match the same site-specific preview hostname.
@@ -1658,11 +1668,19 @@ Blocking reason-code examples:
   - `dns_record_mismatch`
   - `dns_points_to_old_ingress_ip`
   - `ingress_ip_assigned_but_dns_not_updated`
+  - after control-plane DNS ensure, these typically indicate propagation delay, resolver visibility lag, or out-of-band DNS mutation
 - TLS/certificate:
   - `tls_certificate_provisioning`
   - `managed_certificate_failed_not_visible` (usually DNS/LB visibility mismatch)
   - `tls_certificate_bound_to_wrong_site`
 - Ingress isolation:
+  - `managed_site_static_ip_config_missing`
+  - `managed_site_static_ip_provisioning_failed`
+  - `managed_site_dns_config_missing`
+  - `managed_site_dns_provisioning_failed`
+  - `managed_site_dns_conflicting_record`
+  - `managed_site_dns_permission_denied`
+  - `managed_site_dns_transaction_conflict`
   - `managed_site_static_ip_missing`
   - `expected_static_ip_not_bound_to_ingress`
   - `shared_static_ip_not_allowed_for_per_site_ingress`
@@ -1672,6 +1690,10 @@ Isolation rules:
 - Per-site ingress must bind only its deterministic static IP name (`site-web-preview-ip-<normalized-site>`).
 - Shared ingress static IP binding across sites is blocked.
 - Cross-site certificate bindings are blocked.
+- Control plane ensures per-site global static IP existence before dispatch; target workflow validates presence as a runtime safety check.
+- Control plane ensures preview-host DNS `A` record (`<normalized-site>.site.mbsrn.com`) before dispatch and updates only that exact hostname/type.
+- Target repositories do not create or mutate Cloud DNS records.
+- Conflicting DNS record types at the same hostname (for example CNAME) block deploy before dispatch.
 - `ingress.gcp.kubernetes.io/pre-shared-cert` is controller metadata and does not block deploy readiness by itself (including single-value name mismatch or multiple values).
 - blocking cert-identity decisions rely on desired-state managed-certificate annotation, ManagedCertificate domain/status, and HTTPS/TLS probe identity evidence.
 

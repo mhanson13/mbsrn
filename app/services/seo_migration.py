@@ -26,6 +26,8 @@ from app.integrations.seo_migration_github_publisher import (
     MisconfiguredSEOMigrationGitHubPublisher,
     SEOMigrationGitHubActionsSecretUpsertResult,
     SEOMigrationGitHubDeployTarget,
+    SEOMigrationGitHubManagedSiteDnsEnsureResult,
+    SEOMigrationGitHubManagedSiteStaticIPEnsureResult,
     SEOMigrationGitHubRepoAdoptionResult,
     SEOMigrationGitHubPublishPreflightResult,
     SEOMigrationGitHubPublishFile,
@@ -38,6 +40,7 @@ from app.integrations.seo_migration_github_publisher import (
     SEOMigrationGitHubWorkflowProvisionResult,
     derive_site_kubernetes_namespace,
     derive_site_preview_hostname,
+    derive_site_preview_static_ip_name,
     normalize_workflow_dispatch_identifier_for_api,
 )
 from app.models.business import Business
@@ -301,7 +304,22 @@ _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_CERTIFICATE_ANNOTATION_MISMATCH = "ingre
 _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_BOUND_TO_WRONG_SITE = "tls_certificate_bound_to_wrong_site"
 _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_STATIC_IP_CONFLICT = "ingress_static_ip_conflict"
 _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_STATIC_IP_NOT_ALLOWED = "shared_static_ip_not_allowed_for_per_site_ingress"
+_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROVISIONING_FAILED = (
+    "managed_site_static_ip_provisioning_failed"
+)
+_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFIG_MISSING = (
+    "managed_site_static_ip_config_missing"
+)
 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_MISSING = "managed_site_static_ip_missing"
+_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFIG_MISSING = "managed_site_dns_config_missing"
+_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PROVISIONING_FAILED = (
+    "managed_site_dns_provisioning_failed"
+)
+_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFLICTING_RECORD = "managed_site_dns_conflicting_record"
+_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PERMISSION_DENIED = "managed_site_dns_permission_denied"
+_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_TRANSACTION_CONFLICT = (
+    "managed_site_dns_transaction_conflict"
+)
 _DEPLOY_DISPATCH_SERVICE_REASON_EXPECTED_STATIC_IP_NOT_BOUND_TO_INGRESS = (
     "expected_static_ip_not_bound_to_ingress"
 )
@@ -2398,6 +2416,20 @@ class SEOMigrationService:
         workflow_contract_advisory: str | None = None
         dispatch_attempted = False
         dispatch_result_stage: str | None = None
+        expected_static_ip_name: str | None = None
+        expected_static_ip_address: str | None = None
+        static_ip_created: bool | None = None
+        static_ip_project_id: str | None = None
+        static_ip_ensure_result: str | None = None
+        expected_dns_hostname: str | None = None
+        expected_dns_managed_zone: str | None = None
+        expected_dns_project_id: str | None = None
+        expected_dns_ip: str | None = None
+        dns_record_created: bool | None = None
+        dns_record_updated: bool | None = None
+        dns_previous_ips: list[str] = []
+        dns_ttl: int | None = None
+        dns_ensure_result: str | None = None
         # Keep workflow_dispatch payload contract bounded to explicitly configured deploy inputs.
         # Implicit runtime metadata (site_id/artifact_version/ga_measurement_id/etc.) should not
         # be auto-injected because GitHub rejects undeclared workflow_dispatch inputs.
@@ -3234,12 +3266,254 @@ class SEOMigrationService:
                     workflow_resolution.get("kubernetes_namespace"),
                     max_length=63,
                 )
+                deploy_secret_value_for_control_plane: str | None = None
+                if (
+                    deploy_workflow_mode_for_dispatch == _DEPLOY_WORKFLOW_MODE_SITE_REPO_TEMPLATE_V1
+                    and not dry_run
+                ):
+                    if deploy_secret_value_for_control_plane is None:
+                        deploy_secret_value_for_control_plane, _, _ = self._resolve_deploy_secret_for_propagation()
+                    try:
+                        static_ip_ensure: SEOMigrationGitHubManagedSiteStaticIPEnsureResult = (
+                            self.github_publisher.ensure_managed_site_static_ip(
+                                repo_owner=deploy_target_for_dispatch.repo_owner,
+                                repo_name=deploy_target_for_dispatch.repo_name,
+                                site_id=site_id,
+                                managed_gke_config=managed_gke_config_for_dispatch,
+                                gcp_deploy_key=deploy_secret_value_for_control_plane,
+                                dry_run=False,
+                            )
+                        )
+                        expected_static_ip_name = _normalize_string(static_ip_ensure.static_ip_name, max_length=80)
+                        expected_static_ip_address = _normalize_string(static_ip_ensure.static_ip_address, max_length=64)
+                        static_ip_created = bool(static_ip_ensure.static_ip_created)
+                        static_ip_project_id = _normalize_string(static_ip_ensure.gcp_project_id, max_length=120)
+                        static_ip_ensure_result = _normalize_string(static_ip_ensure.result, max_length=80) or "exists"
+                        self._emit_structured_service_log(
+                            payload={
+                                "event": "seo_migration_managed_site_static_ip_ensure",
+                                "business_id": business_id,
+                                "site_id": site_id,
+                                "workspace_id": workspace.id,
+                                "artifact_version_id": artifact.id,
+                                "target_environment_key": _normalize_string(
+                                    workflow_resolution.get("target_environment_key"),
+                                    max_length=80,
+                                ),
+                                "static_ip_name": expected_static_ip_name,
+                                "static_ip_project_id": static_ip_project_id,
+                                "static_ip_created": static_ip_created,
+                                "result": static_ip_ensure_result,
+                                "deploy_trace_id": deploy_trace_id,
+                            },
+                            fallback_message="seo_migration_managed_site_static_ip_ensure",
+                            level=logging.INFO,
+                        )
+                    except SEOMigrationGitHubPublisherError as static_ip_exc:
+                        derived_static_ip_name = None
+                        try:
+                            derived_static_ip_name, _ = derive_site_preview_static_ip_name(
+                                repo_name=deploy_target_for_dispatch.repo_name,
+                                site_id=site_id,
+                            )
+                        except Exception:
+                            derived_static_ip_name = None
+                        expected_static_ip_name = _normalize_string(derived_static_ip_name, max_length=80)
+                        static_ip_project_id = _normalize_string(
+                            _normalize_json_dict(managed_gke_config_for_dispatch).get("project_id"),
+                            max_length=120,
+                        )
+                        static_ip_created = False
+                        static_ip_ensure_result = "failed"
+                        normalized_static_ip_reason = _normalize_dispatch_service_reason_code(static_ip_exc.code)
+                        if normalized_static_ip_reason is not None:
+                            dispatch_service_reason_code = normalized_static_ip_reason
+                        self._emit_structured_service_log(
+                            payload={
+                                "event": "seo_migration_managed_site_static_ip_ensure",
+                                "business_id": business_id,
+                                "site_id": site_id,
+                                "workspace_id": workspace.id,
+                                "artifact_version_id": artifact.id,
+                                "target_environment_key": _normalize_string(
+                                    workflow_resolution.get("target_environment_key"),
+                                    max_length=80,
+                                ),
+                                "static_ip_name": expected_static_ip_name,
+                                "static_ip_project_id": static_ip_project_id,
+                                "static_ip_created": False,
+                                "result": "failed",
+                                "reason_code": _normalize_string(static_ip_exc.code, max_length=80),
+                                "deploy_trace_id": deploy_trace_id,
+                            },
+                            fallback_message="seo_migration_managed_site_static_ip_ensure",
+                            level=logging.WARNING,
+                        )
+                        raise
+                    try:
+                        preview_hostname_for_dns = _normalize_string(
+                            target_readiness.preview_hostname if target_readiness is not None else None,
+                            max_length=253,
+                        ) or _normalize_string(
+                            workflow_resolution.get("preview_hostname"),
+                            max_length=253,
+                        )
+                        if not preview_hostname_for_dns:
+                            derived_preview_hostname, _ = derive_site_preview_hostname(
+                                repo_name=deploy_target_for_dispatch.repo_name,
+                                site_id=site_id,
+                            )
+                            preview_hostname_for_dns = _normalize_string(
+                                derived_preview_hostname,
+                                max_length=253,
+                            )
+                        expected_dns_hostname = preview_hostname_for_dns
+                        expected_dns_managed_zone = _normalize_string(
+                            workflow_resolution.get("managed_site_dns_managed_zone"),
+                            max_length=120,
+                        ) or "sites"
+                        expected_dns_project_id = _normalize_string(
+                            workflow_resolution.get("managed_site_dns_project_id"),
+                            max_length=120,
+                        ) or static_ip_project_id or _normalize_string(
+                            _normalize_json_dict(managed_gke_config_for_dispatch).get("project_id"),
+                            max_length=120,
+                        )
+                        expected_dns_ip = _normalize_string(expected_static_ip_address, max_length=64)
+                        dns_ttl = _coerce_int(workflow_resolution.get("managed_site_dns_ttl")) or 300
+                        dns_ensure: SEOMigrationGitHubManagedSiteDnsEnsureResult = (
+                            self.github_publisher.ensure_managed_site_dns_a_record(
+                                preview_hostname=preview_hostname_for_dns or "",
+                                expected_ip_address=expected_dns_ip or "",
+                                dns_managed_zone=expected_dns_managed_zone or "",
+                                dns_project_id=expected_dns_project_id or "",
+                                gcp_deploy_key=deploy_secret_value_for_control_plane,
+                                ttl=dns_ttl,
+                                dry_run=False,
+                            )
+                        )
+                        expected_dns_hostname = _normalize_string(
+                            str(dns_ensure.dns_record_name).rstrip("."),
+                            max_length=253,
+                        )
+                        expected_dns_managed_zone = _normalize_string(
+                            dns_ensure.dns_managed_zone,
+                            max_length=120,
+                        )
+                        expected_dns_project_id = _normalize_string(
+                            dns_ensure.dns_project_id,
+                            max_length=120,
+                        )
+                        expected_dns_ip = _normalize_string(
+                            dns_ensure.dns_expected_ip,
+                            max_length=64,
+                        )
+                        dns_record_created = bool(dns_ensure.dns_created)
+                        dns_record_updated = bool(dns_ensure.dns_updated)
+                        dns_ttl = _coerce_int(dns_ensure.dns_ttl) or dns_ttl
+                        dns_ensure_result = _normalize_string(dns_ensure.result, max_length=80) or "exists"
+                        normalized_previous_dns_ips: list[str] = []
+                        for raw_ip in tuple(dns_ensure.dns_previous_ips or ()):
+                            candidate_ip = _normalize_string(raw_ip, max_length=64)
+                            if candidate_ip:
+                                normalized_previous_dns_ips.append(candidate_ip)
+                        dns_previous_ips = _dedupe_strings(normalized_previous_dns_ips)
+                        self._emit_structured_service_log(
+                            payload={
+                                "event": "seo_migration_managed_site_dns_ensure",
+                                "business_id": business_id,
+                                "site_id": site_id,
+                                "workspace_id": workspace.id,
+                                "artifact_version_id": artifact.id,
+                                "target_environment_key": _normalize_string(
+                                    workflow_resolution.get("target_environment_key"),
+                                    max_length=80,
+                                ),
+                                "preview_hostname": expected_dns_hostname,
+                                "dns_record_name": (
+                                    f"{expected_dns_hostname}." if expected_dns_hostname else None
+                                ),
+                                "dns_managed_zone": expected_dns_managed_zone,
+                                "dns_project_id": expected_dns_project_id,
+                                "dns_expected_ip": expected_dns_ip,
+                                "dns_previous_ips": list(dns_previous_ips),
+                                "dns_created": dns_record_created,
+                                "dns_updated": dns_record_updated,
+                                "dns_ttl": dns_ttl,
+                                "result": dns_ensure_result,
+                                "deploy_trace_id": deploy_trace_id,
+                            },
+                            fallback_message="seo_migration_managed_site_dns_ensure",
+                            level=logging.INFO,
+                        )
+                    except SEOMigrationGitHubPublisherError as dns_exc:
+                        derived_preview_hostname = None
+                        try:
+                            derived_preview_hostname, _ = derive_site_preview_hostname(
+                                repo_name=deploy_target_for_dispatch.repo_name,
+                                site_id=site_id,
+                            )
+                        except Exception:
+                            derived_preview_hostname = None
+                        expected_dns_hostname = _normalize_string(
+                            derived_preview_hostname,
+                            max_length=253,
+                        ) or expected_dns_hostname
+                        expected_dns_managed_zone = _normalize_string(
+                            workflow_resolution.get("managed_site_dns_managed_zone"),
+                            max_length=120,
+                        ) or expected_dns_managed_zone or "sites"
+                        expected_dns_project_id = _normalize_string(
+                            workflow_resolution.get("managed_site_dns_project_id"),
+                            max_length=120,
+                        ) or expected_dns_project_id or static_ip_project_id or _normalize_string(
+                            _normalize_json_dict(managed_gke_config_for_dispatch).get("project_id"),
+                            max_length=120,
+                        )
+                        expected_dns_ip = _normalize_string(expected_static_ip_address, max_length=64) or expected_dns_ip
+                        dns_record_created = False
+                        dns_record_updated = False
+                        dns_ensure_result = "failed"
+                        normalized_dns_reason = _normalize_dispatch_service_reason_code(dns_exc.code)
+                        if normalized_dns_reason is not None:
+                            dispatch_service_reason_code = normalized_dns_reason
+                        self._emit_structured_service_log(
+                            payload={
+                                "event": "seo_migration_managed_site_dns_ensure",
+                                "business_id": business_id,
+                                "site_id": site_id,
+                                "workspace_id": workspace.id,
+                                "artifact_version_id": artifact.id,
+                                "target_environment_key": _normalize_string(
+                                    workflow_resolution.get("target_environment_key"),
+                                    max_length=80,
+                                ),
+                                "preview_hostname": expected_dns_hostname,
+                                "dns_record_name": (
+                                    f"{expected_dns_hostname}." if expected_dns_hostname else None
+                                ),
+                                "dns_managed_zone": expected_dns_managed_zone,
+                                "dns_project_id": expected_dns_project_id,
+                                "dns_expected_ip": expected_dns_ip,
+                                "dns_previous_ips": list(dns_previous_ips),
+                                "dns_created": False,
+                                "dns_updated": False,
+                                "dns_ttl": dns_ttl,
+                                "result": "failed",
+                                "reason_code": _normalize_string(dns_exc.code, max_length=80),
+                                "deploy_trace_id": deploy_trace_id,
+                            },
+                            fallback_message="seo_migration_managed_site_dns_ensure",
+                            level=logging.WARNING,
+                        )
+                        raise
                 if (
                     deploy_workflow_mode_for_dispatch == _DEPLOY_WORKFLOW_MODE_SITE_REPO_TEMPLATE_V1
                     and dispatch_namespace
                     and private_image_auth_required_for_dispatch
                 ):
-                    deploy_secret_value_for_provision, _, _ = self._resolve_deploy_secret_for_propagation()
+                    if deploy_secret_value_for_control_plane is None:
+                        deploy_secret_value_for_control_plane, _, _ = self._resolve_deploy_secret_for_propagation()
                     self.github_publisher.provision_managed_image_pull_secret(
                         repo_owner=deploy_target_for_dispatch.repo_owner,
                         repo_name=deploy_target_for_dispatch.repo_name,
@@ -3249,7 +3523,7 @@ class SEOMigrationService:
                         git_userid=self.deploy_secret_git_userid,
                         git_email=self.deploy_secret_git_email,
                         git_token=self.deploy_secret_git_token,
-                        gcp_deploy_key=deploy_secret_value_for_provision,
+                        gcp_deploy_key=deploy_secret_value_for_control_plane,
                         dry_run=False,
                     )
             actual_dispatch_identifier_sent = _normalize_string(
@@ -3289,6 +3563,20 @@ class SEOMigrationService:
                     "dispatch_ref_sent": dispatch_ref_sent,
                     "workflow_inputs_configured_keys": workflow_inputs_configured_keys,
                     "workflow_inputs_sent_keys": workflow_inputs_sent_keys,
+                    "expected_static_ip_name": expected_static_ip_name,
+                    "expected_static_ip_address": expected_static_ip_address,
+                    "static_ip_created": static_ip_created,
+                    "static_ip_project_id": static_ip_project_id,
+                    "static_ip_ensure_result": static_ip_ensure_result,
+                    "expected_dns_hostname": expected_dns_hostname,
+                    "expected_dns_managed_zone": expected_dns_managed_zone,
+                    "expected_dns_project_id": expected_dns_project_id,
+                    "expected_dns_ip": expected_dns_ip,
+                    "dns_record_created": dns_record_created,
+                    "dns_record_updated": dns_record_updated,
+                    "dns_previous_ips": list(dns_previous_ips),
+                    "dns_ttl": dns_ttl,
+                    "dns_ensure_result": dns_ensure_result,
                     "post_conformance_stage": _POST_CONFORMANCE_STAGE_WORKFLOW_DISPATCH_ATTEMPTED,
                     "post_conformance_reason_text": "Workflow dispatch was attempted; awaiting run evidence.",
                     "deploy_trace_id": deploy_trace_id,
@@ -3628,6 +3916,20 @@ class SEOMigrationService:
                     "resolved_live_url": resolved_live_url,
                     "url_source": expected_publish_url_source,
                     "url_source_detail": expected_publish_url_source_detail,
+                    "expected_static_ip_name": expected_static_ip_name,
+                    "expected_static_ip_address": expected_static_ip_address,
+                    "static_ip_created": static_ip_created,
+                    "static_ip_project_id": static_ip_project_id,
+                    "static_ip_ensure_result": static_ip_ensure_result,
+                    "expected_dns_hostname": expected_dns_hostname,
+                    "expected_dns_managed_zone": expected_dns_managed_zone,
+                    "expected_dns_project_id": expected_dns_project_id,
+                    "expected_dns_ip": expected_dns_ip,
+                    "dns_record_created": dns_record_created,
+                    "dns_record_updated": dns_record_updated,
+                    "dns_previous_ips": list(dns_previous_ips),
+                    "dns_ttl": dns_ttl,
+                    "dns_ensure_result": dns_ensure_result,
                     "deploy_trace_id": deploy_trace_id,
                     "workflow_dispatch_supported": workflow_dispatch_supported,
                     "workflow_trigger_types": list(workflow_trigger_types),
@@ -3858,6 +4160,20 @@ class SEOMigrationService:
                     "resolved_live_url": resolved_live_url,
                     "url_source": expected_publish_url_source,
                     "url_source_detail": expected_publish_url_source_detail,
+                    "expected_static_ip_name": expected_static_ip_name,
+                    "expected_static_ip_address": expected_static_ip_address,
+                    "static_ip_created": static_ip_created,
+                    "static_ip_project_id": static_ip_project_id,
+                    "static_ip_ensure_result": static_ip_ensure_result,
+                    "expected_dns_hostname": expected_dns_hostname,
+                    "expected_dns_managed_zone": expected_dns_managed_zone,
+                    "expected_dns_project_id": expected_dns_project_id,
+                    "expected_dns_ip": expected_dns_ip,
+                    "dns_record_created": dns_record_created,
+                    "dns_record_updated": dns_record_updated,
+                    "dns_previous_ips": list(dns_previous_ips),
+                    "dns_ttl": dns_ttl,
+                    "dns_ensure_result": dns_ensure_result,
                 },
                 failure_category=failure_category,
                 failure_reason=failure_reason_for_log,
@@ -3964,6 +4280,20 @@ class SEOMigrationService:
                     "resolved_live_url": resolved_live_url,
                     "url_source": expected_publish_url_source,
                     "url_source_detail": expected_publish_url_source_detail,
+                    "expected_static_ip_name": expected_static_ip_name,
+                    "expected_static_ip_address": expected_static_ip_address,
+                    "static_ip_created": static_ip_created,
+                    "static_ip_project_id": static_ip_project_id,
+                    "static_ip_ensure_result": static_ip_ensure_result,
+                    "expected_dns_hostname": expected_dns_hostname,
+                    "expected_dns_managed_zone": expected_dns_managed_zone,
+                    "expected_dns_project_id": expected_dns_project_id,
+                    "expected_dns_ip": expected_dns_ip,
+                    "dns_record_created": dns_record_created,
+                    "dns_record_updated": dns_record_updated,
+                    "dns_previous_ips": list(dns_previous_ips),
+                    "dns_ttl": dns_ttl,
+                    "dns_ensure_result": dns_ensure_result,
                 },
                 fallback_message="seo_migration_deploy_dispatch_failed",
                 level=logging.WARNING,
@@ -4106,6 +4436,20 @@ class SEOMigrationService:
                 "ref_source": ref_source,
                 "workflow_inputs_configured_keys": workflow_inputs_configured_keys,
                 "workflow_inputs_sent_keys": workflow_inputs_sent_keys,
+                "expected_static_ip_name": expected_static_ip_name,
+                "expected_static_ip_address": expected_static_ip_address,
+                "static_ip_created": static_ip_created,
+                "static_ip_project_id": static_ip_project_id,
+                "static_ip_ensure_result": static_ip_ensure_result,
+                "expected_dns_hostname": expected_dns_hostname,
+                "expected_dns_managed_zone": expected_dns_managed_zone,
+                "expected_dns_project_id": expected_dns_project_id,
+                "expected_dns_ip": expected_dns_ip,
+                "dns_record_created": dns_record_created,
+                "dns_record_updated": dns_record_updated,
+                "dns_previous_ips": list(dns_previous_ips),
+                "dns_ttl": dns_ttl,
+                "dns_ensure_result": dns_ensure_result,
                 "deploy_trace_id": deploy_trace_id,
                 "workflow_dispatch_supported": workflow_dispatch_supported,
                 "workflow_trigger_types": list(workflow_trigger_types),
@@ -4494,6 +4838,20 @@ class SEOMigrationService:
             "ingress_conflict_detected": ingress_conflict_detected,
             "cert_identity_valid": cert_identity_valid,
             "deploy_https_ready": deploy_https_ready,
+            "expected_static_ip_name": expected_static_ip_name,
+            "expected_static_ip_address": expected_static_ip_address,
+            "static_ip_created": static_ip_created,
+            "static_ip_project_id": static_ip_project_id,
+            "static_ip_ensure_result": static_ip_ensure_result,
+            "expected_dns_hostname": expected_dns_hostname,
+            "expected_dns_managed_zone": expected_dns_managed_zone,
+            "expected_dns_project_id": expected_dns_project_id,
+            "expected_dns_ip": expected_dns_ip,
+            "dns_record_created": dns_record_created,
+            "dns_record_updated": dns_record_updated,
+            "dns_previous_ips": list(dns_previous_ips),
+            "dns_ttl": dns_ttl,
+            "dns_ensure_result": dns_ensure_result,
             "workflow_integrity_status": workflow_integrity_status,
             "workflow_integrity_reason_code": workflow_integrity_reason_code,
             "workflow_run_id": getattr(deploy_result, "workflow_run_id", None),
@@ -4621,6 +4979,20 @@ class SEOMigrationService:
                 "managed_namespace_policies_aligned": (
                     target_readiness.managed_namespace_policies_aligned if target_readiness is not None else None
                 ),
+                "expected_static_ip_name": expected_static_ip_name,
+                "expected_static_ip_address": expected_static_ip_address,
+                "static_ip_created": static_ip_created,
+                "static_ip_project_id": static_ip_project_id,
+                "static_ip_ensure_result": static_ip_ensure_result,
+                "expected_dns_hostname": expected_dns_hostname,
+                "expected_dns_managed_zone": expected_dns_managed_zone,
+                "expected_dns_project_id": expected_dns_project_id,
+                "expected_dns_ip": expected_dns_ip,
+                "dns_record_created": dns_record_created,
+                "dns_record_updated": dns_record_updated,
+                "dns_previous_ips": list(dns_previous_ips),
+                "dns_ttl": dns_ttl,
+                "dns_ensure_result": dns_ensure_result,
                 "deploy_trace_id": deploy_trace_id,
                 "workflow_dispatch_supported": workflow_dispatch_supported,
                 "workflow_trigger_types": list(workflow_trigger_types),
@@ -10470,6 +10842,9 @@ class SEOMigrationService:
         managed_gke_cluster_name: str | None = None
         managed_gke_cluster_location: str | None = None
         managed_gke_project_id: str | None = None
+        managed_site_dns_managed_zone = "sites"
+        managed_site_dns_project_id: str | None = None
+        managed_site_dns_ttl = 300
         namespace_isolation_defaults = normalize_namespace_isolation_defaults(None).model_dump(mode="json")
         if self.github_publish_config_service is None:
             return {
@@ -10479,6 +10854,14 @@ class SEOMigrationService:
                 "managed_gke_cluster_name": managed_gke_cluster_name,
                 "managed_gke_cluster_location": managed_gke_cluster_location,
                 "managed_gke_project_id": managed_gke_project_id,
+                "managed_site_dns_managed_zone": managed_site_dns_managed_zone,
+                "managed_site_dns_project_id": managed_site_dns_project_id,
+                "managed_site_dns_ttl": managed_site_dns_ttl,
+                "managed_site_dns_config": {
+                    "managed_zone": managed_site_dns_managed_zone,
+                    "project_id": managed_site_dns_project_id,
+                    "ttl": managed_site_dns_ttl,
+                },
                 "namespace_isolation_defaults": namespace_isolation_defaults,
             }
         admin_config = self.github_publish_config_service.get()
@@ -10512,6 +10895,23 @@ class SEOMigrationService:
             getattr(admin_config, "managed_gke_project_id", None),
             max_length=120,
         )
+        candidate_dns_zone = _normalize_string(
+            getattr(admin_config, "managed_site_dns_managed_zone", None),
+            max_length=120,
+        )
+        if candidate_dns_zone:
+            managed_site_dns_managed_zone = candidate_dns_zone
+        candidate_dns_project_id = _normalize_string(
+            getattr(admin_config, "managed_site_dns_project_id", None),
+            max_length=120,
+        )
+        if candidate_dns_project_id:
+            managed_site_dns_project_id = candidate_dns_project_id
+        candidate_dns_ttl = _coerce_int(getattr(admin_config, "managed_site_dns_ttl", None))
+        if candidate_dns_ttl is not None and candidate_dns_ttl > 0:
+            managed_site_dns_ttl = candidate_dns_ttl
+        if managed_site_dns_project_id is None:
+            managed_site_dns_project_id = managed_gke_project_id
         candidate_namespace_defaults = normalize_namespace_isolation_defaults(
             getattr(admin_config, "namespace_isolation_defaults_json", None)
         ).model_dump(mode="json")
@@ -10524,10 +10924,18 @@ class SEOMigrationService:
             "managed_gke_cluster_name": managed_gke_cluster_name,
             "managed_gke_cluster_location": managed_gke_cluster_location,
             "managed_gke_project_id": managed_gke_project_id,
+            "managed_site_dns_managed_zone": managed_site_dns_managed_zone,
+            "managed_site_dns_project_id": managed_site_dns_project_id,
+            "managed_site_dns_ttl": managed_site_dns_ttl,
             "managed_gke_config": {
                 "cluster_name": managed_gke_cluster_name,
                 "cluster_location": managed_gke_cluster_location,
                 "project_id": managed_gke_project_id,
+            },
+            "managed_site_dns_config": {
+                "managed_zone": managed_site_dns_managed_zone,
+                "project_id": managed_site_dns_project_id,
+                "ttl": managed_site_dns_ttl,
             },
             "namespace_isolation_defaults": namespace_isolation_defaults,
         }
@@ -10631,6 +11039,22 @@ class SEOMigrationService:
             repo_name=repo_name,
             site_id=workspace.site_id,
         )
+        expected_static_ip_name, expected_static_ip_name_source = _safe_derive_preview_static_ip_name_for_summary(
+            repo_name=repo_name,
+            site_id=workspace.site_id,
+        )
+        expected_dns_managed_zone = _normalize_string(
+            admin_deploy_metadata.get("managed_site_dns_managed_zone"),
+            max_length=120,
+        ) or "sites"
+        expected_dns_project_id = _normalize_string(
+            admin_deploy_metadata.get("managed_site_dns_project_id"),
+            max_length=120,
+        ) or _normalize_string(
+            admin_deploy_metadata.get("managed_gke_project_id"),
+            max_length=120,
+        )
+        expected_dns_ttl = _coerce_int(admin_deploy_metadata.get("managed_site_dns_ttl")) or 300
         return {
             "enabled": bool(normalized.get("enabled")),
             "repo_owner": str(normalized.get("repo_owner") or fallback_publish.get("repo_owner") or "").strip(),
@@ -10650,6 +11074,13 @@ class SEOMigrationService:
             "preview_hostname": preview_hostname,
             "preview_hostname_source": preview_hostname_source,
             "preview_url": f"https://{preview_hostname}" if preview_hostname else None,
+            "expected_static_ip_name": expected_static_ip_name,
+            "expected_static_ip_name_source": expected_static_ip_name_source,
+            "expected_dns_hostname": preview_hostname,
+            "expected_dns_hostname_source": preview_hostname_source,
+            "expected_dns_managed_zone": expected_dns_managed_zone,
+            "expected_dns_project_id": expected_dns_project_id,
+            "expected_dns_ttl": expected_dns_ttl,
         }
 
     def _resolve_deploy_target_with_workflow_precedence(
@@ -10791,7 +11222,23 @@ class SEOMigrationService:
             repo_name=resolved_target.get("repo_name"),
             site_id=workspace.site_id,
         )
+        resolved_static_ip_name, resolved_static_ip_source = _safe_derive_preview_static_ip_name_for_summary(
+            repo_name=resolved_target.get("repo_name"),
+            site_id=workspace.site_id,
+        )
         admin_deploy_metadata = self._resolve_admin_deploy_template_metadata()
+        resolved_dns_managed_zone = _normalize_string(
+            admin_deploy_metadata.get("managed_site_dns_managed_zone"),
+            max_length=120,
+        ) or "sites"
+        resolved_dns_project_id = _normalize_string(
+            admin_deploy_metadata.get("managed_site_dns_project_id"),
+            max_length=120,
+        ) or _normalize_string(
+            admin_deploy_metadata.get("managed_gke_project_id"),
+            max_length=120,
+        )
+        resolved_dns_ttl = _coerce_int(admin_deploy_metadata.get("managed_site_dns_ttl")) or 300
         resolution = {
             "source": str(selected_candidate.get("source") or fallback_source),
             "workflow_id": str(resolved_target.get("workflow_id") or "").strip(),
@@ -10816,6 +11263,13 @@ class SEOMigrationService:
             "preview_hostname": resolved_preview_hostname,
             "preview_hostname_source": resolved_preview_hostname_source,
             "preview_url": f"https://{resolved_preview_hostname}" if resolved_preview_hostname else None,
+            "expected_static_ip_name": resolved_static_ip_name,
+            "expected_static_ip_name_source": resolved_static_ip_source,
+            "managed_site_dns_managed_zone": resolved_dns_managed_zone,
+            "managed_site_dns_project_id": resolved_dns_project_id,
+            "managed_site_dns_ttl": resolved_dns_ttl,
+            "expected_dns_hostname": resolved_preview_hostname,
+            "expected_dns_hostname_source": resolved_preview_hostname_source,
             "namespace_model_status": "unknown",
         }
         return resolved_target, resolution
@@ -11506,6 +11960,9 @@ class SEOMigrationService:
             "repo_create_failed_runtime_unavailable",
             "github_workflow_write_not_authorized",
             "github_contents_write_not_authorized",
+            _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFIG_MISSING,
+            _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFIG_MISSING,
+            _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PERMISSION_DENIED,
         }:
             return "config_missing"
         if code in {
@@ -13984,6 +14441,13 @@ def _normalize_deploy_failure_reason_code(value: object) -> str | None:
         _DEPLOY_TARGET_REASON_WORKFLOW_NOT_PRODUCTION_READY,
         _DEPLOY_TARGET_REASON_DEPLOY_BLOCKER_RECONCILIATION_FAILED,
         _DEPLOY_TARGET_REASON_STALE_DEPLOY_BLOCKER_REQUIRES_REFRESH,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROVISIONING_FAILED,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFIG_MISSING,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFIG_MISSING,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PROVISIONING_FAILED,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFLICTING_RECORD,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PERMISSION_DENIED,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_TRANSACTION_CONFLICT,
         "github_target_not_found",
         "github_request_failed",
         "github_temporal_failure",
@@ -14015,7 +14479,14 @@ def _normalize_deploy_failure_stage(value: object) -> str | None:
     if not normalized:
         return None
     normalized_lower = normalized.lower()
-    if normalized_lower in {"repo_lookup", "ref_lookup", "workflow_lookup", "workflow_dispatch"}:
+    if normalized_lower in {
+        "repo_lookup",
+        "ref_lookup",
+        "workflow_lookup",
+        "workflow_dispatch",
+        "static_ip_provision",
+        "dns_provision",
+    }:
         return normalized_lower
     return None
 
@@ -14059,6 +14530,13 @@ def _normalize_workflow_run_failure_reason_code(value: object) -> str | None:
         _DEPLOY_RUN_FAILURE_REASON_INGRESS_BACKEND_UNHEALTHY_AFTER_ROLLOUT,
         _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_STATIC_IP_CONFLICT,
         _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_STATIC_IP_NOT_ALLOWED,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROVISIONING_FAILED,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFIG_MISSING,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFIG_MISSING,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PROVISIONING_FAILED,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFLICTING_RECORD,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PERMISSION_DENIED,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_TRANSACTION_CONFLICT,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_MISSING,
         _DEPLOY_DISPATCH_SERVICE_REASON_EXPECTED_STATIC_IP_NOT_BOUND_TO_INGRESS,
         _DEPLOY_DISPATCH_SERVICE_REASON_STALE_PRE_SHARED_CERT_BINDING,
@@ -14121,6 +14599,13 @@ def _normalize_dispatch_service_reason_code(value: object) -> str | None:
         _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_BOUND_TO_WRONG_SITE,
         _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_STATIC_IP_CONFLICT,
         _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_STATIC_IP_NOT_ALLOWED,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROVISIONING_FAILED,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFIG_MISSING,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFIG_MISSING,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PROVISIONING_FAILED,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFLICTING_RECORD,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PERMISSION_DENIED,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_TRANSACTION_CONFLICT,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_MISSING,
         _DEPLOY_DISPATCH_SERVICE_REASON_EXPECTED_STATIC_IP_NOT_BOUND_TO_INGRESS,
         _DEPLOY_DISPATCH_SERVICE_REASON_STALE_PRE_SHARED_CERT_BINDING,
@@ -14633,6 +15118,13 @@ def _derive_dispatch_service_reason_code(
         _DEPLOY_DISPATCH_SERVICE_REASON_MISSING_GCP_PROJECT_ID,
         _DEPLOY_DISPATCH_SERVICE_REASON_IMAGE_PULL_SECRET_MISSING,
         _DEPLOY_DISPATCH_SERVICE_REASON_IMAGE_PULL_SECRET_NOT_REFERENCED,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROVISIONING_FAILED,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFIG_MISSING,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFIG_MISSING,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PROVISIONING_FAILED,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFLICTING_RECORD,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PERMISSION_DENIED,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_TRANSACTION_CONFLICT,
         _DEPLOY_DISPATCH_SERVICE_REASON_CERTIFICATE_DOMAIN_MISMATCH,
         _DEPLOY_DISPATCH_SERVICE_REASON_STALE_MANAGED_CERTIFICATE_PRESENT,
         _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_CERTIFICATE_MISMATCH,
@@ -14671,6 +15163,16 @@ def _derive_dispatch_service_reason_code(
         _DEPLOY_TARGET_REASON_WORKFLOW_NOT_PRODUCTION_READY,
     }:
         return _DEPLOY_DISPATCH_SERVICE_REASON_TARGET_CONFIG_INVALID
+    if normalized_failure_reason in {
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROVISIONING_FAILED,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFIG_MISSING,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFIG_MISSING,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PROVISIONING_FAILED,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFLICTING_RECORD,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PERMISSION_DENIED,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_TRANSACTION_CONFLICT,
+    }:
+        return normalized_failure_reason
     if normalized_failure_stage in {"repo_lookup", "ref_lookup", "workflow_lookup"}:
         return _DEPLOY_DISPATCH_SERVICE_REASON_TARGET_METADATA_MISSING
     return _DEPLOY_DISPATCH_SERVICE_REASON_RUNTIME_UNAVAILABLE
@@ -14704,6 +15206,41 @@ def _derive_managed_gke_dispatch_readiness_message(*, dispatch_service_reason_co
         return (
             "Private-image auth mode is enabled, but managed deployment manifest is missing required image pull "
             "secret reference (ghcr-pull-secret). Republish managed deploy manifests."
+        )
+    if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFIG_MISSING:
+        return (
+            "Admin action required: managed-site static IP provisioning configuration is incomplete "
+            "(GKE project id and/or control-plane deploy credential)."
+        )
+    if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROVISIONING_FAILED:
+        return (
+            "Managed-site static IP provisioning failed in control plane before deploy dispatch. "
+            "Verify GCP permissions and static IP provisioning logs, then retry."
+        )
+    if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFIG_MISSING:
+        return (
+            "Admin action required: managed-site DNS provisioning configuration is incomplete "
+            "(preview hostname zone/project mapping or control-plane deploy credential)."
+        )
+    if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PROVISIONING_FAILED:
+        return (
+            "Managed-site DNS A-record provisioning failed in control plane before deploy dispatch. "
+            "Verify Cloud DNS permissions and DNS provisioning logs, then retry."
+        )
+    if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFLICTING_RECORD:
+        return (
+            "Managed-site preview hostname has a conflicting DNS record type (for example CNAME) and cannot be "
+            "managed as an A record. Remove conflicting record and retry."
+        )
+    if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PERMISSION_DENIED:
+        return (
+            "Managed-site DNS provisioning is not authorized for the configured DNS project/zone. "
+            "Grant required Cloud DNS permissions and retry."
+        )
+    if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_TRANSACTION_CONFLICT:
+        return (
+            "Managed-site DNS update encountered a concurrent transaction conflict. "
+            "Retry deploy after DNS transaction contention clears."
         )
     if normalized_dispatch_reason in {
         _DEPLOY_DISPATCH_SERVICE_REASON_CERTIFICATE_DOMAIN_MISMATCH,
@@ -14830,6 +15367,41 @@ def _derive_deploy_failure_remediation_hint(
         return (
             "Private-image auth mode is enabled, but managed deployment manifest is missing required image pull "
             "secret reference (ghcr-pull-secret). Republish managed deploy manifests and retry."
+        )
+    if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFIG_MISSING:
+        return (
+            "Managed-site static IP provisioning config is missing (GKE project id and/or control-plane deploy "
+            "credential). Update admin deploy settings and retry."
+        )
+    if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROVISIONING_FAILED:
+        return (
+            "Control-plane static IP provisioning failed before workflow dispatch. "
+            "Verify GCP permissions/quota for global addresses and retry."
+        )
+    if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFIG_MISSING:
+        return (
+            "Managed-site DNS provisioning config is missing (DNS zone/project mapping and/or control-plane deploy "
+            "credential). Update admin deploy settings and retry."
+        )
+    if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PROVISIONING_FAILED:
+        return (
+            "Control-plane DNS A-record provisioning failed before workflow dispatch. "
+            "Verify Cloud DNS permissions/API availability and retry."
+        )
+    if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFLICTING_RECORD:
+        return (
+            "Preview hostname has a conflicting non-A DNS record (for example CNAME). "
+            "Remove the conflicting record so control plane can manage the exact hostname A record."
+        )
+    if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PERMISSION_DENIED:
+        return (
+            "Control-plane DNS provisioning lacks required Cloud DNS permissions for the configured project/zone. "
+            "Grant permissions and retry deploy."
+        )
+    if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_TRANSACTION_CONFLICT:
+        return (
+            "Control-plane DNS update hit a concurrent transaction conflict. "
+            "Retry deploy after verifying no competing DNS writers are updating the same hostname."
         )
     if normalized_dispatch_reason in {
         _DEPLOY_DISPATCH_SERVICE_REASON_CERTIFICATE_DOMAIN_MISMATCH,
@@ -15056,6 +15628,41 @@ def _derive_workflow_run_failure_hint(
         return (
             "Ingress static IP annotation does not match this site's deterministic per-site static IP name. "
             "Republish managed ingress with the expected static IP binding and redeploy."
+        )
+    if normalized_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFIG_MISSING:
+        return (
+            "Control-plane static IP provisioning config is missing required GCP project/credential settings. "
+            "Update admin deploy configuration before retrying deploy."
+        )
+    if normalized_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROVISIONING_FAILED:
+        return (
+            "Control-plane static IP provisioning failed before dispatch. "
+            "Verify GCP permissions for global address describe/create and retry."
+        )
+    if normalized_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFIG_MISSING:
+        return (
+            "Control-plane DNS provisioning config is missing required zone/project/credential settings. "
+            "Update admin deploy configuration before retrying deploy."
+        )
+    if normalized_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PROVISIONING_FAILED:
+        return (
+            "Control-plane DNS A-record provisioning failed before dispatch. "
+            "Verify Cloud DNS permissions and provisioning logs, then retry."
+        )
+    if normalized_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFLICTING_RECORD:
+        return (
+            "Preview hostname has a conflicting non-A DNS record (for example CNAME). "
+            "Remove conflicting record and retry so control plane can manage the A record."
+        )
+    if normalized_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PERMISSION_DENIED:
+        return (
+            "Control-plane DNS provisioning is not authorized for the configured DNS project/zone. "
+            "Grant Cloud DNS permissions and retry."
+        )
+    if normalized_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_TRANSACTION_CONFLICT:
+        return (
+            "Control-plane DNS update hit a concurrent transaction conflict. "
+            "Retry deploy after verifying no competing DNS writers are updating this hostname."
         )
     if normalized_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_MISSING:
         return (
@@ -15307,6 +15914,23 @@ def _safe_derive_preview_hostname_for_summary(
     normalized_hostname = _normalize_string(preview_hostname, max_length=253)
     normalized_source = _normalize_string(source, max_length=60)
     return normalized_hostname, normalized_source
+
+
+def _safe_derive_preview_static_ip_name_for_summary(
+    *,
+    repo_name: object,
+    site_id: object | None = None,
+) -> tuple[str | None, str | None]:
+    try:
+        static_ip_name, source = derive_site_preview_static_ip_name(
+            repo_name=repo_name,
+            site_id=site_id,
+        )
+    except (SEOMigrationGitHubPublisherError, ValueError):
+        return None, None
+    normalized_name = _normalize_string(static_ip_name, max_length=80)
+    normalized_source = _normalize_string(source, max_length=60)
+    return normalized_name, normalized_source
 
 
 def _normalize_workflow_id_for_deploy(value: object) -> str | None:
