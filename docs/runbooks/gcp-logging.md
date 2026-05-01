@@ -808,11 +808,13 @@ Duplicate deploy blocking interpretation:
   - run-backed active blockers (`workflow_run_pending`, `workflow_run_in_progress`, `workflow_run_observed`, and active run statuses) use a 30-minute active freshness window
   - unverified dispatch blockers (`dispatch_accepted_no_run` / `dispatch_unverified_no_run`) use a 2-minute weak-blocker window
 - run-backed blockers that are older than 12 minutes are reconciled against GitHub run status before final duplicate rejection.
+- run-backed blockers use a hard stale safety threshold of 2 hours for automated stale-blocker supersede decisions.
 - reconciliation outcomes:
   - `reconciliation_result=terminal_cleared`: prior run reached terminal state, blocker cleared, retry can proceed
   - `reconciliation_result=active`: prior run still active, duplicate blocking remains
   - `reconciliation_result=refresh_failed` with reason `deploy_blocker_reconciliation_failed`: refresh failed while blocker still appears active (fail closed)
-  - `reconciliation_result=stale_requires_manual_refresh` with reason `stale_deploy_blocker_requires_refresh`: refresh failed for a stale blocker; manual status refresh required
+  - `reconciliation_result=stale_requires_manual_refresh` with reason `stale_deploy_blocker_requires_refresh`: refresh failed for a stale blocker below the hard stale threshold; manual status refresh required
+  - `reconciliation_result=superseded_after_stale_threshold` with reason `deploy_blocker_superseded_after_stale_threshold`: blocker exceeded hard stale threshold and could not be confirmed active; prior entry is superseded and retry proceeds
 - quick triage:
   - use `target.blocking_post_dispatch_state` and blocker run fields to confirm whether the prior attempt is still active.
   - use `target.blocking_stale_reference_field`, `target.blocking_stale_reference_at`, `target.blocking_stale_age_seconds`, `target.blocking_stale_threshold_seconds`, `target.blocking_stale_evaluated`, `target.blocking_stale_is_stale`, and `target.blocking_treated_as_stale` to validate stale classification.
@@ -820,6 +822,7 @@ Duplicate deploy blocking interpretation:
   - if reason code is `duplicate_request`, wait for terminal state or cancel/complete the run externally.
   - if reason code is `deploy_blocker_reconciliation_failed`, retry refresh and validate GitHub Actions/API health before reattempting deploy.
   - if reason code is `stale_deploy_blocker_requires_refresh`, perform manual status refresh and confirm terminal evidence before retrying.
+  - if reason code is `deploy_blocker_superseded_after_stale_threshold`, retry deploy and inspect GitHub Actions only if an orphan workflow run is suspected.
   - observe unverified-dispatch reconciliation events:
     - `dispatch_attempted_without_run`
     - `no_run_observed_after_refresh`
@@ -831,6 +834,9 @@ Duplicate deploy blocking interpretation:
   - observe stale active-blocker reconciliation event:
     - `downgrade_to_stale_active_deploy_blocker`
     - followed by `seo_migration_deploy_duplicate_blocker_reconciliation`
+  - observe stale supersede event when hard-stale clearance is used:
+    - `seo_migration_deploy_stale_blocker_superseded`
+    - prior history item updates to `workflow_run_failure_reason_code=stale_deploy_blocker_superseded`
 
 Deploy evidence contract interpretation:
 - `deploy_evidence_contract_status=confirmed_live_evidence` means explicit deploy evidence set `resolved_live_url`.
@@ -910,6 +916,9 @@ Use this bounded checklist for first production exercises:
    - reconciliation failure reason codes:
      - `deploy_blocker_reconciliation_failed`
      - `stale_deploy_blocker_requires_refresh`
+   - hard-stale supersede evidence:
+     - `deploy_blocker_superseded_after_stale_threshold`
+     - prior history item `workflow_run_failure_reason_code=stale_deploy_blocker_superseded`
 8. `resolved_live_url` is only confirmed when explicit evidence exists (`url_source=workflow_output` or `url_source=deploy_result`).
 
 ### First Production Deploy Quick Path
@@ -1253,6 +1262,8 @@ Required credential note:
     GitHub reconciliation for an aged active blocker failed; run status must be refreshed/verified
   - `stale_deploy_blocker_requires_refresh`:
     stale blocker could not be reconciled automatically; manual refresh confirmation required
+  - `deploy_blocker_superseded_after_stale_threshold`:
+    stale blocker exceeded hard stale threshold and was auto-superseded because no reliable active-run evidence remained
 - readiness precedence:
   - when `missing_cluster_*`/`missing_gcp_project_id` is present, treat that as the authoritative blocker before dispatch/workflow troubleshooting
   - only move to GitHub workflow runtime diagnostics after readiness reports managed target configuration blockers cleared

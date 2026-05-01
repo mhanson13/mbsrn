@@ -1041,7 +1041,12 @@ Deploy behavior:
   - if refresh confirms terminal run state, the prior attempt is normalized to terminal and retry proceeds
   - if refresh confirms the run is still active, duplicate blocking remains in place with refreshed blocker metadata
   - if refresh fails while blocker evidence is still inside the active freshness window, deploy fails closed with `deploy_blocker_reconciliation_failed` (operator must refresh status and retry)
-  - if refresh fails after blocker evidence is beyond the larger stale window, deploy fails with `stale_deploy_blocker_requires_refresh` (operator must refresh status and confirm terminal state)
+  - if refresh fails after blocker evidence is beyond the 30-minute active window but below the hard stale window (2 hours), deploy fails with `stale_deploy_blocker_requires_refresh` (operator must refresh status and confirm terminal state)
+  - hard stale safety bound for run-backed blockers is 2 hours; once exceeded, control plane performs one final GitHub reconciliation and:
+    - keeps blocking only when GitHub explicitly confirms the prior run is still active
+    - otherwise supersedes the stale blocker and allows retry
+  - superseded stale blockers are normalized to terminal history with `workflow_run_failure_reason_code=stale_deploy_blocker_superseded`, and reconciliation metadata records `deploy_blocker_superseded_after_stale_threshold`
+  - control plane emits `seo_migration_deploy_stale_blocker_superseded` when this automatic stale-clearance path is used
   - stale unverified-dispatch blockers continue to reconcile to terminal timeout (`workflow_run_failure_reason_code=workflow_reconciliation_timeout`) after the 2-minute no-run threshold
   - if refresh hits `workflow_not_found` after dispatch was attempted, control plane marks the attempt terminal with `workflow_run_failure_reason_code=workflow_run_tracking_lost` so retries are not deadlocked
   - terminal/stale historical records (`workflow_run_failed`, `workflow_run_succeeded_without_live_url`, `workflow_run_succeeded_with_live_url`, cancelled/completed non-active, or stale no-run records) do not block a new deploy retry
@@ -1158,6 +1163,8 @@ Post-fix rollout for existing managed sites:
       aged duplicate blocker could not be refreshed from GitHub while still potentially active
     - `stale_deploy_blocker_requires_refresh`:
       stale duplicate blocker requires manual refresh confirmation before safe retry
+    - `deploy_blocker_superseded_after_stale_threshold`:
+      stale duplicate blocker exceeded the hard stale threshold and was auto-superseded so retry can proceed
   - readiness normalization now prefers managed GKE configuration blockers before dispatch so deploy does not appear dispatchable when required cluster config is incomplete
   - after applying missing config values, retry deploy from the migration workspace (no workflow template change required)
 - hybrid deploy-secret propagation (bridge model):
@@ -1395,6 +1402,9 @@ Migration publish/deploy paths normalize failures into stable categories:
 - `stale_deploy_blocker_requires_refresh`
   - Control plane could not safely reconcile an old duplicate deploy blocker and requires manual status refresh confirmation.
   - Operator action: refresh deploy status, confirm prior run is terminal, then retry deploy.
+- `deploy_blocker_superseded_after_stale_threshold`
+  - Control plane auto-superseded an over-age duplicate blocker after hard stale threshold reconciliation.
+  - Operator action: retry deploy; inspect GitHub Actions history only if an orphan run is suspected.
 - `artifact_invalid`
   - Selected artifact files were not publishable under bounded static-file rules.
   - Operator action: regenerate/re-approve a valid artifact version.
@@ -1784,6 +1794,9 @@ Use this short checklist for the first production shakeout cycle:
    - reconciliation failure reason codes:
      - `deploy_blocker_reconciliation_failed`
      - `stale_deploy_blocker_requires_refresh`
+   - hard-stale supersede evidence:
+     - `deploy_blocker_superseded_after_stale_threshold`
+     - prior history item `workflow_run_failure_reason_code=stale_deploy_blocker_superseded`
 8. `resolved_live_url` is confirmed only when explicit deploy evidence is present (`workflow_output` or `deploy_result`).
 
 ## First Production Deploy (Operator Path)
@@ -1848,6 +1861,7 @@ Deploy failures:
     - `duplicate_request` -> prior run still active
     - `deploy_blocker_reconciliation_failed` -> refresh failed while blocker may still be active
     - `stale_deploy_blocker_requires_refresh` -> stale blocker could not be safely reconciled automatically
+    - `deploy_blocker_superseded_after_stale_threshold` -> blocker was auto-cleared after hard stale threshold; retry is allowed
 - if readiness is blocked, use deploy blocker class + message to identify the owning actor:
   - `published_artifact_missing` -> Operator must publish first
   - `deploy_configuration_missing` / `deploy_configuration_invalid` -> Operator/Admin must fix target config

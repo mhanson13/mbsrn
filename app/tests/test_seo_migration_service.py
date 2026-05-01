@@ -7333,10 +7333,11 @@ def test_stale_duplicate_blocker_refresh_failure_requires_manual_refresh(db_sess
         None,
     )
     assert stale_item is not None
-    stale_item["refreshed_at"] = None
-    stale_item["dispatched_at"] = "2000-01-01T00:00:00+00:00"
-    stale_item["occurred_at"] = "2000-01-01T00:00:00+00:00"
-    stale_item["timestamp"] = "2000-01-01T00:00:00+00:00"
+    stale_activity_at = (utc_now() - timedelta(minutes=90)).isoformat()
+    stale_item["refreshed_at"] = stale_activity_at
+    stale_item["dispatched_at"] = stale_activity_at
+    stale_item["occurred_at"] = stale_activity_at
+    stale_item["timestamp"] = stale_activity_at
     workspace.deploy_history_json = [stale_item]
     service.seo_migration_repository.save_workspace(workspace)
     db_session.commit()
@@ -7390,6 +7391,320 @@ def test_stale_duplicate_blocker_refresh_failure_requires_manual_refresh(db_sess
         "Previous deploy blocker appears stale and could not be safely reconciled automatically. "
         "Run deploy status refresh, confirm terminal state, then retry deploy."
     )
+
+
+def test_very_stale_duplicate_blocker_refresh_failure_is_superseded_and_retry_proceeds(
+    db_session,
+    caplog,
+) -> None:
+    caplog.set_level("INFO", logger="app.services.seo_migration")
+    secret_token = "ghp_stale_blocker_secret_token"
+    secret_private_key = "-----BEGIN PRIVATE KEY-----\\nvery-secret\\n-----END PRIVATE KEY-----"
+    publisher = _RecordingGitHubPublisher(
+        deploy_workflow_run_id=445566,
+        deploy_workflow_run_status="in_progress",
+        deploy_workflow_run_conclusion=None,
+        fail_refresh=True,
+        refresh_error_code="github_timeout",
+        refresh_error_message="Simulated stale blocker refresh timeout.",
+        refresh_error_stage="workflow_run_lookup",
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+        deploy_secret_gcp_key=json.dumps({"type": "service_account", "private_key": secret_private_key}),
+        deploy_secret_git_token=secret_token,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+    _configure_deploy_target(service, business_id=business_id, site_id=site_id)
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes=None,
+        principal_id="principal-1",
+    )
+    service.publish_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        commit_message=None,
+        analytics_measurement_id=None,
+        principal_id="principal-1",
+    )
+    service.deploy_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        principal_id="principal-1",
+    )
+
+    workspace = service.get_workspace(business_id=business_id, site_id=site_id)
+    history = workspace.deploy_history_json or []
+    stale_item = next(
+        (
+            dict(item)
+            for item in reversed(history)
+            if str(item.get("action") or "").strip().lower() == "deploy"
+            and str(item.get("status") or "").strip().lower() == "deploy_requested"
+        ),
+        None,
+    )
+    assert stale_item is not None
+    stale_trace_id = str(stale_item.get("deploy_trace_id") or "")
+    assert stale_trace_id
+    stale_item["refreshed_at"] = "2000-01-01T00:00:00+00:00"
+    stale_item["dispatched_at"] = "2000-01-01T00:00:00+00:00"
+    stale_item["occurred_at"] = "2000-01-01T00:00:00+00:00"
+    stale_item["timestamp"] = "2000-01-01T00:00:00+00:00"
+    workspace.deploy_history_json = [stale_item]
+    service.seo_migration_repository.save_workspace(workspace)
+    db_session.commit()
+
+    service.deploy_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        principal_id="principal-1",
+    )
+    assert len(publisher.deploy_calls) == 2
+    assert len(publisher.refresh_calls) == 1
+
+    workspace = service.get_workspace(business_id=business_id, site_id=site_id)
+    superseded_entry = next(
+        (
+            item
+            for item in workspace.deploy_history_json or []
+            if str(item.get("deploy_trace_id") or "") == stale_trace_id
+        ),
+        None,
+    )
+    assert superseded_entry is not None
+    assert superseded_entry.get("post_dispatch_state") == "workflow_run_failed"
+    assert superseded_entry.get("workflow_run_status") == "completed"
+    assert superseded_entry.get("workflow_run_conclusion") == "failure"
+    assert superseded_entry.get("workflow_run_failure_reason_code") == "stale_deploy_blocker_superseded"
+    assert superseded_entry.get("workflow_run_failure_stage") == "workflow_execution"
+
+    supersede_payloads = [
+        record.__dict__.get("json_fields")
+        for record in caplog.records
+        if isinstance(record.__dict__.get("json_fields"), dict)
+        and record.__dict__["json_fields"].get("event") == "seo_migration_deploy_stale_blocker_superseded"
+    ]
+    assert supersede_payloads
+    latest_supersede_payload = supersede_payloads[-1]
+    assert latest_supersede_payload.get("blocking_deploy_trace_id") == stale_trace_id
+    assert latest_supersede_payload.get("supersede_reason_code") == "deploy_blocker_superseded_after_stale_threshold"
+    assert latest_supersede_payload.get("prior_state") in {
+        "workflow_run_pending",
+        "workflow_run_in_progress",
+    }
+    assert latest_supersede_payload.get("refreshed_state") in {
+        "workflow_run_pending",
+        "workflow_run_in_progress",
+    }
+    assert int(latest_supersede_payload.get("blocker_age_seconds") or 0) >= 2 * 60 * 60
+    assert latest_supersede_payload.get("principal_id") == "principal-1"
+    assert "target_environment_key" in latest_supersede_payload
+
+    target_blob = json.dumps(latest_supersede_payload, sort_keys=True)
+    assert secret_token not in target_blob
+    assert secret_private_key not in target_blob
+    assert "deploy_secret_git_token" not in target_blob
+    assert "deploy_secret_gcp_key" not in target_blob
+    assert secret_token not in caplog.text
+    assert secret_private_key not in caplog.text
+
+    assert seo_migration_module._derive_deploy_failure_remediation_hint(
+        failure_reason="deploy_blocker_superseded_after_stale_threshold",
+        failure_stage="workflow_dispatch",
+        workflow_exists=None,
+        dispatch_service_reason_code=None,
+    ) == (
+        "Previous deploy blocker exceeded the hard stale threshold and was superseded automatically. "
+        "Retry deploy and inspect GitHub Actions history if an orphan run is suspected."
+    )
+    assert seo_migration_module._derive_workflow_run_failure_hint(
+        failure_reason="stale_deploy_blocker_superseded",
+        post_dispatch_state="workflow_run_failed",
+    ) == (
+        "Previous deploy blocker exceeded the hard stale threshold without reliable active-run evidence. "
+        "Blocker was superseded so deploy retry can proceed."
+    )
+
+
+def test_very_stale_duplicate_blocker_with_explicitly_active_run_still_blocks(db_session) -> None:
+    publisher = _RecordingGitHubPublisher(
+        deploy_workflow_run_id=445566,
+        deploy_workflow_run_status="in_progress",
+        deploy_workflow_run_conclusion=None,
+        refresh_workflow_run_id=445566,
+        refresh_workflow_run_status="in_progress",
+        refresh_workflow_run_conclusion=None,
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+    _configure_deploy_target(service, business_id=business_id, site_id=site_id)
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes=None,
+        principal_id="principal-1",
+    )
+    service.publish_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        commit_message=None,
+        analytics_measurement_id=None,
+        principal_id="principal-1",
+    )
+    service.deploy_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        principal_id="principal-1",
+    )
+
+    workspace = service.get_workspace(business_id=business_id, site_id=site_id)
+    history = workspace.deploy_history_json or []
+    stale_item = next(
+        (
+            dict(item)
+            for item in reversed(history)
+            if str(item.get("action") or "").strip().lower() == "deploy"
+            and str(item.get("status") or "").strip().lower() == "deploy_requested"
+        ),
+        None,
+    )
+    assert stale_item is not None
+    stale_item["refreshed_at"] = "2000-01-01T00:00:00+00:00"
+    stale_item["dispatched_at"] = "2000-01-01T00:00:00+00:00"
+    stale_item["occurred_at"] = "2000-01-01T00:00:00+00:00"
+    stale_item["timestamp"] = "2000-01-01T00:00:00+00:00"
+    workspace.deploy_history_json = [stale_item]
+    service.seo_migration_repository.save_workspace(workspace)
+    db_session.commit()
+
+    with pytest.raises(SEOMigrationValidationError, match="already in progress"):
+        service.deploy_artifact_version(
+            business_id=business_id,
+            site_id=site_id,
+            artifact_version_id=artifact.id,
+            dry_run=False,
+            principal_id="principal-1",
+        )
+    assert len(publisher.deploy_calls) == 1
+    assert len(publisher.refresh_calls) == 1
+
+
+def test_very_stale_duplicate_blocker_terminal_refresh_still_clears_and_retries(
+    db_session,
+) -> None:
+    publisher = _RecordingGitHubPublisher(
+        deploy_workflow_run_id=445566,
+        deploy_workflow_run_status="in_progress",
+        deploy_workflow_run_conclusion=None,
+        refresh_workflow_run_id=445566,
+        refresh_workflow_run_status="completed",
+        refresh_workflow_run_conclusion="failure",
+        refresh_workflow_run_failure_reason_code="rollout_verification_failed",
+        refresh_workflow_run_failure_stage="rollout_verify",
+        refresh_workflow_run_failure_step="Verify rollout",
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+    _configure_deploy_target(service, business_id=business_id, site_id=site_id)
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes=None,
+        principal_id="principal-1",
+    )
+    service.publish_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        commit_message=None,
+        analytics_measurement_id=None,
+        principal_id="principal-1",
+    )
+    service.deploy_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        principal_id="principal-1",
+    )
+
+    workspace = service.get_workspace(business_id=business_id, site_id=site_id)
+    history = workspace.deploy_history_json or []
+    stale_item = next(
+        (
+            dict(item)
+            for item in reversed(history)
+            if str(item.get("action") or "").strip().lower() == "deploy"
+            and str(item.get("status") or "").strip().lower() == "deploy_requested"
+        ),
+        None,
+    )
+    assert stale_item is not None
+    stale_item["refreshed_at"] = "2000-01-01T00:00:00+00:00"
+    stale_item["dispatched_at"] = "2000-01-01T00:00:00+00:00"
+    stale_item["occurred_at"] = "2000-01-01T00:00:00+00:00"
+    stale_item["timestamp"] = "2000-01-01T00:00:00+00:00"
+    workspace.deploy_history_json = [stale_item]
+    service.seo_migration_repository.save_workspace(workspace)
+    db_session.commit()
+
+    service.deploy_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        principal_id="principal-1",
+    )
+    assert len(publisher.deploy_calls) == 2
+    assert len(publisher.refresh_calls) == 1
 
 
 def test_deploy_duplicate_active_run_uses_most_recent_activity_timestamp(db_session) -> None:

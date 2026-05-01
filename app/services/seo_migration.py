@@ -81,6 +81,7 @@ _MAX_HISTORY_ITEMS = 80
 _DUPLICATE_DEPLOY_ACTIVE_BLOCKER_STALE_SECONDS = 30 * 60
 _DUPLICATE_DEPLOY_UNVERIFIED_DISPATCH_STALE_SECONDS = 2 * 60
 _DUPLICATE_DEPLOY_ACTIVE_BLOCKER_RECONCILIATION_SECONDS = 12 * 60
+_DUPLICATE_DEPLOY_ACTIVE_BLOCKER_HARD_STALE_SECONDS = 2 * 60 * 60
 _MANAGED_SITE_DNS_PROPAGATION_MAX_WAIT_SECONDS = 120
 _MANAGED_SITE_DNS_PROPAGATION_SLEEP_SECONDS = 10
 _ALLOWED_FILE_EXTENSIONS = (
@@ -241,6 +242,9 @@ _DEPLOY_TARGET_REASON_WORKFLOW_NOT_DISPATCHABLE = "workflow_not_dispatchable"
 _DEPLOY_TARGET_REASON_WORKFLOW_NOT_PRODUCTION_READY = "workflow_not_production_ready"
 _DEPLOY_TARGET_REASON_DEPLOY_BLOCKER_RECONCILIATION_FAILED = "deploy_blocker_reconciliation_failed"
 _DEPLOY_TARGET_REASON_STALE_DEPLOY_BLOCKER_REQUIRES_REFRESH = "stale_deploy_blocker_requires_refresh"
+_DEPLOY_TARGET_REASON_DEPLOY_BLOCKER_SUPERSEDED_AFTER_STALE_THRESHOLD = (
+    "deploy_blocker_superseded_after_stale_threshold"
+)
 _DEPLOY_RUN_FAILURE_REASON_GCP_AUTH = "gcp_auth_failed"
 _DEPLOY_RUN_FAILURE_REASON_CLUSTER_CREDENTIALS = "gke_credentials_failed"
 _DEPLOY_RUN_FAILURE_REASON_MANIFEST_APPLY = "kubectl_apply_failed"
@@ -256,6 +260,7 @@ _DEPLOY_RUN_FAILURE_REASON_TIMED_OUT = "workflow_run_timed_out"
 _DEPLOY_RUN_FAILURE_REASON_GENERIC = "workflow_run_failed"
 _DEPLOY_RUN_FAILURE_REASON_TRACKING_LOST = "workflow_run_tracking_lost"
 _DEPLOY_RUN_FAILURE_REASON_RECONCILIATION_TIMEOUT = "workflow_reconciliation_timeout"
+_DEPLOY_RUN_FAILURE_REASON_STALE_DEPLOY_BLOCKER_SUPERSEDED = "stale_deploy_blocker_superseded"
 _DEPLOY_RUN_FAILURE_REASON_BACKENDCONFIG_HEALTH_CHECK_MISMATCH = "backendconfig_health_check_mismatch"
 _DEPLOY_RUN_FAILURE_REASON_INGRESS_BACKEND_UNHEALTHY = "ingress_backend_unhealthy"
 _DEPLOY_RUN_FAILURE_REASON_INGRESS_BACKEND_502 = "ingress_backend_502"
@@ -2802,6 +2807,14 @@ class SEOMigrationService:
                 now=utc_now(),
                 stale_after_seconds=_DUPLICATE_DEPLOY_ACTIVE_BLOCKER_STALE_SECONDS,
             )
+            stale_hard_threshold_observability = _build_deploy_history_stale_observability(
+                item=stale_active_dispatch_record,
+                now=utc_now(),
+                stale_after_seconds=_DUPLICATE_DEPLOY_ACTIVE_BLOCKER_HARD_STALE_SECONDS,
+            )
+            stale_beyond_hard_threshold = bool(
+                stale_hard_threshold_observability.get("blocking_stale_is_stale")
+            )
             self._emit_structured_service_log(
                 payload={
                     "event": "downgrade_to_stale_active_deploy_blocker",
@@ -2830,6 +2843,16 @@ class SEOMigrationService:
                     "stale_evaluated": stale_active_observability.get("blocking_stale_evaluated"),
                     "stale_is_stale": stale_active_observability.get("blocking_stale_is_stale"),
                     "blocking_treated_as_stale": True,
+                    "hard_stale_threshold_seconds": _DUPLICATE_DEPLOY_ACTIVE_BLOCKER_HARD_STALE_SECONDS,
+                    "hard_stale_age_seconds": stale_hard_threshold_observability.get(
+                        "blocking_stale_age_seconds"
+                    ),
+                    "hard_stale_evaluated": stale_hard_threshold_observability.get(
+                        "blocking_stale_evaluated"
+                    ),
+                    "hard_stale_is_stale": stale_hard_threshold_observability.get(
+                        "blocking_stale_is_stale"
+                    ),
                 },
                 fallback_message="downgrade_to_stale_active_deploy_blocker",
                 level=logging.INFO,
@@ -2849,8 +2872,14 @@ class SEOMigrationService:
                 max_length=80,
             )
             if stale_reconciliation_result == "refresh_failed":
-                stale_reconciliation_result = "stale_requires_manual_refresh"
-                stale_reconciliation_reason_code = _DEPLOY_TARGET_REASON_STALE_DEPLOY_BLOCKER_REQUIRES_REFRESH
+                if stale_beyond_hard_threshold:
+                    stale_reconciliation_result = "superseded_after_stale_threshold"
+                    stale_reconciliation_reason_code = (
+                        _DEPLOY_TARGET_REASON_DEPLOY_BLOCKER_SUPERSEDED_AFTER_STALE_THRESHOLD
+                    )
+                else:
+                    stale_reconciliation_result = "stale_requires_manual_refresh"
+                    stale_reconciliation_reason_code = _DEPLOY_TARGET_REASON_STALE_DEPLOY_BLOCKER_REQUIRES_REFRESH
             stale_reconciliation_prior_state = _normalize_string(
                 stale_blocker_reconciliation.get("prior_state"),
                 max_length=80,
@@ -2974,6 +3003,50 @@ class SEOMigrationService:
                     correlation_id=deploy_trace_id,
                 )
                 raise SEOMigrationValidationError(stale_failure_message)
+            elif stale_reconciliation_result == "superseded_after_stale_threshold":
+                self._reconcile_stale_duplicate_deploy_history_item(
+                    workspace=workspace,
+                    site=site,
+                    history_item=stale_reconciliation_history_item,
+                    principal_id=principal_id,
+                    failure_reason_code=_DEPLOY_RUN_FAILURE_REASON_STALE_DEPLOY_BLOCKER_SUPERSEDED,
+                    event_name="stale_deploy_blocker_superseded",
+                    business_id=business_id,
+                    site_id=site_id,
+                    artifact_version_id=artifact.id,
+                    artifact_version=artifact.version,
+                )
+                self._emit_structured_service_log(
+                    payload={
+                        "event": "seo_migration_deploy_stale_blocker_superseded",
+                        "business_id": business_id,
+                        "site_id": site_id,
+                        "workspace_id": workspace.id,
+                        "artifact_version_id": artifact.id,
+                        "target_environment_key": _normalize_string(
+                            deploy_target.get("target_environment_key"),
+                            max_length=80,
+                        ),
+                        "blocking_deploy_trace_id": _normalize_string(
+                            stale_reconciliation_history_item.get("deploy_trace_id"),
+                            max_length=80,
+                        ),
+                        "blocking_dispatched_at": _normalize_string(
+                            stale_reconciliation_history_item.get("dispatched_at"),
+                            max_length=64,
+                        ),
+                        "blocker_age_seconds": stale_hard_threshold_observability.get(
+                            "blocking_stale_age_seconds"
+                        ),
+                        "prior_state": stale_reconciliation_prior_state,
+                        "refreshed_state": stale_reconciliation_refreshed_state,
+                        "supersede_reason_code": stale_reconciliation_reason_code,
+                        "principal_id": principal_id,
+                    },
+                    fallback_message="seo_migration_deploy_stale_blocker_superseded",
+                    level=logging.INFO,
+                )
+                stale_active_dispatch_record = None
             else:
                 stale_reason_code = (
                     stale_reconciliation_reason_code
@@ -3021,6 +3094,7 @@ class SEOMigrationService:
                         "blocking_reconciliation_prior_state": stale_reconciliation_prior_state,
                         "blocking_reconciliation_refreshed_state": stale_reconciliation_refreshed_state,
                         **stale_active_observability,
+                        **stale_hard_threshold_observability,
                     },
                     failure_category="deploy_error",
                     failure_reason=stale_reason_code,
@@ -14561,6 +14635,7 @@ def _normalize_deploy_failure_reason_code(value: object) -> str | None:
         _DEPLOY_TARGET_REASON_WORKFLOW_NOT_PRODUCTION_READY,
         _DEPLOY_TARGET_REASON_DEPLOY_BLOCKER_RECONCILIATION_FAILED,
         _DEPLOY_TARGET_REASON_STALE_DEPLOY_BLOCKER_REQUIRES_REFRESH,
+        _DEPLOY_TARGET_REASON_DEPLOY_BLOCKER_SUPERSEDED_AFTER_STALE_THRESHOLD,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROVISIONING_FAILED,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFIG_MISSING,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFIG_MISSING,
@@ -14634,6 +14709,7 @@ def _normalize_workflow_run_failure_reason_code(value: object) -> str | None:
         _DEPLOY_RUN_FAILURE_REASON_GENERIC,
         _DEPLOY_RUN_FAILURE_REASON_TRACKING_LOST,
         _DEPLOY_RUN_FAILURE_REASON_RECONCILIATION_TIMEOUT,
+        _DEPLOY_RUN_FAILURE_REASON_STALE_DEPLOY_BLOCKER_SUPERSEDED,
         _DEPLOY_RUN_FAILURE_REASON_BACKENDCONFIG_HEALTH_CHECK_MISMATCH,
         _DEPLOY_RUN_FAILURE_REASON_INGRESS_BACKEND_UNHEALTHY,
         _DEPLOY_RUN_FAILURE_REASON_INGRESS_BACKEND_502,
@@ -15636,6 +15712,11 @@ def _derive_deploy_failure_remediation_hint(
             "Previous deploy blocker appears stale and could not be safely reconciled automatically. "
             "Run deploy status refresh, confirm terminal state, then retry deploy."
         )
+    if normalized_reason == _DEPLOY_TARGET_REASON_DEPLOY_BLOCKER_SUPERSEDED_AFTER_STALE_THRESHOLD:
+        return (
+            "Previous deploy blocker exceeded the hard stale threshold and was superseded automatically. "
+            "Retry deploy and inspect GitHub Actions history if an orphan run is suspected."
+        )
     if (
         normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_TARGET_CONFIG_INVALID
         and normalized_stage == "workflow_lookup"
@@ -15876,6 +15957,11 @@ def _derive_workflow_run_failure_hint(
         return (
             "Deploy tracking state became stale without recent workflow-run activity. "
             "Prior attempt was reconciled as failed so deploy can be retried."
+        )
+    if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_STALE_DEPLOY_BLOCKER_SUPERSEDED:
+        return (
+            "Previous deploy blocker exceeded the hard stale threshold without reliable active-run evidence. "
+            "Blocker was superseded so deploy retry can proceed."
         )
     normalized_post_state = _normalize_string(post_dispatch_state, max_length=80)
     if normalized_post_state == "workflow_run_succeeded_without_live_url":
