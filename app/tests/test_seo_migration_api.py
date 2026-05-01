@@ -34,6 +34,8 @@ from app.integrations.seo_migration_github_publisher import (
     SEOMigrationGitHubDeployResult,
     SEOMigrationGitHubDeployRunStatusResult,
     SEOMigrationGitHubDeployTarget,
+    SEOMigrationGitHubManagedSiteDnsEnsureResult,
+    SEOMigrationGitHubManagedSiteStaticIPEnsureResult,
     SEOMigrationGitHubImagePullSecretProvisionResult,
     SEOMigrationGitHubPublishFile,
     SEOMigrationGitHubPublishPreflightResult,
@@ -45,6 +47,7 @@ from app.integrations.seo_migration_github_publisher import (
     SEOMigrationGitHubRepositoryEnsureResult,
     SEOMigrationGitHubTargetReadinessResult,
     SEOMigrationGitHubWorkflowProvisionResult,
+    derive_site_preview_static_ip_name,
 )
 from app.models.business import Business
 from app.models.github_publish_config import GitHubPublishConfig
@@ -56,10 +59,13 @@ from app.models.seo_competitor_snapshot_run import SEOCompetitorSnapshotRun
 from app.models.seo_recommendation import SEORecommendation
 from app.models.seo_recommendation_run import SEORecommendationRun
 from app.models.seo_site import SEOSite
+from app.services import seo_migration as seo_migration_module
 from app.services.seo_migration_ingest import (
     SEOMigrationIngestResult,
     SEOMigrationSourceIngestError,
 )
+
+_STUB_MANAGED_SITE_STATIC_IP_ADDRESS = "34.149.170.250"
 
 
 @pytest.fixture(autouse=True)
@@ -73,6 +79,15 @@ def _ensure_test_gcp_deploy_key(monkeypatch: pytest.MonkeyPatch):
         yield
     finally:
         get_settings.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def _stub_dns_resolver_for_managed_site_propagation(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        seo_migration_module,
+        "_resolve_hostname_ipv4_addresses",
+        lambda _hostname: [_STUB_MANAGED_SITE_STATIC_IP_ADDRESS],
+    )
 
 
 class _StubMigrationIngestService:
@@ -122,6 +137,16 @@ class _StubMigrationGitHubPublisher(SEOMigrationGitHubPublisher):
         fail_adoption: bool = False,
         adoption_error_code: str | None = None,
         adoption_error_message: str | None = None,
+        ensure_static_ip_address: str = _STUB_MANAGED_SITE_STATIC_IP_ADDRESS,
+        ensure_static_ip_created: bool = False,
+        ensure_static_ip_result: str = "exists",
+        ensure_dns_managed_zone: str = "sites",
+        ensure_dns_project_id: str = "test-project",
+        ensure_dns_ttl: int = 300,
+        ensure_dns_result: str = "exists",
+        ensure_dns_created: bool = False,
+        ensure_dns_updated: bool = False,
+        ensure_dns_previous_ips: tuple[str, ...] | list[str] | None = None,
     ) -> None:
         self.fail_publish = fail_publish
         self.fail_deploy = fail_deploy
@@ -139,10 +164,22 @@ class _StubMigrationGitHubPublisher(SEOMigrationGitHubPublisher):
         self.fail_adoption = fail_adoption
         self.adoption_error_code = adoption_error_code
         self.adoption_error_message = adoption_error_message
+        self.ensure_static_ip_address = ensure_static_ip_address
+        self.ensure_static_ip_created = ensure_static_ip_created
+        self.ensure_static_ip_result = ensure_static_ip_result
+        self.ensure_dns_managed_zone = ensure_dns_managed_zone
+        self.ensure_dns_project_id = ensure_dns_project_id
+        self.ensure_dns_ttl = ensure_dns_ttl
+        self.ensure_dns_result = ensure_dns_result
+        self.ensure_dns_created = ensure_dns_created
+        self.ensure_dns_updated = ensure_dns_updated
+        self.ensure_dns_previous_ips = tuple(ensure_dns_previous_ips or ())
         self.publish_calls: list[tuple[SEOMigrationGitHubPublishTarget, list[SEOMigrationGitHubPublishFile], bool]] = []
         self.deploy_calls: list[tuple[SEOMigrationGitHubDeployTarget, bool]] = []
         self.refresh_calls: list[tuple[SEOMigrationGitHubDeployTarget, int, str | None]] = []
         self.secret_upsert_calls: list[tuple[str, str, str, str]] = []
+        self.ensure_static_ip_calls: list[tuple[str, str, str | None, dict[str, object] | None, str | None, bool]] = []
+        self.ensure_dns_calls: list[tuple[str, str, str, str, str | None, int, bool]] = []
         self.adopt_repository_calls: list[tuple[str, str, str, str, str, str | None, str | None]] = []
         self.workflow_provision_calls: list[
             tuple[
@@ -163,6 +200,96 @@ class _StubMigrationGitHubPublisher(SEOMigrationGitHubPublisher):
                 str | None,
             ]
         ] = []
+
+    def ensure_managed_site_static_ip(
+        self,
+        *,
+        repo_owner: str,
+        repo_name: str,
+        site_id: str | None,
+        managed_gke_config: dict[str, object] | None,
+        gcp_deploy_key: str | None,
+        dry_run: bool = False,
+    ) -> SEOMigrationGitHubManagedSiteStaticIPEnsureResult:
+        self.ensure_static_ip_calls.append(
+            (
+                repo_owner,
+                repo_name,
+                site_id,
+                managed_gke_config,
+                gcp_deploy_key,
+                bool(dry_run),
+            )
+        )
+        static_ip_name, _ = derive_site_preview_static_ip_name(
+            repo_name=repo_name,
+            site_id=site_id,
+        )
+        project_id = str((managed_gke_config or {}).get("project_id") or self.ensure_dns_project_id or "test-project")
+        if dry_run:
+            return SEOMigrationGitHubManagedSiteStaticIPEnsureResult(
+                static_ip_name=static_ip_name,
+                static_ip_address=None,
+                static_ip_created=False,
+                gcp_project_id=project_id,
+                result="dry_run",
+            )
+        return SEOMigrationGitHubManagedSiteStaticIPEnsureResult(
+            static_ip_name=static_ip_name,
+            static_ip_address=self.ensure_static_ip_address,
+            static_ip_created=bool(self.ensure_static_ip_created),
+            gcp_project_id=project_id,
+            result=self.ensure_static_ip_result,
+        )
+
+    def ensure_managed_site_dns_a_record(
+        self,
+        *,
+        preview_hostname: str,
+        expected_ip_address: str,
+        dns_managed_zone: str,
+        dns_project_id: str,
+        gcp_deploy_key: str | None,
+        ttl: int = 300,
+        dry_run: bool = False,
+    ) -> SEOMigrationGitHubManagedSiteDnsEnsureResult:
+        self.ensure_dns_calls.append(
+            (
+                preview_hostname,
+                expected_ip_address,
+                dns_managed_zone,
+                dns_project_id,
+                gcp_deploy_key,
+                int(ttl),
+                bool(dry_run),
+            )
+        )
+        normalized_record_name = f"{str(preview_hostname).strip().rstrip('.') or preview_hostname}."
+        if dry_run:
+            return SEOMigrationGitHubManagedSiteDnsEnsureResult(
+                dns_record_name=normalized_record_name,
+                dns_record_type="A",
+                dns_managed_zone=str(dns_managed_zone or self.ensure_dns_managed_zone),
+                dns_project_id=str(dns_project_id or self.ensure_dns_project_id),
+                dns_expected_ip=str(expected_ip_address or self.ensure_static_ip_address),
+                dns_previous_ips=(),
+                dns_updated=False,
+                dns_created=False,
+                dns_ttl=int(ttl) if int(ttl) > 0 else self.ensure_dns_ttl,
+                result="dry_run",
+            )
+        return SEOMigrationGitHubManagedSiteDnsEnsureResult(
+            dns_record_name=normalized_record_name,
+            dns_record_type="A",
+            dns_managed_zone=str(dns_managed_zone or self.ensure_dns_managed_zone),
+            dns_project_id=str(dns_project_id or self.ensure_dns_project_id),
+            dns_expected_ip=str(expected_ip_address or self.ensure_static_ip_address),
+            dns_previous_ips=tuple(self.ensure_dns_previous_ips),
+            dns_updated=bool(self.ensure_dns_updated),
+            dns_created=bool(self.ensure_dns_created),
+            dns_ttl=int(ttl) if int(ttl) > 0 else self.ensure_dns_ttl,
+            result=self.ensure_dns_result,
+        )
 
     def ensure_repository(
         self,
@@ -860,6 +987,14 @@ def test_migration_api_happy_path_workflow(db_session) -> None:
     assert "workflow_conformance_status" in deploy_result
     assert isinstance(deploy_result.get("workflow_conformance_reasons"), list)
     assert "workflow_conformance_evidence_summary" in deploy_result
+    assert isinstance(deploy_result.get("expected_static_ip_name"), str)
+    assert deploy_result.get("expected_static_ip_address") == _STUB_MANAGED_SITE_STATIC_IP_ADDRESS
+    assert isinstance(deploy_result.get("expected_dns_hostname"), str)
+    assert deploy_result.get("expected_dns_ip") == _STUB_MANAGED_SITE_STATIC_IP_ADDRESS
+    assert deploy_result.get("dns_propagation_result") in {
+        "observed_expected_ip",
+        "observed_expected_ip_after_retry",
+    }
 
     publish_history_response = client.get(
         f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/publish-history"
