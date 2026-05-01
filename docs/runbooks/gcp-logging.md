@@ -345,6 +345,7 @@ When migration deploy fails after publish, query these structured events:
 - `jsonPayload.event="seo_migration_deploy_secret_propagation"` (publish-time guarded `GCP_DEPLOY_KEY` propagation to approved managed repos)
 - `jsonPayload.event="seo_migration_managed_site_static_ip_ensure"` (pre-dispatch control-plane ensure of deterministic per-site global static IP)
 - `jsonPayload.event="seo_migration_managed_site_dns_ensure"` (pre-dispatch control-plane ensure of preview-host DNS A record)
+- `jsonPayload.event="seo_migration_managed_site_dns_propagation_check"` (bounded resolver propagation gate before dispatch)
 - `jsonPayload.event="seo_migration_deploy_dispatch_accepted"`
 - `jsonPayload.event="seo_migration_workflow_run_lookup_attempted"`
 - `jsonPayload.event="seo_migration_workflow_run_result_captured"`
@@ -383,6 +384,7 @@ Per-site success gate (managed ingress deploys):
   - `managed_site_dns_conflicting_record`
   - `managed_site_dns_permission_denied`
   - `managed_site_dns_transaction_conflict`
+  - `managed_site_dns_propagation_pending`
 - per-site ingress isolation blockers:
   - `managed_site_static_ip_missing`
   - `expected_static_ip_not_bound_to_ingress`
@@ -403,7 +405,7 @@ UI-to-log troubleshooting mapping (Deploy consistency block):
   - logs: `seo_migration_target_readiness_check`, ingress-evidence failure records, `dispatch_service_reason_code`
 - `Ingress/static IP conflict check`:
   - UI field: `ingress_conflict_detected`
-  - reason codes: `managed_site_static_ip_config_missing`, `managed_site_static_ip_provisioning_failed`, `managed_site_dns_config_missing`, `managed_site_dns_provisioning_failed`, `managed_site_dns_conflicting_record`, `managed_site_dns_permission_denied`, `managed_site_dns_transaction_conflict`, `ingress_static_ip_conflict`, `shared_static_ip_not_allowed_for_per_site_ingress`, `managed_site_static_ip_missing`, `expected_static_ip_not_bound_to_ingress`, `stale_pre_shared_cert_binding_detected`
+  - reason codes: `managed_site_static_ip_config_missing`, `managed_site_static_ip_provisioning_failed`, `managed_site_dns_config_missing`, `managed_site_dns_provisioning_failed`, `managed_site_dns_conflicting_record`, `managed_site_dns_permission_denied`, `managed_site_dns_transaction_conflict`, `managed_site_dns_propagation_pending`, `ingress_static_ip_conflict`, `shared_static_ip_not_allowed_for_per_site_ingress`, `managed_site_static_ip_missing`, `expected_static_ip_not_bound_to_ingress`, `stale_pre_shared_cert_binding_detected`
   - logs: target-readiness and dispatch failure records with matching `dispatch_service_reason_code`
 - `Managed certificate active` / metadata diagnostics:
   - advisory reason code: `pre_shared_cert_metadata_mismatch`
@@ -457,8 +459,11 @@ Key non-secret fields:
 - pre-dispatch static IP/DNS ensure fields:
   - `expected_static_ip_name`, `expected_static_ip_address`, `static_ip_created`, `static_ip_project_id`, `static_ip_ensure_result`
   - `expected_dns_hostname`, `expected_dns_managed_zone`, `expected_dns_project_id`, `expected_dns_ip`, `dns_record_created`, `dns_record_updated`, `dns_previous_ips`, `dns_ttl`, `dns_ensure_result`
+  - `dns_propagation_result`, `dns_propagation_observed_ips`, `observed_dns_ips`, `dns_propagation_wait_seconds`, `dns_propagation_attempts`
 - `seo_migration_managed_site_dns_ensure` event fields:
   - `preview_hostname`, `dns_record_name`, `dns_managed_zone`, `dns_project_id`, `dns_expected_ip`, `dns_previous_ips`, `dns_created`, `dns_updated`, `dns_ttl`, `result`, optional `reason_code`
+- `seo_migration_managed_site_dns_propagation_check` event fields:
+  - `preview_hostname`, `dns_record_name`, `dns_managed_zone`, `dns_project_id`, `dns_expected_ip`, `dns_observed_ips`, `observed_dns_ips`, `dns_ensure_result`, `max_wait_seconds`, `sleep_seconds`, `wait_elapsed_seconds`, `attempt_count`, `result`
 - `workflow_conformance_checked`, `workflow_conformance_status`
 - `workflow_conformance_reasons`, `workflow_conformance_evidence_summary`
 - namespace isolation/readiness fields:
@@ -1088,6 +1093,9 @@ Managed certificate mismatch reason-code interpretation:
 - `dispatch_service_reason_code=managed_site_dns_transaction_conflict`
   - DNS transaction/update conflict occurred while applying the exact-hostname A record.
   - retry after concurrent DNS writer contention clears.
+- `dispatch_service_reason_code=managed_site_dns_propagation_pending`
+  - control-plane DNS ensure succeeded, but bounded resolver checks still do not see the expected `A` value.
+  - inspect `seo_migration_managed_site_dns_propagation_check` for `preview_hostname`, `dns_expected_ip`, and `observed_dns_ips`; wait for propagation and retry deploy.
 - `workflow_run_failure_reason_code=expected_static_ip_not_bound_to_ingress`
   - ingress is missing expected per-site static IP annotation binding.
   - republish managed ingress manifests so `kubernetes.io/ingress.global-static-ip-name` equals `site-web-preview-ip-<normalized-site>`.
@@ -1237,6 +1245,8 @@ Required credential note:
     admin-owned DNS IAM blocker for configured project/zone
   - `managed_site_dns_transaction_conflict`:
     DNS transaction contention blocker; retry after concurrent writer contention clears
+  - `managed_site_dns_propagation_pending`:
+    control-plane DNS ensure completed but bounded resolver propagation check did not yet observe the expected static-IP `A` record; wait for propagation and retry
   - `duplicate_request`:
     prior workflow run is still active for the selected deploy tuple
   - `deploy_blocker_reconciliation_failed`:

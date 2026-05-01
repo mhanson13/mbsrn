@@ -1089,6 +1089,15 @@ def _seed_business_and_site(db_session, *, ga_measurement_id: str | None = None)
     return business_id, site_id
 
 
+@pytest.fixture(autouse=True)
+def _stub_managed_site_dns_resolution(monkeypatch) -> None:
+    monkeypatch.setattr(
+        seo_migration_module,
+        "_resolve_hostname_ipv4_addresses",
+        lambda _hostname: ["34.149.170.250"],
+    )
+
+
 def _build_service(
     db_session,
     provider: SEOMigrationArtifactGenerationProvider,
@@ -3185,7 +3194,9 @@ def test_publish_and_deploy_flow_records_status_and_analytics(db_session) -> Non
     assert "ga_measurement_id" not in deploy_target.inputs
 
 
-def test_deploy_ensures_managed_site_static_ip_before_dispatch_and_records_metadata(db_session, caplog) -> None:
+def test_deploy_ensures_managed_site_static_ip_before_dispatch_and_records_metadata(
+    db_session, caplog, monkeypatch
+) -> None:
     publisher = _RecordingGitHubPublisher(
         ensure_static_ip_created=True,
         ensure_static_ip_result="created",
@@ -3198,6 +3209,11 @@ def test_deploy_ensures_managed_site_static_ip_before_dispatch_and_records_metad
     )
     business_id, site_id = _seed_business_and_site(db_session)
     artifact = _prepare_published_artifact(service, business_id=business_id, site_id=site_id)
+    monkeypatch.setattr(
+        seo_migration_module,
+        "_resolve_hostname_ipv4_addresses",
+        lambda _hostname: ["34.160.224.212"],
+    )
 
     caplog.set_level("INFO", logger="app.services.seo_migration")
     deploy_result = service.deploy_artifact_version(
@@ -3371,7 +3387,9 @@ def test_deploy_blocks_dispatch_when_managed_site_static_ip_config_is_missing(db
     assert latest.get("dispatch_service_reason_code") == "managed_site_static_ip_config_missing"
 
 
-def test_deploy_ensures_managed_site_dns_after_static_ip_and_before_dispatch(db_session, caplog) -> None:
+def test_deploy_ensures_managed_site_dns_after_static_ip_and_before_dispatch(
+    db_session, caplog, monkeypatch
+) -> None:
     publisher = _RecordingGitHubPublisher(
         ensure_static_ip_created=True,
         ensure_static_ip_result="created",
@@ -3390,6 +3408,11 @@ def test_deploy_ensures_managed_site_dns_after_static_ip_and_before_dispatch(db_
     )
     business_id, site_id = _seed_business_and_site(db_session)
     artifact = _prepare_published_artifact(service, business_id=business_id, site_id=site_id)
+    monkeypatch.setattr(
+        seo_migration_module,
+        "_resolve_hostname_ipv4_addresses",
+        lambda _hostname: ["34.160.224.212"],
+    )
 
     caplog.set_level("INFO", logger="app.services.seo_migration")
     deploy_result = service.deploy_artifact_version(
@@ -3419,6 +3442,10 @@ def test_deploy_ensures_managed_site_dns_after_static_ip_and_before_dispatch(db_
     assert deploy_result.result.get("dns_previous_ips") == []
     assert deploy_result.result.get("dns_ttl") == 300
     assert deploy_result.result.get("dns_ensure_result") == "created"
+    assert deploy_result.result.get("dns_propagation_result") == "observed_expected_ip"
+    assert deploy_result.result.get("dns_propagation_observed_ips") == ["34.160.224.212"]
+    assert deploy_result.result.get("observed_dns_ips") == ["34.160.224.212"]
+    assert deploy_result.result.get("dns_propagation_attempts") == 1
     ensure_logs = [
         record.__dict__.get("json_fields")
         for record in caplog.records
@@ -3428,9 +3455,20 @@ def test_deploy_ensures_managed_site_dns_after_static_ip_and_before_dispatch(db_
     assert ensure_logs
     assert ensure_logs[-1].get("result") == "created"
     assert "gcp_deploy_key" not in json.dumps(ensure_logs[-1]).lower()
+    propagation_logs = [
+        record.__dict__.get("json_fields")
+        for record in caplog.records
+        if isinstance(record.__dict__.get("json_fields"), dict)
+        and record.__dict__["json_fields"].get("event") == "seo_migration_managed_site_dns_propagation_check"
+    ]
+    assert propagation_logs
+    assert propagation_logs[-1].get("result") == "observed_expected_ip"
+    assert propagation_logs[-1].get("dns_expected_ip") == "34.160.224.212"
+    assert propagation_logs[-1].get("observed_dns_ips") == ["34.160.224.212"]
+    assert "gcp_deploy_key" not in json.dumps(propagation_logs[-1]).lower()
 
 
-def test_deploy_ensures_managed_site_dns_updates_old_ips_before_dispatch(db_session) -> None:
+def test_deploy_ensures_managed_site_dns_updates_old_ips_before_dispatch(db_session, monkeypatch) -> None:
     publisher = _RecordingGitHubPublisher(
         ensure_static_ip_created=False,
         ensure_static_ip_result="exists",
@@ -3449,6 +3487,11 @@ def test_deploy_ensures_managed_site_dns_updates_old_ips_before_dispatch(db_sess
     )
     business_id, site_id = _seed_business_and_site(db_session)
     artifact = _prepare_published_artifact(service, business_id=business_id, site_id=site_id)
+    monkeypatch.setattr(
+        seo_migration_module,
+        "_resolve_hostname_ipv4_addresses",
+        lambda _hostname: ["34.160.224.212"],
+    )
 
     deploy_result = service.deploy_artifact_version(
         business_id=business_id,
@@ -3464,6 +3507,128 @@ def test_deploy_ensures_managed_site_dns_updates_old_ips_before_dispatch(db_sess
     assert deploy_result.result.get("dns_record_updated") is True
     assert deploy_result.result.get("dns_previous_ips") == ["34.149.170.250", "34.149.170.251"]
     assert deploy_result.result.get("dns_ensure_result") == "updated"
+    assert deploy_result.result.get("dns_propagation_result") == "observed_expected_ip"
+
+
+def test_deploy_waits_for_dns_propagation_then_dispatches_when_match_observed(
+    db_session, monkeypatch, caplog
+) -> None:
+    publisher = _RecordingGitHubPublisher(
+        ensure_static_ip_created=False,
+        ensure_static_ip_result="exists",
+        ensure_static_ip_address="34.149.170.250",
+        ensure_dns_created=False,
+        ensure_dns_updated=True,
+        ensure_dns_result="updated",
+        ensure_dns_expected_ip="34.149.170.250",
+        ensure_dns_previous_ips=("34.149.170.249",),
+        ensure_dns_ttl=300,
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    artifact = _prepare_published_artifact(service, business_id=business_id, site_id=site_id)
+    resolution_attempts = iter([[], ["34.149.170.250"]])
+
+    def _resolve_with_delay(_hostname: object) -> list[str]:
+        try:
+            return next(resolution_attempts)
+        except StopIteration:
+            return ["34.149.170.250"]
+
+    sleep_calls: list[object] = []
+    monkeypatch.setattr(seo_migration_module, "_resolve_hostname_ipv4_addresses", _resolve_with_delay)
+    monkeypatch.setattr(seo_migration_module.time, "sleep", lambda seconds: sleep_calls.append(seconds))
+    caplog.set_level("INFO", logger="app.services.seo_migration")
+
+    deploy_result = service.deploy_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        principal_id="principal-1",
+    )
+
+    assert publisher.deploy_calls
+    assert sleep_calls
+    assert deploy_result.result.get("dns_propagation_result") == "observed_expected_ip_after_retry"
+    assert int(deploy_result.result.get("dns_propagation_attempts") or 0) >= 2
+    assert deploy_result.result.get("dns_propagation_observed_ips") == ["34.149.170.250"]
+    propagation_logs = [
+        record.__dict__.get("json_fields")
+        for record in caplog.records
+        if isinstance(record.__dict__.get("json_fields"), dict)
+        and record.__dict__["json_fields"].get("event") == "seo_migration_managed_site_dns_propagation_check"
+    ]
+    assert propagation_logs
+    assert propagation_logs[-1].get("result") == "observed_expected_ip_after_retry"
+    assert propagation_logs[-1].get("observed_dns_ips") == ["34.149.170.250"]
+
+
+def test_deploy_blocks_dispatch_when_dns_propagation_times_out_before_dispatch(
+    db_session, monkeypatch, caplog
+) -> None:
+    publisher = _RecordingGitHubPublisher(
+        ensure_static_ip_created=False,
+        ensure_static_ip_result="exists",
+        ensure_static_ip_address="34.149.170.250",
+        ensure_dns_created=False,
+        ensure_dns_updated=True,
+        ensure_dns_result="updated",
+        ensure_dns_expected_ip="34.149.170.250",
+        ensure_dns_previous_ips=("34.149.170.251",),
+        ensure_dns_ttl=300,
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+        deploy_secret_gcp_key='{"type":"service_account","private_key":"sensitive"}',
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    artifact = _prepare_published_artifact(service, business_id=business_id, site_id=site_id)
+    monkeypatch.setattr(seo_migration_module, "_resolve_hostname_ipv4_addresses", lambda _hostname: [])
+    monkeypatch.setattr(seo_migration_module, "_MANAGED_SITE_DNS_PROPAGATION_MAX_WAIT_SECONDS", 0)
+    caplog.set_level("INFO", logger="app.services.seo_migration")
+
+    with pytest.raises(SEOMigrationValidationError, match="DNS propagation is still pending"):
+        service.deploy_artifact_version(
+            business_id=business_id,
+            site_id=site_id,
+            artifact_version_id=artifact.id,
+            dry_run=False,
+            principal_id="principal-1",
+        )
+
+    assert publisher.ensure_managed_site_static_ip_calls
+    assert publisher.ensure_managed_site_dns_calls
+    assert not publisher.deploy_calls
+    workspace = service.get_workspace(business_id=business_id, site_id=site_id)
+    deploy_history = workspace.deploy_history_json or []
+    assert deploy_history
+    latest = deploy_history[-1]
+    assert latest.get("failure_reason") == "managed_site_dns_propagation_pending"
+    assert latest.get("dispatch_service_reason_code") == "managed_site_dns_propagation_pending"
+    assert latest.get("dispatch_result_stage") == "dns_propagation"
+    assert latest.get("expected_dns_ip") == "34.149.170.250"
+    assert latest.get("observed_dns_ips") == []
+    propagation_logs = [
+        record.__dict__.get("json_fields")
+        for record in caplog.records
+        if isinstance(record.__dict__.get("json_fields"), dict)
+        and record.__dict__["json_fields"].get("event") == "seo_migration_managed_site_dns_propagation_check"
+    ]
+    assert propagation_logs
+    assert propagation_logs[-1].get("result") == "pending"
+    assert propagation_logs[-1].get("dns_expected_ip") == "34.149.170.250"
+    assert propagation_logs[-1].get("observed_dns_ips") == []
+    assert propagation_logs[-1].get("preview_hostname")
+    assert propagation_logs[-1].get("dns_managed_zone") == "sites"
+    assert propagation_logs[-1].get("dns_project_id")
+    assert "private_key" not in caplog.text.lower()
 
 
 def test_deploy_blocks_dispatch_when_managed_site_dns_conflicting_record(db_session, caplog) -> None:
@@ -4783,6 +4948,12 @@ def test_dns_pre_dispatch_reason_code_hint_mappings_cover_config_conflict_permis
         )
         or ""
     ).lower()
+    assert "propagation is still pending" in str(
+        seo_migration_module._derive_managed_gke_dispatch_readiness_message(
+            dispatch_service_reason_code="managed_site_dns_propagation_pending"
+        )
+        or ""
+    ).lower()
     assert "config is missing" in str(
         seo_migration_module._derive_deploy_failure_remediation_hint(
             failure_reason=None,
@@ -4825,6 +4996,15 @@ def test_dns_pre_dispatch_reason_code_hint_mappings_cover_config_conflict_permis
             failure_stage=None,
             workflow_exists=None,
             dispatch_service_reason_code="managed_site_dns_transaction_conflict",
+        )
+        or ""
+    ).lower()
+    assert "resolver propagation has not reached" in str(
+        seo_migration_module._derive_deploy_failure_remediation_hint(
+            failure_reason=None,
+            failure_stage=None,
+            workflow_exists=None,
+            dispatch_service_reason_code="managed_site_dns_propagation_pending",
         )
         or ""
     ).lower()

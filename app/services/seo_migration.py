@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import json
 import logging
 import re
+import socket
 import time
 from urllib.parse import quote, urlsplit
 from uuid import uuid4
@@ -80,6 +81,8 @@ _MAX_HISTORY_ITEMS = 80
 _DUPLICATE_DEPLOY_ACTIVE_BLOCKER_STALE_SECONDS = 30 * 60
 _DUPLICATE_DEPLOY_UNVERIFIED_DISPATCH_STALE_SECONDS = 2 * 60
 _DUPLICATE_DEPLOY_ACTIVE_BLOCKER_RECONCILIATION_SECONDS = 12 * 60
+_MANAGED_SITE_DNS_PROPAGATION_MAX_WAIT_SECONDS = 120
+_MANAGED_SITE_DNS_PROPAGATION_SLEEP_SECONDS = 10
 _ALLOWED_FILE_EXTENSIONS = (
     ".html",
     ".css",
@@ -319,6 +322,9 @@ _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFLICTING_RECORD = "managed_s
 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PERMISSION_DENIED = "managed_site_dns_permission_denied"
 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_TRANSACTION_CONFLICT = (
     "managed_site_dns_transaction_conflict"
+)
+_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PROPAGATION_PENDING = (
+    "managed_site_dns_propagation_pending"
 )
 _DEPLOY_DISPATCH_SERVICE_REASON_EXPECTED_STATIC_IP_NOT_BOUND_TO_INGRESS = (
     "expected_static_ip_not_bound_to_ingress"
@@ -2430,6 +2436,10 @@ class SEOMigrationService:
         dns_previous_ips: list[str] = []
         dns_ttl: int | None = None
         dns_ensure_result: str | None = None
+        dns_propagation_result: str | None = None
+        dns_propagation_observed_ips: list[str] = []
+        dns_propagation_wait_seconds: int | None = None
+        dns_propagation_attempts: int | None = None
         # Keep workflow_dispatch payload contract bounded to explicitly configured deploy inputs.
         # Implicit runtime metadata (site_id/artifact_version/ga_measurement_id/etc.) should not
         # be auto-injected because GitHub rejects undeclared workflow_dispatch inputs.
@@ -3507,6 +3517,81 @@ class SEOMigrationService:
                             level=logging.WARNING,
                         )
                         raise
+                    dns_hostname_for_resolution = _normalize_string(expected_dns_hostname, max_length=253)
+                    expected_dns_ip_for_resolution = _normalize_string(expected_dns_ip, max_length=64)
+                    max_wait_seconds = max(_MANAGED_SITE_DNS_PROPAGATION_MAX_WAIT_SECONDS, 0)
+                    sleep_seconds = max(_MANAGED_SITE_DNS_PROPAGATION_SLEEP_SECONDS, 1)
+                    propagation_check_started_at = time.monotonic()
+                    propagation_match_observed = False
+                    observed_dns_ips: list[str] = []
+                    propagation_attempts = 0
+                    while True:
+                        propagation_attempts += 1
+                        observed_dns_ips = _resolve_hostname_ipv4_addresses(dns_hostname_for_resolution)
+                        if (
+                            expected_dns_ip_for_resolution
+                            and observed_dns_ips == [expected_dns_ip_for_resolution]
+                        ):
+                            propagation_match_observed = True
+                            break
+                        elapsed_seconds = int(max(0, round(time.monotonic() - propagation_check_started_at)))
+                        if elapsed_seconds >= max_wait_seconds:
+                            break
+                        remaining_seconds = max_wait_seconds - elapsed_seconds
+                        time.sleep(min(sleep_seconds, max(1, remaining_seconds)))
+                    propagation_elapsed_seconds = int(max(0, round(time.monotonic() - propagation_check_started_at)))
+                    dns_propagation_result = (
+                        "observed_expected_ip_after_retry"
+                        if propagation_match_observed and propagation_attempts > 1
+                        else (
+                            "observed_expected_ip" if propagation_match_observed else "pending"
+                        )
+                    )
+                    dns_propagation_observed_ips = list(observed_dns_ips)
+                    dns_propagation_wait_seconds = propagation_elapsed_seconds
+                    dns_propagation_attempts = propagation_attempts
+                    self._emit_structured_service_log(
+                        payload={
+                            "event": "seo_migration_managed_site_dns_propagation_check",
+                            "business_id": business_id,
+                            "site_id": site_id,
+                            "workspace_id": workspace.id,
+                            "artifact_version_id": artifact.id,
+                            "target_environment_key": _normalize_string(
+                                workflow_resolution.get("target_environment_key"),
+                                max_length=80,
+                            ),
+                            "preview_hostname": dns_hostname_for_resolution,
+                            "dns_record_name": (
+                                f"{dns_hostname_for_resolution}." if dns_hostname_for_resolution else None
+                            ),
+                            "dns_managed_zone": expected_dns_managed_zone,
+                            "dns_project_id": expected_dns_project_id,
+                            "dns_expected_ip": expected_dns_ip_for_resolution,
+                            "dns_observed_ips": list(dns_propagation_observed_ips),
+                            "observed_dns_ips": list(dns_propagation_observed_ips),
+                            "dns_ensure_result": dns_ensure_result,
+                            "max_wait_seconds": max_wait_seconds,
+                            "sleep_seconds": sleep_seconds,
+                            "wait_elapsed_seconds": propagation_elapsed_seconds,
+                            "attempt_count": propagation_attempts,
+                            "result": dns_propagation_result,
+                            "deploy_trace_id": deploy_trace_id,
+                        },
+                        fallback_message="seo_migration_managed_site_dns_propagation_check",
+                        level=(logging.INFO if propagation_match_observed else logging.WARNING),
+                    )
+                    if not propagation_match_observed:
+                        dispatch_service_reason_code = _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PROPAGATION_PENDING
+                        raise SEOMigrationGitHubPublisherError(
+                            code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PROPAGATION_PENDING,
+                            safe_message=(
+                                "Managed-site DNS propagation is still pending for preview hostname "
+                                f"{dns_hostname_for_resolution or 'unknown'} (expected A record "
+                                f"{expected_dns_ip_for_resolution or 'unknown'})."
+                            ),
+                            stage="dns_propagation",
+                        )
                 if (
                     deploy_workflow_mode_for_dispatch == _DEPLOY_WORKFLOW_MODE_SITE_REPO_TEMPLATE_V1
                     and dispatch_namespace
@@ -3577,6 +3662,11 @@ class SEOMigrationService:
                     "dns_previous_ips": list(dns_previous_ips),
                     "dns_ttl": dns_ttl,
                     "dns_ensure_result": dns_ensure_result,
+                    "dns_propagation_result": dns_propagation_result,
+                    "dns_propagation_observed_ips": list(dns_propagation_observed_ips),
+                    "observed_dns_ips": list(dns_propagation_observed_ips),
+                    "dns_propagation_wait_seconds": dns_propagation_wait_seconds,
+                    "dns_propagation_attempts": dns_propagation_attempts,
                     "post_conformance_stage": _POST_CONFORMANCE_STAGE_WORKFLOW_DISPATCH_ATTEMPTED,
                     "post_conformance_reason_text": "Workflow dispatch was attempted; awaiting run evidence.",
                     "deploy_trace_id": deploy_trace_id,
@@ -3930,6 +4020,11 @@ class SEOMigrationService:
                     "dns_previous_ips": list(dns_previous_ips),
                     "dns_ttl": dns_ttl,
                     "dns_ensure_result": dns_ensure_result,
+                    "dns_propagation_result": dns_propagation_result,
+                    "dns_propagation_observed_ips": list(dns_propagation_observed_ips),
+                    "observed_dns_ips": list(dns_propagation_observed_ips),
+                    "dns_propagation_wait_seconds": dns_propagation_wait_seconds,
+                    "dns_propagation_attempts": dns_propagation_attempts,
                     "deploy_trace_id": deploy_trace_id,
                     "workflow_dispatch_supported": workflow_dispatch_supported,
                     "workflow_trigger_types": list(workflow_trigger_types),
@@ -4174,6 +4269,11 @@ class SEOMigrationService:
                     "dns_previous_ips": list(dns_previous_ips),
                     "dns_ttl": dns_ttl,
                     "dns_ensure_result": dns_ensure_result,
+                    "dns_propagation_result": dns_propagation_result,
+                    "dns_propagation_observed_ips": list(dns_propagation_observed_ips),
+                    "observed_dns_ips": list(dns_propagation_observed_ips),
+                    "dns_propagation_wait_seconds": dns_propagation_wait_seconds,
+                    "dns_propagation_attempts": dns_propagation_attempts,
                 },
                 failure_category=failure_category,
                 failure_reason=failure_reason_for_log,
@@ -4294,6 +4394,11 @@ class SEOMigrationService:
                     "dns_previous_ips": list(dns_previous_ips),
                     "dns_ttl": dns_ttl,
                     "dns_ensure_result": dns_ensure_result,
+                    "dns_propagation_result": dns_propagation_result,
+                    "dns_propagation_observed_ips": list(dns_propagation_observed_ips),
+                    "observed_dns_ips": list(dns_propagation_observed_ips),
+                    "dns_propagation_wait_seconds": dns_propagation_wait_seconds,
+                    "dns_propagation_attempts": dns_propagation_attempts,
                 },
                 fallback_message="seo_migration_deploy_dispatch_failed",
                 level=logging.WARNING,
@@ -4450,6 +4555,11 @@ class SEOMigrationService:
                 "dns_previous_ips": list(dns_previous_ips),
                 "dns_ttl": dns_ttl,
                 "dns_ensure_result": dns_ensure_result,
+                "dns_propagation_result": dns_propagation_result,
+                "dns_propagation_observed_ips": list(dns_propagation_observed_ips),
+                "observed_dns_ips": list(dns_propagation_observed_ips),
+                "dns_propagation_wait_seconds": dns_propagation_wait_seconds,
+                "dns_propagation_attempts": dns_propagation_attempts,
                 "deploy_trace_id": deploy_trace_id,
                 "workflow_dispatch_supported": workflow_dispatch_supported,
                 "workflow_trigger_types": list(workflow_trigger_types),
@@ -4852,6 +4962,11 @@ class SEOMigrationService:
             "dns_previous_ips": list(dns_previous_ips),
             "dns_ttl": dns_ttl,
             "dns_ensure_result": dns_ensure_result,
+            "dns_propagation_result": dns_propagation_result,
+            "dns_propagation_observed_ips": list(dns_propagation_observed_ips),
+            "observed_dns_ips": list(dns_propagation_observed_ips),
+            "dns_propagation_wait_seconds": dns_propagation_wait_seconds,
+            "dns_propagation_attempts": dns_propagation_attempts,
             "workflow_integrity_status": workflow_integrity_status,
             "workflow_integrity_reason_code": workflow_integrity_reason_code,
             "workflow_run_id": getattr(deploy_result, "workflow_run_id", None),
@@ -4993,6 +5108,11 @@ class SEOMigrationService:
                 "dns_previous_ips": list(dns_previous_ips),
                 "dns_ttl": dns_ttl,
                 "dns_ensure_result": dns_ensure_result,
+                "dns_propagation_result": dns_propagation_result,
+                "dns_propagation_observed_ips": list(dns_propagation_observed_ips),
+                "observed_dns_ips": list(dns_propagation_observed_ips),
+                "dns_propagation_wait_seconds": dns_propagation_wait_seconds,
+                "dns_propagation_attempts": dns_propagation_attempts,
                 "deploy_trace_id": deploy_trace_id,
                 "workflow_dispatch_supported": workflow_dispatch_supported,
                 "workflow_trigger_types": list(workflow_trigger_types),
@@ -14448,6 +14568,7 @@ def _normalize_deploy_failure_reason_code(value: object) -> str | None:
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFLICTING_RECORD,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PERMISSION_DENIED,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_TRANSACTION_CONFLICT,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PROPAGATION_PENDING,
         "github_target_not_found",
         "github_request_failed",
         "github_temporal_failure",
@@ -14486,6 +14607,7 @@ def _normalize_deploy_failure_stage(value: object) -> str | None:
         "workflow_dispatch",
         "static_ip_provision",
         "dns_provision",
+        "dns_propagation",
     }:
         return normalized_lower
     return None
@@ -14537,6 +14659,7 @@ def _normalize_workflow_run_failure_reason_code(value: object) -> str | None:
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFLICTING_RECORD,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PERMISSION_DENIED,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_TRANSACTION_CONFLICT,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PROPAGATION_PENDING,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_MISSING,
         _DEPLOY_DISPATCH_SERVICE_REASON_EXPECTED_STATIC_IP_NOT_BOUND_TO_INGRESS,
         _DEPLOY_DISPATCH_SERVICE_REASON_STALE_PRE_SHARED_CERT_BINDING,
@@ -14606,6 +14729,7 @@ def _normalize_dispatch_service_reason_code(value: object) -> str | None:
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFLICTING_RECORD,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PERMISSION_DENIED,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_TRANSACTION_CONFLICT,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PROPAGATION_PENDING,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_MISSING,
         _DEPLOY_DISPATCH_SERVICE_REASON_EXPECTED_STATIC_IP_NOT_BOUND_TO_INGRESS,
         _DEPLOY_DISPATCH_SERVICE_REASON_STALE_PRE_SHARED_CERT_BINDING,
@@ -15125,6 +15249,7 @@ def _derive_dispatch_service_reason_code(
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFLICTING_RECORD,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PERMISSION_DENIED,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_TRANSACTION_CONFLICT,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PROPAGATION_PENDING,
         _DEPLOY_DISPATCH_SERVICE_REASON_CERTIFICATE_DOMAIN_MISMATCH,
         _DEPLOY_DISPATCH_SERVICE_REASON_STALE_MANAGED_CERTIFICATE_PRESENT,
         _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_CERTIFICATE_MISMATCH,
@@ -15171,6 +15296,7 @@ def _derive_dispatch_service_reason_code(
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFLICTING_RECORD,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PERMISSION_DENIED,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_TRANSACTION_CONFLICT,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PROPAGATION_PENDING,
     }:
         return normalized_failure_reason
     if normalized_failure_stage in {"repo_lookup", "ref_lookup", "workflow_lookup"}:
@@ -15241,6 +15367,11 @@ def _derive_managed_gke_dispatch_readiness_message(*, dispatch_service_reason_co
         return (
             "Managed-site DNS update encountered a concurrent transaction conflict. "
             "Retry deploy after DNS transaction contention clears."
+        )
+    if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PROPAGATION_PENDING:
+        return (
+            "Managed-site DNS A-record update was applied, but public resolver propagation is still pending. "
+            "Wait for DNS propagation and retry deploy."
         )
     if normalized_dispatch_reason in {
         _DEPLOY_DISPATCH_SERVICE_REASON_CERTIFICATE_DOMAIN_MISMATCH,
@@ -15402,6 +15533,11 @@ def _derive_deploy_failure_remediation_hint(
         return (
             "Control-plane DNS update hit a concurrent transaction conflict. "
             "Retry deploy after verifying no competing DNS writers are updating the same hostname."
+        )
+    if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PROPAGATION_PENDING:
+        return (
+            "Control-plane DNS A record is updated, but resolver propagation has not reached the expected static IP yet. "
+            "Wait for propagation and retry deploy."
         )
     if normalized_dispatch_reason in {
         _DEPLOY_DISPATCH_SERVICE_REASON_CERTIFICATE_DOMAIN_MISMATCH,
@@ -15663,6 +15799,11 @@ def _derive_workflow_run_failure_hint(
         return (
             "Control-plane DNS update hit a concurrent transaction conflict. "
             "Retry deploy after verifying no competing DNS writers are updating this hostname."
+        )
+    if normalized_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PROPAGATION_PENDING:
+        return (
+            "Control-plane DNS A record was updated, but resolver propagation has not reached the expected static IP yet. "
+            "Wait for propagation and retry deploy."
         )
     if normalized_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_MISSING:
         return (
@@ -17180,6 +17321,34 @@ def _dedupe_strings(values: list[str]) -> list[str]:
         seen.add(normalized)
         deduped.append(normalized)
     return deduped
+
+
+def _resolve_hostname_ipv4_addresses(hostname: object) -> list[str]:
+    normalized_hostname = _normalize_string(hostname, max_length=253)
+    if not normalized_hostname:
+        return []
+    query_hostname = normalized_hostname.strip().lower().rstrip(".")
+    if not query_hostname:
+        return []
+    resolved_ips: list[str] = []
+    try:
+        for entry in socket.getaddrinfo(
+            query_hostname,
+            80,
+            family=socket.AF_INET,
+            type=socket.SOCK_STREAM,
+        ):
+            if not isinstance(entry, tuple) or len(entry) < 5:
+                continue
+            sockaddr = entry[4]
+            if not isinstance(sockaddr, tuple) or not sockaddr:
+                continue
+            resolved_ip = _normalize_string(sockaddr[0], max_length=64)
+            if resolved_ip:
+                resolved_ips.append(resolved_ip)
+    except OSError:
+        return []
+    return sorted(_dedupe_strings(resolved_ips))
 
 
 def _coerce_object_list(value: object, *, max_items: int) -> list[dict[str, object]]:

@@ -1209,8 +1209,9 @@ Post-fix rollout for existing managed sites:
       - managed zone default: `sites`
       - DNS project default: effective managed deploy/static-IP project
       - exact-hostname scope only: control plane manages only the `A` record for this preview hostname
+      - after DNS ensure succeeds, control plane performs a bounded propagation gate (max `120s`, sleep `10s`) and only dispatches once resolver-observed `A` matches the expected per-site static IP
       - generated target workflow still validates DNS/ingress parity as deploy-contract evidence
-      - `managed_site_dns_config_missing`, `managed_site_dns_provisioning_failed`, `managed_site_dns_conflicting_record`, `managed_site_dns_permission_denied`, `managed_site_dns_transaction_conflict` block dispatch before workflow run
+      - `managed_site_dns_config_missing`, `managed_site_dns_provisioning_failed`, `managed_site_dns_conflicting_record`, `managed_site_dns_permission_denied`, `managed_site_dns_transaction_conflict`, `managed_site_dns_propagation_pending` block dispatch before workflow run
     - generated manifests must not include `ingress.gcp.kubernetes.io/pre-shared-cert`; `ManagedCertificate` remains the desired-state certificate binding source
     - GKE may still add `ingress.gcp.kubernetes.io/pre-shared-cert` at runtime as controller metadata
     - certificate domain and ingress host must match the same site-specific preview hostname.
@@ -1681,6 +1682,7 @@ Blocking reason-code examples:
   - `managed_site_dns_conflicting_record`
   - `managed_site_dns_permission_denied`
   - `managed_site_dns_transaction_conflict`
+  - `managed_site_dns_propagation_pending`
   - `managed_site_static_ip_missing`
   - `expected_static_ip_not_bound_to_ingress`
   - `shared_static_ip_not_allowed_for_per_site_ingress`
