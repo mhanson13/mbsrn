@@ -5745,6 +5745,15 @@ def test_classify_cloudsql_proxy_failure_maps_ingress_neg_convergence_to_ingress
     assert failure_stage == "ingress_evidence"
 
 
+def test_classify_cloudsql_proxy_failure_maps_ingress_status_ip_stale_advisory_to_ingress_evidence_stage() -> None:
+    reason_code, failure_stage = _classify_cloudsql_proxy_failure_from_log_text(
+        "deploy_runtime_reason_code=ingress_status_ip_stale_or_mismatched"
+    )
+
+    assert reason_code == "ingress_status_ip_stale_or_mismatched"
+    assert failure_stage == "ingress_evidence"
+
+
 def test_classify_cloudsql_proxy_failure_maps_pre_shared_metadata_mismatch_to_ingress_evidence_stage() -> None:
     reason_code, failure_stage = _classify_cloudsql_proxy_failure_from_log_text(
         "deploy_runtime_reason_code=pre_shared_cert_metadata_mismatch"
@@ -7005,12 +7014,21 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "echo \"dns_record_matches_ingress=$dns_record_matches_ingress\"" in workflow_yaml
     assert "echo \"dns_expected_ip=$dns_expected_ip\"" in workflow_yaml
     assert "echo \"dns_observed_ip=$dns_observed_ip\"" in workflow_yaml
+    assert "echo \"expected_static_ip_address=$expected_static_ip_address\"" in workflow_yaml
+    assert "echo \"static_ip_status=$static_ip_status\"" in workflow_yaml
+    assert "echo \"static_ip_users=$static_ip_users\"" in workflow_yaml
     assert "echo \"tls_certificate_status=$tls_certificate_status\"" in workflow_yaml
     assert "echo \"tls_domain_status=$tls_domain_status\"" in workflow_yaml
+    assert "echo \"ingress_status_ip=$ingress_status_ip\"" in workflow_yaml
+    assert "echo \"ingress_status_ip_matches_static_ip=$ingress_status_ip_matches_static_ip\"" in workflow_yaml
+    assert "echo \"static_ip_bound_to_expected_forwarding_rule=$static_ip_bound_to_expected_forwarding_rule\"" in workflow_yaml
     assert "echo \"ingress_ip=$ingress_ip\"" in workflow_yaml
     assert "echo \"ingress_conflict_detected=$ingress_conflict_detected\"" in workflow_yaml
     assert "echo \"cert_identity_valid=$cert_identity_valid\"" in workflow_yaml
     assert "echo \"deploy_https_ready=$deploy_https_ready\"" in workflow_yaml
+    assert "--format='json(name,address,status,users)'" in workflow_yaml
+    assert "dns_expected_ip=\"$expected_static_ip_address\"" in workflow_yaml
+    assert "deploy_runtime_reason_code=ingress_status_ip_stale_or_mismatched" in workflow_yaml
     assert "deploy_runtime_reason_code=dns_record_mismatch" in workflow_yaml
     assert "deploy_runtime_reason_code=dns_points_to_old_ingress_ip" in workflow_yaml
     assert "deploy_runtime_reason_code=ingress_ip_assigned_but_dns_not_updated" in workflow_yaml

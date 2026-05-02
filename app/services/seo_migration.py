@@ -282,6 +282,9 @@ _DEPLOY_RUN_FAILURE_REASON_SERVICE_PROBE_WAITING_FOR_CONVERGENCE = (
     "service_probe_waiting_for_convergence"
 )
 _DEPLOY_RUN_FAILURE_REASON_INGRESS_NEG_CONVERGENCE_PENDING = "ingress_neg_convergence_pending"
+_DEPLOY_RUN_FAILURE_REASON_INGRESS_STATUS_IP_STALE_OR_MISMATCHED = (
+    "ingress_status_ip_stale_or_mismatched"
+)
 _DEPLOY_RUN_FAILURE_REASON_INGRESS_BACKEND_UNHEALTHY_AFTER_ROLLOUT = "ingress_backend_unhealthy_after_rollout"
 _DEPLOY_RUN_FAILURE_REASON_PUBLIC_IMAGE_PULL_FAILED = "public_image_pull_failed"
 _DEPLOY_RUN_FAILURE_REASON_PRIVATE_IMAGE_PULL_FORBIDDEN = "private_image_pull_forbidden"
@@ -15027,6 +15030,7 @@ def _normalize_workflow_run_failure_reason_code(value: object) -> str | None:
         _DEPLOY_RUN_FAILURE_REASON_PRE_SHARED_CERT_METADATA_MISMATCH,
         _DEPLOY_RUN_FAILURE_REASON_SERVICE_PROBE_WAITING_FOR_CONVERGENCE,
         _DEPLOY_RUN_FAILURE_REASON_INGRESS_NEG_CONVERGENCE_PENDING,
+        _DEPLOY_RUN_FAILURE_REASON_INGRESS_STATUS_IP_STALE_OR_MISMATCHED,
         _DEPLOY_RUN_FAILURE_REASON_INGRESS_BACKEND_UNHEALTHY_AFTER_ROLLOUT,
         _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_STATIC_IP_CONFLICT,
         _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_STATIC_IP_NOT_ALLOWED,
@@ -16206,6 +16210,11 @@ def _derive_workflow_run_failure_hint(
         return (
             "Ingress and NEG convergence was still in progress during external ingress readiness checks. "
             "Retry deploy status refresh after load balancer convergence."
+        )
+    if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_INGRESS_STATUS_IP_STALE_OR_MISMATCHED:
+        return (
+            "Ingress status IP differs from reserved static IP, but static IP binding and DNS target are valid. "
+            "Treat ingress status as lagging metadata and continue monitoring HTTPS/certificate readiness."
         )
     if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_INGRESS_BACKEND_UNHEALTHY_AFTER_ROLLOUT:
         return (
