@@ -801,6 +801,7 @@ def get_seo_migration_github_publisher() -> SEOMigrationGitHubPublisher:
             timeout_seconds=settings.migration_github_timeout_seconds,
             committer_name=settings.migration_publish_committer_name,
             committer_email=settings.migration_publish_committer_email,
+            managed_deploy_service_account_email=settings.gcp_managed_deploy,
         )
     except ValueError as exc:
         logger.warning("Failed to initialize GitHub migration publisher: %s", str(exc))

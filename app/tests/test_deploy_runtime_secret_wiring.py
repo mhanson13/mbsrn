@@ -16,6 +16,8 @@ def test_api_deployment_wires_control_plane_git_credentials_from_secret() -> Non
     assert "key: GIT_EMAIL" in deployment_yaml
     assert "- name: GIT_TOKEN" in deployment_yaml
     assert "key: GIT_TOKEN" in deployment_yaml
+    assert "- name: GCP_MANAGED_DEPLOY" in deployment_yaml
+    assert "key: GCP_MANAGED_DEPLOY" in deployment_yaml
 
 
 def test_deploy_prod_projects_git_credentials_into_control_plane_runtime_secret() -> None:
@@ -27,3 +29,5 @@ def test_deploy_prod_projects_git_credentials_into_control_plane_runtime_secret(
     assert "--from-literal=GIT_USERID=\"${GIT_USERID}\"" in workflow_yaml
     assert "--from-literal=GIT_EMAIL=\"${GIT_EMAIL}\"" in workflow_yaml
     assert "--from-literal=GIT_TOKEN=\"${GIT_TOKEN}\"" in workflow_yaml
+    assert "GCP_MANAGED_DEPLOY: ${{ vars.GCP_MANAGED_DEPLOY || '' }}" in workflow_yaml
+    assert "--from-literal=GCP_MANAGED_DEPLOY=\"${GCP_MANAGED_DEPLOY:-}\"" in workflow_yaml

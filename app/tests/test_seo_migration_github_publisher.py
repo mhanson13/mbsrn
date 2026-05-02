@@ -23,6 +23,7 @@ from app.integrations.seo_migration_github_publisher import (
     _render_managed_gke_manifest_files,
     _classify_cloudsql_proxy_failure_from_log_text,
     _classify_rollout_blocker_hints_from_describe_outputs,
+    _resolve_google_credential_principal,
     derive_site_kubernetes_namespace,
     derive_site_preview_certificate_name,
     derive_site_preview_hostname,
@@ -177,6 +178,51 @@ def _install_urlopen_stub(monkeypatch, responses, calls):
         return next_item
 
     monkeypatch.setattr(urllib.request, "urlopen", _stub)
+
+
+def test_resolve_google_credential_principal_prefers_service_account_client_email() -> None:
+    source, principal = _resolve_google_credential_principal(
+        credentials_json=json.dumps(
+            {
+                "type": "service_account",
+                "client_email": "mbsrn-api@mbsrn-prod.iam.gserviceaccount.com",
+                "private_key": "-----BEGIN PRIVATE KEY-----SECRET-----END PRIVATE KEY-----",
+            }
+        ),
+        timeout_seconds=10,
+    )
+
+    assert source == "service_account_json"
+    assert principal == "mbsrn-api@mbsrn-prod.iam.gserviceaccount.com"
+    assert principal and "private_key" not in principal
+
+
+def test_resolve_google_credential_principal_uses_metadata_when_available(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.integrations.seo_migration_github_publisher._lookup_google_metadata_principal_email",
+        lambda **kwargs: "wi-runtime@mbsrn-prod.iam.gserviceaccount.com",
+    )
+    source, principal = _resolve_google_credential_principal(
+        credentials_json=None,
+        timeout_seconds=10,
+    )
+
+    assert source == "adc_metadata_server"
+    assert principal == "wi-runtime@mbsrn-prod.iam.gserviceaccount.com"
+
+
+def test_resolve_google_credential_principal_returns_unknown_when_metadata_unavailable(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.integrations.seo_migration_github_publisher._lookup_google_metadata_principal_email",
+        lambda **kwargs: None,
+    )
+    source, principal = _resolve_google_credential_principal(
+        credentials_json=None,
+        timeout_seconds=10,
+    )
+
+    assert source == "unknown"
+    assert principal is None
 
 
 def _managed_file_verify_response(*, sha: str, marker: str) -> _FakeHTTPResponse:
@@ -4115,7 +4161,13 @@ def test_ensure_managed_site_static_ip_reuses_existing_address(monkeypatch) -> N
         repo_name="tnmfire",
         site_id="site-1",
         managed_gke_config={"project_id": "mbsrn-prod"},
-        gcp_deploy_key="{\"type\":\"service_account\"}",
+        gcp_deploy_key=json.dumps(
+            {
+                "type": "service_account",
+                "client_email": "mbsrn-api@mbsrn-prod.iam.gserviceaccount.com",
+                "private_key": "-----BEGIN PRIVATE KEY-----SECRET-----END PRIVATE KEY-----",
+            }
+        ),
         dry_run=False,
     )
 
@@ -4124,6 +4176,8 @@ def test_ensure_managed_site_static_ip_reuses_existing_address(monkeypatch) -> N
     assert result.static_ip_created is False
     assert result.gcp_project_id == "mbsrn-prod"
     assert result.result == "exists"
+    assert result.gcp_credential_source == "service_account_json"
+    assert result.gcp_principal_email == "mbsrn-api@mbsrn-prod.iam.gserviceaccount.com"
     assert calls == [
         (
             "GET",
@@ -4269,6 +4323,186 @@ def test_ensure_managed_site_static_ip_requires_project_config(monkeypatch) -> N
     assert calls == []
 
 
+def test_ensure_managed_site_static_ip_without_managed_deploy_email_uses_adc_path(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps(
+                    {
+                        "name": "site-web-preview-ip-tnmfire",
+                        "address": "34.160.224.212",
+                    }
+                ),
+            ),
+        ],
+        calls,
+    )
+    monkeypatch.setattr(
+        "app.integrations.seo_migration_github_publisher._resolve_google_access_token_from_google_auth_default",
+        lambda **kwargs: "token",
+    )
+    monkeypatch.setattr(
+        "app.integrations.seo_migration_github_publisher._resolve_google_credential_principal",
+        lambda **kwargs: ("adc_metadata_server", "mbsrn-api@mbsrn-prod.iam.gserviceaccount.com"),
+    )
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    result = publisher.ensure_managed_site_static_ip(
+        repo_owner="mhanson13",
+        repo_name="tnmfire",
+        site_id="site-1",
+        managed_gke_config={"project_id": "mbsrn-prod"},
+        gcp_deploy_key=None,
+        dry_run=False,
+    )
+
+    assert result.gcp_credential_source == "adc_metadata_server"
+    assert result.gcp_principal_email == "mbsrn-api@mbsrn-prod.iam.gserviceaccount.com"
+    assert result.gcp_impersonated_service_account_email is None
+    assert calls == [
+        (
+            "GET",
+            "https://compute.googleapis.com/compute/v1/projects/mbsrn-prod/global/addresses/site-web-preview-ip-tnmfire",
+        ),
+    ]
+
+
+def test_ensure_managed_site_static_ip_uses_managed_deploy_impersonation_when_configured(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps(
+                    {
+                        "name": "site-web-preview-ip-tnmfire",
+                        "address": "34.160.224.212",
+                    }
+                ),
+            ),
+        ],
+        calls,
+    )
+    captured_impersonation: dict[str, object] = {}
+
+    def _capture_impersonation(**kwargs):
+        captured_impersonation.update(kwargs)
+        return "token"
+
+    monkeypatch.setattr(
+        "app.integrations.seo_migration_github_publisher._resolve_google_access_token_via_impersonation",
+        _capture_impersonation,
+    )
+    monkeypatch.setattr(
+        "app.integrations.seo_migration_github_publisher._resolve_google_credential_principal",
+        lambda **kwargs: ("adc_metadata_server", "mbsrn-api@mbsrn-prod.iam.gserviceaccount.com"),
+    )
+    publisher = GitHubSEOMigrationPublisher(
+        token="test-token",
+        managed_deploy_service_account_email="mbsrn-managed-deploy@mbsrn-prod.iam.gserviceaccount.com",
+    )
+    result = publisher.ensure_managed_site_static_ip(
+        repo_owner="mhanson13",
+        repo_name="tnmfire",
+        site_id="site-1",
+        managed_gke_config={"project_id": "mbsrn-prod"},
+        gcp_deploy_key=None,
+        dry_run=False,
+    )
+
+    assert captured_impersonation.get("target_service_account_email") == (
+        "mbsrn-managed-deploy@mbsrn-prod.iam.gserviceaccount.com"
+    )
+    assert result.gcp_credential_source == "managed_deploy_impersonation"
+    assert result.gcp_principal_email == "mbsrn-api@mbsrn-prod.iam.gserviceaccount.com"
+    assert result.gcp_impersonated_service_account_email == (
+        "mbsrn-managed-deploy@mbsrn-prod.iam.gserviceaccount.com"
+    )
+    assert calls == [
+        (
+            "GET",
+            "https://compute.googleapis.com/compute/v1/projects/mbsrn-prod/global/addresses/site-web-preview-ip-tnmfire",
+        ),
+    ]
+
+
+def test_ensure_managed_site_static_ip_rejects_secret_like_managed_deploy_impersonation_value(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    _install_urlopen_stub(monkeypatch, [], calls)
+    publisher = GitHubSEOMigrationPublisher(
+        token="test-token",
+        managed_deploy_service_account_email='{"type":"service_account","private_key":"secret"}',
+    )
+    with pytest.raises(SEOMigrationGitHubPublisherError) as exc_info:
+        publisher.ensure_managed_site_static_ip(
+            repo_owner="mhanson13",
+            repo_name="tnmfire",
+            site_id="site-1",
+            managed_gke_config={"project_id": "mbsrn-prod"},
+            gcp_deploy_key=None,
+            dry_run=False,
+        )
+
+    assert exc_info.value.code == "managed_deploy_impersonation_config_invalid"
+    assert exc_info.value.stage == "static_ip_provision"
+    assert "private_key" not in (exc_info.value.safe_message or "").lower()
+    assert "service-account email" in (exc_info.value.safe_message or "").lower()
+    assert calls == []
+
+
+def test_ensure_managed_site_static_ip_impersonation_permission_denied_is_classified(monkeypatch) -> None:
+    def _raise_permission_denied(**kwargs):
+        raise SEOMigrationGitHubPublisherError(
+            code="managed_deploy_impersonation_permission_denied",
+            safe_message=(
+                "Managed deploy impersonation is not authorized. "
+                "Grant roles/iam.serviceAccountTokenCreator for the configured managed deploy service account."
+            ),
+            stage=kwargs.get("stage", "static_ip_provision"),
+            provider_message="PERMISSION_DENIED: iam.serviceAccounts.getAccessToken denied.",
+        )
+
+    monkeypatch.setattr(
+        "app.integrations.seo_migration_github_publisher._resolve_google_access_token_via_impersonation",
+        _raise_permission_denied,
+    )
+    monkeypatch.setattr(
+        "app.integrations.seo_migration_github_publisher._resolve_google_credential_principal",
+        lambda **kwargs: ("service_account_json", "mbsrn-api@mbsrn-prod.iam.gserviceaccount.com"),
+    )
+    publisher = GitHubSEOMigrationPublisher(
+        token="test-token",
+        managed_deploy_service_account_email="mbsrn-managed-deploy@mbsrn-prod.iam.gserviceaccount.com",
+    )
+    with pytest.raises(SEOMigrationGitHubPublisherError) as exc_info:
+        publisher.ensure_managed_site_static_ip(
+            repo_owner="mhanson13",
+            repo_name="tnmfire",
+            site_id="site-1",
+            managed_gke_config={"project_id": "mbsrn-prod"},
+            gcp_deploy_key=json.dumps(
+                {
+                    "type": "service_account",
+                    "client_email": "mbsrn-api@mbsrn-prod.iam.gserviceaccount.com",
+                    "private_key": "-----BEGIN PRIVATE KEY-----SECRET-----END PRIVATE KEY-----",
+                }
+            ),
+            dry_run=False,
+        )
+
+    assert exc_info.value.code == "managed_deploy_impersonation_permission_denied"
+    diagnostics = exc_info.value.diagnostics or {}
+    assert diagnostics.get("gcp_credential_source") == "managed_deploy_impersonation"
+    assert diagnostics.get("gcp_principal_email") == "mbsrn-api@mbsrn-prod.iam.gserviceaccount.com"
+    assert diagnostics.get("gcp_impersonated_service_account_email") == (
+        "mbsrn-managed-deploy@mbsrn-prod.iam.gserviceaccount.com"
+    )
+    assert "private_key" not in json.dumps(diagnostics).lower()
+
+
 def test_ensure_managed_site_static_ip_permission_failure_is_classified(monkeypatch) -> None:
     calls: list[tuple[str, str]] = []
     _install_urlopen_stub(
@@ -4298,7 +4532,13 @@ def test_ensure_managed_site_static_ip_permission_failure_is_classified(monkeypa
             repo_name="tnmfire",
             site_id="site-1",
             managed_gke_config={"project_id": "mbsrn-prod"},
-            gcp_deploy_key="{\"type\":\"service_account\"}",
+            gcp_deploy_key=json.dumps(
+                {
+                    "type": "service_account",
+                    "client_email": "mbsrn-api@mbsrn-prod.iam.gserviceaccount.com",
+                    "private_key": "-----BEGIN PRIVATE KEY-----SECRET-----END PRIVATE KEY-----",
+                }
+            ),
             dry_run=False,
         )
 
@@ -4309,6 +4549,9 @@ def test_ensure_managed_site_static_ip_permission_failure_is_classified(monkeypa
     assert diagnostics.get("static_ip_error_category") == "permission_denied"
     assert diagnostics.get("static_ip_error_code") == "http_403"
     assert diagnostics.get("static_ip_permission_hint")
+    assert diagnostics.get("gcp_credential_source") == "service_account_json"
+    assert diagnostics.get("gcp_principal_email") == "mbsrn-api@mbsrn-prod.iam.gserviceaccount.com"
+    assert "private_key" not in json.dumps(diagnostics).lower()
     assert calls == [
         (
             "GET",
@@ -4557,6 +4800,69 @@ def test_ensure_managed_site_static_ip_error_summary_redacts_secret_like_markers
     assert "managed site static ip provisioning" in summary
 
 
+def test_ensure_managed_site_dns_uses_managed_deploy_impersonation_when_configured(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _dns_rrsets_response(name="tnmfire.site.mbsrn.com.", record_type="CNAME", rrdatas=None),
+            _dns_rrsets_response(
+                name="tnmfire.site.mbsrn.com.",
+                record_type="A",
+                rrdatas=["34.160.224.212"],
+                ttl=300,
+            ),
+        ],
+        calls,
+    )
+    captured_impersonation: dict[str, object] = {}
+
+    def _capture_impersonation(**kwargs):
+        captured_impersonation.update(kwargs)
+        return "token"
+
+    monkeypatch.setattr(
+        "app.integrations.seo_migration_github_publisher._resolve_google_access_token_via_impersonation",
+        _capture_impersonation,
+    )
+    monkeypatch.setattr(
+        "app.integrations.seo_migration_github_publisher._resolve_google_credential_principal",
+        lambda **kwargs: ("adc_metadata_server", "mbsrn-api@mbsrn-prod.iam.gserviceaccount.com"),
+    )
+    publisher = GitHubSEOMigrationPublisher(
+        token="test-token",
+        managed_deploy_service_account_email="mbsrn-managed-deploy@mbsrn-prod.iam.gserviceaccount.com",
+    )
+    result = publisher.ensure_managed_site_dns_a_record(
+        preview_hostname="tnmfire.site.mbsrn.com",
+        expected_ip_address="34.160.224.212",
+        dns_managed_zone="sites",
+        dns_project_id="mbsrn-prod",
+        gcp_deploy_key=None,
+        ttl=300,
+        dry_run=False,
+    )
+
+    assert captured_impersonation.get("target_service_account_email") == (
+        "mbsrn-managed-deploy@mbsrn-prod.iam.gserviceaccount.com"
+    )
+    assert result.gcp_credential_source == "managed_deploy_impersonation"
+    assert result.gcp_principal_email == "mbsrn-api@mbsrn-prod.iam.gserviceaccount.com"
+    assert result.gcp_impersonated_service_account_email == (
+        "mbsrn-managed-deploy@mbsrn-prod.iam.gserviceaccount.com"
+    )
+    assert calls == [
+        (
+            "GET",
+            "https://dns.googleapis.com/dns/v1/projects/mbsrn-prod/managedZones/sites/rrsets?name=tnmfire.site.mbsrn.com.&type=CNAME",
+        ),
+        (
+            "GET",
+            "https://dns.googleapis.com/dns/v1/projects/mbsrn-prod/managedZones/sites/rrsets?name=tnmfire.site.mbsrn.com.&type=A",
+        ),
+    ]
+
+
 def test_ensure_managed_site_dns_creates_missing_record_before_dispatch(monkeypatch) -> None:
     calls: list[tuple[str, str]] = []
     _install_urlopen_stub(
@@ -4584,7 +4890,13 @@ def test_ensure_managed_site_dns_creates_missing_record_before_dispatch(monkeypa
         expected_ip_address="34.160.224.212",
         dns_managed_zone="sites",
         dns_project_id="mbsrn-prod",
-        gcp_deploy_key="{\"type\":\"service_account\"}",
+        gcp_deploy_key=json.dumps(
+            {
+                "type": "service_account",
+                "client_email": "mbsrn-api@mbsrn-prod.iam.gserviceaccount.com",
+                "private_key": "-----BEGIN PRIVATE KEY-----SECRET-----END PRIVATE KEY-----",
+            }
+        ),
         ttl=300,
         dry_run=False,
     )
@@ -4599,6 +4911,8 @@ def test_ensure_managed_site_dns_creates_missing_record_before_dispatch(monkeypa
     assert result.dns_updated is False
     assert result.dns_ttl == 300
     assert result.result == "created"
+    assert result.gcp_credential_source == "service_account_json"
+    assert result.gcp_principal_email == "mbsrn-api@mbsrn-prod.iam.gserviceaccount.com"
     assert calls == [
         (
             "GET",
@@ -4789,13 +5103,23 @@ def test_ensure_managed_site_dns_permission_denied_is_classified(monkeypatch) ->
             expected_ip_address="34.160.224.212",
             dns_managed_zone="sites",
             dns_project_id="mbsrn-prod",
-            gcp_deploy_key="{\"type\":\"service_account\"}",
+            gcp_deploy_key=json.dumps(
+                {
+                    "type": "service_account",
+                    "client_email": "mbsrn-api@mbsrn-prod.iam.gserviceaccount.com",
+                    "private_key": "-----BEGIN PRIVATE KEY-----SECRET-----END PRIVATE KEY-----",
+                }
+            ),
             ttl=300,
             dry_run=False,
         )
 
     assert exc_info.value.code == "managed_site_dns_permission_denied"
     assert exc_info.value.stage == "dns_provision"
+    diagnostics = exc_info.value.diagnostics or {}
+    assert diagnostics.get("gcp_credential_source") == "service_account_json"
+    assert diagnostics.get("gcp_principal_email") == "mbsrn-api@mbsrn-prod.iam.gserviceaccount.com"
+    assert "private_key" not in json.dumps(diagnostics).lower()
     assert calls == [
         (
             "GET",

@@ -103,6 +103,7 @@ class Settings:
     seo_competitor_profile_rejected_draft_retention_days: int
     git_token: str | None = field(repr=False)
     gcp_deploy_key: str | None = field(repr=False)
+    gcp_managed_deploy: str | None
     git_userid: str | None = field(repr=False)
     git_email: str | None = field(repr=False)
     migration_managed_site_private_image_auth_enabled: bool
@@ -470,6 +471,7 @@ def get_settings() -> Settings:
         ),
         git_token=os.getenv("GIT_TOKEN"),
         gcp_deploy_key=os.getenv("GCP_DEPLOY_KEY"),
+        gcp_managed_deploy=os.getenv("GCP_MANAGED_DEPLOY"),
         git_userid=os.getenv("GIT_USERID"),
         git_email=os.getenv("GIT_EMAIL"),
         migration_managed_site_private_image_auth_enabled=_env_bool(

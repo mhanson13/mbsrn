@@ -22,6 +22,9 @@ from app.core.runtime_metadata import get_runtime_build_metadata
 _LOGGER = logging.getLogger(__name__)
 _VALID_REPO_OWNER_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{0,38}$")
 _VALID_REPO_NAME_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,100}$")
+_MANAGED_DEPLOY_SERVICE_ACCOUNT_EMAIL_PATTERN = re.compile(
+    r"^[a-z0-9][a-z0-9._-]{1,100}@[a-z0-9][a-z0-9-]{1,100}\.iam\.gserviceaccount\.com$"
+)
 _GITHUB_REASON_WORKFLOW_WRITE_NOT_AUTHORIZED = "github_workflow_write_not_authorized"
 _GITHUB_REASON_CONTENTS_WRITE_NOT_AUTHORIZED = "github_contents_write_not_authorized"
 _GITHUB_REASON_BRANCH_UNINITIALIZED = "github_branch_not_found_or_uninitialized"
@@ -99,6 +102,9 @@ class SEOMigrationGitHubManagedSiteStaticIPEnsureResult:
     static_ip_created: bool
     gcp_project_id: str
     result: str
+    gcp_credential_source: str | None = None
+    gcp_principal_email: str | None = None
+    gcp_impersonated_service_account_email: str | None = None
 
 
 @dataclass(frozen=True)
@@ -113,6 +119,9 @@ class SEOMigrationGitHubManagedSiteDnsEnsureResult:
     dns_created: bool
     dns_ttl: int
     result: str
+    gcp_credential_source: str | None = None
+    gcp_principal_email: str | None = None
+    gcp_impersonated_service_account_email: str | None = None
 
 
 @dataclass(frozen=True)
@@ -862,6 +871,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         timeout_seconds: int = 15,
         committer_name: str = "MBSRN Migration Bot",
         committer_email: str = "migration-bot@mbsrn.local",
+        managed_deploy_service_account_email: str | None = None,
     ) -> None:
         normalized_token = token.strip()
         if not normalized_token:
@@ -871,6 +881,9 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         self.timeout_seconds = max(1, int(timeout_seconds))
         self.committer_name = committer_name.strip() or "MBSRN Migration Bot"
         self.committer_email = committer_email.strip() or "migration-bot@mbsrn.local"
+        self.managed_deploy_service_account_email = (
+            _coerce_string(managed_deploy_service_account_email) or ""
+        ).strip() or None
         self.runtime_build_metadata = get_runtime_build_metadata()
 
     def ensure_repository(
@@ -2529,14 +2542,18 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 ),
                 stage="static_ip_provision",
             )
-        if not _coerce_string(gcp_deploy_key):
-            raise SEOMigrationGitHubPublisherError(
-                code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFIG_MISSING,
-                safe_message=(
-                    "Managed deploy runtime credential is unavailable for static IP provisioning."
-                ),
+        impersonated_service_account_email: str | None = None
+        if self.managed_deploy_service_account_email:
+            impersonated_service_account_email = _validate_managed_deploy_impersonation_service_account_email(
+                self.managed_deploy_service_account_email,
                 stage="static_ip_provision",
             )
+        credential_source, principal_email = _resolve_google_credential_principal(
+            credentials_json=gcp_deploy_key,
+            timeout_seconds=self.timeout_seconds,
+        )
+        if impersonated_service_account_email:
+            credential_source = _GCP_CREDENTIAL_SOURCE_MANAGED_DEPLOY_IMPERSONATION
         if dry_run:
             return SEOMigrationGitHubManagedSiteStaticIPEnsureResult(
                 static_ip_name=static_ip_name,
@@ -2544,15 +2561,29 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 static_ip_created=False,
                 gcp_project_id=project_id,
                 result="dry_run",
+                gcp_credential_source=credential_source,
+                gcp_principal_email=principal_email,
+                gcp_impersonated_service_account_email=impersonated_service_account_email,
             )
         try:
             ensure_result = _ensure_managed_site_global_static_ip(
-                gcp_deploy_key=str(gcp_deploy_key),
+                gcp_deploy_key=_coerce_string(gcp_deploy_key),
                 project_id=project_id,
                 static_ip_name=static_ip_name,
                 timeout_seconds=self.timeout_seconds,
+                gcp_credential_source=credential_source,
+                gcp_principal_email=principal_email,
+                gcp_impersonated_service_account_email=impersonated_service_account_email,
             )
         except SEOMigrationGitHubPublisherError as exc:
+            diagnostics = _normalize_static_ip_error_diagnostics(
+                {
+                    **(exc.diagnostics if isinstance(exc.diagnostics, dict) else {}),
+                    "gcp_credential_source": credential_source,
+                    "gcp_principal_email": principal_email,
+                    "gcp_impersonated_service_account_email": impersonated_service_account_email,
+                }
+            )
             if exc.code in {
                 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFIG_MISSING,
                 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROVISIONING_FAILED,
@@ -2561,15 +2592,24 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_QUOTA_EXCEEDED,
                 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROJECT_NOT_FOUND,
                 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFLICT,
+                _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_CONFIG_INVALID,
+                _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_PERMISSION_DENIED,
             }:
-                raise
+                raise SEOMigrationGitHubPublisherError(
+                    code=exc.code,
+                    safe_message=exc.safe_message,
+                    status_code=exc.status_code,
+                    stage=exc.stage,
+                    provider_message=exc.provider_message,
+                    diagnostics=diagnostics,
+                ) from exc
             raise SEOMigrationGitHubPublisherError(
                 code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROVISIONING_FAILED,
                 safe_message="Managed site static IP provisioning failed before deploy dispatch.",
                 status_code=exc.status_code,
                 stage=exc.stage or "static_ip_provision",
                 provider_message=exc.provider_message,
-                diagnostics=_normalize_static_ip_error_diagnostics(exc.diagnostics),
+                diagnostics=diagnostics,
             ) from exc
         return SEOMigrationGitHubManagedSiteStaticIPEnsureResult(
             static_ip_name=static_ip_name,
@@ -2577,6 +2617,9 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             static_ip_created=bool(ensure_result.get("static_ip_created")),
             gcp_project_id=project_id,
             result=_coerce_string(ensure_result.get("result")) or "exists",
+            gcp_credential_source=credential_source,
+            gcp_principal_email=principal_email,
+            gcp_impersonated_service_account_email=impersonated_service_account_email,
         )
 
     def ensure_managed_site_dns_a_record(
@@ -2628,12 +2671,18 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         normalized_ttl = _coerce_int(ttl)
         if normalized_ttl is None or normalized_ttl <= 0:
             normalized_ttl = _MBSRN_MANAGED_PREVIEW_DNS_TTL_DEFAULT
-        if not _coerce_string(gcp_deploy_key):
-            raise SEOMigrationGitHubPublisherError(
-                code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFIG_MISSING,
-                safe_message="Managed deploy runtime credential is unavailable for DNS provisioning.",
+        impersonated_service_account_email: str | None = None
+        if self.managed_deploy_service_account_email:
+            impersonated_service_account_email = _validate_managed_deploy_impersonation_service_account_email(
+                self.managed_deploy_service_account_email,
                 stage="dns_provision",
             )
+        credential_source, principal_email = _resolve_google_credential_principal(
+            credentials_json=gcp_deploy_key,
+            timeout_seconds=self.timeout_seconds,
+        )
+        if impersonated_service_account_email:
+            credential_source = _GCP_CREDENTIAL_SOURCE_MANAGED_DEPLOY_IMPERSONATION
         if dry_run:
             return SEOMigrationGitHubManagedSiteDnsEnsureResult(
                 dns_record_name=normalized_record_name,
@@ -2646,32 +2695,54 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 dns_created=False,
                 dns_ttl=normalized_ttl,
                 result="dry_run",
+                gcp_credential_source=credential_source,
+                gcp_principal_email=principal_email,
+                gcp_impersonated_service_account_email=impersonated_service_account_email,
             )
         try:
             ensure_result = _ensure_managed_site_dns_a_record(
-                gcp_deploy_key=str(gcp_deploy_key),
+                gcp_deploy_key=_coerce_string(gcp_deploy_key),
                 dns_project_id=normalized_project_id,
                 dns_managed_zone=normalized_zone,
                 record_name=normalized_record_name,
                 expected_ip_address=normalized_expected_ip,
                 ttl=normalized_ttl,
                 timeout_seconds=self.timeout_seconds,
+                gcp_impersonated_service_account_email=impersonated_service_account_email,
             )
         except SEOMigrationGitHubPublisherError as exc:
+            diagnostics = _normalize_gcp_credential_diagnostics(
+                {
+                    **(exc.diagnostics if isinstance(exc.diagnostics, dict) else {}),
+                    "gcp_credential_source": credential_source,
+                    "gcp_principal_email": principal_email,
+                    "gcp_impersonated_service_account_email": impersonated_service_account_email,
+                }
+            )
             if exc.code in {
                 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFIG_MISSING,
                 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PROVISIONING_FAILED,
                 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFLICTING_RECORD,
                 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PERMISSION_DENIED,
                 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_TRANSACTION_CONFLICT,
+                _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_CONFIG_INVALID,
+                _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_PERMISSION_DENIED,
             }:
-                raise
+                raise SEOMigrationGitHubPublisherError(
+                    code=exc.code,
+                    safe_message=exc.safe_message,
+                    status_code=exc.status_code,
+                    stage=exc.stage,
+                    provider_message=exc.provider_message,
+                    diagnostics=diagnostics,
+                ) from exc
             raise SEOMigrationGitHubPublisherError(
                 code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PROVISIONING_FAILED,
                 safe_message="Managed-site DNS provisioning failed before deploy dispatch.",
                 status_code=exc.status_code,
                 stage=exc.stage or "dns_provision",
                 provider_message=exc.provider_message,
+                diagnostics=diagnostics,
             ) from exc
         previous_ips_raw = ensure_result.get("dns_previous_ips")
         previous_ips: list[str] = []
@@ -2691,6 +2762,9 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             dns_created=bool(ensure_result.get("dns_created")),
             dns_ttl=_coerce_int(ensure_result.get("dns_ttl")) or normalized_ttl,
             result=_coerce_string(ensure_result.get("result")) or "exists",
+            gcp_credential_source=credential_source,
+            gcp_principal_email=principal_email,
+            gcp_impersonated_service_account_email=impersonated_service_account_email,
         )
 
     def dispatch_deploy(
@@ -6736,10 +6810,13 @@ def _upsert_namespace_scoped_ghcr_pull_secret(
 
 def _ensure_managed_site_global_static_ip(
     *,
-    gcp_deploy_key: str,
+    gcp_deploy_key: str | None,
     project_id: str,
     static_ip_name: str,
     timeout_seconds: int,
+    gcp_credential_source: str | None = None,
+    gcp_principal_email: str | None = None,
+    gcp_impersonated_service_account_email: str | None = None,
 ) -> dict[str, object]:
     normalized_project_id = _coerce_string(project_id)
     normalized_static_ip_name = _coerce_string(static_ip_name)
@@ -6749,22 +6826,42 @@ def _ensure_managed_site_global_static_ip(
             safe_message="Managed site static IP provisioning is missing required project or static IP name.",
             stage="static_ip_provision",
         )
-    access_token = _resolve_google_access_token_from_service_account_json(
-        credentials_json=gcp_deploy_key,
-        missing_code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFIG_MISSING,
-        missing_safe_message=(
-            "Managed deploy runtime credential is unavailable for static IP provisioning."
-        ),
-        invalid_code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFIG_MISSING,
-        invalid_safe_message=(
-            "Managed deploy runtime credential is invalid for static IP provisioning."
-        ),
-        integration_code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROVISIONING_FAILED,
-        integration_safe_message=(
-            "Google auth runtime dependency is unavailable for static IP provisioning."
-        ),
-        stage="static_ip_provision",
-    )
+    try:
+        access_token = _resolve_google_access_token_for_managed_deploy_operations(
+            credentials_json=gcp_deploy_key,
+            impersonated_service_account_email=gcp_impersonated_service_account_email,
+            missing_code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFIG_MISSING,
+            missing_safe_message=(
+                "Managed deploy runtime credential is unavailable for static IP provisioning."
+            ),
+            invalid_code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFIG_MISSING,
+            invalid_safe_message=(
+                "Managed deploy runtime credential is invalid for static IP provisioning."
+            ),
+            integration_code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROVISIONING_FAILED,
+            integration_safe_message=(
+                "Google auth runtime dependency is unavailable for static IP provisioning."
+            ),
+            stage="static_ip_provision",
+        )
+    except SEOMigrationGitHubPublisherError as exc:
+        raise _classify_managed_site_static_ip_provisioning_error(
+            exc=exc,
+            operation="credential_resolve",
+            gcp_credential_source=gcp_credential_source,
+            gcp_principal_email=gcp_principal_email,
+            gcp_impersonated_service_account_email=gcp_impersonated_service_account_email,
+            force_reason_code=(
+                exc.code
+                if exc.code
+                in {
+                    _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFIG_MISSING,
+                    _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_CONFIG_INVALID,
+                    _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_PERMISSION_DENIED,
+                }
+                else None
+            ),
+        ) from exc
     encoded_project = urllib.parse.quote(normalized_project_id, safe="")
     encoded_static_ip_name = urllib.parse.quote(normalized_static_ip_name, safe="")
     describe_url = (
@@ -6794,6 +6891,9 @@ def _ensure_managed_site_global_static_ip(
         raise _classify_managed_site_static_ip_provisioning_error(
             exc=exc,
             operation="describe",
+            gcp_credential_source=gcp_credential_source,
+            gcp_principal_email=gcp_principal_email,
+            gcp_impersonated_service_account_email=gcp_impersonated_service_account_email,
         ) from exc
     if isinstance(existing_payload, dict):
         return {
@@ -6827,6 +6927,9 @@ def _ensure_managed_site_global_static_ip(
                 raise _classify_managed_site_static_ip_provisioning_error(
                     exc=describe_exc,
                     operation="describe_after_create",
+                    gcp_credential_source=gcp_credential_source,
+                    gcp_principal_email=gcp_principal_email,
+                    gcp_impersonated_service_account_email=gcp_impersonated_service_account_email,
                 ) from describe_exc
             if isinstance(raced_payload, dict):
                 return {
@@ -6846,11 +6949,17 @@ def _ensure_managed_site_global_static_ip(
                     provider_message=exc.provider_message,
                 ),
                 operation="describe_after_create",
+                gcp_credential_source=gcp_credential_source,
+                gcp_principal_email=gcp_principal_email,
+                gcp_impersonated_service_account_email=gcp_impersonated_service_account_email,
                 force_reason_code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFLICT,
             ) from exc
         raise _classify_managed_site_static_ip_provisioning_error(
             exc=exc,
             operation="create",
+            gcp_credential_source=gcp_credential_source,
+            gcp_principal_email=gcp_principal_email,
+            gcp_impersonated_service_account_email=gcp_impersonated_service_account_email,
         ) from exc
 
     last_payload: dict[str, object] | None = None
@@ -6866,6 +6975,9 @@ def _ensure_managed_site_global_static_ip(
             raise _classify_managed_site_static_ip_provisioning_error(
                 exc=exc,
                 operation="describe_after_create",
+                gcp_credential_source=gcp_credential_source,
+                gcp_principal_email=gcp_principal_email,
+                gcp_impersonated_service_account_email=gcp_impersonated_service_account_email,
             ) from exc
         if isinstance(created_payload, dict):
             last_payload = created_payload
@@ -6882,6 +6994,9 @@ def _ensure_managed_site_global_static_ip(
                 stage="static_ip_provision",
             ),
             operation="describe_after_create",
+            gcp_credential_source=gcp_credential_source,
+            gcp_principal_email=gcp_principal_email,
+            gcp_impersonated_service_account_email=gcp_impersonated_service_account_email,
         )
     return {
         "static_ip_address": _coerce_string(last_payload.get("address")),
@@ -6894,6 +7009,9 @@ def _classify_managed_site_static_ip_provisioning_error(
     *,
     exc: SEOMigrationGitHubPublisherError,
     operation: str,
+    gcp_credential_source: str | None = None,
+    gcp_principal_email: str | None = None,
+    gcp_impersonated_service_account_email: str | None = None,
     force_reason_code: str | None = None,
 ) -> SEOMigrationGitHubPublisherError:
     normalized_operation = _normalize_static_ip_operation(operation)
@@ -6936,9 +7054,39 @@ def _classify_managed_site_static_ip_provisioning_error(
         ):
             reason_code = _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PERMISSION_DENIED
             error_category = "permission_denied"
+            principal_hint = _normalize_gcp_principal_email(gcp_principal_email)
+            if principal_hint:
+                permission_hint = (
+                    f"Grant required global address permissions to {principal_hint} "
+                    "(compute.globalAddresses.get/create)."
+                )
+            else:
+                permission_hint = (
+                    "Grant control-plane deploy identity permissions to describe/create global addresses "
+                    "(compute.globalAddresses.get/create)."
+                )
+    elif force_reason_code == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_CONFIG_INVALID:
+        error_category = "impersonation_config_invalid"
+    elif force_reason_code == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_PERMISSION_DENIED:
+        error_category = "impersonation_permission_denied"
+        source_principal_hint = _normalize_gcp_principal_email(gcp_principal_email)
+        target_principal_hint = _normalize_gcp_impersonated_service_account_email(
+            gcp_impersonated_service_account_email
+        )
+        if source_principal_hint and target_principal_hint:
             permission_hint = (
-                "Grant control-plane deploy identity permissions to describe/create global addresses "
-                "(compute.globalAddresses.get/create)."
+                f"Grant roles/iam.serviceAccountTokenCreator to {source_principal_hint} "
+                f"on {target_principal_hint}."
+            )
+        elif target_principal_hint:
+            permission_hint = (
+                "Grant roles/iam.serviceAccountTokenCreator to the control-plane principal "
+                f"on {target_principal_hint}."
+            )
+        else:
+            permission_hint = (
+                "Grant roles/iam.serviceAccountTokenCreator to the control-plane principal "
+                "on the configured managed deploy service account."
             )
     elif force_reason_code == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFLICT:
         error_category = "conflict"
@@ -6960,6 +7108,9 @@ def _classify_managed_site_static_ip_provisioning_error(
             "static_ip_error_summary": error_summary,
             "static_ip_exit_code": None,
             "static_ip_permission_hint": permission_hint,
+            "gcp_credential_source": gcp_credential_source,
+            "gcp_principal_email": gcp_principal_email,
+            "gcp_impersonated_service_account_email": gcp_impersonated_service_account_email,
         }
     )
 
@@ -7066,6 +7217,16 @@ def _derive_static_ip_error_code(*, provider_message_lower: str, status_code: in
 
 
 def _derive_static_ip_provisioning_safe_message(*, reason_code: str) -> str:
+    if reason_code == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_CONFIG_INVALID:
+        return (
+            "Managed deploy impersonation configuration is invalid. "
+            "Configure GCP_MANAGED_DEPLOY as a service-account email only."
+        )
+    if reason_code == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_PERMISSION_DENIED:
+        return (
+            "Managed deploy impersonation is not authorized. "
+            "Grant roles/iam.serviceAccountTokenCreator for the configured managed deploy service account."
+        )
     if reason_code == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PERMISSION_DENIED:
         return (
             "Managed-site static IP provisioning is not authorized for the configured GCP project."
@@ -7096,7 +7257,7 @@ def _normalize_static_ip_operation(value: object) -> str | None:
     if not normalized:
         return None
     normalized_lower = normalized.strip().lower()
-    if normalized_lower in {"describe", "create", "describe_after_create"}:
+    if normalized_lower in {"describe", "create", "describe_after_create", "credential_resolve"}:
         return normalized_lower
     return None
 
@@ -7116,6 +7277,7 @@ def _normalize_static_ip_error_diagnostics(value: object) -> dict[str, object] |
         max_length=240,
     )
     normalized_exit_code = _coerce_int(value.get("static_ip_exit_code"))
+    credential_diagnostics = _normalize_gcp_credential_diagnostics(value)
     if normalized_exit_code is not None:
         normalized_exit_code = int(normalized_exit_code)
     return {
@@ -7125,18 +7287,22 @@ def _normalize_static_ip_error_diagnostics(value: object) -> dict[str, object] |
         "static_ip_error_summary": normalized_summary,
         "static_ip_exit_code": normalized_exit_code,
         "static_ip_permission_hint": normalized_permission_hint,
+        "gcp_credential_source": credential_diagnostics.get("gcp_credential_source"),
+        "gcp_principal_email": credential_diagnostics.get("gcp_principal_email"),
+        "gcp_impersonated_service_account_email": credential_diagnostics.get("gcp_impersonated_service_account_email"),
     }
 
 
 def _ensure_managed_site_dns_a_record(
     *,
-    gcp_deploy_key: str,
+    gcp_deploy_key: str | None,
     dns_project_id: str,
     dns_managed_zone: str,
     record_name: str,
     expected_ip_address: str,
     ttl: int,
     timeout_seconds: int,
+    gcp_impersonated_service_account_email: str | None = None,
 ) -> dict[str, object]:
     normalized_project_id = _coerce_string(dns_project_id)
     normalized_zone = _coerce_string(dns_managed_zone)
@@ -7156,8 +7322,9 @@ def _ensure_managed_site_dns_a_record(
             safe_message="Managed-site DNS provisioning is missing required DNS project/zone/record/ip config.",
             stage="dns_provision",
         )
-    access_token = _resolve_google_access_token_from_service_account_json(
+    access_token = _resolve_google_access_token_for_managed_deploy_operations(
         credentials_json=gcp_deploy_key,
+        impersonated_service_account_email=gcp_impersonated_service_account_email,
         missing_code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFIG_MISSING,
         missing_safe_message=(
             "Managed deploy runtime credential is unavailable for DNS provisioning."
@@ -7481,6 +7648,279 @@ def _resolve_google_access_token_from_service_account_json(
     return token
 
 
+def _resolve_google_access_token_from_google_auth_default(
+    *,
+    missing_code: str,
+    missing_safe_message: str,
+    integration_code: str,
+    integration_safe_message: str,
+    stage: str,
+) -> str:
+    try:
+        from google.auth import default as google_auth_default
+        from google.auth.transport.requests import Request as GoogleAuthRequest
+    except ImportError as exc:  # pragma: no cover - environment dependent
+        raise SEOMigrationGitHubPublisherError(
+            code=integration_code,
+            safe_message=integration_safe_message,
+            stage=stage,
+        ) from exc
+    try:
+        credentials, _project_id = google_auth_default(
+            scopes=("https://www.googleapis.com/auth/cloud-platform",),
+        )
+        credentials.refresh(GoogleAuthRequest())
+        token = _coerce_string(getattr(credentials, "token", None))
+    except Exception as exc:
+        provider_message = _sanitize_github_error_message(str(exc), max_length=300)
+        raise SEOMigrationGitHubPublisherError(
+            code=missing_code,
+            safe_message=missing_safe_message,
+            stage=stage,
+            provider_message=provider_message,
+        ) from exc
+    if not token:
+        raise SEOMigrationGitHubPublisherError(
+            code=missing_code,
+            safe_message=missing_safe_message,
+            stage=stage,
+        )
+    return token
+
+
+def _resolve_google_access_token_for_managed_deploy_operations(
+    *,
+    credentials_json: str | None,
+    impersonated_service_account_email: str | None = None,
+    missing_code: str = "runtime_credential_missing",
+    missing_safe_message: str = (
+        "Managed deploy runtime credential is unavailable for image pull secret provisioning."
+    ),
+    invalid_code: str = "runtime_configuration_invalid",
+    invalid_safe_message: str = (
+        "Managed deploy runtime credential is invalid for image pull secret provisioning."
+    ),
+    integration_code: str = "runtime_integration_unavailable",
+    integration_safe_message: str = (
+        "Google auth runtime dependency is unavailable for image pull secret provisioning."
+    ),
+    stage: str = "image_pull_secret_provision",
+) -> str:
+    normalized_impersonated_service_account_email = _coerce_string(impersonated_service_account_email)
+    if normalized_impersonated_service_account_email:
+        validated_impersonated_service_account_email = _validate_managed_deploy_impersonation_service_account_email(
+            normalized_impersonated_service_account_email,
+            stage=stage,
+        )
+        return _resolve_google_access_token_via_impersonation(
+            credentials_json=credentials_json,
+            target_service_account_email=validated_impersonated_service_account_email,
+            missing_code=missing_code,
+            missing_safe_message=missing_safe_message,
+            invalid_code=invalid_code,
+            invalid_safe_message=invalid_safe_message,
+            integration_code=integration_code,
+            integration_safe_message=integration_safe_message,
+            permission_denied_code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_PERMISSION_DENIED,
+            permission_denied_safe_message=(
+                "Managed deploy impersonation is not authorized. "
+                "Grant roles/iam.serviceAccountTokenCreator for the configured managed deploy service account."
+            ),
+            stage=stage,
+        )
+
+    normalized_credentials_json = _coerce_string(credentials_json)
+    if normalized_credentials_json:
+        return _resolve_google_access_token_from_service_account_json(
+            credentials_json=normalized_credentials_json,
+            missing_code=missing_code,
+            missing_safe_message=missing_safe_message,
+            invalid_code=invalid_code,
+            invalid_safe_message=invalid_safe_message,
+            integration_code=integration_code,
+            integration_safe_message=integration_safe_message,
+            stage=stage,
+        )
+    return _resolve_google_access_token_from_google_auth_default(
+        missing_code=missing_code,
+        missing_safe_message=missing_safe_message,
+        integration_code=integration_code,
+        integration_safe_message=integration_safe_message,
+        stage=stage,
+    )
+
+
+def _resolve_google_access_token_via_impersonation(
+    *,
+    credentials_json: str | None,
+    target_service_account_email: str,
+    missing_code: str,
+    missing_safe_message: str,
+    invalid_code: str,
+    invalid_safe_message: str,
+    integration_code: str,
+    integration_safe_message: str,
+    permission_denied_code: str,
+    permission_denied_safe_message: str,
+    stage: str,
+) -> str:
+    normalized_credentials_json = _coerce_string(credentials_json)
+    try:
+        from google.auth import default as google_auth_default
+        from google.auth import impersonated_credentials
+        from google.auth.transport.requests import Request as GoogleAuthRequest
+        from google.oauth2 import service_account
+    except ImportError as exc:  # pragma: no cover - environment dependent
+        raise SEOMigrationGitHubPublisherError(
+            code=integration_code,
+            safe_message=integration_safe_message,
+            stage=stage,
+        ) from exc
+
+    source_credentials = None
+    if normalized_credentials_json:
+        try:
+            parsed_credentials = json.loads(normalized_credentials_json)
+        except json.JSONDecodeError as exc:
+            raise SEOMigrationGitHubPublisherError(
+                code=invalid_code,
+                safe_message=invalid_safe_message,
+                stage=stage,
+            ) from exc
+        try:
+            source_credentials = service_account.Credentials.from_service_account_info(
+                parsed_credentials,
+                scopes=("https://www.googleapis.com/auth/cloud-platform",),
+            )
+        except Exception as exc:
+            raise SEOMigrationGitHubPublisherError(
+                code=invalid_code,
+                safe_message=invalid_safe_message,
+                stage=stage,
+            ) from exc
+    else:
+        try:
+            source_credentials, _project_id = google_auth_default(
+                scopes=("https://www.googleapis.com/auth/cloud-platform",),
+            )
+        except Exception as exc:
+            provider_message = _sanitize_github_error_message(str(exc), max_length=300)
+            provider_message_lower = (provider_message or "").lower()
+            if _is_managed_deploy_impersonation_permission_denied_error(provider_message_lower):
+                raise SEOMigrationGitHubPublisherError(
+                    code=permission_denied_code,
+                    safe_message=permission_denied_safe_message,
+                    stage=stage,
+                    provider_message=provider_message,
+                ) from exc
+            raise SEOMigrationGitHubPublisherError(
+                code=missing_code,
+                safe_message=missing_safe_message,
+                stage=stage,
+                provider_message=provider_message,
+            ) from exc
+
+    try:
+        impersonated = impersonated_credentials.Credentials(
+            source_credentials=source_credentials,
+            target_principal=target_service_account_email,
+            target_scopes=("https://www.googleapis.com/auth/cloud-platform",),
+            lifetime=3600,
+        )
+        impersonated.refresh(GoogleAuthRequest())
+        token = _coerce_string(getattr(impersonated, "token", None))
+    except Exception as exc:
+        provider_message = _sanitize_github_error_message(str(exc), max_length=300)
+        provider_message_lower = (provider_message or "").lower()
+        if _is_managed_deploy_impersonation_permission_denied_error(provider_message_lower):
+            raise SEOMigrationGitHubPublisherError(
+                code=permission_denied_code,
+                safe_message=permission_denied_safe_message,
+                stage=stage,
+                provider_message=provider_message,
+            ) from exc
+        raise SEOMigrationGitHubPublisherError(
+            code=invalid_code,
+            safe_message=invalid_safe_message,
+            stage=stage,
+            provider_message=provider_message,
+        ) from exc
+    if not token:
+        raise SEOMigrationGitHubPublisherError(
+            code=invalid_code,
+            safe_message=invalid_safe_message,
+            stage=stage,
+        )
+    return token
+
+
+def _is_managed_deploy_impersonation_permission_denied_error(provider_message_lower: str) -> bool:
+    if not provider_message_lower:
+        return False
+    return any(
+        token in provider_message_lower
+        for token in (
+            "permission denied",
+            "permission_denied",
+            "iam.serviceaccounts.getaccesstoken",
+            "service account token creator",
+            "serviceaccounttokencreator",
+            "403",
+        )
+    )
+
+
+def _managed_deploy_impersonation_value_contains_secret_material(value: str) -> bool:
+    normalized = (value or "").strip().lower()
+    if not normalized:
+        return False
+    if normalized.startswith("{") or normalized.startswith("["):
+        return True
+    if "private_key" in normalized:
+        return True
+    if "-----begin" in normalized and "private key" in normalized:
+        return True
+    if "\"type\"" in normalized and "service_account" in normalized:
+        return True
+    return False
+
+
+def _validate_managed_deploy_impersonation_service_account_email(
+    value: object,
+    *,
+    stage: str,
+) -> str:
+    normalized = (_coerce_string(value) or "").strip().lower()
+    if not normalized:
+        raise SEOMigrationGitHubPublisherError(
+            code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_CONFIG_INVALID,
+            safe_message=(
+                "Managed deploy impersonation configuration is invalid. "
+                "Set GCP_MANAGED_DEPLOY to a service account email."
+            ),
+            stage=stage,
+        )
+    if _managed_deploy_impersonation_value_contains_secret_material(normalized):
+        raise SEOMigrationGitHubPublisherError(
+            code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_CONFIG_INVALID,
+            safe_message=(
+                "Managed deploy impersonation configuration is invalid. "
+                "GCP_MANAGED_DEPLOY must contain only a service-account email."
+            ),
+            stage=stage,
+        )
+    if not _MANAGED_DEPLOY_SERVICE_ACCOUNT_EMAIL_PATTERN.match(normalized):
+        raise SEOMigrationGitHubPublisherError(
+            code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_CONFIG_INVALID,
+            safe_message=(
+                "Managed deploy impersonation configuration is invalid. "
+                "GCP_MANAGED_DEPLOY must be a valid service-account email."
+            ),
+            stage=stage,
+        )
+    return normalized
+
+
 def _request_google_json(
     *,
     method: str,
@@ -7652,6 +8092,101 @@ def _extract_http_error_message_for_raw_http(exc: urllib.error.HTTPError) -> str
     except Exception:  # pragma: no cover - defensive
         pass
     return payload[:300]
+
+
+def _resolve_google_credential_principal(
+    *,
+    credentials_json: object,
+    timeout_seconds: int,
+) -> tuple[str, str | None]:
+    normalized_credentials = _coerce_string(credentials_json)
+    if normalized_credentials:
+        try:
+            parsed = json.loads(normalized_credentials)
+        except (TypeError, ValueError):
+            return (_GCP_CREDENTIAL_SOURCE_UNKNOWN, None)
+        if isinstance(parsed, dict):
+            client_email = _normalize_gcp_principal_email(parsed.get("client_email"))
+            return (_GCP_CREDENTIAL_SOURCE_SERVICE_ACCOUNT_JSON, client_email)
+        return (_GCP_CREDENTIAL_SOURCE_UNKNOWN, None)
+    metadata_email = _lookup_google_metadata_principal_email(timeout_seconds=timeout_seconds)
+    if metadata_email:
+        return (_GCP_CREDENTIAL_SOURCE_ADC_METADATA, metadata_email)
+    return (_GCP_CREDENTIAL_SOURCE_UNKNOWN, None)
+
+
+def _lookup_google_metadata_principal_email(*, timeout_seconds: int) -> str | None:
+    metadata_url = "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/email"
+    request = urllib.request.Request(
+        url=metadata_url,
+        method="GET",
+        headers={
+            "Metadata-Flavor": "Google",
+            "User-Agent": "MBSRN-MigrationPublisher/1.0",
+        },
+    )
+    resolved_timeout = max(1, min(int(timeout_seconds or 0), 3))
+    try:
+        with urllib.request.urlopen(request, timeout=resolved_timeout) as response:
+            response_body = response.read().decode("utf-8", errors="replace").strip()
+    except Exception:
+        return None
+    return _normalize_gcp_principal_email(response_body)
+
+
+def _normalize_gcp_credential_source(value: object) -> str | None:
+    normalized = _coerce_string(value)
+    if not normalized:
+        return None
+    lowered = normalized.strip().lower()
+    if lowered in {
+        _GCP_CREDENTIAL_SOURCE_SERVICE_ACCOUNT_JSON,
+        _GCP_CREDENTIAL_SOURCE_MANAGED_DEPLOY_IMPERSONATION,
+        _GCP_CREDENTIAL_SOURCE_ADC_METADATA,
+        _GCP_CREDENTIAL_SOURCE_UNKNOWN,
+    }:
+        return lowered
+    return None
+
+
+def _normalize_gcp_principal_email(value: object) -> str | None:
+    normalized = _sanitize_github_error_message(value, max_length=200)
+    if not normalized:
+        return None
+    lowered = normalized.strip().lower()
+    if "@" not in lowered:
+        return None
+    if "private_key" in lowered or "token" in lowered:
+        return None
+    return lowered
+
+
+def _normalize_gcp_impersonated_service_account_email(value: object) -> str | None:
+    normalized = _normalize_gcp_principal_email(value)
+    if not normalized:
+        return None
+    if _managed_deploy_impersonation_value_contains_secret_material(normalized):
+        return None
+    if not _MANAGED_DEPLOY_SERVICE_ACCOUNT_EMAIL_PATTERN.match(normalized):
+        return None
+    return normalized
+
+
+def _normalize_gcp_credential_diagnostics(value: object) -> dict[str, object]:
+    normalized_source: str | None = None
+    normalized_principal: str | None = None
+    normalized_impersonated_principal: str | None = None
+    if isinstance(value, dict):
+        normalized_source = _normalize_gcp_credential_source(value.get("gcp_credential_source"))
+        normalized_principal = _normalize_gcp_principal_email(value.get("gcp_principal_email"))
+        normalized_impersonated_principal = _normalize_gcp_impersonated_service_account_email(
+            value.get("gcp_impersonated_service_account_email")
+        )
+    return {
+        "gcp_credential_source": normalized_source,
+        "gcp_principal_email": normalized_principal,
+        "gcp_impersonated_service_account_email": normalized_impersonated_principal,
+    }
 
 
 def _join_repo_path(root: str, path: str) -> str:
@@ -7828,6 +8363,10 @@ _GKE_ENV_CLUSTER_LOCATION = "KUBERNETES_CLUSTER_LOCATION"
 _GIT_ENV_USERID = "GIT_USERID"
 _GIT_ENV_EMAIL = "GIT_EMAIL"
 _GIT_ENV_TOKEN = "GIT_TOKEN"
+_GCP_CREDENTIAL_SOURCE_SERVICE_ACCOUNT_JSON = "service_account_json"
+_GCP_CREDENTIAL_SOURCE_MANAGED_DEPLOY_IMPERSONATION = "managed_deploy_impersonation"
+_GCP_CREDENTIAL_SOURCE_ADC_METADATA = "adc_metadata_server"
+_GCP_CREDENTIAL_SOURCE_UNKNOWN = "unknown"
 _IMAGE_PULL_SECRET_CONFIG_SOURCE_CONTROL_PLANE = "control_plane_runtime"
 _MANAGED_GKE_CONFIG_CLUSTER_NAME = "cluster_name"
 _MANAGED_GKE_CONFIG_CLUSTER_LOCATION = "cluster_location"
@@ -7872,6 +8411,12 @@ _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROJECT_NOT_FOUND = (
 )
 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFLICT = (
     "managed_site_static_ip_conflict"
+)
+_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_CONFIG_INVALID = (
+    "managed_deploy_impersonation_config_invalid"
+)
+_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_PERMISSION_DENIED = (
+    "managed_deploy_impersonation_permission_denied"
 )
 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_MISSING = "managed_site_static_ip_missing"
 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFIG_MISSING = "managed_site_dns_config_missing"

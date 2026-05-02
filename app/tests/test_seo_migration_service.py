@@ -250,6 +250,9 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         ensure_static_ip_created: bool = False,
         ensure_static_ip_result: str = "exists",
         ensure_static_ip_project_id: str | None = None,
+        ensure_static_ip_credential_source: str | None = None,
+        ensure_static_ip_principal_email: str | None = None,
+        ensure_static_ip_impersonated_service_account_email: str | None = None,
         fail_dns_ensure: bool = False,
         dns_ensure_error_code: str | None = None,
         dns_ensure_error_message: str | None = None,
@@ -263,6 +266,9 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         ensure_dns_updated: bool = False,
         ensure_dns_ttl: int = 300,
         ensure_dns_result: str = "exists",
+        ensure_dns_credential_source: str | None = None,
+        ensure_dns_principal_email: str | None = None,
+        ensure_dns_impersonated_service_account_email: str | None = None,
     ) -> None:
         self.existing_repository = existing_repository
         self.ensure_repository_error_code = ensure_repository_error_code
@@ -373,6 +379,9 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         self.ensure_static_ip_created = ensure_static_ip_created
         self.ensure_static_ip_result = ensure_static_ip_result
         self.ensure_static_ip_project_id = ensure_static_ip_project_id
+        self.ensure_static_ip_credential_source = ensure_static_ip_credential_source
+        self.ensure_static_ip_principal_email = ensure_static_ip_principal_email
+        self.ensure_static_ip_impersonated_service_account_email = ensure_static_ip_impersonated_service_account_email
         self.fail_dns_ensure = fail_dns_ensure
         self.dns_ensure_error_code = dns_ensure_error_code
         self.dns_ensure_error_message = dns_ensure_error_message
@@ -386,6 +395,9 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         self.ensure_dns_updated = ensure_dns_updated
         self.ensure_dns_ttl = ensure_dns_ttl
         self.ensure_dns_result = ensure_dns_result
+        self.ensure_dns_credential_source = ensure_dns_credential_source
+        self.ensure_dns_principal_email = ensure_dns_principal_email
+        self.ensure_dns_impersonated_service_account_email = ensure_dns_impersonated_service_account_email
         self.publish_calls: list[
             tuple[SEOMigrationGitHubPublishTarget, list[SEOMigrationGitHubPublishFile], str, bool]
         ] = []
@@ -802,6 +814,9 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
             static_ip_created=bool(self.ensure_static_ip_created),
             gcp_project_id=project_id,
             result=self.ensure_static_ip_result,
+            gcp_credential_source=self.ensure_static_ip_credential_source,
+            gcp_principal_email=self.ensure_static_ip_principal_email,
+            gcp_impersonated_service_account_email=self.ensure_static_ip_impersonated_service_account_email,
         )
 
     def ensure_managed_site_dns_a_record(
@@ -847,6 +862,9 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
             dns_created=bool(self.ensure_dns_created),
             dns_ttl=int(self.ensure_dns_ttl),
             result=str(self.ensure_dns_result or "exists"),
+            gcp_credential_source=self.ensure_dns_credential_source,
+            gcp_principal_email=self.ensure_dns_principal_email,
+            gcp_impersonated_service_account_email=self.ensure_dns_impersonated_service_account_email,
         )
 
     def refresh_deploy_run_status(
@@ -3208,6 +3226,11 @@ def test_deploy_ensures_managed_site_static_ip_before_dispatch_and_records_metad
         ensure_static_ip_created=True,
         ensure_static_ip_result="created",
         ensure_static_ip_address="34.160.224.212",
+        ensure_static_ip_credential_source="service_account_json",
+        ensure_static_ip_principal_email="mbsrn-api@mbsrn-prod.iam.gserviceaccount.com",
+        ensure_static_ip_impersonated_service_account_email=(
+            "mbsrn-managed-deploy@mbsrn-prod.iam.gserviceaccount.com"
+        ),
     )
     service = _build_service(
         db_session,
@@ -3247,6 +3270,15 @@ def test_deploy_ensures_managed_site_static_ip_before_dispatch_and_records_metad
     assert deploy_result.result.get("static_ip_created") is True
     assert deploy_result.result.get("static_ip_ensure_result") == "created"
     assert deploy_result.result.get("static_ip_project_id")
+    assert deploy_result.result.get("static_ip_gcp_credential_source") == "service_account_json"
+    assert (
+        deploy_result.result.get("static_ip_gcp_principal_email")
+        == "mbsrn-api@mbsrn-prod.iam.gserviceaccount.com"
+    )
+    assert (
+        deploy_result.result.get("static_ip_gcp_impersonated_service_account_email")
+        == "mbsrn-managed-deploy@mbsrn-prod.iam.gserviceaccount.com"
+    )
     ensure_logs = [
         record.__dict__.get("json_fields")
         for record in caplog.records
@@ -3255,7 +3287,15 @@ def test_deploy_ensures_managed_site_static_ip_before_dispatch_and_records_metad
     ]
     assert ensure_logs
     assert ensure_logs[-1].get("result") == "created"
+    assert ensure_logs[-1].get("gcp_credential_source") == "service_account_json"
+    assert ensure_logs[-1].get("gcp_principal_email") == "mbsrn-api@mbsrn-prod.iam.gserviceaccount.com"
+    assert (
+        ensure_logs[-1].get("gcp_impersonated_service_account_email")
+        == "mbsrn-managed-deploy@mbsrn-prod.iam.gserviceaccount.com"
+    )
+    assert ensure_logs[-1].get("operation") == "ensure"
     assert "gcp_deploy_key" not in json.dumps(ensure_logs[-1]).lower()
+    assert "private_key" not in json.dumps(ensure_logs[-1]).lower()
 
 
 def test_deploy_ensures_managed_site_static_ip_existing_before_dispatch(db_session) -> None:
@@ -3327,6 +3367,9 @@ def test_deploy_blocks_dispatch_when_managed_site_static_ip_ensure_fails(db_sess
             "static_ip_error_summary": "Permission denied while creating static IP.",
             "static_ip_exit_code": None,
             "static_ip_permission_hint": "Grant compute.globalAddresses.create permission.",
+            "gcp_credential_source": "service_account_json",
+            "gcp_principal_email": "mbsrn-api@mbsrn-prod.iam.gserviceaccount.com",
+            "gcp_impersonated_service_account_email": "mbsrn-managed-deploy@mbsrn-prod.iam.gserviceaccount.com",
         },
     )
     service = _build_service(
@@ -3361,6 +3404,12 @@ def test_deploy_blocks_dispatch_when_managed_site_static_ip_ensure_fails(db_sess
     assert latest.get("static_ip_error_code") == "PERMISSION_DENIED"
     assert latest.get("static_ip_error_summary") == "Permission denied while creating static IP."
     assert latest.get("static_ip_permission_hint") == "Grant compute.globalAddresses.create permission."
+    assert latest.get("static_ip_gcp_credential_source") == "service_account_json"
+    assert latest.get("static_ip_gcp_principal_email") == "mbsrn-api@mbsrn-prod.iam.gserviceaccount.com"
+    assert (
+        latest.get("static_ip_gcp_impersonated_service_account_email")
+        == "mbsrn-managed-deploy@mbsrn-prod.iam.gserviceaccount.com"
+    )
     ensure_logs = [
         record.__dict__.get("json_fields")
         for record in caplog.records
@@ -3375,6 +3424,13 @@ def test_deploy_blocks_dispatch_when_managed_site_static_ip_ensure_fails(db_sess
     assert ensure_logs[-1].get("static_ip_error_code") == "PERMISSION_DENIED"
     assert ensure_logs[-1].get("static_ip_error_summary") == "Permission denied while creating static IP."
     assert ensure_logs[-1].get("static_ip_permission_hint") == "Grant compute.globalAddresses.create permission."
+    assert ensure_logs[-1].get("gcp_credential_source") == "service_account_json"
+    assert ensure_logs[-1].get("gcp_principal_email") == "mbsrn-api@mbsrn-prod.iam.gserviceaccount.com"
+    assert (
+        ensure_logs[-1].get("gcp_impersonated_service_account_email")
+        == "mbsrn-managed-deploy@mbsrn-prod.iam.gserviceaccount.com"
+    )
+    assert ensure_logs[-1].get("operation") == "create"
     assert "gcp_deploy_key" not in json.dumps(ensure_logs[-1]).lower()
     assert "private_key" not in json.dumps(ensure_logs[-1]).lower()
     assert "access_token" not in json.dumps(ensure_logs[-1]).lower()
@@ -3414,6 +3470,55 @@ def test_deploy_blocks_dispatch_when_managed_site_static_ip_config_is_missing(db
     assert latest.get("dispatch_service_reason_code") == "managed_site_static_ip_config_missing"
 
 
+def test_deploy_blocks_dispatch_when_managed_deploy_impersonation_permission_denied(db_session) -> None:
+    publisher = _RecordingGitHubPublisher(
+        fail_static_ip_ensure=True,
+        static_ip_ensure_error_code="managed_deploy_impersonation_permission_denied",
+        static_ip_ensure_error_message="Simulated managed deploy impersonation permission denied.",
+        static_ip_ensure_error_stage="static_ip_provision",
+        static_ip_ensure_error_diagnostics={
+            "gcp_credential_source": "managed_deploy_impersonation",
+            "gcp_principal_email": "mbsrn-api@mbsrn-prod.iam.gserviceaccount.com",
+            "gcp_impersonated_service_account_email": "mbsrn-managed-deploy@mbsrn-prod.iam.gserviceaccount.com",
+            "static_ip_permission_hint": (
+                "Grant roles/iam.serviceAccountTokenCreator to mbsrn-api@mbsrn-prod.iam.gserviceaccount.com "
+                "on mbsrn-managed-deploy@mbsrn-prod.iam.gserviceaccount.com."
+            ),
+        },
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    artifact = _prepare_published_artifact(service, business_id=business_id, site_id=site_id)
+
+    with pytest.raises(SEOMigrationValidationError, match="impersonation permission denied"):
+        service.deploy_artifact_version(
+            business_id=business_id,
+            site_id=site_id,
+            artifact_version_id=artifact.id,
+            dry_run=False,
+            principal_id="principal-1",
+        )
+
+    assert publisher.ensure_managed_site_static_ip_calls
+    assert not publisher.deploy_calls
+    workspace = service.get_workspace(business_id=business_id, site_id=site_id)
+    deploy_history = workspace.deploy_history_json or []
+    assert deploy_history
+    latest = deploy_history[-1]
+    assert latest.get("failure_reason") == "managed_deploy_impersonation_permission_denied"
+    assert latest.get("dispatch_service_reason_code") == "managed_deploy_impersonation_permission_denied"
+    assert latest.get("dispatch_result_stage") == "static_ip_provision"
+    assert latest.get("static_ip_gcp_credential_source") == "managed_deploy_impersonation"
+    assert (
+        latest.get("static_ip_gcp_impersonated_service_account_email")
+        == "mbsrn-managed-deploy@mbsrn-prod.iam.gserviceaccount.com"
+    )
+
+
 def test_deploy_ensures_managed_site_dns_after_static_ip_and_before_dispatch(
     db_session, caplog, monkeypatch
 ) -> None:
@@ -3421,12 +3526,19 @@ def test_deploy_ensures_managed_site_dns_after_static_ip_and_before_dispatch(
         ensure_static_ip_created=True,
         ensure_static_ip_result="created",
         ensure_static_ip_address="34.160.224.212",
+        ensure_static_ip_credential_source="service_account_json",
+        ensure_static_ip_principal_email="mbsrn-api@mbsrn-prod.iam.gserviceaccount.com",
         ensure_dns_created=True,
         ensure_dns_updated=False,
         ensure_dns_result="created",
         ensure_dns_expected_ip="34.160.224.212",
         ensure_dns_previous_ips=(),
         ensure_dns_ttl=300,
+        ensure_dns_credential_source="service_account_json",
+        ensure_dns_principal_email="mbsrn-api@mbsrn-prod.iam.gserviceaccount.com",
+        ensure_dns_impersonated_service_account_email=(
+            "mbsrn-managed-deploy@mbsrn-prod.iam.gserviceaccount.com"
+        ),
     )
     service = _build_service(
         db_session,
@@ -3469,6 +3581,12 @@ def test_deploy_ensures_managed_site_dns_after_static_ip_and_before_dispatch(
     assert deploy_result.result.get("dns_previous_ips") == []
     assert deploy_result.result.get("dns_ttl") == 300
     assert deploy_result.result.get("dns_ensure_result") == "created"
+    assert deploy_result.result.get("dns_gcp_credential_source") == "service_account_json"
+    assert deploy_result.result.get("dns_gcp_principal_email") == "mbsrn-api@mbsrn-prod.iam.gserviceaccount.com"
+    assert (
+        deploy_result.result.get("dns_gcp_impersonated_service_account_email")
+        == "mbsrn-managed-deploy@mbsrn-prod.iam.gserviceaccount.com"
+    )
     assert deploy_result.result.get("dns_propagation_result") == "observed_expected_ip"
     assert deploy_result.result.get("dns_propagation_observed_ips") == ["34.160.224.212"]
     assert deploy_result.result.get("observed_dns_ips") == ["34.160.224.212"]
@@ -3481,6 +3599,13 @@ def test_deploy_ensures_managed_site_dns_after_static_ip_and_before_dispatch(
     ]
     assert ensure_logs
     assert ensure_logs[-1].get("result") == "created"
+    assert ensure_logs[-1].get("gcp_credential_source") == "service_account_json"
+    assert ensure_logs[-1].get("gcp_principal_email") == "mbsrn-api@mbsrn-prod.iam.gserviceaccount.com"
+    assert (
+        ensure_logs[-1].get("gcp_impersonated_service_account_email")
+        == "mbsrn-managed-deploy@mbsrn-prod.iam.gserviceaccount.com"
+    )
+    assert ensure_logs[-1].get("operation") == "ensure"
     assert "gcp_deploy_key" not in json.dumps(ensure_logs[-1]).lower()
     propagation_logs = [
         record.__dict__.get("json_fields")
@@ -5014,6 +5139,53 @@ def test_static_ip_pre_dispatch_reason_code_hint_mappings_cover_config_and_provi
             failure_stage=None,
             workflow_exists=None,
             dispatch_service_reason_code="managed_site_static_ip_conflict",
+        )
+        or ""
+    ).lower()
+
+
+def test_managed_deploy_impersonation_reason_code_hint_mappings() -> None:
+    assert "gcp_managed_deploy" in str(
+        seo_migration_module._derive_managed_gke_dispatch_readiness_message(
+            dispatch_service_reason_code="managed_deploy_impersonation_config_invalid"
+        )
+        or ""
+    ).lower()
+    assert "tokencreator" in str(
+        seo_migration_module._derive_managed_gke_dispatch_readiness_message(
+            dispatch_service_reason_code="managed_deploy_impersonation_permission_denied"
+        )
+        or ""
+    ).lower()
+    assert "gcp_managed_deploy is invalid" in str(
+        seo_migration_module._derive_deploy_failure_remediation_hint(
+            failure_reason=None,
+            failure_stage=None,
+            workflow_exists=None,
+            dispatch_service_reason_code="managed_deploy_impersonation_config_invalid",
+        )
+        or ""
+    ).lower()
+    assert "tokencreator" in str(
+        seo_migration_module._derive_deploy_failure_remediation_hint(
+            failure_reason=None,
+            failure_stage=None,
+            workflow_exists=None,
+            dispatch_service_reason_code="managed_deploy_impersonation_permission_denied",
+        )
+        or ""
+    ).lower()
+    assert "gcp_managed_deploy is invalid" in str(
+        seo_migration_module._derive_workflow_run_failure_hint(
+            failure_reason="managed_deploy_impersonation_config_invalid",
+            post_dispatch_state=None,
+        )
+        or ""
+    ).lower()
+    assert "tokencreator" in str(
+        seo_migration_module._derive_workflow_run_failure_hint(
+            failure_reason="managed_deploy_impersonation_permission_denied",
+            post_dispatch_state=None,
         )
         or ""
     ).lower()

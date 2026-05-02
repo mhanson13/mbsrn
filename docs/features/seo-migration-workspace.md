@@ -1123,6 +1123,14 @@ Post-fix rollout for existing managed sites:
     - `managed_gke_cluster_location`
     - `managed_gke_project_id`
   - `GCP_DEPLOY_KEY` (full JSON service account key with Kubernetes Engine Admin-equivalent scoped access to target cluster/project)
+  - optional control-plane impersonation config:
+    - `GCP_MANAGED_DEPLOY=<service-account-email>`
+    - this value is an email only (not JSON and not private key material)
+    - when set, control-plane static-IP and DNS ensure operations impersonate this service account
+    - when unset, control plane keeps existing ADC/Workload Identity behavior
+    - IAM contract when enabled:
+      - control-plane runtime principal (`gcp_principal_email`) requires `roles/iam.serviceAccountTokenCreator` on `GCP_MANAGED_DEPLOY`
+      - impersonated service account (`gcp_impersonated_service_account_email`) requires static-IP and DNS permissions in the managed project/zone
   - managed workflow resolves GKE inputs from admin config first; repo vars/secrets are legacy fallback only:
     - `GKE_CLUSTER_NAME = <admin managed_gke_cluster_name>` when present, otherwise `vars.KUBERNETES_CLUSTER_NAME || secrets.KUBERNETES_CLUSTER_NAME`
     - `GKE_CLUSTER_LOCATION = <admin managed_gke_cluster_location>` when present, otherwise `vars.KUBERNETES_CLUSTER_LOCATION || secrets.KUBERNETES_CLUSTER_LOCATION`
@@ -1210,6 +1218,8 @@ Post-fix rollout for existing managed sites:
       - control plane ensures the expected global address exists before workflow dispatch using admin-managed deploy credentials
       - generated target workflow still performs a preflight existence check (`gcloud compute addresses describe site-web-preview-ip-<normalized-site> --global --project "$GKE_PROJECT_ID"`) as a drift safety check
       - `managed_site_static_ip_config_missing` blocks dispatch when control-plane static IP ensure is missing required project/deploy-key config
+      - `managed_deploy_impersonation_config_invalid` blocks dispatch when `GCP_MANAGED_DEPLOY` is not a valid service-account email
+      - `managed_deploy_impersonation_permission_denied` blocks dispatch when control-plane principal cannot impersonate `GCP_MANAGED_DEPLOY`
       - static IP ensure failures are classified before dispatch with operator-safe reason codes:
         - `managed_site_static_ip_permission_denied` (control-plane identity lacks `compute.globalAddresses.get/create`)
         - `managed_site_static_ip_api_disabled` (Compute Engine API disabled for managed project)
@@ -1217,6 +1227,11 @@ Post-fix rollout for existing managed sites:
         - `managed_site_static_ip_project_not_found` (invalid/inaccessible managed project)
         - `managed_site_static_ip_conflict` (named address conflict that could not be reconciled)
         - fallback: `managed_site_static_ip_provisioning_failed`
+      - static IP ensure diagnostics include effective credential metadata for IAM remediation:
+        - `static_ip_gcp_credential_source` (`service_account_json`, `managed_deploy_impersonation`, `adc_metadata_server`, `unknown`)
+        - `static_ip_gcp_principal_email` (safe principal identity; never includes private keys/tokens)
+        - `static_ip_gcp_impersonated_service_account_email` (when impersonation is configured)
+      - permission-denied remediation must target the effective principal reported in `static_ip_gcp_principal_email` (not a hard-coded assumed service account)
     - preview DNS A record is control-plane managed before dispatch:
       - hostname: `<normalized-site>.site.mbsrn.com`
       - managed zone default: `sites`
@@ -1225,6 +1240,11 @@ Post-fix rollout for existing managed sites:
       - after DNS ensure succeeds, control plane performs a bounded propagation gate (max `120s`, sleep `10s`) and only dispatches once resolver-observed `A` matches the expected per-site static IP
       - generated target workflow still validates DNS/ingress parity as deploy-contract evidence
       - `managed_site_dns_config_missing`, `managed_site_dns_provisioning_failed`, `managed_site_dns_conflicting_record`, `managed_site_dns_permission_denied`, `managed_site_dns_transaction_conflict`, `managed_site_dns_propagation_pending` block dispatch before workflow run
+      - DNS ensure diagnostics also surface credential metadata:
+        - `dns_gcp_credential_source`
+        - `dns_gcp_principal_email`
+        - `dns_gcp_impersonated_service_account_email`
+      - permission-denied DNS remediation must grant IAM to the principal reported in `dns_gcp_principal_email`
     - generated manifests must not include `ingress.gcp.kubernetes.io/pre-shared-cert`; `ManagedCertificate` remains the desired-state certificate binding source
     - GKE may still add `ingress.gcp.kubernetes.io/pre-shared-cert` at runtime as controller metadata
     - certificate domain and ingress host must match the same site-specific preview hostname.

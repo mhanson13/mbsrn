@@ -718,6 +718,7 @@ def test_github_publisher_dependency_uses_git_token_when_present() -> None:
         migration_github_timeout_seconds=30.0,
         migration_publish_committer_name="MBSRN Automation",
         migration_publish_committer_email="automation@example.com",
+        gcp_managed_deploy=None,
     )
     with patch("app.api.deps.get_settings", return_value=settings):
         publisher = get_seo_migration_github_publisher()
@@ -732,6 +733,7 @@ def test_github_publisher_dependency_returns_misconfigured_when_token_missing() 
         migration_github_timeout_seconds=30.0,
         migration_publish_committer_name="MBSRN Automation",
         migration_publish_committer_email="automation@example.com",
+        gcp_managed_deploy=None,
     )
     with patch("app.api.deps.get_settings", return_value=settings):
         publisher = get_seo_migration_github_publisher()

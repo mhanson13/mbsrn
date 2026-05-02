@@ -377,6 +377,8 @@ Per-site success gate (managed ingress deploys):
 - `managed_certificate_failed_not_visible` should be triaged as DNS/LB visibility mismatch first.
 - pre-dispatch static IP ensure blockers (control-plane phase):
   - `managed_site_static_ip_config_missing`
+  - `managed_deploy_impersonation_config_invalid`
+  - `managed_deploy_impersonation_permission_denied`
   - `managed_site_static_ip_permission_denied`
   - `managed_site_static_ip_api_disabled`
   - `managed_site_static_ip_quota_exceeded`
@@ -410,7 +412,7 @@ UI-to-log troubleshooting mapping (Deploy consistency block):
   - logs: `seo_migration_target_readiness_check`, ingress-evidence failure records, `dispatch_service_reason_code`
 - `Ingress/static IP conflict check`:
   - UI field: `ingress_conflict_detected`
-  - reason codes: `managed_site_static_ip_config_missing`, `managed_site_static_ip_permission_denied`, `managed_site_static_ip_api_disabled`, `managed_site_static_ip_quota_exceeded`, `managed_site_static_ip_project_not_found`, `managed_site_static_ip_conflict`, `managed_site_static_ip_provisioning_failed`, `managed_site_dns_config_missing`, `managed_site_dns_provisioning_failed`, `managed_site_dns_conflicting_record`, `managed_site_dns_permission_denied`, `managed_site_dns_transaction_conflict`, `managed_site_dns_propagation_pending`, `ingress_static_ip_conflict`, `shared_static_ip_not_allowed_for_per_site_ingress`, `managed_site_static_ip_missing`, `expected_static_ip_not_bound_to_ingress`, `stale_pre_shared_cert_binding_detected`
+  - reason codes: `managed_site_static_ip_config_missing`, `managed_deploy_impersonation_config_invalid`, `managed_deploy_impersonation_permission_denied`, `managed_site_static_ip_permission_denied`, `managed_site_static_ip_api_disabled`, `managed_site_static_ip_quota_exceeded`, `managed_site_static_ip_project_not_found`, `managed_site_static_ip_conflict`, `managed_site_static_ip_provisioning_failed`, `managed_site_dns_config_missing`, `managed_site_dns_provisioning_failed`, `managed_site_dns_conflicting_record`, `managed_site_dns_permission_denied`, `managed_site_dns_transaction_conflict`, `managed_site_dns_propagation_pending`, `ingress_static_ip_conflict`, `shared_static_ip_not_allowed_for_per_site_ingress`, `managed_site_static_ip_missing`, `expected_static_ip_not_bound_to_ingress`, `stale_pre_shared_cert_binding_detected`
   - logs: target-readiness and dispatch failure records with matching `dispatch_service_reason_code`
 - `Managed certificate active` / metadata diagnostics:
   - advisory reason code: `pre_shared_cert_metadata_mismatch`
@@ -463,11 +465,14 @@ Key non-secret fields:
 - `workflow_inputs_configured_keys`, `workflow_inputs_sent_keys`
 - pre-dispatch static IP/DNS ensure fields:
   - `expected_static_ip_name`, `expected_static_ip_address`, `static_ip_created`, `static_ip_project_id`, `static_ip_ensure_result`
-  - static IP ensure diagnostics (safe/operator-facing): `static_ip_operation`, `static_ip_error_category`, `static_ip_error_code`, `static_ip_error_summary`, `static_ip_exit_code`, `static_ip_permission_hint`
+  - static IP ensure diagnostics (safe/operator-facing): `static_ip_operation`, `static_ip_error_category`, `static_ip_error_code`, `static_ip_error_summary`, `static_ip_exit_code`, `static_ip_permission_hint`, `static_ip_gcp_credential_source`, `static_ip_gcp_principal_email`, `static_ip_gcp_impersonated_service_account_email`
   - `expected_dns_hostname`, `expected_dns_managed_zone`, `expected_dns_project_id`, `expected_dns_ip`, `dns_record_created`, `dns_record_updated`, `dns_previous_ips`, `dns_ttl`, `dns_ensure_result`
+  - DNS ensure diagnostics (safe/operator-facing): `dns_operation`, `dns_gcp_credential_source`, `dns_gcp_principal_email`, `dns_gcp_impersonated_service_account_email`
   - `dns_propagation_result`, `dns_propagation_observed_ips`, `observed_dns_ips`, `dns_propagation_wait_seconds`, `dns_propagation_attempts`
+- `seo_migration_managed_site_static_ip_ensure` event fields:
+  - `static_ip_name`, `static_ip_project_id`, `static_ip_address`, `static_ip_created`, `result`, `operation`, `gcp_credential_source`, `gcp_principal_email`, `gcp_impersonated_service_account_email` (when configured), optional `reason_code`
 - `seo_migration_managed_site_dns_ensure` event fields:
-  - `preview_hostname`, `dns_record_name`, `dns_managed_zone`, `dns_project_id`, `dns_expected_ip`, `dns_previous_ips`, `dns_created`, `dns_updated`, `dns_ttl`, `result`, optional `reason_code`
+  - `preview_hostname`, `dns_record_name`, `dns_managed_zone`, `dns_project_id`, `dns_expected_ip`, `dns_previous_ips`, `dns_created`, `dns_updated`, `dns_ttl`, `result`, `operation`, `gcp_credential_source`, `gcp_principal_email`, `gcp_impersonated_service_account_email` (when configured), optional `reason_code`
 - `seo_migration_managed_site_dns_propagation_check` event fields:
   - `preview_hostname`, `dns_record_name`, `dns_managed_zone`, `dns_project_id`, `dns_expected_ip`, `dns_observed_ips`, `observed_dns_ips`, `dns_ensure_result`, `max_wait_seconds`, `sleep_seconds`, `wait_elapsed_seconds`, `attempt_count`, `result`
 - `workflow_conformance_checked`, `workflow_conformance_status`
@@ -1090,10 +1095,18 @@ Managed certificate mismatch reason-code interpretation:
 - `dispatch_service_reason_code=managed_site_static_ip_config_missing`
   - control-plane static IP ensure is missing required managed deploy config (typically `managed_gke_project_id` or deploy credential).
   - fix admin managed deploy configuration in mbsrn control plane before retry.
+- `dispatch_service_reason_code=managed_deploy_impersonation_config_invalid`
+  - `GCP_MANAGED_DEPLOY` is configured with an invalid value.
+  - set it to a service-account email only (for example `mbsrn-managed-deploy@mbsrn-prod.iam.gserviceaccount.com`); do not provide JSON or private key material.
+- `dispatch_service_reason_code=managed_deploy_impersonation_permission_denied`
+  - control-plane principal cannot impersonate the configured `GCP_MANAGED_DEPLOY` service account.
+  - inspect `seo_migration_managed_site_static_ip_ensure` for `gcp_principal_email` and `gcp_impersonated_service_account_email`.
+  - grant `roles/iam.serviceAccountTokenCreator` to `gcp_principal_email` on `gcp_impersonated_service_account_email`, then retry.
 - `dispatch_service_reason_code=managed_site_static_ip_permission_denied`
   - control-plane identity is not authorized to describe/create global static addresses in the managed project.
   - required permissions include `compute.globalAddresses.get` and `compute.globalAddresses.create`.
-  - inspect `seo_migration_managed_site_static_ip_ensure` for `static_ip_operation`, `static_ip_error_code`, `static_ip_error_summary`, and `static_ip_permission_hint`.
+  - inspect `seo_migration_managed_site_static_ip_ensure` for `gcp_principal_email`, `gcp_impersonated_service_account_email`, `gcp_credential_source`, `static_ip_operation`, `static_ip_error_code`, `static_ip_error_summary`, and `static_ip_permission_hint`.
+  - grant IAM to the principal shown in `gcp_principal_email` (do not assume a hard-coded service account).
 - `dispatch_service_reason_code=managed_site_static_ip_api_disabled`
   - Compute Engine API is disabled or not yet enabled for the managed project.
   - enable API for the project, then retry deploy.
@@ -1123,7 +1136,8 @@ Managed certificate mismatch reason-code interpretation:
   - remove the conflicting record type for that exact hostname before retry.
 - `dispatch_service_reason_code=managed_site_dns_permission_denied`
   - control-plane credential lacks required Cloud DNS permissions on configured project/zone.
-  - grant DNS permissions and retry.
+  - inspect `seo_migration_managed_site_dns_ensure` for `gcp_principal_email`, `gcp_impersonated_service_account_email`, `gcp_credential_source`, and `operation`.
+  - grant DNS IAM to the principal shown in `gcp_principal_email` and retry.
 - `dispatch_service_reason_code=managed_site_dns_transaction_conflict`
   - DNS transaction/update conflict occurred while applying the exact-hostname A record.
   - retry after concurrent DNS writer contention clears.
@@ -1215,6 +1229,13 @@ Managed real-deploy prerequisites:
 - Admin-managed deploy secret in MBSRN GitHub publish config:
   - `GCP_DEPLOY_KEY` (full JSON service account key with Kubernetes Engine Admin-equivalent scoped access to the target cluster/project)
   - write-only in admin UI/API; reads return status metadata only (`configured`, `updated_at`)
+- Optional control-plane impersonation config:
+  - `GCP_MANAGED_DEPLOY` (service-account email only; not JSON and not private key material)
+  - when set, control-plane static-IP and DNS ensure calls impersonate this service account
+  - when unset, control plane uses existing ADC/Workload Identity behavior
+  - IAM requirements when enabled:
+    - control-plane runtime principal (`gcp_principal_email`) needs `roles/iam.serviceAccountTokenCreator` on `GCP_MANAGED_DEPLOY`
+    - impersonated principal (`gcp_impersonated_service_account_email`) needs static-IP and DNS permissions in the managed project/zone (for example `compute.globalAddresses.get/create` and Cloud DNS update permissions)
 
 Managed workflow input mapping (rendered centrally by MBSRN):
 - `cluster_name: ${{ env.GKE_CLUSTER_NAME }}`
@@ -1267,8 +1288,13 @@ Required credential note:
     admin-owned managed deploy secret blocker (configure/rotate secret in MBSRN Admin first, then republish to propagate)
   - `managed_site_static_ip_config_missing`:
     admin-owned static IP ensure configuration blocker before workflow dispatch (managed project id and/or deploy key missing for control-plane ensure path)
+  - `managed_deploy_impersonation_config_invalid`:
+    admin-owned impersonation config blocker; `GCP_MANAGED_DEPLOY` must be a service-account email only
+  - `managed_deploy_impersonation_permission_denied`:
+    admin-owned impersonation IAM blocker; grant `roles/iam.serviceAccountTokenCreator` for `gcp_principal_email` on `gcp_impersonated_service_account_email`
   - `managed_site_static_ip_permission_denied`:
-    admin-owned IAM blocker; control-plane identity cannot describe/create global static addresses in configured project
+    admin-owned IAM blocker; control-plane identity cannot describe/create global static addresses in configured project.
+    grant permissions to the effective principal reported in `gcp_principal_email`.
   - `managed_site_static_ip_api_disabled`:
     admin-owned project-service blocker; Compute Engine API disabled for configured managed project
   - `managed_site_static_ip_quota_exceeded`:
@@ -1286,7 +1312,8 @@ Required credential note:
   - `managed_site_dns_conflicting_record`:
     admin-owned DNS record-shape blocker (conflicting non-A record exists at preview hostname)
   - `managed_site_dns_permission_denied`:
-    admin-owned DNS IAM blocker for configured project/zone
+    admin-owned DNS IAM blocker for configured project/zone.
+    grant DNS permissions to the effective principal reported in `gcp_principal_email`.
   - `managed_site_dns_transaction_conflict`:
     DNS transaction contention blocker; retry after concurrent writer contention clears
   - `managed_site_dns_propagation_pending`:

@@ -90,6 +90,12 @@ spec:
                 secretKeyRef:
                   name: mbsrn-api-auth
                   key: GIT_EMAIL
+            - name: GCP_MANAGED_DEPLOY
+              valueFrom:
+                secretKeyRef:
+                  name: mbsrn-api-auth
+                  key: GCP_MANAGED_DEPLOY
+                  optional: true
             - name: GOOGLE_PLACES_API_KEY
               valueFrom:
                 secretKeyRef:

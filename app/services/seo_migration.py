@@ -333,6 +333,12 @@ _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROJECT_NOT_FOUND = (
 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFLICT = (
     "managed_site_static_ip_conflict"
 )
+_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_CONFIG_INVALID = (
+    "managed_deploy_impersonation_config_invalid"
+)
+_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_PERMISSION_DENIED = (
+    "managed_deploy_impersonation_permission_denied"
+)
 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_MISSING = "managed_site_static_ip_missing"
 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFIG_MISSING = "managed_site_dns_config_missing"
 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PROVISIONING_FAILED = (
@@ -2453,6 +2459,9 @@ class SEOMigrationService:
         static_ip_error_summary: str | None = None
         static_ip_exit_code: int | None = None
         static_ip_permission_hint: str | None = None
+        static_ip_gcp_credential_source: str | None = None
+        static_ip_gcp_principal_email: str | None = None
+        static_ip_gcp_impersonated_service_account_email: str | None = None
         expected_dns_hostname: str | None = None
         expected_dns_managed_zone: str | None = None
         expected_dns_project_id: str | None = None
@@ -2462,6 +2471,10 @@ class SEOMigrationService:
         dns_previous_ips: list[str] = []
         dns_ttl: int | None = None
         dns_ensure_result: str | None = None
+        dns_operation: str | None = None
+        dns_gcp_credential_source: str | None = None
+        dns_gcp_principal_email: str | None = None
+        dns_gcp_impersonated_service_account_email: str | None = None
         dns_propagation_result: str | None = None
         dns_propagation_observed_ips: list[str] = []
         dns_propagation_wait_seconds: int | None = None
@@ -3394,6 +3407,19 @@ class SEOMigrationService:
                         static_ip_created = bool(static_ip_ensure.static_ip_created)
                         static_ip_project_id = _normalize_string(static_ip_ensure.gcp_project_id, max_length=120)
                         static_ip_ensure_result = _normalize_string(static_ip_ensure.result, max_length=80) or "exists"
+                        static_ip_operation = "ensure"
+                        static_ip_gcp_credential_source = _normalize_string(
+                            static_ip_ensure.gcp_credential_source,
+                            max_length=80,
+                        )
+                        static_ip_gcp_principal_email = _normalize_string(
+                            static_ip_ensure.gcp_principal_email,
+                            max_length=200,
+                        )
+                        static_ip_gcp_impersonated_service_account_email = _normalize_string(
+                            static_ip_ensure.gcp_impersonated_service_account_email,
+                            max_length=200,
+                        )
                         self._emit_structured_service_log(
                             payload={
                                 "event": "seo_migration_managed_site_static_ip_ensure",
@@ -3408,6 +3434,12 @@ class SEOMigrationService:
                                 "static_ip_name": expected_static_ip_name,
                                 "static_ip_project_id": static_ip_project_id,
                                 "static_ip_created": static_ip_created,
+                                "gcp_credential_source": static_ip_gcp_credential_source,
+                                "gcp_principal_email": static_ip_gcp_principal_email,
+                                "gcp_impersonated_service_account_email": (
+                                    static_ip_gcp_impersonated_service_account_email
+                                ),
+                                "operation": static_ip_operation,
                                 "result": static_ip_ensure_result,
                                 "deploy_trace_id": deploy_trace_id,
                             },
@@ -3462,6 +3494,19 @@ class SEOMigrationService:
                             static_ip_error_diagnostics.get("static_ip_permission_hint"),
                             max_length=240,
                         )
+                        static_ip_gcp_credential_source = _normalize_string(
+                            static_ip_error_diagnostics.get("gcp_credential_source"),
+                            max_length=80,
+                        )
+                        static_ip_gcp_principal_email = _normalize_string(
+                            static_ip_error_diagnostics.get("gcp_principal_email"),
+                            max_length=200,
+                        )
+                        static_ip_gcp_impersonated_service_account_email = _normalize_string(
+                            static_ip_error_diagnostics.get("gcp_impersonated_service_account_email"),
+                            max_length=200,
+                        )
+                        static_ip_operation = static_ip_operation or "ensure"
                         normalized_static_ip_reason = _normalize_dispatch_service_reason_code(static_ip_exc.code)
                         if normalized_static_ip_reason is not None:
                             dispatch_service_reason_code = normalized_static_ip_reason
@@ -3481,6 +3526,12 @@ class SEOMigrationService:
                                 "static_ip_created": False,
                                 "result": "failed",
                                 "reason_code": _normalize_string(static_ip_exc.code, max_length=80),
+                                "gcp_credential_source": static_ip_gcp_credential_source,
+                                "gcp_principal_email": static_ip_gcp_principal_email,
+                                "gcp_impersonated_service_account_email": (
+                                    static_ip_gcp_impersonated_service_account_email
+                                ),
+                                "operation": static_ip_operation,
                                 "static_ip_operation": static_ip_operation,
                                 "static_ip_error_category": static_ip_error_category,
                                 "static_ip_error_code": static_ip_error_code,
@@ -3555,6 +3606,19 @@ class SEOMigrationService:
                         dns_record_updated = bool(dns_ensure.dns_updated)
                         dns_ttl = _coerce_int(dns_ensure.dns_ttl) or dns_ttl
                         dns_ensure_result = _normalize_string(dns_ensure.result, max_length=80) or "exists"
+                        dns_operation = "ensure"
+                        dns_gcp_credential_source = _normalize_string(
+                            dns_ensure.gcp_credential_source,
+                            max_length=80,
+                        ) or static_ip_gcp_credential_source
+                        dns_gcp_principal_email = _normalize_string(
+                            dns_ensure.gcp_principal_email,
+                            max_length=200,
+                        ) or static_ip_gcp_principal_email
+                        dns_gcp_impersonated_service_account_email = _normalize_string(
+                            dns_ensure.gcp_impersonated_service_account_email,
+                            max_length=200,
+                        ) or static_ip_gcp_impersonated_service_account_email
                         normalized_previous_dns_ips: list[str] = []
                         for raw_ip in tuple(dns_ensure.dns_previous_ips or ()):
                             candidate_ip = _normalize_string(raw_ip, max_length=64)
@@ -3583,6 +3647,12 @@ class SEOMigrationService:
                                 "dns_created": dns_record_created,
                                 "dns_updated": dns_record_updated,
                                 "dns_ttl": dns_ttl,
+                                "gcp_credential_source": dns_gcp_credential_source,
+                                "gcp_principal_email": dns_gcp_principal_email,
+                                "gcp_impersonated_service_account_email": (
+                                    dns_gcp_impersonated_service_account_email
+                                ),
+                                "operation": dns_operation,
                                 "result": dns_ensure_result,
                                 "deploy_trace_id": deploy_trace_id,
                             },
@@ -3617,6 +3687,22 @@ class SEOMigrationService:
                         dns_record_created = False
                         dns_record_updated = False
                         dns_ensure_result = "failed"
+                        dns_operation = "ensure"
+                        dns_credential_diagnostics = _normalize_gcp_credential_diagnostics(
+                            getattr(dns_exc, "diagnostics", None)
+                        ) or {}
+                        dns_gcp_credential_source = _normalize_string(
+                            dns_credential_diagnostics.get("gcp_credential_source"),
+                            max_length=80,
+                        ) or static_ip_gcp_credential_source
+                        dns_gcp_principal_email = _normalize_string(
+                            dns_credential_diagnostics.get("gcp_principal_email"),
+                            max_length=200,
+                        ) or static_ip_gcp_principal_email
+                        dns_gcp_impersonated_service_account_email = _normalize_string(
+                            dns_credential_diagnostics.get("gcp_impersonated_service_account_email"),
+                            max_length=200,
+                        ) or static_ip_gcp_impersonated_service_account_email
                         normalized_dns_reason = _normalize_dispatch_service_reason_code(dns_exc.code)
                         if normalized_dns_reason is not None:
                             dispatch_service_reason_code = normalized_dns_reason
@@ -3642,6 +3728,12 @@ class SEOMigrationService:
                                 "dns_created": False,
                                 "dns_updated": False,
                                 "dns_ttl": dns_ttl,
+                                "gcp_credential_source": dns_gcp_credential_source,
+                                "gcp_principal_email": dns_gcp_principal_email,
+                                "gcp_impersonated_service_account_email": (
+                                    dns_gcp_impersonated_service_account_email
+                                ),
+                                "operation": dns_operation,
                                 "result": "failed",
                                 "reason_code": _normalize_string(dns_exc.code, max_length=80),
                                 "deploy_trace_id": deploy_trace_id,
@@ -3792,6 +3884,9 @@ class SEOMigrationService:
                     "static_ip_error_summary": static_ip_error_summary,
                     "static_ip_exit_code": static_ip_exit_code,
                     "static_ip_permission_hint": static_ip_permission_hint,
+                    "static_ip_gcp_credential_source": static_ip_gcp_credential_source,
+                    "static_ip_gcp_principal_email": static_ip_gcp_principal_email,
+                    "static_ip_gcp_impersonated_service_account_email": static_ip_gcp_impersonated_service_account_email,
                     "expected_dns_hostname": expected_dns_hostname,
                     "expected_dns_managed_zone": expected_dns_managed_zone,
                     "expected_dns_project_id": expected_dns_project_id,
@@ -3801,6 +3896,10 @@ class SEOMigrationService:
                     "dns_previous_ips": list(dns_previous_ips),
                     "dns_ttl": dns_ttl,
                     "dns_ensure_result": dns_ensure_result,
+                    "dns_operation": dns_operation,
+                    "dns_gcp_credential_source": dns_gcp_credential_source,
+                    "dns_gcp_principal_email": dns_gcp_principal_email,
+                    "dns_gcp_impersonated_service_account_email": dns_gcp_impersonated_service_account_email,
                     "dns_propagation_result": dns_propagation_result,
                     "dns_propagation_observed_ips": list(dns_propagation_observed_ips),
                     "observed_dns_ips": list(dns_propagation_observed_ips),
@@ -4156,6 +4255,9 @@ class SEOMigrationService:
                     "static_ip_error_summary": static_ip_error_summary,
                     "static_ip_exit_code": static_ip_exit_code,
                     "static_ip_permission_hint": static_ip_permission_hint,
+                    "static_ip_gcp_credential_source": static_ip_gcp_credential_source,
+                    "static_ip_gcp_principal_email": static_ip_gcp_principal_email,
+                    "static_ip_gcp_impersonated_service_account_email": static_ip_gcp_impersonated_service_account_email,
                     "expected_dns_hostname": expected_dns_hostname,
                     "expected_dns_managed_zone": expected_dns_managed_zone,
                     "expected_dns_project_id": expected_dns_project_id,
@@ -4165,6 +4267,10 @@ class SEOMigrationService:
                     "dns_previous_ips": list(dns_previous_ips),
                     "dns_ttl": dns_ttl,
                     "dns_ensure_result": dns_ensure_result,
+                    "dns_operation": dns_operation,
+                    "dns_gcp_credential_source": dns_gcp_credential_source,
+                    "dns_gcp_principal_email": dns_gcp_principal_email,
+                    "dns_gcp_impersonated_service_account_email": dns_gcp_impersonated_service_account_email,
                     "dns_propagation_result": dns_propagation_result,
                     "dns_propagation_observed_ips": list(dns_propagation_observed_ips),
                     "observed_dns_ips": list(dns_propagation_observed_ips),
@@ -4411,6 +4517,9 @@ class SEOMigrationService:
                     "static_ip_error_summary": static_ip_error_summary,
                     "static_ip_exit_code": static_ip_exit_code,
                     "static_ip_permission_hint": static_ip_permission_hint,
+                    "static_ip_gcp_credential_source": static_ip_gcp_credential_source,
+                    "static_ip_gcp_principal_email": static_ip_gcp_principal_email,
+                    "static_ip_gcp_impersonated_service_account_email": static_ip_gcp_impersonated_service_account_email,
                     "expected_dns_hostname": expected_dns_hostname,
                     "expected_dns_managed_zone": expected_dns_managed_zone,
                     "expected_dns_project_id": expected_dns_project_id,
@@ -4420,6 +4529,10 @@ class SEOMigrationService:
                     "dns_previous_ips": list(dns_previous_ips),
                     "dns_ttl": dns_ttl,
                     "dns_ensure_result": dns_ensure_result,
+                    "dns_operation": dns_operation,
+                    "dns_gcp_credential_source": dns_gcp_credential_source,
+                    "dns_gcp_principal_email": dns_gcp_principal_email,
+                    "dns_gcp_impersonated_service_account_email": dns_gcp_impersonated_service_account_email,
                     "dns_propagation_result": dns_propagation_result,
                     "dns_propagation_observed_ips": list(dns_propagation_observed_ips),
                     "observed_dns_ips": list(dns_propagation_observed_ips),
@@ -4542,6 +4655,9 @@ class SEOMigrationService:
                     "static_ip_error_summary": static_ip_error_summary,
                     "static_ip_exit_code": static_ip_exit_code,
                     "static_ip_permission_hint": static_ip_permission_hint,
+                    "static_ip_gcp_credential_source": static_ip_gcp_credential_source,
+                    "static_ip_gcp_principal_email": static_ip_gcp_principal_email,
+                    "static_ip_gcp_impersonated_service_account_email": static_ip_gcp_impersonated_service_account_email,
                     "expected_dns_hostname": expected_dns_hostname,
                     "expected_dns_managed_zone": expected_dns_managed_zone,
                     "expected_dns_project_id": expected_dns_project_id,
@@ -4551,6 +4667,10 @@ class SEOMigrationService:
                     "dns_previous_ips": list(dns_previous_ips),
                     "dns_ttl": dns_ttl,
                     "dns_ensure_result": dns_ensure_result,
+                    "dns_operation": dns_operation,
+                    "dns_gcp_credential_source": dns_gcp_credential_source,
+                    "dns_gcp_principal_email": dns_gcp_principal_email,
+                    "dns_gcp_impersonated_service_account_email": dns_gcp_impersonated_service_account_email,
                     "dns_propagation_result": dns_propagation_result,
                     "dns_propagation_observed_ips": list(dns_propagation_observed_ips),
                     "observed_dns_ips": list(dns_propagation_observed_ips),
@@ -4709,6 +4829,9 @@ class SEOMigrationService:
                 "static_ip_error_summary": static_ip_error_summary,
                 "static_ip_exit_code": static_ip_exit_code,
                 "static_ip_permission_hint": static_ip_permission_hint,
+                "static_ip_gcp_credential_source": static_ip_gcp_credential_source,
+                "static_ip_gcp_principal_email": static_ip_gcp_principal_email,
+                "static_ip_gcp_impersonated_service_account_email": static_ip_gcp_impersonated_service_account_email,
                 "expected_dns_hostname": expected_dns_hostname,
                 "expected_dns_managed_zone": expected_dns_managed_zone,
                 "expected_dns_project_id": expected_dns_project_id,
@@ -4718,6 +4841,10 @@ class SEOMigrationService:
                 "dns_previous_ips": list(dns_previous_ips),
                 "dns_ttl": dns_ttl,
                 "dns_ensure_result": dns_ensure_result,
+                "dns_operation": dns_operation,
+                "dns_gcp_credential_source": dns_gcp_credential_source,
+                "dns_gcp_principal_email": dns_gcp_principal_email,
+                "dns_gcp_impersonated_service_account_email": dns_gcp_impersonated_service_account_email,
                 "dns_propagation_result": dns_propagation_result,
                 "dns_propagation_observed_ips": list(dns_propagation_observed_ips),
                 "observed_dns_ips": list(dns_propagation_observed_ips),
@@ -5122,6 +5249,9 @@ class SEOMigrationService:
             "static_ip_error_summary": static_ip_error_summary,
             "static_ip_exit_code": static_ip_exit_code,
             "static_ip_permission_hint": static_ip_permission_hint,
+            "static_ip_gcp_credential_source": static_ip_gcp_credential_source,
+            "static_ip_gcp_principal_email": static_ip_gcp_principal_email,
+            "static_ip_gcp_impersonated_service_account_email": static_ip_gcp_impersonated_service_account_email,
             "expected_dns_hostname": expected_dns_hostname,
             "expected_dns_managed_zone": expected_dns_managed_zone,
             "expected_dns_project_id": expected_dns_project_id,
@@ -5131,6 +5261,10 @@ class SEOMigrationService:
             "dns_previous_ips": list(dns_previous_ips),
             "dns_ttl": dns_ttl,
             "dns_ensure_result": dns_ensure_result,
+            "dns_operation": dns_operation,
+            "dns_gcp_credential_source": dns_gcp_credential_source,
+            "dns_gcp_principal_email": dns_gcp_principal_email,
+            "dns_gcp_impersonated_service_account_email": dns_gcp_impersonated_service_account_email,
             "dns_propagation_result": dns_propagation_result,
             "dns_propagation_observed_ips": list(dns_propagation_observed_ips),
             "observed_dns_ips": list(dns_propagation_observed_ips),
@@ -5274,6 +5408,9 @@ class SEOMigrationService:
                 "static_ip_error_summary": static_ip_error_summary,
                 "static_ip_exit_code": static_ip_exit_code,
                 "static_ip_permission_hint": static_ip_permission_hint,
+                "static_ip_gcp_credential_source": static_ip_gcp_credential_source,
+                "static_ip_gcp_principal_email": static_ip_gcp_principal_email,
+                "static_ip_gcp_impersonated_service_account_email": static_ip_gcp_impersonated_service_account_email,
                 "expected_dns_hostname": expected_dns_hostname,
                 "expected_dns_managed_zone": expected_dns_managed_zone,
                 "expected_dns_project_id": expected_dns_project_id,
@@ -5283,6 +5420,10 @@ class SEOMigrationService:
                 "dns_previous_ips": list(dns_previous_ips),
                 "dns_ttl": dns_ttl,
                 "dns_ensure_result": dns_ensure_result,
+                "dns_operation": dns_operation,
+                "dns_gcp_credential_source": dns_gcp_credential_source,
+                "dns_gcp_principal_email": dns_gcp_principal_email,
+                "dns_gcp_impersonated_service_account_email": dns_gcp_impersonated_service_account_email,
                 "dns_propagation_result": dns_propagation_result,
                 "dns_propagation_observed_ips": list(dns_propagation_observed_ips),
                 "observed_dns_ips": list(dns_propagation_observed_ips),
@@ -14735,6 +14876,7 @@ def _normalize_static_ip_error_diagnostics(value: object) -> dict[str, object] |
     normalized_summary = _normalize_string(value.get("static_ip_error_summary"), max_length=300)
     normalized_exit_code = _coerce_int(value.get("static_ip_exit_code"))
     normalized_permission_hint = _normalize_string(value.get("static_ip_permission_hint"), max_length=240)
+    credential_diagnostics = _normalize_gcp_credential_diagnostics(value) or {}
     return {
         "static_ip_operation": normalized_operation,
         "static_ip_error_category": normalized_category,
@@ -14742,6 +14884,34 @@ def _normalize_static_ip_error_diagnostics(value: object) -> dict[str, object] |
         "static_ip_error_summary": normalized_summary,
         "static_ip_exit_code": normalized_exit_code,
         "static_ip_permission_hint": normalized_permission_hint,
+        "gcp_credential_source": _normalize_string(
+            credential_diagnostics.get("gcp_credential_source"),
+            max_length=80,
+        ),
+        "gcp_principal_email": _normalize_string(
+            credential_diagnostics.get("gcp_principal_email"),
+            max_length=200,
+        ),
+        "gcp_impersonated_service_account_email": _normalize_string(
+            credential_diagnostics.get("gcp_impersonated_service_account_email"),
+            max_length=200,
+        ),
+    }
+
+
+def _normalize_gcp_credential_diagnostics(value: object) -> dict[str, object] | None:
+    if not isinstance(value, dict):
+        return None
+    normalized_source = _normalize_string(value.get("gcp_credential_source"), max_length=80)
+    normalized_principal = _normalize_string(value.get("gcp_principal_email"), max_length=200)
+    normalized_impersonated_service_account_email = _normalize_string(
+        value.get("gcp_impersonated_service_account_email"),
+        max_length=200,
+    )
+    return {
+        "gcp_credential_source": normalized_source,
+        "gcp_principal_email": normalized_principal,
+        "gcp_impersonated_service_account_email": normalized_impersonated_service_account_email,
     }
 
 
@@ -14768,6 +14938,8 @@ def _normalize_deploy_failure_reason_code(value: object) -> str | None:
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_QUOTA_EXCEEDED,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROJECT_NOT_FOUND,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFLICT,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_CONFIG_INVALID,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_PERMISSION_DENIED,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFIG_MISSING,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PROVISIONING_FAILED,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFLICTING_RECORD,
@@ -14865,6 +15037,8 @@ def _normalize_workflow_run_failure_reason_code(value: object) -> str | None:
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_QUOTA_EXCEEDED,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROJECT_NOT_FOUND,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFLICT,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_CONFIG_INVALID,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_PERMISSION_DENIED,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFIG_MISSING,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PROVISIONING_FAILED,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFLICTING_RECORD,
@@ -14940,6 +15114,8 @@ def _normalize_dispatch_service_reason_code(value: object) -> str | None:
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_QUOTA_EXCEEDED,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROJECT_NOT_FOUND,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFLICT,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_CONFIG_INVALID,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_PERMISSION_DENIED,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFIG_MISSING,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PROVISIONING_FAILED,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFLICTING_RECORD,
@@ -15465,6 +15641,8 @@ def _derive_dispatch_service_reason_code(
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_QUOTA_EXCEEDED,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROJECT_NOT_FOUND,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFLICT,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_CONFIG_INVALID,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_PERMISSION_DENIED,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFIG_MISSING,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PROVISIONING_FAILED,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFLICTING_RECORD,
@@ -15517,6 +15695,8 @@ def _derive_dispatch_service_reason_code(
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_QUOTA_EXCEEDED,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROJECT_NOT_FOUND,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFLICT,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_CONFIG_INVALID,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_PERMISSION_DENIED,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFIG_MISSING,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PROVISIONING_FAILED,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFLICTING_RECORD,
@@ -15564,10 +15744,22 @@ def _derive_managed_gke_dispatch_readiness_message(*, dispatch_service_reason_co
             "Admin action required: managed-site static IP provisioning configuration is incomplete "
             "(GKE project id and/or control-plane deploy credential)."
         )
+    if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_CONFIG_INVALID:
+        return (
+            "Admin action required: GCP_MANAGED_DEPLOY must be set to a service-account email only. "
+            "Do not provide JSON or private key material in that setting."
+        )
+    if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_PERMISSION_DENIED:
+        return (
+            "Managed deploy impersonation is not authorized. "
+            "Grant roles/iam.serviceAccountTokenCreator for the control-plane principal on the configured "
+            "GCP_MANAGED_DEPLOY service account."
+        )
     if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PERMISSION_DENIED:
         return (
             "Managed-site static IP provisioning is not authorized for the configured GCP project. "
-            "Grant control-plane deploy identity permission to describe/create global addresses."
+            "Grant required global-address permissions to the effective principal reported in "
+            "gcp_principal_email."
         )
     if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_API_DISABLED:
         return (
@@ -15755,10 +15947,20 @@ def _derive_deploy_failure_remediation_hint(
             "Managed-site static IP provisioning config is missing (GKE project id and/or control-plane deploy "
             "credential). Update admin deploy settings and retry."
         )
+    if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_CONFIG_INVALID:
+        return (
+            "GCP_MANAGED_DEPLOY is invalid. Set it to the managed deploy service-account email only "
+            "(no JSON and no private key material), then retry deploy."
+        )
+    if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_PERMISSION_DENIED:
+        return (
+            "Control-plane principal cannot impersonate GCP_MANAGED_DEPLOY. "
+            "Grant roles/iam.serviceAccountTokenCreator on that service account and retry deploy."
+        )
     if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PERMISSION_DENIED:
         return (
-            "Control-plane static IP provisioning is not authorized. Grant the deploy identity permission to "
-            "describe/create global addresses in the managed GCP project."
+            "Control-plane static IP provisioning is not authorized. Grant required global-address permissions "
+            "to the effective principal reported in gcp_principal_email for the managed GCP project."
         )
     if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_API_DISABLED:
         return (
@@ -16050,10 +16252,21 @@ def _derive_workflow_run_failure_hint(
             "Control-plane static IP provisioning config is missing required GCP project/credential settings. "
             "Update admin deploy configuration before retrying deploy."
         )
+    if normalized_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_CONFIG_INVALID:
+        return (
+            "GCP_MANAGED_DEPLOY is invalid. Configure it as a service-account email only "
+            "(no JSON and no private key material), then retry."
+        )
+    if normalized_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_PERMISSION_DENIED:
+        return (
+            "Control-plane principal is not allowed to impersonate GCP_MANAGED_DEPLOY. "
+            "Grant roles/iam.serviceAccountTokenCreator on the impersonated service account and retry."
+        )
     if normalized_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PERMISSION_DENIED:
         return (
             "Control-plane static IP provisioning is not authorized for the configured GCP project. "
-            "Grant global address describe/create permissions and retry."
+            "Grant required global-address permissions to the effective principal reported in "
+            "gcp_principal_email, then retry."
         )
     if normalized_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_API_DISABLED:
         return (
@@ -17672,3 +17885,4 @@ def _coerce_object_list(value: object, *, max_items: int) -> list[dict[str, obje
         if len(normalized) >= max_items:
             break
     return normalized
+

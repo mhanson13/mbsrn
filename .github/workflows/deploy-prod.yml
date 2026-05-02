@@ -48,6 +48,7 @@ env:
   AI_PROVIDER_NAME: ${{ vars.AI_PROVIDER_NAME || 'openai' }}
   AI_MODEL_NAME: ${{ vars.AI_MODEL_NAME || 'gpt-4o-mini' }}
   AI_TIMEOUT_VALUE: ${{ vars.AI_TIMEOUT_VALUE || '30' }}
+  GCP_MANAGED_DEPLOY: ${{ vars.GCP_MANAGED_DEPLOY || '' }}
   UI_CPU_REQUEST: ${{ vars.UI_CPU_REQUEST }}
   UI_MEMORY_REQUEST: ${{ vars.UI_MEMORY_REQUEST }}
   UI_EPHEMERAL_STORAGE_REQUEST: ${{ vars.UI_EPHEMERAL_STORAGE_REQUEST }}
@@ -495,6 +496,7 @@ jobs:
             --from-literal=APP_SESSION_SECRET="${APP_SESSION_SECRET}" \
             --from-literal=GOOGLE_OAUTH_CLIENT_SECRET="${GOOGLE_OAUTH_CLIENT_SECRET}" \
             --from-literal=GCP_PROJECT_ID="${GCP_PROJECT_ID}" \
+            --from-literal=GCP_MANAGED_DEPLOY="${GCP_MANAGED_DEPLOY:-}" \
             --from-literal=AI_PROVIDER_API_KEY="${AI_PROVIDER_API_KEY}" \
             --from-literal=GIT_TOKEN="${GIT_TOKEN}" \
             --from-literal=GIT_USERID="${GIT_USERID}" \
@@ -634,6 +636,12 @@ jobs:
             echo "Secret wiring check: mbsrn-api-auth key GIT_EMAIL is present."
           else
             echo "Secret wiring check: mbsrn-api-auth key GIT_EMAIL is missing."
+          fi
+          gcp_managed_deploy_key_present="$(kubectl -n "${K8S_NAMESPACE}" get secret mbsrn-api-auth -o jsonpath='{.data.GCP_MANAGED_DEPLOY}' 2>/dev/null || true)"
+          if [[ -n "${gcp_managed_deploy_key_present}" ]]; then
+            echo "Secret wiring check: mbsrn-api-auth key GCP_MANAGED_DEPLOY is present."
+          else
+            echo "Secret wiring check: mbsrn-api-auth key GCP_MANAGED_DEPLOY is missing or empty."
           fi
           echo "::endgroup::"
           }
