@@ -31,3 +31,8 @@ frontend/operator-ui/test-results/
 
 # TypeScript incremental build artifacts
 *.tsbuildinfo
+
+# coverage reports
+.coverage
+coverage.xml
+htmlcov/

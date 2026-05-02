@@ -318,6 +318,21 @@ _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROVISIONING_FAILED = (
 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFIG_MISSING = (
     "managed_site_static_ip_config_missing"
 )
+_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PERMISSION_DENIED = (
+    "managed_site_static_ip_permission_denied"
+)
+_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_API_DISABLED = (
+    "managed_site_static_ip_api_disabled"
+)
+_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_QUOTA_EXCEEDED = (
+    "managed_site_static_ip_quota_exceeded"
+)
+_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROJECT_NOT_FOUND = (
+    "managed_site_static_ip_project_not_found"
+)
+_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFLICT = (
+    "managed_site_static_ip_conflict"
+)
 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_MISSING = "managed_site_static_ip_missing"
 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFIG_MISSING = "managed_site_dns_config_missing"
 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PROVISIONING_FAILED = (
@@ -2432,6 +2447,12 @@ class SEOMigrationService:
         static_ip_created: bool | None = None
         static_ip_project_id: str | None = None
         static_ip_ensure_result: str | None = None
+        static_ip_operation: str | None = None
+        static_ip_error_category: str | None = None
+        static_ip_error_code: str | None = None
+        static_ip_error_summary: str | None = None
+        static_ip_exit_code: int | None = None
+        static_ip_permission_hint: str | None = None
         expected_dns_hostname: str | None = None
         expected_dns_managed_zone: str | None = None
         expected_dns_project_id: str | None = None
@@ -3409,6 +3430,38 @@ class SEOMigrationService:
                         )
                         static_ip_created = False
                         static_ip_ensure_result = "failed"
+                        static_ip_error_diagnostics = _normalize_static_ip_error_diagnostics(
+                            getattr(static_ip_exc, "diagnostics", None)
+                        ) or {}
+                        static_ip_operation = _normalize_string(
+                            static_ip_error_diagnostics.get("static_ip_operation"),
+                            max_length=40,
+                        )
+                        static_ip_error_category = _normalize_string(
+                            static_ip_error_diagnostics.get("static_ip_error_category"),
+                            max_length=80,
+                        )
+                        static_ip_error_code = _normalize_string(
+                            static_ip_error_diagnostics.get("static_ip_error_code"),
+                            max_length=80,
+                        )
+                        static_ip_error_summary = _normalize_string(
+                            static_ip_error_diagnostics.get("static_ip_error_summary"),
+                            max_length=300,
+                        ) or _normalize_string(
+                            static_ip_exc.provider_message,
+                            max_length=300,
+                        ) or _normalize_string(
+                            static_ip_exc.safe_message,
+                            max_length=300,
+                        )
+                        static_ip_exit_code = _coerce_int(
+                            static_ip_error_diagnostics.get("static_ip_exit_code")
+                        )
+                        static_ip_permission_hint = _normalize_string(
+                            static_ip_error_diagnostics.get("static_ip_permission_hint"),
+                            max_length=240,
+                        )
                         normalized_static_ip_reason = _normalize_dispatch_service_reason_code(static_ip_exc.code)
                         if normalized_static_ip_reason is not None:
                             dispatch_service_reason_code = normalized_static_ip_reason
@@ -3428,6 +3481,12 @@ class SEOMigrationService:
                                 "static_ip_created": False,
                                 "result": "failed",
                                 "reason_code": _normalize_string(static_ip_exc.code, max_length=80),
+                                "static_ip_operation": static_ip_operation,
+                                "static_ip_error_category": static_ip_error_category,
+                                "static_ip_error_code": static_ip_error_code,
+                                "static_ip_error_summary": static_ip_error_summary,
+                                "static_ip_exit_code": static_ip_exit_code,
+                                "static_ip_permission_hint": static_ip_permission_hint,
                                 "deploy_trace_id": deploy_trace_id,
                             },
                             fallback_message="seo_migration_managed_site_static_ip_ensure",
@@ -3727,6 +3786,12 @@ class SEOMigrationService:
                     "static_ip_created": static_ip_created,
                     "static_ip_project_id": static_ip_project_id,
                     "static_ip_ensure_result": static_ip_ensure_result,
+                    "static_ip_operation": static_ip_operation,
+                    "static_ip_error_category": static_ip_error_category,
+                    "static_ip_error_code": static_ip_error_code,
+                    "static_ip_error_summary": static_ip_error_summary,
+                    "static_ip_exit_code": static_ip_exit_code,
+                    "static_ip_permission_hint": static_ip_permission_hint,
                     "expected_dns_hostname": expected_dns_hostname,
                     "expected_dns_managed_zone": expected_dns_managed_zone,
                     "expected_dns_project_id": expected_dns_project_id,
@@ -4085,6 +4150,12 @@ class SEOMigrationService:
                     "static_ip_created": static_ip_created,
                     "static_ip_project_id": static_ip_project_id,
                     "static_ip_ensure_result": static_ip_ensure_result,
+                    "static_ip_operation": static_ip_operation,
+                    "static_ip_error_category": static_ip_error_category,
+                    "static_ip_error_code": static_ip_error_code,
+                    "static_ip_error_summary": static_ip_error_summary,
+                    "static_ip_exit_code": static_ip_exit_code,
+                    "static_ip_permission_hint": static_ip_permission_hint,
                     "expected_dns_hostname": expected_dns_hostname,
                     "expected_dns_managed_zone": expected_dns_managed_zone,
                     "expected_dns_project_id": expected_dns_project_id,
@@ -4334,6 +4405,12 @@ class SEOMigrationService:
                     "static_ip_created": static_ip_created,
                     "static_ip_project_id": static_ip_project_id,
                     "static_ip_ensure_result": static_ip_ensure_result,
+                    "static_ip_operation": static_ip_operation,
+                    "static_ip_error_category": static_ip_error_category,
+                    "static_ip_error_code": static_ip_error_code,
+                    "static_ip_error_summary": static_ip_error_summary,
+                    "static_ip_exit_code": static_ip_exit_code,
+                    "static_ip_permission_hint": static_ip_permission_hint,
                     "expected_dns_hostname": expected_dns_hostname,
                     "expected_dns_managed_zone": expected_dns_managed_zone,
                     "expected_dns_project_id": expected_dns_project_id,
@@ -4459,6 +4536,12 @@ class SEOMigrationService:
                     "static_ip_created": static_ip_created,
                     "static_ip_project_id": static_ip_project_id,
                     "static_ip_ensure_result": static_ip_ensure_result,
+                    "static_ip_operation": static_ip_operation,
+                    "static_ip_error_category": static_ip_error_category,
+                    "static_ip_error_code": static_ip_error_code,
+                    "static_ip_error_summary": static_ip_error_summary,
+                    "static_ip_exit_code": static_ip_exit_code,
+                    "static_ip_permission_hint": static_ip_permission_hint,
                     "expected_dns_hostname": expected_dns_hostname,
                     "expected_dns_managed_zone": expected_dns_managed_zone,
                     "expected_dns_project_id": expected_dns_project_id,
@@ -4620,6 +4703,12 @@ class SEOMigrationService:
                 "static_ip_created": static_ip_created,
                 "static_ip_project_id": static_ip_project_id,
                 "static_ip_ensure_result": static_ip_ensure_result,
+                "static_ip_operation": static_ip_operation,
+                "static_ip_error_category": static_ip_error_category,
+                "static_ip_error_code": static_ip_error_code,
+                "static_ip_error_summary": static_ip_error_summary,
+                "static_ip_exit_code": static_ip_exit_code,
+                "static_ip_permission_hint": static_ip_permission_hint,
                 "expected_dns_hostname": expected_dns_hostname,
                 "expected_dns_managed_zone": expected_dns_managed_zone,
                 "expected_dns_project_id": expected_dns_project_id,
@@ -5027,6 +5116,12 @@ class SEOMigrationService:
             "static_ip_created": static_ip_created,
             "static_ip_project_id": static_ip_project_id,
             "static_ip_ensure_result": static_ip_ensure_result,
+            "static_ip_operation": static_ip_operation,
+            "static_ip_error_category": static_ip_error_category,
+            "static_ip_error_code": static_ip_error_code,
+            "static_ip_error_summary": static_ip_error_summary,
+            "static_ip_exit_code": static_ip_exit_code,
+            "static_ip_permission_hint": static_ip_permission_hint,
             "expected_dns_hostname": expected_dns_hostname,
             "expected_dns_managed_zone": expected_dns_managed_zone,
             "expected_dns_project_id": expected_dns_project_id,
@@ -5173,6 +5268,12 @@ class SEOMigrationService:
                 "static_ip_created": static_ip_created,
                 "static_ip_project_id": static_ip_project_id,
                 "static_ip_ensure_result": static_ip_ensure_result,
+                "static_ip_operation": static_ip_operation,
+                "static_ip_error_category": static_ip_error_category,
+                "static_ip_error_code": static_ip_error_code,
+                "static_ip_error_summary": static_ip_error_summary,
+                "static_ip_exit_code": static_ip_exit_code,
+                "static_ip_permission_hint": static_ip_permission_hint,
                 "expected_dns_hostname": expected_dns_hostname,
                 "expected_dns_managed_zone": expected_dns_managed_zone,
                 "expected_dns_project_id": expected_dns_project_id,
@@ -12155,6 +12256,11 @@ class SEOMigrationService:
             "github_workflow_write_not_authorized",
             "github_contents_write_not_authorized",
             _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFIG_MISSING,
+            _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PERMISSION_DENIED,
+            _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_API_DISABLED,
+            _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_QUOTA_EXCEEDED,
+            _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROJECT_NOT_FOUND,
+            _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFLICT,
             _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFIG_MISSING,
             _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PERMISSION_DENIED,
         }:
@@ -14620,6 +14726,25 @@ def _derive_publish_preflight_blocker_message(
     return "Publish target repository preflight failed. Review admin publish configuration."
 
 
+def _normalize_static_ip_error_diagnostics(value: object) -> dict[str, object] | None:
+    if not isinstance(value, dict):
+        return None
+    normalized_operation = _normalize_string(value.get("static_ip_operation"), max_length=40)
+    normalized_category = _normalize_string(value.get("static_ip_error_category"), max_length=80)
+    normalized_error_code = _normalize_string(value.get("static_ip_error_code"), max_length=80)
+    normalized_summary = _normalize_string(value.get("static_ip_error_summary"), max_length=300)
+    normalized_exit_code = _coerce_int(value.get("static_ip_exit_code"))
+    normalized_permission_hint = _normalize_string(value.get("static_ip_permission_hint"), max_length=240)
+    return {
+        "static_ip_operation": normalized_operation,
+        "static_ip_error_category": normalized_category,
+        "static_ip_error_code": normalized_error_code,
+        "static_ip_error_summary": normalized_summary,
+        "static_ip_exit_code": normalized_exit_code,
+        "static_ip_permission_hint": normalized_permission_hint,
+    }
+
+
 def _normalize_deploy_failure_reason_code(value: object) -> str | None:
     normalized = _normalize_string(value, max_length=80)
     if not normalized:
@@ -14638,6 +14763,11 @@ def _normalize_deploy_failure_reason_code(value: object) -> str | None:
         _DEPLOY_TARGET_REASON_DEPLOY_BLOCKER_SUPERSEDED_AFTER_STALE_THRESHOLD,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROVISIONING_FAILED,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFIG_MISSING,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PERMISSION_DENIED,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_API_DISABLED,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_QUOTA_EXCEEDED,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROJECT_NOT_FOUND,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFLICT,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFIG_MISSING,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PROVISIONING_FAILED,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFLICTING_RECORD,
@@ -14730,6 +14860,11 @@ def _normalize_workflow_run_failure_reason_code(value: object) -> str | None:
         _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_STATIC_IP_NOT_ALLOWED,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROVISIONING_FAILED,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFIG_MISSING,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PERMISSION_DENIED,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_API_DISABLED,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_QUOTA_EXCEEDED,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROJECT_NOT_FOUND,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFLICT,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFIG_MISSING,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PROVISIONING_FAILED,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFLICTING_RECORD,
@@ -14800,6 +14935,11 @@ def _normalize_dispatch_service_reason_code(value: object) -> str | None:
         _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_STATIC_IP_NOT_ALLOWED,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROVISIONING_FAILED,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFIG_MISSING,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PERMISSION_DENIED,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_API_DISABLED,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_QUOTA_EXCEEDED,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROJECT_NOT_FOUND,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFLICT,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFIG_MISSING,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PROVISIONING_FAILED,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFLICTING_RECORD,
@@ -15320,6 +15460,11 @@ def _derive_dispatch_service_reason_code(
         _DEPLOY_DISPATCH_SERVICE_REASON_IMAGE_PULL_SECRET_NOT_REFERENCED,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROVISIONING_FAILED,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFIG_MISSING,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PERMISSION_DENIED,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_API_DISABLED,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_QUOTA_EXCEEDED,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROJECT_NOT_FOUND,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFLICT,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFIG_MISSING,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PROVISIONING_FAILED,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFLICTING_RECORD,
@@ -15367,6 +15512,11 @@ def _derive_dispatch_service_reason_code(
     if normalized_failure_reason in {
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROVISIONING_FAILED,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFIG_MISSING,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PERMISSION_DENIED,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_API_DISABLED,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_QUOTA_EXCEEDED,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROJECT_NOT_FOUND,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFLICT,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFIG_MISSING,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PROVISIONING_FAILED,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFLICTING_RECORD,
@@ -15413,6 +15563,31 @@ def _derive_managed_gke_dispatch_readiness_message(*, dispatch_service_reason_co
         return (
             "Admin action required: managed-site static IP provisioning configuration is incomplete "
             "(GKE project id and/or control-plane deploy credential)."
+        )
+    if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PERMISSION_DENIED:
+        return (
+            "Managed-site static IP provisioning is not authorized for the configured GCP project. "
+            "Grant control-plane deploy identity permission to describe/create global addresses."
+        )
+    if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_API_DISABLED:
+        return (
+            "Managed-site static IP provisioning requires Compute Engine API to be enabled for the configured "
+            "GCP project."
+        )
+    if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_QUOTA_EXCEEDED:
+        return (
+            "Managed-site static IP provisioning exceeded global static address quota in the configured GCP project. "
+            "Increase quota or delete unused addresses, then retry."
+        )
+    if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROJECT_NOT_FOUND:
+        return (
+            "Managed-site static IP provisioning project configuration is invalid or not accessible. "
+            "Verify managed deploy GCP project id."
+        )
+    if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFLICT:
+        return (
+            "Managed-site static IP provisioning encountered a name conflict for the expected global address. "
+            "Inspect the named address and reconcile ownership before retry."
         )
     if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROVISIONING_FAILED:
         return (
@@ -15579,6 +15754,30 @@ def _derive_deploy_failure_remediation_hint(
         return (
             "Managed-site static IP provisioning config is missing (GKE project id and/or control-plane deploy "
             "credential). Update admin deploy settings and retry."
+        )
+    if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PERMISSION_DENIED:
+        return (
+            "Control-plane static IP provisioning is not authorized. Grant the deploy identity permission to "
+            "describe/create global addresses in the managed GCP project."
+        )
+    if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_API_DISABLED:
+        return (
+            "Compute Engine API is disabled for the managed GCP project. Enable the API and retry deploy."
+        )
+    if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_QUOTA_EXCEEDED:
+        return (
+            "Global static address quota is exhausted in the managed GCP project. "
+            "Increase quota or delete unused addresses, then retry deploy."
+        )
+    if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROJECT_NOT_FOUND:
+        return (
+            "Managed deploy GCP project id is invalid or inaccessible for static IP provisioning. "
+            "Verify admin managed project configuration and retry."
+        )
+    if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFLICT:
+        return (
+            "Expected per-site static IP name conflicts with an existing unmanaged resource. "
+            "Inspect the named global address and reconcile ownership before retry."
         )
     if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROVISIONING_FAILED:
         return (
@@ -15850,6 +16049,31 @@ def _derive_workflow_run_failure_hint(
         return (
             "Control-plane static IP provisioning config is missing required GCP project/credential settings. "
             "Update admin deploy configuration before retrying deploy."
+        )
+    if normalized_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PERMISSION_DENIED:
+        return (
+            "Control-plane static IP provisioning is not authorized for the configured GCP project. "
+            "Grant global address describe/create permissions and retry."
+        )
+    if normalized_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_API_DISABLED:
+        return (
+            "Compute Engine API is disabled for the configured GCP project. "
+            "Enable API and retry control-plane static IP provisioning."
+        )
+    if normalized_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_QUOTA_EXCEEDED:
+        return (
+            "Global static address quota is exhausted for the configured GCP project. "
+            "Increase quota or remove unused addresses, then retry."
+        )
+    if normalized_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROJECT_NOT_FOUND:
+        return (
+            "Configured managed deploy GCP project is invalid or inaccessible for static IP provisioning. "
+            "Verify project configuration and retry."
+        )
+    if normalized_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFLICT:
+        return (
+            "Expected static IP name conflicts with existing GCP address state and could not be reconciled. "
+            "Inspect named global address ownership and retry."
         )
     if normalized_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROVISIONING_FAILED:
         return (

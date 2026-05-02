@@ -244,6 +244,7 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         static_ip_ensure_error_code: str | None = None,
         static_ip_ensure_error_message: str | None = None,
         static_ip_ensure_error_stage: str | None = None,
+        static_ip_ensure_error_diagnostics: dict[str, object] | None = None,
         ensure_static_ip_name: str | None = None,
         ensure_static_ip_address: str | None = "34.149.170.250",
         ensure_static_ip_created: bool = False,
@@ -362,6 +363,11 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         self.static_ip_ensure_error_code = static_ip_ensure_error_code
         self.static_ip_ensure_error_message = static_ip_ensure_error_message
         self.static_ip_ensure_error_stage = static_ip_ensure_error_stage
+        self.static_ip_ensure_error_diagnostics = (
+            dict(static_ip_ensure_error_diagnostics)
+            if isinstance(static_ip_ensure_error_diagnostics, dict)
+            else None
+        )
         self.ensure_static_ip_name = ensure_static_ip_name
         self.ensure_static_ip_address = ensure_static_ip_address
         self.ensure_static_ip_created = ensure_static_ip_created
@@ -779,6 +785,7 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
                 code=self.static_ip_ensure_error_code or "managed_site_static_ip_provisioning_failed",
                 safe_message=self.static_ip_ensure_error_message or "Simulated managed-site static IP ensure failure.",
                 stage=self.static_ip_ensure_error_stage or "static_ip_provision",
+                diagnostics=self.static_ip_ensure_error_diagnostics,
             )
         static_ip_name = self.ensure_static_ip_name
         if not static_ip_name:
@@ -3310,9 +3317,17 @@ def test_deploy_ensures_managed_site_static_ip_handles_already_exists_race(db_se
 def test_deploy_blocks_dispatch_when_managed_site_static_ip_ensure_fails(db_session, caplog) -> None:
     publisher = _RecordingGitHubPublisher(
         fail_static_ip_ensure=True,
-        static_ip_ensure_error_code="managed_site_static_ip_provisioning_failed",
-        static_ip_ensure_error_message="Simulated static IP provisioning failure.",
+        static_ip_ensure_error_code="managed_site_static_ip_permission_denied",
+        static_ip_ensure_error_message="Simulated static IP provisioning permission failure.",
         static_ip_ensure_error_stage="static_ip_provision",
+        static_ip_ensure_error_diagnostics={
+            "static_ip_operation": "create",
+            "static_ip_error_category": "permission_denied",
+            "static_ip_error_code": "PERMISSION_DENIED",
+            "static_ip_error_summary": "Permission denied while creating static IP.",
+            "static_ip_exit_code": None,
+            "static_ip_permission_hint": "Grant compute.globalAddresses.create permission.",
+        },
     )
     service = _build_service(
         db_session,
@@ -3323,7 +3338,7 @@ def test_deploy_blocks_dispatch_when_managed_site_static_ip_ensure_fails(db_sess
     artifact = _prepare_published_artifact(service, business_id=business_id, site_id=site_id)
 
     caplog.set_level("INFO", logger="app.services.seo_migration")
-    with pytest.raises(SEOMigrationValidationError, match="Simulated static IP provisioning failure."):
+    with pytest.raises(SEOMigrationValidationError, match="Simulated static IP provisioning permission failure."):
         service.deploy_artifact_version(
             business_id=business_id,
             site_id=site_id,
@@ -3338,9 +3353,14 @@ def test_deploy_blocks_dispatch_when_managed_site_static_ip_ensure_fails(db_sess
     deploy_history = workspace.deploy_history_json or []
     assert deploy_history
     latest = deploy_history[-1]
-    assert latest.get("failure_reason") == "managed_site_static_ip_provisioning_failed"
-    assert latest.get("dispatch_service_reason_code") == "managed_site_static_ip_provisioning_failed"
+    assert latest.get("failure_reason") == "managed_site_static_ip_permission_denied"
+    assert latest.get("dispatch_service_reason_code") == "managed_site_static_ip_permission_denied"
     assert latest.get("dispatch_result_stage") == "static_ip_provision"
+    assert latest.get("static_ip_operation") == "create"
+    assert latest.get("static_ip_error_category") == "permission_denied"
+    assert latest.get("static_ip_error_code") == "PERMISSION_DENIED"
+    assert latest.get("static_ip_error_summary") == "Permission denied while creating static IP."
+    assert latest.get("static_ip_permission_hint") == "Grant compute.globalAddresses.create permission."
     ensure_logs = [
         record.__dict__.get("json_fields")
         for record in caplog.records
@@ -3349,8 +3369,15 @@ def test_deploy_blocks_dispatch_when_managed_site_static_ip_ensure_fails(db_sess
     ]
     assert ensure_logs
     assert ensure_logs[-1].get("result") == "failed"
-    assert ensure_logs[-1].get("reason_code") == "managed_site_static_ip_provisioning_failed"
+    assert ensure_logs[-1].get("reason_code") == "managed_site_static_ip_permission_denied"
+    assert ensure_logs[-1].get("static_ip_operation") == "create"
+    assert ensure_logs[-1].get("static_ip_error_category") == "permission_denied"
+    assert ensure_logs[-1].get("static_ip_error_code") == "PERMISSION_DENIED"
+    assert ensure_logs[-1].get("static_ip_error_summary") == "Permission denied while creating static IP."
+    assert ensure_logs[-1].get("static_ip_permission_hint") == "Grant compute.globalAddresses.create permission."
     assert "gcp_deploy_key" not in json.dumps(ensure_logs[-1]).lower()
+    assert "private_key" not in json.dumps(ensure_logs[-1]).lower()
+    assert "access_token" not in json.dumps(ensure_logs[-1]).lower()
 
 
 def test_deploy_blocks_dispatch_when_managed_site_static_ip_config_is_missing(db_session) -> None:
@@ -4912,6 +4939,81 @@ def test_static_ip_pre_dispatch_reason_code_hint_mappings_cover_config_and_provi
             failure_stage=None,
             workflow_exists=None,
             dispatch_service_reason_code="managed_site_static_ip_provisioning_failed",
+        )
+        or ""
+    ).lower()
+    assert "not authorized" in str(
+        seo_migration_module._derive_managed_gke_dispatch_readiness_message(
+            dispatch_service_reason_code="managed_site_static_ip_permission_denied"
+        )
+        or ""
+    ).lower()
+    assert "compute engine api" in str(
+        seo_migration_module._derive_managed_gke_dispatch_readiness_message(
+            dispatch_service_reason_code="managed_site_static_ip_api_disabled"
+        )
+        or ""
+    ).lower()
+    assert "quota" in str(
+        seo_migration_module._derive_managed_gke_dispatch_readiness_message(
+            dispatch_service_reason_code="managed_site_static_ip_quota_exceeded"
+        )
+        or ""
+    ).lower()
+    assert "project configuration is invalid" in str(
+        seo_migration_module._derive_managed_gke_dispatch_readiness_message(
+            dispatch_service_reason_code="managed_site_static_ip_project_not_found"
+        )
+        or ""
+    ).lower()
+    assert "name conflict" in str(
+        seo_migration_module._derive_managed_gke_dispatch_readiness_message(
+            dispatch_service_reason_code="managed_site_static_ip_conflict"
+        )
+        or ""
+    ).lower()
+    assert "not authorized" in str(
+        seo_migration_module._derive_deploy_failure_remediation_hint(
+            failure_reason=None,
+            failure_stage=None,
+            workflow_exists=None,
+            dispatch_service_reason_code="managed_site_static_ip_permission_denied",
+        )
+        or ""
+    ).lower()
+    assert "enable the api" in str(
+        seo_migration_module._derive_deploy_failure_remediation_hint(
+            failure_reason=None,
+            failure_stage=None,
+            workflow_exists=None,
+            dispatch_service_reason_code="managed_site_static_ip_api_disabled",
+        )
+        or ""
+    ).lower()
+    assert "quota" in str(
+        seo_migration_module._derive_deploy_failure_remediation_hint(
+            failure_reason=None,
+            failure_stage=None,
+            workflow_exists=None,
+            dispatch_service_reason_code="managed_site_static_ip_quota_exceeded",
+        )
+        or ""
+    ).lower()
+    assert "project id is invalid" in str(
+        seo_migration_module._derive_deploy_failure_remediation_hint(
+            failure_reason=None,
+            failure_stage=None,
+            workflow_exists=None,
+            dispatch_service_reason_code="managed_site_static_ip_project_not_found",
+        )
+        or ""
+    ).lower()
+    assert "conflicts with an existing unmanaged resource" in str(
+        seo_migration_module._derive_deploy_failure_remediation_hint(
+            failure_reason=None,
+            failure_stage=None,
+            workflow_exists=None,
+            dispatch_service_reason_code="managed_site_static_ip_conflict",
         )
         or ""
     ).lower()

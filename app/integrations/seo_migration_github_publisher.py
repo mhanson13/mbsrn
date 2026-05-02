@@ -333,6 +333,7 @@ class SEOMigrationGitHubPublisherError(RuntimeError):
     status_code: int | None = None
     stage: str | None = None
     provider_message: str | None = None
+    diagnostics: dict[str, object] | None = None
 
     def __str__(self) -> str:
         return self.safe_message
@@ -2555,6 +2556,11 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             if exc.code in {
                 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFIG_MISSING,
                 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROVISIONING_FAILED,
+                _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PERMISSION_DENIED,
+                _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_API_DISABLED,
+                _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_QUOTA_EXCEEDED,
+                _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROJECT_NOT_FOUND,
+                _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFLICT,
             }:
                 raise
             raise SEOMigrationGitHubPublisherError(
@@ -2563,6 +2569,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 status_code=exc.status_code,
                 stage=exc.stage or "static_ip_provision",
                 provider_message=exc.provider_message,
+                diagnostics=_normalize_static_ip_error_diagnostics(exc.diagnostics),
             ) from exc
         return SEOMigrationGitHubManagedSiteStaticIPEnsureResult(
             static_ip_name=static_ip_name,
@@ -6776,12 +6783,18 @@ def _ensure_managed_site_global_static_ip(
         "safe_message_on_failure": "Managed site static IP provisioning request to Google APIs failed.",
         "safe_message_on_timeout": "Managed site static IP provisioning request timed out.",
     }
-    existing_payload = _request_google_json(
-        method="GET",
-        url=describe_url,
-        allow_404=True,
-        **request_kwargs,
-    )
+    try:
+        existing_payload = _request_google_json(
+            method="GET",
+            url=describe_url,
+            allow_404=True,
+            **request_kwargs,
+        )
+    except SEOMigrationGitHubPublisherError as exc:
+        raise _classify_managed_site_static_ip_provisioning_error(
+            exc=exc,
+            operation="describe",
+        ) from exc
     if isinstance(existing_payload, dict):
         return {
             "static_ip_address": _coerce_string(existing_payload.get("address")),
@@ -6803,52 +6816,315 @@ def _ensure_managed_site_global_static_ip(
         )
     except SEOMigrationGitHubPublisherError as exc:
         if exc.status_code == 409:
-            raced_payload = _request_google_json(
-                method="GET",
-                url=describe_url,
-                allow_404=True,
-                **request_kwargs,
-            )
+            try:
+                raced_payload = _request_google_json(
+                    method="GET",
+                    url=describe_url,
+                    allow_404=True,
+                    **request_kwargs,
+                )
+            except SEOMigrationGitHubPublisherError as describe_exc:
+                raise _classify_managed_site_static_ip_provisioning_error(
+                    exc=describe_exc,
+                    operation="describe_after_create",
+                ) from describe_exc
             if isinstance(raced_payload, dict):
                 return {
                     "static_ip_address": _coerce_string(raced_payload.get("address")),
                     "static_ip_created": False,
                     "result": "already_exists_after_race",
                 }
-            raise SEOMigrationGitHubPublisherError(
-                code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROVISIONING_FAILED,
-                safe_message=(
-                    "Managed site static IP provisioning reported already exists but the address could not be confirmed."
+            raise _classify_managed_site_static_ip_provisioning_error(
+                exc=SEOMigrationGitHubPublisherError(
+                    code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROVISIONING_FAILED,
+                    safe_message=(
+                        "Managed site static IP provisioning reported already exists but the address "
+                        "could not be confirmed."
+                    ),
+                    status_code=exc.status_code,
+                    stage="static_ip_provision",
+                    provider_message=exc.provider_message,
                 ),
-                stage="static_ip_provision",
+                operation="describe_after_create",
+                force_reason_code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFLICT,
             ) from exc
-        raise
+        raise _classify_managed_site_static_ip_provisioning_error(
+            exc=exc,
+            operation="create",
+        ) from exc
 
     last_payload: dict[str, object] | None = None
     for attempt in range(5):
-        created_payload = _request_google_json(
-            method="GET",
-            url=describe_url,
-            allow_404=True,
-            **request_kwargs,
-        )
+        try:
+            created_payload = _request_google_json(
+                method="GET",
+                url=describe_url,
+                allow_404=True,
+                **request_kwargs,
+            )
+        except SEOMigrationGitHubPublisherError as exc:
+            raise _classify_managed_site_static_ip_provisioning_error(
+                exc=exc,
+                operation="describe_after_create",
+            ) from exc
         if isinstance(created_payload, dict):
             last_payload = created_payload
             break
         if attempt < 4:
             time.sleep(1)
     if last_payload is None:
-        raise SEOMigrationGitHubPublisherError(
-            code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROVISIONING_FAILED,
-            safe_message=(
-                "Managed site static IP creation was requested but the resulting address was not visible."
+        raise _classify_managed_site_static_ip_provisioning_error(
+            exc=SEOMigrationGitHubPublisherError(
+                code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROVISIONING_FAILED,
+                safe_message=(
+                    "Managed site static IP creation was requested but the resulting address was not visible."
+                ),
+                stage="static_ip_provision",
             ),
-            stage="static_ip_provision",
+            operation="describe_after_create",
         )
     return {
         "static_ip_address": _coerce_string(last_payload.get("address")),
         "static_ip_created": True,
         "result": "created",
+    }
+
+
+def _classify_managed_site_static_ip_provisioning_error(
+    *,
+    exc: SEOMigrationGitHubPublisherError,
+    operation: str,
+    force_reason_code: str | None = None,
+) -> SEOMigrationGitHubPublisherError:
+    normalized_operation = _normalize_static_ip_operation(operation)
+    sanitized_provider_message = _sanitize_github_error_message(exc.provider_message)
+    provider_message_lower = (sanitized_provider_message or "").lower()
+    status_code = exc.status_code
+
+    reason_code = force_reason_code or _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROVISIONING_FAILED
+    error_category = "provisioning_failed"
+    permission_hint: str | None = None
+
+    if force_reason_code is None:
+        if _is_static_ip_api_disabled_error(
+            status_code=status_code,
+            provider_message_lower=provider_message_lower,
+        ):
+            reason_code = _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_API_DISABLED
+            error_category = "api_disabled"
+        elif _is_static_ip_quota_exceeded_error(
+            status_code=status_code,
+            provider_message_lower=provider_message_lower,
+        ):
+            reason_code = _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_QUOTA_EXCEEDED
+            error_category = "quota_exceeded"
+        elif _is_static_ip_project_not_found_error(
+            status_code=status_code,
+            provider_message_lower=provider_message_lower,
+        ):
+            reason_code = _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROJECT_NOT_FOUND
+            error_category = "project_not_found"
+        elif _is_static_ip_conflict_error(
+            status_code=status_code,
+            provider_message_lower=provider_message_lower,
+        ):
+            reason_code = _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFLICT
+            error_category = "conflict"
+        elif _is_static_ip_permission_denied_error(
+            status_code=status_code,
+            provider_message_lower=provider_message_lower,
+        ):
+            reason_code = _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PERMISSION_DENIED
+            error_category = "permission_denied"
+            permission_hint = (
+                "Grant control-plane deploy identity permissions to describe/create global addresses "
+                "(compute.globalAddresses.get/create)."
+            )
+    elif force_reason_code == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFLICT:
+        error_category = "conflict"
+
+    error_summary = _sanitize_static_ip_error_summary(
+        provider_message=sanitized_provider_message,
+        fallback_message=exc.safe_message,
+    ) or exc.safe_message
+    error_code = _derive_static_ip_error_code(
+        provider_message_lower=provider_message_lower,
+        status_code=status_code,
+    )
+
+    diagnostics = _normalize_static_ip_error_diagnostics(
+        {
+            "static_ip_operation": normalized_operation,
+            "static_ip_error_category": error_category,
+            "static_ip_error_code": error_code,
+            "static_ip_error_summary": error_summary,
+            "static_ip_exit_code": None,
+            "static_ip_permission_hint": permission_hint,
+        }
+    )
+
+    return SEOMigrationGitHubPublisherError(
+        code=reason_code,
+        safe_message=_derive_static_ip_provisioning_safe_message(reason_code=reason_code),
+        status_code=status_code,
+        stage=exc.stage or "static_ip_provision",
+        provider_message=sanitized_provider_message or exc.provider_message,
+        diagnostics=diagnostics,
+    )
+
+
+def _is_static_ip_permission_denied_error(*, status_code: int | None, provider_message_lower: str) -> bool:
+    if "permission denied" in provider_message_lower or "permission_denied" in provider_message_lower:
+        return True
+    if "required 'compute.addresses.create'" in provider_message_lower:
+        return True
+    if "required 'compute.globaladdresses.create'" in provider_message_lower:
+        return True
+    if status_code == 403:
+        return True
+    return False
+
+
+def _is_static_ip_api_disabled_error(*, status_code: int | None, provider_message_lower: str) -> bool:
+    if "compute engine api has not been used" in provider_message_lower:
+        return True
+    if "api not enabled" in provider_message_lower:
+        return True
+    if "service_disabled" in provider_message_lower:
+        return True
+    if status_code == 403 and "has not been used in project" in provider_message_lower:
+        return True
+    return False
+
+
+def _is_static_ip_quota_exceeded_error(*, status_code: int | None, provider_message_lower: str) -> bool:
+    if "quota_exceeded" in provider_message_lower:
+        return True
+    if "resource exhausted" in provider_message_lower or "resource_exhausted" in provider_message_lower:
+        return True
+    if "quota" in provider_message_lower and status_code in {403, 429}:
+        return True
+    return False
+
+
+def _is_static_ip_project_not_found_error(*, status_code: int | None, provider_message_lower: str) -> bool:
+    if "project not found" in provider_message_lower:
+        return True
+    if "invalid project" in provider_message_lower:
+        return True
+    if "not found for project" in provider_message_lower:
+        return True
+    if status_code == 404 and "project" in provider_message_lower:
+        return True
+    return False
+
+
+def _is_static_ip_conflict_error(*, status_code: int | None, provider_message_lower: str) -> bool:
+    if status_code == 409:
+        return True
+    if "already exists" in provider_message_lower:
+        return True
+    if "name conflict" in provider_message_lower:
+        return True
+    return False
+
+
+def _sanitize_static_ip_error_summary(*, provider_message: str | None, fallback_message: str | None) -> str | None:
+    summary = _sanitize_github_error_message(provider_message, max_length=300)
+    if summary:
+        lowered = summary.lower()
+        if any(
+            marker in lowered
+            for marker in (
+                "begin private key",
+                "private_key",
+                "\"private_key\"",
+                "access_token",
+                "\"token\"",
+                "service_account",
+                "gcp_deploy_key",
+            )
+        ):
+            summary = None
+    if summary:
+        return summary
+    return _sanitize_github_error_message(fallback_message, max_length=300)
+
+
+def _derive_static_ip_error_code(*, provider_message_lower: str, status_code: int | None) -> str | None:
+    if "service_disabled" in provider_message_lower:
+        return "SERVICE_DISABLED"
+    if "permission_denied" in provider_message_lower or "permission denied" in provider_message_lower:
+        return "PERMISSION_DENIED"
+    if "quota_exceeded" in provider_message_lower:
+        return "QUOTA_EXCEEDED"
+    if "resource_exhausted" in provider_message_lower or "resource exhausted" in provider_message_lower:
+        return "RESOURCE_EXHAUSTED"
+    if status_code is not None:
+        return f"http_{int(status_code)}"
+    return None
+
+
+def _derive_static_ip_provisioning_safe_message(*, reason_code: str) -> str:
+    if reason_code == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PERMISSION_DENIED:
+        return (
+            "Managed-site static IP provisioning is not authorized for the configured GCP project."
+        )
+    if reason_code == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_API_DISABLED:
+        return (
+            "Managed-site static IP provisioning requires Compute Engine API to be enabled "
+            "for the configured GCP project."
+        )
+    if reason_code == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_QUOTA_EXCEEDED:
+        return (
+            "Managed-site static IP provisioning exceeded global static address quota in the configured GCP project."
+        )
+    if reason_code == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROJECT_NOT_FOUND:
+        return (
+            "Managed-site static IP provisioning project configuration is invalid or not accessible."
+        )
+    if reason_code == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFLICT:
+        return (
+            "Managed-site static IP provisioning encountered a static IP naming conflict and could not reconcile "
+            "the expected global address."
+        )
+    return "Managed site static IP provisioning failed before deploy dispatch."
+
+
+def _normalize_static_ip_operation(value: object) -> str | None:
+    normalized = _coerce_string(value)
+    if not normalized:
+        return None
+    normalized_lower = normalized.strip().lower()
+    if normalized_lower in {"describe", "create", "describe_after_create"}:
+        return normalized_lower
+    return None
+
+
+def _normalize_static_ip_error_diagnostics(value: object) -> dict[str, object] | None:
+    if not isinstance(value, dict):
+        return None
+    normalized_operation = _normalize_static_ip_operation(value.get("static_ip_operation"))
+    normalized_category = _coerce_string(value.get("static_ip_error_category"))
+    normalized_code = _coerce_string(value.get("static_ip_error_code"))
+    normalized_summary = _sanitize_static_ip_error_summary(
+        provider_message=_coerce_string(value.get("static_ip_error_summary")),
+        fallback_message=None,
+    )
+    normalized_permission_hint = _sanitize_github_error_message(
+        value.get("static_ip_permission_hint"),
+        max_length=240,
+    )
+    normalized_exit_code = _coerce_int(value.get("static_ip_exit_code"))
+    if normalized_exit_code is not None:
+        normalized_exit_code = int(normalized_exit_code)
+    return {
+        "static_ip_operation": normalized_operation,
+        "static_ip_error_category": normalized_category,
+        "static_ip_error_code": normalized_code,
+        "static_ip_error_summary": normalized_summary,
+        "static_ip_exit_code": normalized_exit_code,
+        "static_ip_permission_hint": normalized_permission_hint,
     }
 
 
@@ -7581,6 +7857,21 @@ _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROVISIONING_FAILED = (
 )
 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFIG_MISSING = (
     "managed_site_static_ip_config_missing"
+)
+_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PERMISSION_DENIED = (
+    "managed_site_static_ip_permission_denied"
+)
+_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_API_DISABLED = (
+    "managed_site_static_ip_api_disabled"
+)
+_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_QUOTA_EXCEEDED = (
+    "managed_site_static_ip_quota_exceeded"
+)
+_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROJECT_NOT_FOUND = (
+    "managed_site_static_ip_project_not_found"
+)
+_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFLICT = (
+    "managed_site_static_ip_conflict"
 )
 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_MISSING = "managed_site_static_ip_missing"
 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFIG_MISSING = "managed_site_dns_config_missing"

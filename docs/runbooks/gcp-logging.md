@@ -377,6 +377,11 @@ Per-site success gate (managed ingress deploys):
 - `managed_certificate_failed_not_visible` should be triaged as DNS/LB visibility mismatch first.
 - pre-dispatch static IP ensure blockers (control-plane phase):
   - `managed_site_static_ip_config_missing`
+  - `managed_site_static_ip_permission_denied`
+  - `managed_site_static_ip_api_disabled`
+  - `managed_site_static_ip_quota_exceeded`
+  - `managed_site_static_ip_project_not_found`
+  - `managed_site_static_ip_conflict`
   - `managed_site_static_ip_provisioning_failed`
 - pre-dispatch DNS ensure blockers (control-plane phase):
   - `managed_site_dns_config_missing`
@@ -405,7 +410,7 @@ UI-to-log troubleshooting mapping (Deploy consistency block):
   - logs: `seo_migration_target_readiness_check`, ingress-evidence failure records, `dispatch_service_reason_code`
 - `Ingress/static IP conflict check`:
   - UI field: `ingress_conflict_detected`
-  - reason codes: `managed_site_static_ip_config_missing`, `managed_site_static_ip_provisioning_failed`, `managed_site_dns_config_missing`, `managed_site_dns_provisioning_failed`, `managed_site_dns_conflicting_record`, `managed_site_dns_permission_denied`, `managed_site_dns_transaction_conflict`, `managed_site_dns_propagation_pending`, `ingress_static_ip_conflict`, `shared_static_ip_not_allowed_for_per_site_ingress`, `managed_site_static_ip_missing`, `expected_static_ip_not_bound_to_ingress`, `stale_pre_shared_cert_binding_detected`
+  - reason codes: `managed_site_static_ip_config_missing`, `managed_site_static_ip_permission_denied`, `managed_site_static_ip_api_disabled`, `managed_site_static_ip_quota_exceeded`, `managed_site_static_ip_project_not_found`, `managed_site_static_ip_conflict`, `managed_site_static_ip_provisioning_failed`, `managed_site_dns_config_missing`, `managed_site_dns_provisioning_failed`, `managed_site_dns_conflicting_record`, `managed_site_dns_permission_denied`, `managed_site_dns_transaction_conflict`, `managed_site_dns_propagation_pending`, `ingress_static_ip_conflict`, `shared_static_ip_not_allowed_for_per_site_ingress`, `managed_site_static_ip_missing`, `expected_static_ip_not_bound_to_ingress`, `stale_pre_shared_cert_binding_detected`
   - logs: target-readiness and dispatch failure records with matching `dispatch_service_reason_code`
 - `Managed certificate active` / metadata diagnostics:
   - advisory reason code: `pre_shared_cert_metadata_mismatch`
@@ -458,6 +463,7 @@ Key non-secret fields:
 - `workflow_inputs_configured_keys`, `workflow_inputs_sent_keys`
 - pre-dispatch static IP/DNS ensure fields:
   - `expected_static_ip_name`, `expected_static_ip_address`, `static_ip_created`, `static_ip_project_id`, `static_ip_ensure_result`
+  - static IP ensure diagnostics (safe/operator-facing): `static_ip_operation`, `static_ip_error_category`, `static_ip_error_code`, `static_ip_error_summary`, `static_ip_exit_code`, `static_ip_permission_hint`
   - `expected_dns_hostname`, `expected_dns_managed_zone`, `expected_dns_project_id`, `expected_dns_ip`, `dns_record_created`, `dns_record_updated`, `dns_previous_ips`, `dns_ttl`, `dns_ensure_result`
   - `dns_propagation_result`, `dns_propagation_observed_ips`, `observed_dns_ips`, `dns_propagation_wait_seconds`, `dns_propagation_attempts`
 - `seo_migration_managed_site_dns_ensure` event fields:
@@ -1084,9 +1090,28 @@ Managed certificate mismatch reason-code interpretation:
 - `dispatch_service_reason_code=managed_site_static_ip_config_missing`
   - control-plane static IP ensure is missing required managed deploy config (typically `managed_gke_project_id` or deploy credential).
   - fix admin managed deploy configuration in mbsrn control plane before retry.
+- `dispatch_service_reason_code=managed_site_static_ip_permission_denied`
+  - control-plane identity is not authorized to describe/create global static addresses in the managed project.
+  - required permissions include `compute.globalAddresses.get` and `compute.globalAddresses.create`.
+  - inspect `seo_migration_managed_site_static_ip_ensure` for `static_ip_operation`, `static_ip_error_code`, `static_ip_error_summary`, and `static_ip_permission_hint`.
+- `dispatch_service_reason_code=managed_site_static_ip_api_disabled`
+  - Compute Engine API is disabled or not yet enabled for the managed project.
+  - enable API for the project, then retry deploy.
+- `dispatch_service_reason_code=managed_site_static_ip_quota_exceeded`
+  - global static-address quota is exhausted in the managed project.
+  - increase quota or delete unused global static addresses, then retry deploy.
+- `dispatch_service_reason_code=managed_site_static_ip_project_not_found`
+  - configured managed deploy project id is invalid/inaccessible.
+  - verify admin managed deploy project configuration and identity scope.
+- `dispatch_service_reason_code=managed_site_static_ip_conflict`
+  - expected deterministic static IP name conflicted with unreconciled address state.
+  - inspect the named global address ownership/scope and reconcile before retry.
 - `dispatch_service_reason_code=managed_site_static_ip_provisioning_failed`
-  - control-plane static IP describe/create call failed (permissions/API/runtime dependency issue).
-  - inspect `seo_migration_managed_site_static_ip_ensure` structured event for `reason_code`, `static_ip_name`, and `static_ip_project_id`, then remediate and retry.
+  - control-plane static IP describe/create failed with an unclassified provisioning error.
+  - inspect `seo_migration_managed_site_static_ip_ensure` structured event for `reason_code`, `static_ip_name`, `static_ip_project_id`, and static-IP diagnostic fields (`static_ip_operation`, `static_ip_error_category`, `static_ip_error_code`, `static_ip_error_summary`) then remediate and retry.
+  - admin verification commands:
+    - `gcloud compute addresses describe site-web-preview-ip-tnmfire --global --project mbsrn-prod`
+    - `gcloud compute addresses create site-web-preview-ip-tnmfire --global --project mbsrn-prod`
 - `dispatch_service_reason_code=managed_site_dns_config_missing`
   - control-plane DNS ensure is missing required DNS config (managed zone/project mapping or deploy credential).
   - fix admin managed deploy DNS configuration before retry.
@@ -1242,8 +1267,18 @@ Required credential note:
     admin-owned managed deploy secret blocker (configure/rotate secret in MBSRN Admin first, then republish to propagate)
   - `managed_site_static_ip_config_missing`:
     admin-owned static IP ensure configuration blocker before workflow dispatch (managed project id and/or deploy key missing for control-plane ensure path)
+  - `managed_site_static_ip_permission_denied`:
+    admin-owned IAM blocker; control-plane identity cannot describe/create global static addresses in configured project
+  - `managed_site_static_ip_api_disabled`:
+    admin-owned project-service blocker; Compute Engine API disabled for configured managed project
+  - `managed_site_static_ip_quota_exceeded`:
+    admin-owned quota blocker; global static-address quota exhausted in configured managed project
+  - `managed_site_static_ip_project_not_found`:
+    admin-owned project-configuration blocker; configured managed deploy project id invalid/inaccessible
+  - `managed_site_static_ip_conflict`:
+    admin-owned static IP ownership/scope conflict for deterministic per-site address name
   - `managed_site_static_ip_provisioning_failed`:
-    admin-owned static IP provisioning blocker before workflow dispatch (Google API permission/runtime failure during ensure path)
+    admin-owned static IP provisioning blocker before workflow dispatch (unclassified Google API/runtime failure during ensure path)
   - `managed_site_dns_config_missing`:
     admin-owned DNS ensure configuration blocker before workflow dispatch (managed zone/project mapping or deploy key missing)
   - `managed_site_dns_provisioning_failed`:

@@ -1210,7 +1210,13 @@ Post-fix rollout for existing managed sites:
       - control plane ensures the expected global address exists before workflow dispatch using admin-managed deploy credentials
       - generated target workflow still performs a preflight existence check (`gcloud compute addresses describe site-web-preview-ip-<normalized-site> --global --project "$GKE_PROJECT_ID"`) as a drift safety check
       - `managed_site_static_ip_config_missing` blocks dispatch when control-plane static IP ensure is missing required project/deploy-key config
-      - `managed_site_static_ip_provisioning_failed` blocks dispatch when control-plane static IP describe/create fails
+      - static IP ensure failures are classified before dispatch with operator-safe reason codes:
+        - `managed_site_static_ip_permission_denied` (control-plane identity lacks `compute.globalAddresses.get/create`)
+        - `managed_site_static_ip_api_disabled` (Compute Engine API disabled for managed project)
+        - `managed_site_static_ip_quota_exceeded` (global static-address quota exhausted)
+        - `managed_site_static_ip_project_not_found` (invalid/inaccessible managed project)
+        - `managed_site_static_ip_conflict` (named address conflict that could not be reconciled)
+        - fallback: `managed_site_static_ip_provisioning_failed`
     - preview DNS A record is control-plane managed before dispatch:
       - hostname: `<normalized-site>.site.mbsrn.com`
       - managed zone default: `sites`
@@ -1686,6 +1692,11 @@ Blocking reason-code examples:
   - `tls_certificate_bound_to_wrong_site`
 - Ingress isolation:
   - `managed_site_static_ip_config_missing`
+  - `managed_site_static_ip_permission_denied`
+  - `managed_site_static_ip_api_disabled`
+  - `managed_site_static_ip_quota_exceeded`
+  - `managed_site_static_ip_project_not_found`
+  - `managed_site_static_ip_conflict`
   - `managed_site_static_ip_provisioning_failed`
   - `managed_site_dns_config_missing`
   - `managed_site_dns_provisioning_failed`

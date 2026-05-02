@@ -4302,8 +4302,13 @@ def test_ensure_managed_site_static_ip_permission_failure_is_classified(monkeypa
             dry_run=False,
         )
 
-    assert exc_info.value.code == "managed_site_static_ip_provisioning_failed"
+    assert exc_info.value.code == "managed_site_static_ip_permission_denied"
     assert exc_info.value.stage == "static_ip_provision"
+    diagnostics = exc_info.value.diagnostics or {}
+    assert diagnostics.get("static_ip_operation") == "create"
+    assert diagnostics.get("static_ip_error_category") == "permission_denied"
+    assert diagnostics.get("static_ip_error_code") == "http_403"
+    assert diagnostics.get("static_ip_permission_hint")
     assert calls == [
         (
             "GET",
@@ -4314,6 +4319,242 @@ def test_ensure_managed_site_static_ip_permission_failure_is_classified(monkeypa
             "https://compute.googleapis.com/compute/v1/projects/mbsrn-prod/global/addresses",
         ),
     ]
+
+
+def test_ensure_managed_site_static_ip_permission_failure_during_describe_is_classified(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _http_error(
+                "https://compute.googleapis.com/compute/v1/projects/mbsrn-prod/global/addresses/site-web-preview-ip-tnmfire",
+                status_code=403,
+                message="PERMISSION_DENIED: Required 'compute.globalAddresses.get' permission.",
+            ),
+        ],
+        calls,
+    )
+    monkeypatch.setattr(
+        "app.integrations.seo_migration_github_publisher._resolve_google_access_token_from_service_account_json",
+        lambda **kwargs: "token",
+    )
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    with pytest.raises(SEOMigrationGitHubPublisherError) as exc_info:
+        publisher.ensure_managed_site_static_ip(
+            repo_owner="mhanson13",
+            repo_name="tnmfire",
+            site_id="site-1",
+            managed_gke_config={"project_id": "mbsrn-prod"},
+            gcp_deploy_key="{\"type\":\"service_account\"}",
+            dry_run=False,
+        )
+
+    assert exc_info.value.code == "managed_site_static_ip_permission_denied"
+    diagnostics = exc_info.value.diagnostics or {}
+    assert diagnostics.get("static_ip_operation") == "describe"
+    assert diagnostics.get("static_ip_error_category") == "permission_denied"
+    assert diagnostics.get("static_ip_error_code") == "PERMISSION_DENIED"
+    assert calls == [
+        (
+            "GET",
+            "https://compute.googleapis.com/compute/v1/projects/mbsrn-prod/global/addresses/site-web-preview-ip-tnmfire",
+        ),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("status_code", "message", "expected_reason_code", "expected_category", "expected_error_code"),
+    [
+        (
+            403,
+            "SERVICE_DISABLED: Compute Engine API has not been used in project mbsrn-prod before.",
+            "managed_site_static_ip_api_disabled",
+            "api_disabled",
+            "SERVICE_DISABLED",
+        ),
+        (
+            403,
+            "QUOTA_EXCEEDED: Quota exceeded for resource global addresses.",
+            "managed_site_static_ip_quota_exceeded",
+            "quota_exceeded",
+            "QUOTA_EXCEEDED",
+        ),
+        (
+            404,
+            "Project not found for project mbsrn-prod.",
+            "managed_site_static_ip_project_not_found",
+            "project_not_found",
+            "http_404",
+        ),
+        (
+            500,
+            "Unhandled backend failure while creating global address.",
+            "managed_site_static_ip_provisioning_failed",
+            "provisioning_failed",
+            "http_500",
+        ),
+    ],
+)
+def test_ensure_managed_site_static_ip_failure_reason_codes_are_classified(
+    monkeypatch,
+    status_code: int,
+    message: str,
+    expected_reason_code: str,
+    expected_category: str,
+    expected_error_code: str,
+) -> None:
+    calls: list[tuple[str, str]] = []
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _http_error(
+                "https://compute.googleapis.com/compute/v1/projects/mbsrn-prod/global/addresses/site-web-preview-ip-tnmfire",
+                status_code=404,
+                message="Not Found",
+            ),
+            _http_error(
+                "https://compute.googleapis.com/compute/v1/projects/mbsrn-prod/global/addresses",
+                status_code=status_code,
+                message=message,
+            ),
+        ],
+        calls,
+    )
+    monkeypatch.setattr(
+        "app.integrations.seo_migration_github_publisher._resolve_google_access_token_from_service_account_json",
+        lambda **kwargs: "token",
+    )
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    with pytest.raises(SEOMigrationGitHubPublisherError) as exc_info:
+        publisher.ensure_managed_site_static_ip(
+            repo_owner="mhanson13",
+            repo_name="tnmfire",
+            site_id="site-1",
+            managed_gke_config={"project_id": "mbsrn-prod"},
+            gcp_deploy_key="{\"type\":\"service_account\"}",
+            dry_run=False,
+        )
+
+    assert exc_info.value.code == expected_reason_code
+    assert exc_info.value.stage == "static_ip_provision"
+    diagnostics = exc_info.value.diagnostics or {}
+    assert diagnostics.get("static_ip_operation") == "create"
+    assert diagnostics.get("static_ip_error_category") == expected_category
+    assert diagnostics.get("static_ip_error_code") == expected_error_code
+    assert calls == [
+        (
+            "GET",
+            "https://compute.googleapis.com/compute/v1/projects/mbsrn-prod/global/addresses/site-web-preview-ip-tnmfire",
+        ),
+        (
+            "POST",
+            "https://compute.googleapis.com/compute/v1/projects/mbsrn-prod/global/addresses",
+        ),
+    ]
+
+
+def test_ensure_managed_site_static_ip_conflict_when_race_cannot_be_reconciled(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _http_error(
+                "https://compute.googleapis.com/compute/v1/projects/mbsrn-prod/global/addresses/site-web-preview-ip-tnmfire",
+                status_code=404,
+                message="Not Found",
+            ),
+            _http_error(
+                "https://compute.googleapis.com/compute/v1/projects/mbsrn-prod/global/addresses",
+                status_code=409,
+                message="Address already exists",
+            ),
+            _http_error(
+                "https://compute.googleapis.com/compute/v1/projects/mbsrn-prod/global/addresses/site-web-preview-ip-tnmfire",
+                status_code=404,
+                message="Not Found",
+            ),
+        ],
+        calls,
+    )
+    monkeypatch.setattr(
+        "app.integrations.seo_migration_github_publisher._resolve_google_access_token_from_service_account_json",
+        lambda **kwargs: "token",
+    )
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    with pytest.raises(SEOMigrationGitHubPublisherError) as exc_info:
+        publisher.ensure_managed_site_static_ip(
+            repo_owner="mhanson13",
+            repo_name="tnmfire",
+            site_id="site-1",
+            managed_gke_config={"project_id": "mbsrn-prod"},
+            gcp_deploy_key="{\"type\":\"service_account\"}",
+            dry_run=False,
+        )
+
+    assert exc_info.value.code == "managed_site_static_ip_conflict"
+    assert exc_info.value.stage == "static_ip_provision"
+    diagnostics = exc_info.value.diagnostics or {}
+    assert diagnostics.get("static_ip_operation") == "describe_after_create"
+    assert diagnostics.get("static_ip_error_category") == "conflict"
+    assert calls == [
+        (
+            "GET",
+            "https://compute.googleapis.com/compute/v1/projects/mbsrn-prod/global/addresses/site-web-preview-ip-tnmfire",
+        ),
+        (
+            "POST",
+            "https://compute.googleapis.com/compute/v1/projects/mbsrn-prod/global/addresses",
+        ),
+        (
+            "GET",
+            "https://compute.googleapis.com/compute/v1/projects/mbsrn-prod/global/addresses/site-web-preview-ip-tnmfire",
+        ),
+    ]
+
+
+def test_ensure_managed_site_static_ip_error_summary_redacts_secret_like_markers(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _http_error(
+                "https://compute.googleapis.com/compute/v1/projects/mbsrn-prod/global/addresses/site-web-preview-ip-tnmfire",
+                status_code=404,
+                message="Not Found",
+            ),
+            _http_error(
+                "https://compute.googleapis.com/compute/v1/projects/mbsrn-prod/global/addresses",
+                status_code=403,
+                message=(
+                    "PERMISSION_DENIED: Required 'compute.globalAddresses.create'; "
+                    "private_key=BEGIN PRIVATE KEY; access_token=token-value"
+                ),
+            ),
+        ],
+        calls,
+    )
+    monkeypatch.setattr(
+        "app.integrations.seo_migration_github_publisher._resolve_google_access_token_from_service_account_json",
+        lambda **kwargs: "token",
+    )
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    with pytest.raises(SEOMigrationGitHubPublisherError) as exc_info:
+        publisher.ensure_managed_site_static_ip(
+            repo_owner="mhanson13",
+            repo_name="tnmfire",
+            site_id="site-1",
+            managed_gke_config={"project_id": "mbsrn-prod"},
+            gcp_deploy_key="{\"type\":\"service_account\"}",
+            dry_run=False,
+        )
+
+    assert exc_info.value.code == "managed_site_static_ip_permission_denied"
+    diagnostics = exc_info.value.diagnostics or {}
+    summary = str(diagnostics.get("static_ip_error_summary") or "").lower()
+    assert "private_key" not in summary
+    assert "access_token" not in summary
+    assert "permission_denied" not in summary
+    assert "managed site static ip provisioning" in summary
 
 
 def test_ensure_managed_site_dns_creates_missing_record_before_dispatch(monkeypatch) -> None:
