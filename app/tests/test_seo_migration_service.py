@@ -247,6 +247,7 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         static_ip_ensure_error_diagnostics: dict[str, object] | None = None,
         ensure_static_ip_name: str | None = None,
         ensure_static_ip_address: str | None = "34.149.170.250",
+        ensure_static_ip_addresses: tuple[str | None, ...] | list[str | None] | None = None,
         ensure_static_ip_created: bool = False,
         ensure_static_ip_result: str = "exists",
         ensure_static_ip_project_id: str | None = None,
@@ -376,6 +377,8 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         )
         self.ensure_static_ip_name = ensure_static_ip_name
         self.ensure_static_ip_address = ensure_static_ip_address
+        self.ensure_static_ip_addresses = list(ensure_static_ip_addresses or ())
+        self.ensure_static_ip_call_count = 0
         self.ensure_static_ip_created = ensure_static_ip_created
         self.ensure_static_ip_result = ensure_static_ip_result
         self.ensure_static_ip_project_id = ensure_static_ip_project_id
@@ -808,9 +811,13 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         project_id = self.ensure_static_ip_project_id or str((managed_gke_config or {}).get("project_id") or "")
         if not project_id:
             project_id = "mbsrn-prod"
+        static_ip_address = self.ensure_static_ip_address
+        if self.ensure_static_ip_call_count < len(self.ensure_static_ip_addresses):
+            static_ip_address = self.ensure_static_ip_addresses[self.ensure_static_ip_call_count]
+        self.ensure_static_ip_call_count += 1
         return SEOMigrationGitHubManagedSiteStaticIPEnsureResult(
             static_ip_name=static_ip_name,
-            static_ip_address=self.ensure_static_ip_address,
+            static_ip_address=static_ip_address,
             static_ip_created=bool(self.ensure_static_ip_created),
             gcp_project_id=project_id,
             result=self.ensure_static_ip_result,
@@ -3615,9 +3622,122 @@ def test_deploy_ensures_managed_site_dns_after_static_ip_and_before_dispatch(
     ]
     assert propagation_logs
     assert propagation_logs[-1].get("result") == "observed_expected_ip"
-    assert propagation_logs[-1].get("dns_expected_ip") == "34.160.224.212"
+    assert propagation_logs[-1].get("dns_expected_ip") == dns_call[1]
     assert propagation_logs[-1].get("observed_dns_ips") == ["34.160.224.212"]
     assert "gcp_deploy_key" not in json.dumps(propagation_logs[-1]).lower()
+    prerequisite_logs = [
+        record.__dict__.get("json_fields")
+        for record in caplog.records
+        if isinstance(record.__dict__.get("json_fields"), dict)
+        and record.__dict__["json_fields"].get("event")
+        == "seo_migration_managed_deploy_prerequisite_chain"
+    ]
+    assert prerequisite_logs
+    stages = [str(log.get("stage")) for log in prerequisite_logs]
+    assert "static_ip_ensured" in stages
+    assert "dns_ensure_start" in stages
+    assert "dns_ensure_succeeded" in stages
+    assert "dns_propagation_start" in stages
+    assert "dns_propagation_succeeded" in stages
+
+
+def test_deploy_refreshes_static_ip_address_in_same_request_before_dns_ensure(
+    db_session, monkeypatch
+) -> None:
+    publisher = _RecordingGitHubPublisher(
+        ensure_static_ip_addresses=(None, "34.160.224.212"),
+        ensure_static_ip_created=True,
+        ensure_static_ip_result="created",
+        ensure_dns_created=True,
+        ensure_dns_updated=False,
+        ensure_dns_result="created",
+        ensure_dns_expected_ip="34.160.224.212",
+        ensure_dns_previous_ips=(),
+        ensure_dns_ttl=300,
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    artifact = _prepare_published_artifact(service, business_id=business_id, site_id=site_id)
+    monkeypatch.setattr(
+        seo_migration_module,
+        "_resolve_hostname_ipv4_addresses",
+        lambda _hostname: ["34.160.224.212"],
+    )
+
+    deploy_result = service.deploy_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        principal_id="principal-1",
+    )
+
+    assert len(publisher.ensure_managed_site_static_ip_calls) == 2
+    assert publisher.ensure_managed_site_dns_calls
+    dns_call = publisher.ensure_managed_site_dns_calls[-1]
+    assert dns_call[1] == "34.160.224.212"
+    assert publisher.deploy_calls
+    assert deploy_result.result.get("expected_static_ip_address") == "34.160.224.212"
+    assert deploy_result.result.get("expected_dns_ip") == "34.160.224.212"
+    assert deploy_result.result.get("dns_propagation_result") == "observed_expected_ip"
+
+
+def test_deploy_blocks_before_dns_ensure_when_static_ip_address_missing_after_refresh(
+    db_session, caplog
+) -> None:
+    publisher = _RecordingGitHubPublisher(
+        ensure_static_ip_address=None,
+        ensure_static_ip_addresses=(None, None),
+        ensure_static_ip_created=False,
+        ensure_static_ip_result="exists",
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    artifact = _prepare_published_artifact(service, business_id=business_id, site_id=site_id)
+    caplog.set_level("INFO", logger="app.services.seo_migration")
+
+    with pytest.raises(SEOMigrationValidationError, match="did not return an address value"):
+        service.deploy_artifact_version(
+            business_id=business_id,
+            site_id=site_id,
+            artifact_version_id=artifact.id,
+            dry_run=False,
+            principal_id="principal-1",
+        )
+
+    assert len(publisher.ensure_managed_site_static_ip_calls) == 2
+    assert publisher.ensure_managed_site_dns_calls == []
+    assert publisher.deploy_calls == []
+    workspace = service.get_workspace(business_id=business_id, site_id=site_id)
+    deploy_history = workspace.deploy_history_json or []
+    assert deploy_history
+    latest = deploy_history[-1]
+    assert latest.get("failure_reason") == "managed_site_static_ip_address_missing"
+    assert latest.get("dispatch_service_reason_code") == "managed_site_static_ip_address_missing"
+    assert latest.get("dispatch_result_stage") == "static_ip_provision"
+    prerequisite_logs = [
+        record.__dict__.get("json_fields")
+        for record in caplog.records
+        if isinstance(record.__dict__.get("json_fields"), dict)
+        and record.__dict__["json_fields"].get("event")
+        == "seo_migration_managed_deploy_prerequisite_chain"
+    ]
+    assert prerequisite_logs
+    missing_logs = [
+        log for log in prerequisite_logs if log.get("stage") == "static_ip_address_missing"
+    ]
+    assert missing_logs
+    assert missing_logs[-1].get("reason_code") == "managed_site_static_ip_address_missing"
+    assert missing_logs[-1].get("static_ip_address_present") is False
+    assert missing_logs[-1].get("dns_expected_ip_present") is False
 
 
 def test_deploy_ensures_managed_site_dns_updates_old_ips_before_dispatch(db_session, monkeypatch) -> None:
@@ -5049,6 +5169,12 @@ def test_static_ip_pre_dispatch_reason_code_hint_mappings_cover_config_and_provi
         )
         or ""
     ).lower()
+    assert "did not return an address value" in str(
+        seo_migration_module._derive_managed_gke_dispatch_readiness_message(
+            dispatch_service_reason_code="managed_site_static_ip_address_missing"
+        )
+        or ""
+    ).lower()
     assert "config is missing" in str(
         seo_migration_module._derive_deploy_failure_remediation_hint(
             failure_reason=None,
@@ -5064,6 +5190,15 @@ def test_static_ip_pre_dispatch_reason_code_hint_mappings_cover_config_and_provi
             failure_stage=None,
             workflow_exists=None,
             dispatch_service_reason_code="managed_site_static_ip_provisioning_failed",
+        )
+        or ""
+    ).lower()
+    assert "did not return an address" in str(
+        seo_migration_module._derive_deploy_failure_remediation_hint(
+            failure_reason=None,
+            failure_stage=None,
+            workflow_exists=None,
+            dispatch_service_reason_code="managed_site_static_ip_address_missing",
         )
         or ""
     ).lower()
@@ -5139,6 +5274,13 @@ def test_static_ip_pre_dispatch_reason_code_hint_mappings_cover_config_and_provi
             failure_stage=None,
             workflow_exists=None,
             dispatch_service_reason_code="managed_site_static_ip_conflict",
+        )
+        or ""
+    ).lower()
+    assert "did not return an address value" in str(
+        seo_migration_module._derive_workflow_run_failure_hint(
+            failure_reason="managed_site_static_ip_address_missing",
+            post_dispatch_state=None,
         )
         or ""
     ).lower()

@@ -79,6 +79,45 @@ def _dns_rrsets_response(
     return _FakeHTTPResponse(status=200, body=json.dumps({"rrsets": rrsets}))
 
 
+def _render_default_managed_workflow_yaml() -> str:
+    return _render_managed_deploy_workflow_yaml(
+        workflow_id="deploy-tnmfire-www-prod.yml",
+        repo_owner="mhanson13",
+        repo_name="tnmfire",
+        branch="main",
+        deploy_workflow_mode="site_repo_template_v1",
+        target_environment_key="gke_prod",
+        target_environment_source="admin_config",
+        managed_gke_config=None,
+        kubernetes_namespace="tnmfire",
+        namespace_source="repo_name",
+        preview_hostname="tnmfire.site.mbsrn.com",
+        private_image_auth_required=True,
+        site_id="site-tnmfire",
+    )
+
+
+def _extract_resolve_live_url_run_script(workflow_yaml: str) -> str:
+    parsed_workflow = yaml.safe_load(workflow_yaml)
+    assert isinstance(parsed_workflow, dict)
+    jobs = parsed_workflow.get("jobs")
+    assert isinstance(jobs, dict)
+    deploy_job = jobs.get("deploy")
+    assert isinstance(deploy_job, dict)
+    steps = deploy_job.get("steps")
+    assert isinstance(steps, list)
+    resolve_live_url_step = next(
+        (
+            step
+            for step in steps
+            if isinstance(step, dict) and str(step.get("name") or "") == "Resolve live URL from ingress status"
+        ),
+        None,
+    )
+    assert isinstance(resolve_live_url_step, dict)
+    return str(resolve_live_url_step.get("run") or "")
+
+
 def _dispatch_target() -> SEOMigrationGitHubDeployTarget:
     return SEOMigrationGitHubDeployTarget(
         repo_owner="mhanson13",
@@ -4187,6 +4226,59 @@ def test_ensure_managed_site_static_ip_reuses_existing_address(monkeypatch) -> N
     ]
 
 
+def test_ensure_managed_site_static_ip_refreshes_describe_when_address_missing(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps(
+                    {
+                        "name": "site-web-preview-ip-tnmfire",
+                    }
+                ),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps(
+                    {
+                        "name": "site-web-preview-ip-tnmfire",
+                        "address": "34.149.170.250",
+                    }
+                ),
+            ),
+        ],
+        calls,
+    )
+    monkeypatch.setattr(
+        "app.integrations.seo_migration_github_publisher._resolve_google_access_token_from_service_account_json",
+        lambda **kwargs: "token",
+    )
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    result = publisher.ensure_managed_site_static_ip(
+        repo_owner="mhanson13",
+        repo_name="tnmfire",
+        site_id="site-1",
+        managed_gke_config={"project_id": "mbsrn-prod"},
+        gcp_deploy_key='{"type":"service_account"}',
+        dry_run=False,
+    )
+
+    assert result.static_ip_address == "34.149.170.250"
+    assert result.result == "exists"
+    assert calls == [
+        (
+            "GET",
+            "https://compute.googleapis.com/compute/v1/projects/mbsrn-prod/global/addresses/site-web-preview-ip-tnmfire",
+        ),
+        (
+            "GET",
+            "https://compute.googleapis.com/compute/v1/projects/mbsrn-prod/global/addresses/site-web-preview-ip-tnmfire",
+        ),
+    ]
+
+
 def test_ensure_managed_site_static_ip_creates_missing_address_before_dispatch(monkeypatch) -> None:
     calls: list[tuple[str, str]] = []
     _install_urlopen_stub(
@@ -4236,6 +4328,75 @@ def test_ensure_managed_site_static_ip_creates_missing_address_before_dispatch(m
         (
             "POST",
             "https://compute.googleapis.com/compute/v1/projects/mbsrn-prod/global/addresses",
+        ),
+        (
+            "GET",
+            "https://compute.googleapis.com/compute/v1/projects/mbsrn-prod/global/addresses/site-web-preview-ip-tnmfire",
+        ),
+    ]
+
+
+def test_ensure_managed_site_static_ip_describes_again_when_created_payload_lacks_address(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _http_error(
+                "https://compute.googleapis.com/compute/v1/projects/mbsrn-prod/global/addresses/site-web-preview-ip-tnmfire",
+                status_code=404,
+                message="Not Found",
+            ),
+            _FakeHTTPResponse(status=200, body=json.dumps({"name": "operation-1"})),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps(
+                    {
+                        "name": "site-web-preview-ip-tnmfire",
+                    }
+                ),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps(
+                    {
+                        "name": "site-web-preview-ip-tnmfire",
+                        "address": "34.160.224.212",
+                    }
+                ),
+            ),
+        ],
+        calls,
+    )
+    monkeypatch.setattr(
+        "app.integrations.seo_migration_github_publisher._resolve_google_access_token_from_service_account_json",
+        lambda **kwargs: "token",
+    )
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    result = publisher.ensure_managed_site_static_ip(
+        repo_owner="mhanson13",
+        repo_name="tnmfire",
+        site_id="site-1",
+        managed_gke_config={"project_id": "mbsrn-prod"},
+        gcp_deploy_key='{"type":"service_account"}',
+        dry_run=False,
+    )
+
+    assert result.static_ip_name == "site-web-preview-ip-tnmfire"
+    assert result.static_ip_address == "34.160.224.212"
+    assert result.static_ip_created is True
+    assert result.result == "created"
+    assert calls == [
+        (
+            "GET",
+            "https://compute.googleapis.com/compute/v1/projects/mbsrn-prod/global/addresses/site-web-preview-ip-tnmfire",
+        ),
+        (
+            "POST",
+            "https://compute.googleapis.com/compute/v1/projects/mbsrn-prod/global/addresses",
+        ),
+        (
+            "GET",
+            "https://compute.googleapis.com/compute/v1/projects/mbsrn-prod/global/addresses/site-web-preview-ip-tnmfire",
         ),
         (
             "GET",
@@ -4297,6 +4458,62 @@ def test_ensure_managed_site_static_ip_handles_already_exists_race(monkeypatch) 
         (
             "POST",
             "https://compute.googleapis.com/compute/v1/projects/mbsrn-prod/global/addresses",
+        ),
+        (
+            "GET",
+            "https://compute.googleapis.com/compute/v1/projects/mbsrn-prod/global/addresses/site-web-preview-ip-tnmfire",
+        ),
+    ]
+
+
+def test_ensure_managed_site_static_ip_fails_when_address_missing_after_describe_refresh(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps(
+                    {
+                        "name": "site-web-preview-ip-tnmfire",
+                    }
+                ),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps(
+                    {
+                        "name": "site-web-preview-ip-tnmfire",
+                    }
+                ),
+            ),
+        ],
+        calls,
+    )
+    monkeypatch.setattr(
+        "app.integrations.seo_migration_github_publisher._resolve_google_access_token_from_service_account_json",
+        lambda **kwargs: "token",
+    )
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    with pytest.raises(SEOMigrationGitHubPublisherError) as exc_info:
+        publisher.ensure_managed_site_static_ip(
+            repo_owner="mhanson13",
+            repo_name="tnmfire",
+            site_id="site-1",
+            managed_gke_config={"project_id": "mbsrn-prod"},
+            gcp_deploy_key='{"type":"service_account"}',
+            dry_run=False,
+        )
+
+    assert exc_info.value.code == "managed_site_static_ip_address_missing"
+    assert exc_info.value.stage == "static_ip_provision"
+    diagnostics = exc_info.value.diagnostics or {}
+    assert diagnostics.get("static_ip_error_category") == "address_missing"
+    assert diagnostics.get("static_ip_operation") == "describe"
+    assert calls == [
+        (
+            "GET",
+            "https://compute.googleapis.com/compute/v1/projects/mbsrn-prod/global/addresses/site-web-preview-ip-tnmfire",
         ),
         (
             "GET",
@@ -5146,6 +5363,26 @@ def test_ensure_managed_site_dns_requires_config(monkeypatch) -> None:
 
     assert exc_info.value.code == "managed_site_dns_config_missing"
     assert exc_info.value.stage == "dns_provision"
+    assert calls == []
+
+
+def test_ensure_managed_site_dns_requires_static_ip_address(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    _install_urlopen_stub(monkeypatch, [], calls)
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    with pytest.raises(SEOMigrationGitHubPublisherError) as exc_info:
+        publisher.ensure_managed_site_dns_a_record(
+            preview_hostname="tnmfire.site.mbsrn.com",
+            expected_ip_address="",
+            dns_managed_zone="sites",
+            dns_project_id="mbsrn-prod",
+            gcp_deploy_key='{"type":"service_account"}',
+            ttl=300,
+            dry_run=False,
+        )
+
+    assert exc_info.value.code == "managed_site_static_ip_address_missing"
+    assert exc_info.value.stage == "static_ip_provision"
     assert calls == []
 
 
@@ -7198,21 +7435,7 @@ def test_render_managed_gke_manifests_network_policy_allows_site_web_probe_witho
 
 
 def test_rendered_managed_workflow_yaml_parses_embedded_certificate_evaluation_script() -> None:
-    workflow_yaml = _render_managed_deploy_workflow_yaml(
-        workflow_id="deploy-tnmfire-www-prod.yml",
-        repo_owner="mhanson13",
-        repo_name="tnmfire",
-        branch="main",
-        deploy_workflow_mode="site_repo_template_v1",
-        target_environment_key="gke_prod",
-        target_environment_source="admin_config",
-        managed_gke_config=None,
-        kubernetes_namespace="tnmfire",
-        namespace_source="repo_name",
-        preview_hostname="tnmfire.site.mbsrn.com",
-        private_image_auth_required=True,
-        site_id="site-tnmfire",
-    )
+    workflow_yaml = _render_default_managed_workflow_yaml()
 
     parsed_workflow = yaml.safe_load(workflow_yaml)
     assert isinstance(parsed_workflow, dict)
@@ -7220,22 +7443,7 @@ def test_rendered_managed_workflow_yaml_parses_embedded_certificate_evaluation_s
     for unexpected_python_key in ("import", "raw", "expected_host", "payload", "spec_domains"):
         assert unexpected_python_key not in top_level_keys
 
-    jobs = parsed_workflow.get("jobs")
-    assert isinstance(jobs, dict)
-    deploy_job = jobs.get("deploy")
-    assert isinstance(deploy_job, dict)
-    steps = deploy_job.get("steps")
-    assert isinstance(steps, list)
-    resolve_live_url_step = next(
-        (
-            step
-            for step in steps
-            if isinstance(step, dict) and str(step.get("name") or "") == "Resolve live URL from ingress status"
-        ),
-        None,
-    )
-    assert isinstance(resolve_live_url_step, dict)
-    run_script = str(resolve_live_url_step.get("run") or "")
+    run_script = _extract_resolve_live_url_run_script(workflow_yaml)
     assert "python - <<'PY'" in run_script
     assert "import json" in run_script
     assert "expected_host = str(os.environ.get('EXPECTED_PREVIEW_HOST') or '').strip().lower()" in run_script
@@ -7247,6 +7455,22 @@ def test_rendered_managed_workflow_yaml_parses_embedded_certificate_evaluation_s
     assert "ingress_status_ip_matches_static_ip" in run_script
     assert "static_ip_bound_to_expected_forwarding_rule" in run_script
     assert "deploy_runtime_reason_code=ingress_status_ip_stale_or_mismatched" in run_script
+    assert "emit_resolve_live_url_state()" in run_script
+    assert "resolve_live_url_state_host_reachable" in run_script
+    assert "resolve_live_url_state_deploy_https_ready" in run_script
+    assert "Ingress external address observed after HTTPS success verification." in run_script
+    assert (
+        'if [ "$host_reachable" = true ] && [ "$host_reachability_scheme" = "https" ] && [ -z "$ingress_ip" ]; then'
+        in run_script
+    )
+    assert 'if [ -z "$ingress_ip" ] && [ "$host_reachable" != "true" ]; then' in run_script
+    assert 'if [ -z "$ingress_ip" ]; then' not in run_script
+    assert 'echo "live_url=$live_url"' in run_script
+    assert 'echo "deploy_https_ready=$deploy_https_ready"' in run_script
+    assert 'echo "deploy_runtime_reason_code=ingress_address_pending"' in run_script
+    assert 'echo "deploy_runtime_reason_code=ingress_backend_502"' in run_script
+    assert 'echo "deploy_runtime_reason_code=reachable_but_tls_certificate_mismatch"' in run_script
+    assert "Neither ingress status IP nor reserved static IP address is available for DNS/TLS validation yet." in run_script
 
     try:
         syntax_check = subprocess.run(

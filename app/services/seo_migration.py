@@ -336,6 +336,9 @@ _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROJECT_NOT_FOUND = (
 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFLICT = (
     "managed_site_static_ip_conflict"
 )
+_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_ADDRESS_MISSING = (
+    "managed_site_static_ip_address_missing"
+)
 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_CONFIG_INVALID = (
     "managed_deploy_impersonation_config_invalid"
 )
@@ -3392,6 +3395,39 @@ class SEOMigrationService:
                     deploy_workflow_mode_for_dispatch == _DEPLOY_WORKFLOW_MODE_SITE_REPO_TEMPLATE_V1
                     and not dry_run
                 ):
+                    def _emit_prerequisite_chain_log(
+                        *,
+                        stage: str,
+                        reason_code: str | None = None,
+                        level: int = logging.INFO,
+                    ) -> None:
+                        self._emit_structured_service_log(
+                            payload={
+                                "event": "seo_migration_managed_deploy_prerequisite_chain",
+                                "business_id": business_id,
+                                "site_id": site_id,
+                                "workspace_id": workspace.id,
+                                "artifact_version_id": artifact.id,
+                                "target_environment_key": _normalize_string(
+                                    workflow_resolution.get("target_environment_key"),
+                                    max_length=80,
+                                ),
+                                "static_ip_name": expected_static_ip_name,
+                                "static_ip_address_present": bool(
+                                    _normalize_string(expected_static_ip_address, max_length=64)
+                                ),
+                                "dns_hostname": expected_dns_hostname,
+                                "dns_expected_ip_present": bool(
+                                    _normalize_string(expected_dns_ip, max_length=64)
+                                ),
+                                "stage": _normalize_string(stage, max_length=80),
+                                "reason_code": _normalize_string(reason_code, max_length=80),
+                                "deploy_trace_id": deploy_trace_id,
+                            },
+                            fallback_message="seo_migration_managed_deploy_prerequisite_chain",
+                            level=level,
+                        )
+
                     if deploy_secret_value_for_control_plane is None:
                         deploy_secret_value_for_control_plane, _, _ = self._resolve_deploy_secret_for_propagation()
                     try:
@@ -3449,6 +3485,94 @@ class SEOMigrationService:
                             fallback_message="seo_migration_managed_site_static_ip_ensure",
                             level=logging.INFO,
                         )
+                        _emit_prerequisite_chain_log(stage="static_ip_ensured")
+                        if not expected_static_ip_address:
+                            _emit_prerequisite_chain_log(stage="static_ip_address_refresh_attempt")
+                            try:
+                                refreshed_static_ip_ensure: SEOMigrationGitHubManagedSiteStaticIPEnsureResult = (
+                                    self.github_publisher.ensure_managed_site_static_ip(
+                                        repo_owner=deploy_target_for_dispatch.repo_owner,
+                                        repo_name=deploy_target_for_dispatch.repo_name,
+                                        site_id=site_id,
+                                        managed_gke_config=managed_gke_config_for_dispatch,
+                                        gcp_deploy_key=deploy_secret_value_for_control_plane,
+                                        dry_run=False,
+                                    )
+                                )
+                            except SEOMigrationGitHubPublisherError as refreshed_static_ip_exc:
+                                _emit_prerequisite_chain_log(
+                                    stage="static_ip_address_refresh_failed",
+                                    reason_code=_normalize_dispatch_service_reason_code(
+                                        refreshed_static_ip_exc.code
+                                    )
+                                    or _normalize_string(refreshed_static_ip_exc.code, max_length=80),
+                                    level=logging.WARNING,
+                                )
+                                raise
+                            refreshed_static_ip_address = _normalize_string(
+                                refreshed_static_ip_ensure.static_ip_address,
+                                max_length=64,
+                            )
+                            if refreshed_static_ip_address:
+                                expected_static_ip_name = _normalize_string(
+                                    refreshed_static_ip_ensure.static_ip_name,
+                                    max_length=80,
+                                ) or expected_static_ip_name
+                                expected_static_ip_address = refreshed_static_ip_address
+                                static_ip_created = static_ip_created or bool(
+                                    refreshed_static_ip_ensure.static_ip_created
+                                )
+                                static_ip_project_id = _normalize_string(
+                                    refreshed_static_ip_ensure.gcp_project_id,
+                                    max_length=120,
+                                ) or static_ip_project_id
+                                refreshed_result = _normalize_string(
+                                    refreshed_static_ip_ensure.result,
+                                    max_length=80,
+                                )
+                                if refreshed_result and not static_ip_created:
+                                    static_ip_ensure_result = refreshed_result
+                                static_ip_gcp_credential_source = _normalize_string(
+                                    refreshed_static_ip_ensure.gcp_credential_source,
+                                    max_length=80,
+                                ) or static_ip_gcp_credential_source
+                                static_ip_gcp_principal_email = _normalize_string(
+                                    refreshed_static_ip_ensure.gcp_principal_email,
+                                    max_length=200,
+                                ) or static_ip_gcp_principal_email
+                                static_ip_gcp_impersonated_service_account_email = _normalize_string(
+                                    refreshed_static_ip_ensure.gcp_impersonated_service_account_email,
+                                    max_length=200,
+                                ) or static_ip_gcp_impersonated_service_account_email
+                                _emit_prerequisite_chain_log(stage="static_ip_address_refreshed")
+                        if not expected_static_ip_address:
+                            dispatch_service_reason_code = (
+                                _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_ADDRESS_MISSING
+                            )
+                            static_ip_ensure_result = "failed"
+                            static_ip_operation = "ensure"
+                            static_ip_error_category = "address_missing"
+                            static_ip_error_code = "address_missing"
+                            static_ip_error_summary = (
+                                "Static IP ensure succeeded but did not return an address value."
+                            )
+                            static_ip_exit_code = None
+                            static_ip_permission_hint = (
+                                "Verify global address describe permissions and retry."
+                            )
+                            _emit_prerequisite_chain_log(
+                                stage="static_ip_address_missing",
+                                reason_code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_ADDRESS_MISSING,
+                                level=logging.WARNING,
+                            )
+                            raise SEOMigrationGitHubPublisherError(
+                                code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_ADDRESS_MISSING,
+                                safe_message=(
+                                    "Managed-site static IP ensure succeeded but did not return an address value. "
+                                    "Verify global address describe permissions and retry."
+                                ),
+                                stage="static_ip_provision",
+                            )
                     except SEOMigrationGitHubPublisherError as static_ip_exc:
                         derived_static_ip_name = None
                         try:
@@ -3513,6 +3637,12 @@ class SEOMigrationService:
                         normalized_static_ip_reason = _normalize_dispatch_service_reason_code(static_ip_exc.code)
                         if normalized_static_ip_reason is not None:
                             dispatch_service_reason_code = normalized_static_ip_reason
+                        _emit_prerequisite_chain_log(
+                            stage="static_ip_ensure_failed",
+                            reason_code=normalized_static_ip_reason
+                            or _normalize_string(static_ip_exc.code, max_length=80),
+                            level=logging.WARNING,
+                        )
                         self._emit_structured_service_log(
                             payload={
                                 "event": "seo_migration_managed_site_static_ip_ensure",
@@ -3577,6 +3707,7 @@ class SEOMigrationService:
                             max_length=120,
                         )
                         expected_dns_ip = _normalize_string(expected_static_ip_address, max_length=64)
+                        _emit_prerequisite_chain_log(stage="dns_ensure_start")
                         dns_ttl = _coerce_int(workflow_resolution.get("managed_site_dns_ttl")) or 300
                         dns_ensure: SEOMigrationGitHubManagedSiteDnsEnsureResult = (
                             self.github_publisher.ensure_managed_site_dns_a_record(
@@ -3604,7 +3735,7 @@ class SEOMigrationService:
                         expected_dns_ip = _normalize_string(
                             dns_ensure.dns_expected_ip,
                             max_length=64,
-                        )
+                        ) or expected_dns_ip
                         dns_record_created = bool(dns_ensure.dns_created)
                         dns_record_updated = bool(dns_ensure.dns_updated)
                         dns_ttl = _coerce_int(dns_ensure.dns_ttl) or dns_ttl
@@ -3662,6 +3793,7 @@ class SEOMigrationService:
                             fallback_message="seo_migration_managed_site_dns_ensure",
                             level=logging.INFO,
                         )
+                        _emit_prerequisite_chain_log(stage="dns_ensure_succeeded")
                     except SEOMigrationGitHubPublisherError as dns_exc:
                         derived_preview_hostname = None
                         try:
@@ -3709,6 +3841,12 @@ class SEOMigrationService:
                         normalized_dns_reason = _normalize_dispatch_service_reason_code(dns_exc.code)
                         if normalized_dns_reason is not None:
                             dispatch_service_reason_code = normalized_dns_reason
+                        _emit_prerequisite_chain_log(
+                            stage="dns_ensure_failed",
+                            reason_code=normalized_dns_reason
+                            or _normalize_string(dns_exc.code, max_length=80),
+                            level=logging.WARNING,
+                        )
                         self._emit_structured_service_log(
                             payload={
                                 "event": "seo_migration_managed_site_dns_ensure",
@@ -3747,6 +3885,7 @@ class SEOMigrationService:
                         raise
                     dns_hostname_for_resolution = _normalize_string(expected_dns_hostname, max_length=253)
                     expected_dns_ip_for_resolution = _normalize_string(expected_dns_ip, max_length=64)
+                    _emit_prerequisite_chain_log(stage="dns_propagation_start")
                     max_wait_seconds = max(_MANAGED_SITE_DNS_PROPAGATION_MAX_WAIT_SECONDS, 0)
                     sleep_seconds = max(_MANAGED_SITE_DNS_PROPAGATION_SLEEP_SECONDS, 1)
                     propagation_check_started_at = time.monotonic()
@@ -3811,6 +3950,11 @@ class SEOMigrationService:
                     )
                     if not propagation_match_observed:
                         dispatch_service_reason_code = _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PROPAGATION_PENDING
+                        _emit_prerequisite_chain_log(
+                            stage="dns_propagation_pending",
+                            reason_code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PROPAGATION_PENDING,
+                            level=logging.WARNING,
+                        )
                         raise SEOMigrationGitHubPublisherError(
                             code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PROPAGATION_PENDING,
                             safe_message=(
@@ -3820,6 +3964,7 @@ class SEOMigrationService:
                             ),
                             stage="dns_propagation",
                         )
+                    _emit_prerequisite_chain_log(stage="dns_propagation_succeeded")
                 if (
                     deploy_workflow_mode_for_dispatch == _DEPLOY_WORKFLOW_MODE_SITE_REPO_TEMPLATE_V1
                     and dispatch_namespace
@@ -12405,6 +12550,7 @@ class SEOMigrationService:
             _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_QUOTA_EXCEEDED,
             _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROJECT_NOT_FOUND,
             _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFLICT,
+            _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_ADDRESS_MISSING,
             _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFIG_MISSING,
             _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PERMISSION_DENIED,
         }:
@@ -14941,6 +15087,7 @@ def _normalize_deploy_failure_reason_code(value: object) -> str | None:
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_QUOTA_EXCEEDED,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROJECT_NOT_FOUND,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFLICT,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_ADDRESS_MISSING,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_CONFIG_INVALID,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_PERMISSION_DENIED,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFIG_MISSING,
@@ -15041,6 +15188,7 @@ def _normalize_workflow_run_failure_reason_code(value: object) -> str | None:
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_QUOTA_EXCEEDED,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROJECT_NOT_FOUND,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFLICT,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_ADDRESS_MISSING,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_CONFIG_INVALID,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_PERMISSION_DENIED,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFIG_MISSING,
@@ -15118,6 +15266,7 @@ def _normalize_dispatch_service_reason_code(value: object) -> str | None:
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_QUOTA_EXCEEDED,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROJECT_NOT_FOUND,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFLICT,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_ADDRESS_MISSING,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_CONFIG_INVALID,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_PERMISSION_DENIED,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFIG_MISSING,
@@ -15645,6 +15794,7 @@ def _derive_dispatch_service_reason_code(
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_QUOTA_EXCEEDED,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROJECT_NOT_FOUND,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFLICT,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_ADDRESS_MISSING,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_CONFIG_INVALID,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_PERMISSION_DENIED,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFIG_MISSING,
@@ -15699,6 +15849,7 @@ def _derive_dispatch_service_reason_code(
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_QUOTA_EXCEEDED,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROJECT_NOT_FOUND,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFLICT,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_ADDRESS_MISSING,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_CONFIG_INVALID,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_PERMISSION_DENIED,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFIG_MISSING,
@@ -15784,6 +15935,11 @@ def _derive_managed_gke_dispatch_readiness_message(*, dispatch_service_reason_co
         return (
             "Managed-site static IP provisioning encountered a name conflict for the expected global address. "
             "Inspect the named address and reconcile ownership before retry."
+        )
+    if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_ADDRESS_MISSING:
+        return (
+            "Managed-site static IP ensure succeeded but did not return an address value. "
+            "Verify global address describe permissions and retry."
         )
     if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROVISIONING_FAILED:
         return (
@@ -15985,6 +16141,11 @@ def _derive_deploy_failure_remediation_hint(
             "Expected per-site static IP name conflicts with an existing unmanaged resource. "
             "Inspect the named global address and reconcile ownership before retry."
         )
+    if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_ADDRESS_MISSING:
+        return (
+            "Static IP ensure succeeded but did not return an address; verify global address describe "
+            "permissions and retry."
+        )
     if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROVISIONING_FAILED:
         return (
             "Control-plane static IP provisioning failed before workflow dispatch. "
@@ -15992,8 +16153,8 @@ def _derive_deploy_failure_remediation_hint(
         )
     if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFIG_MISSING:
         return (
-            "Managed-site DNS provisioning config is missing (DNS zone/project mapping and/or control-plane deploy "
-            "credential). Update admin deploy settings and retry."
+            "Managed-site DNS provisioning config is missing (preview hostname zone/project mapping and/or "
+            "control-plane deploy credential). Update admin deploy settings and retry."
         )
     if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PROVISIONING_FAILED:
         return (
@@ -16296,6 +16457,11 @@ def _derive_workflow_run_failure_hint(
         return (
             "Expected static IP name conflicts with existing GCP address state and could not be reconciled. "
             "Inspect named global address ownership and retry."
+        )
+    if normalized_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_ADDRESS_MISSING:
+        return (
+            "Static IP ensure succeeded but did not return an address value. "
+            "Verify global address describe permissions and retry."
         )
     if normalized_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROVISIONING_FAILED:
         return (

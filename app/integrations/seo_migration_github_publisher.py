@@ -2592,6 +2592,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_QUOTA_EXCEEDED,
                 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROJECT_NOT_FOUND,
                 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFLICT,
+                _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_ADDRESS_MISSING,
                 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_CONFIG_INVALID,
                 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_PERMISSION_DENIED,
             }:
@@ -2654,9 +2655,11 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         normalized_expected_ip = _coerce_string(expected_ip_address)
         if not normalized_expected_ip:
             raise SEOMigrationGitHubPublisherError(
-                code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFIG_MISSING,
-                safe_message="Managed-site DNS provisioning requires an expected static IP address.",
-                stage="dns_provision",
+                code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_ADDRESS_MISSING,
+                safe_message=(
+                    "Managed-site static IP ensure succeeded but did not provide an address for DNS provisioning."
+                ),
+                stage="static_ip_provision",
             )
         normalized_zone = (_coerce_string(dns_managed_zone) or "").strip().lower()
         normalized_project_id = (_coerce_string(dns_project_id) or "").strip().lower()
@@ -2725,6 +2728,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFLICTING_RECORD,
                 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PERMISSION_DENIED,
                 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_TRANSACTION_CONFLICT,
+                _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_ADDRESS_MISSING,
                 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_CONFIG_INVALID,
                 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_PERMISSION_DENIED,
             }:
@@ -6880,6 +6884,53 @@ def _ensure_managed_site_global_static_ip(
         "safe_message_on_failure": "Managed site static IP provisioning request to Google APIs failed.",
         "safe_message_on_timeout": "Managed site static IP provisioning request timed out.",
     }
+
+    def _coerce_static_ip_address(payload: object) -> str | None:
+        if not isinstance(payload, dict):
+            return None
+        return _coerce_string(payload.get("address"))
+
+    def _raise_static_ip_address_missing(*, operation: str) -> None:
+        raise SEOMigrationGitHubPublisherError(
+            code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_ADDRESS_MISSING,
+            safe_message=(
+                "Managed-site static IP ensure succeeded but Google address details did not contain an address value."
+            ),
+            stage="static_ip_provision",
+            diagnostics=_normalize_static_ip_error_diagnostics(
+                {
+                    "static_ip_operation": operation,
+                    "static_ip_error_category": "address_missing",
+                    "static_ip_error_code": "address_missing",
+                    "static_ip_error_summary": (
+                        "Managed-site static IP address payload was missing required field 'address'."
+                    ),
+                    "gcp_credential_source": gcp_credential_source,
+                    "gcp_principal_email": gcp_principal_email,
+                    "gcp_impersonated_service_account_email": gcp_impersonated_service_account_email,
+                }
+            ),
+        )
+
+    def _refresh_describe_payload(*, operation: str) -> dict[str, object] | None:
+        try:
+            refreshed_payload = _request_google_json(
+                method="GET",
+                url=describe_url,
+                allow_404=True,
+                **request_kwargs,
+            )
+        except SEOMigrationGitHubPublisherError as exc:
+            raise _classify_managed_site_static_ip_provisioning_error(
+                exc=exc,
+                operation=operation,
+                gcp_credential_source=gcp_credential_source,
+                gcp_principal_email=gcp_principal_email,
+                gcp_impersonated_service_account_email=gcp_impersonated_service_account_email,
+            ) from exc
+        if isinstance(refreshed_payload, dict):
+            return refreshed_payload
+        return None
     try:
         existing_payload = _request_google_json(
             method="GET",
@@ -6896,8 +6947,14 @@ def _ensure_managed_site_global_static_ip(
             gcp_impersonated_service_account_email=gcp_impersonated_service_account_email,
         ) from exc
     if isinstance(existing_payload, dict):
+        existing_address = _coerce_static_ip_address(existing_payload)
+        if not existing_address:
+            existing_payload = _refresh_describe_payload(operation="describe")
+            existing_address = _coerce_static_ip_address(existing_payload)
+        if not existing_address:
+            _raise_static_ip_address_missing(operation="describe")
         return {
-            "static_ip_address": _coerce_string(existing_payload.get("address")),
+            "static_ip_address": existing_address,
             "static_ip_created": False,
             "result": "exists",
         }
@@ -6932,8 +6989,14 @@ def _ensure_managed_site_global_static_ip(
                     gcp_impersonated_service_account_email=gcp_impersonated_service_account_email,
                 ) from describe_exc
             if isinstance(raced_payload, dict):
+                raced_address = _coerce_static_ip_address(raced_payload)
+                if not raced_address:
+                    raced_payload = _refresh_describe_payload(operation="describe_after_create")
+                    raced_address = _coerce_static_ip_address(raced_payload)
+                if not raced_address:
+                    _raise_static_ip_address_missing(operation="describe_after_create")
                 return {
-                    "static_ip_address": _coerce_string(raced_payload.get("address")),
+                    "static_ip_address": raced_address,
                     "static_ip_created": False,
                     "result": "already_exists_after_race",
                 }
@@ -6998,8 +7061,14 @@ def _ensure_managed_site_global_static_ip(
             gcp_principal_email=gcp_principal_email,
             gcp_impersonated_service_account_email=gcp_impersonated_service_account_email,
         )
+    created_address = _coerce_static_ip_address(last_payload)
+    if not created_address:
+        last_payload = _refresh_describe_payload(operation="describe_after_create")
+        created_address = _coerce_static_ip_address(last_payload)
+    if not created_address:
+        _raise_static_ip_address_missing(operation="describe_after_create")
     return {
-        "static_ip_address": _coerce_string(last_payload.get("address")),
+        "static_ip_address": created_address,
         "static_ip_created": True,
         "result": "created",
     }
@@ -7217,6 +7286,11 @@ def _derive_static_ip_error_code(*, provider_message_lower: str, status_code: in
 
 
 def _derive_static_ip_provisioning_safe_message(*, reason_code: str) -> str:
+    if reason_code == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_ADDRESS_MISSING:
+        return (
+            "Managed-site static IP ensure succeeded but did not return an address value. "
+            "Verify global address describe permissions and retry."
+        )
     if reason_code == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_CONFIG_INVALID:
         return (
             "Managed deploy impersonation configuration is invalid. "
@@ -7311,15 +7385,18 @@ def _ensure_managed_site_dns_a_record(
     normalized_ttl = _coerce_int(ttl)
     if normalized_ttl is None or normalized_ttl <= 0:
         normalized_ttl = _MBSRN_MANAGED_PREVIEW_DNS_TTL_DEFAULT
-    if (
-        not normalized_project_id
-        or not normalized_zone
-        or not normalized_record_name
-        or not normalized_expected_ip
-    ):
+    if not normalized_expected_ip:
+        raise SEOMigrationGitHubPublisherError(
+            code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_ADDRESS_MISSING,
+            safe_message=(
+                "Managed-site static IP ensure succeeded but did not provide an address for DNS provisioning."
+            ),
+            stage="static_ip_provision",
+        )
+    if not normalized_project_id or not normalized_zone or not normalized_record_name:
         raise SEOMigrationGitHubPublisherError(
             code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFIG_MISSING,
-            safe_message="Managed-site DNS provisioning is missing required DNS project/zone/record/ip config.",
+            safe_message="Managed-site DNS provisioning is missing required DNS project/zone/record config.",
             stage="dns_provision",
         )
     access_token = _resolve_google_access_token_for_managed_deploy_operations(
@@ -8412,6 +8489,9 @@ _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROJECT_NOT_FOUND = (
 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFLICT = (
     "managed_site_static_ip_conflict"
 )
+_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_ADDRESS_MISSING = (
+    "managed_site_static_ip_address_missing"
+)
 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_CONFIG_INVALID = (
     "managed_deploy_impersonation_config_invalid"
 )
@@ -9368,6 +9448,23 @@ def _render_managed_deploy_workflow_yaml(
         "          ingress_conflict_detected=false\n"
         "          cert_identity_valid=false\n"
         "          deploy_https_ready=false\n"
+        "          live_url=\"\"\n"
+        "          emit_resolve_live_url_state() {\n"
+        "            echo \"resolve_live_url_state_host_reachable=$host_reachable\"\n"
+        "            echo \"resolve_live_url_state_host_reachability_scheme=$host_reachability_scheme\"\n"
+        "            echo \"resolve_live_url_state_live_url=$live_url\"\n"
+        "            echo \"resolve_live_url_state_dns_record_matches_ingress=$dns_record_matches_ingress\"\n"
+        "            echo \"resolve_live_url_state_dns_expected_ip=$dns_expected_ip\"\n"
+        "            echo \"resolve_live_url_state_dns_observed_ip=$dns_observed_ip\"\n"
+        "            echo \"resolve_live_url_state_expected_static_ip_address=$expected_static_ip_address\"\n"
+        "            echo \"resolve_live_url_state_static_ip_status=$static_ip_status\"\n"
+        "            echo \"resolve_live_url_state_static_ip_bound_to_expected_forwarding_rule=$static_ip_bound_to_expected_forwarding_rule\"\n"
+        "            echo \"resolve_live_url_state_tls_certificate_status=$tls_certificate_status\"\n"
+        "            echo \"resolve_live_url_state_tls_domain_status=$tls_domain_status\"\n"
+        "            echo \"resolve_live_url_state_cert_identity_valid=$cert_identity_valid\"\n"
+        "            echo \"resolve_live_url_state_deploy_https_ready=$deploy_https_ready\"\n"
+        "          }\n"
+        "          trap 'resolve_live_url_exit_code=$?; if [ \"$resolve_live_url_exit_code\" -ne 0 ]; then emit_resolve_live_url_state; fi' EXIT\n"
         "          for attempt in $(seq 1 \"$max_attempts\"); do\n"
         "            ingress_host=\"$(kubectl get ingress site-web --namespace \"$K8S_NAMESPACE\" -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)\"\n"
         "            ingress_ip=\"$(kubectl get ingress site-web --namespace \"$K8S_NAMESPACE\" -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)\"\n"
@@ -9428,7 +9525,6 @@ def _render_managed_deploy_workflow_yaml(
         "              sleep \"$sleep_seconds\"\n"
         "            fi\n"
         "          done\n"
-        "          live_url=\"\"\n"
         "          if [ \"$tls_mismatch_detected\" = true ]; then\n"
             "            echo \"deploy_runtime_reason_message=Expected hostname is reachable but TLS certificate is bound to another site.\"\n"
             "            kubectl get ingress site-web --namespace \"$K8S_NAMESPACE\" -o wide || true\n"
@@ -9512,7 +9608,14 @@ def _render_managed_deploy_workflow_yaml(
         "            echo \"deploy_runtime_reason_message=Preview hostname is missing; cannot validate DNS/TLS identity.\"\n"
         "            exit 1\n"
         "          fi\n"
-        "          if [ -z \"$ingress_ip\" ]; then\n"
+        "          if [ \"$host_reachable\" = true ] && [ \"$host_reachability_scheme\" = \"https\" ] && [ -z \"$ingress_ip\" ]; then\n"
+        "            ingress_ip=\"$(kubectl get ingress site-web --namespace \"$K8S_NAMESPACE\" -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)\"\n"
+        "            ingress_host=\"$(kubectl get ingress site-web --namespace \"$K8S_NAMESPACE\" -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)\"\n"
+        "            if [ -n \"$ingress_ip\" ] || [ -n \"$ingress_host\" ]; then\n"
+        "              echo \"Ingress external address observed after HTTPS success verification.\"\n"
+        "            fi\n"
+        "          fi\n"
+        "          if [ -z \"$ingress_ip\" ] && [ \"$host_reachable\" != \"true\" ]; then\n"
         "            echo \"deploy_runtime_reason_code=ingress_address_pending\"\n"
         "            echo \"deploy_runtime_reason_message=Ingress external IP is required before DNS/TLS validation.\"\n"
         "            exit 1\n"
@@ -9613,6 +9716,11 @@ def _render_managed_deploy_workflow_yaml(
         "              echo \"static_ip_users=$static_ip_users\"\n"
         "              exit 1\n"
         "            fi\n"
+        "          fi\n"
+        "          if [ -z \"$dns_expected_ip\" ]; then\n"
+        "            echo \"deploy_runtime_reason_code=ingress_address_pending\"\n"
+        "            echo \"deploy_runtime_reason_message=Neither ingress status IP nor reserved static IP address is available for DNS/TLS validation yet.\"\n"
+        "            exit 1\n"
         "          fi\n"
         "          ingress_validation_output=\"$(mktemp)\"\n"
         "          kubectl describe ingress site-web --namespace \"$K8S_NAMESPACE\" > \"$ingress_validation_output\" 2>&1 || true\n"

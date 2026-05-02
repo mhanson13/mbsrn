@@ -346,6 +346,7 @@ When migration deploy fails after publish, query these structured events:
 - `jsonPayload.event="seo_migration_managed_site_static_ip_ensure"` (pre-dispatch control-plane ensure of deterministic per-site global static IP)
 - `jsonPayload.event="seo_migration_managed_site_dns_ensure"` (pre-dispatch control-plane ensure of preview-host DNS A record)
 - `jsonPayload.event="seo_migration_managed_site_dns_propagation_check"` (bounded resolver propagation gate before dispatch)
+- `jsonPayload.event="seo_migration_managed_deploy_prerequisite_chain"` (static-IP -> DNS -> propagation prerequisite transition checkpoints)
 - `jsonPayload.event="seo_migration_deploy_dispatch_accepted"`
 - `jsonPayload.event="seo_migration_workflow_run_lookup_attempted"`
 - `jsonPayload.event="seo_migration_workflow_run_result_captured"`
@@ -384,6 +385,7 @@ Per-site success gate (managed ingress deploys):
   - `managed_site_static_ip_quota_exceeded`
   - `managed_site_static_ip_project_not_found`
   - `managed_site_static_ip_conflict`
+  - `managed_site_static_ip_address_missing`
   - `managed_site_static_ip_provisioning_failed`
 - pre-dispatch DNS ensure blockers (control-plane phase):
   - `managed_site_dns_config_missing`
@@ -399,7 +401,7 @@ Per-site success gate (managed ingress deploys):
   - `stale_pre_shared_cert_binding_detected` (confirmed stale/cross-site cert evidence)
 - advisory cert metadata signal:
   - `pre_shared_cert_metadata_mismatch` (controller metadata mismatch only; non-blocking by itself)
-- workflow template validation coverage now includes YAML parsing of rendered managed deploy workflows plus `bash -n` syntax checks for the `Resolve live URL from ingress status` run script so embedded diagnostics blocks stay structurally valid.
+- workflow template validation coverage now includes YAML parsing of rendered managed deploy workflows plus `bash -n` syntax checks for the `Resolve live URL from ingress status` run script so embedded diagnostics blocks stay structurally valid; regression tests also cover the HTTPS-success finalization path (including delayed ingress IP population and non-blocking stale ingress-status IP advisory handling).
 
 UI-to-log troubleshooting mapping (Deploy consistency block):
 - `DNS matches expected target IP` (Blocked/Pending):
@@ -412,7 +414,7 @@ UI-to-log troubleshooting mapping (Deploy consistency block):
   - logs: `seo_migration_target_readiness_check`, ingress-evidence failure records, `dispatch_service_reason_code`
 - `Ingress/static IP conflict check`:
   - UI field: `ingress_conflict_detected`
-  - reason codes: `managed_site_static_ip_config_missing`, `managed_deploy_impersonation_config_invalid`, `managed_deploy_impersonation_permission_denied`, `managed_site_static_ip_permission_denied`, `managed_site_static_ip_api_disabled`, `managed_site_static_ip_quota_exceeded`, `managed_site_static_ip_project_not_found`, `managed_site_static_ip_conflict`, `managed_site_static_ip_provisioning_failed`, `managed_site_dns_config_missing`, `managed_site_dns_provisioning_failed`, `managed_site_dns_conflicting_record`, `managed_site_dns_permission_denied`, `managed_site_dns_transaction_conflict`, `managed_site_dns_propagation_pending`, `ingress_static_ip_conflict`, `shared_static_ip_not_allowed_for_per_site_ingress`, `managed_site_static_ip_missing`, `expected_static_ip_not_bound_to_ingress`, `stale_pre_shared_cert_binding_detected`
+  - reason codes: `managed_site_static_ip_config_missing`, `managed_deploy_impersonation_config_invalid`, `managed_deploy_impersonation_permission_denied`, `managed_site_static_ip_permission_denied`, `managed_site_static_ip_api_disabled`, `managed_site_static_ip_quota_exceeded`, `managed_site_static_ip_project_not_found`, `managed_site_static_ip_conflict`, `managed_site_static_ip_address_missing`, `managed_site_static_ip_provisioning_failed`, `managed_site_dns_config_missing`, `managed_site_dns_provisioning_failed`, `managed_site_dns_conflicting_record`, `managed_site_dns_permission_denied`, `managed_site_dns_transaction_conflict`, `managed_site_dns_propagation_pending`, `ingress_static_ip_conflict`, `shared_static_ip_not_allowed_for_per_site_ingress`, `managed_site_static_ip_missing`, `expected_static_ip_not_bound_to_ingress`, `stale_pre_shared_cert_binding_detected`
   - logs: target-readiness and dispatch failure records with matching `dispatch_service_reason_code`
 - `Managed certificate active` / metadata diagnostics:
   - advisory reason code: `pre_shared_cert_metadata_mismatch`
@@ -475,6 +477,8 @@ Key non-secret fields:
   - `preview_hostname`, `dns_record_name`, `dns_managed_zone`, `dns_project_id`, `dns_expected_ip`, `dns_previous_ips`, `dns_created`, `dns_updated`, `dns_ttl`, `result`, `operation`, `gcp_credential_source`, `gcp_principal_email`, `gcp_impersonated_service_account_email` (when configured), optional `reason_code`
 - `seo_migration_managed_site_dns_propagation_check` event fields:
   - `preview_hostname`, `dns_record_name`, `dns_managed_zone`, `dns_project_id`, `dns_expected_ip`, `dns_observed_ips`, `observed_dns_ips`, `dns_ensure_result`, `max_wait_seconds`, `sleep_seconds`, `wait_elapsed_seconds`, `attempt_count`, `result`
+- `seo_migration_managed_deploy_prerequisite_chain` event fields:
+  - `static_ip_name`, `static_ip_address_present`, `dns_hostname`, `dns_expected_ip_present`, `stage`, optional `reason_code`
 - `workflow_conformance_checked`, `workflow_conformance_status`
 - `workflow_conformance_reasons`, `workflow_conformance_evidence_summary`
 - namespace isolation/readiness fields:
@@ -1138,8 +1142,13 @@ Managed certificate mismatch reason-code interpretation:
   - admin verification commands:
     - `gcloud compute addresses describe site-web-preview-ip-tnmfire --global --project mbsrn-prod`
     - `gcloud compute addresses create site-web-preview-ip-tnmfire --global --project mbsrn-prod`
+- `dispatch_service_reason_code=managed_site_static_ip_address_missing`
+  - static IP ensure returned success state but no usable `address` after in-request describe refresh.
+  - DNS ensure is not attempted with null expected IP.
+  - verify `compute.globalAddresses.get` for the effective principal and inspect `seo_migration_managed_deploy_prerequisite_chain` + `seo_migration_managed_site_static_ip_ensure` logs.
 - `dispatch_service_reason_code=managed_site_dns_config_missing`
-  - control-plane DNS ensure is missing required DNS config (managed zone/project mapping or deploy credential).
+  - control-plane DNS ensure is missing required DNS config (preview hostname zone/project mapping or deploy credential).
+  - this code is reserved for DNS config; missing static-IP address is reported as `managed_site_static_ip_address_missing`.
   - fix admin managed deploy DNS configuration before retry.
 - `dispatch_service_reason_code=managed_site_dns_provisioning_failed`
   - control-plane DNS describe/change call failed.
@@ -1319,6 +1328,8 @@ Required credential note:
     admin-owned project-configuration blocker; configured managed deploy project id invalid/inaccessible
   - `managed_site_static_ip_conflict`:
     admin-owned static IP ownership/scope conflict for deterministic per-site address name
+  - `managed_site_static_ip_address_missing`:
+    static-IP ensure returned success but no usable address after in-request refresh; DNS stage is skipped and dispatch is blocked at static-IP prerequisite stage
   - `managed_site_static_ip_provisioning_failed`:
     admin-owned static IP provisioning blocker before workflow dispatch (unclassified Google API/runtime failure during ensure path)
   - `managed_site_dns_config_missing`:

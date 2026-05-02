@@ -1218,6 +1218,7 @@ Post-fix rollout for existing managed sites:
       - annotation: `kubernetes.io/ingress.global-static-ip-name: site-web-preview-ip-<normalized-site>`
       - static IP names are site-scoped and must not be shared across sites
       - control plane ensures the expected global address exists before workflow dispatch using admin-managed deploy credentials
+      - prerequisite chain is single-request and ordered: static-IP ensure -> DNS ensure (with the same in-request static IP address) -> DNS propagation gate -> workflow dispatch
       - generated target workflow still performs a preflight existence check (`gcloud compute addresses describe site-web-preview-ip-<normalized-site> --global --project "$GKE_PROJECT_ID"`) as a drift safety check
       - when ingress static-IP annotation matches expected per-site name, workflow fetches static-IP metadata (`address`, `status`, `users`) and treats reserved `address` as `dns_expected_ip`
       - if static IP is `IN_USE` and `users` indicate expected site forwarding-rule binding, ingress status IP mismatch is advisory only (`ingress_status_ip_stale_or_mismatched`)
@@ -1238,6 +1239,7 @@ Post-fix rollout for existing managed sites:
         - `managed_site_static_ip_quota_exceeded` (global static-address quota exhausted)
         - `managed_site_static_ip_project_not_found` (invalid/inaccessible managed project)
         - `managed_site_static_ip_conflict` (named address conflict that could not be reconciled)
+        - `managed_site_static_ip_address_missing` (ensure succeeded but no usable address was returned after refresh; DNS ensure is not attempted with null IP)
         - fallback: `managed_site_static_ip_provisioning_failed`
       - static IP ensure diagnostics include effective credential metadata for IAM remediation:
         - `static_ip_gcp_credential_source` (`service_account_json`, `managed_deploy_impersonation`, `adc_metadata_server`, `unknown`)
@@ -1732,6 +1734,7 @@ Blocking reason-code examples:
   - `managed_site_static_ip_quota_exceeded`
   - `managed_site_static_ip_project_not_found`
   - `managed_site_static_ip_conflict`
+  - `managed_site_static_ip_address_missing`
   - `managed_site_static_ip_provisioning_failed`
   - `managed_site_dns_config_missing`
   - `managed_site_dns_provisioning_failed`
