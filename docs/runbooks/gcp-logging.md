@@ -399,7 +399,7 @@ Per-site success gate (managed ingress deploys):
   - `stale_pre_shared_cert_binding_detected` (confirmed stale/cross-site cert evidence)
 - advisory cert metadata signal:
   - `pre_shared_cert_metadata_mismatch` (controller metadata mismatch only; non-blocking by itself)
-- workflow template validation coverage now includes YAML parsing of rendered managed deploy workflows so embedded diagnostics scripts (including ManagedCertificate evaluation) remain inside the `run` script block.
+- workflow template validation coverage now includes YAML parsing of rendered managed deploy workflows plus `bash -n` syntax checks for the `Resolve live URL from ingress status` run script so embedded diagnostics blocks stay structurally valid.
 
 UI-to-log troubleshooting mapping (Deploy consistency block):
 - `DNS matches expected target IP` (Blocked/Pending):

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import base64
 import io
 import json
-import base64
+import subprocess
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -7239,6 +7240,24 @@ def test_rendered_managed_workflow_yaml_parses_embedded_certificate_evaluation_s
     assert "import json" in run_script
     assert "expected_host = str(os.environ.get('EXPECTED_PREVIEW_HOST') or '').strip().lower()" in run_script
     assert "payload = json.loads(raw) if raw else {}" in run_script
+    assert "expected_static_ip_address" in run_script
+    assert "static_ip_status" in run_script
+    assert "static_ip_users" in run_script
+    assert "ingress_status_ip" in run_script
+    assert "ingress_status_ip_matches_static_ip" in run_script
+    assert "static_ip_bound_to_expected_forwarding_rule" in run_script
+    assert "deploy_runtime_reason_code=ingress_status_ip_stale_or_mismatched" in run_script
+
+    try:
+        syntax_check = subprocess.run(
+            ["bash", "-n"],
+            input=run_script.encode("utf-8"),
+            capture_output=True,
+            check=False,
+        )
+    except FileNotFoundError:
+        pytest.skip("bash is required to syntax-check rendered managed workflow shell script")
+    assert syntax_check.returncode == 0, syntax_check.stderr.decode("utf-8", errors="replace")
 
 
 def test_render_managed_gke_manifests_for_sc_mechanical_is_site_scoped() -> None:
