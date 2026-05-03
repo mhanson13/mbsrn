@@ -410,7 +410,7 @@ UI-to-log troubleshooting mapping (Deploy consistency block):
   - logs: `seo_migration_target_readiness_check`, `seo_migration_workflow_run_result_captured`, deploy failure entries with the same reason code
 - `Managed certificate active` and `Certificate identity valid`:
   - UI fields: `tls_certificate_status`, `tls_domain_status`, `cert_identity_valid`
-  - reason codes: `tls_certificate_provisioning`, `managed_certificate_failed_not_visible`, `tls_certificate_bound_to_wrong_site`, `managed_certificate_identity_mismatch`, `ingress_certificate_mismatch`
+  - reason codes: `tls_certificate_provisioning`, `managed_certificate_failed_not_visible`, `managed_certificate_domain_drift_repaired` (advisory), `managed_certificate_domain_drift_repair_failed`, `tls_certificate_bound_to_wrong_site`, `managed_certificate_identity_mismatch`, `ingress_certificate_mismatch`
   - logs: `seo_migration_target_readiness_check`, ingress-evidence failure records, `dispatch_service_reason_code`
 - `Ingress/static IP conflict check`:
   - UI field: `ingress_conflict_detected`
@@ -1095,12 +1095,22 @@ If browser TLS fails with `SSL_ERROR_BAD_CERT_DOMAIN` for preview host:
 3. Verify certificate domain matches the requested preview host:
    - `kubectl get managedcertificate -n <site-namespace>`
    - `kubectl describe managedcertificate site-web-preview-cert-<normalized-site> -n <site-namespace>`
+   - `kubectl get managedcertificate site-web-preview-cert-<normalized-site> -n <site-namespace> -o yaml`
+   - expected `spec.domains` shape:
+     - exactly one domain entry
+     - value equals `<normalized-site>.site.mbsrn.com`
    - `kubectl describe ingress site-web -n <site-namespace>`
 4. If annotation/domain points at another site hostname, republish + redeploy the site so managed ingress/certificate resources are regenerated for the correct host.
 
 Managed certificate mismatch reason-code interpretation:
 - `dispatch_service_reason_code=tls_certificate_bound_to_wrong_site`
   - ingress host and managed certificate domain disagree for the expected preview host.
+- `workflow_run_failure_reason_code=managed_certificate_domain_drift_repaired`
+  - advisory only: expected deterministic ManagedCertificate name existed, but `spec.domains` drifted.
+  - workflow attempted safe repair by deleting/recreating only that ManagedCertificate resource and re-checking bounded convergence.
+- `dispatch_service_reason_code=managed_certificate_domain_drift_repair_failed`
+  - blocking: ManagedCertificate domain drift repair could not converge for the expected deterministic certificate resource.
+  - inspect `observed_managed_certificate_domains`, `observed_managed_certificate_status`, and `observed_managed_certificate_domain_status` in workflow diagnostics.
 - `dispatch_service_reason_code=ingress_certificate_annotation_mismatch`
   - ingress managed-certificate annotation does not match the expected site-scoped certificate name.
 - `dispatch_service_reason_code=managed_certificate_identity_mismatch`

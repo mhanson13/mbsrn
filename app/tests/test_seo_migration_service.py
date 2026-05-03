@@ -5156,6 +5156,53 @@ def test_static_ip_reason_code_hint_mappings_cover_missing_and_not_bound() -> No
     ).lower()
 
 
+def test_managed_certificate_domain_drift_reason_code_hint_mappings() -> None:
+    assert "safe delete/recreate repair was attempted" in str(
+        seo_migration_module._derive_managed_gke_dispatch_readiness_message(
+            dispatch_service_reason_code="managed_certificate_domain_drift_repaired"
+        )
+        or ""
+    ).lower()
+    assert "did not converge" in str(
+        seo_migration_module._derive_managed_gke_dispatch_readiness_message(
+            dispatch_service_reason_code="managed_certificate_domain_drift_repair_failed"
+        )
+        or ""
+    ).lower()
+    assert "automatic safe repair was attempted" in str(
+        seo_migration_module._derive_deploy_failure_remediation_hint(
+            failure_reason=None,
+            failure_stage=None,
+            workflow_exists=None,
+            dispatch_service_reason_code="managed_certificate_domain_drift_repaired",
+        )
+        or ""
+    ).lower()
+    assert "persisted after safe repair attempt" in str(
+        seo_migration_module._derive_deploy_failure_remediation_hint(
+            failure_reason=None,
+            failure_stage=None,
+            workflow_exists=None,
+            dispatch_service_reason_code="managed_certificate_domain_drift_repair_failed",
+        )
+        or ""
+    ).lower()
+    assert "safe delete/recreate repair was attempted" in str(
+        seo_migration_module._derive_workflow_run_failure_hint(
+            failure_reason="managed_certificate_domain_drift_repaired",
+            post_dispatch_state=None,
+        )
+        or ""
+    ).lower()
+    assert "persisted after safe repair attempt" in str(
+        seo_migration_module._derive_workflow_run_failure_hint(
+            failure_reason="managed_certificate_domain_drift_repair_failed",
+            post_dispatch_state=None,
+        )
+        or ""
+    ).lower()
+
+
 def test_static_ip_pre_dispatch_reason_code_hint_mappings_cover_config_and_provisioning_failures() -> None:
     assert "configuration is incomplete" in str(
         seo_migration_module._derive_managed_gke_dispatch_readiness_message(

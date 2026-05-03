@@ -6001,6 +6001,15 @@ def test_classify_cloudsql_proxy_failure_maps_pre_shared_metadata_mismatch_to_in
     assert failure_stage == "ingress_evidence"
 
 
+def test_classify_cloudsql_proxy_failure_maps_managed_certificate_domain_drift_repair_failed() -> None:
+    reason_code, failure_stage = _classify_cloudsql_proxy_failure_from_log_text(
+        "deploy_runtime_reason_code=managed_certificate_domain_drift_repair_failed"
+    )
+
+    assert reason_code == "managed_certificate_domain_drift_repair_failed"
+    assert failure_stage == "ingress_evidence"
+
+
 def test_ensure_deploy_workflow_creates_missing_file_and_verifies_presence(monkeypatch) -> None:
     calls: list[tuple[str, str]] = []
     _install_urlopen_stub(monkeypatch, _managed_provisioning_responses(), calls)
@@ -7271,8 +7280,19 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "deploy_runtime_reason_code=dns_points_to_old_ingress_ip" in workflow_yaml
     assert "deploy_runtime_reason_code=ingress_ip_assigned_but_dns_not_updated" in workflow_yaml
     assert "deploy_runtime_reason_code=tls_certificate_provisioning" in workflow_yaml
+    assert "deploy_runtime_reason_code=managed_certificate_domain_drift_repaired" in workflow_yaml
+    assert "deploy_runtime_reason_code=managed_certificate_domain_drift_repair_failed" in workflow_yaml
     assert "deploy_runtime_reason_code=expected_static_ip_not_bound_to_ingress" in workflow_yaml
     assert "deploy_runtime_reason_code=shared_static_ip_not_allowed_for_per_site_ingress" in workflow_yaml
+    assert (
+        "kubectl delete managedcertificate \"$MBSRN_PREVIEW_CERTIFICATE_NAME\" --namespace \"$K8S_NAMESPACE\" --ignore-not-found=true"
+        in workflow_yaml
+    )
+    assert "kubectl apply -f k8s/managedcertificate.yaml --namespace \"$K8S_NAMESPACE\"" in workflow_yaml
+    assert "kubectl apply -f k8s/ingress.yaml --namespace \"$K8S_NAMESPACE\" >/dev/null 2>&1 || true" in workflow_yaml
+    assert "echo \"observed_managed_certificate_domains=$observed_managed_certificate_domains\"" in workflow_yaml
+    assert "echo \"observed_managed_certificate_status=$tls_certificate_status\"" in workflow_yaml
+    assert "echo \"observed_managed_certificate_domain_status=$tls_domain_status\"" in workflow_yaml
     assert (
         "echo \"Site runtime image: ${{ steps.resolve_site_runtime_image.outputs.site_runtime_image_reference }}\""
         in workflow_yaml
@@ -7454,6 +7474,11 @@ def test_rendered_managed_workflow_yaml_parses_embedded_certificate_evaluation_s
     assert "ingress_status_ip" in run_script
     assert "ingress_status_ip_matches_static_ip" in run_script
     assert "static_ip_bound_to_expected_forwarding_rule" in run_script
+    assert "evaluate_managed_certificate() {" in run_script
+    assert "apply_managed_certificate_eval_output() {" in run_script
+    assert "resource_name_matches_expected" in run_script
+    assert "deploy_runtime_reason_code=managed_certificate_domain_drift_repaired" in run_script
+    assert "deploy_runtime_reason_code=managed_certificate_domain_drift_repair_failed" in run_script
     assert "deploy_runtime_reason_code=ingress_status_ip_stale_or_mismatched" in run_script
     assert "emit_resolve_live_url_state()" in run_script
     assert "resolve_live_url_state_host_reachable" in run_script
@@ -7470,6 +7495,10 @@ def test_rendered_managed_workflow_yaml_parses_embedded_certificate_evaluation_s
     assert 'echo "deploy_runtime_reason_code=ingress_address_pending"' in run_script
     assert 'echo "deploy_runtime_reason_code=ingress_backend_502"' in run_script
     assert 'echo "deploy_runtime_reason_code=reachable_but_tls_certificate_mismatch"' in run_script
+    assert 'echo "observed_managed_certificate_domains=$observed_managed_certificate_domains"' in run_script
+    annotation_mismatch_index = run_script.index("deploy_runtime_reason_code=ingress_certificate_annotation_mismatch")
+    drift_repair_index = run_script.index("deploy_runtime_reason_code=managed_certificate_domain_drift_repaired")
+    assert annotation_mismatch_index < drift_repair_index
     assert "Neither ingress status IP nor reserved static IP address is available for DNS/TLS validation yet." in run_script
 
     try:

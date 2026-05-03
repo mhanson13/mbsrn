@@ -1726,6 +1726,8 @@ Blocking reason-code examples:
 - TLS/certificate:
   - `tls_certificate_provisioning`
   - `managed_certificate_failed_not_visible` (usually DNS/LB visibility mismatch)
+  - `managed_certificate_domain_drift_repaired` (advisory: expected ManagedCertificate name had stale `spec.domains`; workflow attempted safe delete/recreate repair)
+  - `managed_certificate_domain_drift_repair_failed` (blocking: domain drift persisted or repair could not converge)
   - `tls_certificate_bound_to_wrong_site`
 - Ingress isolation:
   - `managed_site_static_ip_config_missing`
@@ -1757,6 +1759,7 @@ Isolation rules:
 - Conflicting DNS record types at the same hostname (for example CNAME) block deploy before dispatch.
 - `ingress.gcp.kubernetes.io/pre-shared-cert` is controller metadata and does not block deploy readiness by itself (including single-value name mismatch or multiple values).
 - blocking cert-identity decisions rely on desired-state managed-certificate annotation, ManagedCertificate domain/status, and HTTPS/TLS probe identity evidence.
+- when ingress annotation already references the expected deterministic ManagedCertificate resource name, workflow may safely repair domain drift by deleting/recreating only that ManagedCertificate and re-checking bounded status/domain convergence before allowing success.
 
 ### Deploy Consistency Block (Operator UI)
 
