@@ -5931,6 +5931,29 @@ def test_classify_cloudsql_proxy_failure_maps_tls_provisioning_reason() -> None:
     assert failure_stage == "ingress_evidence"
 
 
+def test_classify_cloudsql_proxy_failure_maps_managed_certificate_pending_to_tls_provisioning() -> None:
+    reason_code, failure_stage = _classify_cloudsql_proxy_failure_from_log_text(
+        "\n".join(
+            [
+                "backend health: HEALTHY",
+                "deploy_runtime_reason_code=managed_certificate_pending",
+            ]
+        )
+    )
+
+    assert reason_code == "tls_certificate_provisioning"
+    assert failure_stage == "ingress_evidence"
+
+
+def test_classify_cloudsql_proxy_failure_maps_https_probe_failed_to_ingress_verify() -> None:
+    reason_code, failure_stage = _classify_cloudsql_proxy_failure_from_log_text(
+        "deploy_runtime_reason_code=https_probe_failed"
+    )
+
+    assert reason_code == "ingress_verify"
+    assert failure_stage == "ingress_evidence"
+
+
 def test_classify_cloudsql_proxy_failure_maps_managed_site_static_ip_missing_reason() -> None:
     reason_code, failure_stage = _classify_cloudsql_proxy_failure_from_log_text(
         "deploy_runtime_reason_code=managed_site_static_ip_missing"
@@ -7479,10 +7502,18 @@ def test_rendered_managed_workflow_yaml_parses_embedded_certificate_evaluation_s
     assert "resource_name_matches_expected" in run_script
     assert "deploy_runtime_reason_code=managed_certificate_domain_drift_repaired" in run_script
     assert "deploy_runtime_reason_code=managed_certificate_domain_drift_repair_failed" in run_script
+    assert "deploy_runtime_reason_code=managed_certificate_pending" in run_script
+    assert "deploy_runtime_reason_code=https_probe_failed" in run_script
     assert "deploy_runtime_reason_code=ingress_status_ip_stale_or_mismatched" in run_script
     assert "emit_resolve_live_url_state()" in run_script
     assert "resolve_live_url_state_host_reachable" in run_script
     assert "resolve_live_url_state_deploy_https_ready" in run_script
+    assert "resolve_live_url_state_static_ip_users" in run_script
+    assert "resolve_live_url_state_ingress_status_ip" in run_script
+    assert "resolve_live_url_state_observed_managed_certificate_domains" in run_script
+    assert "resolve_live_url_state_https_probe_error_summary" in run_script
+    assert "collect_resolve_live_url_evidence() {" in run_script
+    assert "collect_resolve_live_url_evidence" in run_script
     assert "Ingress external address observed after HTTPS success verification." in run_script
     assert (
         'if [ "$host_reachable" = true ] && [ "$host_reachability_scheme" = "https" ] && [ -z "$ingress_ip" ]; then'
@@ -7495,7 +7526,21 @@ def test_rendered_managed_workflow_yaml_parses_embedded_certificate_evaluation_s
     assert 'echo "deploy_runtime_reason_code=ingress_address_pending"' in run_script
     assert 'echo "deploy_runtime_reason_code=ingress_backend_502"' in run_script
     assert 'echo "deploy_runtime_reason_code=reachable_but_tls_certificate_mismatch"' in run_script
+    assert 'echo "deploy_runtime_reason_code=tls_certificate_bound_to_wrong_site"' in run_script
     assert 'echo "observed_managed_certificate_domains=$observed_managed_certificate_domains"' in run_script
+    assert 'if [ -z "$ingress_status_ip" ] && [ -z "$expected_static_ip_address" ] && [ "$host_reachable" != "true" ]; then' in run_script
+    assert 'dns_expected_ip="$expected_static_ip_address"' in run_script
+    evidence_collect_index = run_script.index("collect_resolve_live_url_evidence")
+    tls_failure_index = run_script.index('if [ "$tls_mismatch_detected" = true ]; then')
+    assert evidence_collect_index < tls_failure_index
+    static_ip_collect_index = run_script.index("static_ip_metadata_json=")
+    dns_collect_index = run_script.index("dns_observed_ip=")
+    https_failed_index = run_script.index("deploy_runtime_reason_code=https_probe_failed")
+    cert_collect_index = run_script.index("managed_certificate_json=")
+    cert_reason_index = run_script.index("deploy_runtime_reason_code=tls_certificate_bound_to_wrong_site")
+    assert static_ip_collect_index < tls_failure_index
+    assert dns_collect_index < https_failed_index
+    assert cert_collect_index < cert_reason_index
     annotation_mismatch_index = run_script.index("deploy_runtime_reason_code=ingress_certificate_annotation_mismatch")
     drift_repair_index = run_script.index("deploy_runtime_reason_code=managed_certificate_domain_drift_repaired")
     assert annotation_mismatch_index < drift_repair_index

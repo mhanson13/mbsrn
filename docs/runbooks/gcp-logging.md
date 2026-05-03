@@ -420,6 +420,16 @@ UI-to-log troubleshooting mapping (Deploy consistency block):
   - advisory reason code: `pre_shared_cert_metadata_mismatch`
   - interpretation: controller-generated `ingress.gcp.kubernetes.io/pre-shared-cert` differs from expected managed certificate name, but hard-failure decisions still come from managed-certificate annotation/domain/TLS identity checks
   - logs: ingress-evidence run-failure records and workflow diagnostic lines with managed certificate annotation/domain context
+
+Resolve-live-url evidence collection order (managed deploy workflow):
+- step collects evidence in this sequence before expected terminal exits:
+  - ingress status (`ingress_status_ip`)
+  - reserved static-IP metadata (`expected_static_ip_address`, `static_ip_status`, `static_ip_users`, `static_ip_bound_to_expected_forwarding_rule`)
+  - DNS observation (`dns_expected_ip`, `dns_observed_ip`, `dns_record_matches_ingress`)
+  - ManagedCertificate evidence (`observed_managed_certificate_domains`, `observed_managed_certificate_status`, `observed_managed_certificate_domain_status`, `tls_certificate_status`, `tls_domain_status`, `cert_identity_valid`)
+  - HTTPS probe classification (`ingress_backend_502`, `tls_certificate_bound_to_wrong_site`, `managed_certificate_pending`, `managed_certificate_failed_not_visible`, `https_probe_failed`; `ingress_address_pending` only when no ingress/static-IP/live target evidence exists)
+- failure trap fields (`resolve_live_url_state_*`) should normally show populated evidence if cluster/GCP reads succeeded.
+- if trap fields remain empty, treat it as upstream evidence unavailability (missing ingress/static IP/hostname, DNS lookup failure, or API access issue), not a generic ingress/NEG convergence assumption.
 - `HTTPS probe`:
   - UI field: `deploy_https_ready`
   - requires DNS/TLS/ingress convergence and explicit HTTPS-ready evidence for `Pass`

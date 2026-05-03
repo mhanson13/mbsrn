@@ -1716,6 +1716,11 @@ Deploy is not considered HTTPS-ready unless all runtime checks agree:
 - no ingress/static-ip or certificate cross-site conflict (`ingress_conflict_detected=false`)
 - explicit HTTPS live URL evidence is present (`deploy_https_ready=true` and `resolved_live_url` starts with `https://`)
 
+Resolve-live-url failure diagnostics are evidence-first:
+- workflow gathers ingress status, reserved static-IP metadata, DNS A-record observation, and ManagedCertificate domain/status evidence before terminal failure classification.
+- failure-state trap fields (`resolve_live_url_state_*`) should include populated `expected_static_ip_address`, `dns_expected_ip`, `dns_observed_ip`, and ManagedCertificate status/domain fields when that evidence is available from cluster/GCP APIs.
+- empty trap fields now primarily indicate upstream evidence is genuinely unavailable (for example missing ingress/static-IP/hostname), not premature early exit ordering.
+
 Blocking reason-code examples:
 - DNS mismatch:
   - `dns_record_mismatch`
