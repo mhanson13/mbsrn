@@ -89,8 +89,12 @@ Required deployment config mirrors the existing production deploy model:
   - `AR_REPOSITORY`
   - optional website sizing/image vars:
     - `WWW_IMAGE_NAME`
-    - `WWW_CPU_REQUEST`, `WWW_MEMORY_REQUEST`, `WWW_EPHEMERAL_STORAGE_REQUEST`
-    - `WWW_CPU_LIMIT`, `WWW_MEMORY_LIMIT`, `WWW_EPHEMERAL_STORAGE_LIMIT`
+    - `WWW_MEMORY_REQUEST`, `WWW_EPHEMERAL_STORAGE_REQUEST`
+    - `WWW_MEMORY_LIMIT`, `WWW_EPHEMERAL_STORAGE_LIMIT`
+  - website CPU is intentionally pinned in `.github/workflows/deploy-www-prod.yml`:
+    - `requests.cpu=100m`
+    - `limits.cpu=500m`
+    - ultra-low recommender values (for example `4m`) are treated as advisory, not copied literally for production
 - GitHub secrets:
   - `GCP_WORKLOAD_IDENTITY_PROVIDER`
   - `GCP_SERVICE_ACCOUNT_EMAIL`

@@ -119,6 +119,42 @@ This produces OCI-compatible images suitable for containerd on GKE.
   - Redis workload/service name: `mbsrn-redis`
   - API Redis URL: `redis://mbsrn-redis:6379/0`
 
+### GKE Resource Request Tuning (FinOps)
+
+Production CPU tuning for the two user-facing workloads is owned directly in workflow env values:
+
+- `.github/workflows/deploy-prod.yml`:
+  - `UI_CPU_REQUEST=100m`
+  - `UI_CPU_LIMIT=500m`
+- `.github/workflows/deploy-www-prod.yml`:
+  - `WWW_CPU_REQUEST=100m`
+  - `WWW_CPU_LIMIT=500m`
+
+This keeps `mbsrn-ui` and `mbsrn-www` on a conservative production floor while leaving existing memory values and non-resource deploy behavior unchanged.
+
+FinOps guidance:
+- Google Cloud Billing/Recommender CPU suggestions (for example very low values such as `4m`) are advisory inputs.
+- For production web/UI workloads, apply a safety floor (`100m` request, `500m` limit) instead of copying extreme recommendations directly.
+
+Post-deploy verification:
+1. Confirm live deployment CPU request/limit values:
+
+```bash
+kubectl -n mbsrn get deploy mbsrn-ui mbsrn-www \
+  -o jsonpath='{range .items[*]}{.metadata.name}{" requests.cpu="}{.spec.template.spec.containers[0].resources.requests.cpu}{" limits.cpu="}{.spec.template.spec.containers[0].resources.limits.cpu}{"\n"}{end}'
+```
+
+2. Confirm no `4m` CPU value is present in active specs:
+
+```bash
+kubectl -n mbsrn get deploy mbsrn-ui mbsrn-www -o yaml | grep -n "cpu:"
+```
+
+3. Validate production impact over real traffic:
+- In Cloud Monitoring (GKE Workloads), review CPU usage/request utilization and throttling trends for `mbsrn-ui` and `mbsrn-www`.
+- In Billing/FinOps recommendations, re-check rightsizing guidance after at least 24-72 hours of representative traffic.
+- If sustained CPU utilization is high or throttling appears, increment conservatively and re-measure.
+
 ### SEO Migration Managed Target Repo Contract
 
 For migration-driven site repos, MBSRN acts as a control-plane orchestrator:
