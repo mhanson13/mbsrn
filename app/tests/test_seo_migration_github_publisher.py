@@ -6024,6 +6024,15 @@ def test_classify_cloudsql_proxy_failure_maps_pre_shared_metadata_mismatch_to_in
     assert failure_stage == "ingress_evidence"
 
 
+def test_classify_cloudsql_proxy_failure_maps_managed_certificate_metadata_unavailable_advisory() -> None:
+    reason_code, failure_stage = _classify_cloudsql_proxy_failure_from_log_text(
+        "deploy_runtime_reason_code=managed_certificate_metadata_unavailable"
+    )
+
+    assert reason_code == "managed_certificate_metadata_unavailable"
+    assert failure_stage == "ingress_evidence"
+
+
 def test_classify_cloudsql_proxy_failure_maps_managed_certificate_domain_drift_repair_failed() -> None:
     reason_code, failure_stage = _classify_cloudsql_proxy_failure_from_log_text(
         "deploy_runtime_reason_code=managed_certificate_domain_drift_repair_failed"
@@ -7314,8 +7323,8 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "kubectl apply -f k8s/managedcertificate.yaml --namespace \"$K8S_NAMESPACE\"" in workflow_yaml
     assert "kubectl apply -f k8s/ingress.yaml --namespace \"$K8S_NAMESPACE\" >/dev/null 2>&1 || true" in workflow_yaml
     assert "echo \"observed_managed_certificate_domains=$observed_managed_certificate_domains\"" in workflow_yaml
-    assert "echo \"observed_managed_certificate_status=$tls_certificate_status\"" in workflow_yaml
-    assert "echo \"observed_managed_certificate_domain_status=$tls_domain_status\"" in workflow_yaml
+    assert "echo \"observed_managed_certificate_status=$observed_managed_certificate_status\"" in workflow_yaml
+    assert "echo \"observed_managed_certificate_domain_status=$observed_managed_certificate_domain_status\"" in workflow_yaml
     assert (
         "echo \"Site runtime image: ${{ steps.resolve_site_runtime_image.outputs.site_runtime_image_reference }}\""
         in workflow_yaml
@@ -7514,6 +7523,10 @@ def test_rendered_managed_workflow_yaml_parses_embedded_certificate_evaluation_s
     assert "resolve_live_url_state_https_probe_error_summary" in run_script
     assert "collect_resolve_live_url_evidence() {" in run_script
     assert "collect_resolve_live_url_evidence" in run_script
+    assert "STATIC_IP_METADATA_JSON=\"$static_ip_metadata_json\" python - <<'PY'" in run_script
+    assert "MANAGED_CERTIFICATE_JSON=\"$managed_certificate_json\" EXPECTED_PREVIEW_HOST" in run_script
+    assert "MANAGED_CERTIFICATE_JSON=\"$managed_certificate_payload\" EXPECTED_PREVIEW_HOST" in run_script
+    assert "sys.stdin.read().strip()" not in run_script
     assert "Ingress external address observed after HTTPS success verification." in run_script
     assert (
         'if [ "$host_reachable" = true ] && [ "$host_reachability_scheme" = "https" ] && [ -z "$ingress_ip" ]; then'
@@ -7527,6 +7540,12 @@ def test_rendered_managed_workflow_yaml_parses_embedded_certificate_evaluation_s
     assert 'echo "deploy_runtime_reason_code=ingress_backend_502"' in run_script
     assert 'echo "deploy_runtime_reason_code=reachable_but_tls_certificate_mismatch"' in run_script
     assert 'echo "deploy_runtime_reason_code=tls_certificate_bound_to_wrong_site"' in run_script
+    assert 'echo "deploy_runtime_reason_code=managed_certificate_metadata_unavailable"' in run_script
+    assert 'if [ "$managed_certificate_metadata_available" != "true" ]' in run_script
+    assert '&& [ "$host_reachable" = true ]' in run_script
+    assert '&& [ "$host_reachability_scheme" = "https" ]' in run_script
+    assert '&& [ "$dns_record_matches_ingress" = "true" ]' in run_script
+    assert '&& [ "$managed_cert_annotation_first" = "$expected_cert_name" ]; then' in run_script
     assert 'echo "observed_managed_certificate_domains=$observed_managed_certificate_domains"' in run_script
     assert 'if [ -z "$ingress_status_ip" ] && [ -z "$expected_static_ip_address" ] && [ "$host_reachable" != "true" ]; then' in run_script
     assert 'dns_expected_ip="$expected_static_ip_address"' in run_script

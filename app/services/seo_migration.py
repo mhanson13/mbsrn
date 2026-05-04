@@ -277,6 +277,9 @@ _DEPLOY_RUN_FAILURE_REASON_IN_CLUSTER_SERVICE_PROBE_TIMEOUT = "in_cluster_servic
 _DEPLOY_RUN_FAILURE_REASON_NETWORK_POLICY_MAY_BLOCK_SERVICE_PROBE = (
     "network_policy_may_block_service_probe"
 )
+_DEPLOY_RUN_FAILURE_REASON_MANAGED_CERTIFICATE_METADATA_UNAVAILABLE = (
+    "managed_certificate_metadata_unavailable"
+)
 _DEPLOY_RUN_FAILURE_REASON_PRE_SHARED_CERT_METADATA_MISMATCH = "pre_shared_cert_metadata_mismatch"
 _DEPLOY_RUN_FAILURE_REASON_SERVICE_PROBE_WAITING_FOR_CONVERGENCE = (
     "service_probe_waiting_for_convergence"
@@ -15181,6 +15184,7 @@ def _normalize_workflow_run_failure_reason_code(value: object) -> str | None:
         _DEPLOY_RUN_FAILURE_REASON_IN_CLUSTER_SERVICE_CURL_FAILED_AFTER_RETRIES,
         _DEPLOY_RUN_FAILURE_REASON_IN_CLUSTER_SERVICE_PROBE_TIMEOUT,
         _DEPLOY_RUN_FAILURE_REASON_NETWORK_POLICY_MAY_BLOCK_SERVICE_PROBE,
+        _DEPLOY_RUN_FAILURE_REASON_MANAGED_CERTIFICATE_METADATA_UNAVAILABLE,
         _DEPLOY_RUN_FAILURE_REASON_PRE_SHARED_CERT_METADATA_MISMATCH,
         _DEPLOY_RUN_FAILURE_REASON_SERVICE_PROBE_WAITING_FOR_CONVERGENCE,
         _DEPLOY_RUN_FAILURE_REASON_INGRESS_NEG_CONVERGENCE_PENDING,
@@ -16390,6 +16394,11 @@ def _derive_workflow_run_failure_hint(
         return (
             "NetworkPolicy may be blocking same-namespace probe traffic to site-web. "
             "Verify allow rules for namespace-local ingress to pod port 8080."
+        )
+    if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_MANAGED_CERTIFICATE_METADATA_UNAVAILABLE:
+        return (
+            "ManagedCertificate metadata was unavailable from cluster API, but HTTPS/TLS identity evidence can still "
+            "validate the expected hostname. Treat this as advisory when DNS and HTTPS checks pass."
         )
     if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_PRE_SHARED_CERT_METADATA_MISMATCH:
         return (

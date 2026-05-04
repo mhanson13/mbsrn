@@ -5537,6 +5537,38 @@ def test_refresh_deploy_status_pre_shared_cert_metadata_mismatch_is_advisory(db_
     assert refresh_result.result.get("deploy_https_ready") is False
 
 
+def test_refresh_deploy_status_managed_certificate_metadata_unavailable_is_advisory(db_session) -> None:
+    publisher = _RecordingGitHubPublisher(
+        deploy_workflow_run_id=910006,
+        deploy_workflow_run_status="in_progress",
+        refresh_workflow_run_id=910006,
+        refresh_workflow_run_status="completed",
+        refresh_workflow_run_conclusion="failure",
+        refresh_workflow_run_failure_reason_code="managed_certificate_metadata_unavailable",
+        refresh_workflow_run_failure_stage="ingress_evidence",
+        refresh_workflow_run_failure_step="Collect managed certificate evidence",
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    artifact = _prepare_and_request_deploy(service, business_id=business_id, site_id=site_id)
+
+    refresh_result = service.refresh_deploy_run_status(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        principal_id="principal-1",
+    )
+    assert refresh_result.result.get("workflow_run_failure_reason_code") == "managed_certificate_metadata_unavailable"
+    assert refresh_result.result.get("workflow_run_failure_stage") == "ingress_evidence"
+    assert "treat this as advisory" in str(refresh_result.result.get("workflow_run_failure_hint") or "").lower()
+    assert refresh_result.result.get("ingress_conflict_detected") is not True
+
+
 def test_refresh_deploy_status_ingress_status_ip_stale_reason_is_advisory(db_session) -> None:
     publisher = _RecordingGitHubPublisher(
         deploy_workflow_run_id=910005,

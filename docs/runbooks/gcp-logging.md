@@ -1114,7 +1114,11 @@ If browser TLS fails with `SSL_ERROR_BAD_CERT_DOMAIN` for preview host:
 
 Managed certificate mismatch reason-code interpretation:
 - `dispatch_service_reason_code=tls_certificate_bound_to_wrong_site`
-  - ingress host and managed certificate domain disagree for the expected preview host.
+  - ingress host and managed certificate domain disagree for the expected preview host, or HTTPS/TLS hostname verification shows positive cross-site mismatch evidence.
+  - do not infer this from empty metadata alone when DNS + ingress annotation + HTTPS hostname validation are all aligned.
+- `workflow_run_failure_reason_code=managed_certificate_metadata_unavailable`
+  - advisory: workflow could not read/parse ManagedCertificate metadata from cluster API in that attempt.
+  - if ingress managed-certificate annotation matches expected name and HTTPS certificate hostname verification succeeds, this reason alone should not block deploy success.
 - `workflow_run_failure_reason_code=managed_certificate_domain_drift_repaired`
   - advisory only: expected deterministic ManagedCertificate name existed, but `spec.domains` drifted.
   - workflow attempted safe repair by deleting/recreating only that ManagedCertificate resource and re-checking bounded convergence.
