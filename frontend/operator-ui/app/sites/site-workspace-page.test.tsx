@@ -129,6 +129,9 @@ const mockRefreshMigrationDeployStatus = jest.fn<Promise<MigrationDeployActionRe
 const mockFetchMigrationPublishHistory = jest.fn<Promise<MigrationHistoryListResponse>, unknown[]>();
 const mockFetchMigrationDeployHistory = jest.fn<Promise<MigrationHistoryListResponse>, unknown[]>();
 const mockGenerateMigrationDraftArtifacts = jest.fn<Promise<MigrationArtifactVersion>, unknown[]>();
+const mockFetchMigrationMediaAssets = jest.fn<Promise<Record<string, unknown>>, unknown[]>();
+const mockUploadMigrationMediaAsset = jest.fn<Promise<Record<string, unknown>>, unknown[]>();
+const mockUpdateMigrationMediaAsset = jest.fn<Promise<Record<string, unknown>>, unknown[]>();
 
 jest.mock("next/navigation", () => ({
   useParams: () => navigationState.params,
@@ -198,6 +201,9 @@ jest.mock("../../lib/api/client", () => {
     fetchMigrationPublishHistory: (...args: unknown[]) => mockFetchMigrationPublishHistory(...args),
     fetchMigrationDeployHistory: (...args: unknown[]) => mockFetchMigrationDeployHistory(...args),
     generateMigrationDraftArtifacts: (...args: unknown[]) => mockGenerateMigrationDraftArtifacts(...args),
+    fetchMigrationMediaAssets: (...args: unknown[]) => mockFetchMigrationMediaAssets(...args),
+    uploadMigrationMediaAsset: (...args: unknown[]) => mockUploadMigrationMediaAsset(...args),
+    updateMigrationMediaAsset: (...args: unknown[]) => mockUpdateMigrationMediaAsset(...args),
   };
 });
 
@@ -1205,6 +1211,102 @@ describe("site migration workflow route", () => {
     );
   });
 
+  it("shows targeted Google reconnect guidance in draft diagnostics without forcing logout messaging", async () => {
+    const user = userEvent.setup();
+    const baseSummary = buildMigrationWorkspaceSummary();
+    const baseContextSummary = baseSummary.context_summary as Record<string, unknown>;
+    const baseDiagnostics = (baseContextSummary.migration_diagnostics || {}) as Record<string, unknown>;
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(
+      buildMigrationWorkspaceSummary({
+        context_summary: {
+          ...baseContextSummary,
+          migration_diagnostics: {
+            ...baseDiagnostics,
+            last_draft_failure_reason: "google_reconnect_required",
+          },
+        },
+      }),
+    );
+
+    render(<SiteMigrationWorkflowPage />);
+    await user.click(await screen.findByText("Show detailed migration failure diagnostics"));
+    expect(await screen.findByTestId("migration-draft-auth-guidance")).toHaveTextContent(
+      "Google Search Console / Analytics reconnect is required",
+    );
+  });
+
+  it("shows app-session-specific guidance when draft diagnostics reason code is app_auth_required", async () => {
+    const user = userEvent.setup();
+    const baseSummary = buildMigrationWorkspaceSummary();
+    const baseContextSummary = baseSummary.context_summary as Record<string, unknown>;
+    const baseDiagnostics = (baseContextSummary.migration_diagnostics || {}) as Record<string, unknown>;
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(
+      buildMigrationWorkspaceSummary({
+        context_summary: {
+          ...baseContextSummary,
+          migration_diagnostics: {
+            ...baseDiagnostics,
+            last_draft_failure_reason: "app_auth_required",
+          },
+        },
+      }),
+    );
+
+    render(<SiteMigrationWorkflowPage />);
+    await user.click(await screen.findByText("Show detailed migration failure diagnostics"));
+    expect(await screen.findByTestId("migration-draft-auth-guidance")).toHaveTextContent(
+      "App session expired. Sign back into MBSRN before retrying draft generation.",
+    );
+  });
+
+  it("shows context-unavailable guidance when draft diagnostics reason code is draft_generation_context_unavailable", async () => {
+    const user = userEvent.setup();
+    const baseSummary = buildMigrationWorkspaceSummary();
+    const baseContextSummary = baseSummary.context_summary as Record<string, unknown>;
+    const baseDiagnostics = (baseContextSummary.migration_diagnostics || {}) as Record<string, unknown>;
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(
+      buildMigrationWorkspaceSummary({
+        context_summary: {
+          ...baseContextSummary,
+          migration_diagnostics: {
+            ...baseDiagnostics,
+            last_draft_failure_reason: "draft_generation_context_unavailable",
+          },
+        },
+      }),
+    );
+
+    render(<SiteMigrationWorkflowPage />);
+    await user.click(await screen.findByText("Show detailed migration failure diagnostics"));
+    expect(await screen.findByTestId("migration-draft-auth-guidance")).toHaveTextContent(
+      "Draft context could not be assembled. Retry and contact support if the issue persists.",
+    );
+  });
+
+  it("shows integration-unavailable guidance when draft diagnostics reason code is google_integration_unavailable", async () => {
+    const user = userEvent.setup();
+    const baseSummary = buildMigrationWorkspaceSummary();
+    const baseContextSummary = baseSummary.context_summary as Record<string, unknown>;
+    const baseDiagnostics = (baseContextSummary.migration_diagnostics || {}) as Record<string, unknown>;
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(
+      buildMigrationWorkspaceSummary({
+        context_summary: {
+          ...baseContextSummary,
+          migration_diagnostics: {
+            ...baseDiagnostics,
+            last_draft_failure_reason: "google_integration_unavailable",
+          },
+        },
+      }),
+    );
+
+    render(<SiteMigrationWorkflowPage />);
+    await user.click(await screen.findByText("Show detailed migration failure diagnostics"));
+    expect(await screen.findByTestId("migration-draft-auth-guidance")).toHaveTextContent(
+      "Google integration state could not be read. Retry shortly, then reconnect Google if this persists.",
+    );
+  });
+
   it("falls back to latest draft summary diagnostics context when no artifact is selected", async () => {
     const user = userEvent.setup();
     mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(
@@ -1766,6 +1868,76 @@ describe("site migration workflow route", () => {
     ).toBeInTheDocument();
   });
 
+  it("renders draft input summary and media grouping with operator actions", async () => {
+    const summary = buildMigrationWorkspaceSummary({
+      context_summary: {
+        ...buildMigrationWorkspaceSummary().context_summary,
+        draft_input_summary: {
+          recommendations_included_count: 3,
+          gsc_signals_included: true,
+          ga4_signals_included: true,
+          competitor_profiles_included_count: 2,
+          operator_requirements_included: true,
+          enriched_business_context_included: true,
+          source_site_images_discovered_count: 2,
+          source_site_images_imported_count: 1,
+          operator_uploaded_images_count: 1,
+          selected_media_assets_count: 1,
+          media_context_included: true,
+          provider_source: "mock",
+          mocked_source: true,
+        },
+        media_assets: {
+          source_discovered_count: 2,
+          source_imported_count: 1,
+          operator_uploaded_count: 1,
+          selected_assets_count: 1,
+          media_asset_categories: ["project_gallery", "service_page"],
+          selected_assets_trimmed: false,
+          diagnostics: [],
+          source_discovered: [
+            {
+              asset_id: "srcimg-1",
+              normalized_url: "https://legacy.example/images/front.jpg",
+              provenance: "source_site_import",
+              selected_for_draft: true,
+            },
+          ],
+          operator_uploaded: [
+            {
+              asset_id: "upl-1",
+              display_filename: "project-1.jpg",
+              provenance: "operator_upload",
+              category: "project_gallery",
+              selected_for_draft: false,
+            },
+          ],
+          selected_assets: [
+            {
+              asset_id: "srcimg-1",
+              normalized_url: "https://legacy.example/images/front.jpg",
+              provenance: "source_site_import",
+              selected_for_draft: true,
+            },
+          ],
+        },
+      },
+    });
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(summary);
+    mockFetchMigrationMediaAssets.mockResolvedValueOnce(
+      (summary.context_summary as Record<string, unknown>).media_assets as Record<string, unknown>,
+    );
+
+    render(<SiteMigrationWorkflowPage />);
+
+    expect(await screen.findByTestId("migration-draft-input-summary")).toBeInTheDocument();
+    const mediaSection = await screen.findByTestId("migration-media-section");
+    expect(within(mediaSection).getByText("Media / Images")).toBeInTheDocument();
+    expect(within(mediaSection).getByText("Discovered from source site: 2")).toBeInTheDocument();
+    expect(within(mediaSection).getByText("Selected for draft context: 1")).toBeInTheDocument();
+    expect(within(mediaSection).getByRole("button", { name: "Upload Workspace Image" })).toBeInTheDocument();
+  });
+
   it("renders advanced diagnostics and history with collapsible publish/deploy history panels", async () => {
     const user = userEvent.setup();
     render(<SiteMigrationWorkflowPage />);
@@ -2289,6 +2461,7 @@ function buildMigrationWorkspaceSummary(
       internal_links: ["https://legacy.example/services"],
       service_blocks: ["Installation and inspection"],
       asset_references: { stylesheets: [], scripts: [], images: [] },
+      discovered_images: [],
       cleaned_text_blocks: ["Legacy content block"],
       warnings: [],
     },
@@ -2539,6 +2712,9 @@ function seedCompetitorProfileGenerationDefaults(): void {
   mockFetchMigrationPublishHistory.mockReset();
   mockFetchMigrationDeployHistory.mockReset();
   mockGenerateMigrationDraftArtifacts.mockReset();
+  mockFetchMigrationMediaAssets.mockReset();
+  mockUploadMigrationMediaAsset.mockReset();
+  mockUpdateMigrationMediaAsset.mockReset();
   mockUpsertMigrationWorkspace.mockResolvedValue(defaultMigrationWorkspace);
   mockFetchMigrationWorkspaceSummary.mockResolvedValue(
     buildMigrationWorkspaceSummary({
@@ -2559,6 +2735,7 @@ function seedCompetitorProfileGenerationDefaults(): void {
   );
   mockFetchMigrationPublishHistory.mockResolvedValue({ items: [], total: 0 });
   mockFetchMigrationDeployHistory.mockResolvedValue({ items: [], total: 0 });
+  mockFetchMigrationMediaAssets.mockResolvedValue({});
   mockIngestMigrationSource.mockResolvedValue({
     ...defaultMigrationWorkspace,
     source_site_status: "ingested",
@@ -2667,6 +2844,18 @@ function seedCompetitorProfileGenerationDefaults(): void {
     },
   });
   mockGenerateMigrationDraftArtifacts.mockResolvedValue(defaultMigrationArtifact);
+  mockUploadMigrationMediaAsset.mockResolvedValue({
+    asset_id: "upload-1",
+    display_filename: "uploaded.jpg",
+    provenance: "operator_upload",
+    selected_for_draft: true,
+  });
+  mockUpdateMigrationMediaAsset.mockResolvedValue({
+    asset_id: "upload-1",
+    display_filename: "uploaded.jpg",
+    provenance: "operator_upload",
+    selected_for_draft: true,
+  });
 }
 
 function seedRichWorkspaceData(): void {

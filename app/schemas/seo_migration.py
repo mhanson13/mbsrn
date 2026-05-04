@@ -241,6 +241,29 @@ class SEOMigrationDraftGenerateRequest(BaseModel):
     force_new_version: bool = False
 
 
+class SEOMigrationMediaAssetUpdateRequest(BaseModel):
+    selected_for_draft: bool | None = None
+    category: str | None = Field(default=None, max_length=64)
+    alt_text: str | None = Field(default=None, max_length=240)
+    description: str | None = Field(default=None, max_length=800)
+    usage_note: str | None = Field(default=None, max_length=400)
+    page_assignment: str | None = Field(default=None, max_length=120)
+
+    @field_validator(
+        "category",
+        "alt_text",
+        "description",
+        "usage_note",
+        "page_assignment",
+        mode="before",
+    )
+    @classmethod
+    def _normalize_optional_fields(cls, value: object) -> str | None:
+        if value is None:
+            return None
+        return _normalize_optional_text(value, max_length=800)
+
+
 class SEOMigrationArtifactApproveRequest(BaseModel):
     approval_notes: str | None = Field(default=None, max_length=1200)
 
@@ -294,6 +317,7 @@ class SEOMigrationSourceSnapshotRead(BaseModel):
     internal_links: list[str] = Field(default_factory=list)
     service_blocks: list[str] = Field(default_factory=list)
     asset_references: dict[str, list[str]] = Field(default_factory=dict)
+    discovered_images: list[dict[str, object]] = Field(default_factory=list)
     cleaned_text_blocks: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
 
@@ -303,6 +327,39 @@ class SEOMigrationArtifactFileRead(BaseModel):
     media_type: str
     size_bytes: int
     content: str | None = None
+
+
+class SEOMigrationMediaAssetRead(BaseModel):
+    asset_id: str | None = None
+    display_filename: str | None = None
+    content_type: str | None = None
+    size_bytes: int | None = None
+    width: int | None = None
+    height: int | None = None
+    provenance: str | None = None
+    selected_for_draft: bool = False
+    import_status: str | None = None
+    category: str | None = None
+    alt_text: str | None = None
+    description: str | None = None
+    usage_note: str | None = None
+    page_assignment: str | None = None
+    normalized_url: str | None = None
+    source_page_url: str | None = None
+    created_at: str | None = None
+
+
+class SEOMigrationMediaAssetListRead(BaseModel):
+    source_discovered: list[SEOMigrationMediaAssetRead] = Field(default_factory=list)
+    operator_uploaded: list[SEOMigrationMediaAssetRead] = Field(default_factory=list)
+    selected_assets: list[SEOMigrationMediaAssetRead] = Field(default_factory=list)
+    source_discovered_count: int = 0
+    source_imported_count: int = 0
+    operator_uploaded_count: int = 0
+    selected_assets_count: int = 0
+    media_asset_categories: list[str] = Field(default_factory=list)
+    selected_assets_trimmed: bool = False
+    diagnostics: list[str] = Field(default_factory=list)
 
 
 class SEOMigrationArtifactVersionRead(BaseModel):

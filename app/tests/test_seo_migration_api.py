@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -13,11 +14,14 @@ from app.core.config import get_settings
 from app.api.deps import (
     TenantContext,
     get_db,
+    get_seo_migration_service,
     get_seo_migration_artifact_provider,
     get_seo_migration_github_publisher,
     get_seo_migration_ingest_service,
+    get_session_token_service,
     get_tenant_context,
 )
+from app.core.session_token import AppSessionTokenError
 from app.api.routes.seo_migration import router as seo_migration_router
 from app.integrations.seo_migration_artifact_provider import (
     MockSEOMigrationArtifactGenerationProvider,
@@ -58,8 +62,10 @@ from app.models.seo_competitor_set import SEOCompetitorSet
 from app.models.seo_competitor_snapshot_run import SEOCompetitorSnapshotRun
 from app.models.seo_recommendation import SEORecommendation
 from app.models.seo_recommendation_run import SEORecommendationRun
+from app.models.seo_migration_workspace import SEOMigrationWorkspace
 from app.models.seo_site import SEOSite
 from app.services import seo_migration as seo_migration_module
+from app.services.seo_migration import SEOMigrationValidationError
 from app.services.seo_migration_ingest import (
     SEOMigrationIngestResult,
     SEOMigrationSourceIngestError,
@@ -661,6 +667,12 @@ class _IncompatibleMigrationArtifactProvider(SEOMigrationArtifactGenerationProvi
         raise RuntimeError("provider call should be blocked by compatibility preflight")
 
 
+class _AlwaysExpiredSessionTokenService:
+    def verify_access_token(self, token: str):  # noqa: ANN001
+        del token
+        raise AppSessionTokenError("expired")
+
+
 def _override_tenant_context(
     business_id: str,
     *,
@@ -777,6 +789,39 @@ def _seed_business_and_site(db_session, *, business_id: str, site_id: str) -> No
         )
     )
     db_session.commit()
+
+
+def _seed_site_for_business(
+    db_session,
+    *,
+    business_id: str,
+    site_id: str,
+    base_url: str,
+    normalized_domain: str,
+    is_primary: bool = False,
+) -> None:
+    site = SEOSite(
+        id=site_id,
+        business_id=business_id,
+        display_name=f"Site {site_id[-4:]}",
+        base_url=base_url,
+        normalized_domain=normalized_domain,
+        industry="fire protection",
+        primary_location="Longmont, CO",
+        service_areas_json=["Longmont", "Boulder"],
+        is_active=True,
+        is_primary=is_primary,
+    )
+    db_session.add(site)
+    db_session.commit()
+
+
+def _tiny_png_payload() -> bytes:
+    return (
+        b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+        b"\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0bIDAT\x08\xd7c\xf8\x0f"
+        b"\x00\x01\x01\x01\x00\x18\xdd\x8d\xb1\x00\x00\x00\x00IEND\xaeB`\x82"
+    )
 
 
 def _prepare_workspace_for_draft_generation(client: TestClient, *, business_id: str, site_id: str) -> None:
@@ -2694,3 +2739,309 @@ def test_migration_summary_surfaces_missing_managed_gke_config_reason_and_remedi
             diagnostics.get("last_deploy_failure_remediation_hint")
             == "Managed deploy target is missing required admin GKE cluster name configuration. Update MBSRN admin deployment settings."
         )
+
+
+def test_migration_media_routes_scope_assets_and_sanitize_payloads(db_session) -> None:
+    business_id = "11111111-1111-1111-1111-111111111111"
+    site_id = "22222222-2222-2222-2222-222222222222"
+    other_site_id = "33333333-3333-3333-3333-333333333333"
+    _seed_business_and_site(db_session, business_id=business_id, site_id=site_id)
+    _seed_site_for_business(
+        db_session,
+        business_id=business_id,
+        site_id=other_site_id,
+        base_url="https://second.example/",
+        normalized_domain="second.example",
+    )
+    client = _make_client(db_session, business_id=business_id)
+
+    for target_site_id in (site_id, other_site_id):
+        workspace_response = client.put(
+            f"/api/businesses/{business_id}/seo/sites/{target_site_id}/migration/workspace",
+            json={"source_url": "https://legacy.example"},
+        )
+        assert workspace_response.status_code == 200
+
+    upload_response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/media/upload",
+        params={
+            "filename": "crew-photo.png",
+            "selected_for_draft": "true",
+            "category": "project_gallery",
+            "alt_text": "Crew photo",
+            "description": "Project crew onsite",
+            "usage_note": "Use in projects gallery",
+            "page_assignment": "/projects",
+        },
+        headers={"Content-Type": "image/png"},
+        content=_tiny_png_payload(),
+    )
+    assert upload_response.status_code == 201
+    uploaded = upload_response.json()
+    assert uploaded.get("provenance") == "operator_upload"
+    assert uploaded.get("selected_for_draft") is True
+    assert uploaded.get("content_type") == "image/png"
+    assert "storage_key" not in uploaded
+
+    asset_id = str(uploaded.get("asset_id") or "")
+    assert asset_id
+
+    update_response = client.patch(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/media/assets/{asset_id}",
+        json={
+            "selected_for_draft": False,
+            "category": "hero",
+            "alt_text": "Updated hero alt",
+            "description": "Updated hero description",
+            "usage_note": "Updated usage note",
+            "page_assignment": "/",
+        },
+    )
+    assert update_response.status_code == 200
+    updated_asset = update_response.json()
+    assert updated_asset.get("selected_for_draft") is False
+    assert updated_asset.get("category") == "hero"
+    assert updated_asset.get("alt_text") == "Updated hero alt"
+
+    site_media_response = client.get(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/media/assets"
+    )
+    assert site_media_response.status_code == 200
+    site_media_payload = site_media_response.json()
+    assert site_media_payload.get("operator_uploaded_count") == 1
+    assert site_media_payload.get("selected_assets_count") == 0
+    serialized_payload = json.dumps(site_media_payload).lower()
+    for forbidden in (
+        "storage_key",
+        "base64",
+        "access_token",
+        "refresh_token",
+        "authorization",
+        "cookie",
+        "\\\\",
+        "/tmp/",
+    ):
+        assert forbidden not in serialized_payload
+
+    other_media_response = client.get(
+        f"/api/businesses/{business_id}/seo/sites/{other_site_id}/migration/media/assets"
+    )
+    assert other_media_response.status_code == 200
+    other_payload = other_media_response.json()
+    assert other_payload.get("operator_uploaded_count") == 0
+    assert other_payload.get("selected_assets_count") == 0
+
+    cross_site_update_response = client.patch(
+        f"/api/businesses/{business_id}/seo/sites/{other_site_id}/migration/media/assets/{asset_id}",
+        json={"selected_for_draft": True},
+    )
+    assert cross_site_update_response.status_code == 404
+
+
+def test_migration_media_routes_enforce_validation_and_stable_error_codes(db_session) -> None:
+    business_id = "11111111-1111-1111-1111-111111111111"
+    site_id = "22222222-2222-2222-2222-222222222222"
+    _seed_business_and_site(db_session, business_id=business_id, site_id=site_id)
+    client = _make_client(db_session, business_id=business_id)
+
+    workspace_response = client.put(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/workspace",
+        json={"source_url": "https://legacy.example"},
+    )
+    assert workspace_response.status_code == 200
+
+    unsupported_mime_response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/media/upload",
+        params={"filename": "vector.svg"},
+        headers={"Content-Type": "image/svg+xml"},
+        content=_tiny_png_payload(),
+    )
+    assert unsupported_mime_response.status_code == 422
+    unsupported_detail = unsupported_mime_response.json().get("detail") or {}
+    assert unsupported_detail.get("error_code") == "unsupported_mime_type"
+
+    mismatched_mime_response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/media/upload",
+        params={"filename": "photo.jpg"},
+        headers={"Content-Type": "image/jpeg"},
+        content=_tiny_png_payload(),
+    )
+    assert mismatched_mime_response.status_code == 422
+    mismatched_detail = mismatched_mime_response.json().get("detail") or {}
+    assert mismatched_detail.get("error_code") == "media_upload_content_type_mismatch"
+
+    oversized_response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/media/upload",
+        params={"filename": "oversized.png"},
+        headers={"Content-Type": "image/png"},
+        content=(b"\x89PNG\r\n\x1a\n" + (b"x" * ((8 * 1024 * 1024) + 1))),
+    )
+    assert oversized_response.status_code == 422
+    oversized_detail = oversized_response.json().get("detail") or {}
+    assert oversized_detail.get("error_code") == "file_too_large"
+
+    valid_upload_response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/media/upload",
+        params={"filename": "metadata-target.png"},
+        headers={"Content-Type": "image/png"},
+        content=_tiny_png_payload(),
+    )
+    assert valid_upload_response.status_code == 201
+    valid_asset = valid_upload_response.json()
+    valid_asset_id = str(valid_asset.get("asset_id") or "")
+    assert valid_asset_id
+
+    invalid_metadata_response = client.patch(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/media/assets/{valid_asset_id}",
+        json={"alt_text": "x" * 500},
+    )
+    assert invalid_metadata_response.status_code == 422
+
+    invalid_asset_id_response = client.patch(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/media/assets/%20",
+        json={"selected_for_draft": True},
+    )
+    assert invalid_asset_id_response.status_code == 422
+    invalid_asset_id_detail = invalid_asset_id_response.json().get("detail") or {}
+    assert invalid_asset_id_detail.get("error_code") == "media_asset_id_required"
+
+    workspace = (
+        db_session.query(SEOMigrationWorkspace)
+        .filter(
+            SEOMigrationWorkspace.business_id == business_id,
+            SEOMigrationWorkspace.site_id == site_id,
+        )
+        .one()
+    )
+    workspace.enriched_content_notes_json = {
+        "workspace_media_assets": [
+            {
+                "asset_id": f"upl-preseed-{index}",
+                "display_filename": f"seed-{index}.png",
+                "content_type": "image/png",
+                "size_bytes": 68,
+                "provenance": "operator_upload",
+                "selected_for_draft": False,
+                "import_status": "uploaded",
+            }
+            for index in range(80)
+        ]
+    }
+    db_session.add(workspace)
+    db_session.commit()
+
+    max_count_response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/media/upload",
+        params={"filename": "exceeds-limit.png"},
+        headers={"Content-Type": "image/png"},
+        content=_tiny_png_payload(),
+    )
+    assert max_count_response.status_code == 422
+    max_count_detail = max_count_response.json().get("detail") or {}
+    assert max_count_detail.get("error_code") == "workspace_media_upload_limit_reached"
+
+
+def test_migration_media_upload_requires_existing_workspace_context(db_session) -> None:
+    business_id = "11111111-1111-1111-1111-111111111111"
+    site_id = "22222222-2222-2222-2222-222222222222"
+    _seed_business_and_site(db_session, business_id=business_id, site_id=site_id)
+    client = _make_client(db_session, business_id=business_id)
+
+    upload_response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/media/upload",
+        params={"filename": "without-workspace.png"},
+        headers={"Content-Type": "image/png"},
+        content=_tiny_png_payload(),
+    )
+    assert upload_response.status_code == 404
+    assert "workspace" in str(upload_response.json().get("detail") or "").lower()
+
+
+@pytest.mark.parametrize(
+    ("raised_code", "expected_code"),
+    [
+        ("google_reconnect_required", "google_reconnect_required"),
+        ("google_integration_unavailable", "google_integration_unavailable"),
+        ("draft_generation_context_unavailable", "draft_generation_context_unavailable"),
+        ("google_token_expired", "google_reconnect_required"),
+    ],
+)
+def test_generate_draft_route_surfaces_deterministic_reason_codes_for_auth_and_context_failures(
+    db_session,
+    raised_code: str,
+    expected_code: str,
+) -> None:
+    business_id = "11111111-1111-1111-1111-111111111111"
+    site_id = "22222222-2222-2222-2222-222222222222"
+    _seed_business_and_site(db_session, business_id=business_id, site_id=site_id)
+
+    class _ReasonCodeDraftService:
+        def generate_draft_artifacts(self, *, business_id: str, site_id: str, principal_id: str | None):  # noqa: ANN001
+            del business_id, site_id, principal_id
+            raise SEOMigrationValidationError(
+                "Simulated deterministic draft gating failure.",
+                failure_category="unknown_error",
+                failure_reason="unknown",
+                error_code=raised_code,
+            )
+
+    app = FastAPI()
+    app.include_router(seo_migration_router)
+    app.dependency_overrides[get_tenant_context] = _override_tenant_context(business_id)
+    app.dependency_overrides[get_seo_migration_service] = lambda: _ReasonCodeDraftService()
+    client = TestClient(app)
+
+    generate_response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/generate-draft-artifacts",
+        json={"force_new_version": True},
+    )
+    assert generate_response.status_code == 422
+    detail = generate_response.json().get("detail") or {}
+    assert detail.get("reason_code") == expected_code
+    assert detail.get("error_code") == expected_code
+
+
+def test_generate_draft_route_requires_app_auth_reason_code_when_bearer_missing(db_session) -> None:
+    app = FastAPI()
+    app.include_router(seo_migration_router)
+
+    def override_get_db():
+        try:
+            yield db_session
+        finally:
+            pass
+
+    app.dependency_overrides[get_db] = override_get_db
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/businesses/11111111-1111-1111-1111-111111111111/seo/sites/22222222-2222-2222-2222-222222222222/migration/generate-draft-artifacts",
+        json={"force_new_version": True},
+    )
+    assert response.status_code == 401
+    detail = response.json().get("detail") or {}
+    assert detail.get("reason_code") == "app_auth_required"
+
+
+def test_generate_draft_route_returns_session_expired_reason_code_for_expired_session_token(db_session) -> None:
+    app = FastAPI()
+    app.include_router(seo_migration_router)
+
+    def override_get_db():
+        try:
+            yield db_session
+        finally:
+            pass
+
+    app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[get_session_token_service] = lambda: _AlwaysExpiredSessionTokenService()
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/businesses/11111111-1111-1111-1111-111111111111/seo/sites/22222222-2222-2222-2222-222222222222/migration/generate-draft-artifacts",
+        json={"force_new_version": True},
+        headers={"Authorization": "Bearer a.b.c"},
+    )
+    assert response.status_code == 401
+    detail = response.json().get("detail") or {}
+    assert detail.get("reason_code") == "session_expired"

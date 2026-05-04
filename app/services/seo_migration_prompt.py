@@ -32,7 +32,9 @@ def build_seo_migration_prompt(
         "Output must be strict JSON matching the provided schema. "
         "Never emit backend, infrastructure, CI, deployment, secret, auth, runtime, or package-manager files. "
         "Only emit static website artifacts under allowed relative paths. "
-        "Do not claim publish/deploy execution. All outputs are draft-only."
+        "Do not claim publish/deploy execution. All outputs are draft-only. "
+        "Use only selected media assets from migration_context.media_assets.selected_assets; "
+        "when none are selected, use safe placeholders and do not invent real media assets."
     )
 
     user_prompt = (

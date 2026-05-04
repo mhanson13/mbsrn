@@ -416,8 +416,51 @@ export interface MigrationSourceSnapshot {
   internal_links: string[];
   service_blocks: string[];
   asset_references: Record<string, string[]>;
+  discovered_images?: Array<Record<string, unknown>>;
   cleaned_text_blocks: string[];
   warnings: string[];
+}
+
+export interface MigrationMediaAsset {
+  asset_id?: string | null;
+  display_filename?: string | null;
+  content_type?: string | null;
+  size_bytes?: number | null;
+  width?: number | null;
+  height?: number | null;
+  provenance?: string | null;
+  selected_for_draft?: boolean;
+  import_status?: string | null;
+  category?: string | null;
+  alt_text?: string | null;
+  description?: string | null;
+  usage_note?: string | null;
+  page_assignment?: string | null;
+  normalized_url?: string | null;
+  source_page_url?: string | null;
+  created_at?: string | null;
+}
+
+export interface MigrationMediaAssetListResponse {
+  source_discovered: MigrationMediaAsset[];
+  operator_uploaded: MigrationMediaAsset[];
+  selected_assets: MigrationMediaAsset[];
+  source_discovered_count: number;
+  source_imported_count: number;
+  operator_uploaded_count: number;
+  selected_assets_count: number;
+  media_asset_categories: string[];
+  selected_assets_trimmed: boolean;
+  diagnostics: string[];
+}
+
+export interface MigrationMediaAssetUpdateRequest {
+  selected_for_draft?: boolean | null;
+  category?: string | null;
+  alt_text?: string | null;
+  description?: string | null;
+  usage_note?: string | null;
+  page_assignment?: string | null;
 }
 
 export interface MigrationArtifactFile {
@@ -675,6 +718,8 @@ export interface MigrationContextSummary extends Record<string, unknown> {
   draft_provider_compatibility?: MigrationDraftProviderCompatibility;
   draft_generation_state?: MigrationDraftGenerationState;
   destination_summary?: MigrationDestinationSummary;
+  draft_input_summary?: Record<string, unknown>;
+  media_assets?: MigrationMediaAssetListResponse;
 }
 
 export interface MigrationWorkspaceSummary {

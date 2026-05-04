@@ -15,16 +15,19 @@ import {
   fetchMigrationArtifactFilePreview,
   fetchMigrationArtifactVersions,
   fetchMigrationDeployHistory,
+  fetchMigrationMediaAssets,
   fetchMigrationPublishHistory,
   fetchMigrationWorkspaceSummary,
   generateMigrationDraftArtifacts,
   ingestMigrationSource,
   publishMigrationArtifactVersion,
   refreshMigrationDeployStatus,
+  updateMigrationMediaAsset,
   updateMigrationPublishConfig,
   updateMigrationDeployConfig,
   updateMigrationEnrichedContent,
   updateMigrationRequirements,
+  uploadMigrationMediaAsset,
   upsertMigrationWorkspace,
 } from "../lib/api/client";
 import type {
@@ -56,6 +59,8 @@ type BusyAction =
   | "deploy"
   | "refresh_deploy_status"
   | "delete_draft"
+  | "upload_media"
+  | "update_media"
   | null;
 
 const EMPTY_REQUIREMENTS: MigrationOperatorRequirements = {
@@ -396,10 +401,13 @@ function parseDraftGenerationFailure(error: unknown): {
   let message = toErrorMessage(error, "Draft generation failed.");
   let category: DraftGenerationFailureCategory = "unknown_error";
   let reason = "";
+  let reasonCode = "";
   let retryable: boolean | null = null;
   let correlationId: string | null = null;
   let timeoutSeconds: number | null = null;
+  let statusCode: number | null = null;
   if (error instanceof ApiRequestError) {
+    statusCode = error.status;
     const detail = asRecord(error.detail);
     const detailMessage = asString(detail.message).trim();
     if (detailMessage) {
@@ -415,6 +423,7 @@ function parseDraftGenerationFailure(error: unknown): {
       category = categoryValue;
     }
     reason = asString(detail.failure_reason).trim().toLowerCase();
+    reasonCode = asString(detail.error_code || detail.reason_code).trim().toLowerCase();
     retryable = typeof detail.retryable === "boolean" ? detail.retryable : null;
     timeoutSeconds = typeof detail.timeout_seconds === "number" ? Math.max(1, Math.round(detail.timeout_seconds)) : null;
     correlationId =
@@ -427,6 +436,23 @@ function parseDraftGenerationFailure(error: unknown): {
     hint = `Draft generation timed out after ${timeoutSeconds} seconds.`;
   } else if (reason === "timeout" && retryable) {
     hint = "This looks retryable.";
+  } else if (reasonCode === "app_auth_required" || reasonCode === "session_expired") {
+    hint = "App session expired. Sign back into MBSRN and retry draft generation.";
+  } else if (reasonCode === "google_reconnect_required") {
+    hint = "Google Search Console/Analytics reconnect is required before draft generation can use live Google signals.";
+  } else if (reasonCode === "google_integration_unavailable") {
+    hint = "Google integration status is unavailable right now. Retry shortly, then reconnect Google if it persists.";
+  } else if (reasonCode === "draft_generation_context_unavailable") {
+    hint = "Draft context is currently unavailable. Retry and contact support if this keeps happening.";
+  } else if (statusCode === 401) {
+    hint = "Operator session appears expired. Re-authenticate to MBSRN. This is separate from Google integration reconnect.";
+  } else if (statusCode === 403) {
+    hint = "Request was denied by API authorization policy. Review operator role/site scope.";
+  } else if (
+    reasonCode.includes("google")
+    && (reasonCode.includes("reconnect") || reasonCode.includes("consent") || reasonCode.includes("token"))
+  ) {
+    hint = "Google integration reconnect may be required for analytics signals. Operator session remains separate.";
   } else if (category === "config_missing" || reason === "authentication_failed" || reason === "unsupported_configuration") {
     hint = "Check AI provider configuration.";
   } else if (
@@ -444,6 +470,35 @@ function parseDraftGenerationFailure(error: unknown): {
     hint,
     correlationId,
   };
+}
+
+function toDraftAuthIntegrationGuidance(value: string | null): string | null {
+  const normalized = (value || "").trim().toLowerCase();
+  if (!normalized) {
+    return null;
+  }
+  if (normalized === "app_auth_required" || normalized === "session_expired") {
+    return "App session expired. Sign back into MBSRN before retrying draft generation.";
+  }
+  if (normalized === "google_reconnect_required") {
+    return "Google Search Console / Analytics reconnect is required for live Google draft signals.";
+  }
+  if (normalized === "google_integration_unavailable") {
+    return "Google integration state could not be read. Retry shortly, then reconnect Google if this persists.";
+  }
+  if (normalized === "draft_generation_context_unavailable") {
+    return "Draft context could not be assembled. Retry and contact support if the issue persists.";
+  }
+  if (normalized.includes("google") && normalized.includes("reconnect")) {
+    return "Google integration reconnect is required for some analytics signals. Operator app session remains separate.";
+  }
+  if (normalized.includes("google") && normalized.includes("token")) {
+    return "Google integration token refresh failed. Reconnect Google integration and retry draft generation.";
+  }
+  if (normalized === "authentication_failed" || normalized.includes("session")) {
+    return "Operator session authentication may have expired. Re-authenticate in MBSRN and retry.";
+  }
+  return null;
 }
 
 function splitLines(value: string): string[] {
@@ -490,6 +545,22 @@ function asStringList(value: unknown): string[] {
   return value
     .map((item) => String(item || "").trim())
     .filter((item) => item.length > 0);
+}
+
+function asRecordList(value: unknown): Array<Record<string, unknown>> {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((item) => asRecord(item))
+    .filter((item) => Object.keys(item).length > 0);
+}
+
+function asNonNegativeInt(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return null;
+  }
+  return Math.max(0, Math.round(value));
 }
 
 function formatBooleanStateLabel(value: boolean | null, labels?: { trueLabel?: string; falseLabel?: string }): string {
@@ -2107,6 +2178,14 @@ export function MigrationWorkspacePanel({
   const [faqItems, setFaqItems] = useState("");
   const [contactOverrides, setContactOverrides] = useState("");
   const [enrichedNotes, setEnrichedNotes] = useState("");
+  const [mediaUploadFile, setMediaUploadFile] = useState<File | null>(null);
+  const [mediaUploadCategory, setMediaUploadCategory] = useState("other");
+  const [mediaUploadAltText, setMediaUploadAltText] = useState("");
+  const [mediaUploadDescription, setMediaUploadDescription] = useState("");
+  const [mediaUploadUsageNote, setMediaUploadUsageNote] = useState("");
+  const [mediaUploadPageAssignment, setMediaUploadPageAssignment] = useState("");
+  const [mediaUploadSelectedForDraft, setMediaUploadSelectedForDraft] = useState(true);
+  const [mediaAssetsSnapshot, setMediaAssetsSnapshot] = useState<Record<string, unknown> | null>(null);
 
   const [publishRepoName, setPublishRepoName] = useState("");
   const [publishBranch, setPublishBranch] = useState("");
@@ -2255,7 +2334,29 @@ export function MigrationWorkspacePanel({
   });
   const deployPrimaryBlockerMessage = toDeployBlockerMessage(deployBlockerCodes);
   const contextSummary = asRecord(summary?.context_summary);
+  const draftInputSummary = asRecord(contextSummary.draft_input_summary);
+  const mediaSummaryFromContext = asRecord(contextSummary.media_assets);
+  const mediaSummaryFromRoute = asRecord(mediaAssetsSnapshot);
+  const mediaSummary =
+    Object.keys(mediaSummaryFromRoute).length > 0
+      ? mediaSummaryFromRoute
+      : mediaSummaryFromContext;
+  const sourceDiscoveredMediaAssets = asRecordList(mediaSummary.source_discovered);
+  const operatorUploadedMediaAssets = asRecordList(mediaSummary.operator_uploaded);
+  const selectedMediaAssets = asRecordList(mediaSummary.selected_assets);
+  const sourceDiscoveredMediaCount =
+    asNonNegativeInt(mediaSummary.source_discovered_count) ?? sourceDiscoveredMediaAssets.length;
+  const sourceImportedMediaCount =
+    asNonNegativeInt(mediaSummary.source_imported_count)
+    ?? sourceDiscoveredMediaAssets.filter((item) => Boolean(item.selected_for_draft)).length;
+  const operatorUploadedMediaCount =
+    asNonNegativeInt(mediaSummary.operator_uploaded_count) ?? operatorUploadedMediaAssets.length;
+  const selectedMediaAssetsCount =
+    asNonNegativeInt(mediaSummary.selected_assets_count) ?? selectedMediaAssets.length;
+  const mediaAssetCategories = asStringList(mediaSummary.media_asset_categories);
+  const mediaSelectedAssetsTrimmed = Boolean(mediaSummary.selected_assets_trimmed);
   const migrationDiagnostics = asRecord(contextSummary.migration_diagnostics);
+  const mediaDiagnostics = asStringList(migrationDiagnostics.media_diagnostics || mediaSummary.diagnostics);
   const currentSiteUrl = asStringOrNull(sourceSnapshot?.final_url) || asStringOrNull(summary?.workspace.source_url);
   const destinationSummary = deriveMigrationDestinationSummary({
     contextSummary,
@@ -3065,6 +3166,11 @@ export function MigrationWorkspacePanel({
   const draftAIDifficultyBucket = asStringOrNull(draftAIDiagnosticsSummary.difficulty_bucket);
   const draftAIInputSizeBucket = asStringOrNull(draftAIDiagnosticsSummary.input_size_bucket);
   const draftAIDegradedState = asStringOrNull(draftAIDiagnosticsSummary.degraded_state);
+  const draftAuthIntegrationGuidance = toDraftAuthIntegrationGuidance(
+    asStringOrNull(migrationDiagnostics.last_draft_failure_reason)
+    || draftAIFailureReason
+    || asStringOrNull(migrationDiagnostics.last_draft_failure_code),
+  );
   const selectedArtifactFailureMessage = asStringOrNull(selectedArtifact?.error_summary);
   const draftFailureMessage = selectedArtifactFailureMessage || asStringOrNull(migrationDiagnostics.last_draft_failure_message);
   const draftDiagnosticsUsingSummaryFallback =
@@ -3262,10 +3368,17 @@ export function MigrationWorkspacePanel({
           fetchMigrationPublishHistory(token, businessId, siteId),
           fetchMigrationDeployHistory(token, businessId, siteId),
         ]);
+        let mediaPayload: Record<string, unknown> | null = null;
+        try {
+          mediaPayload = asRecord(await fetchMigrationMediaAssets(token, businessId, siteId));
+        } catch {
+          mediaPayload = null;
+        }
         setSummary(workspaceSummary);
         setArtifactVersions(versionList.items || []);
         setPublishHistory(publishHistoryResponse.items || workspaceSummary.publish_history || []);
         setDeployHistory(deployHistoryResponse.items || workspaceSummary.deploy_history || []);
+        setMediaAssetsSnapshot(mediaPayload);
         hydrateFromSummary(workspaceSummary);
         const versions = versionList.items || [];
         setSelectedArtifactVersionId((current) =>
@@ -3451,6 +3564,125 @@ export function MigrationWorkspacePanel({
     } catch (error) {
       setErrorHint(null);
       setErrorMessage(toErrorMessage(error, "Failed to save enriched content."));
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const handleUploadMediaAsset = async (): Promise<void> => {
+    if (!mediaUploadFile) {
+      setErrorHint(null);
+      setErrorMessage("Select an image file before uploading.");
+      return;
+    }
+    setBusyAction("upload_media");
+    setErrorMessage(null);
+    setErrorHint(null);
+    setStatusMessage(null);
+    try {
+      await uploadMigrationMediaAsset(token, businessId, siteId, {
+        file: mediaUploadFile,
+        selectedForDraft: mediaUploadSelectedForDraft,
+        category: asStringOrNull(mediaUploadCategory),
+        altText: asStringOrNull(mediaUploadAltText),
+        description: asStringOrNull(mediaUploadDescription),
+        usageNote: asStringOrNull(mediaUploadUsageNote),
+        pageAssignment: asStringOrNull(mediaUploadPageAssignment),
+      });
+      setMediaUploadFile(null);
+      setMediaUploadCategory("other");
+      setMediaUploadAltText("");
+      setMediaUploadDescription("");
+      setMediaUploadUsageNote("");
+      setMediaUploadPageAssignment("");
+      setMediaUploadSelectedForDraft(true);
+      setStatusMessage("Workspace media uploaded.");
+      await loadWorkspaceData(false);
+    } catch (error) {
+      setErrorHint(null);
+      setErrorMessage(toErrorMessage(error, "Media upload failed."));
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const handleToggleMediaSelection = async (
+    asset: Record<string, unknown>,
+    selectedForDraft: boolean,
+  ): Promise<void> => {
+    const assetId = asStringOrNull(asset.asset_id);
+    if (!assetId) {
+      setErrorHint(null);
+      setErrorMessage("Media asset id is missing.");
+      return;
+    }
+    setBusyAction("update_media");
+    setErrorMessage(null);
+    setErrorHint(null);
+    setStatusMessage(null);
+    try {
+      await updateMigrationMediaAsset(token, businessId, siteId, assetId, {
+        selected_for_draft: selectedForDraft,
+      });
+      setStatusMessage(
+        selectedForDraft
+          ? "Media asset selected for draft context."
+          : "Media asset removed from draft context.",
+      );
+      await loadWorkspaceData(false);
+    } catch (error) {
+      setErrorHint(null);
+      setErrorMessage(toErrorMessage(error, "Failed to update media asset selection."));
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const handleEditMediaMetadata = async (asset: Record<string, unknown>): Promise<void> => {
+    const assetId = asStringOrNull(asset.asset_id);
+    if (!assetId) {
+      setErrorHint(null);
+      setErrorMessage("Media asset id is missing.");
+      return;
+    }
+    const currentAlt = asString(asset.alt_text);
+    const currentUsage = asString(asset.usage_note);
+    const currentCategory = asString(asset.category);
+    const currentPage = asString(asset.page_assignment);
+
+    const nextAlt = window.prompt("Alt text (optional)", currentAlt);
+    if (nextAlt === null) {
+      return;
+    }
+    const nextUsage = window.prompt("Usage note (optional)", currentUsage);
+    if (nextUsage === null) {
+      return;
+    }
+    const nextCategory = window.prompt("Category (optional)", currentCategory);
+    if (nextCategory === null) {
+      return;
+    }
+    const nextPageAssignment = window.prompt("Page/gallery assignment (optional)", currentPage);
+    if (nextPageAssignment === null) {
+      return;
+    }
+
+    setBusyAction("update_media");
+    setErrorMessage(null);
+    setErrorHint(null);
+    setStatusMessage(null);
+    try {
+      await updateMigrationMediaAsset(token, businessId, siteId, assetId, {
+        alt_text: asStringOrNull(nextAlt),
+        usage_note: asStringOrNull(nextUsage),
+        category: asStringOrNull(nextCategory),
+        page_assignment: asStringOrNull(nextPageAssignment),
+      });
+      setStatusMessage("Media metadata updated.");
+      await loadWorkspaceData(false);
+    } catch (error) {
+      setErrorHint(null);
+      setErrorMessage(toErrorMessage(error, "Failed to update media metadata."));
     } finally {
       setBusyAction(null);
     }
@@ -4221,6 +4453,224 @@ export function MigrationWorkspacePanel({
         )}
       </div>
 
+      <div className="panel stack workspace-section-block" data-testid="migration-media-section">
+        <h3>Media / Images</h3>
+        <span className="hint muted">
+          Manage source-discovered and operator-uploaded image assets. Only selected assets are included in draft AI context.
+        </span>
+        <div className="grid grid-2">
+          <div className="panel panel-compact stack-tight" data-testid="migration-media-operator-actions">
+            <strong>Operator Actions</strong>
+            <span className="hint muted">
+              Upload photos for galleries/pages and explicitly select which assets may be used in draft generation.
+            </span>
+            <label className="stack-tight">
+              <span className="hint muted">Upload image</span>
+              <input
+                type="file"
+                accept="image/jpeg,image/png,image/webp,image/gif"
+                onChange={(event) => {
+                  const file = event.target.files && event.target.files.length > 0 ? event.target.files[0] : null;
+                  setMediaUploadFile(file);
+                }}
+              />
+            </label>
+            <label className="stack-tight">
+              <span className="hint muted">Category</span>
+              <select
+                value={mediaUploadCategory}
+                onChange={(event) => setMediaUploadCategory(event.target.value)}
+              >
+                <option value="other">other</option>
+                <option value="customer_gallery">customer_gallery</option>
+                <option value="project_gallery">project_gallery</option>
+                <option value="before_after">before_after</option>
+                <option value="team">team</option>
+                <option value="company">company</option>
+                <option value="service_page">service_page</option>
+                <option value="hero">hero</option>
+                <option value="logo">logo</option>
+              </select>
+            </label>
+            <label className="stack-tight">
+              <span className="hint muted">Alt text</span>
+              <input value={mediaUploadAltText} onChange={(event) => setMediaUploadAltText(event.target.value)} />
+            </label>
+            <label className="stack-tight">
+              <span className="hint muted">Description</span>
+              <textarea
+                value={mediaUploadDescription}
+                onChange={(event) => setMediaUploadDescription(event.target.value)}
+                rows={2}
+              />
+            </label>
+            <label className="stack-tight">
+              <span className="hint muted">Usage note</span>
+              <input value={mediaUploadUsageNote} onChange={(event) => setMediaUploadUsageNote(event.target.value)} />
+            </label>
+            <label className="stack-tight">
+              <span className="hint muted">Page/gallery assignment</span>
+              <input
+                value={mediaUploadPageAssignment}
+                onChange={(event) => setMediaUploadPageAssignment(event.target.value)}
+              />
+            </label>
+            <label className="link-row">
+              <input
+                type="checkbox"
+                checked={mediaUploadSelectedForDraft}
+                onChange={(event) => setMediaUploadSelectedForDraft(event.target.checked)}
+              />
+              <span>Select for draft context on upload</span>
+            </label>
+            <WorkspaceActionBar variant="secondary">
+              <button
+                type="button"
+                className="button button-secondary"
+                onClick={() => void handleUploadMediaAsset()}
+                disabled={isActionInFlight || !mediaUploadFile}
+              >
+                {busyAction === "upload_media" ? "Uploading..." : "Upload Workspace Image"}
+              </button>
+            </WorkspaceActionBar>
+          </div>
+
+          <div className="panel panel-compact stack-tight" data-testid="migration-media-counts">
+            <strong>Media Counts</strong>
+            <span className="hint">Discovered from source site: {sourceDiscoveredMediaCount}</span>
+            <span className="hint">Imported/selected from source: {sourceImportedMediaCount}</span>
+            <span className="hint">Operator uploaded: {operatorUploadedMediaCount}</span>
+            <span className="hint">Selected for draft context: {selectedMediaAssetsCount}</span>
+            <span className="hint">
+              Asset categories in workspace: {mediaAssetCategories.length > 0 ? mediaAssetCategories.join(", ") : "none"}
+            </span>
+            {mediaSelectedAssetsTrimmed ? (
+              <span className="hint warning">
+                Selected media context was trimmed to stay inside AI budget constraints.
+              </span>
+            ) : null}
+            <span className="hint muted">
+              Media fetch/import rejection reasons are listed under Advanced Diagnostics.
+            </span>
+          </div>
+        </div>
+
+        <div className="grid grid-2">
+          <div className="panel panel-compact stack-tight" data-testid="migration-media-source-list">
+            <strong>Discovered Source-Site Images</strong>
+            {sourceDiscoveredMediaAssets.length > 0 ? (
+              <ul className="stack-tight">
+                {sourceDiscoveredMediaAssets.slice(0, 12).map((item, index) => {
+                  const assetId = asStringOrNull(item.asset_id) || `source-${index}`;
+                  const selected = Boolean(item.selected_for_draft);
+                  return (
+                    <li key={`source-media-${assetId}`} className="stack-tight">
+                      <span className="hint">
+                        {asStringOrNull(item.display_filename) || asStringOrNull(item.filename) || asStringOrNull(item.normalized_url) || assetId}
+                      </span>
+                      <span className="hint muted">Provenance: {asStringOrNull(item.provenance) || "source_site_import"}</span>
+                      {asStringOrNull(item.normalized_url) ? (
+                        <span className="hint muted">URL: {asStringOrNull(item.normalized_url)}</span>
+                      ) : null}
+                      <div className="row-wrap-tight">
+                        <button
+                          type="button"
+                          className="button button-tertiary"
+                          onClick={() => void handleToggleMediaSelection(item, !selected)}
+                          disabled={isActionInFlight}
+                        >
+                          {selected ? "Unselect" : "Select for Draft"}
+                        </button>
+                        <button
+                          type="button"
+                          className="button button-tertiary"
+                          onClick={() => void handleEditMediaMetadata(item)}
+                          disabled={isActionInFlight}
+                        >
+                          Edit Metadata
+                        </button>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            ) : (
+              <span className="hint muted">No source-site images discovered yet.</span>
+            )}
+          </div>
+
+          <div className="panel panel-compact stack-tight" data-testid="migration-media-uploaded-list">
+            <strong>Operator Uploaded Images</strong>
+            {operatorUploadedMediaAssets.length > 0 ? (
+              <ul className="stack-tight">
+                {operatorUploadedMediaAssets.slice(0, 12).map((item, index) => {
+                  const assetId = asStringOrNull(item.asset_id) || `upload-${index}`;
+                  const selected = Boolean(item.selected_for_draft);
+                  return (
+                    <li key={`uploaded-media-${assetId}`} className="stack-tight">
+                      <span className="hint">
+                        {asStringOrNull(item.display_filename) || asStringOrNull(item.filename) || assetId}
+                      </span>
+                      <span className="hint muted">Provenance: {asStringOrNull(item.provenance) || "operator_upload"}</span>
+                      <span className="hint muted">
+                        Category: {asStringOrNull(item.category) || "other"} | Alt: {asStringOrNull(item.alt_text) || "none"}
+                      </span>
+                      <span className="hint muted">Usage note: {asStringOrNull(item.usage_note) || "none"}</span>
+                      <div className="row-wrap-tight">
+                        <button
+                          type="button"
+                          className="button button-tertiary"
+                          onClick={() => void handleToggleMediaSelection(item, !selected)}
+                          disabled={isActionInFlight}
+                        >
+                          {selected ? "Unselect" : "Select for Draft"}
+                        </button>
+                        <button
+                          type="button"
+                          className="button button-tertiary"
+                          onClick={() => void handleEditMediaMetadata(item)}
+                          disabled={isActionInFlight}
+                        >
+                          Edit Metadata
+                        </button>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            ) : (
+              <span className="hint muted">No operator-uploaded images yet.</span>
+            )}
+          </div>
+        </div>
+
+        <div className="panel panel-compact stack-tight" data-testid="migration-media-selected-list">
+          <strong>Selected Images Used In Draft Context</strong>
+          {selectedMediaAssets.length > 0 ? (
+            <ul className="stack-tight">
+              {selectedMediaAssets.slice(0, 12).map((item, index) => {
+                const assetId = asStringOrNull(item.asset_id) || `selected-${index}`;
+                return (
+                  <li key={`selected-media-${assetId}`} className="stack-tight">
+                    <span className="hint">
+                      {asStringOrNull(item.display_filename) || asStringOrNull(item.filename) || assetId}
+                    </span>
+                    <span className="hint muted">
+                      Provenance: {asStringOrNull(item.provenance) || "unknown"} | Category: {asStringOrNull(item.category) || "other"}
+                    </span>
+                    <span className="hint muted">
+                      Alt/description: {asStringOrNull(item.alt_text) || asStringOrNull(item.description) || "none"}
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : (
+            <span className="hint muted">No selected media assets. Draft generation should use placeholders only.</span>
+          )}
+        </div>
+      </div>
+
       <div className="grid grid-2">
         <div className="panel stack workspace-section-block">
           <h3>Operator Requirements</h3>
@@ -4333,6 +4783,75 @@ export function MigrationWorkspacePanel({
         </div>
       </div>
 
+      <div className="panel stack workspace-section-block" data-testid="migration-draft-input-summary">
+        <h3>Draft Inputs / AI Context</h3>
+        <span className="hint muted">
+          This summary is bounded metadata for operator inspection. It is safe to store/display and excludes raw secrets and media bytes.
+        </span>
+        <div className="grid grid-2">
+          <div className="panel panel-compact stack-tight">
+            <strong>Context Signals</strong>
+            <span className="hint">
+              Recommendations included: {asNonNegativeInt(draftInputSummary.recommendations_included_count) ?? 0}
+            </span>
+            <span className="hint">
+              Recommendation categories: {asStringList(draftInputSummary.recommendation_categories_included).join(", ") || "none"}
+            </span>
+            <span className="hint">
+              Top recommendation titles: {asStringList(draftInputSummary.top_recommendation_titles).join(" | ") || "none"}
+            </span>
+            <span className="hint">GSC signals included: {formatBooleanStateLabel(asBooleanOrNull(draftInputSummary.gsc_signals_included))}</span>
+            <span className="hint">GA4 signals included: {formatBooleanStateLabel(asBooleanOrNull(draftInputSummary.ga4_signals_included))}</span>
+            <span className="hint">
+              Competitor profiles included: {asNonNegativeInt(draftInputSummary.competitor_profiles_included_count) ?? 0}
+            </span>
+            <span className="hint">
+              Operator requirements included: {formatBooleanStateLabel(asBooleanOrNull(draftInputSummary.operator_requirements_included))}
+            </span>
+            <span className="hint">
+              Enriched business context included: {formatBooleanStateLabel(asBooleanOrNull(draftInputSummary.enriched_business_context_included))}
+            </span>
+            <span className="hint">
+              Audit findings included: {asNonNegativeInt(draftInputSummary.audit_findings_included_count) ?? 0}
+            </span>
+          </div>
+          <div className="panel panel-compact stack-tight">
+            <strong>Media + Provider Context</strong>
+            <span className="hint">
+              Source images discovered: {asNonNegativeInt(draftInputSummary.source_site_images_discovered_count) ?? sourceDiscoveredMediaCount}
+            </span>
+            <span className="hint">
+              Source images imported: {asNonNegativeInt(draftInputSummary.source_site_images_imported_count) ?? sourceImportedMediaCount}
+            </span>
+            <span className="hint">
+              Operator uploaded images: {asNonNegativeInt(draftInputSummary.operator_uploaded_images_count) ?? operatorUploadedMediaCount}
+            </span>
+            <span className="hint">
+              Selected media assets in draft context: {asNonNegativeInt(draftInputSummary.selected_media_assets_count) ?? selectedMediaAssetsCount}
+            </span>
+            <span className="hint">
+              Media categories in context: {asStringList(draftInputSummary.media_asset_categories).join(", ") || "none"}
+            </span>
+            <span className="hint">
+              Media context included: {formatBooleanStateLabel(asBooleanOrNull(draftInputSummary.media_context_included))}
+            </span>
+            <span className="hint">
+              Media context trimmed: {formatBooleanStateLabel(asBooleanOrNull(draftInputSummary.media_context_trimmed))}
+            </span>
+            <span className="hint">
+              AI context blocks included: {asNonNegativeInt(draftInputSummary.ai_context_source_count) ?? 0}
+            </span>
+            <span className="hint">
+              AI context trimmed: {formatBooleanStateLabel(asBooleanOrNull(draftInputSummary.ai_context_trimmed))}
+            </span>
+            <span className="hint">
+              Provider source: {asStringOrNull(draftInputSummary.provider_source) || "unknown"}{" "}
+              {asBooleanOrNull(draftInputSummary.mocked_source) ? "(mocked)" : ""}
+            </span>
+          </div>
+        </div>
+      </div>
+
       <h3 className="hint muted migration-section-title">B. Draft / Version Status</h3>
       <p className="hint muted migration-section-subtitle">
         Confirm readiness and compatibility, then generate a draft when unblocked.
@@ -4340,6 +4859,7 @@ export function MigrationWorkspacePanel({
 
       <div className="panel panel-compact stack-tight" data-testid="migration-current-state">
         <strong>Current Migration State</strong>
+        <span className="hint muted">Metrics: readiness, AI execution profile, timing, and latest failure source.</span>
         <span className="hint">State: {draftGenerationStateLabel}</span>
         <span className={draftGenerationStateToneClass}>{draftGenerationState.summary}</span>
         <WorkspaceMetadataGrid data-testid="migration-ai-execution-metadata">
@@ -4399,6 +4919,9 @@ export function MigrationWorkspacePanel({
 
       <div className="panel stack workspace-section-block">
         <h3>Draft Artifact Generation</h3>
+        <span className="hint muted">
+          Operator Actions: generate/retry draft here. Approval, publish, and deploy actions remain explicit in later sections.
+        </span>
         <div className="panel panel-compact stack-tight" data-testid="migration-draft-readiness">
           <strong>Preflight Readiness</strong>
           <span className="hint">Status: {draftReadinessStatusLabel}</span>
@@ -5094,6 +5617,24 @@ export function MigrationWorkspacePanel({
               <span className="hint">Last deploy status: {asString(migrationDiagnostics.last_deploy_status) || "n/a"}</span>
             </div>
 
+            <div className="panel panel-compact stack-tight" data-testid="migration-media-diagnostics">
+              <strong>Media Diagnostics</strong>
+              <span className="hint muted">
+                Failed image fetch/import reasons and safety rejections are shown here (not in primary media workflow cards).
+              </span>
+              {mediaDiagnostics.length > 0 ? (
+                <ul className="stack-tight">
+                  {mediaDiagnostics.slice(0, 20).map((item, index) => (
+                    <li key={`migration-media-diagnostic-${index}`} className="hint warning">
+                      {item}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <span className="hint muted">No media diagnostics recorded.</span>
+              )}
+            </div>
+
             <details className="workspace-details-shell">
               <summary className="hint muted">Show publish history</summary>
               <div className="panel panel-compact stack" data-testid="migration-publish-history">
@@ -5505,6 +6046,11 @@ export function MigrationWorkspacePanel({
               ) : null}
               {draftFailureSourceLabel ? (
                 <span className="hint warning">Draft failure source: {draftFailureSourceLabel}</span>
+              ) : null}
+              {draftAuthIntegrationGuidance ? (
+                <span className="hint warning" data-testid="migration-draft-auth-guidance">
+                  {draftAuthIntegrationGuidance}
+                </span>
               ) : null}
               {draftAIFailureCategory || draftAIFailureReason || draftAIHint ? (
                 <span className="hint">

@@ -39,6 +39,45 @@ Service-focus provenance is available in `competitor_prompt_preview.prompt_metri
 
 These fields are intended for diagnostics and API-level inspection.
 
+## Site SEO Migration Workspace IA (2026-05)
+
+The dedicated migration route (`/sites/[site_id]/migration`) keeps primary operator workflow and diagnostics separated:
+
+- Operator Actions:
+  - draft generation, approval, publish, deploy, refresh/retry, delete draft
+  - media upload/select/unselect/edit metadata actions
+- Draft Inputs / AI Context:
+  - bounded provenance summary (`context_summary.draft_input_summary`)
+  - recommendation, operator, enriched-content, competitor, analytics, audit, and media inclusion signals
+- Media / Images:
+  - discovered source-site images
+  - operator-uploaded images
+  - selected images used in AI context
+- Metrics:
+  - readiness/AI execution/runtime status in primary workflow cards
+- Diagnostics / Debug Output:
+  - advanced troubleshooting output and history under `Advanced Diagnostics & History`
+  - media rejection/fetch safety reasons appear in `Media Diagnostics` (not in the primary media action cards)
+
+Google auth/integration operator cue:
+- reconnect-required Google integration states are shown as targeted integration guidance in draft diagnostics
+- operator app-session expiration guidance remains distinct from integration reconnect guidance
+
+Deterministic draft reason-code guidance (migration diagnostics):
+- `app_auth_required` / `session_expired`:
+  - show MBSRN sign-in guidance (app session)
+- `google_reconnect_required`:
+  - show Google Search Console / Analytics reconnect guidance
+- `google_integration_unavailable`:
+  - show retry-first integration-state warning with reconnect fallback guidance
+- `draft_generation_context_unavailable`:
+  - show retry/support guidance for context assembly failure
+
+Media UX note:
+- discovered source-site images and operator uploads are both visible in migration media sections
+- selected discovered images remain metadata-only in this pass (no broad remote binary import yet)
+- diagnostics should surface the staged limitation and any safe rejection reason codes without exposing storage paths or raw bytes
+
 ## Competitor Run Quality States
 
 The workspace competitor panel includes a compact terminal-run quality summary line:

@@ -121,39 +121,51 @@ This produces OCI-compatible images suitable for containerd on GKE.
 
 ### GKE Resource Request Tuning (FinOps)
 
-Production CPU tuning for the two user-facing workloads is owned directly in workflow env values:
+This section distinguishes declared (repo/workflow) resource values from admitted (live cluster) values in GKE Autopilot.
 
+Declared/rendered source of truth for production UI/WWW CPU:
 - `.github/workflows/deploy-prod.yml`:
   - `UI_CPU_REQUEST=100m`
   - `UI_CPU_LIMIT=500m`
 - `.github/workflows/deploy-www-prod.yml`:
   - `WWW_CPU_REQUEST=100m`
   - `WWW_CPU_LIMIT=500m`
+- Templates are rendered into:
+  - `k8s/ui-deployment.yaml` (`__UI_CPU_REQUEST__`, `__UI_CPU_LIMIT__`)
+  - `k8s/www-deployment.yaml` (`__WWW_CPU_REQUEST__`, `__WWW_CPU_LIMIT__`)
 
-This keeps `mbsrn-ui` and `mbsrn-www` on a conservative production floor while leaving existing memory values and non-resource deploy behavior unchanged.
+Observed production evidence (May 4, 2026):
+- Workloads: `mbsrn-ui`, `mbsrn-www`
+- Declared CPU request target: `100m`
+- Live admitted CPU request: `308m`
+- Live CPU limit: `500m`
+- Live memory request/limit: `2Gi`
+- Live ephemeral-storage request/limit: `4Gi`
+- Rollout outcome at verification time: both deployments successful, healthy pods, `0` restarts observed
 
-FinOps guidance:
-- Google Cloud Billing/Recommender CPU suggestions (for example very low values such as `4m`) are advisory inputs.
-- For production web/UI workloads, apply a safety floor (`100m` request, `500m` limit) instead of copying extreme recommendations directly.
+Interpretation:
+- Google Cloud Billing/Recommender values (including very low values such as `4m`) are advisory and are not copied literally for production.
+- In GKE Autopilot, admitted Pod resources can differ from declared values after admission/defaulting.
+- With current memory sizing (`2Gi`), Autopilot admitted CPU request at `308m` for both UI/WWW in observed production state.
+- Do not assume declared `100m` always equals live admitted `100m`.
 
-Post-deploy verification:
-1. Confirm live deployment CPU request/limit values:
+Post-deploy verification commands (declared vs admitted):
 
 ```bash
-kubectl -n mbsrn get deploy mbsrn-ui mbsrn-www \
-  -o jsonpath='{range .items[*]}{.metadata.name}{" requests.cpu="}{.spec.template.spec.containers[0].resources.requests.cpu}{" limits.cpu="}{.spec.template.spec.containers[0].resources.limits.cpu}{"\n"}{end}'
+kubectl -n mbsrn get deployment mbsrn-ui -o jsonpath='{.spec.template.spec.containers[0].resources}{"\n"}'
+kubectl -n mbsrn get deployment mbsrn-www -o jsonpath='{.spec.template.spec.containers[0].resources}{"\n"}'
+kubectl -n mbsrn rollout status deployment/mbsrn-ui
+kubectl -n mbsrn rollout status deployment/mbsrn-www
+kubectl -n mbsrn get pods -l app=mbsrn-ui
+kubectl -n mbsrn get pods -l app=mbsrn-www
+kubectl -n mbsrn get events --sort-by=.lastTimestamp | grep -i -E "autopilot|resource|cpu|memory|mbsrn-ui|mbsrn-www|mbsrn-api" | tail -50
 ```
 
-2. Confirm no `4m` CPU value is present in active specs:
-
-```bash
-kubectl -n mbsrn get deploy mbsrn-ui mbsrn-www -o yaml | grep -n "cpu:"
-```
-
-3. Validate production impact over real traffic:
-- In Cloud Monitoring (GKE Workloads), review CPU usage/request utilization and throttling trends for `mbsrn-ui` and `mbsrn-www`.
-- In Billing/FinOps recommendations, re-check rightsizing guidance after at least 24-72 hours of representative traffic.
-- If sustained CPU utilization is high or throttling appears, increment conservatively and re-measure.
+Future tuning note:
+- Do not reduce memory blindly.
+- Review Cloud Monitoring memory working set and CPU throttling over 24-72 hours before changing memory.
+- If memory usage remains comfortably below `2Gi`, consider a separate conservative change to reduce memory request/limit (for example toward `1Gi`), then re-check admitted CPU after rollout.
+- `mbsrn-api` `FailedScheduling`/HPA warnings should be tracked as a separate follow-up review and are out of scope for this UI/WWW tuning pass.
 
 ### SEO Migration Managed Target Repo Contract
 

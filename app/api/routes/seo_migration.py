@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
 from app.api.deps import (
     TenantContext,
@@ -22,6 +22,9 @@ from app.schemas.seo_migration import (
     SEOMigrationDraftGenerateRequest,
     SEOMigrationEnrichedContentUpdateRequest,
     SEOMigrationHistoryListRead,
+    SEOMigrationMediaAssetListRead,
+    SEOMigrationMediaAssetRead,
+    SEOMigrationMediaAssetUpdateRequest,
     SEOMigrationPublishActionRead,
     SEOMigrationPublishConfigUpdateRequest,
     SEOMigrationPublishRequest,
@@ -47,6 +50,11 @@ _DRAFT_ONLY_NOTICE = (
     "Draft artifacts only. Nothing is published or deployed automatically. "
     "Approval, GitHub publish, and GKE deploy remain explicit operator-triggered steps."
 )
+_DRAFT_REASON_CODE_APP_AUTH_REQUIRED = "app_auth_required"
+_DRAFT_REASON_CODE_SESSION_EXPIRED = "session_expired"
+_DRAFT_REASON_CODE_GOOGLE_RECONNECT_REQUIRED = "google_reconnect_required"
+_DRAFT_REASON_CODE_GOOGLE_INTEGRATION_UNAVAILABLE = "google_integration_unavailable"
+_DRAFT_REASON_CODE_CONTEXT_UNAVAILABLE = "draft_generation_context_unavailable"
 
 
 def _to_workspace_read(workspace) -> SEOMigrationWorkspaceRead:  # noqa: ANN001
@@ -59,14 +67,72 @@ def _to_artifact_read(artifact) -> SEOMigrationArtifactVersionRead:  # noqa: ANN
 
 def _validation_error_detail(exc: SEOMigrationValidationError) -> str | dict[str, object]:
     detail = exc.to_error_detail()
+    if isinstance(detail, dict):
+        reason_code = _normalize_draft_generation_reason_code(
+            detail.get("reason_code") or detail.get("error_code")
+        )
+        if reason_code is not None:
+            detail["reason_code"] = reason_code
+            if not detail.get("error_code"):
+                detail["error_code"] = reason_code
     if isinstance(detail, dict) and (
         detail.get("failure_category")
         or detail.get("failure_reason")
         or detail.get("error_code")
+        or detail.get("reason_code")
         or detail.get("retryable") is not None
     ):
         return detail
     return str(exc)
+
+
+def _normalize_draft_generation_reason_code(value: object) -> str | None:
+    normalized = str(value or "").strip().lower()
+    if not normalized:
+        return None
+    if normalized in {
+        _DRAFT_REASON_CODE_APP_AUTH_REQUIRED,
+        _DRAFT_REASON_CODE_SESSION_EXPIRED,
+        _DRAFT_REASON_CODE_GOOGLE_RECONNECT_REQUIRED,
+        _DRAFT_REASON_CODE_GOOGLE_INTEGRATION_UNAVAILABLE,
+        _DRAFT_REASON_CODE_CONTEXT_UNAVAILABLE,
+    }:
+        return normalized
+    if normalized in {
+        "reconnect_required",
+        "google_refresh_required",
+        "google_token_expired",
+        "google_token_revoked",
+        "google_token_invalid",
+        "google_scope_missing",
+        "google_consent_expired",
+        "google_auth_required",
+    }:
+        return _DRAFT_REASON_CODE_GOOGLE_RECONNECT_REQUIRED
+    if normalized in {
+        "google_status_unavailable",
+        "google_integration_status_unavailable",
+        "google_integration_read_failed",
+        "google_connection_unavailable",
+    }:
+        return _DRAFT_REASON_CODE_GOOGLE_INTEGRATION_UNAVAILABLE
+    if normalized in {"context_unavailable", "context_assembly_failed"}:
+        return _DRAFT_REASON_CODE_CONTEXT_UNAVAILABLE
+    return None
+
+
+def _draft_generation_error_detail(exc: SEOMigrationValidationError) -> str | dict[str, object]:
+    detail = _validation_error_detail(exc)
+    if not isinstance(detail, dict):
+        return detail
+    normalized_reason = _normalize_draft_generation_reason_code(
+        detail.get("reason_code") or detail.get("error_code")
+    )
+    if normalized_reason is None:
+        return detail
+    detail["reason_code"] = normalized_reason
+    detail["error_code"] = normalized_reason
+    return detail
 
 
 @router.put("/sites/{site_id}/migration/workspace", response_model=SEOMigrationWorkspaceRead)
@@ -166,6 +232,121 @@ def ingest_seo_migration_source(
     except SEOMigrationValidationError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
     return _to_workspace_read(workspace)
+
+
+@router.get("/sites/{site_id}/migration/media/assets", response_model=SEOMigrationMediaAssetListRead)
+def list_seo_migration_media_assets(
+    business_id: str,
+    site_id: str,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    migration_service: SEOMigrationService = Depends(get_seo_migration_service),
+) -> SEOMigrationMediaAssetListRead:
+    scoped_business_id = resolve_tenant_business_id(
+        tenant_context=tenant_context,
+        requested_business_id=business_id,
+    )
+    try:
+        payload = migration_service.list_workspace_media_assets(
+            business_id=scoped_business_id,
+            site_id=site_id,
+        )
+    except SEOMigrationNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    source_discovered = payload.get("source_discovered") if isinstance(payload, dict) else []
+    operator_uploaded = payload.get("operator_uploaded") if isinstance(payload, dict) else []
+    selected_assets = payload.get("selected_assets") if isinstance(payload, dict) else []
+    return SEOMigrationMediaAssetListRead(
+        source_discovered=[SEOMigrationMediaAssetRead.model_validate(item) for item in source_discovered or []],
+        operator_uploaded=[SEOMigrationMediaAssetRead.model_validate(item) for item in operator_uploaded or []],
+        selected_assets=[SEOMigrationMediaAssetRead.model_validate(item) for item in selected_assets or []],
+        source_discovered_count=int(payload.get("source_discovered_count") or 0) if isinstance(payload, dict) else 0,
+        source_imported_count=int(payload.get("source_imported_count") or 0) if isinstance(payload, dict) else 0,
+        operator_uploaded_count=int(payload.get("operator_uploaded_count") or 0) if isinstance(payload, dict) else 0,
+        selected_assets_count=int(payload.get("selected_assets_count") or 0) if isinstance(payload, dict) else 0,
+        media_asset_categories=list(payload.get("media_asset_categories") or []) if isinstance(payload, dict) else [],
+        selected_assets_trimmed=bool(payload.get("selected_assets_trimmed")) if isinstance(payload, dict) else False,
+        diagnostics=list(payload.get("diagnostics") or []) if isinstance(payload, dict) else [],
+    )
+
+
+@router.post(
+    "/sites/{site_id}/migration/media/upload",
+    response_model=SEOMigrationMediaAssetRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def upload_seo_migration_media_asset(
+    business_id: str,
+    site_id: str,
+    request: Request,
+    filename: str = Query(..., min_length=1, max_length=160),
+    selected_for_draft: bool = Query(default=False),
+    category: str | None = Query(default=None),
+    alt_text: str | None = Query(default=None),
+    description: str | None = Query(default=None),
+    usage_note: str | None = Query(default=None),
+    page_assignment: str | None = Query(default=None),
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    migration_service: SEOMigrationService = Depends(get_seo_migration_service),
+) -> SEOMigrationMediaAssetRead:
+    scoped_business_id = resolve_tenant_business_id(
+        tenant_context=tenant_context,
+        requested_business_id=business_id,
+    )
+    payload = await request.body()
+    content_type = request.headers.get("content-type")
+    try:
+        media_asset = migration_service.upload_workspace_media_asset(
+            business_id=scoped_business_id,
+            site_id=site_id,
+            filename=filename,
+            content_type=content_type,
+            payload=payload,
+            selected_for_draft=bool(selected_for_draft),
+            category=category,
+            alt_text=alt_text,
+            description=description,
+            usage_note=usage_note,
+            page_assignment=page_assignment,
+            principal_id=tenant_context.principal_id,
+        )
+    except SEOMigrationNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except SEOMigrationValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=_validation_error_detail(exc)) from exc
+    return SEOMigrationMediaAssetRead.model_validate(media_asset)
+
+
+@router.patch("/sites/{site_id}/migration/media/assets/{asset_id}", response_model=SEOMigrationMediaAssetRead)
+def update_seo_migration_media_asset(
+    business_id: str,
+    site_id: str,
+    asset_id: str,
+    payload: SEOMigrationMediaAssetUpdateRequest,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    migration_service: SEOMigrationService = Depends(get_seo_migration_service),
+) -> SEOMigrationMediaAssetRead:
+    scoped_business_id = resolve_tenant_business_id(
+        tenant_context=tenant_context,
+        requested_business_id=business_id,
+    )
+    try:
+        media_asset = migration_service.update_workspace_media_asset(
+            business_id=scoped_business_id,
+            site_id=site_id,
+            asset_id=asset_id,
+            selected_for_draft=payload.selected_for_draft,
+            category=payload.category,
+            alt_text=payload.alt_text,
+            description=payload.description,
+            usage_note=payload.usage_note,
+            page_assignment=payload.page_assignment,
+            principal_id=tenant_context.principal_id,
+        )
+    except SEOMigrationNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except SEOMigrationValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=_validation_error_detail(exc)) from exc
+    return SEOMigrationMediaAssetRead.model_validate(media_asset)
 
 
 @router.put("/sites/{site_id}/migration/operator-requirements", response_model=SEOMigrationWorkspaceRead)
@@ -387,7 +568,7 @@ def generate_seo_migration_draft_artifacts(
     except SEOMigrationValidationError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=_validation_error_detail(exc),
+            detail=_draft_generation_error_detail(exc),
         ) from exc
     return _to_artifact_read(artifact)
 

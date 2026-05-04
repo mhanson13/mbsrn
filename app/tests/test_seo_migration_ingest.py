@@ -127,3 +127,61 @@ def test_ingest_rejects_oversized_response(monkeypatch: pytest.MonkeyPatch) -> N
     service = SEOMigrationSourceIngestService(max_response_bytes=10_000)
     with pytest.raises(SEOMigrationSourceIngestError, match="size limit"):
         service.ingest_homepage(source_url="https://tnmfire.example")
+
+
+def test_ingest_discovers_images_from_img_srcset_and_meta(monkeypatch: pytest.MonkeyPatch) -> None:
+    html = """
+    <html>
+      <head>
+        <meta property="og:image" content="https://tnmfire.example/media/hero.jpg?token=abc" />
+        <meta name="twitter:image" content="/media/twitter-card.jpg?signature=123" />
+      </head>
+      <body>
+        <img src="/images/logo.png?cache=1" />
+        <img data-src="/images/logo.png?cache=2" />
+        <img srcset="/images/gallery-1.jpg 1x, /images/gallery-2.jpg 2x" />
+        <picture>
+          <source srcset="/images/gallery-2.jpg 1x, /images/gallery-3.jpg 2x" />
+        </picture>
+      </body>
+    </html>
+    """
+    response = _FakeResponse(
+        content_type="text/html; charset=utf-8",
+        body=html,
+        final_url="https://tnmfire.example/",
+    )
+    monkeypatch.setattr(urllib.request, "build_opener", lambda *_args, **_kwargs: _FakeOpener(response))
+
+    service = SEOMigrationSourceIngestService()
+    result = service.ingest_homepage(source_url="https://tnmfire.example")
+    discovered = result.snapshot.get("discovered_images")
+    assert isinstance(discovered, list)
+    assert len(discovered) >= 5
+
+    normalized_urls = {
+        str(item.get("normalized_url"))
+        for item in discovered
+        if isinstance(item, dict)
+    }
+    assert "https://tnmfire.example/images/logo.png" in normalized_urls
+    assert "https://tnmfire.example/images/gallery-1.jpg" in normalized_urls
+    assert "https://tnmfire.example/images/gallery-2.jpg" in normalized_urls
+    assert "https://tnmfire.example/images/gallery-3.jpg" in normalized_urls
+    assert "https://tnmfire.example/media/hero.jpg" in normalized_urls
+    assert "https://tnmfire.example/media/twitter-card.jpg" in normalized_urls
+
+    for item in discovered:
+        assert isinstance(item, dict)
+        assert str(item.get("asset_id", "")).startswith("srcimg-")
+        assert item.get("provenance") == "source_site_import"
+        assert item.get("selected_for_draft") is False
+        assert item.get("import_status") == "discovered"
+
+
+def test_ingest_rejects_private_or_local_source_hosts() -> None:
+    service = SEOMigrationSourceIngestService()
+    with pytest.raises(SEOMigrationSourceIngestError, match="host is not allowed"):
+        service.ingest_homepage(source_url="http://localhost:8080")
+    with pytest.raises(SEOMigrationSourceIngestError, match="host is not allowed"):
+        service.ingest_homepage(source_url="http://169.254.169.254/latest/meta-data/")

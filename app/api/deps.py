@@ -1382,6 +1382,15 @@ def _log_auth_failure(
     )
 
 
+def _auth_required_detail(*, reason_code: str = "app_auth_required", message: str = "Unauthorized.") -> dict[str, str]:
+    normalized_reason = (reason_code or "").strip().lower() or "app_auth_required"
+    return {
+        "message": message,
+        "reason_code": normalized_reason,
+        "error_code": normalized_reason,
+    }
+
+
 def _parse_bearer_token(authorization: str | None) -> str | None:
     if not authorization:
         return None
@@ -1390,7 +1399,9 @@ def _parse_bearer_token(authorization: str | None) -> str | None:
     if scheme.lower() != "bearer" or not token.strip():
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid Authorization header format. Expected: Bearer <token>.",
+            detail=_auth_required_detail(
+                message="Invalid Authorization header format. Expected: Bearer <token>.",
+            ),
         )
     return token.strip()
 
@@ -1429,17 +1440,26 @@ def get_tenant_context(
         if token.count(".") == 2:
             if session_token_service is None:
                 _log_auth_failure(request=request, reason="session_service_unavailable", auth_kind="jwt")
-                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized.")
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail=_auth_required_detail(reason_code="app_auth_required"),
+                )
             try:
                 claims = session_token_service.verify_access_token(token)
             except AppSessionTokenError as exc:
                 _log_auth_failure(request=request, reason="invalid_access_token", auth_kind="jwt")
-                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized.") from exc
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail=_auth_required_detail(reason_code="session_expired"),
+                ) from exc
 
             principal = principal_repository.get_for_business(claims.business_id, claims.principal_id)
             if principal is None or not principal.is_active:
                 _log_auth_failure(request=request, reason="principal_not_active_or_missing", auth_kind="jwt")
-                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized.")
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail=_auth_required_detail(reason_code="app_auth_required"),
+                )
             if claims.principal_identity_id:
                 identity = principal_identity_repository.get_for_business(
                     business_id=claims.business_id,
@@ -1447,7 +1467,10 @@ def get_tenant_context(
                 )
                 if identity is None or not identity.is_active:
                     _log_auth_failure(request=request, reason="identity_not_active_or_missing", auth_kind="jwt")
-                    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized.")
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail=_auth_required_detail(reason_code="app_auth_required"),
+                    )
             return TenantContext(
                 business_id=claims.business_id,
                 principal_id=claims.principal_id,
@@ -1481,13 +1504,13 @@ def get_tenant_context(
         _log_auth_failure(request=request, reason="credential_not_found_or_inactive", auth_kind="api_credential")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Unauthorized.",
+            detail=_auth_required_detail(reason_code="app_auth_required"),
         )
 
     _log_auth_failure(request=request, reason="missing_bearer_token", auth_kind="none")
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Unauthorized.",
+        detail=_auth_required_detail(reason_code="app_auth_required"),
     )
 
 

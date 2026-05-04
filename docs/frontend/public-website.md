@@ -95,6 +95,8 @@ Required deployment config mirrors the existing production deploy model:
     - `requests.cpu=100m`
     - `limits.cpu=500m`
     - ultra-low recommender values (for example `4m`) are treated as advisory, not copied literally for production
+    - these are declared/rendered targets; GKE Autopilot may admit different live requests after admission/defaulting
+    - observed production state on May 4, 2026 for `mbsrn-www` admitted `requests.cpu=308m` with `requests.memory=2Gi`
 - GitHub secrets:
   - `GCP_WORKLOAD_IDENTITY_PROVIDER`
   - `GCP_SERVICE_ACCOUNT_EMAIL`

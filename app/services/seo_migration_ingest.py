@@ -3,7 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from html.parser import HTMLParser
+import hashlib
+import ipaddress
 import re
+import socket
 import urllib.parse
 import urllib.request
 
@@ -54,6 +57,8 @@ _CONTACT_HINT_PATTERN = re.compile(
 _MAX_PHONE_RESULTS = 12
 _MAX_EMAIL_RESULTS = 12
 _MAX_ADDRESS_RESULTS = 12
+_MAX_IMAGE_CANDIDATES = 120
+_MAX_DISCOVERED_IMAGE_METADATA = 80
 
 
 class SEOMigrationSourceIngestError(ValueError):
@@ -128,6 +133,11 @@ class _HomepageExtractParser(HTMLParser):
                 content = _clean_optional_text(attrs_dict.get("content"))
                 if content:
                     self.meta_description = content[:320]
+        if lower_tag == "meta":
+            property_name = attrs_dict.get("property", "").strip().lower()
+            meta_name = attrs_dict.get("name", "").strip().lower()
+            if property_name in {"og:image", "og:image:url"} or meta_name in {"og:image", "twitter:image"}:
+                self._capture_image_candidate(attrs_dict.get("content"))
         if lower_tag == "link":
             rel = attrs_dict.get("rel", "").strip().lower()
             href = attrs_dict.get("href")
@@ -148,12 +158,12 @@ class _HomepageExtractParser(HTMLParser):
                     self._seen_scripts.add(normalized)
                     self.asset_scripts.append(normalized)
         if lower_tag == "img":
-            src = attrs_dict.get("src")
-            if src:
-                normalized = self._normalize_url(src)
-                if normalized and normalized not in self._seen_images:
-                    self._seen_images.add(normalized)
-                    self.asset_images.append(normalized)
+            self._capture_image_candidate(attrs_dict.get("src"))
+            self._capture_image_candidate(attrs_dict.get("data-src"))
+            self._capture_srcset_candidates(attrs_dict.get("srcset"))
+        if lower_tag == "source":
+            self._capture_image_candidate(attrs_dict.get("src"))
+            self._capture_srcset_candidates(attrs_dict.get("srcset"))
         if lower_tag == "a":
             href = attrs_dict.get("href")
             if href:
@@ -168,6 +178,25 @@ class _HomepageExtractParser(HTMLParser):
             anchor_hint = attrs_dict.get("aria-label") or attrs_dict.get("title")
             if anchor_hint:
                 self._capture_contact_signal(anchor_hint)
+
+    def _capture_image_candidate(self, raw_url: object) -> None:
+        normalized = self._normalize_url(str(raw_url or ""))
+        if not normalized:
+            return
+        if normalized in self._seen_images:
+            return
+        self._seen_images.add(normalized)
+        if len(self.asset_images) < _MAX_IMAGE_CANDIDATES:
+            self.asset_images.append(normalized)
+        elif "Image candidate list was truncated." not in self.warnings:
+            self.warnings.append("Image candidate list was truncated.")
+
+    def _capture_srcset_candidates(self, raw_srcset: object) -> None:
+        srcset = _clean_optional_text(raw_srcset)
+        if srcset is None:
+            return
+        for candidate in _parse_srcset_urls(srcset):
+            self._capture_image_candidate(candidate)
 
     def handle_endtag(self, tag: str) -> None:
         lower_tag = (tag or "").lower()
@@ -315,6 +344,11 @@ class SEOMigrationSourceIngestService:
             _ADDRESS_PATTERN.findall(combined_text), max_items=_MAX_ADDRESS_RESULTS, max_len=180
         )
         fetched_at = _format_datetime(utc_now())
+        discovered_images = _build_discovered_image_metadata(
+            parser.asset_images,
+            source_page_url=final_url,
+            max_items=_MAX_DISCOVERED_IMAGE_METADATA,
+        )
 
         snapshot: dict[str, object] = {
             "fetched_at": fetched_at,
@@ -336,6 +370,7 @@ class SEOMigrationSourceIngestService:
                 "scripts": parser.asset_scripts[:60],
                 "images": parser.asset_images[:60],
             },
+            "discovered_images": discovered_images,
             "cleaned_text_blocks": parser.text_blocks,
             "warnings": parser.warnings,
         }
@@ -354,6 +389,8 @@ class SEOMigrationSourceIngestService:
             raise SEOMigrationSourceIngestError("source_url must use http or https.")
         if not parsed.netloc:
             raise SEOMigrationSourceIngestError("source_url must include a valid host.")
+        if _is_disallowed_host(parsed.hostname):
+            raise SEOMigrationSourceIngestError("source_url host is not allowed for ingest.")
         normalized = urllib.parse.urlunsplit(
             (
                 parsed.scheme.lower(),
@@ -419,6 +456,142 @@ def _dedupe_results(items: list[str], *, max_items: int, max_len: int) -> list[s
         if len(normalized) >= max_items:
             break
     return normalized
+
+
+def _parse_srcset_urls(raw_srcset: str) -> list[str]:
+    normalized = _clean_optional_text(raw_srcset)
+    if normalized is None:
+        return []
+    urls: list[str] = []
+    for candidate in normalized.split(","):
+        token = candidate.strip().split(" ", 1)[0].strip()
+        if token:
+            urls.append(token)
+    return urls
+
+
+def _safe_filename_from_url(value: str) -> str | None:
+    try:
+        parsed = urllib.parse.urlsplit(value)
+    except ValueError:
+        return None
+    basename = (parsed.path or "").rsplit("/", 1)[-1].strip()
+    cleaned = _clean_optional_text(basename)
+    if cleaned is None:
+        return None
+    return cleaned[:140]
+
+
+def _build_discovered_image_metadata(
+    image_urls: list[str],
+    *,
+    source_page_url: str,
+    max_items: int,
+) -> list[dict[str, object]]:
+    normalized: list[dict[str, object]] = []
+    seen: set[str] = set()
+    for raw_url in image_urls:
+        cleaned = _clean_optional_text(raw_url)
+        if cleaned is None:
+            continue
+        try:
+            parsed = urllib.parse.urlsplit(cleaned)
+        except ValueError:
+            continue
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            continue
+        normalized_url = urllib.parse.urlunsplit(
+            (
+                parsed.scheme.lower(),
+                parsed.netloc.lower(),
+                parsed.path or "/",
+                "",
+                "",
+            )
+        )
+        if normalized_url in seen:
+            continue
+        seen.add(normalized_url)
+        asset_id = "srcimg-" + hashlib.sha1(normalized_url.encode("utf-8")).hexdigest()[:16]
+        normalized.append(
+            {
+                "asset_id": asset_id,
+                "original_url": _strip_url_query(cleaned)[:2048],
+                "normalized_url": normalized_url[:2048],
+                "filename": _safe_filename_from_url(normalized_url),
+                "source_page_url": _strip_url_query(source_page_url)[:2048],
+                "provenance": "source_site_import",
+                "selected_for_draft": False,
+                "import_status": "discovered",
+            }
+        )
+        if len(normalized) >= max(1, int(max_items)):
+            break
+    return normalized
+
+
+def _is_disallowed_host(hostname: str | None) -> bool:
+    host = (hostname or "").strip().lower().rstrip(".")
+    if not host:
+        return True
+    if host in {"localhost", "metadata.google.internal", "metadata"}:
+        return True
+    if host.endswith(".localhost") or host.endswith(".local"):
+        return True
+
+    try:
+        direct_ip = ipaddress.ip_address(host)
+    except ValueError:
+        direct_ip = None
+    if direct_ip is not None:
+        return _is_disallowed_ip(direct_ip)
+
+    try:
+        resolved = socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
+    except OSError:
+        # If DNS cannot be resolved here, rely on runtime fetch safeguards.
+        return False
+    for item in resolved:
+        if not isinstance(item, tuple) or len(item) < 5:
+            continue
+        sockaddr = item[4]
+        if not isinstance(sockaddr, tuple) or not sockaddr:
+            continue
+        candidate = sockaddr[0]
+        try:
+            resolved_ip = ipaddress.ip_address(str(candidate))
+        except ValueError:
+            continue
+        if _is_disallowed_ip(resolved_ip):
+            return True
+    return False
+
+
+def _is_disallowed_ip(value: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    return bool(
+        value.is_private
+        or value.is_loopback
+        or value.is_link_local
+        or value.is_multicast
+        or value.is_unspecified
+        or value.is_reserved
+    )
+
+
+def _strip_url_query(value: str) -> str:
+    try:
+        parsed = urllib.parse.urlsplit(value)
+    except ValueError:
+        return value
+    return urllib.parse.urlunsplit(
+        (
+            parsed.scheme,
+            parsed.netloc,
+            parsed.path,
+            "",
+            "",
+        )
+    )
 
 
 def _format_datetime(value: datetime) -> str:

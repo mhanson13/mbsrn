@@ -47,6 +47,7 @@ from app.models.github_publish_config import GitHubPublishConfig
 from app.models.principal import PrincipalRole
 from app.models.seo_audit_run import SEOAuditRun
 from app.models.seo_competitor_comparison_run import SEOCompetitorComparisonRun
+from app.models.seo_competitor_domain import SEOCompetitorDomain
 from app.models.seo_competitor_set import SEOCompetitorSet
 from app.models.seo_competitor_snapshot_run import SEOCompetitorSnapshotRun
 from app.models.seo_recommendation import SEORecommendation
@@ -115,6 +116,16 @@ class _TrackingMigrationProvider(SEOMigrationArtifactGenerationProvider):
     def generate_artifacts(self, *, migration_context: dict[str, object]) -> SEOMigrationArtifactGenerationOutput:
         del migration_context
         self.call_count += 1
+        return self.output
+
+
+class _ContextCaptureMigrationProvider(SEOMigrationArtifactGenerationProvider):
+    def __init__(self, output: SEOMigrationArtifactGenerationOutput) -> None:
+        self.output = output
+        self.last_context: dict[str, object] | None = None
+
+    def generate_artifacts(self, *, migration_context: dict[str, object]) -> SEOMigrationArtifactGenerationOutput:
+        self.last_context = dict(migration_context)
         return self.output
 
 
@@ -1423,6 +1434,15 @@ def _build_publishable_output(*, index_content: str | None = None) -> SEOMigrati
     )
 
 
+def _tiny_png_payload() -> bytes:
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        b"\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89"
+        b"\x00\x00\x00\x0AIDATx\x9cc`\x00\x00\x00\x02\x00\x01\xe5'\xd4\xa2"
+        b"\x00\x00\x00\x00IEND\xaeB`\x82"
+    )
+
+
 def _configure_publish_target(
     service: SEOMigrationService,
     *,
@@ -1692,6 +1712,405 @@ def test_generate_artifacts_applies_guardrails_and_analytics_normalization(db_se
     assert isinstance(signals, dict)
     assert signals.get("required_files_present") is True
 
+
+def test_workspace_media_upload_update_and_listing_are_bounded_and_workspace_scoped(
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("MIGRATION_MEDIA_STORAGE_ROOT", str(tmp_path))
+    service = _build_service(db_session, _StaticMigrationProvider(_build_publishable_output()))
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+
+    workspace = service.get_workspace(business_id=business_id, site_id=site_id)
+    workspace.imported_source_snapshot_json = {
+        "discovered_images": [
+            {
+                "asset_id": "srcimg-a",
+                "normalized_url": "https://legacy.example/images/front.jpg?token=abc",
+                "source_page_url": "https://legacy.example/?signed=123",
+                "selected_for_draft": False,
+                "provenance": "source_site_import",
+                "import_status": "discovered",
+            }
+        ]
+    }
+    service.seo_migration_repository.save_workspace(workspace)
+    service.session.commit()
+
+    uploaded = service.upload_workspace_media_asset(
+        business_id=business_id,
+        site_id=site_id,
+        filename="crew-photo.png",
+        content_type="image/png",
+        payload=_tiny_png_payload(),
+        selected_for_draft=True,
+        category="project_gallery",
+        alt_text="Project crew photo",
+        description="Crew onsite during install",
+        usage_note="Use in gallery section",
+        page_assignment="/projects",
+        principal_id="principal-1",
+    )
+    assert isinstance(uploaded, dict)
+    assert str(uploaded.get("asset_id", "")).startswith("upl-")
+    assert uploaded.get("provenance") == "operator_upload"
+    assert uploaded.get("selected_for_draft") is True
+    assert uploaded.get("content_type") == "image/png"
+    assert uploaded.get("width") == 1
+    assert uploaded.get("height") == 1
+    assert "storage_key" not in uploaded
+
+    stored_files = [path for path in tmp_path.rglob("*") if path.is_file()]
+    assert len(stored_files) == 1
+    assert stored_files[0].suffix == ".png"
+
+    listed = service.list_workspace_media_assets(business_id=business_id, site_id=site_id)
+    assert listed.get("source_discovered_count") == 1
+    assert listed.get("operator_uploaded_count") == 1
+    assert listed.get("selected_assets_count") == 1
+
+    updated_source = service.update_workspace_media_asset(
+        business_id=business_id,
+        site_id=site_id,
+        asset_id="srcimg-a",
+        selected_for_draft=True,
+        category="hero",
+        alt_text="Legacy storefront hero",
+        description="Legacy storefront exterior",
+        usage_note="Potential hero fallback",
+        page_assignment="/",
+        principal_id="principal-1",
+    )
+    assert updated_source.get("selected_for_draft") is True
+    assert updated_source.get("category") == "hero"
+    assert updated_source.get("alt_text") == "Legacy storefront hero"
+
+    listed_after_update = service.list_workspace_media_assets(business_id=business_id, site_id=site_id)
+    assert listed_after_update.get("selected_assets_count") == 2
+    selected_assets = listed_after_update.get("selected_assets")
+    assert isinstance(selected_assets, list)
+    assert {item.get("asset_id") for item in selected_assets if isinstance(item, dict)} == {
+        "srcimg-a",
+        uploaded.get("asset_id"),
+    }
+
+
+def test_workspace_media_upload_rejects_unsupported_or_mismatched_mime_types(db_session) -> None:
+    service = _build_service(db_session, _StaticMigrationProvider(_build_publishable_output()))
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    png_payload = _tiny_png_payload()
+
+    with pytest.raises(SEOMigrationValidationError) as unsupported_error:
+        service.upload_workspace_media_asset(
+            business_id=business_id,
+            site_id=site_id,
+            filename="vector.svg",
+            content_type="image/svg+xml",
+            payload=png_payload,
+            selected_for_draft=False,
+            category=None,
+            alt_text=None,
+            description=None,
+            usage_note=None,
+            page_assignment=None,
+            principal_id="principal-1",
+        )
+    assert unsupported_error.value.error_code == "unsupported_mime_type"
+
+    with pytest.raises(SEOMigrationValidationError) as mismatch_error:
+        service.upload_workspace_media_asset(
+            business_id=business_id,
+            site_id=site_id,
+            filename="photo.jpg",
+            content_type="image/jpeg",
+            payload=png_payload,
+            selected_for_draft=False,
+            category=None,
+            alt_text=None,
+            description=None,
+            usage_note=None,
+            page_assignment=None,
+            principal_id="principal-1",
+        )
+    assert mismatch_error.value.error_code == "media_upload_content_type_mismatch"
+
+
+def test_selected_discovered_media_import_boundary_reports_metadata_only_limitation(db_session) -> None:
+    service = _build_service(db_session, _StaticMigrationProvider(_build_publishable_output()))
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+
+    workspace = service.get_workspace(business_id=business_id, site_id=site_id)
+    workspace.imported_source_snapshot_json = {
+        "discovered_images": [
+            {
+                "asset_id": "srcimg-selected",
+                "normalized_url": "https://legacy.example/media/hero.jpg",
+                "selected_for_draft": True,
+                "provenance": "source_site_import",
+                "import_status": "selected",
+            },
+            {
+                "asset_id": "srcimg-unselected",
+                "normalized_url": "https://legacy.example/media/gallery.jpg",
+                "selected_for_draft": False,
+                "provenance": "source_site_import",
+                "import_status": "discovered",
+            },
+        ]
+    }
+    service.seo_migration_repository.save_workspace(workspace)
+    service.session.commit()
+
+    boundary_result = service.import_selected_discovered_media_assets(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    assert boundary_result.get("implemented") is False
+    assert boundary_result.get("attempted_count") == 1
+    assert boundary_result.get("imported_count") == 0
+    assert boundary_result.get("failure_reason_code") == "selected_remote_image_import_not_enabled"
+    failures = boundary_result.get("failures")
+    assert isinstance(failures, list)
+    assert failures[0].get("asset_id") == "srcimg-selected"
+    assert failures[0].get("reason_code") == "selected_remote_image_import_not_enabled"
+
+
+def test_generate_draft_artifacts_sets_context_unavailable_reason_code_when_context_assembly_errors(
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = _build_service(db_session, _StaticMigrationProvider(_build_publishable_output()))
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+
+    def _explode_context(*, site, workspace):  # noqa: ANN001
+        del site, workspace
+        raise RuntimeError("context assembly exploded")
+
+    monkeypatch.setattr(service, "_assemble_context", _explode_context)
+
+    with pytest.raises(SEOMigrationValidationError) as exc_info:
+        service.generate_draft_artifacts(
+            business_id=business_id,
+            site_id=site_id,
+            principal_id="principal-1",
+        )
+    assert exc_info.value.error_code == "draft_generation_context_unavailable"
+    assert exc_info.value.failure_category == "unknown_error"
+    assert exc_info.value.retryable is True
+
+
+def test_generate_draft_artifacts_normalizes_google_reconnect_reason_code_from_context_validation_error(
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = _build_service(db_session, _StaticMigrationProvider(_build_publishable_output()))
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+
+    def _raise_reconnect_validation(*, site, workspace):  # noqa: ANN001
+        del site, workspace
+        raise SEOMigrationValidationError(
+            "Google token refresh is required before draft context assembly can continue.",
+            failure_category="config_missing",
+            failure_reason="authentication_failed",
+            error_code="google_token_expired",
+        )
+
+    monkeypatch.setattr(service, "_assemble_context", _raise_reconnect_validation)
+
+    with pytest.raises(SEOMigrationValidationError) as exc_info:
+        service.generate_draft_artifacts(
+            business_id=business_id,
+            site_id=site_id,
+            principal_id="principal-1",
+        )
+    assert exc_info.value.error_code == "google_reconnect_required"
+    assert exc_info.value.failure_category == "config_missing"
+    assert exc_info.value.failure_reason == "authentication_failed"
+    assert exc_info.value.retryable is False
+
+
+def test_generate_draft_artifacts_includes_bounded_draft_input_summary_and_media_context(db_session) -> None:
+    provider = _ContextCaptureMigrationProvider(_build_publishable_output())
+    service = _build_service(db_session, provider)
+    business_id, site_id = _seed_business_and_site(db_session, ga_measurement_id="G-ABCD1234")
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _seed_reused_context_records(db_session, business_id=business_id, site_id=site_id)
+
+    competitor_domain = SEOCompetitorDomain(
+        id="competitor-domain-summary-1",
+        business_id=business_id,
+        site_id=site_id,
+        competitor_set_id="competitor-set-readiness-1",
+        domain="competitor.example",
+        base_url="https://competitor.example/",
+        display_name="Competitor Example",
+        source="manual",
+        verification_status="verified",
+        is_active=True,
+    )
+    db_session.add(competitor_domain)
+
+    site = service.seo_site_repository.get_for_business(business_id, site_id)
+    assert site is not None
+    site.search_console_enabled = True
+    site.search_console_property_url = "https://search.google.com/search-console?resource_id=sc-domain:tnmfire.example"
+    site.ga4_onboarding_status = "connected"
+
+    workspace = service.get_workspace(business_id=business_id, site_id=site_id)
+    workspace.imported_source_snapshot_json = {
+        "title": "Legacy Site",
+        "fetched_at": utc_now().isoformat(),
+        "warnings": ["private_host_rejected"],
+        "discovered_images": [
+            {
+                "asset_id": "srcimg-selected",
+                "normalized_url": "https://legacy.example/media/hero.jpg?signed=abc123",
+                "source_page_url": "https://legacy.example/?sig=xyz",
+                "selected_for_draft": True,
+                "provenance": "source_site_import",
+                "import_status": "selected",
+                "category": "hero",
+                "alt_text": "Existing storefront",
+            },
+            {
+                "asset_id": "srcimg-unselected",
+                "normalized_url": "https://legacy.example/media/gallery.jpg?token=def",
+                "selected_for_draft": False,
+                "provenance": "source_site_import",
+                "import_status": "discovered",
+                "category": "project_gallery",
+                "image_base64": "iVBORw0KGgoAAAANSUhEUgAAAAUA",
+            },
+        ],
+    }
+    enriched_notes = dict(workspace.enriched_content_notes_json or {})
+    enriched_notes["workspace_media_assets"] = [
+        {
+            "asset_id": "upl-selected",
+            "display_filename": "crew.jpg",
+            "content_type": "image/jpeg",
+            "size_bytes": 2048,
+            "provenance": "operator_upload",
+            "selected_for_draft": True,
+            "import_status": "selected",
+            "category": "project_gallery",
+            "alt_text": "Crew on jobsite",
+            "description": "Customer gallery image",
+            "usage_note": "Use on projects page",
+            "page_assignment": "/projects",
+            "storage_key": "business/site/upl-selected.jpg",
+            "raw_token_value": "secret-token-value",
+        }
+    ]
+    workspace.enriched_content_notes_json = enriched_notes
+    service.seo_migration_repository.save_workspace(workspace)
+    service.session.commit()
+
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    assert artifact.status in {"completed", "partial"}
+    assert isinstance(provider.last_context, dict)
+
+    context = provider.last_context or {}
+    draft_input_summary = context.get("draft_input_summary")
+    assert isinstance(draft_input_summary, dict)
+    assert draft_input_summary.get("recommendations_included_count") == 1
+    assert draft_input_summary.get("gsc_signals_included") is True
+    assert draft_input_summary.get("ga4_signals_included") is True
+    assert draft_input_summary.get("competitor_profiles_included_count") == 1
+    assert draft_input_summary.get("operator_requirements_included") is True
+    assert draft_input_summary.get("enriched_business_context_included") is True
+    assert draft_input_summary.get("source_site_images_discovered_count") == 2
+    assert draft_input_summary.get("source_site_images_imported_count") == 1
+    assert draft_input_summary.get("operator_uploaded_images_count") == 1
+    assert draft_input_summary.get("selected_media_assets_count") == 2
+    assert draft_input_summary.get("media_context_included") is True
+    assert draft_input_summary.get("media_context_trimmed") is False
+    assert draft_input_summary.get("provider_source") == "mock"
+    assert draft_input_summary.get("mocked_source") is True
+
+    summary_json = json.dumps(draft_input_summary).lower()
+    assert "token_value" not in summary_json
+    assert "raw_token" not in summary_json
+    assert "image_base64" not in summary_json
+    assert "ivborw0kggo" not in summary_json
+
+    media_context = context.get("media_assets")
+    assert isinstance(media_context, dict)
+    selected_assets = media_context.get("selected_assets")
+    assert isinstance(selected_assets, list)
+    assert len(selected_assets) == 2
+    for item in selected_assets:
+        assert isinstance(item, dict)
+        assert "storage_key" not in item
+        assert "raw_token_value" not in item
+        assert "image_base64" not in item
+        normalized_url = item.get("normalized_url")
+        if isinstance(normalized_url, str) and normalized_url:
+            assert "?" not in normalized_url
+
+
+def test_generate_draft_artifacts_flags_media_context_trimming_when_selected_assets_are_oversized(
+    db_session,
+) -> None:
+    provider = _ContextCaptureMigrationProvider(_build_publishable_output())
+    service = _build_service(db_session, provider)
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _seed_reused_context_records(db_session, business_id=business_id, site_id=site_id)
+
+    discovered_images: list[dict[str, object]] = []
+    for index in range(35):
+        discovered_images.append(
+            {
+                "asset_id": f"srcimg-{index}",
+                "normalized_url": f"https://legacy.example/media/photo-{index}.jpg?token=abc{index}",
+                "selected_for_draft": True,
+                "provenance": "source_site_import",
+                "import_status": "selected",
+                "category": "project_gallery",
+            }
+        )
+
+    workspace = service.get_workspace(business_id=business_id, site_id=site_id)
+    workspace.imported_source_snapshot_json = {
+        "title": "Legacy Site",
+        "fetched_at": utc_now().isoformat(),
+        "discovered_images": discovered_images,
+    }
+    service.seo_migration_repository.save_workspace(workspace)
+    service.session.commit()
+
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    assert artifact.status in {"completed", "partial"}
+    assert isinstance(provider.last_context, dict)
+
+    context = provider.last_context or {}
+    draft_input_summary = context.get("draft_input_summary")
+    assert isinstance(draft_input_summary, dict)
+    assert draft_input_summary.get("source_site_images_discovered_count") == 35
+    assert draft_input_summary.get("media_context_trimmed") is True
+
+    media_context = context.get("media_assets")
+    assert isinstance(media_context, dict)
+    selected_assets_count = media_context.get("selected_assets_count")
+    assert isinstance(selected_assets_count, int)
+    assert selected_assets_count < 35
+    assert media_context.get("context_trimmed") is True
 
 def test_draft_generation_readiness_ready_with_all_core_and_reused_context_signals(db_session) -> None:
     service = _build_service(db_session, _StaticMigrationProvider(_build_publishable_output()))

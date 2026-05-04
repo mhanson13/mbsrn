@@ -190,6 +190,130 @@ Destination and preview trust additions:
   - blocked deletes surface deterministic operator-safe reasons (for example: referenced by publish history)
   - deletion recalculates workspace pointers/readiness and keeps history integrity intact
 
+## Draft Input Provenance and AI Context Summary (2026-05)
+Draft generation now persists and returns a bounded, operator-safe provenance summary at:
+- `context_summary.draft_input_summary`
+
+Purpose:
+- make draft input coverage inspectable without exposing secrets or oversized payloads
+- show what context classes were included, not raw source payloads
+
+Current summary fields include:
+- recommendation coverage:
+  - `recommendations_included_count`
+  - `recommendation_categories_included`
+  - `top_recommendation_titles`
+- analytics/competitor/audit/operator coverage:
+  - `gsc_signals_included`
+  - `ga4_signals_included`
+  - `competitor_profiles_included_count`
+  - `operator_requirements_included`
+  - `enriched_business_context_included`
+  - `audit_findings_included_count`
+- media coverage:
+  - `source_site_images_discovered_count`
+  - `source_site_images_imported_count`
+  - `operator_uploaded_images_count`
+  - `selected_media_assets_count`
+  - `media_asset_categories`
+  - `media_context_included`
+  - `media_context_trimmed`
+- AI request-shape summary:
+  - `ai_context_source_count`
+  - `ai_context_trimmed`
+  - `ai_context_trimmed_bytes`
+  - `provider_source`
+  - `mocked_source`
+
+Interpretation:
+- this is bounded metadata for trust and debugging, not a full prompt dump
+- values represent context presence/counts and budget behavior, not guaranteed quality of source data
+- provider recommender outputs and SEO recommendations remain advisory; operator review is still required before approval/publish/deploy
+
+## Media Discovery, Upload, and Safety Boundaries (2026-05)
+Source-site media discovery:
+- source ingest now captures bounded discovered image metadata under:
+  - `source_snapshot.discovered_images`
+- discovery sources include:
+  - `img[src]`
+  - `img[data-src]`
+  - `img[srcset]`
+  - `picture/source[srcset]`
+  - OpenGraph/Twitter image meta tags
+- normalized URLs are deduplicated and query strings are stripped from normalized metadata fields
+
+Workspace media APIs:
+- `GET /api/businesses/{business_id}/seo/sites/{site_id}/migration/media/assets`
+- `POST /api/businesses/{business_id}/seo/sites/{site_id}/migration/media/upload`
+- `PATCH /api/businesses/{business_id}/seo/sites/{site_id}/migration/media/assets/{asset_id}`
+
+Workspace/site scoping contract:
+- media list/upload/update operations are scoped by both tenant business and `site_id`
+- assets from one site workspace are not visible in another site workspace, even within the same tenant
+- cross-site update/select attempts return not-found behavior rather than mutating another workspace
+
+Operator uploads:
+- uploads are stored as workspace-scoped media assets with provenance `operator_upload`
+- validation enforces:
+  - allowed MIME: `image/jpeg`, `image/png`, `image/webp`, `image/gif`
+  - extension checks
+  - max upload bytes (`8 MiB`)
+  - max upload count per workspace (`80`)
+- uploaded media metadata is bounded and includes safe fields (id, filename, type, size, dimensions, category, alt/description/usage, page assignment, provenance)
+- local/internal storage keys are not returned in operator-facing API payloads
+
+Error contract highlights:
+- unsupported MIME -> `unsupported_mime_type`
+- payload/declared MIME mismatch -> `media_upload_content_type_mismatch`
+- file too large -> `file_too_large`
+- workspace max upload count reached -> `workspace_media_upload_limit_reached`
+- missing/invalid media asset id in update route -> `media_asset_id_required`
+
+Draft generation media contract:
+- only selected media metadata is included in AI context (`migration_context.media_assets.selected_assets`)
+- selected media context is trimmed to a bounded count when necessary
+- raw image bytes/base64 are not sent to the AI provider
+- when no media is selected, generation should rely on placeholders and must not invent approved media assets
+
+Selected discovered-image import status (2026-05 hardening pass):
+- selected source-site discovered images are still metadata-only in this pass
+- selecting a discovered image controls draft-context eligibility, not remote binary import/storage
+- backend now includes a small boundary method (`import_selected_discovered_media_assets`) that reports a staged limitation result with reason code:
+  - `selected_remote_image_import_not_enabled`
+- broad remote import remains a follow-up change and must keep strict SSRF/type/size/timeout controls
+
+## Site SEO Workspace Grouping and Diagnostics (2026-05)
+Migration route grouping in the UI now explicitly separates:
+- Operator Actions:
+  - generate/approve/publish/deploy/refresh/delete + media upload/select/edit actions
+- Draft Inputs / AI Context:
+  - recommendation/operator/enriched/competitor/analytics/audit/media provenance summary
+- Media / Images:
+  - discovered source images
+  - operator uploads
+  - selected assets used for draft context
+- Metrics:
+  - readiness/AI execution/runtime metrics in primary workflow cards
+- Diagnostics / Debug Output:
+  - advanced troubleshooting and history under `F. Advanced Diagnostics & History`
+  - media safety/import rejection reasons are shown in `Media Diagnostics`, not in the primary media action cards
+
+## Google Integration Reconnect vs Operator Session
+Draft diagnostics now surfaces targeted guidance distinguishing:
+- Google integration reconnect requirements (analytics/integration scope)
+- operator app session/auth expiration
+
+Deterministic draft-generation reason codes:
+- `app_auth_required`: app bearer/session auth is missing or invalid; sign back into MBSRN
+- `session_expired`: app session token is expired/invalid; sign back into MBSRN
+- `google_reconnect_required`: Google consent/token state requires reconnect before live Google signals can be used
+- `google_integration_unavailable`: Google integration state could not be read reliably; retry then reconnect if persistent
+- `draft_generation_context_unavailable`: non-auth context assembly failure; retry and escalate if persistent
+
+Operator rule:
+- Google reconnect-required states are integration warnings and should not be interpreted as automatic operator logout.
+- expired/revoked integration consent should surface reconnect guidance, while preserving existing app-session behavior.
+
 ## Reused Context Availability Semantics
 Migration reused-context cards use best-available signal, not strict completeness.
 

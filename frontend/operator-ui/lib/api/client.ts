@@ -31,6 +31,9 @@ import type {
   MigrationDraftGenerateRequest,
   MigrationEnrichedContentUpdateRequest,
   MigrationHistoryListResponse,
+  MigrationMediaAsset,
+  MigrationMediaAssetListResponse,
+  MigrationMediaAssetUpdateRequest,
   MigrationPublishActionResponse,
   MigrationRepositoryAdoptActionResponse,
   MigrationPublishConfigUpdateRequest,
@@ -317,6 +320,90 @@ export async function ingestMigrationSource(
     `/api/businesses/${businessId}/seo/sites/${siteId}/migration/source-ingest`,
     {
       method: "POST",
+      token,
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function fetchMigrationMediaAssets(
+  token: string,
+  businessId: string,
+  siteId: string,
+): Promise<MigrationMediaAssetListResponse> {
+  return apiRequest<MigrationMediaAssetListResponse>(
+    `/api/businesses/${businessId}/seo/sites/${siteId}/migration/media/assets`,
+    { token },
+  );
+}
+
+export async function uploadMigrationMediaAsset(
+  token: string,
+  businessId: string,
+  siteId: string,
+  params: {
+    file: File;
+    selectedForDraft?: boolean;
+    category?: string | null;
+    altText?: string | null;
+    description?: string | null;
+    usageNote?: string | null;
+    pageAssignment?: string | null;
+  },
+): Promise<MigrationMediaAsset> {
+  const query = new URLSearchParams();
+  query.set("filename", params.file.name || "upload-image");
+  query.set("selected_for_draft", String(Boolean(params.selectedForDraft)));
+  if (params.category) {
+    query.set("category", params.category);
+  }
+  if (params.altText) {
+    query.set("alt_text", params.altText);
+  }
+  if (params.description) {
+    query.set("description", params.description);
+  }
+  if (params.usageNote) {
+    query.set("usage_note", params.usageNote);
+  }
+  if (params.pageAssignment) {
+    query.set("page_assignment", params.pageAssignment);
+  }
+  const response = await fetch(`${apiBaseUrl()}/api/businesses/${businessId}/seo/sites/${siteId}/migration/media/upload?${query.toString()}`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": params.file.type || "application/octet-stream",
+    },
+    body: params.file,
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    let message = `HTTP ${response.status}`;
+    let detailObject: Record<string, unknown> | null = null;
+    try {
+      const parsed = parseErrorDetail(await response.json());
+      message = parsed.message;
+      detailObject = parsed.detail;
+    } catch {
+      // ignore parse failures
+    }
+    throw new ApiRequestError(message, { status: response.status, detail: detailObject });
+  }
+  return (await response.json()) as MigrationMediaAsset;
+}
+
+export async function updateMigrationMediaAsset(
+  token: string,
+  businessId: string,
+  siteId: string,
+  assetId: string,
+  payload: MigrationMediaAssetUpdateRequest,
+): Promise<MigrationMediaAsset> {
+  return apiRequest<MigrationMediaAsset>(
+    `/api/businesses/${businessId}/seo/sites/${siteId}/migration/media/assets/${assetId}`,
+    {
+      method: "PATCH",
       token,
       body: JSON.stringify(payload),
     },
