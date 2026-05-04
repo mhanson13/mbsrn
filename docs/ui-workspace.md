@@ -55,6 +55,7 @@ The dedicated migration route (`/sites/[site_id]/migration`) keeps primary opera
   - selected images used in AI context
 - Metrics:
   - readiness/AI execution/runtime status in primary workflow cards
+  - readiness card can consume dedicated preflight endpoint data (`GET .../migration/draft-readiness`) and show blocking vs warning states near `Generate Draft`
 - Diagnostics / Debug Output:
   - advanced troubleshooting output and history under `Advanced Diagnostics & History`
   - media rejection/fetch safety reasons appear in `Media Diagnostics` (not in the primary media action cards)
@@ -72,6 +73,21 @@ Deterministic draft reason-code guidance (migration diagnostics):
   - show retry-first integration-state warning with reconnect fallback guidance
 - `draft_generation_context_unavailable`:
   - show retry/support guidance for context assembly failure
+
+Draft preflight/readiness UI behavior:
+- readiness endpoint is lightweight and does not call the AI provider
+- readiness endpoint does not force Google OAuth redirect
+- blocking reason codes prevent `Generate Draft`; warning reason codes keep draft generation available with guidance text
+- Google reconnect may appear as warning-only when live Google fetch is not required for draft generation
+
+Draft-generate error envelope (422 detail) fields surfaced in UI workflows:
+- `message`
+- `reason_code`
+- `error_code`
+- `retryable`
+- `operator_action`
+- optional `reconnect_target`
+- optional bounded `diagnostic_context`
 
 Media UX note:
 - discovered source-site images and operator uploads are both visible in migration media sections

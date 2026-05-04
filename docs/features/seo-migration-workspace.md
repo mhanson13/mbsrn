@@ -314,6 +314,17 @@ Operator rule:
 - Google reconnect-required states are integration warnings and should not be interpreted as automatic operator logout.
 - expired/revoked integration consent should surface reconnect guidance, while preserving existing app-session behavior.
 
+Draft-generation error envelope (`POST .../generate-draft-artifacts`, HTTP 422 detail payload):
+- `message`
+- `reason_code`
+- `error_code`
+- `retryable`
+- `operator_action`
+- optional `reconnect_target`
+- optional bounded `diagnostic_context` (no secrets/tokens/raw payloads)
+
+The route preserves existing HTTP semantics and keeps prior diagnostic fields (`failure_category`, `failure_reason`, correlation/version/provider metadata) for operator/debug workflows.
+
 ## Reused Context Availability Semantics
 Migration reused-context cards use best-available signal, not strict completeness.
 
@@ -331,7 +342,15 @@ Operational note:
 - Reused context cards can show `Available` even when `existing_context_summaries.*` entries are null, because summaries are not the only source-of-truth signal for availability.
 
 ## Draft Generation Preflight Readiness
-Migration summary payload now includes `context_summary.draft_generation_readiness` before draft generation.
+Migration readiness can be read from two surfaces:
+- summary-derived readiness: `context_summary.draft_generation_readiness`
+- lightweight endpoint: `GET /api/businesses/{business_id}/seo/sites/{site_id}/migration/draft-readiness`
+
+`draft-readiness` endpoint behavior:
+- does not invoke the AI provider
+- does not force Google OAuth redirect
+- returns bounded operator-safe state only (no tokens, headers, cookies, secret values, or raw media bytes)
+- inspects stored workspace/context signals and returns blocking vs warning reason codes
 
 Payload shape:
 - `status`: `ready` | `ready_with_warnings` | `not_ready`
@@ -347,6 +366,21 @@ Payload shape:
   - `recommendations_available`
   - `competitors_available`
   - `draft_provider_configured`
+
+Draft-readiness endpoint fields (operator preflight contract):
+- `ready`
+- `blocking_reason_codes`
+- `warning_reason_codes`
+- `app_auth_ready`
+- `google_integration_ready` (`true`/`false`/`null`)
+- `google_reconnect_required`
+- `live_google_data_required`
+- `draft_context_ready`
+- `recommendations_available_count`
+- `competitor_profiles_available_count`
+- `selected_media_assets_count`
+- `source_site_images_discovered_count`
+- `operator_action`
 
 Scoring weights:
 - source site ingested: +15
@@ -376,6 +410,7 @@ Runtime behavior:
 - generate draft endpoint performs this preflight check first
 - if `hard_blocked=true`, provider is not called and API returns a sanitized validation error
 - readiness evaluations emit structured logs: `event=seo_migration_readiness_evaluation`
+- when live Google fetch is not required for draft generation, Google reconnect can surface as warning-only readiness guidance instead of a hard block
 
 ## Draft Provider Compatibility Preflight
 Workspace readiness and provider compatibility are separate controls:

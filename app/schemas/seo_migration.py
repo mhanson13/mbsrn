@@ -241,6 +241,59 @@ class SEOMigrationDraftGenerateRequest(BaseModel):
     force_new_version: bool = False
 
 
+class SEOMigrationDraftGenerationDiagnosticContext(BaseModel):
+    failure_category: str | None = None
+    failure_reason: str | None = None
+    correlation_id: str | None = None
+    workspace_id: str | None = None
+    artifact_version_id: str | None = None
+    provider_name: str | None = None
+    model_name: str | None = None
+    prompt_version: str | None = None
+    timeout_seconds: int | None = Field(default=None, ge=1)
+    timeout_source: str | None = None
+
+
+class SEOMigrationDraftGenerationErrorDetailRead(BaseModel):
+    message: str
+    reason_code: str
+    error_code: str
+    retryable: bool
+    operator_action: str
+    reconnect_target: str | None = None
+    diagnostic_context: SEOMigrationDraftGenerationDiagnosticContext | None = None
+    failure_category: str | None = None
+    failure_reason: str | None = None
+    correlation_id: str | None = None
+    workspace_id: str | None = None
+    artifact_version_id: str | None = None
+    provider_name: str | None = None
+    model_name: str | None = None
+    prompt_version: str | None = None
+    timeout_seconds: int | None = Field(default=None, ge=1)
+    timeout_source: str | None = None
+
+
+class SEOMigrationDraftGenerationErrorEnvelopeRead(BaseModel):
+    detail: SEOMigrationDraftGenerationErrorDetailRead
+
+
+class SEOMigrationDraftReadinessRead(BaseModel):
+    ready: bool
+    blocking_reason_codes: list[str] = Field(default_factory=list)
+    warning_reason_codes: list[str] = Field(default_factory=list)
+    app_auth_ready: bool = True
+    google_integration_ready: bool | None = None
+    google_reconnect_required: bool = False
+    live_google_data_required: bool = False
+    draft_context_ready: bool = False
+    recommendations_available_count: int = Field(default=0, ge=0)
+    competitor_profiles_available_count: int = Field(default=0, ge=0)
+    selected_media_assets_count: int = Field(default=0, ge=0)
+    source_site_images_discovered_count: int = Field(default=0, ge=0)
+    operator_action: str
+
+
 class SEOMigrationMediaAssetUpdateRequest(BaseModel):
     selected_for_draft: bool | None = None
     category: str | None = Field(default=None, max_length=64)

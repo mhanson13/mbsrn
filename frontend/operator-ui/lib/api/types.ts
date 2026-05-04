@@ -587,6 +587,55 @@ export interface MigrationDraftReadiness {
   signals: MigrationDraftReadinessSignals;
 }
 
+export interface MigrationDraftGenerationDiagnosticContext {
+  failure_category?: string | null;
+  failure_reason?: string | null;
+  correlation_id?: string | null;
+  workspace_id?: string | null;
+  artifact_version_id?: string | null;
+  provider_name?: string | null;
+  model_name?: string | null;
+  prompt_version?: string | null;
+  timeout_seconds?: number | null;
+  timeout_source?: string | null;
+}
+
+export interface MigrationDraftGenerationErrorDetail {
+  message: string;
+  reason_code: string;
+  error_code: string;
+  retryable: boolean;
+  operator_action: string;
+  reconnect_target?: string | null;
+  diagnostic_context?: MigrationDraftGenerationDiagnosticContext | null;
+  failure_category?: string | null;
+  failure_reason?: string | null;
+  correlation_id?: string | null;
+  workspace_id?: string | null;
+  artifact_version_id?: string | null;
+  provider_name?: string | null;
+  model_name?: string | null;
+  prompt_version?: string | null;
+  timeout_seconds?: number | null;
+  timeout_source?: string | null;
+}
+
+export interface MigrationDraftReadinessPreflight {
+  ready: boolean;
+  blocking_reason_codes: string[];
+  warning_reason_codes: string[];
+  app_auth_ready: boolean;
+  google_integration_ready: boolean | null;
+  google_reconnect_required: boolean;
+  live_google_data_required: boolean;
+  draft_context_ready: boolean;
+  recommendations_available_count: number;
+  competitor_profiles_available_count: number;
+  selected_media_assets_count: number;
+  source_site_images_discovered_count: number;
+  operator_action: string;
+}
+
 export interface MigrationDraftProviderCompatibility {
   supported: boolean;
   reason_code: string;

@@ -19,7 +19,9 @@ from app.schemas.seo_migration import (
     SEOMigrationDeployConfigUpdateRequest,
     SEOMigrationDeployStatusRefreshRequest,
     SEOMigrationDeployRequest,
+    SEOMigrationDraftGenerationErrorEnvelopeRead,
     SEOMigrationDraftGenerateRequest,
+    SEOMigrationDraftReadinessRead,
     SEOMigrationEnrichedContentUpdateRequest,
     SEOMigrationHistoryListRead,
     SEOMigrationMediaAssetListRead,
@@ -55,6 +57,7 @@ _DRAFT_REASON_CODE_SESSION_EXPIRED = "session_expired"
 _DRAFT_REASON_CODE_GOOGLE_RECONNECT_REQUIRED = "google_reconnect_required"
 _DRAFT_REASON_CODE_GOOGLE_INTEGRATION_UNAVAILABLE = "google_integration_unavailable"
 _DRAFT_REASON_CODE_CONTEXT_UNAVAILABLE = "draft_generation_context_unavailable"
+_DRAFT_REASON_CODE_DEFAULT = "draft_generation_failed"
 
 
 def _to_workspace_read(workspace) -> SEOMigrationWorkspaceRead:  # noqa: ANN001
@@ -122,17 +125,127 @@ def _normalize_draft_generation_reason_code(value: object) -> str | None:
 
 
 def _draft_generation_error_detail(exc: SEOMigrationValidationError) -> str | dict[str, object]:
-    detail = _validation_error_detail(exc)
-    if not isinstance(detail, dict):
-        return detail
-    normalized_reason = _normalize_draft_generation_reason_code(
-        detail.get("reason_code") or detail.get("error_code")
+    raw_detail = _validation_error_detail(exc)
+    detail = raw_detail if isinstance(raw_detail, dict) else {"message": str(raw_detail or exc)}
+    detail = {**detail}
+    message = str(detail.get("message") or str(exc) or "Draft generation failed.").strip()
+    raw_reason = str(detail.get("reason_code") or detail.get("error_code") or "").strip().lower()
+    normalized_reason = _normalize_draft_generation_reason_code(raw_reason) or raw_reason or _DRAFT_REASON_CODE_DEFAULT
+    failure_category = str(detail.get("failure_category") or "").strip().lower() or None
+    retryable_raw = detail.get("retryable")
+    retryable: bool
+    if isinstance(retryable_raw, bool):
+        retryable = retryable_raw
+    else:
+        retryable = normalized_reason not in {
+            _DRAFT_REASON_CODE_APP_AUTH_REQUIRED,
+            _DRAFT_REASON_CODE_SESSION_EXPIRED,
+            _DRAFT_REASON_CODE_GOOGLE_RECONNECT_REQUIRED,
+            "source_site_ingest_required",
+            "operator_requirements_required",
+            "enriched_content_required",
+            "provider_config_missing",
+            "unsupported_model_configuration",
+            "unsupported_request_shape",
+            "unsupported_endpoint_mode",
+            "tools_required_but_unavailable",
+            "degraded_mode_not_allowed",
+        }
+        if failure_category == "config_missing":
+            retryable = False
+    operator_action, reconnect_target = _draft_generation_operator_action(
+        reason_code=normalized_reason,
+        retryable=retryable,
     )
-    if normalized_reason is None:
-        return detail
-    detail["reason_code"] = normalized_reason
-    detail["error_code"] = normalized_reason
-    return detail
+
+    payload: dict[str, object] = {
+        "message": message,
+        "reason_code": normalized_reason,
+        "error_code": normalized_reason,
+        "retryable": retryable,
+        "operator_action": operator_action,
+    }
+    if reconnect_target is not None:
+        payload["reconnect_target"] = reconnect_target
+
+    diagnostic_context: dict[str, object] = {}
+    for key in (
+        "failure_category",
+        "failure_reason",
+        "correlation_id",
+        "workspace_id",
+        "artifact_version_id",
+        "provider_name",
+        "model_name",
+        "prompt_version",
+        "timeout_seconds",
+        "timeout_source",
+    ):
+        value = detail.get(key)
+        if value is None:
+            continue
+        if key == "timeout_seconds":
+            if isinstance(value, int) and value >= 1:
+                diagnostic_context[key] = int(value)
+            continue
+        if isinstance(value, bool):
+            diagnostic_context[key] = value
+            continue
+        normalized_value = str(value).strip()
+        if normalized_value:
+            diagnostic_context[key] = normalized_value
+    if diagnostic_context:
+        payload["diagnostic_context"] = diagnostic_context
+
+    # Preserve existing top-level diagnostic fields consumed by UI callers.
+    for key in (
+        "failure_category",
+        "failure_reason",
+        "correlation_id",
+        "workspace_id",
+        "artifact_version_id",
+        "provider_name",
+        "model_name",
+        "prompt_version",
+        "timeout_seconds",
+        "timeout_source",
+    ):
+        if key in diagnostic_context:
+            payload[key] = diagnostic_context[key]
+
+    return payload
+
+
+def _draft_generation_operator_action(*, reason_code: str, retryable: bool) -> tuple[str, str | None]:
+    normalized_reason = str(reason_code or "").strip().lower()
+    if normalized_reason in {_DRAFT_REASON_CODE_APP_AUTH_REQUIRED, _DRAFT_REASON_CODE_SESSION_EXPIRED}:
+        return ("Sign back into MBSRN and retry draft generation.", "mbsrn_session")
+    if normalized_reason == _DRAFT_REASON_CODE_GOOGLE_RECONNECT_REQUIRED:
+        return (
+            "Reconnect Google Search Console / Analytics, then retry draft generation.",
+            "google_search_console_analytics",
+        )
+    if normalized_reason == _DRAFT_REASON_CODE_GOOGLE_INTEGRATION_UNAVAILABLE:
+        return (
+            "Retry shortly. If Google integration state remains unavailable, reconnect Google and retry.",
+            "google_search_console_analytics",
+        )
+    if normalized_reason in {"source_site_ingest_required", "operator_requirements_required", "enriched_content_required"}:
+        return ("Update workspace inputs to resolve draft readiness blockers, then retry generation.", None)
+    if normalized_reason in {
+        "provider_config_missing",
+        "unsupported_model_configuration",
+        "unsupported_request_shape",
+        "unsupported_endpoint_mode",
+        "tools_required_but_unavailable",
+        "degraded_mode_not_allowed",
+    }:
+        return ("Review AI provider/model configuration for migration draft compatibility.", None)
+    if normalized_reason == _DRAFT_REASON_CODE_CONTEXT_UNAVAILABLE:
+        return ("Retry draft generation. If this persists, contact support with the correlation reference.", None)
+    if retryable:
+        return ("Retry draft generation. If this repeats, review diagnostics and contact support.", None)
+    return ("Resolve the blocking draft-generation issue and retry.", None)
 
 
 @router.put("/sites/{site_id}/migration/workspace", response_model=SEOMigrationWorkspaceRead)
@@ -540,10 +653,34 @@ def get_seo_migration_prompt_preview(
     )
 
 
+@router.get("/sites/{site_id}/migration/draft-readiness", response_model=SEOMigrationDraftReadinessRead)
+def get_seo_migration_draft_readiness(
+    business_id: str,
+    site_id: str,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    migration_service: SEOMigrationService = Depends(get_seo_migration_service),
+) -> SEOMigrationDraftReadinessRead:
+    scoped_business_id = resolve_tenant_business_id(
+        tenant_context=tenant_context,
+        requested_business_id=business_id,
+    )
+    try:
+        readiness = migration_service.get_draft_generation_readiness(
+            business_id=scoped_business_id,
+            site_id=site_id,
+        )
+    except SEOMigrationNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except SEOMigrationValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=_validation_error_detail(exc)) from exc
+    return SEOMigrationDraftReadinessRead.model_validate(readiness)
+
+
 @router.post(
     "/sites/{site_id}/migration/generate-draft-artifacts",
     response_model=SEOMigrationArtifactVersionRead,
     status_code=status.HTTP_201_CREATED,
+    responses={status.HTTP_422_UNPROCESSABLE_CONTENT: {"model": SEOMigrationDraftGenerationErrorEnvelopeRead}},
 )
 def generate_seo_migration_draft_artifacts(
     business_id: str,

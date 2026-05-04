@@ -14,6 +14,7 @@ import {
   deployMigrationArtifactVersion,
   fetchMigrationArtifactFilePreview,
   fetchMigrationArtifactVersions,
+  fetchMigrationDraftReadiness,
   fetchMigrationDeployHistory,
   fetchMigrationMediaAssets,
   fetchMigrationPublishHistory,
@@ -406,6 +407,7 @@ function parseDraftGenerationFailure(error: unknown): {
   let correlationId: string | null = null;
   let timeoutSeconds: number | null = null;
   let statusCode: number | null = null;
+  let operatorAction: string | null = null;
   if (error instanceof ApiRequestError) {
     statusCode = error.status;
     const detail = asRecord(error.detail);
@@ -424,6 +426,7 @@ function parseDraftGenerationFailure(error: unknown): {
     }
     reason = asString(detail.failure_reason).trim().toLowerCase();
     reasonCode = asString(detail.error_code || detail.reason_code).trim().toLowerCase();
+    operatorAction = asStringOrNull(detail.operator_action);
     retryable = typeof detail.retryable === "boolean" ? detail.retryable : null;
     timeoutSeconds = typeof detail.timeout_seconds === "number" ? Math.max(1, Math.round(detail.timeout_seconds)) : null;
     correlationId =
@@ -462,6 +465,8 @@ function parseDraftGenerationFailure(error: unknown): {
     reason === "validation_failed"
   ) {
     hint = "The provider returned an invalid draft payload.";
+  } else if (operatorAction) {
+    hint = operatorAction;
   } else if (retryable) {
     hint = "This looks retryable.";
   }
@@ -1148,6 +1153,50 @@ function parseDraftReadinessReason(value: unknown): DraftReadinessReason | null 
   };
 }
 
+function draftReadinessReasonMessageFromCode(code: string, severity: "warning" | "blocking"): string {
+  const normalized = code.trim().toLowerCase();
+  if (normalized === "source_site_ingest_required") {
+    return "Run source ingest to capture baseline source-site context.";
+  }
+  if (normalized === "operator_requirements_required") {
+    return "Add operator requirements before generating a draft.";
+  }
+  if (normalized === "enriched_content_required") {
+    return "Add enriched replacement content notes before generating a draft.";
+  }
+  if (normalized === "provider_config_missing") {
+    return "AI provider configuration is missing or invalid for migration draft generation.";
+  }
+  if (normalized === "audit_context_unavailable") {
+    return "Audit context is not available; draft quality may be limited.";
+  }
+  if (normalized === "recommendations_context_unavailable") {
+    return "Recommendation context is not available; draft quality may be limited.";
+  }
+  if (normalized === "competitors_context_unavailable") {
+    return "Competitor context is not available; draft quality may be limited.";
+  }
+  if (normalized === "enriched_content_sparse") {
+    return "Enriched replacement content is sparse; add more detail for better draft quality.";
+  }
+  if (normalized === "google_reconnect_required") {
+    return "Google Search Console / Analytics reconnect is recommended to restore live Google signals.";
+  }
+  if (normalized === "google_integration_unavailable") {
+    return "Google integration state is currently unavailable; retry shortly and reconnect if this persists.";
+  }
+  if (normalized === "draft_generation_context_unavailable") {
+    return "Draft context is unavailable. Retry and contact support if this persists.";
+  }
+  if (normalized === "app_auth_required" || normalized === "session_expired") {
+    return "App session is not valid. Sign back into MBSRN and retry.";
+  }
+  const label = normalized ? normalized.replace(/_/g, " ") : "unknown readiness state";
+  return severity === "blocking"
+    ? `Resolve blocking condition: ${label}.`
+    : `Warning: ${label}.`;
+}
+
 function toDraftReadinessStatusLabel(value: DraftReadinessStatus): string {
   if (value === "ready") {
     return "Ready";
@@ -1158,7 +1207,10 @@ function toDraftReadinessStatusLabel(value: DraftReadinessStatus): string {
   return "Not ready";
 }
 
-function parseDraftReadiness(contextSummary: Record<string, unknown>): DraftReadinessEvaluation {
+function parseDraftReadiness(
+  contextSummary: Record<string, unknown>,
+  draftReadinessPreflight: Record<string, unknown> | null,
+): DraftReadinessEvaluation {
   const readinessRecord = asRecord(contextSummary.draft_generation_readiness);
   const readinessStatusRaw = asString(readinessRecord.status).trim().toLowerCase();
   const readinessStatus: DraftReadinessStatus | null =
@@ -1178,6 +1230,53 @@ function parseDraftReadiness(contextSummary: Record<string, unknown>): DraftRead
   const readinessReasons = readinessReasonsRaw
     .map((reason) => parseDraftReadinessReason(reason))
     .filter((reason): reason is DraftReadinessReason => reason !== null);
+
+  const preflightRecord = asRecord(draftReadinessPreflight);
+  const preflightReady = typeof preflightRecord.ready === "boolean" ? preflightRecord.ready : null;
+  const preflightBlockingCodes = asStringList(preflightRecord.blocking_reason_codes);
+  const preflightWarningCodes = asStringList(preflightRecord.warning_reason_codes);
+  const preflightOperatorAction = asString(preflightRecord.operator_action).trim();
+  if (preflightReady !== null) {
+    const preflightReasons: DraftReadinessReason[] = [
+      ...preflightBlockingCodes.map((code) => ({
+        code,
+        severity: "blocking" as const,
+        message: draftReadinessReasonMessageFromCode(code, "blocking"),
+      })),
+      ...preflightWarningCodes.map((code) => ({
+        code,
+        severity: "warning" as const,
+        message: draftReadinessReasonMessageFromCode(code, "warning"),
+      })),
+    ];
+    const preflightStatus: DraftReadinessStatus = preflightReady
+      ? preflightWarningCodes.length > 0
+        ? "ready_with_warnings"
+        : "ready"
+      : "not_ready";
+    const signalMap: Record<string, boolean> = {};
+    for (const [key, value] of Object.entries(readinessSignalsRaw)) {
+      if (typeof value === "boolean") {
+        signalMap[key] = value;
+      }
+    }
+    const computedScore =
+      preflightStatus === "ready" ? 100 : preflightStatus === "ready_with_warnings" ? 85 : 40;
+    return {
+      status: preflightStatus,
+      score: readinessScore ?? computedScore,
+      hardBlocked: !preflightReady,
+      summary:
+        preflightOperatorAction ||
+        (preflightStatus === "ready"
+          ? "Ready to generate draft."
+          : preflightStatus === "ready_with_warnings"
+            ? "Ready, but draft quality may be limited."
+            : "Not ready yet — resolve blocking migration readiness issues."),
+      reasons: preflightReasons,
+      signals: signalMap,
+    };
+  }
 
   if (readinessStatus && readinessScore !== null && readinessHardBlocked !== null && readinessSummary) {
     const signalMap: Record<string, boolean> = {};
@@ -2186,6 +2285,7 @@ export function MigrationWorkspacePanel({
   const [mediaUploadPageAssignment, setMediaUploadPageAssignment] = useState("");
   const [mediaUploadSelectedForDraft, setMediaUploadSelectedForDraft] = useState(true);
   const [mediaAssetsSnapshot, setMediaAssetsSnapshot] = useState<Record<string, unknown> | null>(null);
+  const [draftReadinessSnapshot, setDraftReadinessSnapshot] = useState<Record<string, unknown> | null>(null);
 
   const [publishRepoName, setPublishRepoName] = useState("");
   const [publishBranch, setPublishBranch] = useState("");
@@ -3139,7 +3239,7 @@ export function MigrationWorkspacePanel({
       (deployHttpsReadyFromSelected === null && deployHttpsReadyFromSummary !== null) ||
       (!workflowIntegrityStatusFromSelected && !!workflowIntegrityStatusFromSummary) ||
       (!workflowIntegrityReasonCodeFromSelected && !!workflowIntegrityReasonCodeFromSummary));
-  const draftReadiness = parseDraftReadiness(contextSummary);
+  const draftReadiness = parseDraftReadiness(contextSummary, draftReadinessSnapshot);
   const draftProviderCompatibility = parseDraftProviderCompatibility(contextSummary, migrationDiagnostics);
   const draftGenerationState = parseDraftGenerationState({
     contextSummary,
@@ -3374,11 +3474,18 @@ export function MigrationWorkspacePanel({
         } catch {
           mediaPayload = null;
         }
+        let readinessPayload: Record<string, unknown> | null = null;
+        try {
+          readinessPayload = asRecord(await fetchMigrationDraftReadiness(token, businessId, siteId));
+        } catch {
+          readinessPayload = null;
+        }
         setSummary(workspaceSummary);
         setArtifactVersions(versionList.items || []);
         setPublishHistory(publishHistoryResponse.items || workspaceSummary.publish_history || []);
         setDeployHistory(deployHistoryResponse.items || workspaceSummary.deploy_history || []);
         setMediaAssetsSnapshot(mediaPayload);
+        setDraftReadinessSnapshot(readinessPayload);
         hydrateFromSummary(workspaceSummary);
         const versions = versionList.items || [];
         setSelectedArtifactVersionId((current) =>
@@ -3755,6 +3862,27 @@ export function MigrationWorkspacePanel({
     setErrorHint(null);
     setStatusMessage(null);
     try {
+      let refreshedReadinessPayload: Record<string, unknown> | null = null;
+      try {
+        refreshedReadinessPayload = asRecord(await fetchMigrationDraftReadiness(token, businessId, siteId));
+      } catch {
+        refreshedReadinessPayload = null;
+      }
+      if (refreshedReadinessPayload) {
+        setDraftReadinessSnapshot(refreshedReadinessPayload);
+        const readyRaw = refreshedReadinessPayload.ready;
+        const readinessReady = typeof readyRaw === "boolean" ? readyRaw : true;
+        if (!readinessReady) {
+          const blockingCodes = asStringList(refreshedReadinessPayload.blocking_reason_codes);
+          const firstBlockingCode = blockingCodes.length > 0 ? blockingCodes[0] : null;
+          const operatorAction = asString(refreshedReadinessPayload.operator_action).trim();
+          setErrorHint(toDraftAuthIntegrationGuidance(firstBlockingCode));
+          setErrorMessage(
+            operatorAction || "Draft readiness is currently blocked. Resolve blocking issues and retry.",
+          );
+          return;
+        }
+      }
       const artifact = await generateMigrationDraftArtifacts(token, businessId, siteId, {
         force_new_version: true,
       });

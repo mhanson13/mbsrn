@@ -29,6 +29,7 @@ import type {
   MigrationDeployRequest,
   MigrationDeployStatusRefreshRequest,
   MigrationDraftGenerateRequest,
+  MigrationDraftReadinessPreflight,
   MigrationEnrichedContentUpdateRequest,
   MigrationHistoryListResponse,
   MigrationMediaAsset,
@@ -498,6 +499,17 @@ export async function fetchMigrationWorkspaceSummary(
   return apiRequest<MigrationWorkspaceSummary>(`/api/businesses/${businessId}/seo/sites/${siteId}/migration/summary`, {
     token,
   });
+}
+
+export async function fetchMigrationDraftReadiness(
+  token: string,
+  businessId: string,
+  siteId: string,
+): Promise<MigrationDraftReadinessPreflight> {
+  return apiRequest<MigrationDraftReadinessPreflight>(
+    `/api/businesses/${businessId}/seo/sites/${siteId}/migration/draft-readiness`,
+    { token },
+  );
 }
 
 export async function fetchMigrationPromptPreview(

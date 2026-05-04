@@ -22,6 +22,7 @@ import type {
   MigrationArtifactFilePreview,
   MigrationArtifactDeleteActionResponse,
   MigrationArtifactVersion,
+  MigrationDraftReadinessPreflight,
   MigrationDeployActionResponse,
   MigrationHistoryListResponse,
   MigrationPublishActionResponse,
@@ -129,6 +130,7 @@ const mockRefreshMigrationDeployStatus = jest.fn<Promise<MigrationDeployActionRe
 const mockFetchMigrationPublishHistory = jest.fn<Promise<MigrationHistoryListResponse>, unknown[]>();
 const mockFetchMigrationDeployHistory = jest.fn<Promise<MigrationHistoryListResponse>, unknown[]>();
 const mockGenerateMigrationDraftArtifacts = jest.fn<Promise<MigrationArtifactVersion>, unknown[]>();
+const mockFetchMigrationDraftReadiness = jest.fn<Promise<MigrationDraftReadinessPreflight>, unknown[]>();
 const mockFetchMigrationMediaAssets = jest.fn<Promise<Record<string, unknown>>, unknown[]>();
 const mockUploadMigrationMediaAsset = jest.fn<Promise<Record<string, unknown>>, unknown[]>();
 const mockUpdateMigrationMediaAsset = jest.fn<Promise<Record<string, unknown>>, unknown[]>();
@@ -201,6 +203,7 @@ jest.mock("../../lib/api/client", () => {
     fetchMigrationPublishHistory: (...args: unknown[]) => mockFetchMigrationPublishHistory(...args),
     fetchMigrationDeployHistory: (...args: unknown[]) => mockFetchMigrationDeployHistory(...args),
     generateMigrationDraftArtifacts: (...args: unknown[]) => mockGenerateMigrationDraftArtifacts(...args),
+    fetchMigrationDraftReadiness: (...args: unknown[]) => mockFetchMigrationDraftReadiness(...args),
     fetchMigrationMediaAssets: (...args: unknown[]) => mockFetchMigrationMediaAssets(...args),
     uploadMigrationMediaAsset: (...args: unknown[]) => mockUploadMigrationMediaAsset(...args),
     updateMigrationMediaAsset: (...args: unknown[]) => mockUpdateMigrationMediaAsset(...args),
@@ -1233,6 +1236,56 @@ describe("site migration workflow route", () => {
     expect(await screen.findByTestId("migration-draft-auth-guidance")).toHaveTextContent(
       "Google Search Console / Analytics reconnect is required",
     );
+  });
+
+  it("renders draft-readiness preflight warning guidance near generate controls", async () => {
+    mockFetchMigrationDraftReadiness.mockResolvedValueOnce(
+      buildMigrationDraftReadinessPreflight({
+        ready: true,
+        warning_reason_codes: ["google_reconnect_required"],
+        google_reconnect_required: true,
+        google_integration_ready: false,
+        operator_action:
+          "Draft can be generated now. Reconnect Google Search Console / Analytics to restore live Google signals.",
+      }),
+    );
+
+    render(<SiteMigrationWorkflowPage />);
+
+    const readinessCard = await screen.findByTestId("migration-draft-readiness");
+    expect(readinessCard).toHaveTextContent("Status: Ready with warnings");
+    expect(readinessCard).toHaveTextContent(
+      "Draft can be generated now. Reconnect Google Search Console / Analytics to restore live Google signals.",
+    );
+  });
+
+  it("blocks generate action when refreshed preflight reports blocking reconnect state", async () => {
+    const user = userEvent.setup();
+    mockFetchMigrationDraftReadiness
+      .mockResolvedValueOnce(buildMigrationDraftReadinessPreflight())
+      .mockResolvedValueOnce(
+        buildMigrationDraftReadinessPreflight({
+          ready: false,
+          blocking_reason_codes: ["google_reconnect_required"],
+          warning_reason_codes: [],
+          google_reconnect_required: true,
+          google_integration_ready: false,
+          draft_context_ready: false,
+          operator_action: "Reconnect Google Search Console / Analytics, then retry draft generation.",
+        }),
+      );
+
+    render(<SiteMigrationWorkflowPage />);
+
+    const generateButton = await screen.findByRole("button", { name: "Generate Draft Mockup" });
+    await user.click(generateButton);
+
+    await waitFor(() => expect(mockGenerateMigrationDraftArtifacts).not.toHaveBeenCalled());
+    const reconnectGuidance = await screen.findAllByText(
+      "Reconnect Google Search Console / Analytics, then retry draft generation.",
+    );
+    expect(reconnectGuidance.length).toBeGreaterThan(0);
+    expect(screen.getByText("Google Search Console / Analytics reconnect is required for live Google draft signals.")).toBeInTheDocument();
   });
 
   it("shows app-session-specific guidance when draft diagnostics reason code is app_auth_required", async () => {
@@ -2544,6 +2597,27 @@ function buildMigrationWorkspaceSummary(
   };
 }
 
+function buildMigrationDraftReadinessPreflight(
+  overrides: Partial<MigrationDraftReadinessPreflight> = {},
+): MigrationDraftReadinessPreflight {
+  return {
+    ready: true,
+    blocking_reason_codes: [],
+    warning_reason_codes: [],
+    app_auth_ready: true,
+    google_integration_ready: null,
+    google_reconnect_required: false,
+    live_google_data_required: false,
+    draft_context_ready: true,
+    recommendations_available_count: 1,
+    competitor_profiles_available_count: 1,
+    selected_media_assets_count: 0,
+    source_site_images_discovered_count: 0,
+    operator_action: "Ready to generate draft.",
+    ...overrides,
+  };
+}
+
 function buildMigrationArtifactFilePreview(
   overrides: Partial<MigrationArtifactFilePreview> = {},
 ): MigrationArtifactFilePreview {
@@ -2712,6 +2786,7 @@ function seedCompetitorProfileGenerationDefaults(): void {
   mockFetchMigrationPublishHistory.mockReset();
   mockFetchMigrationDeployHistory.mockReset();
   mockGenerateMigrationDraftArtifacts.mockReset();
+  mockFetchMigrationDraftReadiness.mockReset();
   mockFetchMigrationMediaAssets.mockReset();
   mockUploadMigrationMediaAsset.mockReset();
   mockUpdateMigrationMediaAsset.mockReset();
@@ -2735,6 +2810,7 @@ function seedCompetitorProfileGenerationDefaults(): void {
   );
   mockFetchMigrationPublishHistory.mockResolvedValue({ items: [], total: 0 });
   mockFetchMigrationDeployHistory.mockResolvedValue({ items: [], total: 0 });
+  mockFetchMigrationDraftReadiness.mockResolvedValue(buildMigrationDraftReadinessPreflight());
   mockFetchMigrationMediaAssets.mockResolvedValue({});
   mockIngestMigrationSource.mockResolvedValue({
     ...defaultMigrationWorkspace,

@@ -8240,6 +8240,196 @@ class SEOMigrationService:
             user_prompt=prompt.user_prompt,
         )
 
+    def get_draft_generation_readiness(
+        self,
+        *,
+        business_id: str,
+        site_id: str,
+    ) -> dict[str, object]:
+        workspace = self.get_workspace(business_id=business_id, site_id=site_id)
+        site = self._require_site(business_id=business_id, site_id=site_id)
+        live_google_data_required = self._is_live_google_data_required_for_draft(workspace=workspace)
+        google_integration_ready: bool | None = True if live_google_data_required else None
+        google_reconnect_required = False
+        draft_context_ready = False
+
+        recommendation_count = self._recommendation_available_count_for_readiness(site=site)
+        competitor_count = self._competitor_available_count_for_readiness(site=site)
+        media_assets_payload = self._collect_workspace_media_assets(workspace=workspace)
+        selected_media_assets_count = max(0, int(media_assets_payload.get("selected_assets_count") or 0))
+        source_site_images_discovered_count = max(0, int(media_assets_payload.get("source_discovered_count") or 0))
+
+        fallback_context_summary = self._fallback_context_summary_for_readiness(
+            workspace=workspace,
+            recommendation_count=recommendation_count,
+            competitor_count=competitor_count,
+        )
+        context_summary_for_readiness = fallback_context_summary
+
+        preflight_blocking_reason_codes: list[str] = []
+        preflight_warning_reason_codes: list[str] = []
+        try:
+            _, assembled_context_summary = self._assemble_context(site=site, workspace=workspace)
+            context_summary_for_readiness = _normalize_json_dict(assembled_context_summary)
+            draft_context_ready = True
+        except SEOMigrationValidationError as exc:
+            canonical_reason = _canonical_draft_auth_reason_code(exc.error_code)
+            if canonical_reason == _DRAFT_AUTH_REASON_GOOGLE_RECONNECT_REQUIRED:
+                google_reconnect_required = True
+                google_integration_ready = False
+                if live_google_data_required:
+                    _append_reason_code(preflight_blocking_reason_codes, canonical_reason)
+                    draft_context_ready = False
+                else:
+                    _append_reason_code(preflight_warning_reason_codes, canonical_reason)
+                    draft_context_ready = True
+            elif canonical_reason == _DRAFT_AUTH_REASON_GOOGLE_INTEGRATION_UNAVAILABLE:
+                google_integration_ready = None
+                if live_google_data_required:
+                    _append_reason_code(preflight_blocking_reason_codes, canonical_reason)
+                    draft_context_ready = False
+                else:
+                    _append_reason_code(preflight_warning_reason_codes, canonical_reason)
+                    draft_context_ready = True
+            elif canonical_reason in {_DRAFT_AUTH_REASON_APP_AUTH_REQUIRED, _DRAFT_AUTH_REASON_SESSION_EXPIRED}:
+                _append_reason_code(preflight_blocking_reason_codes, str(canonical_reason))
+                draft_context_ready = False
+            else:
+                _append_reason_code(preflight_blocking_reason_codes, _DRAFT_AUTH_REASON_CONTEXT_UNAVAILABLE)
+                google_integration_ready = None if google_integration_ready is True else google_integration_ready
+                draft_context_ready = False
+        except Exception:  # noqa: BLE001
+            _append_reason_code(preflight_blocking_reason_codes, _DRAFT_AUTH_REASON_CONTEXT_UNAVAILABLE)
+            google_integration_ready = None if google_integration_ready is True else google_integration_ready
+            draft_context_ready = False
+
+        readiness_payload = self._build_draft_generation_readiness(
+            business_id=business_id,
+            site_id=site_id,
+            workspace=workspace,
+            context_summary=context_summary_for_readiness,
+            emit_log=True,
+        )
+        readiness_reason_list = (
+            list(readiness_payload.get("reasons"))
+            if isinstance(readiness_payload.get("reasons"), list)
+            else []
+        )
+        for raw_reason in readiness_reason_list:
+            reason = _normalize_json_dict(raw_reason)
+            code = _normalize_string(reason.get("code"), max_length=80)
+            severity = _normalize_string(reason.get("severity"), max_length=20)
+            if code is None or severity is None:
+                continue
+            if severity == "blocking":
+                _append_reason_code(preflight_blocking_reason_codes, code)
+            elif severity == "warning":
+                _append_reason_code(preflight_warning_reason_codes, code)
+
+        reused_context = _normalize_json_dict(_normalize_json_dict(context_summary_for_readiness).get("reused_context"))
+        recommendation_count = self._resolve_reused_context_count(
+            reused_context_entry=_normalize_json_dict(reused_context.get("recommendations")),
+            default_count=recommendation_count,
+        )
+        competitor_count = self._resolve_reused_context_count(
+            reused_context_entry=_normalize_json_dict(reused_context.get("competitors")),
+            default_count=competitor_count,
+        )
+
+        if not draft_context_ready and not preflight_blocking_reason_codes:
+            _append_reason_code(preflight_blocking_reason_codes, _DRAFT_AUTH_REASON_CONTEXT_UNAVAILABLE)
+        ready = bool(draft_context_ready and not preflight_blocking_reason_codes)
+        operator_action = _resolve_draft_preflight_operator_action(
+            ready=ready,
+            blocking_reason_codes=preflight_blocking_reason_codes,
+            warning_reason_codes=preflight_warning_reason_codes,
+            live_google_data_required=live_google_data_required,
+            google_reconnect_required=google_reconnect_required,
+        )
+        return {
+            "ready": ready,
+            "blocking_reason_codes": preflight_blocking_reason_codes,
+            "warning_reason_codes": preflight_warning_reason_codes,
+            "app_auth_ready": True,
+            "google_integration_ready": google_integration_ready,
+            "google_reconnect_required": google_reconnect_required,
+            "live_google_data_required": live_google_data_required,
+            "draft_context_ready": draft_context_ready,
+            "recommendations_available_count": recommendation_count,
+            "competitor_profiles_available_count": competitor_count,
+            "selected_media_assets_count": selected_media_assets_count,
+            "source_site_images_discovered_count": source_site_images_discovered_count,
+            "operator_action": operator_action,
+        }
+
+    @staticmethod
+    def _resolve_reused_context_count(*, reused_context_entry: dict[str, object], default_count: int) -> int:
+        count_value = reused_context_entry.get("count")
+        if isinstance(count_value, int) and count_value >= 0:
+            return int(count_value)
+        available = reused_context_entry.get("available")
+        if isinstance(available, bool) and available and default_count <= 0:
+            return 1
+        return max(0, int(default_count))
+
+    def _fallback_context_summary_for_readiness(
+        self,
+        *,
+        workspace: SEOMigrationWorkspace,
+        recommendation_count: int,
+        competitor_count: int,
+    ) -> dict[str, object]:
+        operator_requirements = _normalize_json_dict(workspace.operator_requirements_json)
+        enriched_notes = _normalize_json_dict(workspace.enriched_content_notes_json)
+        source_snapshot = _normalize_json_dict(workspace.imported_source_snapshot_json)
+        return {
+            "has_source_snapshot": bool(source_snapshot),
+            "has_operator_requirements": bool(operator_requirements),
+            "has_enriched_content_notes": bool(enriched_notes),
+            "has_audit_summary": False,
+            "has_recommendation_summary": recommendation_count > 0,
+            "has_competitor_summary": competitor_count > 0,
+            "reused_context": {
+                "audit": {
+                    "available": False,
+                    "source": "none",
+                },
+                "recommendations": {
+                    "available": recommendation_count > 0,
+                    "source": "latest_generated" if recommendation_count > 0 else "none",
+                    "count": recommendation_count,
+                },
+                "competitors": {
+                    "available": competitor_count > 0,
+                    "source": "active_domains" if competitor_count > 0 else "none",
+                    "count": competitor_count,
+                },
+            },
+        }
+
+    def _recommendation_available_count_for_readiness(self, *, site: SEOSite) -> int:
+        recommendation_page = self.seo_recommendation_repository.list_recommendations_page_for_business_site(
+            business_id=site.business_id,
+            site_id=site.id,
+            page=1,
+            page_size=1,
+            sort_by="created_at",
+            sort_order="desc",
+        )
+        return max(0, int(recommendation_page.total))
+
+    def _competitor_available_count_for_readiness(self, *, site: SEOSite) -> int:
+        competitor_domains = self.seo_competitor_repository.list_domains_for_business_site(site.business_id, site.id)
+        active_competitor_domains = [
+            item for item in competitor_domains if getattr(item, "is_active", None) is not False
+        ]
+        return max(0, len(active_competitor_domains))
+
+    @staticmethod
+    def _is_live_google_data_required_for_draft(*, workspace: SEOMigrationWorkspace) -> bool:
+        analytics_config = _normalize_analytics_config(workspace.analytics_config_json)
+        return bool(analytics_config.get("require_live_google_data"))
+
     def generate_draft_artifacts(
         self,
         *,
@@ -19036,6 +19226,50 @@ def _dedupe_strings(values: list[str]) -> list[str]:
         seen.add(normalized)
         deduped.append(normalized)
     return deduped
+
+
+def _append_reason_code(target: list[str], reason_code: object) -> None:
+    normalized = _normalize_string(reason_code, max_length=80)
+    if normalized is None:
+        return
+    if normalized in target:
+        return
+    target.append(normalized)
+
+
+def _resolve_draft_preflight_operator_action(
+    *,
+    ready: bool,
+    blocking_reason_codes: list[str],
+    warning_reason_codes: list[str],
+    live_google_data_required: bool,
+    google_reconnect_required: bool,
+) -> str:
+    blocking = {item for item in blocking_reason_codes if item}
+    warnings = {item for item in warning_reason_codes if item}
+    if _DRAFT_AUTH_REASON_APP_AUTH_REQUIRED in blocking or _DRAFT_AUTH_REASON_SESSION_EXPIRED in blocking:
+        return "App session is not valid. Sign back into MBSRN and retry draft generation."
+    if _DRAFT_AUTH_REASON_GOOGLE_RECONNECT_REQUIRED in blocking:
+        return "Reconnect Google Search Console / Analytics, then retry draft generation."
+    if _DRAFT_AUTH_REASON_GOOGLE_INTEGRATION_UNAVAILABLE in blocking:
+        return "Google integration state is unavailable. Retry shortly, then reconnect Google if the issue persists."
+    if _DRAFT_AUTH_REASON_CONTEXT_UNAVAILABLE in blocking:
+        return "Draft context is unavailable. Retry and contact support if this persists."
+    if blocking:
+        return "Resolve blocking draft readiness issues before generating a draft."
+    if _DRAFT_AUTH_REASON_GOOGLE_RECONNECT_REQUIRED in warnings:
+        if live_google_data_required:
+            return "Reconnect Google Search Console / Analytics before generating a draft."
+        return "Draft can be generated now. Reconnect Google Search Console / Analytics to restore live Google signals."
+    if _DRAFT_AUTH_REASON_GOOGLE_INTEGRATION_UNAVAILABLE in warnings:
+        return "Draft can be generated now. Retry Google integration checks and reconnect if unavailable state persists."
+    if google_reconnect_required and not live_google_data_required:
+        return "Draft can be generated now. Reconnect Google Search Console / Analytics to restore live Google signals."
+    if warnings:
+        return "Draft can be generated, but warning signals should be reviewed first."
+    if ready:
+        return "Ready to generate draft."
+    return "Resolve draft readiness issues before generating a draft."
 
 
 def _resolve_hostname_ipv4_addresses(hostname: object) -> list[str]:

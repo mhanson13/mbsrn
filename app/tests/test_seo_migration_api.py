@@ -2999,6 +2999,12 @@ def test_generate_draft_route_surfaces_deterministic_reason_codes_for_auth_and_c
     detail = generate_response.json().get("detail") or {}
     assert detail.get("reason_code") == expected_code
     assert detail.get("error_code") == expected_code
+    assert isinstance(detail.get("message"), str)
+    assert isinstance(detail.get("retryable"), bool)
+    assert isinstance(detail.get("operator_action"), str)
+    diagnostic_context = detail.get("diagnostic_context") or {}
+    assert isinstance(diagnostic_context, dict)
+    assert "token" not in json.dumps(detail).lower()
 
 
 def test_generate_draft_route_requires_app_auth_reason_code_when_bearer_missing(db_session) -> None:
@@ -3045,3 +3051,247 @@ def test_generate_draft_route_returns_session_expired_reason_code_for_expired_se
     assert response.status_code == 401
     detail = response.json().get("detail") or {}
     assert detail.get("reason_code") == "session_expired"
+
+
+def test_draft_readiness_endpoint_returns_bounded_counts_and_no_secrets(db_session) -> None:
+    business_id = "11111111-1111-1111-1111-111111111111"
+    site_id = "22222222-2222-2222-2222-222222222222"
+    _seed_business_and_site(db_session, business_id=business_id, site_id=site_id)
+    client = _make_client(db_session, business_id=business_id)
+
+    workspace_response = client.put(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/workspace",
+        json={
+            "source_url": "https://legacy.example",
+            "operator_requirements": {
+                "business_objectives": ["Replace weak legacy pages"],
+            },
+            "enriched_content_notes": {
+                "replacement_summary": "Prepared replacement copy.",
+            },
+        },
+    )
+    assert workspace_response.status_code == 200
+    _prepare_workspace_for_draft_generation(client, business_id=business_id, site_id=site_id)
+
+    now = utc_now()
+    audit_run = SEOAuditRun(
+        id="audit-run-readiness-1",
+        business_id=business_id,
+        site_id=site_id,
+        status="completed",
+        started_at=now,
+        completed_at=now,
+        created_by_principal_id="principal-1",
+    )
+    recommendation_run = SEORecommendationRun(
+        id="recommendation-run-readiness-1",
+        business_id=business_id,
+        site_id=site_id,
+        audit_run_id=audit_run.id,
+        comparison_run_id=None,
+        status="completed",
+        total_recommendations=1,
+        warning_recommendations=1,
+        started_at=now,
+        completed_at=now,
+        created_by_principal_id="principal-1",
+    )
+    recommendation = SEORecommendation(
+        id="recommendation-readiness-1",
+        business_id=business_id,
+        site_id=site_id,
+        recommendation_run_id=recommendation_run.id,
+        audit_run_id=audit_run.id,
+        comparison_run_id=None,
+        rule_key="migration-readiness-rule",
+        category="SEO",
+        severity="WARNING",
+        title="Improve service-page trust proof",
+        rationale="Legacy content is sparse.",
+        priority_score=70,
+        priority_band="high",
+        effort_bucket="small",
+        status="open",
+    )
+    db_session.add(audit_run)
+    db_session.add(recommendation_run)
+    db_session.add(recommendation)
+
+    workspace = (
+        db_session.query(SEOMigrationWorkspace)
+        .filter(
+            SEOMigrationWorkspace.business_id == business_id,
+            SEOMigrationWorkspace.site_id == site_id,
+        )
+        .one()
+    )
+    workspace.imported_source_snapshot_json = {
+        "title": "Legacy",
+        "discovered_images": [
+            {
+                "asset_id": "srcimg-1",
+                "normalized_url": "https://legacy.example/hero.jpg?token=abc",
+                "selected_for_draft": True,
+                "image_base64": "iVBORw0KGgoAAAANSUhEUgAAAAUA",
+            },
+            {
+                "asset_id": "srcimg-2",
+                "normalized_url": "https://legacy.example/gallery.jpg?token=def",
+                "selected_for_draft": False,
+            },
+        ],
+    }
+    enriched_notes = dict(workspace.enriched_content_notes_json or {})
+    enriched_notes["workspace_media_assets"] = [
+        {
+            "asset_id": "upl-1",
+            "display_filename": "crew.jpg",
+            "content_type": "image/jpeg",
+            "size_bytes": 2048,
+            "provenance": "operator_upload",
+            "selected_for_draft": True,
+            "import_status": "selected",
+            "raw_token_value": "secret-token-value",
+            "storage_key": "workspace/asset/upl-1.jpg",
+        }
+    ]
+    workspace.enriched_content_notes_json = enriched_notes
+    db_session.add(workspace)
+    db_session.commit()
+
+    readiness_response = client.get(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/draft-readiness",
+    )
+    assert readiness_response.status_code == 200
+    payload = readiness_response.json()
+    assert payload.get("app_auth_ready") is True
+    assert isinstance(payload.get("ready"), bool)
+    assert isinstance(payload.get("blocking_reason_codes"), list)
+    assert isinstance(payload.get("warning_reason_codes"), list)
+    assert payload.get("recommendations_available_count") == 1
+    assert payload.get("selected_media_assets_count") == 2
+    assert payload.get("source_site_images_discovered_count") == 2
+    assert isinstance(payload.get("operator_action"), str)
+
+    serialized = json.dumps(payload).lower()
+    assert "raw_token_value" not in serialized
+    assert "secret-token-value" not in serialized
+    assert "image_base64" not in serialized
+    assert "ivborw0kggo" not in serialized
+    assert "storage_key" not in serialized
+
+
+def test_draft_readiness_endpoint_requires_app_auth_reason_code_when_bearer_missing(db_session) -> None:
+    app = FastAPI()
+    app.include_router(seo_migration_router)
+
+    def override_get_db():
+        try:
+            yield db_session
+        finally:
+            pass
+
+    app.dependency_overrides[get_db] = override_get_db
+    client = TestClient(app)
+
+    response = client.get(
+        "/api/businesses/11111111-1111-1111-1111-111111111111/seo/sites/22222222-2222-2222-2222-222222222222/migration/draft-readiness",
+    )
+    assert response.status_code == 401
+    detail = response.json().get("detail") or {}
+    assert detail.get("reason_code") == "app_auth_required"
+
+
+def test_draft_readiness_endpoint_returns_session_expired_reason_code_for_expired_session_token(db_session) -> None:
+    app = FastAPI()
+    app.include_router(seo_migration_router)
+
+    def override_get_db():
+        try:
+            yield db_session
+        finally:
+            pass
+
+    app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[get_session_token_service] = lambda: _AlwaysExpiredSessionTokenService()
+    client = TestClient(app)
+
+    response = client.get(
+        "/api/businesses/11111111-1111-1111-1111-111111111111/seo/sites/22222222-2222-2222-2222-222222222222/migration/draft-readiness",
+        headers={"Authorization": "Bearer a.b.c"},
+    )
+    assert response.status_code == 401
+    detail = response.json().get("detail") or {}
+    assert detail.get("reason_code") == "session_expired"
+
+
+def test_draft_readiness_endpoint_surfaces_google_reconnect_warning_without_blocking_when_live_fetch_not_required(
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    business_id = "11111111-1111-1111-1111-111111111111"
+    site_id = "22222222-2222-2222-2222-222222222222"
+    _seed_business_and_site(db_session, business_id=business_id, site_id=site_id)
+    client = _make_client(db_session, business_id=business_id)
+    workspace_response = client.put(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/workspace",
+        json={"source_url": "https://legacy.example"},
+    )
+    assert workspace_response.status_code == 200
+    _prepare_workspace_for_draft_generation(client, business_id=business_id, site_id=site_id)
+
+    def _raise_google_reconnect(self, *, site, workspace):  # noqa: ANN001
+        del self, site, workspace
+        raise SEOMigrationValidationError(
+            "Google token refresh is required.",
+            failure_category="config_missing",
+            failure_reason="authentication_failed",
+            error_code="google_token_expired",
+        )
+
+    monkeypatch.setattr(seo_migration_module.SEOMigrationService, "_assemble_context", _raise_google_reconnect)
+
+    readiness_response = client.get(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/draft-readiness",
+    )
+    assert readiness_response.status_code == 200
+    payload = readiness_response.json()
+    assert payload.get("ready") is True
+    assert payload.get("google_reconnect_required") is True
+    assert payload.get("draft_context_ready") is True
+    assert payload.get("live_google_data_required") is False
+    assert payload.get("google_integration_ready") is False
+    assert "google_reconnect_required" not in set(payload.get("blocking_reason_codes") or [])
+    assert "google_reconnect_required" in set(payload.get("warning_reason_codes") or [])
+
+
+def test_draft_readiness_endpoint_surfaces_context_unavailable_as_blocking(
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    business_id = "11111111-1111-1111-1111-111111111111"
+    site_id = "22222222-2222-2222-2222-222222222222"
+    _seed_business_and_site(db_session, business_id=business_id, site_id=site_id)
+    client = _make_client(db_session, business_id=business_id)
+    workspace_response = client.put(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/workspace",
+        json={"source_url": "https://legacy.example"},
+    )
+    assert workspace_response.status_code == 200
+    _prepare_workspace_for_draft_generation(client, business_id=business_id, site_id=site_id)
+
+    def _raise_context_error(self, *, site, workspace):  # noqa: ANN001
+        del self, site, workspace
+        raise RuntimeError("context assembly exploded")
+
+    monkeypatch.setattr(seo_migration_module.SEOMigrationService, "_assemble_context", _raise_context_error)
+
+    readiness_response = client.get(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/draft-readiness",
+    )
+    assert readiness_response.status_code == 200
+    payload = readiness_response.json()
+    assert payload.get("ready") is False
+    assert payload.get("draft_context_ready") is False
+    assert "draft_generation_context_unavailable" in set(payload.get("blocking_reason_codes") or [])
