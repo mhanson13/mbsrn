@@ -64,6 +64,7 @@ from app.repositories.seo_recommendation_narrative_repository import SEORecommen
 from app.repositories.seo_recommendation_repository import SEORecommendationRepository
 from app.repositories.seo_site_repository import SEOSiteRepository
 from app.services.seo_migration import SEOMigrationService, SEOMigrationValidationError
+from app.services.seo_migration_artifact_quality import evaluate_migration_artifact_quality
 from app.services.seo_migration_context import SEOMigrationContextAssembler
 from app.services.seo_migration_ingest import SEOMigrationSourceIngestService
 from app.services.github_publish_config import GitHubPublishConfigService
@@ -1773,11 +1774,26 @@ def test_workspace_media_upload_update_and_listing_are_bounded_and_workspace_sco
     assert listed.get("operator_uploaded_count") == 1
     assert listed.get("selected_assets_count") == 1
 
-    updated_source = service.update_workspace_media_asset(
+    with pytest.raises(SEOMigrationValidationError) as selection_error:
+        service.update_workspace_media_asset(
+            business_id=business_id,
+            site_id=site_id,
+            asset_id="srcimg-a",
+            selected_for_draft=True,
+            category="hero",
+            alt_text="Legacy storefront hero",
+            description="Legacy storefront exterior",
+            usage_note="Potential hero fallback",
+            page_assignment="/",
+            principal_id="principal-1",
+        )
+    assert selection_error.value.error_code == "media_asset_not_imported"
+
+    updated_source_metadata = service.update_workspace_media_asset(
         business_id=business_id,
         site_id=site_id,
         asset_id="srcimg-a",
-        selected_for_draft=True,
+        selected_for_draft=None,
         category="hero",
         alt_text="Legacy storefront hero",
         description="Legacy storefront exterior",
@@ -1785,18 +1801,15 @@ def test_workspace_media_upload_update_and_listing_are_bounded_and_workspace_sco
         page_assignment="/",
         principal_id="principal-1",
     )
-    assert updated_source.get("selected_for_draft") is True
-    assert updated_source.get("category") == "hero"
-    assert updated_source.get("alt_text") == "Legacy storefront hero"
+    assert updated_source_metadata.get("selected_for_draft") is False
+    assert updated_source_metadata.get("category") == "hero"
+    assert updated_source_metadata.get("alt_text") == "Legacy storefront hero"
 
     listed_after_update = service.list_workspace_media_assets(business_id=business_id, site_id=site_id)
-    assert listed_after_update.get("selected_assets_count") == 2
+    assert listed_after_update.get("selected_assets_count") == 1
     selected_assets = listed_after_update.get("selected_assets")
     assert isinstance(selected_assets, list)
-    assert {item.get("asset_id") for item in selected_assets if isinstance(item, dict)} == {
-        "srcimg-a",
-        uploaded.get("asset_id"),
-    }
+    assert {item.get("asset_id") for item in selected_assets if isinstance(item, dict)} == {uploaded.get("asset_id")}
 
 
 def test_workspace_media_metadata_suggestions_are_stored_separately_and_apply_only_on_explicit_action(
@@ -2107,7 +2120,59 @@ def test_workspace_media_metadata_batch_suggestion_returns_partial_success_for_r
     }
     assert (results_by_asset.get(uploaded_asset_id) or {}).get("suggestion_status") == "completed"
     assert (results_by_asset.get("srcimg-remote-only") or {}).get("suggestion_status") == "not_available"
-    assert (results_by_asset.get("srcimg-remote-only") or {}).get("reason_code") == "image_not_imported"
+    assert (results_by_asset.get("srcimg-remote-only") or {}).get("reason_code") == "media_asset_not_imported"
+
+
+def test_workspace_media_selection_and_batch_suggestion_reject_low_value_discovered_assets(db_session) -> None:
+    service = _build_service(db_session, _StaticMigrationProvider(_build_publishable_output()))
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+
+    workspace = service.get_workspace(business_id=business_id, site_id=site_id)
+    workspace.imported_source_snapshot_json = {
+        "discovered_images": [
+            {
+                "asset_id": "srcimg-low-value",
+                "normalized_url": "https://legacy.example/images/transparent_placeholder.png",
+                "provenance": "source_site_import",
+                "import_status": "discovered",
+                "selected_for_draft": True,
+                "candidate_quality": "low_value",
+                "quality_reason": "placeholder_image_detected",
+            }
+        ]
+    }
+    service.seo_migration_repository.save_workspace(workspace)
+    service.session.commit()
+
+    with pytest.raises(SEOMigrationValidationError) as selection_error:
+        service.update_workspace_media_asset(
+            business_id=business_id,
+            site_id=site_id,
+            asset_id="srcimg-low-value",
+            selected_for_draft=True,
+            principal_id="principal-1",
+        )
+    assert selection_error.value.error_code == "placeholder_image_detected"
+
+    batch_result = service.suggest_media_assets_metadata_batch(
+        business_id=business_id,
+        site_id=site_id,
+        asset_ids=["srcimg-low-value"],
+        force_refresh=False,
+        principal_id="principal-1",
+    )
+    assert batch_result.get("batch_status") == "failed"
+    assert batch_result.get("completed_count") == 0
+    assert batch_result.get("failed_count") == 0
+    assert batch_result.get("skipped_count") == 1
+    results = batch_result.get("results")
+    assert isinstance(results, list)
+    assert len(results) == 1
+    result = results[0] if isinstance(results[0], dict) else {}
+    assert result.get("suggestion_status") == "not_available"
+    assert result.get("reason_code") == "placeholder_image_detected"
+    assert result.get("retryable") is False
 
 
 def test_workspace_media_metadata_batch_suggestion_blocks_cross_site_assets(
@@ -2632,6 +2697,14 @@ def test_generate_draft_artifacts_includes_bounded_draft_input_summary_and_media
     assert draft_input_summary.get("source_site_images_imported_count") == 1
     assert draft_input_summary.get("operator_uploaded_images_count") == 1
     assert draft_input_summary.get("selected_media_assets_count") == 2
+    assert draft_input_summary.get("selected_usable_media_assets_count") == 2
+    assert draft_input_summary.get("usable_media_assets_count") == 2
+    assert draft_input_summary.get("useful_discovered_images_count") == 2
+    assert draft_input_summary.get("low_value_discovered_images_count") == 0
+    assert draft_input_summary.get("rejected_discovered_images_count") == 0
+    assert draft_input_summary.get("media_required_by_operator") is False
+    assert draft_input_summary.get("media_requirement_satisfied") is True
+    assert draft_input_summary.get("media_requirement_warning_reason") is None
     assert draft_input_summary.get("media_context_included") is True
     assert draft_input_summary.get("media_context_trimmed") is False
     assert draft_input_summary.get("media_assets_with_ai_suggestions_count") == 1
@@ -2822,6 +2895,106 @@ def test_draft_generation_readiness_missing_reused_context_is_warning_only(db_se
     assert "audit_context_unavailable" in warning_codes
     assert "recommendations_context_unavailable" in warning_codes
     assert "competitors_context_unavailable" in warning_codes
+
+
+def test_draft_generation_readiness_warns_when_operator_requires_media_but_no_usable_selected_assets(
+    db_session,
+) -> None:
+    service = _build_service(db_session, _StaticMigrationProvider(_build_publishable_output()))
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _mark_workspace_ingested(service, business_id=business_id, site_id=site_id)
+    _seed_reused_context_records(db_session, business_id=business_id, site_id=site_id)
+
+    workspace = service.get_workspace(business_id=business_id, site_id=site_id)
+    workspace.operator_requirements_json = {
+        "business_objectives": [
+            "Use real project photos and bring over existing images into the new Project Gallery."
+        ],
+    }
+    workspace.imported_source_snapshot_json = {
+        "title": "Legacy",
+        "discovered_images": [
+            {
+                "asset_id": "srcimg-placeholder",
+                "normalized_url": "https://legacy.example/images/transparent_placeholder.png",
+                "provenance": "source_site_import",
+                "import_status": "discovered",
+                "selected_for_draft": False,
+                "candidate_quality": "low_value",
+                "quality_reason": "placeholder_image_detected",
+            },
+            {
+                "asset_id": "srcimg-tracking",
+                "normalized_url": "https://legacy.example/assets/tracking-pixel.gif",
+                "provenance": "source_site_import",
+                "import_status": "discovered",
+                "selected_for_draft": False,
+                "candidate_quality": "rejected",
+                "quality_reason": "tracking_pixel_detected",
+            },
+            {
+                "asset_id": "srcimg-useful",
+                "normalized_url": "https://legacy.example/gallery/project-1.jpg",
+                "provenance": "source_site_import",
+                "import_status": "discovered",
+                "selected_for_draft": False,
+                "candidate_quality": "useful",
+            },
+        ],
+    }
+    service.seo_migration_repository.save_workspace(workspace)
+    service.session.commit()
+
+    readiness = service.get_draft_generation_readiness(business_id=business_id, site_id=site_id)
+    assert readiness.get("ready") is True
+    assert "media_required_but_not_selected" in set(readiness.get("warning_reason_codes") or [])
+    assert readiness.get("media_required_by_operator") is True
+    assert readiness.get("media_requirement_satisfied") is False
+    assert readiness.get("media_requirement_warning_reason") == "media_required_but_not_selected"
+    assert readiness.get("selected_usable_media_assets_count") == 0
+    assert readiness.get("usable_media_assets_count") == 0
+    assert readiness.get("useful_discovered_images_count") == 1
+    assert readiness.get("low_value_discovered_images_count") == 1
+    assert readiness.get("rejected_discovered_images_count") == 1
+
+
+def test_artifact_quality_flags_required_media_missing_when_placeholders_are_present() -> None:
+    quality = evaluate_migration_artifact_quality(
+        {
+            "generated_files": [
+                {
+                    "path": "index.html",
+                    "media_type": "text/html",
+                    "content": (
+                        "<html><body>"
+                        "<h1>Project Photo Placeholder</h1>"
+                        "<p>Draft gallery slot - replace with a real project photo.</p>"
+                        "</body></html>"
+                    ),
+                }
+            ],
+            "operator_requirements": {
+                "business_objectives": [
+                    "Use real project photos from existing jobs and include before/after examples."
+                ],
+            },
+            "selected_usable_media_assets_count": 0,
+            "media_required_by_operator": True,
+        }
+    )
+    assert isinstance(quality, dict)
+    issues = quality.get("issues")
+    assert isinstance(issues, list)
+    assert any(
+        isinstance(item, dict)
+        and item.get("type") == "required_media_missing"
+        and item.get("severity") in {"warning", "needs_review"}
+        for item in issues
+    )
+    operator_summary = str(quality.get("operator_summary") or "")
+    assert "real/existing project images were requested" in operator_summary.lower()
+    assert "No quality issues detected" not in operator_summary
 
 
 def test_generate_artifacts_is_blocked_by_readiness_before_provider_call(db_session) -> None:

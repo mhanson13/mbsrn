@@ -96,7 +96,11 @@ Media UX note:
 - discovered source-site images and operator uploads are both visible in migration media sections
 - selected discovered-image import is available behind feature flag `SEO_MIGRATION_REMOTE_IMAGE_IMPORT_ENABLED` (default disabled)
 - when disabled, import action shows deterministic `remote_image_import_disabled` guidance
-- discovered remote-only images show import-required guidance before AI suggestion can run (`image_not_imported`)
+- discovered remote-only images show import-required guidance before draft selection or AI suggestion can run
+- discovered remote-only lifecycle gating:
+  - primary action is import (`Import image` or marked `Import Selected Source Images`)
+  - `Select for Draft`, `Suggest metadata`, and `Apply suggestions` are not active until import completes
+  - edit action is labeled as discovery-notes editing while still unimported
 - no hotlink fallback is used for this workflow; images must be imported into workspace control before analysis/use
 - diagnostics should surface safe import rejection reason codes without exposing storage paths or raw bytes
 - AI suggestions are editable and are stored separately from operator-authored metadata until explicitly applied
@@ -108,6 +112,7 @@ Media UX note:
   - `AI Suggested`
   - `Applied`
   - `Not Available` / `Rejected`
+- low-value/rejected discovered candidates are hidden/de-emphasized by default and can be revealed explicitly
 - batch suggestion feedback is rendered with per-asset status/reason summaries:
   - `batch_status` (`Completed`, `Partial success`, `Failed`)
   - `completed_count`, `failed_count`, `skipped_count`
@@ -119,12 +124,19 @@ Media UX note:
 Media suggestion reason-code cues in UI:
 - `image_metadata_suggested`: suggestion ready to review/apply
 - `image_not_imported`: import required before AI suggestion
+- `media_asset_not_imported`: import before draft/suggestion actions
+- `media_asset_not_available`: asset unavailable in current lifecycle state
+- `media_asset_low_value`: low-value candidate excluded from draft/suggestion actions
+- `media_asset_rejected`: rejected candidate excluded from draft/suggestion actions
+- `media_action_not_allowed_for_state`: generic lifecycle-state guard
 - `image_analysis_not_available`: provider/runtime cannot analyze this asset in current mode
 - `unsupported_image_type`: file type rejected for suggestion
 - `image_too_large`: file exceeds current bounded suggestion size budget
 - `provider_unavailable` / `provider_response_invalid`: provider-side failure surfaced in subordinate diagnostics text
 - `media_asset_not_authorized`: asset does not belong to the active site workspace scope
 - `media_suggestion_batch_limit_reached`: selected batch is above allowed asset count and must be reduced
+- `placeholder_image_detected` / `tracking_pixel_detected` / `layout_asset_detected` / `non_image_candidate_detected`:
+  - candidate-quality classifier reasons used for low-value/rejected source discovery filtering and lifecycle gating
 
 Media import reason-code cues in UI:
 - `remote_image_import_disabled`: runtime feature flag is off
@@ -137,6 +149,12 @@ Media import reason-code cues in UI:
 - `image_fetch_timeout` / `image_fetch_failed`: bounded fetch failure surfaced without sensitive URL detail
 - `image_content_type_mismatch`: declared vs sniffed type mismatch
 - `media_import_count_limit_reached`: request/workspace import limit reached
+
+Media-required readiness/quality cues:
+- draft readiness shows warning `media_required_but_not_selected` when operator requirements request real/existing media and no usable selected media exists
+- readiness remains generate-able in this case (warning, not hard block, unless broader workspace blockers exist)
+- Media / Images section shows a compact "Media needed for this draft" callout with operator action guidance
+- Artifact Quality Summary surfaces `required_media_missing` when required media is absent and placeholder-heavy output is detected
 
 ## Competitor Run Quality States
 

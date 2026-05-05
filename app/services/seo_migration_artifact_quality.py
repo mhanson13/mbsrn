@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter
+import math
 import re
 
 
@@ -8,6 +9,12 @@ _PLACEHOLDER_PHRASES = (
     "lorem ipsum",
     "your business here",
     "we are a leading provider",
+)
+_MEDIA_PLACEHOLDER_INDICATORS = (
+    "project photo placeholder",
+    "draft gallery slot",
+    "replace with real",
+    "image-placeholder",
 )
 _GENERIC_PARAGRAPH_MARKERS = (
     "we are a leading provider",
@@ -36,6 +43,10 @@ def evaluate_migration_artifact_quality(artifact_bundle: dict[str, object]) -> d
     business_name = _normalize_text(artifact_bundle.get("business_name"))
     location_hints = _normalize_string_list(artifact_bundle.get("location_hints"))
     expected_service_terms = _normalize_string_list(artifact_bundle.get("expected_service_terms"))
+    media_required_by_operator = bool(artifact_bundle.get("media_required_by_operator"))
+    selected_usable_media_assets_count = _coerce_non_negative_int(
+        artifact_bundle.get("selected_usable_media_assets_count")
+    )
 
     has_business_name = bool(business_name and business_name.lower() in combined_text_lower)
     has_location = any(hint.lower() in combined_text_lower for hint in location_hints)
@@ -79,6 +90,7 @@ def evaluate_migration_artifact_quality(artifact_bundle: dict[str, object]) -> d
         )
 
     placeholder_matches = [phrase for phrase in _PLACEHOLDER_PHRASES if phrase in combined_text_lower]
+    media_placeholder_matches = [phrase for phrase in _MEDIA_PLACEHOLDER_INDICATORS if phrase in combined_text_lower]
     empty_heading_count = sum(len(_EMPTY_HEADING_PATTERN.findall(item["content"])) for item in html_files)
     repeated_generic_paragraph_count = _count_repeated_generic_paragraphs(html_files)
     placeholder_detected = bool(placeholder_matches or empty_heading_count > 0 or repeated_generic_paragraph_count > 0)
@@ -104,6 +116,34 @@ def evaluate_migration_artifact_quality(artifact_bundle: dict[str, object]) -> d
                     "Repeated generic paragraph content detected "
                     f"({repeated_generic_paragraph_count} repeated block(s))."
                 ),
+            }
+        )
+
+    required_media_missing = (
+        media_required_by_operator
+        and (
+            selected_usable_media_assets_count <= 0
+            or bool(media_placeholder_matches)
+        )
+    )
+    if required_media_missing:
+        if selected_usable_media_assets_count <= 0:
+            description = (
+                "Real project images were requested, but no imported/uploaded media was selected. "
+                "Draft uses placeholders."
+            )
+        else:
+            markers = ", ".join(sorted(set(media_placeholder_matches))) if media_placeholder_matches else "placeholder markers"
+            description = (
+                "Real/existing media was requested, but placeholder markers remain in generated HTML: "
+                + markers
+                + "."
+            )
+        issues.append(
+            {
+                "type": "required_media_missing",
+                "severity": "warning",
+                "description": description,
             }
         )
 
@@ -179,6 +219,8 @@ def evaluate_migration_artifact_quality(artifact_bundle: dict[str, object]) -> d
         score -= 8
     if duplicated_page_count > 0:
         score -= 10
+    if required_media_missing:
+        score -= 20
     score = max(0, min(100, int(score)))
 
     quality_status = _classify_quality_status(
@@ -192,6 +234,7 @@ def evaluate_migration_artifact_quality(artifact_bundle: dict[str, object]) -> d
         issue_count=len(issues),
         missing_sections=missing_sections,
         placeholder_detected=placeholder_detected,
+        required_media_missing=required_media_missing,
     )
 
     return {
@@ -207,6 +250,10 @@ def evaluate_migration_artifact_quality(artifact_bundle: dict[str, object]) -> d
             "page_count": page_count,
             "index_size_bytes": index_size_bytes,
             "duplicated_page_count": duplicated_page_count,
+            "media_required_by_operator": media_required_by_operator,
+            "selected_usable_media_assets_count": selected_usable_media_assets_count,
+            "required_media_missing": required_media_missing,
+            "media_placeholder_markers": media_placeholder_matches,
         },
         "operator_summary": operator_summary,
     }
@@ -320,7 +367,13 @@ def _build_operator_summary(
     issue_count: int,
     missing_sections: list[str],
     placeholder_detected: bool,
+    required_media_missing: bool,
 ) -> str:
+    if required_media_missing:
+        return (
+            "Review warning: real/existing project images were requested, but usable selected media is missing "
+            "or placeholders remain."
+        )
     if quality_status == "high":
         return "High quality draft: core sections and grounding signals are present."
     if quality_status == "medium":
@@ -336,3 +389,15 @@ def _build_operator_summary(
     if issue_count > 0:
         return "Low quality draft: completeness and grounding gaps were detected; revise before approval."
     return "Low quality draft: generated content is not sufficient for approval."
+
+
+def _coerce_non_negative_int(value: object) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return max(0, int(value))
+    if isinstance(value, float):
+        if not math.isfinite(value) or not value.is_integer():
+            return 0
+        return max(0, int(value))
+    return 0

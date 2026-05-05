@@ -145,6 +145,14 @@ _MIGRATION_MEDIA_IMPORT_BATCH_MAX_COUNT = 12
 _MIGRATION_MEDIA_IMPORT_MAX_TOTAL_IMPORTED = 80
 _MIGRATION_MEDIA_IMPORT_TIMEOUT_SECONDS = 8
 _MIGRATION_MEDIA_IMPORT_MAX_REDIRECTS = 3
+_MIGRATION_MEDIA_CANDIDATE_QUALITY_USEFUL = "useful"
+_MIGRATION_MEDIA_CANDIDATE_QUALITY_LOW_VALUE = "low_value"
+_MIGRATION_MEDIA_CANDIDATE_QUALITY_REJECTED = "rejected"
+_MIGRATION_MEDIA_CANDIDATE_QUALITY_ALLOWED = {
+    _MIGRATION_MEDIA_CANDIDATE_QUALITY_USEFUL,
+    _MIGRATION_MEDIA_CANDIDATE_QUALITY_LOW_VALUE,
+    _MIGRATION_MEDIA_CANDIDATE_QUALITY_REJECTED,
+}
 _MIGRATION_MEDIA_REASON_SUGGESTED = "image_metadata_suggested"
 _MIGRATION_MEDIA_REASON_ANALYSIS_NOT_AVAILABLE = "image_analysis_not_available"
 _MIGRATION_MEDIA_REASON_IMAGE_NOT_IMPORTED = "image_not_imported"
@@ -164,6 +172,21 @@ _MIGRATION_MEDIA_REASON_IMAGE_FETCH_TIMEOUT = "image_fetch_timeout"
 _MIGRATION_MEDIA_REASON_IMAGE_FETCH_FAILED = "image_fetch_failed"
 _MIGRATION_MEDIA_REASON_IMAGE_CONTENT_TYPE_MISMATCH = "image_content_type_mismatch"
 _MIGRATION_MEDIA_REASON_IMPORT_COUNT_LIMIT_REACHED = "media_import_count_limit_reached"
+_MIGRATION_MEDIA_REASON_ASSET_NOT_IMPORTED = "media_asset_not_imported"
+_MIGRATION_MEDIA_REASON_ASSET_NOT_AVAILABLE = "media_asset_not_available"
+_MIGRATION_MEDIA_REASON_ASSET_LOW_VALUE = "media_asset_low_value"
+_MIGRATION_MEDIA_REASON_ASSET_REJECTED = "media_asset_rejected"
+_MIGRATION_MEDIA_REASON_ACTION_NOT_ALLOWED_FOR_STATE = "media_action_not_allowed_for_state"
+_MIGRATION_MEDIA_REASON_PLACEHOLDER_IMAGE_DETECTED = "placeholder_image_detected"
+_MIGRATION_MEDIA_REASON_TRACKING_PIXEL_DETECTED = "tracking_pixel_detected"
+_MIGRATION_MEDIA_REASON_LAYOUT_ASSET_DETECTED = "layout_asset_detected"
+_MIGRATION_MEDIA_REASON_NON_IMAGE_CANDIDATE_DETECTED = "non_image_candidate_detected"
+_MIGRATION_MEDIA_QUALITY_REASON_CODES = {
+    _MIGRATION_MEDIA_REASON_PLACEHOLDER_IMAGE_DETECTED,
+    _MIGRATION_MEDIA_REASON_TRACKING_PIXEL_DETECTED,
+    _MIGRATION_MEDIA_REASON_LAYOUT_ASSET_DETECTED,
+    _MIGRATION_MEDIA_REASON_NON_IMAGE_CANDIDATE_DETECTED,
+}
 _MIGRATION_MEDIA_IMPORT_DISALLOWED_HOSTS = {
     "localhost",
     "metadata",
@@ -516,6 +539,19 @@ _DRAFT_READINESS_REASON_AUDIT_UNAVAILABLE = "audit_context_unavailable"
 _DRAFT_READINESS_REASON_RECOMMENDATIONS_UNAVAILABLE = "recommendations_context_unavailable"
 _DRAFT_READINESS_REASON_COMPETITORS_UNAVAILABLE = "competitors_context_unavailable"
 _DRAFT_READINESS_REASON_ENRICHED_SPARSE = "enriched_content_sparse"
+_DRAFT_READINESS_REASON_MEDIA_REQUIRED_NOT_SELECTED = "media_required_but_not_selected"
+_MEDIA_REQUIREMENT_HINTS = (
+    "real project photo",
+    "real project photos",
+    "before/after",
+    "before after",
+    "project gallery",
+    "use existing images",
+    "bring over all existing images",
+    "bring over existing images",
+    "existing images",
+    "make them available in the new site",
+)
 _DRAFT_GENERATION_STATE_VALUES = {
     "ready",
     "ready_with_warnings",
@@ -1088,6 +1124,16 @@ class SEOMigrationService:
                 if _normalize_string(item.get("asset_id"), max_length=80) != target_asset_id:
                     continue
                 if isinstance(selected_for_draft, bool):
+                    if selected_for_draft:
+                        state_reason = _media_asset_unusable_reason_code(item)
+                        if state_reason is not None:
+                            raise SEOMigrationValidationError(
+                                _media_action_block_message(reason_code=state_reason),
+                                failure_category="artifact_invalid",
+                                failure_reason="validation_failed",
+                                error_code=state_reason or _MIGRATION_MEDIA_REASON_ACTION_NOT_ALLOWED_FOR_STATE,
+                                workspace_id=workspace.id,
+                            )
                     item["selected_for_draft"] = bool(selected_for_draft)
                     current_status = _normalize_string(item.get("import_status"), max_length=40)
                     provenance = _normalize_string(item.get("provenance"), max_length=40) or "source_site_import"
@@ -1313,6 +1359,20 @@ class SEOMigrationService:
                 )
                 continue
 
+            unusable_reason = _media_asset_unusable_reason_code(target_asset)
+            if unusable_reason is not None:
+                skipped_count += 1
+                results.append(
+                    {
+                        "asset_id": asset_id,
+                        "suggestion_status": _MIGRATION_MEDIA_SUGGESTION_STATUS_NOT_AVAILABLE,
+                        "reason_code": unusable_reason,
+                        "retryable": False,
+                        "metadata_suggestion": None,
+                    }
+                )
+                continue
+
             suggestion_payload: dict[str, object]
             existing_suggestion = _normalize_media_metadata_suggestion(target_asset.get("metadata_suggestion"))
             if (
@@ -1402,14 +1462,17 @@ class SEOMigrationService:
                 suggestion_status=_MIGRATION_MEDIA_SUGGESTION_STATUS_FAILED,
                 reason_code=_MIGRATION_MEDIA_REASON_UNSUPPORTED_IMAGE_TYPE,
             )
-        if provenance == "source_site_import":
-            storage_key = _normalize_string(media_asset.get("storage_key"), max_length=240)
-            import_status = _normalize_string(media_asset.get("import_status"), max_length=40)
-            if storage_key is None and import_status in {"discovered", None}:
-                return _build_media_metadata_suggestion_payload(
-                    suggestion_status=_MIGRATION_MEDIA_SUGGESTION_STATUS_NOT_AVAILABLE,
-                    reason_code=_MIGRATION_MEDIA_REASON_IMAGE_NOT_IMPORTED,
-                )
+        unusable_reason = _media_asset_unusable_reason_code(media_asset)
+        if unusable_reason is not None:
+            reason_code = (
+                _MIGRATION_MEDIA_REASON_IMAGE_NOT_IMPORTED
+                if unusable_reason == _MIGRATION_MEDIA_REASON_ASSET_NOT_IMPORTED
+                else unusable_reason
+            )
+            return _build_media_metadata_suggestion_payload(
+                suggestion_status=_MIGRATION_MEDIA_SUGGESTION_STATUS_NOT_AVAILABLE,
+                reason_code=reason_code,
+            )
         storage_key = _normalize_string(media_asset.get("storage_key"), max_length=240)
         if storage_key is None:
             return _build_media_metadata_suggestion_payload(
@@ -1835,7 +1898,10 @@ class SEOMigrationService:
                 or utc_now().isoformat()
             )
             suggestion = _normalize_media_metadata_suggestion(target_asset.get("metadata_suggestion"))
-            if suggestion.get("reason_code") == _MIGRATION_MEDIA_REASON_IMAGE_NOT_IMPORTED:
+            if suggestion.get("reason_code") in {
+                _MIGRATION_MEDIA_REASON_IMAGE_NOT_IMPORTED,
+                _MIGRATION_MEDIA_REASON_ASSET_NOT_IMPORTED,
+            }:
                 target_asset["metadata_suggestion"] = None
                 target_asset["metadata_suggestion_applied"] = False
                 target_asset["metadata_suggestion_applied_at"] = None
@@ -9137,6 +9203,10 @@ class SEOMigrationService:
         media_assets_payload = self._collect_workspace_media_assets(workspace=workspace)
         selected_media_assets_count = max(0, int(media_assets_payload.get("selected_assets_count") or 0))
         source_site_images_discovered_count = max(0, int(media_assets_payload.get("source_discovered_count") or 0))
+        media_requirement_state = self._build_media_requirement_state(
+            workspace=workspace,
+            media_assets_payload=media_assets_payload,
+        )
 
         fallback_context_summary = self._fallback_context_summary_for_readiness(
             workspace=workspace,
@@ -9214,6 +9284,12 @@ class SEOMigrationService:
             reused_context_entry=_normalize_json_dict(reused_context.get("competitors")),
             default_count=competitor_count,
         )
+        media_requirement_warning_reason = _normalize_string(
+            media_requirement_state.get("media_requirement_warning_reason"),
+            max_length=80,
+        )
+        if media_requirement_warning_reason is not None:
+            _append_reason_code(preflight_warning_reason_codes, media_requirement_warning_reason)
 
         if not draft_context_ready and not preflight_blocking_reason_codes:
             _append_reason_code(preflight_blocking_reason_codes, _DRAFT_AUTH_REASON_CONTEXT_UNAVAILABLE)
@@ -9238,6 +9314,31 @@ class SEOMigrationService:
             "competitor_profiles_available_count": competitor_count,
             "selected_media_assets_count": selected_media_assets_count,
             "source_site_images_discovered_count": source_site_images_discovered_count,
+            "media_required_by_operator": bool(media_requirement_state.get("media_required_by_operator")),
+            "media_requirement_sources": _normalize_string_list(
+                media_requirement_state.get("media_requirement_sources"),
+                max_items=8,
+                max_item_length=140,
+            ),
+            "usable_media_assets_count": max(0, int(media_requirement_state.get("usable_media_assets_count") or 0)),
+            "useful_discovered_images_count": max(
+                0,
+                int(media_requirement_state.get("useful_discovered_images_count") or 0),
+            ),
+            "low_value_discovered_images_count": max(
+                0,
+                int(media_requirement_state.get("low_value_discovered_images_count") or 0),
+            ),
+            "rejected_discovered_images_count": max(
+                0,
+                int(media_requirement_state.get("rejected_discovered_images_count") or 0),
+            ),
+            "selected_usable_media_assets_count": max(
+                0,
+                int(media_requirement_state.get("selected_usable_media_assets_count") or 0),
+            ),
+            "media_requirement_satisfied": bool(media_requirement_state.get("media_requirement_satisfied")),
+            "media_requirement_warning_reason": media_requirement_warning_reason,
             "operator_action": operator_action,
         }
 
@@ -9773,6 +9874,7 @@ class SEOMigrationService:
         total_bytes = sum(len(str(item["content"]).encode("utf-8")) for item in normalized_files)
         artifact_model_used = _normalize_string(provider_output.model_name, max_length=128) or model_resolved
         generation_duration_ms = self._duration_ms(started_at)
+        draft_input_summary = _normalize_json_dict(context_json.get("draft_input_summary"))
         artifact_quality_evaluation = evaluate_migration_artifact_quality(
             {
                 "generated_files": normalized_files,
@@ -9783,6 +9885,11 @@ class SEOMigrationService:
                 "expected_service_terms": self._build_artifact_quality_service_terms(
                     workspace=workspace,
                     context_json=context_json,
+                ),
+                "media_required_by_operator": bool(draft_input_summary.get("media_required_by_operator")),
+                "selected_usable_media_assets_count": max(
+                    0,
+                    int(draft_input_summary.get("selected_usable_media_assets_count") or 0),
                 ),
             }
         )
@@ -10803,6 +10910,11 @@ class SEOMigrationService:
         audit_context = _normalize_json_dict(reused_context.get("audit"))
         recommendation_context = _normalize_json_dict(reused_context.get("recommendations"))
         competitor_context = _normalize_json_dict(reused_context.get("competitors"))
+        media_assets_payload = self._collect_workspace_media_assets(workspace=workspace)
+        media_requirement_state = self._build_media_requirement_state(
+            workspace=workspace,
+            media_assets_payload=media_assets_payload,
+        )
         has_source_snapshot = bool(normalized_summary.get("has_source_snapshot"))
         has_operator_requirements = bool(normalized_summary.get("has_operator_requirements"))
         has_enriched_notes = bool(normalized_summary.get("has_enriched_content_notes"))
@@ -10818,6 +10930,11 @@ class SEOMigrationService:
             "competitors_available": bool(normalized_summary.get("has_competitor_summary"))
             or bool(competitor_context.get("available")),
             "draft_provider_configured": bool(self.draft_provider_configured),
+            "media_required_by_operator": bool(media_requirement_state.get("media_required_by_operator")),
+            "media_requirement_satisfied": bool(media_requirement_state.get("media_requirement_satisfied")),
+            "selected_usable_media_assets_present": (
+                max(0, int(media_requirement_state.get("selected_usable_media_assets_count") or 0)) > 0
+            ),
         }
         blocking_reasons: list[SEOMigrationDraftReadinessReason] = []
         warning_reasons: list[SEOMigrationDraftReadinessReason] = []
@@ -10889,6 +11006,17 @@ class SEOMigrationService:
                     message="Enriched replacement content is sparse; add more detail for better draft quality.",
                 )
             )
+        if signals["media_required_by_operator"] and not signals["media_requirement_satisfied"]:
+            warning_reasons.append(
+                SEOMigrationDraftReadinessReason(
+                    code=_DRAFT_READINESS_REASON_MEDIA_REQUIRED_NOT_SELECTED,
+                    severity="warning",
+                    message=(
+                        "Operator requirements request real/existing images, but no usable imported/uploaded "
+                        "media is selected for draft context."
+                    ),
+                )
+            )
 
         score = 0
         if signals["source_site_ingested"]:
@@ -10932,6 +11060,34 @@ class SEOMigrationService:
             "summary": summary,
             "reasons": [item.to_payload() for item in reason_payload],
             "signals": signals,
+            "media_required_by_operator": bool(media_requirement_state.get("media_required_by_operator")),
+            "media_requirement_sources": _normalize_string_list(
+                media_requirement_state.get("media_requirement_sources"),
+                max_items=8,
+                max_item_length=140,
+            ),
+            "usable_media_assets_count": max(0, int(media_requirement_state.get("usable_media_assets_count") or 0)),
+            "useful_discovered_images_count": max(
+                0,
+                int(media_requirement_state.get("useful_discovered_images_count") or 0),
+            ),
+            "low_value_discovered_images_count": max(
+                0,
+                int(media_requirement_state.get("low_value_discovered_images_count") or 0),
+            ),
+            "rejected_discovered_images_count": max(
+                0,
+                int(media_requirement_state.get("rejected_discovered_images_count") or 0),
+            ),
+            "selected_usable_media_assets_count": max(
+                0,
+                int(media_requirement_state.get("selected_usable_media_assets_count") or 0),
+            ),
+            "media_requirement_satisfied": bool(media_requirement_state.get("media_requirement_satisfied")),
+            "media_requirement_warning_reason": _normalize_string(
+                media_requirement_state.get("media_requirement_warning_reason"),
+                max_length=80,
+            ),
         }
         if emit_log:
             self._log_draft_readiness_evaluation(
@@ -12051,7 +12207,8 @@ class SEOMigrationService:
             operator_uploaded=operator_uploaded,
             max_items=_MAX_MEDIA_ASSETS_PER_WORKSPACE,
         )
-        selected_assets = [item for item in all_assets if bool(item.get("selected_for_draft"))]
+        selected_assets_all = [item for item in all_assets if bool(item.get("selected_for_draft"))]
+        selected_assets = [item for item in selected_assets_all if _is_media_asset_usable_for_draft(item)]
         selected_assets_trimmed = False
         if len(selected_assets) > _MAX_SELECTED_MEDIA_FOR_CONTEXT:
             selected_assets = selected_assets[:_MAX_SELECTED_MEDIA_FOR_CONTEXT]
@@ -12059,11 +12216,34 @@ class SEOMigrationService:
         source_imported_count = sum(
             1 for item in source_discovered if _is_discovered_media_asset_imported(item)
         )
+        useful_discovered_images_count = sum(
+            1
+            for item in source_discovered
+            if _normalize_media_candidate_quality(item.get("candidate_quality"))
+            == _MIGRATION_MEDIA_CANDIDATE_QUALITY_USEFUL
+        )
+        low_value_discovered_images_count = sum(
+            1
+            for item in source_discovered
+            if _normalize_media_candidate_quality(item.get("candidate_quality"))
+            == _MIGRATION_MEDIA_CANDIDATE_QUALITY_LOW_VALUE
+        )
+        rejected_discovered_images_count = sum(
+            1
+            for item in source_discovered
+            if _normalize_media_candidate_quality(item.get("candidate_quality"))
+            == _MIGRATION_MEDIA_CANDIDATE_QUALITY_REJECTED
+        )
+        usable_media_assets_count = sum(1 for item in all_assets if _is_media_asset_usable_for_draft(item))
         source_selected_count = sum(
-            1 for item in source_discovered if bool(item.get("selected_for_draft"))
+            1
+            for item in selected_assets
+            if (_normalize_string(item.get("provenance"), max_length=40) or "source_site_import") == "source_site_import"
         )
         operator_selected_count = sum(
-            1 for item in operator_uploaded if bool(item.get("selected_for_draft"))
+            1
+            for item in selected_assets
+            if (_normalize_string(item.get("provenance"), max_length=40) or "") == "operator_upload"
         )
         media_categories = _collect_media_categories(
             all_assets,
@@ -12096,9 +12276,15 @@ class SEOMigrationService:
             "all_assets_count": len(all_assets),
             "source_discovered_count": len(source_discovered),
             "source_imported_count": source_imported_count,
+            "useful_discovered_images_count": useful_discovered_images_count,
+            "low_value_discovered_images_count": low_value_discovered_images_count,
+            "rejected_discovered_images_count": rejected_discovered_images_count,
             "operator_uploaded_count": len(operator_uploaded),
+            "usable_assets_count": usable_media_assets_count,
             "selected_assets": selected_assets,
             "selected_assets_count": len(selected_assets),
+            "selected_unusable_assets_count": max(0, len(selected_assets_all) - len(selected_assets)),
+            "selected_usable_assets_count": len(selected_assets),
             "selected_source_assets_count": source_selected_count,
             "selected_operator_assets_count": operator_selected_count,
             "media_asset_categories": media_categories,
@@ -12158,6 +12344,10 @@ class SEOMigrationService:
             max_items=_MAX_MEDIA_CATEGORIES_FOR_SUMMARY,
         )
         provider_name = _normalize_string(self.provider_name, max_length=64) or "unknown"
+        media_requirement_state = self._build_media_requirement_state(
+            workspace=workspace,
+            media_assets_payload=media_assets_payload,
+        )
         summary = {
             "recommendations_included_count": max(0, int(recommendation_count)),
             "recommendation_categories_included": recommendation_categories,
@@ -12185,10 +12375,41 @@ class SEOMigrationService:
                 0,
                 int(media_assets_payload.get("operator_uploaded_count") or 0),
             ),
+            "usable_media_assets_count": max(
+                0,
+                int(media_requirement_state.get("usable_media_assets_count") or 0),
+            ),
+            "useful_discovered_images_count": max(
+                0,
+                int(media_requirement_state.get("useful_discovered_images_count") or 0),
+            ),
+            "low_value_discovered_images_count": max(
+                0,
+                int(media_requirement_state.get("low_value_discovered_images_count") or 0),
+            ),
+            "rejected_discovered_images_count": max(
+                0,
+                int(media_requirement_state.get("rejected_discovered_images_count") or 0),
+            ),
             "selected_media_assets_count": max(0, int(len(selected_media_assets))),
+            "selected_usable_media_assets_count": max(
+                0,
+                int(media_requirement_state.get("selected_usable_media_assets_count") or 0),
+            ),
             "media_asset_categories": selected_media_asset_categories,
             "media_context_included": media_context_included,
             "media_context_trimmed": media_context_trimmed,
+            "media_required_by_operator": bool(media_requirement_state.get("media_required_by_operator")),
+            "media_requirement_sources": _normalize_string_list(
+                media_requirement_state.get("media_requirement_sources"),
+                max_items=8,
+                max_item_length=140,
+            ),
+            "media_requirement_satisfied": bool(media_requirement_state.get("media_requirement_satisfied")),
+            "media_requirement_warning_reason": _normalize_string(
+                media_requirement_state.get("media_requirement_warning_reason"),
+                max_length=80,
+            ),
             "media_assets_with_ai_suggestions_count": max(
                 0,
                 int(media_assets_payload.get("media_assets_with_ai_suggestions_count") or 0),
@@ -16475,6 +16696,93 @@ class SEOMigrationService:
 
         return terms
 
+    def _detect_media_requirement_signals(self, *, workspace: SEOMigrationWorkspace) -> tuple[bool, list[str]]:
+        matched_sources: list[str] = []
+        seen: set[str] = set()
+
+        def _scan_text(*, source_label: str, raw_text: object) -> None:
+            normalized_text = _normalize_string(raw_text, max_length=1200)
+            if normalized_text is None:
+                return
+            lowered = normalized_text.lower()
+            for hint in _MEDIA_REQUIREMENT_HINTS:
+                if hint not in lowered:
+                    continue
+                key = f"{source_label}:{hint}".lower()
+                if key in seen:
+                    return
+                seen.add(key)
+                matched_sources.append(f"{source_label}:{hint}")
+                return
+
+        requirements = _normalize_json_dict(workspace.operator_requirements_json)
+        for field_name in (
+            "business_objectives",
+            "requested_pages",
+            "must_include",
+            "calls_to_action",
+            "tone_preferences",
+            "additional_notes",
+        ):
+            value = requirements.get(field_name)
+            if isinstance(value, list):
+                for entry in value[:20]:
+                    _scan_text(source_label=f"operator_requirements.{field_name}", raw_text=entry)
+                    if len(matched_sources) >= 8:
+                        return True, matched_sources
+            else:
+                _scan_text(source_label=f"operator_requirements.{field_name}", raw_text=value)
+                if len(matched_sources) >= 8:
+                    return True, matched_sources
+
+        enriched = _normalize_json_dict(workspace.enriched_content_notes_json)
+        for field_name in ("replacement_summary", "about_business", "additional_notes"):
+            _scan_text(source_label=f"enriched_content.{field_name}", raw_text=enriched.get(field_name))
+            if len(matched_sources) >= 8:
+                break
+        return bool(matched_sources), matched_sources
+
+    def _build_media_requirement_state(
+        self,
+        *,
+        workspace: SEOMigrationWorkspace,
+        media_assets_payload: dict[str, object],
+    ) -> dict[str, object]:
+        media_required_by_operator, media_requirement_sources = self._detect_media_requirement_signals(
+            workspace=workspace
+        )
+        usable_media_assets_count = max(0, int(media_assets_payload.get("usable_assets_count") or 0))
+        useful_discovered_images_count = max(0, int(media_assets_payload.get("useful_discovered_images_count") or 0))
+        low_value_discovered_images_count = max(
+            0,
+            int(media_assets_payload.get("low_value_discovered_images_count") or 0),
+        )
+        rejected_discovered_images_count = max(
+            0,
+            int(media_assets_payload.get("rejected_discovered_images_count") or 0),
+        )
+        selected_usable_media_assets_count = max(
+            0,
+            int(media_assets_payload.get("selected_usable_assets_count") or 0),
+        )
+        media_requirement_satisfied = (not media_required_by_operator) or selected_usable_media_assets_count > 0
+        media_requirement_warning_reason = (
+            _DRAFT_READINESS_REASON_MEDIA_REQUIRED_NOT_SELECTED
+            if media_required_by_operator and not media_requirement_satisfied
+            else None
+        )
+        return {
+            "media_required_by_operator": media_required_by_operator,
+            "media_requirement_sources": media_requirement_sources[:8],
+            "usable_media_assets_count": usable_media_assets_count,
+            "useful_discovered_images_count": useful_discovered_images_count,
+            "low_value_discovered_images_count": low_value_discovered_images_count,
+            "rejected_discovered_images_count": rejected_discovered_images_count,
+            "selected_usable_media_assets_count": selected_usable_media_assets_count,
+            "media_requirement_satisfied": media_requirement_satisfied,
+            "media_requirement_warning_reason": media_requirement_warning_reason,
+        }
+
     def _validate_and_normalize_files(
         self,
         files: list,
@@ -16984,6 +17292,88 @@ def _normalize_media_category(value: object) -> str | None:
     return "other"
 
 
+def _normalize_media_candidate_quality(value: object) -> str | None:
+    normalized = _normalize_string(value, max_length=40)
+    if normalized is None:
+        return None
+    lowered = normalized.lower()
+    if lowered in _MIGRATION_MEDIA_CANDIDATE_QUALITY_ALLOWED:
+        return lowered
+    return None
+
+
+def _normalize_media_quality_reason(value: object) -> str | None:
+    normalized = _normalize_string(value, max_length=80)
+    if normalized is None:
+        return None
+    lowered = normalized.lower()
+    if lowered in _MIGRATION_MEDIA_QUALITY_REASON_CODES:
+        return lowered
+    return None
+
+
+def _infer_media_candidate_quality(item: dict[str, object]) -> tuple[str, str | None]:
+    existing_quality = _normalize_media_candidate_quality(item.get("candidate_quality"))
+    existing_reason = _normalize_media_quality_reason(item.get("quality_reason"))
+    if existing_quality is not None:
+        return existing_quality, existing_reason
+
+    provenance = _normalize_string(item.get("provenance"), max_length=40) or "source_site_import"
+    if provenance != "source_site_import":
+        return _MIGRATION_MEDIA_CANDIDATE_QUALITY_USEFUL, None
+
+    normalized_url = _normalize_string(item.get("normalized_url"), max_length=2048) or ""
+    display_name = _normalize_string(item.get("display_filename"), max_length=160) or ""
+    filename = _normalize_string(item.get("filename"), max_length=160) or ""
+    combined = " ".join((normalized_url.lower(), display_name.lower(), filename.lower()))
+    extension = _url_path_extension(normalized_url)
+
+    if extension in {".html", ".htm", ".php", ".aspx", ".jsp", ".txt", ".json", ".xml", ".svg"}:
+        return _MIGRATION_MEDIA_CANDIDATE_QUALITY_REJECTED, _MIGRATION_MEDIA_REASON_NON_IMAGE_CANDIDATE_DETECTED
+    if any(
+        token in combined
+        for token in ("tracking", "beacon", "pixel", "collect", "analytics")
+    ):
+        return _MIGRATION_MEDIA_CANDIDATE_QUALITY_REJECTED, _MIGRATION_MEDIA_REASON_TRACKING_PIXEL_DETECTED
+    if any(
+        token in combined
+        for token in ("transparent_placeholder", "placeholder", "spacer", "blank", "loader", "spinner")
+    ):
+        return _MIGRATION_MEDIA_CANDIDATE_QUALITY_LOW_VALUE, _MIGRATION_MEDIA_REASON_PLACEHOLDER_IMAGE_DETECTED
+    if any(token in combined for token in ("logo", "icon", "sprite", "favicon")):
+        return _MIGRATION_MEDIA_CANDIDATE_QUALITY_LOW_VALUE, _MIGRATION_MEDIA_REASON_LAYOUT_ASSET_DETECTED
+
+    width = _coerce_non_negative_int(item.get("width"))
+    height = _coerce_non_negative_int(item.get("height"))
+    if width is not None and height is not None:
+        if width <= 2 and height <= 2:
+            return _MIGRATION_MEDIA_CANDIDATE_QUALITY_REJECTED, _MIGRATION_MEDIA_REASON_TRACKING_PIXEL_DETECTED
+        if width <= 24 and height <= 24:
+            return _MIGRATION_MEDIA_CANDIDATE_QUALITY_LOW_VALUE, _MIGRATION_MEDIA_REASON_LAYOUT_ASSET_DETECTED
+
+    if extension and extension not in {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".tif", ".tiff", ".avif", ".heic"}:
+        return _MIGRATION_MEDIA_CANDIDATE_QUALITY_REJECTED, _MIGRATION_MEDIA_REASON_NON_IMAGE_CANDIDATE_DETECTED
+    return _MIGRATION_MEDIA_CANDIDATE_QUALITY_USEFUL, None
+
+
+def _url_path_extension(value: str) -> str:
+    if not value:
+        return ""
+    try:
+        parsed = urllib.parse.urlsplit(value)
+    except ValueError:
+        return ""
+    path = (parsed.path or "").strip().lower()
+    if not path:
+        return ""
+    _, _, tail = path.rpartition("/")
+    filename = tail or path
+    dot_index = filename.rfind(".")
+    if dot_index <= 0:
+        return ""
+    return filename[dot_index:]
+
+
 def _normalize_workspace_operator_media_assets(value: object) -> list[dict[str, object]]:
     payload = _normalize_json_dict(value)
     raw_assets = payload.get("workspace_media_assets")
@@ -17037,6 +17427,9 @@ def _normalize_media_asset_list(value: object, *, max_items: int) -> list[dict[s
             normalized_item.get("metadata_suggestion_applied_at"),
             max_length=80,
         )
+        candidate_quality, quality_reason = _infer_media_candidate_quality(normalized_item)
+        normalized_item["candidate_quality"] = candidate_quality
+        normalized_item["quality_reason"] = quality_reason
         normalized.append(normalized_item)
         if len(normalized) >= max(1, int(max_items)):
             break
@@ -17088,6 +17481,8 @@ def _media_asset_context_entry(value: object) -> dict[str, object] | None:
     asset_id = _normalize_string(item.get("asset_id"), max_length=80)
     if asset_id is None:
         return None
+    if not _is_media_asset_usable_for_draft(item):
+        return None
     effective_metadata = _resolve_effective_media_metadata(item=item)
     return {
         "asset_id": asset_id,
@@ -17126,7 +17521,52 @@ def _sanitize_media_asset_for_read(value: object) -> dict[str, object]:
         "metadata_suggestion": _normalize_media_metadata_suggestion(item.get("metadata_suggestion")),
         "metadata_suggestion_applied": bool(item.get("metadata_suggestion_applied")),
         "metadata_suggestion_applied_at": _normalize_string(item.get("metadata_suggestion_applied_at"), max_length=80),
+        "candidate_quality": _normalize_media_candidate_quality(item.get("candidate_quality")),
+        "quality_reason": _normalize_media_quality_reason(item.get("quality_reason")),
     }
+
+
+def _media_asset_unusable_reason_code(value: object) -> str | None:
+    item = _normalize_json_dict(value)
+    candidate_quality = _normalize_media_candidate_quality(item.get("candidate_quality"))
+    quality_reason = _normalize_media_quality_reason(item.get("quality_reason"))
+    if candidate_quality == _MIGRATION_MEDIA_CANDIDATE_QUALITY_REJECTED:
+        return quality_reason or _MIGRATION_MEDIA_REASON_ASSET_REJECTED
+    if candidate_quality == _MIGRATION_MEDIA_CANDIDATE_QUALITY_LOW_VALUE:
+        return quality_reason or _MIGRATION_MEDIA_REASON_ASSET_LOW_VALUE
+
+    import_status = (_normalize_string(item.get("import_status"), max_length=40) or "").lower()
+    provenance = (_normalize_string(item.get("provenance"), max_length=40) or "source_site_import").lower()
+    if import_status in {"failed", "disabled", "not_available"}:
+        return _MIGRATION_MEDIA_REASON_ASSET_NOT_AVAILABLE
+    if provenance == "source_site_import" and not _is_discovered_media_asset_imported(item):
+        return _MIGRATION_MEDIA_REASON_ASSET_NOT_IMPORTED
+    return None
+
+
+def _is_media_asset_usable_for_draft(value: object) -> bool:
+    return _media_asset_unusable_reason_code(value) is None
+
+
+def _media_action_block_message(*, reason_code: str) -> str:
+    normalized = _normalize_string(reason_code, max_length=80) or _MIGRATION_MEDIA_REASON_ACTION_NOT_ALLOWED_FOR_STATE
+    if normalized in {_MIGRATION_MEDIA_REASON_ASSET_NOT_IMPORTED, _MIGRATION_MEDIA_REASON_IMAGE_NOT_IMPORTED}:
+        return "Import this source image before selecting it for draft context."
+    if normalized == _MIGRATION_MEDIA_REASON_ASSET_NOT_AVAILABLE:
+        return "This media asset is not currently available for draft usage."
+    if normalized in {
+        _MIGRATION_MEDIA_REASON_ASSET_LOW_VALUE,
+        _MIGRATION_MEDIA_REASON_PLACEHOLDER_IMAGE_DETECTED,
+        _MIGRATION_MEDIA_REASON_LAYOUT_ASSET_DETECTED,
+    }:
+        return "This media candidate is low-value and is not eligible for draft usage."
+    if normalized in {
+        _MIGRATION_MEDIA_REASON_ASSET_REJECTED,
+        _MIGRATION_MEDIA_REASON_TRACKING_PIXEL_DETECTED,
+        _MIGRATION_MEDIA_REASON_NON_IMAGE_CANDIDATE_DETECTED,
+    }:
+        return "This media candidate was rejected and cannot be used for draft context."
+    return "Media action is not allowed for this asset lifecycle state."
 
 
 def _resolve_effective_media_metadata(*, item: dict[str, object]) -> dict[str, object]:
@@ -20703,6 +21143,11 @@ def _resolve_draft_preflight_operator_action(
         return "Draft context is unavailable. Retry and contact support if this persists."
     if blocking:
         return "Resolve blocking draft readiness issues before generating a draft."
+    if _DRAFT_READINESS_REASON_MEDIA_REQUIRED_NOT_SELECTED in warnings:
+        return (
+            "Draft can be generated, but operator-requested real media is missing. "
+            "Import/select source images or upload project photos before approval."
+        )
     if _DRAFT_AUTH_REASON_GOOGLE_RECONNECT_REQUIRED in warnings:
         if live_google_data_required:
             return "Reconnect Google Search Console / Analytics before generating a draft."

@@ -2101,9 +2101,7 @@ describe("site migration workflow route", () => {
     expect(
       within(mediaSection).getByText("AI suggestions are editable and stored separately until you explicitly apply them."),
     ).toBeInTheDocument();
-    expect(
-      within(mediaSection).getByText("Image must be imported before AI metadata can be suggested."),
-    ).toBeInTheDocument();
+    expect(within(mediaSection).getAllByText("Import before using in draft or AI suggestions.").length).toBeGreaterThan(0);
     expect(within(mediaSection).getByText("AI provider is unavailable for image metadata suggestion.")).toBeInTheDocument();
     expect(within(mediaSection).getByText("Category: project_gallery | Alt: Manual alt text")).toBeInTheDocument();
 
@@ -2145,7 +2143,7 @@ describe("site migration workflow route", () => {
               selected_for_draft: true,
               metadata_suggestion: {
                 suggestion_status: "not_available",
-                reason_code: "image_not_imported",
+                reason_code: "media_asset_not_imported",
               },
             },
           ],
@@ -2185,7 +2183,7 @@ describe("site migration workflow route", () => {
               selected_for_draft: true,
               metadata_suggestion: {
                 suggestion_status: "not_available",
-                reason_code: "image_not_imported",
+                reason_code: "media_asset_not_imported",
               },
             },
           ],
@@ -2213,7 +2211,7 @@ describe("site migration workflow route", () => {
         {
           asset_id: "srcimg-remote",
           suggestion_status: "not_available",
-          reason_code: "image_not_imported",
+          reason_code: "media_asset_not_imported",
           retryable: false,
         },
       ],
@@ -2231,9 +2229,6 @@ describe("site migration workflow route", () => {
     expect(within(mediaSection).getByTestId("migration-media-lifecycle-upl-1")).toHaveTextContent("Applied");
     expect(within(mediaSection).getByTestId("migration-media-lifecycle-srcimg-remote")).toHaveTextContent("Discovered");
     expect(within(mediaSection).getByTestId("migration-media-lifecycle-srcimg-remote")).toHaveTextContent(
-      "Selected for Draft",
-    );
-    expect(within(mediaSection).getByTestId("migration-media-lifecycle-srcimg-remote")).toHaveTextContent(
       "Not Available",
     );
 
@@ -2248,10 +2243,10 @@ describe("site migration workflow route", () => {
     const batchFeedback = within(mediaSection).getByTestId("migration-media-batch-feedback");
     expect(batchFeedback).toHaveTextContent("Status: Partial success");
     expect(batchFeedback).toHaveTextContent("Completed: 1 | Failed: 0 | Skipped: 1");
-    expect(within(batchFeedback).getByText(/Image must be imported before AI metadata can be suggested/i)).toBeInTheDocument();
+    expect(within(batchFeedback).getByText(/Import before using in draft or AI suggestions/i)).toBeInTheDocument();
   });
 
-  it("imports selected discovered images and renders import feedback", async () => {
+  it("imports discovered source images through import-first actions and renders feedback", async () => {
     const user = userEvent.setup();
     const summary = buildMigrationWorkspaceSummary({
       context_summary: {
@@ -2270,19 +2265,11 @@ describe("site migration workflow route", () => {
               normalized_url: "https://legacy.example/images/hero.jpg",
               provenance: "source_site_import",
               import_status: "discovered",
-              selected_for_draft: true,
+              selected_for_draft: false,
             },
           ],
           operator_uploaded: [],
-          selected_assets: [
-            {
-              asset_id: "srcimg-remote",
-              normalized_url: "https://legacy.example/images/hero.jpg",
-              provenance: "source_site_import",
-              import_status: "discovered",
-              selected_for_draft: true,
-            },
-          ],
+          selected_assets: [],
         },
       },
     });
@@ -2310,9 +2297,10 @@ describe("site migration workflow route", () => {
     render(<SiteMigrationWorkflowPage />);
 
     const mediaSection = await screen.findByTestId("migration-media-section");
-    const importButton = within(mediaSection).getByRole("button", { name: "Import Selected Source Images" });
-    expect(importButton).toBeInTheDocument();
-    await user.click(importButton);
+    const sourceList = within(mediaSection).getByTestId("migration-media-source-list");
+    expect(within(sourceList).queryByRole("button", { name: "Select for Draft" })).not.toBeInTheDocument();
+    expect(within(sourceList).queryByRole("button", { name: "Suggest metadata" })).not.toBeInTheDocument();
+    await user.click(within(sourceList).getByRole("button", { name: "Import image" }));
 
     await waitFor(() =>
       expect(mockImportMigrationDiscoveredMediaAssets).toHaveBeenCalledWith("token-1", "biz-1", "site-1", {
@@ -2345,7 +2333,7 @@ describe("site migration workflow route", () => {
               normalized_url: "https://legacy.example/images/disabled.jpg",
               provenance: "source_site_import",
               import_status: "discovered",
-              selected_for_draft: true,
+              selected_for_draft: false,
             },
           ],
           operator_uploaded: [],
@@ -2377,13 +2365,159 @@ describe("site migration workflow route", () => {
     render(<SiteMigrationWorkflowPage />);
 
     const mediaSection = await screen.findByTestId("migration-media-section");
-    await user.click(within(mediaSection).getByRole("button", { name: "Import Selected Source Images" }));
+    const sourceList = within(mediaSection).getByTestId("migration-media-source-list");
+    await user.click(within(sourceList).getByRole("button", { name: "Import image" }));
 
     const importFeedback = await within(mediaSection).findByTestId("migration-media-import-feedback");
     expect(importFeedback).toHaveTextContent("Disabled: 1");
     expect(
       within(importFeedback).getByText(/Remote source image import is currently disabled for this environment/i),
     ).toBeInTheDocument();
+  });
+
+  it("gates discovered not-available actions and de-emphasizes low-value candidates by default", async () => {
+    const summary = buildMigrationWorkspaceSummary({
+      context_summary: {
+        ...buildMigrationWorkspaceSummary().context_summary,
+        media_assets: {
+          source_discovered_count: 2,
+          source_imported_count: 0,
+          operator_uploaded_count: 0,
+          selected_assets_count: 0,
+          media_asset_categories: [],
+          selected_assets_trimmed: false,
+          diagnostics: [],
+          source_discovered: [
+            {
+              asset_id: "srcimg-useful",
+              display_filename: "hero.jpg",
+              normalized_url: "https://legacy.example/images/hero.jpg",
+              provenance: "source_site_import",
+              import_status: "discovered",
+              selected_for_draft: false,
+              candidate_quality: "useful",
+            },
+            {
+              asset_id: "srcimg-low",
+              display_filename: "transparent_placeholder.png",
+              normalized_url: "https://legacy.example/images/transparent_placeholder.png",
+              provenance: "source_site_import",
+              import_status: "discovered",
+              selected_for_draft: false,
+              candidate_quality: "low_value",
+              quality_reason: "placeholder_image_detected",
+            },
+          ],
+          operator_uploaded: [],
+          selected_assets: [],
+        },
+      },
+    });
+    const mediaAssetsPayload = (summary.context_summary as Record<string, unknown>).media_assets as Record<
+      string,
+      unknown
+    >;
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(summary);
+    mockFetchMigrationMediaAssets.mockResolvedValue(mediaAssetsPayload);
+
+    render(<SiteMigrationWorkflowPage />);
+
+    const mediaSection = await screen.findByTestId("migration-media-section");
+    const sourceList = within(mediaSection).getByTestId("migration-media-source-list");
+    expect(sourceList).toHaveTextContent("Import before using in draft or AI suggestions.");
+    expect(within(sourceList).getByRole("button", { name: "Import image" })).toBeInTheDocument();
+    expect(within(sourceList).queryByRole("button", { name: "Suggest metadata" })).not.toBeInTheDocument();
+    expect(within(sourceList).queryByRole("button", { name: "Select for Draft" })).not.toBeInTheDocument();
+    expect(within(sourceList).queryByRole("button", { name: "Apply suggestions" })).not.toBeInTheDocument();
+    expect(sourceList).not.toHaveTextContent("transparent_placeholder.png");
+
+    const showLowValueButton = within(sourceList).getByRole("button", { name: "Show low-value/rejected" });
+    await userEvent.setup().click(showLowValueButton);
+    expect(sourceList).toHaveTextContent("transparent_placeholder.png");
+    expect(sourceList).toHaveTextContent("Candidate was classified as placeholder-like imagery.");
+  });
+
+  it("surfaces media-required readiness warning when no usable media is selected", async () => {
+    mockFetchMigrationDraftReadiness.mockResolvedValueOnce(
+      buildMigrationDraftReadinessPreflight({
+        ready: true,
+        warning_reason_codes: ["media_required_but_not_selected"],
+        media_required_by_operator: true,
+        media_requirement_sources: ["operator_requirements.business_objectives:real project photos"],
+        selected_usable_media_assets_count: 0,
+        media_requirement_satisfied: false,
+        media_requirement_warning_reason: "media_required_but_not_selected",
+        operator_action:
+          "Draft can be generated, but operator-requested real media is missing. Import/select source images or upload project photos before approval.",
+      }),
+    );
+
+    render(<SiteMigrationWorkflowPage />);
+
+    const readinessCard = await screen.findByTestId("migration-draft-readiness");
+    expect(readinessCard).toHaveTextContent(
+      "Real/existing media was requested, but no usable selected media is in draft context yet.",
+    );
+    const mediaSection = await screen.findByTestId("migration-media-section");
+    expect(within(mediaSection).getByTestId("migration-media-required-callout")).toHaveTextContent(
+      "Media needed for this draft",
+    );
+  });
+
+  it("shows required-media warning in artifact quality summary when placeholders are present", async () => {
+    const artifactWithMediaWarning = buildMigrationArtifactVersion({
+      artifact_quality_evaluation: {
+        quality_status: "medium",
+        score: 62,
+        issue_count: 1,
+        operator_summary:
+          "Real project images were requested, but no imported/uploaded media was selected. Draft uses placeholders.",
+        issues: [
+          {
+            type: "required_media_missing",
+            severity: "warning",
+            description:
+              "Real project images were requested, but no imported/uploaded media was selected. Draft uses placeholders.",
+          },
+        ],
+      },
+      artifact_quality_evaluation_json: {
+        quality_status: "medium",
+        score: 62,
+        issue_count: 1,
+        operator_summary:
+          "Real project images were requested, but no imported/uploaded media was selected. Draft uses placeholders.",
+        issues: [
+          {
+            type: "required_media_missing",
+            severity: "warning",
+            description:
+              "Real project images were requested, but no imported/uploaded media was selected. Draft uses placeholders.",
+          },
+        ],
+      },
+    });
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(
+      buildMigrationWorkspaceSummary({
+        workspace: buildMigrationWorkspace({
+          latest_generated_artifact_version_id: artifactWithMediaWarning.id,
+          latest_generated_artifact_version_number: artifactWithMediaWarning.version,
+        }),
+        latest_artifact: artifactWithMediaWarning,
+      }),
+    );
+    mockFetchMigrationArtifactVersions.mockResolvedValueOnce({
+      items: [artifactWithMediaWarning],
+      total: 1,
+    });
+
+    render(<SiteMigrationWorkflowPage />);
+
+    const qualitySummary = await screen.findByTestId("migration-artifact-quality-summary");
+    expect(within(qualitySummary).getByTestId("migration-artifact-quality-required-media-warning")).toHaveTextContent(
+      "Real project images were requested",
+    );
+    expect(within(qualitySummary).queryByText("No quality issues detected.")).not.toBeInTheDocument();
   });
 
   it("renders advanced diagnostics and history with collapsible publish/deploy history panels", async () => {
@@ -3008,6 +3142,15 @@ function buildMigrationDraftReadinessPreflight(
     competitor_profiles_available_count: 1,
     selected_media_assets_count: 0,
     source_site_images_discovered_count: 0,
+    media_required_by_operator: false,
+    media_requirement_sources: [],
+    usable_media_assets_count: 0,
+    useful_discovered_images_count: 0,
+    low_value_discovered_images_count: 0,
+    rejected_discovered_images_count: 0,
+    selected_usable_media_assets_count: 0,
+    media_requirement_satisfied: true,
+    media_requirement_warning_reason: null,
     operator_action: "Ready to generate draft.",
     ...overrides,
   };

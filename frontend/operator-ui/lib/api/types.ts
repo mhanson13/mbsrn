@@ -442,6 +442,8 @@ export interface MigrationMediaAsset {
   metadata_suggestion?: MigrationMediaMetadataSuggestion | null;
   metadata_suggestion_applied?: boolean;
   metadata_suggestion_applied_at?: string | null;
+  candidate_quality?: "useful" | "low_value" | "rejected" | string | null;
+  quality_reason?: string | null;
 }
 
 export interface MigrationMediaAssetListResponse {
@@ -694,6 +696,15 @@ export interface MigrationDraftReadinessPreflight {
   competitor_profiles_available_count: number;
   selected_media_assets_count: number;
   source_site_images_discovered_count: number;
+  media_required_by_operator: boolean;
+  media_requirement_sources: string[];
+  usable_media_assets_count: number;
+  useful_discovered_images_count: number;
+  low_value_discovered_images_count: number;
+  rejected_discovered_images_count: number;
+  selected_usable_media_assets_count: number;
+  media_requirement_satisfied: boolean;
+  media_requirement_warning_reason?: string | null;
   operator_action: string;
 }
 

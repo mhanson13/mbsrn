@@ -291,6 +291,15 @@ class SEOMigrationDraftReadinessRead(BaseModel):
     competitor_profiles_available_count: int = Field(default=0, ge=0)
     selected_media_assets_count: int = Field(default=0, ge=0)
     source_site_images_discovered_count: int = Field(default=0, ge=0)
+    media_required_by_operator: bool = False
+    media_requirement_sources: list[str] = Field(default_factory=list)
+    usable_media_assets_count: int = Field(default=0, ge=0)
+    useful_discovered_images_count: int = Field(default=0, ge=0)
+    low_value_discovered_images_count: int = Field(default=0, ge=0)
+    rejected_discovered_images_count: int = Field(default=0, ge=0)
+    selected_usable_media_assets_count: int = Field(default=0, ge=0)
+    media_requirement_satisfied: bool = True
+    media_requirement_warning_reason: str | None = None
     operator_action: str
 
 
@@ -482,6 +491,8 @@ class SEOMigrationMediaAssetRead(BaseModel):
     metadata_suggestion: SEOMigrationMediaMetadataSuggestionRead | None = None
     metadata_suggestion_applied: bool = False
     metadata_suggestion_applied_at: str | None = None
+    candidate_quality: str | None = None
+    quality_reason: str | None = None
 
 
 class SEOMigrationMediaAssetListRead(BaseModel):

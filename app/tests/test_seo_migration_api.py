@@ -2917,6 +2917,67 @@ def test_migration_media_suggest_metadata_returns_image_not_imported_for_remote_
         assert forbidden not in serialized
 
 
+def test_migration_media_update_rejects_selecting_unimported_or_low_value_discovered_assets(db_session) -> None:
+    business_id = "11111111-1111-1111-1111-111111111111"
+    site_id = "22222222-2222-2222-2222-222222222222"
+    _seed_business_and_site(db_session, business_id=business_id, site_id=site_id)
+    client = _make_client(db_session, business_id=business_id)
+
+    workspace_response = client.put(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/workspace",
+        json={"source_url": "https://legacy.example"},
+    )
+    assert workspace_response.status_code == 200
+
+    workspace = (
+        db_session.query(SEOMigrationWorkspace)
+        .filter(
+            SEOMigrationWorkspace.business_id == business_id,
+            SEOMigrationWorkspace.site_id == site_id,
+        )
+        .one()
+    )
+    workspace.imported_source_snapshot_json = {
+        "discovered_images": [
+            {
+                "asset_id": "srcimg-remote-only",
+                "normalized_url": "https://legacy.example/images/hero.jpg",
+                "provenance": "source_site_import",
+                "import_status": "discovered",
+                "selected_for_draft": False,
+                "candidate_quality": "useful",
+            },
+            {
+                "asset_id": "srcimg-placeholder",
+                "normalized_url": "https://legacy.example/images/transparent_placeholder.png",
+                "provenance": "source_site_import",
+                "import_status": "discovered",
+                "selected_for_draft": False,
+                "candidate_quality": "low_value",
+                "quality_reason": "placeholder_image_detected",
+            },
+        ],
+    }
+    db_session.add(workspace)
+    db_session.commit()
+
+    unimported_select_response = client.patch(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/media/assets/srcimg-remote-only",
+        json={"selected_for_draft": True},
+    )
+    assert unimported_select_response.status_code == 422
+    unimported_detail = unimported_select_response.json().get("detail") or {}
+    assert unimported_detail.get("error_code") == "media_asset_not_imported"
+
+    low_value_select_response = client.patch(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/media/assets/srcimg-placeholder",
+        json={"selected_for_draft": True},
+    )
+    assert low_value_select_response.status_code == 422
+    low_value_detail = low_value_select_response.json().get("detail") or {}
+    assert low_value_detail.get("error_code") == "placeholder_image_detected"
+
+
 def test_migration_media_batch_suggest_metadata_succeeds_for_selected_uploaded_assets(db_session) -> None:
     business_id = "11111111-1111-1111-1111-111111111111"
     site_id = "22222222-2222-2222-2222-222222222222"
@@ -3051,7 +3112,7 @@ def test_migration_media_batch_suggest_metadata_returns_partial_success_for_impo
     assert uploaded_result.get("suggestion_status") == "completed"
     assert uploaded_result.get("reason_code") == "image_metadata_suggested"
     assert remote_result.get("suggestion_status") == "not_available"
-    assert remote_result.get("reason_code") == "image_not_imported"
+    assert remote_result.get("reason_code") == "media_asset_not_imported"
     serialized = json.dumps(payload).lower()
     for forbidden in ("storage_key", "base64", "access_token", "refresh_token", "authorization", "cookie", "\\\\"):
         assert forbidden not in serialized
@@ -4004,6 +4065,14 @@ def test_draft_readiness_endpoint_returns_bounded_counts_and_no_secrets(db_sessi
     assert payload.get("recommendations_available_count") == 1
     assert payload.get("selected_media_assets_count") == 2
     assert payload.get("source_site_images_discovered_count") == 2
+    assert isinstance(payload.get("media_required_by_operator"), bool)
+    assert isinstance(payload.get("media_requirement_sources"), list)
+    assert isinstance(payload.get("usable_media_assets_count"), int)
+    assert isinstance(payload.get("useful_discovered_images_count"), int)
+    assert isinstance(payload.get("low_value_discovered_images_count"), int)
+    assert isinstance(payload.get("rejected_discovered_images_count"), int)
+    assert isinstance(payload.get("selected_usable_media_assets_count"), int)
+    assert isinstance(payload.get("media_requirement_satisfied"), bool)
     assert isinstance(payload.get("operator_action"), str)
 
     serialized = json.dumps(payload).lower()
@@ -4127,3 +4196,88 @@ def test_draft_readiness_endpoint_surfaces_context_unavailable_as_blocking(
     assert payload.get("ready") is False
     assert payload.get("draft_context_ready") is False
     assert "draft_generation_context_unavailable" in set(payload.get("blocking_reason_codes") or [])
+
+
+def test_draft_readiness_endpoint_warns_when_media_is_required_but_no_usable_selected_assets(
+    db_session,
+) -> None:
+    business_id = "11111111-1111-1111-1111-111111111111"
+    site_id = "22222222-2222-2222-2222-222222222222"
+    _seed_business_and_site(db_session, business_id=business_id, site_id=site_id)
+    client = _make_client(db_session, business_id=business_id)
+
+    workspace_response = client.put(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/workspace",
+        json={
+            "source_url": "https://legacy.example",
+            "operator_requirements": {
+                "business_objectives": ["Use real project photos and bring over existing images."],
+            },
+            "enriched_content_notes": {
+                "replacement_summary": "Prepared replacement copy.",
+            },
+        },
+    )
+    assert workspace_response.status_code == 200
+    _prepare_workspace_for_draft_generation(client, business_id=business_id, site_id=site_id)
+
+    workspace = (
+        db_session.query(SEOMigrationWorkspace)
+        .filter(
+            SEOMigrationWorkspace.business_id == business_id,
+            SEOMigrationWorkspace.site_id == site_id,
+        )
+        .one()
+    )
+    workspace.imported_source_snapshot_json = {
+        "title": "Legacy",
+        "discovered_images": [
+            {
+                "asset_id": "srcimg-useful",
+                "normalized_url": "https://legacy.example/gallery/project-1.jpg",
+                "provenance": "source_site_import",
+                "import_status": "discovered",
+                "selected_for_draft": False,
+                "candidate_quality": "useful",
+            },
+            {
+                "asset_id": "srcimg-placeholder",
+                "normalized_url": "https://legacy.example/images/transparent_placeholder.png",
+                "provenance": "source_site_import",
+                "import_status": "discovered",
+                "selected_for_draft": False,
+                "candidate_quality": "low_value",
+                "quality_reason": "placeholder_image_detected",
+            },
+            {
+                "asset_id": "srcimg-tracking",
+                "normalized_url": "https://legacy.example/assets/tracking-pixel.gif",
+                "provenance": "source_site_import",
+                "import_status": "discovered",
+                "selected_for_draft": False,
+                "candidate_quality": "rejected",
+                "quality_reason": "tracking_pixel_detected",
+            },
+        ],
+    }
+    workspace.operator_requirements_json = {
+        "business_objectives": ["Use real project photos and bring over existing images."],
+    }
+    db_session.add(workspace)
+    db_session.commit()
+
+    readiness_response = client.get(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/draft-readiness",
+    )
+    assert readiness_response.status_code == 200
+    payload = readiness_response.json()
+    warning_codes = set(payload.get("warning_reason_codes") or [])
+    assert "media_required_but_not_selected" in warning_codes
+    assert payload.get("media_required_by_operator") is True
+    assert payload.get("media_requirement_satisfied") is False
+    assert payload.get("media_requirement_warning_reason") == "media_required_but_not_selected"
+    assert payload.get("selected_usable_media_assets_count") == 0
+    assert payload.get("usable_media_assets_count") == 0
+    assert payload.get("useful_discovered_images_count") == 1
+    assert payload.get("low_value_discovered_images_count") == 1
+    assert payload.get("rejected_discovered_images_count") == 1

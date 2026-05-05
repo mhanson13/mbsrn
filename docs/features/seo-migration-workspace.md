@@ -378,6 +378,41 @@ Import reason codes:
 - `media_asset_not_authorized`
 - `media_import_count_limit_reached`
 
+Media lifecycle action rules (coherence pass, 2026-05):
+- discovered remote source assets are not draft-usable by default (`import_status=discovered`)
+- import-first operator flow:
+  - primary action is `Import image` (or `Import Selected Source Images` for marked candidates)
+  - draft selection and AI suggestion actions are not active until asset is imported/controlled
+- uploaded/imported assets:
+  - support `Select for Draft`, `Suggest metadata`, and `Apply suggestions` (when suggestion is completed and not already applied)
+- low-value/rejected discovered candidates:
+  - are excluded from draft selection and AI suggestion actions
+  - remain visible via diagnostics/secondary controls only
+  - are hidden/de-emphasized by default in UI, with explicit operator toggle to reveal them
+
+Low-value discovered-image classification (bounded heuristic, no remote fetch):
+- classifier emits:
+  - `candidate_quality`: `useful|low_value|rejected`
+  - `quality_reason`: deterministic reason code when applicable
+- examples:
+  - `placeholder_image_detected` (placeholder/spacer/transparent-loader style URL/name)
+  - `tracking_pixel_detected` (tracking/beacon/pixel style URL/name)
+  - `layout_asset_detected` (logo/icon/sprite/chrome imagery)
+  - `non_image_candidate_detected` (HTML/page-like or non-image extension)
+- when uncertain, classification defaults to `useful`
+- low-value/rejected discovered candidates do not improve media-readiness quality counts
+
+Media lifecycle enforcement reason codes:
+- `media_asset_not_imported`
+- `media_asset_not_available`
+- `media_asset_low_value`
+- `media_asset_rejected`
+- `media_action_not_allowed_for_state`
+- `placeholder_image_detected`
+- `tracking_pixel_detected`
+- `layout_asset_detected`
+- `non_image_candidate_detected`
+
 ## Site SEO Workspace Grouping and Diagnostics (2026-05)
 Migration route grouping in the UI now explicitly separates:
 - Operator Actions:
@@ -485,6 +520,15 @@ Draft-readiness endpoint fields (operator preflight contract):
 - `competitor_profiles_available_count`
 - `selected_media_assets_count`
 - `source_site_images_discovered_count`
+- `media_required_by_operator`
+- `media_requirement_sources`
+- `usable_media_assets_count`
+- `useful_discovered_images_count`
+- `low_value_discovered_images_count`
+- `rejected_discovered_images_count`
+- `selected_usable_media_assets_count`
+- `media_requirement_satisfied`
+- `media_requirement_warning_reason`
 - `operator_action`
 
 Scoring weights:
@@ -510,6 +554,7 @@ Blocking signals (generation disabled):
 Warning-only signals (generation still allowed):
 - missing audit/recommendation/competitor reused context
 - sparse enriched content
+- explicit media requirement exists but no usable selected/imported/uploaded media is present (`media_required_but_not_selected`)
 
 Runtime behavior:
 - generate draft endpoint performs this preflight check first
@@ -849,7 +894,7 @@ API exposure:
 
 Evaluation output shape:
 - `quality_status`: `high` | `medium` | `low`
-- `issues`: list of `{type, description}` entries
+- `issues`: list of `{type, severity, description}` entries
 - `signals`: deterministic booleans/lists (for example business/location/service signal presence, placeholder detection, missing sections)
 - `operator_summary`: short human-readable summary
 
@@ -869,6 +914,10 @@ What is evaluated:
   - index HTML size bounds
   - generated HTML page count breadth
   - obvious near-duplicate page content
+- operator-required media coherence:
+  - if operator requirements request real/existing media and selected usable media count is zero, evaluator adds `required_media_missing`
+  - if placeholder markers appear while required media is missing (for example `Project Photo Placeholder`, `Draft gallery slot`, `Replace with real`, `image-placeholder`), evaluator records warning evidence
+  - quality summary avoids "No quality issues detected" messaging in this scenario
 
 Operator guidance:
 - this quality summary is advisory only in current phase

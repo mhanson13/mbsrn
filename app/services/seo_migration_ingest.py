@@ -59,6 +59,50 @@ _MAX_EMAIL_RESULTS = 12
 _MAX_ADDRESS_RESULTS = 12
 _MAX_IMAGE_CANDIDATES = 120
 _MAX_DISCOVERED_IMAGE_METADATA = 80
+_IMAGE_EXTENSIONS = {
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".webp",
+    ".gif",
+    ".bmp",
+    ".tif",
+    ".tiff",
+    ".avif",
+    ".heic",
+}
+_NON_IMAGE_EXTENSIONS = {
+    ".html",
+    ".htm",
+    ".php",
+    ".aspx",
+    ".jsp",
+    ".txt",
+    ".json",
+    ".xml",
+    ".svg",
+}
+_PLACEHOLDER_TOKENS = (
+    "transparent_placeholder",
+    "placeholder",
+    "spacer",
+    "blank",
+    "loader",
+    "spinner",
+)
+_TRACKING_TOKENS = (
+    "tracking",
+    "beacon",
+    "pixel",
+    "collect",
+    "analytics",
+)
+_LAYOUT_TOKENS = (
+    "logo",
+    "icon",
+    "sprite",
+    "favicon",
+)
 
 
 class SEOMigrationSourceIngestError(ValueError):
@@ -513,21 +557,64 @@ def _build_discovered_image_metadata(
             continue
         seen.add(normalized_url)
         asset_id = "srcimg-" + hashlib.sha1(normalized_url.encode("utf-8")).hexdigest()[:16]
+        filename = _safe_filename_from_url(normalized_url)
+        candidate_quality, quality_reason = _classify_discovered_image_candidate(
+            normalized_url=normalized_url,
+            filename=filename,
+        )
         normalized.append(
             {
                 "asset_id": asset_id,
                 "original_url": _strip_url_query(cleaned)[:2048],
                 "normalized_url": normalized_url[:2048],
-                "filename": _safe_filename_from_url(normalized_url),
+                "filename": filename,
                 "source_page_url": _strip_url_query(source_page_url)[:2048],
                 "provenance": "source_site_import",
                 "selected_for_draft": False,
                 "import_status": "discovered",
+                "candidate_quality": candidate_quality,
+                "quality_reason": quality_reason,
             }
         )
         if len(normalized) >= max(1, int(max_items)):
             break
     return normalized
+
+
+def _classify_discovered_image_candidate(*, normalized_url: str, filename: str | None) -> tuple[str, str | None]:
+    lowered_url = normalized_url.lower()
+    lowered_filename = (filename or "").lower()
+    extension = _path_extension(normalized_url)
+    if extension in _NON_IMAGE_EXTENSIONS:
+        return "rejected", "non_image_candidate_detected"
+
+    joined = f"{lowered_url} {lowered_filename}"
+    if any(token in joined for token in _TRACKING_TOKENS):
+        return "rejected", "tracking_pixel_detected"
+    if any(token in joined for token in _PLACEHOLDER_TOKENS):
+        return "low_value", "placeholder_image_detected"
+    if any(token in joined for token in _LAYOUT_TOKENS):
+        return "low_value", "layout_asset_detected"
+
+    if extension and extension not in _IMAGE_EXTENSIONS:
+        return "rejected", "non_image_candidate_detected"
+    return "useful", None
+
+
+def _path_extension(value: str) -> str:
+    try:
+        parsed = urllib.parse.urlsplit(value)
+    except ValueError:
+        return ""
+    path = (parsed.path or "").strip().lower()
+    if not path:
+        return ""
+    _, _, tail = path.rpartition("/")
+    filename = tail or path
+    dot_index = filename.rfind(".")
+    if dot_index <= 0:
+        return ""
+    return filename[dot_index:]
 
 
 def _is_disallowed_host(hostname: str | None) -> bool:

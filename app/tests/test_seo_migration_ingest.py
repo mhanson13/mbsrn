@@ -185,3 +185,46 @@ def test_ingest_rejects_private_or_local_source_hosts() -> None:
         service.ingest_homepage(source_url="http://localhost:8080")
     with pytest.raises(SEOMigrationSourceIngestError, match="host is not allowed"):
         service.ingest_homepage(source_url="http://169.254.169.254/latest/meta-data/")
+
+
+def test_ingest_classifies_low_value_and_non_image_discovered_candidates(monkeypatch: pytest.MonkeyPatch) -> None:
+    html = """
+    <html>
+      <body>
+        <img src="/images/transparent_placeholder.png" />
+        <img src="/assets/tracking-pixel.gif?cache=1" />
+        <img src="/project-gallery/before-after.jpg" />
+        <img src="/services/fire-protection.html" />
+      </body>
+    </html>
+    """
+    response = _FakeResponse(
+        content_type="text/html; charset=utf-8",
+        body=html,
+        final_url="https://tnmfire.example/",
+    )
+    monkeypatch.setattr(urllib.request, "build_opener", lambda *_args, **_kwargs: _FakeOpener(response))
+
+    service = SEOMigrationSourceIngestService()
+    result = service.ingest_homepage(source_url="https://tnmfire.example")
+    discovered = result.snapshot.get("discovered_images")
+    assert isinstance(discovered, list)
+
+    by_url = {
+        str(item.get("normalized_url")): item
+        for item in discovered
+        if isinstance(item, dict)
+    }
+    placeholder = by_url["https://tnmfire.example/images/transparent_placeholder.png"]
+    tracking = by_url["https://tnmfire.example/assets/tracking-pixel.gif"]
+    useful = by_url["https://tnmfire.example/project-gallery/before-after.jpg"]
+    non_image = by_url["https://tnmfire.example/services/fire-protection.html"]
+
+    assert placeholder.get("candidate_quality") == "low_value"
+    assert placeholder.get("quality_reason") == "placeholder_image_detected"
+    assert tracking.get("candidate_quality") == "rejected"
+    assert tracking.get("quality_reason") == "tracking_pixel_detected"
+    assert useful.get("candidate_quality") == "useful"
+    assert useful.get("quality_reason") is None
+    assert non_image.get("candidate_quality") == "rejected"
+    assert non_image.get("quality_reason") == "non_image_candidate_detected"
