@@ -46,6 +46,8 @@ The dedicated migration route (`/sites/[site_id]/migration`) keeps primary opera
 - Operator Actions:
   - draft generation, approval, publish, deploy, refresh/retry, delete draft
   - media upload/select/unselect/edit metadata actions
+  - `Suggest metadata` and `Apply suggestions` actions per media asset
+  - `Suggest Metadata for Selected` batch action for selected media assets
 - Draft Inputs / AI Context:
   - bounded provenance summary (`context_summary.draft_input_summary`)
   - recommendation, operator, enriched-content, competitor, analytics, audit, and media inclusion signals
@@ -53,6 +55,7 @@ The dedicated migration route (`/sites/[site_id]/migration`) keeps primary opera
   - discovered source-site images
   - operator-uploaded images
   - selected images used in AI context
+  - AI-suggested metadata status/reason hints with explicit apply control
 - Metrics:
   - readiness/AI execution/runtime status in primary workflow cards
   - readiness card can consume dedicated preflight endpoint data (`GET .../migration/draft-readiness`) and show blocking vs warning states near `Generate Draft`
@@ -91,8 +94,49 @@ Draft-generate error envelope (422 detail) fields surfaced in UI workflows:
 
 Media UX note:
 - discovered source-site images and operator uploads are both visible in migration media sections
-- selected discovered images remain metadata-only in this pass (no broad remote binary import yet)
-- diagnostics should surface the staged limitation and any safe rejection reason codes without exposing storage paths or raw bytes
+- selected discovered-image import is available behind feature flag `SEO_MIGRATION_REMOTE_IMAGE_IMPORT_ENABLED` (default disabled)
+- when disabled, import action shows deterministic `remote_image_import_disabled` guidance
+- discovered remote-only images show import-required guidance before AI suggestion can run (`image_not_imported`)
+- no hotlink fallback is used for this workflow; images must be imported into workspace control before analysis/use
+- diagnostics should surface safe import rejection reason codes without exposing storage paths or raw bytes
+- AI suggestions are editable and are stored separately from operator-authored metadata until explicitly applied
+- lifecycle/status labels are rendered per asset to clarify state transitions:
+  - `Discovered`
+  - `Uploaded`
+  - `Imported`
+  - `Selected for Draft`
+  - `AI Suggested`
+  - `Applied`
+  - `Not Available` / `Rejected`
+- batch suggestion feedback is rendered with per-asset status/reason summaries:
+  - `batch_status` (`Completed`, `Partial success`, `Failed`)
+  - `completed_count`, `failed_count`, `skipped_count`
+- discovered-image import feedback is rendered with per-asset status/reason summaries:
+  - `status` (`Imported`, `Skipped`, `Failed`, `Disabled`)
+  - `imported_count`, `failed_count`, `skipped_count`, `disabled_count`
+- draft generation still uses selected media metadata only; raw image bytes are not sent into text draft context
+
+Media suggestion reason-code cues in UI:
+- `image_metadata_suggested`: suggestion ready to review/apply
+- `image_not_imported`: import required before AI suggestion
+- `image_analysis_not_available`: provider/runtime cannot analyze this asset in current mode
+- `unsupported_image_type`: file type rejected for suggestion
+- `image_too_large`: file exceeds current bounded suggestion size budget
+- `provider_unavailable` / `provider_response_invalid`: provider-side failure surfaced in subordinate diagnostics text
+- `media_asset_not_authorized`: asset does not belong to the active site workspace scope
+- `media_suggestion_batch_limit_reached`: selected batch is above allowed asset count and must be reduced
+
+Media import reason-code cues in UI:
+- `remote_image_import_disabled`: runtime feature flag is off
+- `remote_image_imported`: import completed (or asset already imported)
+- `image_not_found_in_source_snapshot`: requested id/url is not in current discovered snapshot
+- `image_import_unsafe_url`: URL failed scheme/format safety validation
+- `image_import_private_address_blocked`: hostname/IP blocked by SSRF safety controls
+- `unsupported_image_type`: source response is not an allowed image MIME
+- `image_too_large`: source response exceeded bounded size limits
+- `image_fetch_timeout` / `image_fetch_failed`: bounded fetch failure surfaced without sensitive URL detail
+- `image_content_type_mismatch`: declared vs sniffed type mismatch
+- `media_import_count_limit_reached`: request/workspace import limit reached
 
 ## Competitor Run Quality States
 

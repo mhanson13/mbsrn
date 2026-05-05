@@ -133,7 +133,10 @@ const mockGenerateMigrationDraftArtifacts = jest.fn<Promise<MigrationArtifactVer
 const mockFetchMigrationDraftReadiness = jest.fn<Promise<MigrationDraftReadinessPreflight>, unknown[]>();
 const mockFetchMigrationMediaAssets = jest.fn<Promise<Record<string, unknown>>, unknown[]>();
 const mockUploadMigrationMediaAsset = jest.fn<Promise<Record<string, unknown>>, unknown[]>();
+const mockImportMigrationDiscoveredMediaAssets = jest.fn<Promise<Record<string, unknown>>, unknown[]>();
 const mockUpdateMigrationMediaAsset = jest.fn<Promise<Record<string, unknown>>, unknown[]>();
+const mockSuggestMigrationMediaAssetMetadata = jest.fn<Promise<Record<string, unknown>>, unknown[]>();
+const mockSuggestMigrationMediaAssetsMetadataBatch = jest.fn<Promise<Record<string, unknown>>, unknown[]>();
 
 jest.mock("next/navigation", () => ({
   useParams: () => navigationState.params,
@@ -206,7 +209,11 @@ jest.mock("../../lib/api/client", () => {
     fetchMigrationDraftReadiness: (...args: unknown[]) => mockFetchMigrationDraftReadiness(...args),
     fetchMigrationMediaAssets: (...args: unknown[]) => mockFetchMigrationMediaAssets(...args),
     uploadMigrationMediaAsset: (...args: unknown[]) => mockUploadMigrationMediaAsset(...args),
+    importMigrationDiscoveredMediaAssets: (...args: unknown[]) => mockImportMigrationDiscoveredMediaAssets(...args),
     updateMigrationMediaAsset: (...args: unknown[]) => mockUpdateMigrationMediaAsset(...args),
+    suggestMigrationMediaAssetMetadata: (...args: unknown[]) => mockSuggestMigrationMediaAssetMetadata(...args),
+    suggestMigrationMediaAssetsMetadataBatch: (...args: unknown[]) =>
+      mockSuggestMigrationMediaAssetsMetadataBatch(...args),
   };
 });
 
@@ -1991,6 +1998,394 @@ describe("site migration workflow route", () => {
     expect(within(mediaSection).getByRole("button", { name: "Upload Workspace Image" })).toBeInTheDocument();
   });
 
+  it("supports media metadata suggestion actions while preserving manual metadata until apply", async () => {
+    const user = userEvent.setup();
+    const summary = buildMigrationWorkspaceSummary({
+      context_summary: {
+        ...buildMigrationWorkspaceSummary().context_summary,
+        draft_input_summary: {
+          recommendations_included_count: 1,
+          gsc_signals_included: true,
+          ga4_signals_included: true,
+          competitor_profiles_included_count: 1,
+          operator_requirements_included: true,
+          enriched_business_context_included: true,
+          source_site_images_discovered_count: 2,
+          source_site_images_imported_count: 1,
+          operator_uploaded_images_count: 1,
+          selected_media_assets_count: 1,
+          media_context_included: true,
+          media_assets_with_ai_suggestions_count: 1,
+          media_assets_with_operator_applied_metadata_count: 0,
+          media_suggestion_failures_count: 1,
+          provider_source: "mock",
+          mocked_source: true,
+        },
+        media_assets: {
+          source_discovered_count: 2,
+          source_imported_count: 1,
+          operator_uploaded_count: 1,
+          selected_assets_count: 1,
+          media_asset_categories: ["project_gallery"],
+          selected_assets_trimmed: false,
+          diagnostics: [],
+          source_discovered: [
+            {
+              asset_id: "srcimg-1",
+              normalized_url: "https://legacy.example/images/front.jpg",
+              provenance: "source_site_import",
+              import_status: "discovered",
+              selected_for_draft: false,
+            },
+            {
+              asset_id: "srcimg-2",
+              normalized_url: "https://legacy.example/images/gallery.jpg",
+              provenance: "source_site_import",
+              import_status: "selected",
+              selected_for_draft: true,
+              metadata_suggestion: {
+                suggestion_status: "failed",
+                reason_code: "provider_unavailable",
+              },
+            },
+          ],
+          operator_uploaded: [
+            {
+              asset_id: "upl-1",
+              display_filename: "crew-photo.jpg",
+              provenance: "operator_upload",
+              category: "project_gallery",
+              alt_text: "Manual alt text",
+              selected_for_draft: true,
+              metadata_suggestion: {
+                suggestion_status: "completed",
+                reason_code: "image_metadata_suggested",
+                suggested_alt_text: "AI suggested alt",
+                suggested_category: "hero",
+              },
+            },
+          ],
+          selected_assets: [
+            {
+              asset_id: "upl-1",
+              display_filename: "crew-photo.jpg",
+              provenance: "operator_upload",
+              selected_for_draft: true,
+            },
+          ],
+        },
+      },
+    });
+    const mediaAssetsPayload = (summary.context_summary as Record<string, unknown>).media_assets as Record<
+      string,
+      unknown
+    >;
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(summary);
+    mockFetchMigrationMediaAssets.mockResolvedValue(mediaAssetsPayload);
+    mockSuggestMigrationMediaAssetMetadata.mockResolvedValue({
+      asset_id: "upl-1",
+      display_filename: "crew-photo.jpg",
+      provenance: "operator_upload",
+      selected_for_draft: true,
+      metadata_suggestion: {
+        suggestion_status: "completed",
+        reason_code: "image_metadata_suggested",
+        suggested_alt_text: "AI suggested alt",
+        suggested_category: "hero",
+      },
+    });
+
+    render(<SiteMigrationWorkflowPage />);
+
+    const mediaSection = await screen.findByTestId("migration-media-section");
+    expect(
+      within(mediaSection).getByText("AI suggestions are editable and stored separately until you explicitly apply them."),
+    ).toBeInTheDocument();
+    expect(
+      within(mediaSection).getByText("Image must be imported before AI metadata can be suggested."),
+    ).toBeInTheDocument();
+    expect(within(mediaSection).getByText("AI provider is unavailable for image metadata suggestion.")).toBeInTheDocument();
+    expect(within(mediaSection).getByText("Category: project_gallery | Alt: Manual alt text")).toBeInTheDocument();
+
+    const uploadedList = within(mediaSection).getByTestId("migration-media-uploaded-list");
+    await user.click(within(uploadedList).getByRole("button", { name: "Suggest metadata" }));
+    await waitFor(() =>
+      expect(mockSuggestMigrationMediaAssetMetadata).toHaveBeenCalledWith("token-1", "biz-1", "site-1", "upl-1", {
+        forceRefresh: false,
+      }),
+    );
+
+    await user.click(within(uploadedList).getByRole("button", { name: "Apply suggestions" }));
+    await waitFor(() =>
+      expect(mockUpdateMigrationMediaAsset).toHaveBeenCalledWith("token-1", "biz-1", "site-1", "upl-1", {
+        apply_suggested_metadata: true,
+      }),
+    );
+  });
+
+  it("runs batch media metadata suggestion for selected assets and renders lifecycle/status feedback", async () => {
+    const user = userEvent.setup();
+    const summary = buildMigrationWorkspaceSummary({
+      context_summary: {
+        ...buildMigrationWorkspaceSummary().context_summary,
+        media_assets: {
+          source_discovered_count: 1,
+          source_imported_count: 0,
+          operator_uploaded_count: 1,
+          selected_assets_count: 2,
+          media_asset_categories: ["project_gallery", "hero"],
+          selected_assets_trimmed: false,
+          diagnostics: [],
+          source_discovered: [
+            {
+              asset_id: "srcimg-remote",
+              normalized_url: "https://legacy.example/images/hero.jpg",
+              provenance: "source_site_import",
+              import_status: "discovered",
+              selected_for_draft: true,
+              metadata_suggestion: {
+                suggestion_status: "not_available",
+                reason_code: "image_not_imported",
+              },
+            },
+          ],
+          operator_uploaded: [
+            {
+              asset_id: "upl-1",
+              display_filename: "crew-photo.jpg",
+              provenance: "operator_upload",
+              category: "project_gallery",
+              alt_text: "Manual alt text",
+              selected_for_draft: true,
+              metadata_suggestion_applied: true,
+              metadata_suggestion: {
+                suggestion_status: "completed",
+                reason_code: "image_metadata_suggested",
+                suggested_alt_text: "AI suggested alt",
+              },
+            },
+          ],
+          selected_assets: [
+            {
+              asset_id: "upl-1",
+              display_filename: "crew-photo.jpg",
+              provenance: "operator_upload",
+              selected_for_draft: true,
+              metadata_suggestion_applied: true,
+              metadata_suggestion: {
+                suggestion_status: "completed",
+                reason_code: "image_metadata_suggested",
+              },
+            },
+            {
+              asset_id: "srcimg-remote",
+              normalized_url: "https://legacy.example/images/hero.jpg",
+              provenance: "source_site_import",
+              import_status: "discovered",
+              selected_for_draft: true,
+              metadata_suggestion: {
+                suggestion_status: "not_available",
+                reason_code: "image_not_imported",
+              },
+            },
+          ],
+        },
+      },
+    });
+    const mediaAssetsPayload = (summary.context_summary as Record<string, unknown>).media_assets as Record<
+      string,
+      unknown
+    >;
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(summary);
+    mockFetchMigrationMediaAssets.mockResolvedValue(mediaAssetsPayload);
+    mockSuggestMigrationMediaAssetsMetadataBatch.mockResolvedValue({
+      batch_status: "partial_success",
+      completed_count: 1,
+      failed_count: 0,
+      skipped_count: 1,
+      results: [
+        {
+          asset_id: "upl-1",
+          suggestion_status: "completed",
+          reason_code: "image_metadata_suggested",
+          retryable: false,
+        },
+        {
+          asset_id: "srcimg-remote",
+          suggestion_status: "not_available",
+          reason_code: "image_not_imported",
+          retryable: false,
+        },
+      ],
+    });
+
+    render(<SiteMigrationWorkflowPage />);
+
+    const mediaSection = await screen.findByTestId("migration-media-section");
+    const batchActionButton = within(mediaSection).getByRole("button", { name: "Suggest Metadata for Selected" });
+    expect(batchActionButton).toBeInTheDocument();
+
+    expect(within(mediaSection).getByTestId("migration-media-lifecycle-upl-1")).toHaveTextContent("Uploaded");
+    expect(within(mediaSection).getByTestId("migration-media-lifecycle-upl-1")).toHaveTextContent("Selected for Draft");
+    expect(within(mediaSection).getByTestId("migration-media-lifecycle-upl-1")).toHaveTextContent("AI Suggested");
+    expect(within(mediaSection).getByTestId("migration-media-lifecycle-upl-1")).toHaveTextContent("Applied");
+    expect(within(mediaSection).getByTestId("migration-media-lifecycle-srcimg-remote")).toHaveTextContent("Discovered");
+    expect(within(mediaSection).getByTestId("migration-media-lifecycle-srcimg-remote")).toHaveTextContent(
+      "Selected for Draft",
+    );
+    expect(within(mediaSection).getByTestId("migration-media-lifecycle-srcimg-remote")).toHaveTextContent(
+      "Not Available",
+    );
+
+    await user.click(batchActionButton);
+    await waitFor(() =>
+      expect(mockSuggestMigrationMediaAssetsMetadataBatch).toHaveBeenCalledWith("token-1", "biz-1", "site-1", {
+        asset_ids: ["upl-1", "srcimg-remote"],
+        force_refresh: false,
+      }),
+    );
+
+    const batchFeedback = within(mediaSection).getByTestId("migration-media-batch-feedback");
+    expect(batchFeedback).toHaveTextContent("Status: Partial success");
+    expect(batchFeedback).toHaveTextContent("Completed: 1 | Failed: 0 | Skipped: 1");
+    expect(within(batchFeedback).getByText(/Image must be imported before AI metadata can be suggested/i)).toBeInTheDocument();
+  });
+
+  it("imports selected discovered images and renders import feedback", async () => {
+    const user = userEvent.setup();
+    const summary = buildMigrationWorkspaceSummary({
+      context_summary: {
+        ...buildMigrationWorkspaceSummary().context_summary,
+        media_assets: {
+          source_discovered_count: 1,
+          source_imported_count: 0,
+          operator_uploaded_count: 0,
+          selected_assets_count: 1,
+          media_asset_categories: ["hero"],
+          selected_assets_trimmed: false,
+          diagnostics: [],
+          source_discovered: [
+            {
+              asset_id: "srcimg-remote",
+              normalized_url: "https://legacy.example/images/hero.jpg",
+              provenance: "source_site_import",
+              import_status: "discovered",
+              selected_for_draft: true,
+            },
+          ],
+          operator_uploaded: [],
+          selected_assets: [
+            {
+              asset_id: "srcimg-remote",
+              normalized_url: "https://legacy.example/images/hero.jpg",
+              provenance: "source_site_import",
+              import_status: "discovered",
+              selected_for_draft: true,
+            },
+          ],
+        },
+      },
+    });
+    const mediaAssetsPayload = (summary.context_summary as Record<string, unknown>).media_assets as Record<
+      string,
+      unknown
+    >;
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(summary);
+    mockFetchMigrationMediaAssets.mockResolvedValue(mediaAssetsPayload);
+    mockImportMigrationDiscoveredMediaAssets.mockResolvedValue({
+      batch_status: "completed",
+      imported_count: 1,
+      failed_count: 0,
+      skipped_count: 0,
+      disabled_count: 0,
+      results: [
+        {
+          asset_id: "srcimg-remote",
+          status: "imported",
+          reason_code: "remote_image_imported",
+        },
+      ],
+    });
+
+    render(<SiteMigrationWorkflowPage />);
+
+    const mediaSection = await screen.findByTestId("migration-media-section");
+    const importButton = within(mediaSection).getByRole("button", { name: "Import Selected Source Images" });
+    expect(importButton).toBeInTheDocument();
+    await user.click(importButton);
+
+    await waitFor(() =>
+      expect(mockImportMigrationDiscoveredMediaAssets).toHaveBeenCalledWith("token-1", "biz-1", "site-1", {
+        discovered_image_ids: ["srcimg-remote"],
+        selected_for_draft: true,
+      }),
+    );
+
+    const importFeedback = within(mediaSection).getByTestId("migration-media-import-feedback");
+    expect(importFeedback).toHaveTextContent("Status: Completed");
+    expect(importFeedback).toHaveTextContent("Imported: 1 | Failed: 0 | Skipped: 0 | Disabled: 0");
+  });
+
+  it("renders disabled discovered-image import guidance when feature flag is off", async () => {
+    const user = userEvent.setup();
+    const summary = buildMigrationWorkspaceSummary({
+      context_summary: {
+        ...buildMigrationWorkspaceSummary().context_summary,
+        media_assets: {
+          source_discovered_count: 1,
+          source_imported_count: 0,
+          operator_uploaded_count: 0,
+          selected_assets_count: 1,
+          media_asset_categories: [],
+          selected_assets_trimmed: false,
+          diagnostics: [],
+          source_discovered: [
+            {
+              asset_id: "srcimg-disabled",
+              normalized_url: "https://legacy.example/images/disabled.jpg",
+              provenance: "source_site_import",
+              import_status: "discovered",
+              selected_for_draft: true,
+            },
+          ],
+          operator_uploaded: [],
+          selected_assets: [],
+        },
+      },
+    });
+    const mediaAssetsPayload = (summary.context_summary as Record<string, unknown>).media_assets as Record<
+      string,
+      unknown
+    >;
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(summary);
+    mockFetchMigrationMediaAssets.mockResolvedValue(mediaAssetsPayload);
+    mockImportMigrationDiscoveredMediaAssets.mockResolvedValue({
+      batch_status: "failed",
+      imported_count: 0,
+      failed_count: 0,
+      skipped_count: 0,
+      disabled_count: 1,
+      results: [
+        {
+          asset_id: "srcimg-disabled",
+          status: "disabled",
+          reason_code: "remote_image_import_disabled",
+        },
+      ],
+    });
+
+    render(<SiteMigrationWorkflowPage />);
+
+    const mediaSection = await screen.findByTestId("migration-media-section");
+    await user.click(within(mediaSection).getByRole("button", { name: "Import Selected Source Images" }));
+
+    const importFeedback = await within(mediaSection).findByTestId("migration-media-import-feedback");
+    expect(importFeedback).toHaveTextContent("Disabled: 1");
+    expect(
+      within(importFeedback).getByText(/Remote source image import is currently disabled for this environment/i),
+    ).toBeInTheDocument();
+  });
+
   it("renders advanced diagnostics and history with collapsible publish/deploy history panels", async () => {
     const user = userEvent.setup();
     render(<SiteMigrationWorkflowPage />);
@@ -2789,7 +3184,10 @@ function seedCompetitorProfileGenerationDefaults(): void {
   mockFetchMigrationDraftReadiness.mockReset();
   mockFetchMigrationMediaAssets.mockReset();
   mockUploadMigrationMediaAsset.mockReset();
+  mockImportMigrationDiscoveredMediaAssets.mockReset();
   mockUpdateMigrationMediaAsset.mockReset();
+  mockSuggestMigrationMediaAssetMetadata.mockReset();
+  mockSuggestMigrationMediaAssetsMetadataBatch.mockReset();
   mockUpsertMigrationWorkspace.mockResolvedValue(defaultMigrationWorkspace);
   mockFetchMigrationWorkspaceSummary.mockResolvedValue(
     buildMigrationWorkspaceSummary({
@@ -2812,6 +3210,28 @@ function seedCompetitorProfileGenerationDefaults(): void {
   mockFetchMigrationDeployHistory.mockResolvedValue({ items: [], total: 0 });
   mockFetchMigrationDraftReadiness.mockResolvedValue(buildMigrationDraftReadinessPreflight());
   mockFetchMigrationMediaAssets.mockResolvedValue({});
+  mockImportMigrationDiscoveredMediaAssets.mockResolvedValue({
+    batch_status: "completed",
+    imported_count: 0,
+    failed_count: 0,
+    skipped_count: 0,
+    disabled_count: 0,
+    results: [],
+  });
+  mockSuggestMigrationMediaAssetsMetadataBatch.mockResolvedValue({
+    batch_status: "completed",
+    completed_count: 1,
+    failed_count: 0,
+    skipped_count: 0,
+    results: [
+      {
+        asset_id: "upl-1",
+        suggestion_status: "completed",
+        reason_code: "image_metadata_suggested",
+        retryable: false,
+      },
+    ],
+  });
   mockIngestMigrationSource.mockResolvedValue({
     ...defaultMigrationWorkspace,
     source_site_status: "ingested",
@@ -2931,6 +3351,18 @@ function seedCompetitorProfileGenerationDefaults(): void {
     display_filename: "uploaded.jpg",
     provenance: "operator_upload",
     selected_for_draft: true,
+  });
+  mockSuggestMigrationMediaAssetMetadata.mockResolvedValue({
+    asset_id: "upload-1",
+    display_filename: "uploaded.jpg",
+    provenance: "operator_upload",
+    selected_for_draft: true,
+    metadata_suggestion: {
+      suggestion_status: "completed",
+      reason_code: "image_metadata_suggested",
+      suggested_alt_text: "Suggested alt text",
+      suggested_category: "project_gallery",
+    },
   });
 }
 

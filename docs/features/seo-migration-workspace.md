@@ -246,6 +246,9 @@ Workspace media APIs:
 - `GET /api/businesses/{business_id}/seo/sites/{site_id}/migration/media/assets`
 - `POST /api/businesses/{business_id}/seo/sites/{site_id}/migration/media/upload`
 - `PATCH /api/businesses/{business_id}/seo/sites/{site_id}/migration/media/assets/{asset_id}`
+- `POST /api/businesses/{business_id}/seo/sites/{site_id}/migration/media/assets/{asset_id}/suggest-metadata`
+- `POST /api/businesses/{business_id}/seo/sites/{site_id}/migration/media/assets/suggest-metadata`
+- `POST /api/businesses/{business_id}/seo/sites/{site_id}/migration/media/discovered/import`
 
 Workspace/site scoping contract:
 - media list/upload/update operations are scoped by both tenant business and `site_id`
@@ -262,6 +265,41 @@ Operator uploads:
 - uploaded media metadata is bounded and includes safe fields (id, filename, type, size, dimensions, category, alt/description/usage, page assignment, provenance)
 - local/internal storage keys are not returned in operator-facing API payloads
 
+AI-assisted media metadata suggestions (2026-05):
+- suggestion fields are stored separately from operator-authored fields under `metadata_suggestion`:
+  - `suggested_category`
+  - `suggested_alt_text`
+  - `suggested_description`
+  - `suggested_usage_note`
+  - `suggested_page_assignment`
+  - optional `confidence`
+  - `suggestion_source` (`ai_image_recognition`)
+  - `suggestion_status` (`pending|completed|failed|not_available`)
+  - optional `reason_code`
+  - optional `generated_at`
+- operator-authored values are never overwritten automatically
+- operator can explicitly apply a completed suggestion via media update payload:
+  - `apply_suggested_metadata: true`
+- batch suggestion (selected assets) is available through:
+  - `POST .../migration/media/assets/suggest-metadata`
+  - request: `asset_ids: string[]`, optional `force_refresh: boolean`
+  - per-asset processing is independent; one asset failure does not fail the entire batch
+  - response includes:
+    - `batch_status` (`completed|partial_success|failed`)
+    - `results[]` per asset (`asset_id`, `suggestion_status`, `reason_code`, `retryable`, optional `metadata_suggestion`)
+    - `completed_count`, `failed_count`, `skipped_count`
+  - max batch size is enforced with deterministic validation reason:
+    - `media_suggestion_batch_limit_reached`
+- remote discovered images that are not imported/controlled return staged not-available guidance:
+  - `image_not_imported`
+  - no raw remote URL handoff to provider in this pass
+- suggestion response payloads remain metadata-only:
+  - no local file paths
+  - no storage keys
+  - no raw bytes/base64
+  - no auth tokens/headers/cookies
+- local automated tests for this capability mock provider responses; no real provider calls are required for test runs
+
 Error contract highlights:
 - unsupported MIME -> `unsupported_mime_type`
 - payload/declared MIME mismatch -> `media_upload_content_type_mismatch`
@@ -273,14 +311,72 @@ Draft generation media contract:
 - only selected media metadata is included in AI context (`migration_context.media_assets.selected_assets`)
 - selected media context is trimmed to a bounded count when necessary
 - raw image bytes/base64 are not sent to the AI provider
+- draft context uses effective metadata precedence:
+  - operator-authored/applied metadata first
+  - AI suggestion metadata only as bounded fallback when suggestion status is completed
 - when no media is selected, generation should rely on placeholders and must not invent approved media assets
 
-Selected discovered-image import status (2026-05 hardening pass):
-- selected source-site discovered images are still metadata-only in this pass
-- selecting a discovered image controls draft-context eligibility, not remote binary import/storage
-- backend now includes a small boundary method (`import_selected_discovered_media_assets`) that reports a staged limitation result with reason code:
-  - `selected_remote_image_import_not_enabled`
-- broad remote import remains a follow-up change and must keep strict SSRF/type/size/timeout controls
+Draft input summary media suggestion counters:
+- `media_assets_with_ai_suggestions_count`
+- `media_assets_with_operator_applied_metadata_count`
+- `media_suggestion_failures_count`
+
+Suggestion reason codes:
+- `image_metadata_suggested`
+- `image_analysis_not_available`
+- `image_not_imported`
+- `unsupported_image_type`
+- `image_too_large`
+- `provider_unavailable`
+- `provider_response_invalid`
+- `media_asset_not_found`
+- `media_asset_not_authorized`
+- `media_suggestion_batch_limit_reached`
+
+Selected discovered-image import (feature-flagged, 2026-05):
+- feature flag: `SEO_MIGRATION_REMOTE_IMAGE_IMPORT_ENABLED`
+  - default: `false` (disabled unless explicitly enabled in runtime config)
+- when disabled:
+  - discovered import endpoint returns per-asset `status=disabled` with reason `remote_image_import_disabled`
+  - metadata suggestion for remote-only discovered assets still returns `image_not_imported`
+- imports are operator-selected only:
+  - endpoint accepts discovered ids/URLs already present in `source_snapshot.discovered_images`
+  - no arbitrary new remote URLs are accepted
+  - no auto-import of all discovered images
+  - no hotlink fallback in generated artifacts
+- imported assets are stored as workspace media assets under source provenance (`source_site_import`) and become eligible for:
+  - per-asset metadata suggestion
+  - batch metadata suggestion
+  - selected-media draft context (metadata only)
+- import response contract is per-asset and bounded:
+  - `status`: `imported|skipped|failed|disabled`
+  - `reason_code`: deterministic import reason
+  - optional sanitized `media_asset` (no storage key, no local path, no raw bytes/base64)
+
+Import safety controls:
+- only `http`/`https` schemes
+- URL must already exist in discovered snapshot metadata
+- DNS/IP safety checks before fetch (private/loopback/link-local/multicast/reserved blocked)
+- cloud metadata endpoints blocked (including `169.254.169.254`/`metadata.google.internal`)
+- redirect escape prevention (redirect target is re-validated)
+- bounded timeout and response-size limits
+- allowed image MIME types match upload policy (`jpeg/png/webp/gif`)
+- SVG remains disallowed in this pass
+- content-type mismatch is rejected
+
+Import reason codes:
+- `remote_image_import_disabled`
+- `remote_image_imported`
+- `image_not_found_in_source_snapshot`
+- `image_import_unsafe_url`
+- `image_import_private_address_blocked`
+- `unsupported_image_type`
+- `image_too_large`
+- `image_fetch_timeout`
+- `image_fetch_failed`
+- `image_content_type_mismatch`
+- `media_asset_not_authorized`
+- `media_import_count_limit_reached`
 
 ## Site SEO Workspace Grouping and Diagnostics (2026-05)
 Migration route grouping in the UI now explicitly separates:
@@ -292,6 +388,15 @@ Migration route grouping in the UI now explicitly separates:
   - discovered source images
   - operator uploads
   - selected assets used for draft context
+  - media lifecycle labels for operator clarity:
+    - `Discovered`
+    - `Uploaded`
+    - `Imported` (when import/selection state indicates controlled availability)
+    - `Selected for Draft`
+    - `AI Suggested`
+    - `Applied`
+    - `Not Available` / `Rejected`
+  - batch suggestion action for selected assets with per-asset result feedback
 - Metrics:
   - readiness/AI execution/runtime metrics in primary workflow cards
 - Diagnostics / Debug Output:

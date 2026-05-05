@@ -1152,6 +1152,7 @@ def _build_service(
     deploy_secret_git_email: str | None = None,
     deploy_secret_git_token: str | None = None,
     managed_site_private_image_auth_enabled: bool = False,
+    remote_image_import_enabled: bool = False,
 ) -> SEOMigrationService:
     github_publish_config_service = GitHubPublishConfigService(
         session=db_session,
@@ -1181,6 +1182,7 @@ def _build_service(
         deploy_secret_git_email=deploy_secret_git_email,
         deploy_secret_git_token=deploy_secret_git_token,
         managed_site_private_image_auth_enabled=managed_site_private_image_auth_enabled,
+        remote_image_import_enabled=remote_image_import_enabled,
     )
 
 
@@ -1797,6 +1799,399 @@ def test_workspace_media_upload_update_and_listing_are_bounded_and_workspace_sco
     }
 
 
+def test_workspace_media_metadata_suggestions_are_stored_separately_and_apply_only_on_explicit_action(
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("MIGRATION_MEDIA_STORAGE_ROOT", str(tmp_path))
+    service = _build_service(db_session, _StaticMigrationProvider(_build_publishable_output()))
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+
+    uploaded = service.upload_workspace_media_asset(
+        business_id=business_id,
+        site_id=site_id,
+        filename="crew-photo.png",
+        content_type="image/png",
+        payload=_tiny_png_payload(),
+        selected_for_draft=True,
+        category="project_gallery",
+        alt_text="Operator-authored alt",
+        description="Operator-authored description",
+        usage_note="Operator-authored usage",
+        page_assignment="/projects",
+        principal_id="principal-1",
+    )
+    uploaded_asset_id = str(uploaded.get("asset_id") or "")
+    assert uploaded_asset_id
+
+    def _mock_suggestion_request(**kwargs) -> dict[str, object]:  # noqa: ANN003
+        del kwargs
+        return {
+            "suggested_category": "hero",
+            "suggested_alt_text": "AI suggested alt text",
+            "suggested_description": "AI suggested description",
+            "suggested_usage_note": "AI suggested usage",
+            "suggested_page_assignment": "/",
+            "confidence": 0.87,
+        }
+
+    monkeypatch.setattr(service, "_request_media_metadata_suggestion", _mock_suggestion_request)
+
+    suggested = service.suggest_media_asset_metadata(
+        business_id=business_id,
+        site_id=site_id,
+        asset_id=uploaded_asset_id,
+        force_refresh=True,
+        principal_id="principal-1",
+    )
+    suggestion = suggested.get("metadata_suggestion") or {}
+    assert suggestion.get("suggestion_status") == "completed"
+    assert suggestion.get("reason_code") == "image_metadata_suggested"
+    assert suggestion.get("suggested_alt_text") == "AI suggested alt text"
+    assert suggested.get("alt_text") == "Operator-authored alt"
+    assert suggested.get("description") == "Operator-authored description"
+    assert suggested.get("metadata_suggestion_applied") is False
+
+    applied = service.update_workspace_media_asset(
+        business_id=business_id,
+        site_id=site_id,
+        asset_id=uploaded_asset_id,
+        selected_for_draft=None,
+        apply_suggested_metadata=True,
+        principal_id="principal-1",
+    )
+    assert applied.get("metadata_suggestion_applied") is True
+    assert isinstance(applied.get("metadata_suggestion_applied_at"), str)
+    assert applied.get("category") == "hero"
+    assert applied.get("alt_text") == "AI suggested alt text"
+    assert applied.get("description") == "AI suggested description"
+    assert applied.get("usage_note") == "AI suggested usage"
+    assert applied.get("page_assignment") == "/"
+
+
+@pytest.mark.parametrize("provider_reason_code", ["provider_unavailable", "provider_response_invalid"])
+def test_workspace_media_metadata_suggestion_normalizes_provider_failure_reason_codes(
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    provider_reason_code: str,
+) -> None:
+    monkeypatch.setenv("MIGRATION_MEDIA_STORAGE_ROOT", str(tmp_path))
+    service = _build_service(db_session, _StaticMigrationProvider(_build_publishable_output()))
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+
+    uploaded = service.upload_workspace_media_asset(
+        business_id=business_id,
+        site_id=site_id,
+        filename="provider-failure.png",
+        content_type="image/png",
+        payload=_tiny_png_payload(),
+        selected_for_draft=False,
+        category=None,
+        alt_text=None,
+        description=None,
+        usage_note=None,
+        page_assignment=None,
+        principal_id="principal-1",
+    )
+    uploaded_asset_id = str(uploaded.get("asset_id") or "")
+    assert uploaded_asset_id
+
+    def _raise_provider_failure(**kwargs):  # noqa: ANN003
+        del kwargs
+        raise SEOMigrationValidationError(
+            "simulated provider failure",
+            failure_category="provider_error",
+            failure_reason="unknown",
+            error_code=provider_reason_code,
+        )
+
+    monkeypatch.setattr(service, "_request_media_metadata_suggestion", _raise_provider_failure)
+
+    suggested = service.suggest_media_asset_metadata(
+        business_id=business_id,
+        site_id=site_id,
+        asset_id=uploaded_asset_id,
+        force_refresh=True,
+        principal_id="principal-1",
+    )
+    suggestion = suggested.get("metadata_suggestion") or {}
+    assert suggestion.get("suggestion_status") == "failed"
+    assert suggestion.get("reason_code") == provider_reason_code
+
+
+def test_workspace_media_metadata_suggestion_returns_image_not_imported_for_remote_discovered_assets(db_session) -> None:
+    service = _build_service(db_session, _StaticMigrationProvider(_build_publishable_output()))
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+
+    workspace = service.get_workspace(business_id=business_id, site_id=site_id)
+    workspace.imported_source_snapshot_json = {
+        "discovered_images": [
+            {
+                "asset_id": "srcimg-remote-only",
+                "normalized_url": "https://legacy.example/images/front.jpg?signed=abc123",
+                "provenance": "source_site_import",
+                "import_status": "discovered",
+                "selected_for_draft": True,
+            }
+        ]
+    }
+    service.seo_migration_repository.save_workspace(workspace)
+    service.session.commit()
+
+    suggested = service.suggest_media_asset_metadata(
+        business_id=business_id,
+        site_id=site_id,
+        asset_id="srcimg-remote-only",
+        force_refresh=True,
+        principal_id="principal-1",
+    )
+    suggestion = suggested.get("metadata_suggestion") or {}
+    assert suggestion.get("suggestion_status") == "not_available"
+    assert suggestion.get("reason_code") == "image_not_imported"
+
+
+def test_workspace_media_metadata_batch_suggestions_support_force_refresh(
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("MIGRATION_MEDIA_STORAGE_ROOT", str(tmp_path))
+    service = _build_service(db_session, _StaticMigrationProvider(_build_publishable_output()))
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+
+    uploaded_asset_ids: list[str] = []
+    for index in range(2):
+        uploaded = service.upload_workspace_media_asset(
+            business_id=business_id,
+            site_id=site_id,
+            filename=f"batch-{index}.png",
+            content_type="image/png",
+            payload=_tiny_png_payload(),
+            selected_for_draft=True,
+            category=None,
+            alt_text=None,
+            description=None,
+            usage_note=None,
+            page_assignment=None,
+            principal_id="principal-1",
+        )
+        asset_id = str(uploaded.get("asset_id") or "")
+        assert asset_id
+        uploaded_asset_ids.append(asset_id)
+
+    request_call_count = {"count": 0}
+
+    def _mock_suggestion_request(**kwargs) -> dict[str, object]:  # noqa: ANN003
+        request_call_count["count"] += 1
+        asset_metadata = kwargs.get("asset_metadata")
+        asset_id = (
+            str(asset_metadata.get("asset_id") or "").strip()
+            if isinstance(asset_metadata, dict)
+            else "unknown"
+        )
+        return {
+            "suggested_category": "project_gallery",
+            "suggested_alt_text": f"AI alt for {asset_id}",
+            "suggested_description": "AI generated description",
+            "suggested_usage_note": "AI generated usage note",
+            "suggested_page_assignment": "/projects",
+            "confidence": 0.91,
+        }
+
+    monkeypatch.setattr(service, "_request_media_metadata_suggestion", _mock_suggestion_request)
+
+    first_batch = service.suggest_media_assets_metadata_batch(
+        business_id=business_id,
+        site_id=site_id,
+        asset_ids=uploaded_asset_ids,
+        force_refresh=False,
+        principal_id="principal-1",
+    )
+    assert first_batch.get("batch_status") == "completed"
+    assert first_batch.get("completed_count") == 2
+    assert first_batch.get("failed_count") == 0
+    assert first_batch.get("skipped_count") == 0
+    assert request_call_count["count"] == 2
+
+    second_batch = service.suggest_media_assets_metadata_batch(
+        business_id=business_id,
+        site_id=site_id,
+        asset_ids=uploaded_asset_ids,
+        force_refresh=False,
+        principal_id="principal-1",
+    )
+    assert second_batch.get("batch_status") == "completed"
+    assert request_call_count["count"] == 2
+
+    third_batch = service.suggest_media_assets_metadata_batch(
+        business_id=business_id,
+        site_id=site_id,
+        asset_ids=uploaded_asset_ids,
+        force_refresh=True,
+        principal_id="principal-1",
+    )
+    assert third_batch.get("batch_status") == "completed"
+    assert request_call_count["count"] == 4
+    serialized = json.dumps(third_batch).lower()
+    for forbidden in ("storage_key", "base64", "access_token", "refresh_token", "authorization", "cookie", "\\\\"):
+        assert forbidden not in serialized
+
+
+def test_workspace_media_metadata_batch_suggestion_returns_partial_success_for_remote_not_imported_assets(
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("MIGRATION_MEDIA_STORAGE_ROOT", str(tmp_path))
+    service = _build_service(db_session, _StaticMigrationProvider(_build_publishable_output()))
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+
+    uploaded = service.upload_workspace_media_asset(
+        business_id=business_id,
+        site_id=site_id,
+        filename="controlled.png",
+        content_type="image/png",
+        payload=_tiny_png_payload(),
+        selected_for_draft=True,
+        category=None,
+        alt_text=None,
+        description=None,
+        usage_note=None,
+        page_assignment=None,
+        principal_id="principal-1",
+    )
+    uploaded_asset_id = str(uploaded.get("asset_id") or "")
+    assert uploaded_asset_id
+
+    workspace = service.get_workspace(business_id=business_id, site_id=site_id)
+    source_snapshot = dict(workspace.imported_source_snapshot_json or {})
+    discovered = list(source_snapshot.get("discovered_images") or [])
+    discovered.append(
+        {
+            "asset_id": "srcimg-remote-only",
+            "normalized_url": "https://legacy.example/images/front.jpg?signed=abc123",
+            "provenance": "source_site_import",
+            "import_status": "discovered",
+            "selected_for_draft": True,
+        }
+    )
+    source_snapshot["discovered_images"] = discovered
+    workspace.imported_source_snapshot_json = source_snapshot
+    service.seo_migration_repository.save_workspace(workspace)
+    service.session.commit()
+
+    batch_result = service.suggest_media_assets_metadata_batch(
+        business_id=business_id,
+        site_id=site_id,
+        asset_ids=[uploaded_asset_id, "srcimg-remote-only"],
+        force_refresh=False,
+        principal_id="principal-1",
+    )
+    assert batch_result.get("batch_status") == "partial_success"
+    assert batch_result.get("completed_count") == 1
+    assert batch_result.get("failed_count") == 0
+    assert batch_result.get("skipped_count") == 1
+    results = batch_result.get("results")
+    assert isinstance(results, list)
+    results_by_asset = {
+        str(item.get("asset_id") or ""): item
+        for item in results
+        if isinstance(item, dict)
+    }
+    assert (results_by_asset.get(uploaded_asset_id) or {}).get("suggestion_status") == "completed"
+    assert (results_by_asset.get("srcimg-remote-only") or {}).get("suggestion_status") == "not_available"
+    assert (results_by_asset.get("srcimg-remote-only") or {}).get("reason_code") == "image_not_imported"
+
+
+def test_workspace_media_metadata_batch_suggestion_blocks_cross_site_assets(
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("MIGRATION_MEDIA_STORAGE_ROOT", str(tmp_path))
+    service = _build_service(db_session, _StaticMigrationProvider(_build_publishable_output()))
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+
+    other_site_id = "33333333-3333-3333-3333-333333333333"
+    db_session.add(
+        SEOSite(
+            id=other_site_id,
+            business_id=business_id,
+            display_name="Secondary Site",
+            base_url="https://secondary.example/",
+            normalized_domain="secondary.example",
+            industry="fire protection",
+            primary_location="Longmont, CO",
+            service_areas_json=["Longmont"],
+            is_active=True,
+            is_primary=False,
+        )
+    )
+    db_session.commit()
+    _seed_workspace(service, business_id=business_id, site_id=other_site_id)
+
+    uploaded = service.upload_workspace_media_asset(
+        business_id=business_id,
+        site_id=site_id,
+        filename="site-a-only.png",
+        content_type="image/png",
+        payload=_tiny_png_payload(),
+        selected_for_draft=True,
+        category=None,
+        alt_text=None,
+        description=None,
+        usage_note=None,
+        page_assignment=None,
+        principal_id="principal-1",
+    )
+    asset_id = str(uploaded.get("asset_id") or "")
+    assert asset_id
+
+    batch_result = service.suggest_media_assets_metadata_batch(
+        business_id=business_id,
+        site_id=other_site_id,
+        asset_ids=[asset_id],
+        force_refresh=False,
+        principal_id="principal-1",
+    )
+    assert batch_result.get("batch_status") == "failed"
+    assert batch_result.get("completed_count") == 0
+    assert batch_result.get("failed_count") == 1
+    results = batch_result.get("results")
+    assert isinstance(results, list)
+    assert len(results) == 1
+    result = results[0] if isinstance(results[0], dict) else {}
+    assert result.get("asset_id") == asset_id
+    assert result.get("reason_code") == "media_asset_not_authorized"
+    assert result.get("suggestion_status") == "failed"
+    assert result.get("retryable") is False
+
+
+def test_workspace_media_metadata_batch_suggestion_enforces_max_asset_count(db_session) -> None:
+    service = _build_service(db_session, _StaticMigrationProvider(_build_publishable_output()))
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+
+    oversized_asset_ids = [f"asset-{index}" for index in range(25)]
+    with pytest.raises(SEOMigrationValidationError) as exc_info:
+        service.suggest_media_assets_metadata_batch(
+            business_id=business_id,
+            site_id=site_id,
+            asset_ids=oversized_asset_ids,
+            force_refresh=False,
+            principal_id="principal-1",
+        )
+    assert exc_info.value.error_code == "media_suggestion_batch_limit_reached"
+
+
 def test_workspace_media_upload_rejects_unsupported_or_mismatched_mime_types(db_session) -> None:
     service = _build_service(db_session, _StaticMigrationProvider(_build_publishable_output()))
     business_id, site_id = _seed_business_and_site(db_session)
@@ -1838,7 +2233,7 @@ def test_workspace_media_upload_rejects_unsupported_or_mismatched_mime_types(db_
     assert mismatch_error.value.error_code == "media_upload_content_type_mismatch"
 
 
-def test_selected_discovered_media_import_boundary_reports_metadata_only_limitation(db_session) -> None:
+def test_selected_discovered_media_import_returns_disabled_reason_when_feature_flag_off(db_session) -> None:
     service = _build_service(db_session, _StaticMigrationProvider(_build_publishable_output()))
     business_id, site_id = _seed_business_and_site(db_session)
     _seed_workspace(service, business_id=business_id, site_id=site_id)
@@ -1851,7 +2246,7 @@ def test_selected_discovered_media_import_boundary_reports_metadata_only_limitat
                 "normalized_url": "https://legacy.example/media/hero.jpg",
                 "selected_for_draft": True,
                 "provenance": "source_site_import",
-                "import_status": "selected",
+                "import_status": "discovered",
             },
             {
                 "asset_id": "srcimg-unselected",
@@ -1873,11 +2268,198 @@ def test_selected_discovered_media_import_boundary_reports_metadata_only_limitat
     assert boundary_result.get("implemented") is False
     assert boundary_result.get("attempted_count") == 1
     assert boundary_result.get("imported_count") == 0
-    assert boundary_result.get("failure_reason_code") == "selected_remote_image_import_not_enabled"
+    assert boundary_result.get("failure_reason_code") == "remote_image_import_disabled"
     failures = boundary_result.get("failures")
     assert isinstance(failures, list)
     assert failures[0].get("asset_id") == "srcimg-selected"
-    assert failures[0].get("reason_code") == "selected_remote_image_import_not_enabled"
+    assert failures[0].get("reason_code") == "remote_image_import_disabled"
+
+
+def test_discovered_media_import_imports_selected_assets_when_feature_flag_enabled(
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        remote_image_import_enabled=True,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+
+    workspace = service.get_workspace(business_id=business_id, site_id=site_id)
+    workspace.imported_source_snapshot_json = {
+        "discovered_images": [
+            {
+                "asset_id": "srcimg-selected",
+                "normalized_url": "https://legacy.example/media/hero.jpg?token=abc",
+                "selected_for_draft": True,
+                "provenance": "source_site_import",
+                "import_status": "discovered",
+                "metadata_suggestion": {
+                    "suggestion_status": "not_available",
+                    "reason_code": "image_not_imported",
+                },
+            }
+        ]
+    }
+    service.seo_migration_repository.save_workspace(workspace)
+    service.session.commit()
+
+    monkeypatch.setattr(
+        service,
+        "_fetch_remote_discovered_image_for_import",
+        lambda *, url: {
+            "reason_code": "remote_image_imported",
+            "payload": _tiny_png_payload(),
+            "content_type": "image/png",
+            "final_url": "https://legacy.example/media/hero.jpg",
+        },
+    )
+
+    result = service.import_discovered_media_assets(
+        business_id=business_id,
+        site_id=site_id,
+        discovered_image_ids=["srcimg-selected"],
+        normalized_urls=[],
+        selected_for_draft=True,
+        principal_id="principal-1",
+    )
+    assert result.get("batch_status") == "completed"
+    assert result.get("imported_count") == 1
+    assert result.get("failed_count") == 0
+    assert result.get("skipped_count") == 0
+    assert result.get("disabled_count") == 0
+    results = result.get("results")
+    assert isinstance(results, list)
+    assert results[0].get("status") == "imported"
+    assert results[0].get("reason_code") == "remote_image_imported"
+
+    refreshed_workspace = service.get_workspace(business_id=business_id, site_id=site_id)
+    discovered_assets = list((refreshed_workspace.imported_source_snapshot_json or {}).get("discovered_images") or [])
+    assert len(discovered_assets) == 1
+    imported_asset = discovered_assets[0]
+    assert imported_asset.get("import_status") == "selected"
+    assert imported_asset.get("selected_for_draft") is True
+    assert imported_asset.get("content_type") == "image/png"
+    assert imported_asset.get("size_bytes") == len(_tiny_png_payload())
+    assert isinstance(imported_asset.get("storage_key"), str)
+    assert imported_asset.get("metadata_suggestion") is None
+
+
+def test_discovered_media_import_blocks_private_source_urls_without_fetch(
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        remote_image_import_enabled=True,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+
+    workspace = service.get_workspace(business_id=business_id, site_id=site_id)
+    workspace.imported_source_snapshot_json = {
+        "discovered_images": [
+            {
+                "asset_id": "srcimg-private",
+                "normalized_url": "http://127.0.0.1/internal.png",
+                "selected_for_draft": True,
+                "provenance": "source_site_import",
+                "import_status": "discovered",
+            }
+        ]
+    }
+    service.seo_migration_repository.save_workspace(workspace)
+    service.session.commit()
+
+    class _UnexpectedFetchOpener:
+        def open(self, request, timeout):  # noqa: ANN001
+            del request, timeout
+            raise AssertionError("network fetch should not be attempted for private host URLs")
+
+    monkeypatch.setattr(urllib.request, "build_opener", lambda *_args, **_kwargs: _UnexpectedFetchOpener())
+
+    result = service.import_discovered_media_assets(
+        business_id=business_id,
+        site_id=site_id,
+        discovered_image_ids=["srcimg-private"],
+        normalized_urls=[],
+        selected_for_draft=True,
+        principal_id="principal-1",
+    )
+    assert result.get("batch_status") == "failed"
+    assert result.get("imported_count") == 0
+    assert result.get("failed_count") == 1
+    results = result.get("results")
+    assert isinstance(results, list)
+    assert results[0].get("status") == "failed"
+    assert results[0].get("reason_code") == "image_import_private_address_blocked"
+
+
+def test_discovered_media_import_deduplicates_repeated_import_attempts(
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        remote_image_import_enabled=True,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+
+    workspace = service.get_workspace(business_id=business_id, site_id=site_id)
+    workspace.imported_source_snapshot_json = {
+        "discovered_images": [
+            {
+                "asset_id": "srcimg-repeat",
+                "normalized_url": "https://legacy.example/media/repeat.jpg",
+                "selected_for_draft": True,
+                "provenance": "source_site_import",
+                "import_status": "discovered",
+            }
+        ]
+    }
+    service.seo_migration_repository.save_workspace(workspace)
+    service.session.commit()
+
+    monkeypatch.setattr(
+        service,
+        "_fetch_remote_discovered_image_for_import",
+        lambda *, url: {
+            "reason_code": "remote_image_imported",
+            "payload": _tiny_png_payload(),
+            "content_type": "image/png",
+            "final_url": "https://legacy.example/media/repeat.jpg",
+        },
+    )
+
+    first_result = service.import_discovered_media_assets(
+        business_id=business_id,
+        site_id=site_id,
+        discovered_image_ids=["srcimg-repeat"],
+        normalized_urls=[],
+        selected_for_draft=True,
+        principal_id="principal-1",
+    )
+    assert first_result.get("imported_count") == 1
+
+    second_result = service.import_discovered_media_assets(
+        business_id=business_id,
+        site_id=site_id,
+        discovered_image_ids=["srcimg-repeat"],
+        normalized_urls=[],
+        selected_for_draft=True,
+        principal_id="principal-1",
+    )
+    assert second_result.get("imported_count") == 0
+    assert second_result.get("skipped_count") == 1
+    second_results = second_result.get("results")
+    assert isinstance(second_results, list)
+    assert second_results[0].get("status") == "skipped"
+    assert second_results[0].get("reason_code") == "remote_image_imported"
 
 
 def test_generate_draft_artifacts_sets_context_unavailable_reason_code_when_context_assembly_errors(
@@ -1987,6 +2569,10 @@ def test_generate_draft_artifacts_includes_bounded_draft_input_summary_and_media
                 "import_status": "discovered",
                 "category": "project_gallery",
                 "image_base64": "iVBORw0KGgoAAAANSUhEUgAAAAUA",
+                "metadata_suggestion": {
+                    "suggestion_status": "not_available",
+                    "reason_code": "image_not_imported",
+                },
             },
         ],
     }
@@ -2000,11 +2586,23 @@ def test_generate_draft_artifacts_includes_bounded_draft_input_summary_and_media
             "provenance": "operator_upload",
             "selected_for_draft": True,
             "import_status": "selected",
-            "category": "project_gallery",
-            "alt_text": "Crew on jobsite",
-            "description": "Customer gallery image",
-            "usage_note": "Use on projects page",
-            "page_assignment": "/projects",
+            "category": None,
+            "alt_text": None,
+            "description": None,
+            "usage_note": None,
+            "page_assignment": None,
+            "metadata_suggestion": {
+                "suggestion_status": "completed",
+                "reason_code": "image_metadata_suggested",
+                "suggestion_source": "ai_image_recognition",
+                "suggested_category": "project_gallery",
+                "suggested_alt_text": "Crew on jobsite",
+                "suggested_description": "Customer gallery image",
+                "suggested_usage_note": "Use on projects page",
+                "suggested_page_assignment": "/projects",
+                "confidence": 0.8,
+                "generated_at": utc_now().isoformat(),
+            },
             "storage_key": "business/site/upl-selected.jpg",
             "raw_token_value": "secret-token-value",
         }
@@ -2036,6 +2634,9 @@ def test_generate_draft_artifacts_includes_bounded_draft_input_summary_and_media
     assert draft_input_summary.get("selected_media_assets_count") == 2
     assert draft_input_summary.get("media_context_included") is True
     assert draft_input_summary.get("media_context_trimmed") is False
+    assert draft_input_summary.get("media_assets_with_ai_suggestions_count") == 1
+    assert draft_input_summary.get("media_assets_with_operator_applied_metadata_count") == 0
+    assert draft_input_summary.get("media_suggestion_failures_count") == 1
     assert draft_input_summary.get("provider_source") == "mock"
     assert draft_input_summary.get("mocked_source") is True
 
@@ -2050,6 +2651,15 @@ def test_generate_draft_artifacts_includes_bounded_draft_input_summary_and_media
     selected_assets = media_context.get("selected_assets")
     assert isinstance(selected_assets, list)
     assert len(selected_assets) == 2
+    selected_by_id = {
+        str(item.get("asset_id")): item
+        for item in selected_assets
+        if isinstance(item, dict) and isinstance(item.get("asset_id"), str)
+    }
+    uploaded_context = selected_by_id.get("upl-selected") or {}
+    assert uploaded_context.get("metadata_source") == "ai_suggested"
+    assert uploaded_context.get("category") == "project_gallery"
+    assert uploaded_context.get("alt_text") == "Crew on jobsite"
     for item in selected_assets:
         assert isinstance(item, dict)
         assert "storage_key" not in item

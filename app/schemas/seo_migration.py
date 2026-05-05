@@ -296,6 +296,7 @@ class SEOMigrationDraftReadinessRead(BaseModel):
 
 class SEOMigrationMediaAssetUpdateRequest(BaseModel):
     selected_for_draft: bool | None = None
+    apply_suggested_metadata: bool | None = None
     category: str | None = Field(default=None, max_length=64)
     alt_text: str | None = Field(default=None, max_length=240)
     description: str | None = Field(default=None, max_length=800)
@@ -315,6 +316,71 @@ class SEOMigrationMediaAssetUpdateRequest(BaseModel):
         if value is None:
             return None
         return _normalize_optional_text(value, max_length=800)
+
+
+class SEOMigrationMediaSuggestionBatchRequest(BaseModel):
+    asset_ids: list[str] = Field(default_factory=list)
+    force_refresh: bool = False
+
+    @field_validator("asset_ids", mode="before")
+    @classmethod
+    def _normalize_asset_ids(cls, value: object) -> list[str]:
+        if not isinstance(value, list):
+            return []
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for item in value:
+            asset_id = _normalize_optional_text(item, max_length=80)
+            if asset_id is None:
+                continue
+            key = asset_id.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            normalized.append(asset_id)
+        return normalized
+
+
+class SEOMigrationDiscoveredMediaImportRequest(BaseModel):
+    discovered_image_ids: list[str] = Field(default_factory=list)
+    normalized_urls: list[str] = Field(default_factory=list)
+    selected_for_draft: bool | None = None
+
+    @field_validator("discovered_image_ids", mode="before")
+    @classmethod
+    def _normalize_discovered_image_ids(cls, value: object) -> list[str]:
+        if not isinstance(value, list):
+            return []
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for item in value:
+            asset_id = _normalize_optional_text(item, max_length=80)
+            if asset_id is None:
+                continue
+            lowered = asset_id.lower()
+            if lowered in seen:
+                continue
+            seen.add(lowered)
+            normalized.append(asset_id)
+        return normalized
+
+    @field_validator("normalized_urls", mode="before")
+    @classmethod
+    def _normalize_discovered_urls(cls, value: object) -> list[str]:
+        if not isinstance(value, list):
+            return []
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for item in value:
+            url_value = _normalize_optional_text(item, max_length=2048)
+            if url_value is None:
+                continue
+            lowered = url_value.lower()
+            if lowered in seen:
+                continue
+            seen.add(lowered)
+            normalized.append(url_value)
+        return normalized
 
 
 class SEOMigrationArtifactApproveRequest(BaseModel):
@@ -375,6 +441,19 @@ class SEOMigrationSourceSnapshotRead(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+class SEOMigrationMediaMetadataSuggestionRead(BaseModel):
+    suggested_category: str | None = None
+    suggested_alt_text: str | None = None
+    suggested_description: str | None = None
+    suggested_usage_note: str | None = None
+    suggested_page_assignment: str | None = None
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    suggestion_source: str | None = None
+    suggestion_status: str | None = None
+    reason_code: str | None = None
+    generated_at: str | None = None
+
+
 class SEOMigrationArtifactFileRead(BaseModel):
     path: str
     media_type: str
@@ -400,6 +479,9 @@ class SEOMigrationMediaAssetRead(BaseModel):
     normalized_url: str | None = None
     source_page_url: str | None = None
     created_at: str | None = None
+    metadata_suggestion: SEOMigrationMediaMetadataSuggestionRead | None = None
+    metadata_suggestion_applied: bool = False
+    metadata_suggestion_applied_at: str | None = None
 
 
 class SEOMigrationMediaAssetListRead(BaseModel):
@@ -413,6 +495,39 @@ class SEOMigrationMediaAssetListRead(BaseModel):
     media_asset_categories: list[str] = Field(default_factory=list)
     selected_assets_trimmed: bool = False
     diagnostics: list[str] = Field(default_factory=list)
+
+
+class SEOMigrationMediaSuggestionBatchResultRead(BaseModel):
+    asset_id: str
+    suggestion_status: str
+    reason_code: str | None = None
+    retryable: bool = False
+    metadata_suggestion: SEOMigrationMediaMetadataSuggestionRead | None = None
+
+
+class SEOMigrationMediaSuggestionBatchRead(BaseModel):
+    batch_status: str
+    results: list[SEOMigrationMediaSuggestionBatchResultRead] = Field(default_factory=list)
+    completed_count: int = Field(default=0, ge=0)
+    failed_count: int = Field(default=0, ge=0)
+    skipped_count: int = Field(default=0, ge=0)
+
+
+class SEOMigrationDiscoveredMediaImportResultRead(BaseModel):
+    asset_id: str | None = None
+    normalized_url: str | None = None
+    status: str
+    reason_code: str | None = None
+    media_asset: SEOMigrationMediaAssetRead | None = None
+
+
+class SEOMigrationDiscoveredMediaImportRead(BaseModel):
+    batch_status: str
+    results: list[SEOMigrationDiscoveredMediaImportResultRead] = Field(default_factory=list)
+    imported_count: int = Field(default=0, ge=0)
+    failed_count: int = Field(default=0, ge=0)
+    skipped_count: int = Field(default=0, ge=0)
+    disabled_count: int = Field(default=0, ge=0)
 
 
 class SEOMigrationArtifactVersionRead(BaseModel):

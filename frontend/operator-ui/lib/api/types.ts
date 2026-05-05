@@ -439,6 +439,9 @@ export interface MigrationMediaAsset {
   normalized_url?: string | null;
   source_page_url?: string | null;
   created_at?: string | null;
+  metadata_suggestion?: MigrationMediaMetadataSuggestion | null;
+  metadata_suggestion_applied?: boolean;
+  metadata_suggestion_applied_at?: string | null;
 }
 
 export interface MigrationMediaAssetListResponse {
@@ -454,13 +457,71 @@ export interface MigrationMediaAssetListResponse {
   diagnostics: string[];
 }
 
+export interface MigrationMediaMetadataSuggestion {
+  suggested_category?: string | null;
+  suggested_alt_text?: string | null;
+  suggested_description?: string | null;
+  suggested_usage_note?: string | null;
+  suggested_page_assignment?: string | null;
+  confidence?: number | null;
+  suggestion_source?: string | null;
+  suggestion_status?: "pending" | "completed" | "failed" | "not_available" | null;
+  reason_code?: string | null;
+  generated_at?: string | null;
+}
+
 export interface MigrationMediaAssetUpdateRequest {
   selected_for_draft?: boolean | null;
+  apply_suggested_metadata?: boolean | null;
   category?: string | null;
   alt_text?: string | null;
   description?: string | null;
   usage_note?: string | null;
   page_assignment?: string | null;
+}
+
+export interface MigrationMediaMetadataSuggestionBatchRequest {
+  asset_ids: string[];
+  force_refresh?: boolean;
+}
+
+export interface MigrationMediaMetadataSuggestionBatchResult {
+  asset_id: string;
+  suggestion_status: "pending" | "completed" | "failed" | "not_available";
+  reason_code?: string | null;
+  retryable: boolean;
+  metadata_suggestion?: MigrationMediaMetadataSuggestion | null;
+}
+
+export interface MigrationMediaMetadataSuggestionBatchResponse {
+  batch_status: "completed" | "partial_success" | "failed";
+  results: MigrationMediaMetadataSuggestionBatchResult[];
+  completed_count: number;
+  failed_count: number;
+  skipped_count: number;
+}
+
+export interface MigrationDiscoveredMediaImportRequest {
+  discovered_image_ids?: string[];
+  normalized_urls?: string[];
+  selected_for_draft?: boolean | null;
+}
+
+export interface MigrationDiscoveredMediaImportResult {
+  asset_id?: string | null;
+  normalized_url?: string | null;
+  status: "imported" | "skipped" | "failed" | "disabled";
+  reason_code?: string | null;
+  media_asset?: MigrationMediaAsset | null;
+}
+
+export interface MigrationDiscoveredMediaImportResponse {
+  batch_status: "completed" | "partial_success" | "failed";
+  results: MigrationDiscoveredMediaImportResult[];
+  imported_count: number;
+  failed_count: number;
+  skipped_count: number;
+  disabled_count: number;
 }
 
 export interface MigrationArtifactFile {

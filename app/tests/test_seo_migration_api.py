@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 from types import SimpleNamespace
+import urllib.error
 from unittest.mock import patch
 
 import pytest
@@ -2803,6 +2804,37 @@ def test_migration_media_routes_scope_assets_and_sanitize_payloads(db_session) -
     assert updated_asset.get("category") == "hero"
     assert updated_asset.get("alt_text") == "Updated hero alt"
 
+    suggest_response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/media/assets/{asset_id}/suggest-metadata",
+    )
+    assert suggest_response.status_code == 200
+    suggested_asset = suggest_response.json()
+    suggestion = suggested_asset.get("metadata_suggestion") or {}
+    assert suggestion.get("suggestion_status") == "completed"
+    assert suggestion.get("reason_code") == "image_metadata_suggested"
+    suggested_json = json.dumps(suggested_asset).lower()
+    for forbidden in (
+        "storage_key",
+        "base64",
+        "access_token",
+        "refresh_token",
+        "authorization",
+        "cookie",
+        "\\\\",
+        "/tmp/",
+    ):
+        assert forbidden not in suggested_json
+
+    apply_response = client.patch(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/media/assets/{asset_id}",
+        json={"apply_suggested_metadata": True},
+    )
+    assert apply_response.status_code == 200
+    applied_asset = apply_response.json()
+    assert applied_asset.get("metadata_suggestion_applied") is True
+    assert isinstance(applied_asset.get("metadata_suggestion_applied_at"), str)
+    assert applied_asset.get("alt_text") != "Updated hero alt"
+
     site_media_response = client.get(
         f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/media/assets"
     )
@@ -2833,9 +2865,809 @@ def test_migration_media_routes_scope_assets_and_sanitize_payloads(db_session) -
 
     cross_site_update_response = client.patch(
         f"/api/businesses/{business_id}/seo/sites/{other_site_id}/migration/media/assets/{asset_id}",
-        json={"selected_for_draft": True},
+        json={"apply_suggested_metadata": True},
     )
     assert cross_site_update_response.status_code == 404
+
+
+def test_migration_media_suggest_metadata_returns_image_not_imported_for_remote_discovered_assets(db_session) -> None:
+    business_id = "11111111-1111-1111-1111-111111111111"
+    site_id = "22222222-2222-2222-2222-222222222222"
+    _seed_business_and_site(db_session, business_id=business_id, site_id=site_id)
+    client = _make_client(db_session, business_id=business_id)
+
+    workspace_response = client.put(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/workspace",
+        json={"source_url": "https://legacy.example"},
+    )
+    assert workspace_response.status_code == 200
+
+    workspace = (
+        db_session.query(SEOMigrationWorkspace)
+        .filter(
+            SEOMigrationWorkspace.business_id == business_id,
+            SEOMigrationWorkspace.site_id == site_id,
+        )
+        .one()
+    )
+    workspace.imported_source_snapshot_json = {
+        "discovered_images": [
+            {
+                "asset_id": "srcimg-remote-only",
+                "normalized_url": "https://legacy.example/images/hero.jpg?token=abc123",
+                "provenance": "source_site_import",
+                "import_status": "discovered",
+                "selected_for_draft": True,
+            }
+        ]
+    }
+    db_session.add(workspace)
+    db_session.commit()
+
+    suggest_response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/media/assets/srcimg-remote-only/suggest-metadata",
+    )
+    assert suggest_response.status_code == 200
+    payload = suggest_response.json()
+    suggestion = payload.get("metadata_suggestion") or {}
+    assert suggestion.get("suggestion_status") == "not_available"
+    assert suggestion.get("reason_code") == "image_not_imported"
+    serialized = json.dumps(payload).lower()
+    for forbidden in ("storage_key", "base64", "access_token", "refresh_token", "authorization", "cookie", "\\\\"):
+        assert forbidden not in serialized
+
+
+def test_migration_media_batch_suggest_metadata_succeeds_for_selected_uploaded_assets(db_session) -> None:
+    business_id = "11111111-1111-1111-1111-111111111111"
+    site_id = "22222222-2222-2222-2222-222222222222"
+    _seed_business_and_site(db_session, business_id=business_id, site_id=site_id)
+    client = _make_client(db_session, business_id=business_id)
+
+    workspace_response = client.put(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/workspace",
+        json={"source_url": "https://legacy.example"},
+    )
+    assert workspace_response.status_code == 200
+
+    uploaded_asset_ids: list[str] = []
+    for index in range(2):
+        upload_response = client.post(
+            f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/media/upload",
+            params={
+                "filename": f"batch-{index}.png",
+                "selected_for_draft": "true",
+            },
+            headers={"Content-Type": "image/png"},
+            content=_tiny_png_payload(),
+        )
+        assert upload_response.status_code == 201
+        payload = upload_response.json()
+        asset_id = str(payload.get("asset_id") or "")
+        assert asset_id
+        uploaded_asset_ids.append(asset_id)
+
+    batch_response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/media/assets/suggest-metadata",
+        json={"asset_ids": uploaded_asset_ids},
+    )
+    assert batch_response.status_code == 200
+    payload = batch_response.json()
+    assert payload.get("batch_status") == "completed"
+    assert payload.get("completed_count") == 2
+    assert payload.get("failed_count") == 0
+    assert payload.get("skipped_count") == 0
+    results = payload.get("results") or []
+    assert isinstance(results, list)
+    assert len(results) == 2
+    for result in results:
+        assert isinstance(result, dict)
+        assert result.get("asset_id") in uploaded_asset_ids
+        assert result.get("suggestion_status") == "completed"
+        assert result.get("reason_code") == "image_metadata_suggested"
+        assert isinstance(result.get("retryable"), bool)
+    serialized = json.dumps(payload).lower()
+    for forbidden in (
+        "storage_key",
+        "base64",
+        "access_token",
+        "refresh_token",
+        "authorization",
+        "cookie",
+        "\\\\",
+        "/tmp/",
+    ):
+        assert forbidden not in serialized
+
+
+def test_migration_media_batch_suggest_metadata_returns_partial_success_for_import_required_assets(db_session) -> None:
+    business_id = "11111111-1111-1111-1111-111111111111"
+    site_id = "22222222-2222-2222-2222-222222222222"
+    _seed_business_and_site(db_session, business_id=business_id, site_id=site_id)
+    client = _make_client(db_session, business_id=business_id)
+
+    workspace_response = client.put(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/workspace",
+        json={"source_url": "https://legacy.example"},
+    )
+    assert workspace_response.status_code == 200
+
+    upload_response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/media/upload",
+        params={
+            "filename": "batch-controlled.png",
+            "selected_for_draft": "true",
+        },
+        headers={"Content-Type": "image/png"},
+        content=_tiny_png_payload(),
+    )
+    assert upload_response.status_code == 201
+    uploaded_asset_id = str(upload_response.json().get("asset_id") or "")
+    assert uploaded_asset_id
+
+    workspace = (
+        db_session.query(SEOMigrationWorkspace)
+        .filter(
+            SEOMigrationWorkspace.business_id == business_id,
+            SEOMigrationWorkspace.site_id == site_id,
+        )
+        .one()
+    )
+    source_snapshot = dict(workspace.imported_source_snapshot_json or {})
+    discovered = list(source_snapshot.get("discovered_images") or [])
+    discovered.append(
+        {
+            "asset_id": "srcimg-remote-only",
+            "normalized_url": "https://legacy.example/images/front.jpg?token=abc123",
+            "provenance": "source_site_import",
+            "import_status": "discovered",
+            "selected_for_draft": True,
+        }
+    )
+    source_snapshot["discovered_images"] = discovered
+    workspace.imported_source_snapshot_json = source_snapshot
+    db_session.add(workspace)
+    db_session.commit()
+
+    batch_response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/media/assets/suggest-metadata",
+        json={"asset_ids": [uploaded_asset_id, "srcimg-remote-only"]},
+    )
+    assert batch_response.status_code == 200
+    payload = batch_response.json()
+    assert payload.get("batch_status") == "partial_success"
+    assert payload.get("completed_count") == 1
+    assert payload.get("failed_count") == 0
+    assert payload.get("skipped_count") == 1
+    results = payload.get("results") or []
+    assert isinstance(results, list)
+    assert len(results) == 2
+    results_by_asset = {
+        str(item.get("asset_id") or ""): item
+        for item in results
+        if isinstance(item, dict)
+    }
+    uploaded_result = results_by_asset.get(uploaded_asset_id) or {}
+    remote_result = results_by_asset.get("srcimg-remote-only") or {}
+    assert uploaded_result.get("suggestion_status") == "completed"
+    assert uploaded_result.get("reason_code") == "image_metadata_suggested"
+    assert remote_result.get("suggestion_status") == "not_available"
+    assert remote_result.get("reason_code") == "image_not_imported"
+    serialized = json.dumps(payload).lower()
+    for forbidden in ("storage_key", "base64", "access_token", "refresh_token", "authorization", "cookie", "\\\\"):
+        assert forbidden not in serialized
+
+
+def test_migration_media_batch_suggest_metadata_blocks_cross_site_asset_access(db_session) -> None:
+    business_id = "11111111-1111-1111-1111-111111111111"
+    site_id = "22222222-2222-2222-2222-222222222222"
+    other_site_id = "33333333-3333-3333-3333-333333333333"
+    _seed_business_and_site(db_session, business_id=business_id, site_id=site_id)
+    _seed_site_for_business(
+        db_session,
+        business_id=business_id,
+        site_id=other_site_id,
+        base_url="https://other.example/",
+        normalized_domain="other.example",
+    )
+    client = _make_client(db_session, business_id=business_id)
+
+    for target_site_id in (site_id, other_site_id):
+        workspace_response = client.put(
+            f"/api/businesses/{business_id}/seo/sites/{target_site_id}/migration/workspace",
+            json={"source_url": "https://legacy.example"},
+        )
+        assert workspace_response.status_code == 200
+
+    upload_response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/media/upload",
+        params={
+            "filename": "site-a-only.png",
+            "selected_for_draft": "true",
+        },
+        headers={"Content-Type": "image/png"},
+        content=_tiny_png_payload(),
+    )
+    assert upload_response.status_code == 201
+    site_a_asset_id = str(upload_response.json().get("asset_id") or "")
+    assert site_a_asset_id
+
+    batch_response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{other_site_id}/migration/media/assets/suggest-metadata",
+        json={"asset_ids": [site_a_asset_id]},
+    )
+    assert batch_response.status_code == 200
+    payload = batch_response.json()
+    assert payload.get("batch_status") == "failed"
+    assert payload.get("completed_count") == 0
+    assert payload.get("failed_count") == 1
+    assert payload.get("skipped_count") == 0
+    results = payload.get("results") or []
+    assert isinstance(results, list)
+    assert len(results) == 1
+    result = results[0] if isinstance(results[0], dict) else {}
+    assert result.get("asset_id") == site_a_asset_id
+    assert result.get("suggestion_status") == "failed"
+    assert result.get("reason_code") == "media_asset_not_authorized"
+    assert result.get("retryable") is False
+
+
+def test_migration_media_batch_suggest_metadata_enforces_max_asset_count(db_session) -> None:
+    business_id = "11111111-1111-1111-1111-111111111111"
+    site_id = "22222222-2222-2222-2222-222222222222"
+    _seed_business_and_site(db_session, business_id=business_id, site_id=site_id)
+    client = _make_client(db_session, business_id=business_id)
+
+    workspace_response = client.put(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/workspace",
+        json={"source_url": "https://legacy.example"},
+    )
+    assert workspace_response.status_code == 200
+
+    oversized_batch = [f"upl-{index}" for index in range(25)]
+    batch_response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/media/assets/suggest-metadata",
+        json={"asset_ids": oversized_batch},
+    )
+    assert batch_response.status_code == 422
+    detail = batch_response.json().get("detail") or {}
+    assert detail.get("error_code") == "media_suggestion_batch_limit_reached"
+
+
+def test_migration_media_import_endpoint_returns_disabled_reason_when_feature_flag_off(db_session) -> None:
+    business_id = "11111111-1111-1111-1111-111111111111"
+    site_id = "22222222-2222-2222-2222-222222222222"
+    _seed_business_and_site(db_session, business_id=business_id, site_id=site_id)
+    client = _make_client(db_session, business_id=business_id)
+
+    workspace_response = client.put(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/workspace",
+        json={"source_url": "https://legacy.example"},
+    )
+    assert workspace_response.status_code == 200
+
+    workspace = (
+        db_session.query(SEOMigrationWorkspace)
+        .filter(
+            SEOMigrationWorkspace.business_id == business_id,
+            SEOMigrationWorkspace.site_id == site_id,
+        )
+        .one()
+    )
+    workspace.imported_source_snapshot_json = {
+        "discovered_images": [
+            {
+                "asset_id": "srcimg-disabled",
+                "normalized_url": "https://legacy.example/media/hero.jpg",
+                "provenance": "source_site_import",
+                "import_status": "discovered",
+                "selected_for_draft": True,
+            }
+        ]
+    }
+    db_session.add(workspace)
+    db_session.commit()
+
+    import_response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/media/discovered/import",
+        json={"discovered_image_ids": ["srcimg-disabled"], "selected_for_draft": True},
+    )
+    assert import_response.status_code == 200
+    payload = import_response.json()
+    assert payload.get("batch_status") == "failed"
+    assert payload.get("imported_count") == 0
+    assert payload.get("disabled_count") == 1
+    results = payload.get("results") or []
+    assert isinstance(results, list)
+    assert results[0].get("status") == "disabled"
+    assert results[0].get("reason_code") == "remote_image_import_disabled"
+
+
+def test_migration_media_import_endpoint_imports_discovered_assets_and_enables_suggestion(
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SEO_MIGRATION_REMOTE_IMAGE_IMPORT_ENABLED", "true")
+    get_settings.cache_clear()
+
+    business_id = "11111111-1111-1111-1111-111111111111"
+    site_id = "22222222-2222-2222-2222-222222222222"
+    _seed_business_and_site(db_session, business_id=business_id, site_id=site_id)
+    client = _make_client(db_session, business_id=business_id)
+
+    workspace_response = client.put(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/workspace",
+        json={"source_url": "https://legacy.example"},
+    )
+    assert workspace_response.status_code == 200
+
+    workspace = (
+        db_session.query(SEOMigrationWorkspace)
+        .filter(
+            SEOMigrationWorkspace.business_id == business_id,
+            SEOMigrationWorkspace.site_id == site_id,
+        )
+        .one()
+    )
+    workspace.imported_source_snapshot_json = {
+        "discovered_images": [
+            {
+                "asset_id": "srcimg-import-me",
+                "normalized_url": "https://legacy.example/media/hero.jpg?token=abc",
+                "provenance": "source_site_import",
+                "import_status": "discovered",
+                "selected_for_draft": True,
+                "metadata_suggestion": {
+                    "suggestion_status": "not_available",
+                    "reason_code": "image_not_imported",
+                },
+            }
+        ]
+    }
+    db_session.add(workspace)
+    db_session.commit()
+
+    monkeypatch.setattr(
+        seo_migration_module.SEOMigrationService,
+        "_fetch_remote_discovered_image_for_import",
+        lambda self, *, url: {
+            "reason_code": "remote_image_imported",
+            "payload": _tiny_png_payload(),
+            "content_type": "image/png",
+            "final_url": "https://legacy.example/media/hero.jpg",
+        },
+    )
+
+    import_response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/media/discovered/import",
+        json={"discovered_image_ids": ["srcimg-import-me"], "selected_for_draft": True},
+    )
+    assert import_response.status_code == 200
+    payload = import_response.json()
+    assert payload.get("batch_status") == "completed"
+    assert payload.get("imported_count") == 1
+    assert payload.get("failed_count") == 0
+    assert payload.get("skipped_count") == 0
+    result_items = payload.get("results") or []
+    assert isinstance(result_items, list)
+    assert len(result_items) == 1
+    first_result = result_items[0] if isinstance(result_items[0], dict) else {}
+    assert first_result.get("status") == "imported"
+    assert first_result.get("reason_code") == "remote_image_imported"
+    media_asset = first_result.get("media_asset") or {}
+    assert media_asset.get("import_status") == "selected"
+    assert media_asset.get("selected_for_draft") is True
+    assert media_asset.get("content_type") == "image/png"
+    assert "storage_key" not in media_asset
+    serialized = json.dumps(payload).lower()
+    for forbidden in ("storage_key", "base64", "access_token", "refresh_token", "authorization", "cookie", "\\\\"):
+        assert forbidden not in serialized
+
+    suggest_response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/media/assets/srcimg-import-me/suggest-metadata",
+    )
+    assert suggest_response.status_code == 200
+    suggestion = (suggest_response.json().get("metadata_suggestion") or {})
+    assert suggestion.get("reason_code") == "image_metadata_suggested"
+    assert suggestion.get("suggestion_status") == "completed"
+
+
+def test_migration_media_import_endpoint_rejects_unknown_discovered_asset_ids(
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SEO_MIGRATION_REMOTE_IMAGE_IMPORT_ENABLED", "true")
+    get_settings.cache_clear()
+
+    business_id = "11111111-1111-1111-1111-111111111111"
+    site_id = "22222222-2222-2222-2222-222222222222"
+    _seed_business_and_site(db_session, business_id=business_id, site_id=site_id)
+    client = _make_client(db_session, business_id=business_id)
+
+    workspace_response = client.put(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/workspace",
+        json={"source_url": "https://legacy.example"},
+    )
+    assert workspace_response.status_code == 200
+
+    import_response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/media/discovered/import",
+        json={"discovered_image_ids": ["srcimg-missing"], "selected_for_draft": True},
+    )
+    assert import_response.status_code == 200
+    payload = import_response.json()
+    assert payload.get("batch_status") == "failed"
+    assert payload.get("failed_count") == 1
+    result_items = payload.get("results") or []
+    assert isinstance(result_items, list)
+    assert result_items[0].get("reason_code") == "image_not_found_in_source_snapshot"
+
+
+def test_migration_media_import_endpoint_blocks_cross_site_discovered_asset_access(
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SEO_MIGRATION_REMOTE_IMAGE_IMPORT_ENABLED", "true")
+    get_settings.cache_clear()
+
+    business_id = "11111111-1111-1111-1111-111111111111"
+    site_id = "22222222-2222-2222-2222-222222222222"
+    other_site_id = "33333333-3333-3333-3333-333333333333"
+    _seed_business_and_site(db_session, business_id=business_id, site_id=site_id)
+    _seed_site_for_business(
+        db_session,
+        business_id=business_id,
+        site_id=other_site_id,
+        base_url="https://other.example/",
+        normalized_domain="other.example",
+    )
+    client = _make_client(db_session, business_id=business_id)
+
+    for target_site_id in (site_id, other_site_id):
+        workspace_response = client.put(
+            f"/api/businesses/{business_id}/seo/sites/{target_site_id}/migration/workspace",
+            json={"source_url": "https://legacy.example"},
+        )
+        assert workspace_response.status_code == 200
+
+    site_a_workspace = (
+        db_session.query(SEOMigrationWorkspace)
+        .filter(
+            SEOMigrationWorkspace.business_id == business_id,
+            SEOMigrationWorkspace.site_id == site_id,
+        )
+        .one()
+    )
+    site_a_workspace.imported_source_snapshot_json = {
+        "discovered_images": [
+            {
+                "asset_id": "srcimg-site-a-only",
+                "normalized_url": "https://legacy.example/media/site-a.jpg",
+                "provenance": "source_site_import",
+                "import_status": "discovered",
+                "selected_for_draft": True,
+            }
+        ]
+    }
+    db_session.add(site_a_workspace)
+    db_session.commit()
+
+    import_response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{other_site_id}/migration/media/discovered/import",
+        json={"discovered_image_ids": ["srcimg-site-a-only"], "selected_for_draft": True},
+    )
+    assert import_response.status_code == 200
+    payload = import_response.json()
+    assert payload.get("imported_count") == 0
+    assert payload.get("failed_count") == 1
+    results = payload.get("results") or []
+    assert isinstance(results, list)
+    assert results[0].get("reason_code") == "image_not_found_in_source_snapshot"
+
+
+def test_migration_media_import_endpoint_blocks_private_source_hosts(
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SEO_MIGRATION_REMOTE_IMAGE_IMPORT_ENABLED", "true")
+    get_settings.cache_clear()
+
+    business_id = "11111111-1111-1111-1111-111111111111"
+    site_id = "22222222-2222-2222-2222-222222222222"
+    _seed_business_and_site(db_session, business_id=business_id, site_id=site_id)
+    client = _make_client(db_session, business_id=business_id)
+
+    workspace_response = client.put(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/workspace",
+        json={"source_url": "https://legacy.example"},
+    )
+    assert workspace_response.status_code == 200
+
+    workspace = (
+        db_session.query(SEOMigrationWorkspace)
+        .filter(
+            SEOMigrationWorkspace.business_id == business_id,
+            SEOMigrationWorkspace.site_id == site_id,
+        )
+        .one()
+    )
+    workspace.imported_source_snapshot_json = {
+        "discovered_images": [
+            {
+                "asset_id": "srcimg-private-host",
+                "normalized_url": "http://127.0.0.1/blocked.png",
+                "provenance": "source_site_import",
+                "import_status": "discovered",
+                "selected_for_draft": True,
+            }
+        ]
+    }
+    db_session.add(workspace)
+    db_session.commit()
+
+    import_response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/media/discovered/import",
+        json={"discovered_image_ids": ["srcimg-private-host"], "selected_for_draft": True},
+    )
+    assert import_response.status_code == 200
+    payload = import_response.json()
+    assert payload.get("failed_count") == 1
+    first_result = (payload.get("results") or [{}])[0]
+    assert first_result.get("reason_code") == "image_import_private_address_blocked"
+
+
+def test_migration_media_import_endpoint_blocks_redirect_escape_to_private_host(
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SEO_MIGRATION_REMOTE_IMAGE_IMPORT_ENABLED", "true")
+    get_settings.cache_clear()
+
+    business_id = "11111111-1111-1111-1111-111111111111"
+    site_id = "22222222-2222-2222-2222-222222222222"
+    _seed_business_and_site(db_session, business_id=business_id, site_id=site_id)
+    client = _make_client(db_session, business_id=business_id)
+
+    workspace_response = client.put(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/workspace",
+        json={"source_url": "https://legacy.example"},
+    )
+    assert workspace_response.status_code == 200
+
+    workspace = (
+        db_session.query(SEOMigrationWorkspace)
+        .filter(
+            SEOMigrationWorkspace.business_id == business_id,
+            SEOMigrationWorkspace.site_id == site_id,
+        )
+        .one()
+    )
+    workspace.imported_source_snapshot_json = {
+        "discovered_images": [
+            {
+                "asset_id": "srcimg-redirect",
+                "normalized_url": "https://legacy.example/media/redirect.jpg",
+                "provenance": "source_site_import",
+                "import_status": "discovered",
+                "selected_for_draft": True,
+            }
+        ]
+    }
+    db_session.add(workspace)
+    db_session.commit()
+
+    def _mock_getaddrinfo(host: str, *_args, **_kwargs):  # noqa: ANN001
+        normalized = str(host).strip().lower()
+        if normalized == "legacy.example":
+            return [(None, None, None, None, ("93.184.216.34", 443))]
+        if normalized == "169.254.169.254":
+            return [(None, None, None, None, ("169.254.169.254", 80))]
+        raise OSError("unknown host")
+
+    class _RedirectOnceOpener:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def open(self, request, timeout):  # noqa: ANN001
+            del timeout
+            self.calls += 1
+            if self.calls == 1:
+                raise urllib.error.HTTPError(
+                    request.full_url,
+                    302,
+                    "Found",
+                    {"Location": "http://169.254.169.254/latest/meta-data/"},
+                    None,
+                )
+            raise AssertionError("import should block private redirect target before follow-up fetch")
+
+    monkeypatch.setattr(seo_migration_module.socket, "getaddrinfo", _mock_getaddrinfo)
+    monkeypatch.setattr(
+        seo_migration_module.urllib.request,
+        "build_opener",
+        lambda *_args, **_kwargs: _RedirectOnceOpener(),
+    )
+
+    import_response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/media/discovered/import",
+        json={"discovered_image_ids": ["srcimg-redirect"], "selected_for_draft": True},
+    )
+    assert import_response.status_code == 200
+    payload = import_response.json()
+    assert payload.get("failed_count") == 1
+    result_items = payload.get("results") or []
+    assert isinstance(result_items, list)
+    assert result_items[0].get("reason_code") == "image_import_private_address_blocked"
+
+
+@pytest.mark.parametrize(
+    ("reason_code", "expected_status"),
+    [
+        ("unsupported_image_type", "failed"),
+        ("image_too_large", "failed"),
+        ("image_fetch_timeout", "failed"),
+        ("image_fetch_failed", "failed"),
+        ("image_content_type_mismatch", "failed"),
+    ],
+)
+def test_migration_media_import_endpoint_surfaces_stable_fetch_reason_codes(
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+    reason_code: str,
+    expected_status: str,
+) -> None:
+    monkeypatch.setenv("SEO_MIGRATION_REMOTE_IMAGE_IMPORT_ENABLED", "true")
+    get_settings.cache_clear()
+
+    business_id = "11111111-1111-1111-1111-111111111111"
+    site_id = "22222222-2222-2222-2222-222222222222"
+    _seed_business_and_site(db_session, business_id=business_id, site_id=site_id)
+    client = _make_client(db_session, business_id=business_id)
+
+    workspace_response = client.put(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/workspace",
+        json={"source_url": "https://legacy.example"},
+    )
+    assert workspace_response.status_code == 200
+
+    workspace = (
+        db_session.query(SEOMigrationWorkspace)
+        .filter(
+            SEOMigrationWorkspace.business_id == business_id,
+            SEOMigrationWorkspace.site_id == site_id,
+        )
+        .one()
+    )
+    workspace.imported_source_snapshot_json = {
+        "discovered_images": [
+            {
+                "asset_id": "srcimg-fetch-error",
+                "normalized_url": "https://legacy.example/media/error.jpg",
+                "provenance": "source_site_import",
+                "import_status": "discovered",
+                "selected_for_draft": True,
+            }
+        ]
+    }
+    db_session.add(workspace)
+    db_session.commit()
+
+    monkeypatch.setattr(
+        seo_migration_module.SEOMigrationService,
+        "_fetch_remote_discovered_image_for_import",
+        lambda self, *, url: {"reason_code": reason_code},
+    )
+
+    import_response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/media/discovered/import",
+        json={"discovered_image_ids": ["srcimg-fetch-error"], "selected_for_draft": True},
+    )
+    assert import_response.status_code == 200
+    payload = import_response.json()
+    assert payload.get("imported_count") == 0
+    result_items = payload.get("results") or []
+    assert isinstance(result_items, list)
+    assert result_items[0].get("status") == expected_status
+    assert result_items[0].get("reason_code") == reason_code
+
+
+def test_migration_media_import_endpoint_deduplicates_repeated_import_of_same_discovered_asset(
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SEO_MIGRATION_REMOTE_IMAGE_IMPORT_ENABLED", "true")
+    get_settings.cache_clear()
+
+    business_id = "11111111-1111-1111-1111-111111111111"
+    site_id = "22222222-2222-2222-2222-222222222222"
+    _seed_business_and_site(db_session, business_id=business_id, site_id=site_id)
+    client = _make_client(db_session, business_id=business_id)
+
+    workspace_response = client.put(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/workspace",
+        json={"source_url": "https://legacy.example"},
+    )
+    assert workspace_response.status_code == 200
+
+    workspace = (
+        db_session.query(SEOMigrationWorkspace)
+        .filter(
+            SEOMigrationWorkspace.business_id == business_id,
+            SEOMigrationWorkspace.site_id == site_id,
+        )
+        .one()
+    )
+    workspace.imported_source_snapshot_json = {
+        "discovered_images": [
+            {
+                "asset_id": "srcimg-repeat",
+                "normalized_url": "https://legacy.example/media/repeat.jpg",
+                "provenance": "source_site_import",
+                "import_status": "discovered",
+                "selected_for_draft": True,
+            }
+        ]
+    }
+    db_session.add(workspace)
+    db_session.commit()
+
+    monkeypatch.setattr(
+        seo_migration_module.SEOMigrationService,
+        "_fetch_remote_discovered_image_for_import",
+        lambda self, *, url: {
+            "reason_code": "remote_image_imported",
+            "payload": _tiny_png_payload(),
+            "content_type": "image/png",
+            "final_url": "https://legacy.example/media/repeat.jpg",
+        },
+    )
+
+    first_response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/media/discovered/import",
+        json={"discovered_image_ids": ["srcimg-repeat"], "selected_for_draft": True},
+    )
+    assert first_response.status_code == 200
+    assert first_response.json().get("imported_count") == 1
+
+    second_response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/media/discovered/import",
+        json={"discovered_image_ids": ["srcimg-repeat"], "selected_for_draft": True},
+    )
+    assert second_response.status_code == 200
+    second_payload = second_response.json()
+    assert second_payload.get("imported_count") == 0
+    assert second_payload.get("skipped_count") == 1
+    second_results = second_payload.get("results") or []
+    assert isinstance(second_results, list)
+    assert second_results[0].get("status") == "skipped"
+    assert second_results[0].get("reason_code") == "remote_image_imported"
+
+
+def test_migration_media_import_endpoint_enforces_batch_count_limit(
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SEO_MIGRATION_REMOTE_IMAGE_IMPORT_ENABLED", "true")
+    get_settings.cache_clear()
+
+    business_id = "11111111-1111-1111-1111-111111111111"
+    site_id = "22222222-2222-2222-2222-222222222222"
+    _seed_business_and_site(db_session, business_id=business_id, site_id=site_id)
+    client = _make_client(db_session, business_id=business_id)
+
+    workspace_response = client.put(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/workspace",
+        json={"source_url": "https://legacy.example"},
+    )
+    assert workspace_response.status_code == 200
+
+    oversized_ids = [f"srcimg-{index}" for index in range(13)]
+    import_response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/media/discovered/import",
+        json={"discovered_image_ids": oversized_ids, "selected_for_draft": True},
+    )
+    assert import_response.status_code == 422
+    detail = import_response.json().get("detail") or {}
+    assert detail.get("error_code") == "media_import_count_limit_reached"
 
 
 def test_migration_media_routes_enforce_validation_and_stable_error_codes(db_session) -> None:

@@ -34,6 +34,10 @@ import type {
   MigrationHistoryListResponse,
   MigrationMediaAsset,
   MigrationMediaAssetListResponse,
+  MigrationDiscoveredMediaImportRequest,
+  MigrationDiscoveredMediaImportResponse,
+  MigrationMediaMetadataSuggestionBatchRequest,
+  MigrationMediaMetadataSuggestionBatchResponse,
   MigrationMediaAssetUpdateRequest,
   MigrationPublishActionResponse,
   MigrationRepositoryAdoptActionResponse,
@@ -407,6 +411,67 @@ export async function updateMigrationMediaAsset(
       method: "PATCH",
       token,
       body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function suggestMigrationMediaAssetMetadata(
+  token: string,
+  businessId: string,
+  siteId: string,
+  assetId: string,
+  options: { forceRefresh?: boolean } = {},
+): Promise<MigrationMediaAsset> {
+  const query = new URLSearchParams();
+  if (typeof options.forceRefresh === "boolean") {
+    query.set("force_refresh", String(options.forceRefresh));
+  }
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return apiRequest<MigrationMediaAsset>(
+    `/api/businesses/${businessId}/seo/sites/${siteId}/migration/media/assets/${assetId}/suggest-metadata${suffix}`,
+    {
+      method: "POST",
+      token,
+    },
+  );
+}
+
+export async function suggestMigrationMediaAssetsMetadataBatch(
+  token: string,
+  businessId: string,
+  siteId: string,
+  payload: MigrationMediaMetadataSuggestionBatchRequest,
+): Promise<MigrationMediaMetadataSuggestionBatchResponse> {
+  return apiRequest<MigrationMediaMetadataSuggestionBatchResponse>(
+    `/api/businesses/${businessId}/seo/sites/${siteId}/migration/media/assets/suggest-metadata`,
+    {
+      method: "POST",
+      token,
+      body: JSON.stringify({
+        asset_ids: payload.asset_ids,
+        force_refresh: Boolean(payload.force_refresh),
+      }),
+    },
+  );
+}
+
+export async function importMigrationDiscoveredMediaAssets(
+  token: string,
+  businessId: string,
+  siteId: string,
+  payload: MigrationDiscoveredMediaImportRequest,
+): Promise<MigrationDiscoveredMediaImportResponse> {
+  return apiRequest<MigrationDiscoveredMediaImportResponse>(
+    `/api/businesses/${businessId}/seo/sites/${siteId}/migration/media/discovered/import`,
+    {
+      method: "POST",
+      token,
+      body: JSON.stringify({
+        discovered_image_ids: Array.isArray(payload.discovered_image_ids) ? payload.discovered_image_ids : [],
+        normalized_urls: Array.isArray(payload.normalized_urls) ? payload.normalized_urls : [],
+        selected_for_draft:
+          typeof payload.selected_for_draft === "boolean" ? payload.selected_for_draft : null,
+      }),
     },
   );
 }

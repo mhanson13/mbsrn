@@ -22,10 +22,14 @@ from app.schemas.seo_migration import (
     SEOMigrationDraftGenerationErrorEnvelopeRead,
     SEOMigrationDraftGenerateRequest,
     SEOMigrationDraftReadinessRead,
+    SEOMigrationDiscoveredMediaImportRead,
+    SEOMigrationDiscoveredMediaImportRequest,
     SEOMigrationEnrichedContentUpdateRequest,
     SEOMigrationHistoryListRead,
     SEOMigrationMediaAssetListRead,
     SEOMigrationMediaAssetRead,
+    SEOMigrationMediaSuggestionBatchRead,
+    SEOMigrationMediaSuggestionBatchRequest,
     SEOMigrationMediaAssetUpdateRequest,
     SEOMigrationPublishActionRead,
     SEOMigrationPublishConfigUpdateRequest,
@@ -448,6 +452,7 @@ def update_seo_migration_media_asset(
             site_id=site_id,
             asset_id=asset_id,
             selected_for_draft=payload.selected_for_draft,
+            apply_suggested_metadata=bool(payload.apply_suggested_metadata),
             category=payload.category,
             alt_text=payload.alt_text,
             description=payload.description,
@@ -460,6 +465,92 @@ def update_seo_migration_media_asset(
     except SEOMigrationValidationError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=_validation_error_detail(exc)) from exc
     return SEOMigrationMediaAssetRead.model_validate(media_asset)
+
+
+@router.post("/sites/{site_id}/migration/media/assets/{asset_id}/suggest-metadata", response_model=SEOMigrationMediaAssetRead)
+def suggest_seo_migration_media_asset_metadata(
+    business_id: str,
+    site_id: str,
+    asset_id: str,
+    force_refresh: bool = Query(default=False),
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    migration_service: SEOMigrationService = Depends(get_seo_migration_service),
+) -> SEOMigrationMediaAssetRead:
+    scoped_business_id = resolve_tenant_business_id(
+        tenant_context=tenant_context,
+        requested_business_id=business_id,
+    )
+    try:
+        media_asset = migration_service.suggest_media_asset_metadata(
+            business_id=scoped_business_id,
+            site_id=site_id,
+            asset_id=asset_id,
+            force_refresh=bool(force_refresh),
+            principal_id=tenant_context.principal_id,
+        )
+    except SEOMigrationNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except SEOMigrationValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=_validation_error_detail(exc)) from exc
+    return SEOMigrationMediaAssetRead.model_validate(media_asset)
+
+
+@router.post("/sites/{site_id}/migration/media/assets/suggest-metadata", response_model=SEOMigrationMediaSuggestionBatchRead)
+def suggest_seo_migration_media_assets_metadata_batch(
+    business_id: str,
+    site_id: str,
+    payload: SEOMigrationMediaSuggestionBatchRequest,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    migration_service: SEOMigrationService = Depends(get_seo_migration_service),
+) -> SEOMigrationMediaSuggestionBatchRead:
+    scoped_business_id = resolve_tenant_business_id(
+        tenant_context=tenant_context,
+        requested_business_id=business_id,
+    )
+    try:
+        batch_result = migration_service.suggest_media_assets_metadata_batch(
+            business_id=scoped_business_id,
+            site_id=site_id,
+            asset_ids=payload.asset_ids,
+            force_refresh=bool(payload.force_refresh),
+            principal_id=tenant_context.principal_id,
+        )
+    except SEOMigrationNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except SEOMigrationValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=_validation_error_detail(exc)) from exc
+    return SEOMigrationMediaSuggestionBatchRead.model_validate(batch_result)
+
+
+@router.post(
+    "/sites/{site_id}/migration/media/discovered/import",
+    response_model=SEOMigrationDiscoveredMediaImportRead,
+)
+def import_seo_migration_discovered_media_assets(
+    business_id: str,
+    site_id: str,
+    payload: SEOMigrationDiscoveredMediaImportRequest,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    migration_service: SEOMigrationService = Depends(get_seo_migration_service),
+) -> SEOMigrationDiscoveredMediaImportRead:
+    scoped_business_id = resolve_tenant_business_id(
+        tenant_context=tenant_context,
+        requested_business_id=business_id,
+    )
+    try:
+        import_result = migration_service.import_discovered_media_assets(
+            business_id=scoped_business_id,
+            site_id=site_id,
+            discovered_image_ids=payload.discovered_image_ids,
+            normalized_urls=payload.normalized_urls,
+            selected_for_draft=payload.selected_for_draft,
+            principal_id=tenant_context.principal_id,
+        )
+    except SEOMigrationNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except SEOMigrationValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=_validation_error_detail(exc)) from exc
+    return SEOMigrationDiscoveredMediaImportRead.model_validate(import_result)
 
 
 @router.put("/sites/{site_id}/migration/operator-requirements", response_model=SEOMigrationWorkspaceRead)
