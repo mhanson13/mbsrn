@@ -253,6 +253,156 @@ function MigrationSummaryCard({ label, emphasis = false, children }: MigrationSu
   );
 }
 
+interface MigrationSummarySectionProps {
+  workspaceSiteName: string;
+  draftGenerationStateStatus: DraftGenerationStateStatus;
+  draftGenerationStateLabel: string;
+  draftGenerationStateSummary: string;
+  draftGenerationStateToneClass: string;
+  nextActionMessage: string;
+  latestDraftStatusLabel: string;
+  selectedArtifactVersionIdTrimmed: string;
+  topQualityBadgeClass: string;
+  topQualityStatusLabel: string;
+  latestArtifactQualityOperatorSummary: string | null;
+  summaryPriorityAlert: string | null;
+}
+
+function MigrationSummarySection({
+  workspaceSiteName,
+  draftGenerationStateStatus,
+  draftGenerationStateLabel,
+  draftGenerationStateSummary,
+  draftGenerationStateToneClass,
+  nextActionMessage,
+  latestDraftStatusLabel,
+  selectedArtifactVersionIdTrimmed,
+  topQualityBadgeClass,
+  topQualityStatusLabel,
+  latestArtifactQualityOperatorSummary,
+  summaryPriorityAlert,
+}: MigrationSummarySectionProps): JSX.Element {
+  return (
+    <>
+      <div className="panel panel-compact stack" data-testid="migration-draft-banner">
+        <strong>Draft-only mode: generated files are review artifacts pending explicit approval/publish/deploy.</strong>
+        <span className="hint">
+          Legacy source content may be incomplete or poor quality. Operator requirements and enriched content can
+          override weak source material.
+        </span>
+        <span className="hint warning">GitHub publish does not equal production deployment. Deploy remains explicit.</span>
+      </div>
+
+      <div className="panel panel-compact stack migration-summary-band" data-testid="migration-summary-band">
+        <strong>Migration Summary</strong>
+        <div className="migration-summary-grid">
+          <MigrationSummaryCard label="Site">
+            <strong data-testid="migration-summary-site-name">{workspaceSiteName}</strong>
+          </MigrationSummaryCard>
+          <MigrationSummaryCard label="Migration state">
+            <span className={draftGenerationStateBadgeClass(draftGenerationStateStatus)}>{draftGenerationStateLabel}</span>
+            <span className={draftGenerationStateToneClass}>{draftGenerationStateSummary}</span>
+          </MigrationSummaryCard>
+          <MigrationSummaryCard label="Next action" emphasis={true}>
+            <strong data-testid="migration-next-action">{nextActionMessage}</strong>
+          </MigrationSummaryCard>
+          <MigrationSummaryCard label="Latest draft">
+            <strong>{latestDraftStatusLabel}</strong>
+            <span className="hint muted">Selected version: {selectedArtifactVersionIdTrimmed || "None"}</span>
+          </MigrationSummaryCard>
+          <MigrationSummaryCard label="Artifact quality">
+            <span className={topQualityBadgeClass}>Quality: {topQualityStatusLabel}</span>
+            <span className="hint muted">
+              {latestArtifactQualityOperatorSummary || "Generate and review an artifact to score quality."}
+            </span>
+          </MigrationSummaryCard>
+        </div>
+        {summaryPriorityAlert ? (
+          <span className="hint warning" data-testid="migration-summary-priority-alert">
+            {summaryPriorityAlert}
+          </span>
+        ) : null}
+      </div>
+    </>
+  );
+}
+
+interface MigrationSectionWrapperProps {
+  children: ReactNode;
+}
+
+function MigrationSourceRequirementsSection({ children }: MigrationSectionWrapperProps): JSX.Element {
+  return (
+    <>
+      <h3 className="hint muted migration-section-title">A. Source + Requirements</h3>
+      <p className="hint muted migration-section-subtitle">
+        Capture source context and operator replacement requirements before draft generation.
+      </p>
+      {children}
+    </>
+  );
+}
+
+function MigrationMediaSection({ children }: MigrationSectionWrapperProps): JSX.Element {
+  return (
+    <>
+      <h3 className="hint muted migration-section-title">B. Media / Images</h3>
+      <p className="hint muted migration-section-subtitle">
+        Media counts, selection status, and image actions live only in this section.
+      </p>
+      {children}
+    </>
+  );
+}
+
+function MigrationDraftReadinessSection({ children }: MigrationSectionWrapperProps): JSX.Element {
+  return (
+    <>
+      <h3 className="hint muted migration-section-title">C. Draft Readiness + Generate</h3>
+      <p className="hint muted migration-section-subtitle">
+        Confirm readiness and compatibility, then generate a draft when unblocked.
+      </p>
+      {children}
+    </>
+  );
+}
+
+function MigrationArtifactReviewSection({ children }: MigrationSectionWrapperProps): JSX.Element {
+  return (
+    <>
+      <h3 className="hint muted migration-section-title">D. Draft Review + Quality</h3>
+      <p className="hint muted migration-section-subtitle">
+        Review selected artifacts, resolve quality issues, and perform explicit draft approval actions.
+      </p>
+      {children}
+    </>
+  );
+}
+
+function MigrationPublishDeploySection({ children }: MigrationSectionWrapperProps): JSX.Element {
+  return (
+    <>
+      <h3 className="hint muted migration-section-title">E. Approval / Publish / Deploy</h3>
+      <p className="hint muted migration-section-subtitle">
+        Approval, publish, and deploy remain explicit and unchanged.
+      </p>
+      {children}
+    </>
+  );
+}
+
+function MigrationAdvancedDiagnosticsSection({ children }: MigrationSectionWrapperProps): JSX.Element {
+  return (
+    <>
+      <h3 className="hint muted migration-section-title">F. Advanced Diagnostics &amp; History</h3>
+      <p className="hint muted migration-section-subtitle">
+        Use detailed diagnostics and attempt history only when troubleshooting.
+      </p>
+      {children}
+    </>
+  );
+}
+
 function toFailureCategoryLabel(value: string | null): string {
   if (!value) {
     return "unknown";
@@ -4777,45 +4927,20 @@ export function MigrationWorkspacePanel({
 
   return (
     <div className="stack migration-workspace-shell" data-testid="migration-workspace-panel">
-      <div className="panel panel-compact stack" data-testid="migration-draft-banner">
-        <strong>Draft-only mode: generated files are review artifacts pending explicit approval/publish/deploy.</strong>
-        <span className="hint">
-          Legacy source content may be incomplete or poor quality. Operator requirements and enriched content can
-          override weak source material.
-        </span>
-        <span className="hint warning">GitHub publish does not equal production deployment. Deploy remains explicit.</span>
-      </div>
-
-      <div className="panel panel-compact stack migration-summary-band" data-testid="migration-summary-band">
-        <strong>Migration Summary</strong>
-        <div className="migration-summary-grid">
-          <MigrationSummaryCard label="Site">
-            <strong data-testid="migration-summary-site-name">{workspaceSiteName}</strong>
-          </MigrationSummaryCard>
-          <MigrationSummaryCard label="Migration state">
-            <span className={draftGenerationStateBadgeClass(draftGenerationState.status)}>{draftGenerationStateLabel}</span>
-            <span className={draftGenerationStateToneClass}>{draftGenerationState.summary}</span>
-          </MigrationSummaryCard>
-          <MigrationSummaryCard label="Next action" emphasis={true}>
-            <strong data-testid="migration-next-action">{nextActionMessage}</strong>
-          </MigrationSummaryCard>
-          <MigrationSummaryCard label="Latest draft">
-            <strong>{latestDraftStatusLabel}</strong>
-            <span className="hint muted">Selected version: {selectedArtifactVersionIdTrimmed || "None"}</span>
-          </MigrationSummaryCard>
-          <MigrationSummaryCard label="Artifact quality">
-            <span className={topQualityBadgeClass}>Quality: {topQualityStatusLabel}</span>
-            <span className="hint muted">
-              {latestArtifactQualitySummary?.operatorSummary || "Generate and review an artifact to score quality."}
-            </span>
-          </MigrationSummaryCard>
-        </div>
-        {summaryPriorityAlert ? (
-          <span className="hint warning" data-testid="migration-summary-priority-alert">
-            {summaryPriorityAlert}
-          </span>
-        ) : null}
-      </div>
+      <MigrationSummarySection
+        workspaceSiteName={workspaceSiteName}
+        draftGenerationStateStatus={draftGenerationState.status}
+        draftGenerationStateLabel={draftGenerationStateLabel}
+        draftGenerationStateSummary={draftGenerationState.summary}
+        draftGenerationStateToneClass={draftGenerationStateToneClass}
+        nextActionMessage={nextActionMessage}
+        latestDraftStatusLabel={latestDraftStatusLabel}
+        selectedArtifactVersionIdTrimmed={selectedArtifactVersionIdTrimmed}
+        topQualityBadgeClass={topQualityBadgeClass}
+        topQualityStatusLabel={topQualityStatusLabel}
+        latestArtifactQualityOperatorSummary={latestArtifactQualitySummary?.operatorSummary || null}
+        summaryPriorityAlert={summaryPriorityAlert}
+      />
 
       {errorMessage || statusMessage ? (
         <WorkspaceMessageStack data-testid="migration-message-stack">
@@ -4829,10 +4954,7 @@ export function MigrationWorkspacePanel({
         </WorkspaceMessageStack>
       ) : null}
 
-      <h3 className="hint muted migration-section-title">A. Source + Requirements</h3>
-      <p className="hint muted migration-section-subtitle">
-        Capture source context and operator replacement requirements before draft generation.
-      </p>
+      <MigrationSourceRequirementsSection>
 
       <div className="panel stack workspace-section-block">
         <h3>Source Ingest</h3>
@@ -4874,10 +4996,9 @@ export function MigrationWorkspacePanel({
         )}
       </div>
 
-      <h3 className="hint muted migration-section-title">B. Media / Images</h3>
-      <p className="hint muted migration-section-subtitle">
-        Media counts, selection status, and image actions live only in this section.
-      </p>
+      </MigrationSourceRequirementsSection>
+
+      <MigrationMediaSection>
 
       <div className="panel stack workspace-section-block" data-testid="migration-media-section">
         <h3>Media / Images</h3>
@@ -5518,10 +5639,9 @@ export function MigrationWorkspacePanel({
         </div>
       </div>
 
-      <h3 className="hint muted migration-section-title">C. Draft Readiness + Generate</h3>
-      <p className="hint muted migration-section-subtitle">
-        Confirm readiness and compatibility, then generate a draft when unblocked.
-      </p>
+      </MigrationMediaSection>
+
+      <MigrationDraftReadinessSection>
 
       <div className="panel stack workspace-section-block">
         <h3>Draft Artifact Generation</h3>
@@ -5573,10 +5693,9 @@ export function MigrationWorkspacePanel({
         ) : null}
       </div>
 
-      <h3 className="hint muted migration-section-title">D. Draft Review + Quality</h3>
-      <p className="hint muted migration-section-subtitle">
-        Review selected artifacts, resolve quality issues, and perform explicit draft approval actions.
-      </p>
+      </MigrationDraftReadinessSection>
+
+      <MigrationArtifactReviewSection>
 
       <div className="panel stack workspace-section-block">
         <h3>Artifact Quality Summary</h3>
@@ -5866,15 +5985,14 @@ export function MigrationWorkspacePanel({
           </>
         ) : (
           <WorkspaceEmptyStateCard data-testid="migration-artifact-review-empty-state">
-            <p className="hint muted">No artifact version selected.</p>
-          </WorkspaceEmptyStateCard>
-        )}
+          <p className="hint muted">No artifact version selected.</p>
+        </WorkspaceEmptyStateCard>
+      )}
       </div>
 
-      <h3 className="hint muted migration-section-title">E. Approval / Publish / Deploy</h3>
-      <p className="hint muted migration-section-subtitle">
-        Approval, publish, and deploy remain explicit and unchanged.
-      </p>
+      </MigrationArtifactReviewSection>
+
+      <MigrationPublishDeploySection>
 
       <div className="panel stack workspace-section-block" data-testid="migration-publish-deploy-section">
         <h3>Publish and Deploy Controls</h3>
@@ -6186,10 +6304,9 @@ export function MigrationWorkspacePanel({
         </div>
       </div>
 
-      <h3 className="hint muted migration-section-title">F. Advanced Diagnostics &amp; History</h3>
-      <p className="hint muted migration-section-subtitle">
-        Use detailed diagnostics and attempt history only when troubleshooting.
-      </p>
+      </MigrationPublishDeploySection>
+
+      <MigrationAdvancedDiagnosticsSection>
 
       <div className="panel stack workspace-section-block">
         <h3>Advanced Diagnostics &amp; History</h3>
@@ -6935,6 +7052,7 @@ export function MigrationWorkspacePanel({
           </div>
         </details>
       </div>
+      </MigrationAdvancedDiagnosticsSection>
     </div>
   );
 }
