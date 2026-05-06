@@ -91,6 +91,11 @@ Compact informational-summary defaults:
 - these sections are informational summaries, not operator action surfaces.
 
 Advanced diagnostics normalization defaults:
+- Advanced Diagnostics subsection panels use a consistent shell pattern based on `Draft / Provider Diagnostics`:
+  - section heading
+  - optional helper text directly under heading
+  - bordered/rounded subsection shell
+  - consistent disclosure/content spacing
 - Publish Diagnostics and Deploy Diagnostics render normalized compact cards by default:
   - status
   - selected-attempt/latest-summary context

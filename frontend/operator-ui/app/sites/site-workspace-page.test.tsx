@@ -3208,7 +3208,15 @@ describe("site migration workflow route", () => {
     render(<SiteMigrationWorkflowPage />);
 
     await user.click(await screen.findByText("Show detailed migration failure diagnostics"));
+    expect(screen.getByTestId("migration-action-diagnostics-shell")).toHaveClass("migration-diagnostics-shell");
+    expect(screen.getByTestId("migration-draft-provider-diagnostics-shell")).toHaveClass("migration-diagnostics-shell");
     expect(screen.getByTestId("migration-draft-provider-diagnostics")).toBeInTheDocument();
+    expect(screen.getByTestId("migration-media-diagnostics-shell")).toHaveClass("migration-diagnostics-shell");
+    expect(screen.getByTestId("migration-publish-history-shell")).toHaveClass("migration-diagnostics-shell");
+    expect(screen.getByTestId("migration-deploy-history-shell")).toHaveClass("migration-diagnostics-shell");
+    expect(screen.getByTestId("migration-publish-diagnostics-shell")).toHaveClass("migration-diagnostics-shell");
+    expect(screen.getByTestId("migration-deploy-diagnostics-shell")).toHaveClass("migration-diagnostics-shell");
+    expect(screen.getByTestId("migration-draft-diagnostics-shell")).toHaveClass("migration-diagnostics-shell");
 
     const providerDetails = screen.getByTestId("migration-provider-execution-details");
     expect(providerDetails).not.toHaveAttribute("open");
@@ -3294,6 +3302,13 @@ describe("site migration workflow route", () => {
 
     await user.click(screen.getByText("Show deploy history"));
     expect(await screen.findByTestId("migration-deploy-history")).toBeInTheDocument();
+    expect(screen.getByTestId("migration-publish-history-shell")).toHaveAttribute("open");
+    expect(screen.getByTestId("migration-deploy-history-shell")).toHaveAttribute("open");
+
+    const deployDiagnosticsShell = screen.getByTestId("migration-deploy-diagnostics-shell");
+    expect(within(deployDiagnosticsShell).getByTestId("migration-deploy-consistency-shell")).toHaveClass(
+      "migration-diagnostics-shell",
+    );
   });
 });
 

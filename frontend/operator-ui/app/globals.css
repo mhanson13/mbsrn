@@ -1406,6 +1406,33 @@ main {
   margin: 0;
 }
 
+.migration-diagnostics-shell {
+  border: 1px solid var(--section-divider);
+  border-radius: var(--radius-sm);
+  background: linear-gradient(180deg, var(--surface-subtle) 0%, var(--panel) 100%);
+  padding: 0.2rem;
+}
+
+.migration-diagnostics-shell > summary {
+  cursor: pointer;
+  padding: 0.1rem 0.26rem;
+}
+
+.migration-diagnostics-shell[open] > summary {
+  margin-bottom: 0.16rem;
+}
+
+.migration-diagnostics-shell-panel.panel-compact {
+  border: 1px solid var(--section-divider);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  padding: 0.46rem 0.52rem;
+}
+
+.migration-diagnostics-shell-nested {
+  margin-top: 0.12rem;
+}
+
 .migration-publish-deploy-layout-stack {
   display: grid;
   gap: 0.62rem;

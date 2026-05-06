@@ -178,6 +178,7 @@ Summary and diagnostics compaction (2026-05):
   - long recommendation-title lists are truncated in primary view and available through disclosure.
   - this section remains informational provenance only, not an operator action surface.
 - Advanced Diagnostics is compact by default while preserving full data:
+  - subsection shells are visually normalized to the `Draft / Provider Diagnostics` pattern (title, helper text, consistent bordered/rounded shell, aligned disclosure/content spacing)
   - Publish/Deploy diagnostics show normalized status + selected-attempt scope + concise reason + next action.
   - raw failure/workflow/remediation fields remain under explicit `Show raw ... diagnostics fields` disclosures.
   - publish/deploy history defaults to latest attempts plus grouped repeated failure reasons; full per-attempt history remains available under disclosure.
