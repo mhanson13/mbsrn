@@ -61,12 +61,22 @@ Operator UI now uses a tighter dashboard hierarchy for migration review without 
   - latest draft version/status
   - artifact quality status
 - migration route sections are presented in this order:
-  1. `A. Migration Overview`
-  2. `B. Draft / Version Status`
-  3. `C. Artifact Quality Summary`
-  4. `D. Artifact Review`
-  5. `E. Approval / Publish / Deploy`
-  6. `F. Advanced Diagnostics & History`
+  1. `Top Summary / Next Action`
+  2. `A. Source + Requirements`
+  3. `B. Media / Images`
+  4. `C. Draft Readiness + Generate`
+  5. `D. Draft Review + Quality`
+  6. `E. Approval / Publish / Deploy`
+  7. `F. Advanced Diagnostics & History`
+
+Section ownership/deduplication rules:
+- Top Summary is the single source of truth for migration state + next action scanability (site, migration state, next action, selected draft summary, one highest-priority warning only)
+- Source + Requirements owns source ingest/snapshot and operator replacement requirements
+- Media / Images is the single source of truth for media counts and media actions
+- Draft Readiness + Generate owns readiness and provider compatibility gate (`Pass|Warning|Blocking`) for generation only
+- Draft Review + Quality owns artifact selection, quality findings, preview, approval, and delete
+- Approval / Publish / Deploy owns concise readiness and concise destination/action controls only
+- Advanced Diagnostics owns verbose/troubleshooting details (provider execution metadata, destination/runtime evidence, history, reason-code diagnostics)
 
 Purpose:
 - improve <10-second scanability for operators
@@ -122,73 +132,40 @@ Operator impact:
 - faster section scanning and clearer primary-vs-secondary content separation
 - no workflow semantic changes (approval/publish/deploy and generation gates are unchanged)
 
-Destination and preview trust additions:
-- migration workspace now includes an `Effective Publish/Deploy Destinations` section that separates:
-  - draft preview availability
-  - expected publish destination (owner/repo/branch/path and derived repository tree URL when determinable)
-  - platform-owned preview destination (`<site-slug>.site.mbsrn.com`) used for managed deploy validation with TLS
-  - customer production domain target (`expected_publish_url`) as a separate cutover state
-  - expected published site URL (`expected_publish_url`) when deterministic from target config
-  - resolved live URL (`resolved_live_url`) when deploy metadata/runtime result provides a concrete URL
-- destination summary scanability is grouped into compact blocks:
-  - Admin-controlled destination
-  - Operator-controlled destination
-  - Derived URLs / publish target
-  - Runtime / evidence state
-  - lower-value troubleshooting metadata is available under `Show additional destination diagnostics`
-- blocker visibility rule:
-  - publish/deploy blockers stay visible without expansion
-  - degraded-state blocker rows show compact failure identifiers (`category`, `reason`, `stage`) when available
-  - readiness cards remain concise and point back to the destination summary for authoritative destination/runtime metadata
-- URL source metadata now uses stable values:
-  - `deterministic_target_config` (derived from configured deploy target inputs)
-  - `workflow_output` (explicit URL captured from GitHub workflow completion metadata)
-  - `deploy_result` (explicit URL surfaced by deploy dispatch result metadata)
-  - `unknown` (not determinable from current config/history)
-- confirmation semantics:
-  - `deterministic_target_config` remains expected/not-confirmed destination guidance
-  - only `deploy_result` and `workflow_output` sources are treated as confirmed live URL sources
-  - preview deployment and customer-domain activation are intentionally separated:
-    - preview URL can be confirmed from managed deploy evidence
-    - customer production domain remains pending until explicit cutover and matching live evidence exist
-  - deploy request inputs are never treated as confirmed live evidence; only explicit deploy-result/workflow output metadata can confirm live URL state
-  - post-dispatch capture is best-effort and synchronous: the deploy action attempts to resolve the dispatched workflow run and reads explicit run-correlated completion metadata (for example deployment `environment_url`) when available
-  - if completion metadata is not yet available immediately after dispatch, URL remains unconfirmed until a later deploy result includes explicit live URL evidence
-- manual follow-up capture is available through `Refresh Deploy Status` in the migration workspace:
-  - operator/admin can re-check stored workflow-run metadata without re-dispatching deploy
-  - refresh updates workflow run status/conclusion when the run progresses
-  - confirmed live URL is promoted only when new explicit workflow completion evidence is found
-  - common no-op states are surfaced explicitly (`workflow_run_metadata_missing`, `deploy_record_missing`, `deploy_target_metadata_missing`)
-- destination values are labeled as configured/expected/live/unknown; URLs are only shown when derivable from existing config or recorded deploy metadata
+Destination, readiness, and diagnostics IA refinements:
+- Section E now keeps destination display concise:
+  - publish destination: repository, branch, artifact root, state, expected URL
+  - deploy destination: repository/ref, environment, preview URL, deploy-evidence state
+  - one-line blocker text stays visible when publish/deploy are not ready
+- verbose destination/runtime/config evidence is no longer primary-path content:
+  - namespace and managed policy alignment
+  - workflow/path/source metadata
+  - URL source/detail and runtime confirmation context
+  - these live under `Advanced Diagnostics & History` -> `Show full destination diagnostics`
+- readiness cards in Section E are intentionally compact:
+  - show `Ready: Yes/No`
+  - show one primary operator action/blocker line
+  - stale/old failure detail lines are not shown as primary warnings when readiness is `Ready: Yes`
+- full troubleshooting remains available and grouped in Advanced Diagnostics:
+  - Draft / Provider
+  - Media
+  - Publish
+  - Deploy / Runtime
+  - Destination / Config
 - diagnostics are run-bound, not floating snapshot-only:
-  - publish diagnostics can be viewed for a selected publish attempt
-  - deploy diagnostics can be viewed for a selected deploy attempt
-  - draft diagnostics are scoped to the selected artifact version when available
-  - labels indicate whether diagnostics are from selected context vs latest summary fallback
-  - precedence is field-level and deterministic:
-    - selected attempt fields are authoritative when present
-    - latest summary fields only fill truly missing values
-  - fallback usage is explicitly called out in diagnostics when selected-attempt fields are incomplete so operators do not mistake summary values for selected-attempt evidence
-  - when no publish/deploy attempt is selected, diagnostics intentionally use latest summary context
-  - publish/deploy history now appears under `Advanced Diagnostics & History` as collapsible troubleshooting sections
-- draft website preview is available before publish/deploy from the selected artifact version:
-  - rendered in a sandboxed, read-only iframe
-  - explicitly labeled as draft-only (`not published`, `not deployed`)
-  - supports whole-site preview across generated HTML pages via a page selector when multiple pages exist
-  - preserves operator-session preview context by blocking external/app-auth links inside iframe preview; blocked links are shown as auth-context guidance instead of forcing re-auth loops
-  - unavailable state is explicit when artifact HTML is missing
-- Section D now owns review-stage draft actions:
-  - `Preview Draft`
-  - `Approve Selected Draft`
-  - `Delete Selected Draft` (eligibility rules unchanged)
-  - this keeps Section E focused on publish/deploy execution controls
-- page map, generated files, and selected-file preview are presented in one combined inspection surface
-- artifact file preview now supports explicit hide/show controls so operators can collapse preview content without losing selected file context
-- draft lifecycle cleanup now includes single-draft deletion:
-  - eligible unpublished drafts can be deleted from the migration workflow
-  - deletion is blocked for published artifacts and for artifacts referenced by publish/deploy history
-  - blocked deletes surface deterministic operator-safe reasons (for example: referenced by publish history)
-  - deletion recalculates workspace pointers/readiness and keeps history integrity intact
+  - publish/deploy diagnostics can be scoped to selected history attempts
+  - fallback to latest summary is field-level and explicit when selected-attempt fields are missing
+  - publish/deploy history remains collapsible under Advanced Diagnostics
+- URL confirmation semantics are unchanged:
+  - `deterministic_target_config` is expected guidance (not confirmed live evidence)
+  - confirmed live evidence comes from explicit deploy/workflow result metadata (for example `deploy_result` or `workflow_output`)
+- manual follow-up capture remains available through `Refresh Deploy Status`
+
+Draft review and preview behavior:
+- Section D owns preview + review actions (`Preview Draft`, `Approve Selected Draft`, `Delete Selected Draft`)
+- preview remains sandboxed and draft-only (`not published`, `not deployed`)
+- page map, generated files, and selected-file preview stay in a combined inspection surface
+- draft deletion eligibility and history-protection invariants are unchanged
 
 ## Draft Input Provenance and AI Context Summary (2026-05)
 Draft generation now persists and returns a bounded, operator-safe provenance summary at:
@@ -228,6 +205,9 @@ Current summary fields include:
 Interpretation:
 - this is bounded metadata for trust and debugging, not a full prompt dump
 - values represent context presence/counts and budget behavior, not guaranteed quality of source data
+- in the primary workflow UI, this section is provenance-only:
+  - media counts/actions belong to `B. Media / Images` (single source of truth)
+  - provider execution/request metadata belongs to `F. Advanced Diagnostics & History`
 - provider recommender outputs and SEO recommendations remain advisory; operator review is still required before approval/publish/deploy
 
 ## Media Discovery, Upload, and Safety Boundaries (2026-05)

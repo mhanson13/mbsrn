@@ -820,6 +820,15 @@ describe("site migration workflow route", () => {
       render(<SiteMigrationWorkflowPage />);
 
       const deployReadinessCard = await screen.findByTestId("migration-deploy-readiness");
+      if (fixActive) {
+        expect(within(deployReadinessCard).queryByTestId("migration-managed-site-rollout-state-readiness")).not.toBeInTheDocument();
+        expect(within(deployReadinessCard).queryByTestId("migration-managed-site-rollout-fix-status-readiness")).not.toBeInTheDocument();
+        expect(within(deployReadinessCard).queryByTestId("migration-managed-site-rollout-observed-digest-readiness")).not.toBeInTheDocument();
+        expect(within(deployReadinessCard).getByTestId("migration-deploy-readiness-primary-action")).toHaveTextContent(
+          "Action: Run deploy for the selected approved and published draft.",
+        );
+        return;
+      }
       expect(within(deployReadinessCard).getByTestId("migration-managed-site-rollout-state-readiness")).toHaveTextContent(
         `Managed site rollout state: ${expectedLabel}`,
       );
@@ -1546,7 +1555,18 @@ describe("site migration workflow route", () => {
     expect(within(inspectionSurface).getByTestId("migration-file-preview-iframe")).toBeInTheDocument();
   });
 
-  it("consolidates destination metadata labels and removes analytics insertion rules from migration route", async () => {
+  async function openFullDestinationDiagnostics(
+    user: ReturnType<typeof userEvent.setup>,
+  ): Promise<HTMLElement> {
+    await user.click(await screen.findByText("Show detailed migration failure diagnostics"));
+    const destinationDetails = await screen.findByTestId("migration-destination-secondary-details");
+    await user.click(within(destinationDetails).getByText("Show full destination diagnostics"));
+    expect(destinationDetails).toHaveAttribute("open");
+    return screen.getByTestId("migration-destination-config-diagnostics");
+  }
+
+  it("keeps destination summary concise and moves full namespace/policy/runtime fields to advanced diagnostics", async () => {
+    const user = userEvent.setup();
     mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(
       buildMigrationWorkspaceSummary({
         deploy_readiness: {
@@ -1562,6 +1582,7 @@ describe("site migration workflow route", () => {
             target_environment_key: "gke_prod",
             target_environment_source: "admin_config",
             site_workflow_file_path: ".github/workflows/deploy-tnmfire-www-prod.yml",
+            kubernetes_namespace: "site-1",
             managed_resource_quota_expected: true,
             managed_resource_quota_present: true,
             managed_limit_range_expected: true,
@@ -1576,28 +1597,29 @@ describe("site migration workflow route", () => {
     render(<SiteMigrationWorkflowPage />);
 
     const destinationSummary = await screen.findByTestId("migration-destination-summary");
-    expect(within(destinationSummary).getByTestId("migration-destination-admin-block")).toBeInTheDocument();
-    expect(within(destinationSummary).getByTestId("migration-destination-operator-block")).toBeInTheDocument();
-    expect(within(destinationSummary).getByTestId("migration-destination-derived-block")).toBeInTheDocument();
-    expect(within(destinationSummary).getByTestId("migration-destination-runtime-block")).toBeInTheDocument();
-    expect(within(destinationSummary).getAllByText("Admin-set").length).toBeGreaterThan(0);
-    expect(within(destinationSummary).getAllByText("Runtime").length).toBeGreaterThan(0);
-    expect(within(destinationSummary).getByText("Managed ResourceQuota")).toBeInTheDocument();
-    expect(within(destinationSummary).getByText("Managed LimitRange")).toBeInTheDocument();
-    expect(within(destinationSummary).getByText("Managed NetworkPolicy")).toBeInTheDocument();
-    expect(within(destinationSummary).getByText("Managed namespace policy set aligned")).toBeInTheDocument();
+    expect(destinationSummary).toHaveTextContent("Publish Destination");
+    expect(destinationSummary).toHaveTextContent("Deploy Destination");
+    expect(destinationSummary).toHaveTextContent("Repository:");
+    expect(destinationSummary).toHaveTextContent("Environment:");
+    expect(within(destinationSummary).queryByText("Managed ResourceQuota")).not.toBeInTheDocument();
+    expect(within(destinationSummary).queryByText("Managed LimitRange")).not.toBeInTheDocument();
+    expect(within(destinationSummary).queryByText("Managed NetworkPolicy")).not.toBeInTheDocument();
+    expect(within(destinationSummary).queryByText("Kubernetes namespace")).not.toBeInTheDocument();
 
     const publishReadiness = screen.getByTestId("migration-publish-readiness");
     const deployReadiness = screen.getByTestId("migration-deploy-readiness");
-    expect(within(publishReadiness).queryByText("GitHub account/owner")).not.toBeInTheDocument();
-    expect(within(deployReadiness).queryByText("Workflow identifier")).not.toBeInTheDocument();
-    expect(within(publishReadiness).queryByText(/Runtime publisher:/i)).not.toBeInTheDocument();
-    expect(within(deployReadiness).queryByText(/Runtime publisher:/i)).not.toBeInTheDocument();
-
+    expect(within(publishReadiness).queryByText(/Failure category:/i)).not.toBeInTheDocument();
+    expect(within(deployReadiness).queryByText(/Deploy failure reason:/i)).not.toBeInTheDocument();
     expect(screen.queryByText("Analytics Insertion Rules")).not.toBeInTheDocument();
+
+    const destinationDiagnostics = await openFullDestinationDiagnostics(user);
+    expect(destinationDiagnostics).toHaveTextContent("Kubernetes namespace");
+    expect(destinationDiagnostics).toHaveTextContent("Managed ResourceQuota");
+    expect(destinationDiagnostics).toHaveTextContent("Managed LimitRange");
+    expect(destinationDiagnostics).toHaveTextContent("Managed NetworkPolicy");
   });
 
-  it("keeps destination blockers always visible and secondary diagnostics behind disclosure", async () => {
+  it("keeps concise blockers visible in Section E and retains detailed publish/deploy failure diagnostics under advanced details", async () => {
     const user = userEvent.setup();
     mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(
       buildMigrationWorkspaceSummary({
@@ -1623,6 +1645,7 @@ describe("site migration workflow route", () => {
             target_environment_key: "gke_prod",
             target_environment_source: "admin_config",
             site_workflow_file_path: ".github/workflows/deploy-tnmfire-www-prod.yml",
+            kubernetes_namespace: "site-1",
           },
           last_failure_category: "target_invalid",
           last_failure_reason: "workflow_not_dispatchable",
@@ -1634,40 +1657,35 @@ describe("site migration workflow route", () => {
     render(<SiteMigrationWorkflowPage />);
 
     const destinationSummary = await screen.findByTestId("migration-destination-summary");
-    expect(within(destinationSummary).getByTestId("migration-destination-blockers")).toBeInTheDocument();
-    expect(within(destinationSummary).getByTestId("migration-destination-publish-failure-category")).toHaveTextContent(
-      /Category:\s*config missing/i,
+    expect(within(destinationSummary).getByTestId("migration-destination-publish-blocker")).toHaveTextContent(
+      "GitHub publish/deploy authentication failed.",
     );
-    expect(within(destinationSummary).getByTestId("migration-destination-publish-failure-reason")).toHaveTextContent(
-      /Reason:\s*authentication failed/i,
+    expect(within(destinationSummary).getByTestId("migration-destination-deploy-blocker")).toHaveTextContent(
+      "GitHub repository or workflow target was not found.",
     );
-    expect(within(destinationSummary).getByTestId("migration-destination-publish-failure-stage")).toHaveTextContent(
-      /Stage:\s*config validation/i,
-    );
-    expect(within(destinationSummary).getByTestId("migration-destination-deploy-failure-category")).toHaveTextContent(
-      /Category:\s*target invalid/i,
-    );
-    expect(within(destinationSummary).getByTestId("migration-destination-deploy-failure-reason")).toHaveTextContent(
-      /Reason:\s*workflow not dispatchable/i,
-    );
-    expect(within(destinationSummary).getByTestId("migration-destination-deploy-failure-stage")).toHaveTextContent(
-      /Stage:\s*workflow lookup/i,
-    );
-    expect(within(destinationSummary).getByText(/GitHub publish\/deploy authentication failed\./i)).toBeInTheDocument();
-    expect(within(destinationSummary).getByText(/GitHub repository or workflow target was not found\./i)).toBeInTheDocument();
+    expect(within(destinationSummary).queryByText(/Category:/i)).not.toBeInTheDocument();
+    expect(within(destinationSummary).queryByText(/Reason:/i)).not.toBeInTheDocument();
+    expect(within(destinationSummary).queryByText(/Stage:/i)).not.toBeInTheDocument();
 
-    const secondaryDetails = within(destinationSummary).getByTestId("migration-destination-secondary-details");
+    await user.click(screen.getByText("Show detailed migration failure diagnostics"));
+    const publishDiagnostics = screen.getByTestId("migration-publish-diagnostics");
+    const deployDiagnostics = screen.getByTestId("migration-deploy-diagnostics");
+    expect(publishDiagnostics).toHaveTextContent("Publish failure category: config missing");
+    expect(publishDiagnostics).toHaveTextContent("Publish failure reason: authentication failed");
+    expect(deployDiagnostics).toHaveTextContent("Deploy failure category: target invalid");
+    expect(deployDiagnostics).toHaveTextContent("Deploy failure reason: workflow not dispatchable");
+    expect(deployDiagnostics).toHaveTextContent("Deploy failure stage: workflow lookup");
+
+    const secondaryDetails = screen.getByTestId("migration-destination-secondary-details");
     expect(secondaryDetails).not.toHaveAttribute("open");
-
-    const collapsedUrlSource = within(destinationSummary).getByText("URL source");
-    expect(collapsedUrlSource).not.toBeVisible();
-    await user.click(within(destinationSummary).getByText("Show additional destination diagnostics"));
+    const collapsedField = within(secondaryDetails).getByText("Kubernetes namespace");
+    expect(collapsedField).not.toBeVisible();
+    await user.click(within(secondaryDetails).getByText("Show full destination diagnostics"));
     expect(secondaryDetails).toHaveAttribute("open");
-    expect(within(destinationSummary).getByText("Draft entry file")).toBeVisible();
-    expect(within(destinationSummary).getByText("URL source")).toBeVisible();
+    expect(within(secondaryDetails).getByText("Kubernetes namespace")).toBeVisible();
   });
 
-  it("shows operator-set destination labels when repository overrides are configured", async () => {
+  it("shows configured repository values in concise destination summary", async () => {
     mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(
       buildMigrationWorkspaceSummary({
         workspace: buildMigrationWorkspace({
@@ -1696,11 +1714,12 @@ describe("site migration workflow route", () => {
     render(<SiteMigrationWorkflowPage />);
 
     const destinationSummary = await screen.findByTestId("migration-destination-summary");
-    expect(within(destinationSummary).getAllByText("Operator-set").length).toBeGreaterThan(0);
-    expect(within(destinationSummary).getByText("mhanson13/tnmfire")).toBeInTheDocument();
+    expect(destinationSummary).toHaveTextContent("Repository: mhanson13/tnmfire");
+    expect(destinationSummary).not.toHaveTextContent("Operator-set");
   });
 
-  it("shows repository provisioning guidance when publish will auto-create a missing repo", async () => {
+  it("shows repository provisioning guidance in destination diagnostics when publish will auto-create a missing repo", async () => {
+    const user = userEvent.setup();
     mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(
       buildMigrationWorkspaceSummary({
         publish_readiness: {
@@ -1723,15 +1742,14 @@ describe("site migration workflow route", () => {
 
     render(<SiteMigrationWorkflowPage />);
 
-    const destinationSummary = await screen.findByTestId("migration-destination-summary");
-    expect(
-      within(destinationSummary).getByText(
-        "Missing repository will be auto-created on live publish (admin policy enabled).",
-      ),
-    ).toBeInTheDocument();
+    const destinationDiagnostics = await openFullDestinationDiagnostics(user);
+    expect(destinationDiagnostics).toHaveTextContent(
+      "Missing repository will be auto-created on live publish (admin policy enabled).",
+    );
   });
 
-  it("shows repository provisioning guidance when publish preflight indicates branch bootstrap", async () => {
+  it("shows repository provisioning guidance in destination diagnostics for branch bootstrap", async () => {
+    const user = userEvent.setup();
     mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(
       buildMigrationWorkspaceSummary({
         publish_readiness: {
@@ -1754,15 +1772,14 @@ describe("site migration workflow route", () => {
 
     render(<SiteMigrationWorkflowPage />);
 
-    const destinationSummary = await screen.findByTestId("migration-destination-summary");
-    expect(
-      within(destinationSummary).getByText(
-        "Target branch is missing and will be bootstrapped during live publish.",
-      ),
-    ).toBeInTheDocument();
+    const destinationDiagnostics = await openFullDestinationDiagnostics(user);
+    expect(destinationDiagnostics).toHaveTextContent(
+      "Target branch is missing and will be bootstrapped during live publish.",
+    );
   });
 
-  it("shows repository provisioning guidance when managed baseline files will be reconciled", async () => {
+  it("shows repository provisioning guidance in destination diagnostics for baseline reconciliation", async () => {
+    const user = userEvent.setup();
     mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(
       buildMigrationWorkspaceSummary({
         publish_readiness: {
@@ -1788,15 +1805,14 @@ describe("site migration workflow route", () => {
 
     render(<SiteMigrationWorkflowPage />);
 
-    const destinationSummary = await screen.findByTestId("migration-destination-summary");
-    expect(
-      within(destinationSummary).getByText(
-        "Repository is MBSRN-managed and missing baseline files (README.md, .gitignore, LICENSE); live publish will reconcile missing files.",
-      ),
-    ).toBeInTheDocument();
+    const destinationDiagnostics = await openFullDestinationDiagnostics(user);
+    expect(destinationDiagnostics).toHaveTextContent(
+      "Repository is MBSRN-managed and missing baseline files (README.md, .gitignore, LICENSE); live publish will reconcile missing files.",
+    );
   });
 
-  it("shows repository provisioning guidance when publish preflight detects workflow write authorization gap", async () => {
+  it("shows repository provisioning guidance in destination diagnostics for workflow write authorization gaps", async () => {
+    const user = userEvent.setup();
     mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(
       buildMigrationWorkspaceSummary({
         publish_readiness: {
@@ -1819,15 +1835,14 @@ describe("site migration workflow route", () => {
 
     render(<SiteMigrationWorkflowPage />);
 
-    const destinationSummary = await screen.findByTestId("migration-destination-summary");
-    expect(
-      within(destinationSummary).getAllByText(
-        "GitHub runtime is not authorized to write workflow files in the configured repository.",
-      ).length,
-    ).toBeGreaterThan(0);
+    const destinationDiagnostics = await openFullDestinationDiagnostics(user);
+    expect(destinationDiagnostics).toHaveTextContent(
+      "GitHub runtime is not authorized to write workflow files in the configured repository.",
+    );
   });
 
-  it("shows repository ownership guidance when publish preflight detects missing mbsrn.key marker", async () => {
+  it("shows repository ownership guidance in destination diagnostics when mbsrn.key is missing", async () => {
+    const user = userEvent.setup();
     mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(
       buildMigrationWorkspaceSummary({
         publish_readiness: {
@@ -1850,12 +1865,10 @@ describe("site migration workflow route", () => {
 
     render(<SiteMigrationWorkflowPage />);
 
-    const destinationSummary = await screen.findByTestId("migration-destination-summary");
-    expect(
-      within(destinationSummary).getByText(
-        "This repository exists but is not marked as MBSRN-managed. Adopt it to allow managed publish updates.",
-      ),
-    ).toBeInTheDocument();
+    const destinationDiagnostics = await openFullDestinationDiagnostics(user);
+    expect(destinationDiagnostics).toHaveTextContent(
+      "This repository exists but is not marked as MBSRN-managed. Adopt it to allow managed publish updates.",
+    );
   });
 
   it("shows adopt repository action for adoption-required publish targets and triggers adoption call", async () => {
@@ -1896,7 +1909,8 @@ describe("site migration workflow route", () => {
     await waitFor(() => expect(mockAdoptMigrationPublishRepository).toHaveBeenCalledTimes(1));
   });
 
-  it("shows repository provisioning authorization guidance when runtime token cannot create repos", async () => {
+  it("shows repository provisioning authorization guidance in destination diagnostics when runtime token cannot create repos", async () => {
+    const user = userEvent.setup();
     mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(
       buildMigrationWorkspaceSummary({
         publish_readiness: {
@@ -1920,12 +1934,129 @@ describe("site migration workflow route", () => {
 
     render(<SiteMigrationWorkflowPage />);
 
+    const destinationDiagnostics = await openFullDestinationDiagnostics(user);
+    expect(destinationDiagnostics).toHaveTextContent(
+      "Runtime token is not authorized to create repositories under the configured owner.",
+    );
+  });
+
+  it("shows migration state in the top summary band and removes duplicate primary current-state cards", async () => {
+    render(<SiteMigrationWorkflowPage />);
+
+    const summaryBand = await screen.findByTestId("migration-summary-band");
+    expect(summaryBand).toHaveTextContent("Migration state");
+    expect(summaryBand).toHaveTextContent("Next action");
+    expect(summaryBand).toHaveTextContent("Latest draft");
+    expect(screen.queryByTestId("migration-current-state")).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Current Migration State" })).not.toBeInTheDocument();
+  });
+
+  it("keeps provider execution metadata hidden by default and available via Advanced Diagnostics disclosure", async () => {
+    const user = userEvent.setup();
+    render(<SiteMigrationWorkflowPage />);
+
+    await user.click(await screen.findByText("Show detailed migration failure diagnostics"));
+    const providerDetails = screen.getByTestId("migration-provider-execution-details");
+    expect(providerDetails).not.toHaveAttribute("open");
+
+    const providerMetadata = screen.getByTestId("migration-ai-execution-metadata");
+    expect(providerMetadata).not.toBeVisible();
+
+    await user.click(within(providerDetails).getByText("Show provider execution details"));
+    expect(providerDetails).toHaveAttribute("open");
+    expect(screen.getByTestId("migration-ai-execution-metadata")).toBeVisible();
+  });
+
+  it("hides deploy namespace/policy/runtime evidence by default and reveals it only in destination diagnostics", async () => {
+    const user = userEvent.setup();
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(
+      buildMigrationWorkspaceSummary({
+        deploy_readiness: {
+          ready: false,
+          reasons: ["Deploy target is not enabled."],
+          target: {
+            enabled: false,
+            repo_owner: "mhanson13",
+            repo_name: "tnmfire",
+            workflow_id: "deploy-tnmfire-www-prod.yml",
+            ref: "main",
+            kubernetes_namespace: "site-1",
+            managed_resource_quota_expected: true,
+            managed_resource_quota_present: true,
+            managed_limit_range_expected: true,
+            managed_limit_range_present: true,
+            managed_network_policy_expected: false,
+            managed_network_policy_present: null,
+          },
+        },
+      }),
+    );
+    render(<SiteMigrationWorkflowPage />);
+
     const destinationSummary = await screen.findByTestId("migration-destination-summary");
-    expect(
-      within(destinationSummary).getByText(
-        "Runtime token is not authorized to create repositories under the configured owner.",
-      ),
-    ).toBeInTheDocument();
+    expect(within(destinationSummary).queryByText("Kubernetes namespace")).not.toBeInTheDocument();
+    expect(within(destinationSummary).queryByText("Managed ResourceQuota")).not.toBeInTheDocument();
+
+    await user.click(screen.getByText("Show detailed migration failure diagnostics"));
+    const destinationDetails = screen.getByTestId("migration-destination-secondary-details");
+    expect(destinationDetails).not.toHaveAttribute("open");
+    expect(within(destinationDetails).getByText("Kubernetes namespace")).not.toBeVisible();
+    expect(within(destinationDetails).getByText("Managed ResourceQuota")).not.toBeVisible();
+
+    await user.click(within(destinationDetails).getByText("Show full destination diagnostics"));
+    expect(destinationDetails).toHaveAttribute("open");
+    expect(within(destinationDetails).getByText("Kubernetes namespace")).toBeVisible();
+    expect(within(destinationDetails).getByText("Managed ResourceQuota")).toBeVisible();
+  });
+
+  it("does not show stale failure detail lines in publish/deploy readiness cards when both readiness states are ready", async () => {
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(
+      buildMigrationWorkspaceSummary({
+        publish_readiness: {
+          ready: true,
+          reasons: [],
+          last_failure_category: "config_missing",
+          last_failure_message: "Old publish failure that should not be surfaced in ready state.",
+          target: {
+            enabled: true,
+            repo_owner: "mhanson13",
+            repo_name: "tnmfire",
+            branch: "main",
+            artifact_root: "/",
+          },
+        },
+        deploy_readiness: {
+          ready: true,
+          reasons: [],
+          last_failure_category: "target_invalid",
+          last_failure_reason: "workflow_not_dispatchable",
+          last_failure_stage: "workflow_lookup",
+          last_failure_message: "Old deploy failure that should not be surfaced in ready state.",
+          target: {
+            enabled: true,
+            repo_owner: "mhanson13",
+            repo_name: "tnmfire",
+            workflow_id: "deploy-tnmfire-www-prod.yml",
+            ref: "main",
+          },
+        },
+      }),
+    );
+    render(<SiteMigrationWorkflowPage />);
+
+    const publishReadiness = await screen.findByTestId("migration-publish-readiness");
+    const deployReadiness = screen.getByTestId("migration-deploy-readiness");
+
+    expect(within(publishReadiness).getByTestId("migration-publish-readiness-primary-action")).toHaveTextContent(
+      "Action: Publish the selected approved draft when operator review is complete.",
+    );
+    expect(within(deployReadiness).getByTestId("migration-deploy-readiness-primary-action")).toHaveTextContent(
+      "Action: Run deploy for the selected approved and published draft.",
+    );
+    expect(within(publishReadiness).queryByText(/Failure category:/i)).not.toBeInTheDocument();
+    expect(within(publishReadiness).queryByText(/Old publish failure/i)).not.toBeInTheDocument();
+    expect(within(deployReadiness).queryByText(/Old deploy failure/i)).not.toBeInTheDocument();
+    expect(within(deployReadiness).queryByTestId("migration-managed-gke-config-guidance-readiness")).not.toBeInTheDocument();
   });
 
   it("renders draft input summary and media grouping with operator actions", async () => {
@@ -1990,7 +2121,14 @@ describe("site migration workflow route", () => {
 
     render(<SiteMigrationWorkflowPage />);
 
-    expect(await screen.findByTestId("migration-draft-input-summary")).toBeInTheDocument();
+    const draftInputSummary = await screen.findByTestId("migration-draft-input-summary");
+    expect(draftInputSummary).toHaveTextContent("Bounded Provenance");
+    expect(draftInputSummary).toHaveTextContent("Media context included: Yes");
+    expect(draftInputSummary).toHaveTextContent("AI context blocks included:");
+    expect(within(draftInputSummary).queryByText("Source-site images discovered:")).not.toBeInTheDocument();
+    expect(within(draftInputSummary).queryByText("Operator uploaded images:")).not.toBeInTheDocument();
+    expect(within(draftInputSummary).queryByText(/Provider source:/i)).not.toBeInTheDocument();
+
     const mediaSection = await screen.findByTestId("migration-media-section");
     expect(within(mediaSection).getByText("Media / Images")).toBeInTheDocument();
     expect(within(mediaSection).getByText("Discovered from source site: 2")).toBeInTheDocument();
@@ -2518,6 +2656,108 @@ describe("site migration workflow route", () => {
       "Real project images were requested",
     );
     expect(within(qualitySummary).queryByText("No quality issues detected.")).not.toBeInTheDocument();
+  });
+
+  it("keeps moved provider/media/destination troubleshooting fields available under Advanced Diagnostics disclosures", async () => {
+    const user = userEvent.setup();
+    const baseSummary = buildMigrationWorkspaceSummary();
+    const baseContextSummary = baseSummary.context_summary as Record<string, unknown>;
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(
+      buildMigrationWorkspaceSummary({
+        context_summary: {
+          ...baseContextSummary,
+          migration_diagnostics: {
+            last_draft_generation_status: "failed",
+            media_diagnostics: ["image_fetch_failed"],
+          },
+        },
+        deploy_readiness: {
+          ready: false,
+          reasons: ["Deploy target is not enabled."],
+          target: {
+            enabled: false,
+            repo_owner: "mhanson13",
+            repo_name: "tnmfire",
+            workflow_id: "deploy-tnmfire-www-prod.yml",
+            ref: "main",
+            kubernetes_namespace: "site-1",
+          },
+        },
+      }),
+    );
+    render(<SiteMigrationWorkflowPage />);
+
+    await user.click(await screen.findByText("Show detailed migration failure diagnostics"));
+    expect(screen.getByTestId("migration-draft-provider-diagnostics")).toBeInTheDocument();
+
+    const providerDetails = screen.getByTestId("migration-provider-execution-details");
+    expect(providerDetails).not.toHaveAttribute("open");
+    await user.click(within(providerDetails).getByText("Show provider execution details"));
+    expect(providerDetails).toHaveAttribute("open");
+    expect(screen.getByTestId("migration-ai-execution-metadata")).toBeVisible();
+
+    await user.click(screen.getByText("Show media diagnostics"));
+    expect(screen.getByTestId("migration-media-diagnostics")).toHaveTextContent("image_fetch_failed");
+
+    const destinationDetails = screen.getByTestId("migration-destination-secondary-details");
+    expect(destinationDetails).not.toHaveAttribute("open");
+    await user.click(within(destinationDetails).getByText("Show full destination diagnostics"));
+    expect(destinationDetails).toHaveAttribute("open");
+    expect(screen.getByTestId("migration-destination-config-diagnostics")).toBeVisible();
+  });
+
+  it("renders loading migration workspace state safely when operator context is still loading", () => {
+    mockUseOperatorContext.mockReturnValue(baseContext({ loading: true }));
+    render(<SiteMigrationWorkflowPage />);
+
+    expect(screen.getByText("Loading migration workspace")).toBeInTheDocument();
+    expect(screen.queryByTestId("migration-workspace-panel")).not.toBeInTheDocument();
+  });
+
+  it("handles null/empty migration workspace payloads without crashing", async () => {
+    const baseSummary = buildMigrationWorkspaceSummary();
+    const baseContextSummary = baseSummary.context_summary as Record<string, unknown>;
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(
+      buildMigrationWorkspaceSummary({
+        workspace: buildMigrationWorkspace({
+          source_url: "",
+          source_site_status: "not_ingested",
+          latest_generated_artifact_version_id: null,
+          latest_generated_artifact_version_number: null,
+          latest_approved_artifact_version_id: null,
+          latest_approved_artifact_version_number: null,
+          publish_config_json: null,
+          deploy_config_json: null,
+        }),
+        source_snapshot: null,
+        latest_artifact: null,
+        context_summary: {
+          ...baseContextSummary,
+          draft_input_summary: {},
+          migration_diagnostics: {},
+          media_assets: {
+            source_discovered_count: 0,
+            source_imported_count: 0,
+            operator_uploaded_count: 0,
+            selected_assets_count: 0,
+            media_asset_categories: [],
+            selected_assets_trimmed: false,
+            diagnostics: [],
+            source_discovered: [],
+            operator_uploaded: [],
+            selected_assets: [],
+          },
+        },
+      }),
+    );
+    mockFetchMigrationArtifactVersions.mockResolvedValueOnce({ items: [], total: 0 });
+
+    render(<SiteMigrationWorkflowPage />);
+
+    expect(await screen.findByTestId("migration-workspace-panel")).toBeInTheDocument();
+    expect(screen.getByTestId("migration-source-summary-empty-state")).toBeInTheDocument();
+    expect(screen.getByTestId("migration-artifact-quality-empty-state")).toBeInTheDocument();
+    expect(screen.getByTestId("migration-artifact-review-empty-state")).toBeInTheDocument();
   });
 
   it("renders advanced diagnostics and history with collapsible publish/deploy history panels", async () => {

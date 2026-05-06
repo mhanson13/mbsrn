@@ -43,25 +43,43 @@ These fields are intended for diagnostics and API-level inspection.
 
 The dedicated migration route (`/sites/[site_id]/migration`) keeps primary operator workflow and diagnostics separated:
 
-- Operator Actions:
-  - draft generation, approval, publish, deploy, refresh/retry, delete draft
-  - media upload/select/unselect/edit metadata actions
-  - `Suggest metadata` and `Apply suggestions` actions per media asset
-  - `Suggest Metadata for Selected` batch action for selected media assets
-- Draft Inputs / AI Context:
-  - bounded provenance summary (`context_summary.draft_input_summary`)
-  - recommendation, operator, enriched-content, competitor, analytics, audit, and media inclusion signals
-- Media / Images:
-  - discovered source-site images
-  - operator-uploaded images
-  - selected images used in AI context
-  - AI-suggested metadata status/reason hints with explicit apply control
-- Metrics:
-  - readiness/AI execution/runtime status in primary workflow cards
-  - readiness card can consume dedicated preflight endpoint data (`GET .../migration/draft-readiness`) and show blocking vs warning states near `Generate Draft`
-- Diagnostics / Debug Output:
-  - advanced troubleshooting output and history under `Advanced Diagnostics & History`
-  - media rejection/fetch safety reasons appear in `Media Diagnostics` (not in the primary media action cards)
+- Top Summary / Next Action (single owner for migration state scanability):
+  - site name
+  - migration state
+  - next action
+  - selected/latest draft summary
+  - one highest-priority blocker/warning line only
+- A. Source + Requirements:
+  - source ingest action + source snapshot summary
+  - operator requirements + enriched replacement content
+- B. Media / Images (single source of truth for media):
+  - discovered/imported/uploaded/selected media state
+  - media counts and media actions
+  - media-required readiness cue
+- C. Draft Readiness + Generate:
+  - readiness summary + generate action
+  - provider compatibility gate (`Pass|Warning|Blocking`)
+  - compact media-required warning when relevant
+- D. Draft Review + Quality:
+  - artifact selector, quality status/issues, preview controls
+  - approve/delete draft actions
+- E. Approval / Publish / Deploy:
+  - concise publish/deploy destination summary
+  - concise readiness state + one action/blocker line
+  - explicit publish/deploy actions
+- F. Advanced Diagnostics & History:
+  - draft/provider execution metadata
+  - media diagnostics
+  - publish/deploy attempt history + full failure diagnostics
+  - full destination/runtime/config evidence
+
+Deduplication rules:
+- Migration state should not be repeated across multiple primary cards; top summary owns it.
+- Media counts should not be repeated outside `B. Media / Images`.
+- Draft Inputs / AI Context is provenance-focused, not a duplicate media/provider dashboard.
+- Provider request/execution details and destination runtime/policy details are hidden by default and surfaced through disclosure in Advanced Diagnostics.
+- When readiness is `Ready: Yes`, stale historical failure traces should not be shown as primary warnings.
+- Loading/guest/auth support states should render simple support shells and must not flash authenticated diagnostics surfaces.
 
 Google auth/integration operator cue:
 - reconnect-required Google integration states are shown as targeted integration guidance in draft diagnostics
