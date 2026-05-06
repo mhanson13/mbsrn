@@ -1286,6 +1286,91 @@ main {
   align-content: start;
 }
 
+.migration-media-browser {
+  border-color: var(--workspace-summary-border);
+}
+
+.migration-media-filter-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.42rem;
+  align-items: center;
+}
+
+.migration-media-browser-list {
+  display: grid;
+  gap: 0.58rem;
+}
+
+.migration-media-row {
+  position: relative;
+  border: 1px solid var(--section-divider);
+  border-radius: var(--radius-sm);
+  background: var(--surface-subtle);
+  padding: 0.5rem 0.56rem;
+  display: grid;
+  gap: 0.38rem;
+}
+
+.migration-media-row-deemphasized {
+  opacity: 0.9;
+}
+
+.migration-media-row-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.migration-media-row-title {
+  min-width: 0;
+  display: grid;
+  gap: 0.12rem;
+}
+
+.migration-media-row-controls {
+  position: relative;
+}
+
+.migration-media-preview-trigger {
+  min-height: 1.95rem;
+}
+
+.migration-media-preview-popover {
+  position: absolute;
+  inset-inline-start: 0;
+  inset-block-start: calc(100% + 0.3rem);
+  z-index: 20;
+  width: min(340px, calc(100vw - 4.5rem));
+  max-height: 280px;
+  padding: 0.42rem;
+  border: 1px solid var(--section-divider);
+  border-radius: var(--radius-sm);
+  background: linear-gradient(180deg, var(--surface-subtle) 0%, var(--panel) 100%);
+  box-shadow: 0 14px 24px -18px var(--panel-depth-shadow);
+}
+
+.migration-media-thumbnail {
+  display: block;
+  width: 100%;
+  max-width: 340px;
+  max-height: 260px;
+  object-fit: contain;
+  border-radius: calc(var(--radius-sm) - 2px);
+  background: var(--surface-muted);
+}
+
+.migration-media-details {
+  border-top: 1px solid var(--section-divider);
+  padding-top: 0.35rem;
+}
+
+.migration-media-details > summary {
+  cursor: pointer;
+}
+
 .migration-quality-issue-list {
   margin: 0;
   padding: 0;
@@ -3230,6 +3315,12 @@ code {
 
   .operational-item-chip-group {
     justify-content: flex-start;
+  }
+
+  .migration-media-preview-popover {
+    position: static;
+    width: 100%;
+    margin-top: 0.28rem;
   }
 }
 

@@ -235,6 +235,44 @@ Workspace/site scoping contract:
 - assets from one site workspace are not visible in another site workspace, even within the same tenant
 - cross-site update/select attempts return not-found behavior rather than mutating another workspace
 
+Media / Images compact browser behavior:
+- migration media UI now uses compact asset rows instead of verbose stacked cards
+- default row content is intentionally minimal:
+  - short asset name
+  - lifecycle badges
+  - one primary next action
+  - optional compact reason label
+- verbose metadata remains available, but is disclosure-only per asset:
+  - full URL
+  - provenance details
+  - suggestion and candidate-quality diagnostics
+- primary action gating remains behaviorally unchanged:
+  - discovered unimported useful asset -> `Import image`
+  - imported/uploaded unselected usable asset -> `Select for Draft`
+  - selected usable asset without completed suggestion -> `Suggest metadata`
+  - completed suggestion not yet applied -> `Apply suggestions`
+  - unavailable/low-value/rejected -> details-only action
+- secondary actions remain available under details:
+  - edit metadata (or discovery notes while unimported)
+  - unselect selected assets
+  - mark/unmark discovered import candidates
+  - force-refresh suggestion (when compatible)
+- lightweight local filters prioritize actionable assets first:
+  - `All`, `Needs import`, `Selected`, `Uploaded/imported`, `Suggestions available`, `Low-value/rejected`
+- low-value/rejected discovered candidates remain hidden/de-emphasized by default unless explicitly shown
+
+Preview behavior and safety contract:
+- preview is display-only and never changes import/selection/suggestion state
+- preview trigger supports keyboard focus and click toggle fallback in addition to hover/focus affordance
+- safe preview URLs are derived from bounded existing asset metadata only; no new backend import/URL semantics were introduced
+- query/hash components are stripped before rendering preview URLs
+- private/internal/metadata/local host targets are blocked from preview rendering
+- when preview cannot be safely rendered, UI shows deterministic guidance (`Preview unavailable until imported.` or unavailable for that asset)
+- preview surfaces remain metadata-safe:
+  - no storage keys
+  - no local filesystem paths
+  - no raw bytes/base64
+
 Operator uploads:
 - uploads are stored as workspace-scoped media assets with provenance `operator_upload`
 - validation enforces:

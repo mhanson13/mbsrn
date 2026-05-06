@@ -2060,6 +2060,7 @@ describe("site migration workflow route", () => {
   });
 
   it("renders draft input summary and media grouping with operator actions", async () => {
+    const user = userEvent.setup();
     const summary = buildMigrationWorkspaceSummary({
       context_summary: {
         ...buildMigrationWorkspaceSummary().context_summary,
@@ -2134,6 +2135,14 @@ describe("site migration workflow route", () => {
     expect(within(mediaSection).getByText("Discovered from source site: 2")).toBeInTheDocument();
     expect(within(mediaSection).getByText("Selected for draft context: 1")).toBeInTheDocument();
     expect(within(mediaSection).getByRole("button", { name: "Upload Workspace Image" })).toBeInTheDocument();
+
+    const sourceList = within(mediaSection).getByTestId("migration-media-source-list");
+    expect(within(sourceList).getByTestId("migration-media-row-srcimg-1")).toBeInTheDocument();
+    const sourceDetails = within(sourceList).getByTestId("migration-media-details-srcimg-1");
+    expect(sourceDetails).not.toHaveAttribute("open");
+    expect(within(sourceDetails).getByText("URL: https://legacy.example/images/front.jpg")).not.toBeVisible();
+    await user.click(within(sourceDetails).getByText("Details"));
+    expect(within(sourceDetails).getByText("URL: https://legacy.example/images/front.jpg")).toBeInTheDocument();
   });
 
   it("supports media metadata suggestion actions while preserving manual metadata until apply", async () => {
@@ -2237,26 +2246,185 @@ describe("site migration workflow route", () => {
 
     const mediaSection = await screen.findByTestId("migration-media-section");
     expect(
-      within(mediaSection).getByText("AI suggestions are editable and stored separately until you explicitly apply them."),
+      within(mediaSection).getByText("Preview is view-only. Import/select/suggest/apply actions remain explicit and unchanged."),
     ).toBeInTheDocument();
-    expect(within(mediaSection).getAllByText("Import before using in draft or AI suggestions.").length).toBeGreaterThan(0);
-    expect(within(mediaSection).getByText("AI provider is unavailable for image metadata suggestion.")).toBeInTheDocument();
-    expect(within(mediaSection).getByText("Category: project_gallery | Alt: Manual alt text")).toBeInTheDocument();
+    expect(within(mediaSection).queryByText("Category: project_gallery | Alt: Manual alt text")).not.toBeInTheDocument();
+    expect(within(mediaSection).getAllByText("AI provider is unavailable for image metadata suggestion.").length).toBeGreaterThan(0);
+    const sourceList = within(mediaSection).getByTestId("migration-media-source-list");
+    const uploadedRow = within(sourceList).getByTestId("migration-media-row-upl-1");
+    expect(within(uploadedRow).getByTestId("migration-media-primary-action-upl-1")).toHaveTextContent("Apply suggestions");
 
-    const uploadedList = within(mediaSection).getByTestId("migration-media-uploaded-list");
-    await user.click(within(uploadedList).getByRole("button", { name: "Suggest metadata" }));
+    const uploadedDetails = within(sourceList).getByTestId("migration-media-details-upl-1");
+    await user.click(within(uploadedDetails).getByText("Details"));
+    await user.click(within(uploadedDetails).getByRole("button", { name: "Force refresh suggestion" }));
     await waitFor(() =>
       expect(mockSuggestMigrationMediaAssetMetadata).toHaveBeenCalledWith("token-1", "biz-1", "site-1", "upl-1", {
-        forceRefresh: false,
+        forceRefresh: true,
       }),
     );
 
-    await user.click(within(uploadedList).getByRole("button", { name: "Apply suggestions" }));
+    await user.click(within(uploadedRow).getByTestId("migration-media-primary-action-upl-1"));
     await waitFor(() =>
       expect(mockUpdateMigrationMediaAsset).toHaveBeenCalledWith("token-1", "biz-1", "site-1", "upl-1", {
         apply_suggested_metadata: true,
       }),
     );
+  });
+
+  it("renders media preview trigger for safe assets and preview-unavailable guidance for blocked assets", async () => {
+    const user = userEvent.setup();
+    const summary = buildMigrationWorkspaceSummary({
+      context_summary: {
+        ...buildMigrationWorkspaceSummary().context_summary,
+        media_assets: {
+          source_discovered_count: 2,
+          source_imported_count: 1,
+          operator_uploaded_count: 0,
+          selected_assets_count: 1,
+          media_asset_categories: ["hero"],
+          selected_assets_trimmed: false,
+          diagnostics: [],
+          source_discovered: [
+            {
+              asset_id: "safe-1",
+              normalized_url: "https://legacy.example/images/hero.jpg?token=temporary",
+              provenance: "source_site_import",
+              import_status: "selected",
+              alt_text: "Safe hero image",
+              selected_for_draft: true,
+            },
+            {
+              asset_id: "blocked-1",
+              normalized_url: "http://127.0.0.1/internal.png",
+              provenance: "source_site_import",
+              import_status: "discovered",
+              selected_for_draft: false,
+            },
+          ],
+          operator_uploaded: [],
+          selected_assets: [
+            {
+              asset_id: "safe-1",
+              normalized_url: "https://legacy.example/images/hero.jpg?token=temporary",
+              provenance: "source_site_import",
+              import_status: "selected",
+              alt_text: "Safe hero image",
+              selected_for_draft: true,
+            },
+          ],
+        },
+      },
+    });
+    const mediaAssetsPayload = (summary.context_summary as Record<string, unknown>).media_assets as Record<
+      string,
+      unknown
+    >;
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(summary);
+    mockFetchMigrationMediaAssets.mockResolvedValue(mediaAssetsPayload);
+
+    render(<SiteMigrationWorkflowPage />);
+
+    const mediaSection = await screen.findByTestId("migration-media-section");
+    const sourceList = within(mediaSection).getByTestId("migration-media-source-list");
+    expect(within(sourceList).getByTestId("migration-media-preview-unavailable-blocked-1")).toHaveTextContent(
+      "Preview unavailable until imported.",
+    );
+
+    await user.click(within(sourceList).getByTestId("migration-media-preview-trigger-safe-1"));
+    const previewImage = within(sourceList).getByTestId("migration-media-preview-image-safe-1");
+    expect(previewImage).toHaveAttribute("alt", "Safe hero image");
+    const previewSrc = previewImage.getAttribute("src") || "";
+    expect(previewSrc).toContain("https://legacy.example/images/hero.jpg");
+    expect(previewSrc).not.toContain("token=");
+    expect(previewSrc).not.toContain("C:\\");
+    expect(previewSrc).not.toContain("base64");
+  });
+
+  it("shows apply-suggestions only for completed and unapplied suggestions", async () => {
+    const summary = buildMigrationWorkspaceSummary({
+      context_summary: {
+        ...buildMigrationWorkspaceSummary().context_summary,
+        media_assets: {
+          source_discovered_count: 0,
+          source_imported_count: 0,
+          operator_uploaded_count: 3,
+          selected_assets_count: 3,
+          media_asset_categories: ["project_gallery"],
+          selected_assets_trimmed: false,
+          diagnostics: [],
+          source_discovered: [],
+          operator_uploaded: [
+            {
+              asset_id: "ready-1",
+              display_filename: "ready.jpg",
+              provenance: "operator_upload",
+              selected_for_draft: true,
+              metadata_suggestion_applied: false,
+              metadata_suggestion: {
+                suggestion_status: "completed",
+                reason_code: "image_metadata_suggested",
+              },
+            },
+            {
+              asset_id: "applied-1",
+              display_filename: "applied.jpg",
+              provenance: "operator_upload",
+              selected_for_draft: true,
+              metadata_suggestion_applied: true,
+              metadata_suggestion: {
+                suggestion_status: "completed",
+                reason_code: "image_metadata_suggested",
+              },
+            },
+            {
+              asset_id: "pending-1",
+              display_filename: "pending.jpg",
+              provenance: "operator_upload",
+              selected_for_draft: true,
+              metadata_suggestion_applied: false,
+              metadata_suggestion: {
+                suggestion_status: "pending",
+              },
+            },
+          ],
+          selected_assets: [
+            {
+              asset_id: "ready-1",
+              display_filename: "ready.jpg",
+              provenance: "operator_upload",
+              selected_for_draft: true,
+            },
+            {
+              asset_id: "applied-1",
+              display_filename: "applied.jpg",
+              provenance: "operator_upload",
+              selected_for_draft: true,
+            },
+            {
+              asset_id: "pending-1",
+              display_filename: "pending.jpg",
+              provenance: "operator_upload",
+              selected_for_draft: true,
+            },
+          ],
+        },
+      },
+    });
+    const mediaAssetsPayload = (summary.context_summary as Record<string, unknown>).media_assets as Record<
+      string,
+      unknown
+    >;
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(summary);
+    mockFetchMigrationMediaAssets.mockResolvedValue(mediaAssetsPayload);
+
+    render(<SiteMigrationWorkflowPage />);
+
+    const mediaSection = await screen.findByTestId("migration-media-section");
+    const sourceList = within(mediaSection).getByTestId("migration-media-source-list");
+    expect(within(sourceList).getByTestId("migration-media-primary-action-ready-1")).toHaveTextContent("Apply suggestions");
+    expect(within(sourceList).getByTestId("migration-media-primary-action-pending-1")).toHaveTextContent("Suggest metadata");
+    expect(within(sourceList).getByTestId("migration-media-primary-action-applied-1")).toHaveTextContent("View details");
+    expect(within(sourceList).getAllByRole("button", { name: "Apply suggestions" })).toHaveLength(1);
   });
 
   it("runs batch media metadata suggestion for selected assets and renders lifecycle/status feedback", async () => {

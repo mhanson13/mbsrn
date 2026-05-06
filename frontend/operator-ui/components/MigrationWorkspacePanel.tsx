@@ -874,6 +874,117 @@ function toMediaLifecycleBadgeClass(label: string): string {
   return "badge";
 }
 
+type MediaPrimaryAction = "import" | "select" | "suggest" | "apply" | "view_details";
+
+type MediaBrowserFilter =
+  | "all"
+  | "needs_import"
+  | "selected"
+  | "uploaded_imported"
+  | "suggestions_available"
+  | "low_value_rejected";
+
+function toMediaAssetDisplayName(asset: Record<string, unknown>, fallback: string): string {
+  const displayFilename = asStringOrNull(asset.display_filename);
+  if (displayFilename) {
+    return displayFilename;
+  }
+  const filename = asStringOrNull(asset.filename);
+  if (filename) {
+    return filename;
+  }
+  const normalizedUrl = asStringOrNull(asset.normalized_url);
+  if (normalizedUrl) {
+    try {
+      const parsed = new URL(normalizedUrl);
+      const pathTail = parsed.pathname.split("/").filter(Boolean).slice(-2).join("/");
+      if (pathTail) {
+        return `${parsed.hostname}/${pathTail}`;
+      }
+      return parsed.hostname;
+    } catch {
+      return normalizedUrl;
+    }
+  }
+  return fallback;
+}
+
+function isPrivateOrBlockedHostname(hostname: string): boolean {
+  const normalized = hostname.trim().toLowerCase();
+  if (!normalized) {
+    return true;
+  }
+  if (
+    normalized === "localhost" ||
+    normalized === "metadata.google.internal" ||
+    normalized === "metadata" ||
+    normalized.endsWith(".local") ||
+    normalized.endsWith(".internal")
+  ) {
+    return true;
+  }
+  if (
+    normalized === "::1" ||
+    normalized.startsWith("fc") ||
+    normalized.startsWith("fd")
+  ) {
+    return true;
+  }
+  const octets = normalized.split(".");
+  if (octets.length === 4 && octets.every((item) => /^\d+$/.test(item))) {
+    const [first, second] = octets.map((item) => Number.parseInt(item, 10));
+    if (!Number.isFinite(first) || !Number.isFinite(second)) {
+      return true;
+    }
+    if (first === 10 || first === 127 || first === 0) {
+      return true;
+    }
+    if (first === 169 && second === 254) {
+      return true;
+    }
+    if (first === 172 && second >= 16 && second <= 31) {
+      return true;
+    }
+    if (first === 192 && second === 168) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function resolveSafeMediaPreviewUrl(asset: Record<string, unknown>): string | null {
+  const normalizedUrl = asStringOrNull(asset.normalized_url);
+  if (!normalizedUrl) {
+    return null;
+  }
+  try {
+    const parsed = new URL(normalizedUrl);
+    const protocol = parsed.protocol.trim().toLowerCase();
+    if (protocol !== "https:" && protocol !== "http:") {
+      return null;
+    }
+    if (isPrivateOrBlockedHostname(parsed.hostname)) {
+      return null;
+    }
+    parsed.search = "";
+    parsed.hash = "";
+    return parsed.toString();
+  } catch {
+    return null;
+  }
+}
+
+function toMediaPreviewAltText(asset: Record<string, unknown>): string {
+  const suggestion = asRecord(asset.metadata_suggestion);
+  return (
+    asStringOrNull(asset.alt_text) ||
+    asStringOrNull(suggestion.suggested_alt_text) ||
+    asStringOrNull(asset.display_filename) ||
+    asStringOrNull(asset.filename) ||
+    "Media preview"
+  );
+}
+
 function splitLines(value: string): string[] {
   return value
     .split(/\r?\n/)
@@ -2723,6 +2834,11 @@ export function MigrationWorkspacePanel({
   const [draftReadinessSnapshot, setDraftReadinessSnapshot] = useState<Record<string, unknown> | null>(null);
   const [showLowValueDiscovered, setShowLowValueDiscovered] = useState(false);
   const [selectedDiscoveredImportIds, setSelectedDiscoveredImportIds] = useState<string[]>([]);
+  const [mediaBrowserFilter, setMediaBrowserFilter] = useState<MediaBrowserFilter>("all");
+  const [mediaPreviewPinnedAssetId, setMediaPreviewPinnedAssetId] = useState<string | null>(null);
+  const [mediaPreviewHoverAssetId, setMediaPreviewHoverAssetId] = useState<string | null>(null);
+  const [mediaPreviewFocusAssetId, setMediaPreviewFocusAssetId] = useState<string | null>(null);
+  const [openMediaDetailsAssetIds, setOpenMediaDetailsAssetIds] = useState<string[]>([]);
 
   const [publishRepoName, setPublishRepoName] = useState("");
   const [publishBranch, setPublishBranch] = useState("");
@@ -3011,9 +3127,221 @@ export function MigrationWorkspacePanel({
     }
     return selectedIds;
   }, [selectedDiscoveredImportIds, sourceDiscoveredImportEligibleIds]);
-  const sourceDiscoveredVisibleMediaAssets = showLowValueDiscovered
-    ? sourceDiscoveredMediaAssets
-    : sourceDiscoveredUsefulMediaAssets;
+  const mediaBrowserAssets = useMemo(() => {
+    const byAssetKey = new Map<string, Record<string, unknown>>();
+    const ingest = (items: Array<Record<string, unknown>>, sourceTag: string): void => {
+      items.forEach((rawItem, index) => {
+        const item = asRecord(rawItem);
+        const assetId = asStringOrNull(item.asset_id);
+        const normalizedUrl = asStringOrNull(item.normalized_url);
+        const key = (assetId || normalizedUrl || `${sourceTag}-${index}`).toLowerCase();
+        if (!key) {
+          return;
+        }
+        const current = byAssetKey.get(key) || {};
+        byAssetKey.set(key, { ...current, ...item });
+      });
+    };
+    ingest(sourceDiscoveredMediaAssets, "source");
+    ingest(operatorUploadedMediaAssets, "uploaded");
+    ingest(selectedMediaAssets, "selected");
+
+    const selectedImportLookup = new Set(selectedDiscoveredImportCandidateIds.map((item) => item.toLowerCase()));
+
+    return Array.from(byAssetKey.values())
+      .map((asset, index) => {
+        const assetId =
+          asStringOrNull(asset.asset_id)
+          || asStringOrNull(asset.normalized_url)
+          || `asset-${index}`;
+        const suggestion = asRecord(asset.metadata_suggestion);
+        const suggestionStatus = (asStringOrNull(suggestion.suggestion_status) || "").trim().toLowerCase();
+        const suggestionReason = toMediaSuggestionReasonLabel(asStringOrNull(suggestion.reason_code));
+        const lifecycleLabels = toMediaLifecycleLabels(asset);
+        const remoteImportRequired = isSourceAssetImportRequired(asset);
+        const unavailableReasonCode = mediaAssetUnavailableReasonCode(asset);
+        const unavailableReason = toMediaSuggestionReasonLabel(unavailableReasonCode);
+        const canSelectForDraft = isMediaAssetUsableForDraft(asset);
+        const canSuggestMetadata = canSelectForDraft;
+        const selected = Boolean(asset.selected_for_draft);
+        const candidateQuality = mediaCandidateQuality(asset);
+        const suggestionCompleted = suggestionStatus === "completed";
+        const suggestionApplied = Boolean(asset.metadata_suggestion_applied);
+        const importMarked = selectedImportLookup.has(assetId.toLowerCase());
+        const provenance = (asStringOrNull(asset.provenance) || "").trim().toLowerCase();
+        const importStatus = (asStringOrNull(asset.import_status) || "").trim().toLowerCase();
+        const isImportedOrUploaded =
+          provenance === "operator_upload"
+          || importStatus === "imported"
+          || importStatus === "selected"
+          || importStatus === "available"
+          || importStatus === "uploaded";
+        let primaryAction: MediaPrimaryAction = "view_details";
+        if (remoteImportRequired && candidateQuality === "useful") {
+          primaryAction = "import";
+        } else if (canSelectForDraft && !selected) {
+          primaryAction = "select";
+        } else if (canSuggestMetadata && suggestionCompleted && !suggestionApplied) {
+          primaryAction = "apply";
+        } else if (canSuggestMetadata && selected && !suggestionCompleted) {
+          primaryAction = "suggest";
+        }
+        const compactReasonLabel =
+          primaryAction === "import"
+            ? "Needs import before draft/suggestion actions."
+            : primaryAction === "apply"
+              ? "Suggestions ready to apply."
+              : primaryAction === "suggest" && suggestionReason
+                ? suggestionReason
+                : unavailableReason || suggestionReason;
+        return {
+          asset,
+          assetId,
+          displayName: toMediaAssetDisplayName(asset, assetId),
+          lifecycleLabels,
+          suggestionStatus,
+          suggestionReason,
+          selected,
+          canSelectForDraft,
+          canSuggestMetadata,
+          suggestionCompleted,
+          suggestionApplied,
+          remoteImportRequired,
+          candidateQuality,
+          mediaUnavailableReasonCode: unavailableReasonCode,
+          mediaUnavailableReason: unavailableReason,
+          importMarked,
+          isImportedOrUploaded,
+          primaryAction,
+          compactReasonLabel,
+          previewUrl: resolveSafeMediaPreviewUrl(asset),
+          previewAlt: toMediaPreviewAltText(asset),
+          provenance: asStringOrNull(asset.provenance),
+          normalizedUrl: asStringOrNull(asset.normalized_url),
+          qualityReason: asStringOrNull(asset.quality_reason),
+          sourcePageUrl: asStringOrNull(asset.source_page_url),
+        };
+      })
+      .sort((left, right) => {
+        const rank = (item: {
+          candidateQuality: "useful" | "low_value" | "rejected";
+          selected: boolean;
+          isImportedOrUploaded: boolean;
+          remoteImportRequired: boolean;
+        }): number => {
+          if (item.candidateQuality !== "useful") {
+            return 4;
+          }
+          if (item.selected) {
+            return 0;
+          }
+          if (item.isImportedOrUploaded) {
+            return 1;
+          }
+          if (item.remoteImportRequired) {
+            return 2;
+          }
+          return 3;
+        };
+        const leftRank = rank(left);
+        const rightRank = rank(right);
+        if (leftRank !== rightRank) {
+          return leftRank - rightRank;
+        }
+        return left.displayName.localeCompare(right.displayName, undefined, { sensitivity: "base" });
+      });
+  }, [
+    operatorUploadedMediaAssets,
+    selectedDiscoveredImportCandidateIds,
+    selectedMediaAssets,
+    sourceDiscoveredMediaAssets,
+  ]);
+  const mediaFilterCounts = useMemo(() => {
+    const countByFilter = (filter: MediaBrowserFilter): number =>
+      mediaBrowserAssets.filter((item) => {
+        if (filter === "needs_import") {
+          return item.remoteImportRequired && item.candidateQuality === "useful";
+        }
+        if (filter === "selected") {
+          return item.selected;
+        }
+        if (filter === "uploaded_imported") {
+          return item.isImportedOrUploaded;
+        }
+        if (filter === "suggestions_available") {
+          return item.suggestionCompleted && !item.suggestionApplied;
+        }
+        if (filter === "low_value_rejected") {
+          return item.candidateQuality !== "useful";
+        }
+        return showLowValueDiscovered ? true : item.candidateQuality === "useful";
+      }).length;
+    return {
+      all: countByFilter("all"),
+      needs_import: countByFilter("needs_import"),
+      selected: countByFilter("selected"),
+      uploaded_imported: countByFilter("uploaded_imported"),
+      suggestions_available: countByFilter("suggestions_available"),
+      low_value_rejected: countByFilter("low_value_rejected"),
+    };
+  }, [mediaBrowserAssets, showLowValueDiscovered]);
+  const mediaBrowserVisibleAssets = useMemo(() => {
+    return mediaBrowserAssets.filter((item) => {
+      if (mediaBrowserFilter === "needs_import") {
+        return item.remoteImportRequired && item.candidateQuality === "useful";
+      }
+      if (mediaBrowserFilter === "selected") {
+        return item.selected;
+      }
+      if (mediaBrowserFilter === "uploaded_imported") {
+        return item.isImportedOrUploaded;
+      }
+      if (mediaBrowserFilter === "suggestions_available") {
+        return item.suggestionCompleted && !item.suggestionApplied;
+      }
+      if (mediaBrowserFilter === "low_value_rejected") {
+        return item.candidateQuality !== "useful";
+      }
+      return showLowValueDiscovered ? true : item.candidateQuality === "useful";
+    });
+  }, [mediaBrowserAssets, mediaBrowserFilter, showLowValueDiscovered]);
+  const mediaBrowserVisibleSourceAssets = useMemo(
+    () => mediaBrowserVisibleAssets.filter((item) => (item.provenance || "").trim().toLowerCase() === "source_site_import"),
+    [mediaBrowserVisibleAssets],
+  );
+  const mediaBrowserVisibleUploadedAssets = useMemo(
+    () => mediaBrowserVisibleAssets.filter((item) => (item.provenance || "").trim().toLowerCase() === "operator_upload"),
+    [mediaBrowserVisibleAssets],
+  );
+  const mediaBrowserVisibleSelectedAssets = useMemo(
+    () => mediaBrowserVisibleAssets.filter((item) => item.selected),
+    [mediaBrowserVisibleAssets],
+  );
+  useEffect(() => {
+    const allowed = new Set(mediaBrowserAssets.map((item) => item.assetId.toLowerCase()));
+    setMediaPreviewPinnedAssetId((current) => {
+      if (!current) {
+        return current;
+      }
+      return allowed.has(current.toLowerCase()) ? current : null;
+    });
+    setMediaPreviewHoverAssetId((current) => {
+      if (!current) {
+        return current;
+      }
+      return allowed.has(current.toLowerCase()) ? current : null;
+    });
+    setMediaPreviewFocusAssetId((current) => {
+      if (!current) {
+        return current;
+      }
+      return allowed.has(current.toLowerCase()) ? current : null;
+    });
+    setOpenMediaDetailsAssetIds((current) => {
+      const next = current.filter((item) => allowed.has(item.toLowerCase()));
+      return next.length === current.length ? current : next;
+    });
+  }, [mediaBrowserAssets]);
   const mediaImportBatchRecord = asRecord(mediaImportBatchSnapshot);
   const mediaImportBatchStatus = asStringOrNull(mediaImportBatchRecord.batch_status);
   const mediaImportBatchResults = asRecordList(mediaImportBatchRecord.results);
@@ -4920,6 +5248,14 @@ export function MigrationWorkspacePanel({
   const artifactQualitySummary = parseArtifactQualitySummary(selectedArtifact);
   const requiredMediaQualityIssue =
     artifactQualitySummary?.issues.find((issue) => issue.type === "required_media_missing") || null;
+  const mediaFilterOptions: Array<{ value: MediaBrowserFilter; label: string; count: number }> = [
+    { value: "all", label: "All", count: mediaFilterCounts.all },
+    { value: "needs_import", label: "Needs import", count: mediaFilterCounts.needs_import },
+    { value: "selected", label: "Selected", count: mediaFilterCounts.selected },
+    { value: "uploaded_imported", label: "Uploaded/imported", count: mediaFilterCounts.uploaded_imported },
+    { value: "suggestions_available", label: "Suggestions available", count: mediaFilterCounts.suggestions_available },
+    { value: "low_value_rejected", label: "Low-value/rejected", count: mediaFilterCounts.low_value_rejected },
+  ];
 
   if (busyAction === "load" && !summary) {
     return <p className="hint muted">Loading migration workspace...</p>;
@@ -5006,7 +5342,7 @@ export function MigrationWorkspacePanel({
           Manage source-discovered and operator-uploaded image assets. Only selected assets are included in draft AI context.
         </span>
         <span className="hint muted">
-          AI suggestions are editable and stored separately until you explicitly apply them.
+          Preview is view-only. Import/select/suggest/apply actions remain explicit and unchanged.
         </span>
         {mediaRequiredByOperator ? (
           <div className="panel panel-compact stack-tight" data-testid="migration-media-required-callout">
@@ -5149,7 +5485,9 @@ export function MigrationWorkspacePanel({
               </span>
             ) : null}
             {mediaImportBatchStatus ? (
-              <div className="panel panel-compact stack-tight" data-testid="migration-media-import-feedback">
+              <details className="workspace-details-shell" data-testid="migration-media-import-feedback">
+                <summary>Show import result details</summary>
+                <div className="stack-tight">
                 <strong>Import Result</strong>
                 <span className="hint">
                   Status: {toMediaSuggestionBatchStatusLabel(mediaImportBatchStatus)}
@@ -5173,10 +5511,13 @@ export function MigrationWorkspacePanel({
                     })}
                   </ul>
                 ) : null}
-              </div>
+                </div>
+              </details>
             ) : null}
             {mediaSuggestionBatchStatus ? (
-              <div className="panel panel-compact stack-tight" data-testid="migration-media-batch-feedback">
+              <details className="workspace-details-shell" data-testid="migration-media-batch-feedback">
+                <summary>Show batch suggestion result details</summary>
+                <div className="stack-tight">
                 <strong>Batch Suggestion Result</strong>
                 <span className="hint">
                   Status: {toMediaSuggestionBatchStatusLabel(mediaSuggestionBatchStatus)}
@@ -5200,7 +5541,8 @@ export function MigrationWorkspacePanel({
                     })}
                   </ul>
                 ) : null}
-              </div>
+                </div>
+              </details>
             ) : null}
             <span className="hint muted">
               Media fetch/import rejection reasons are listed under Advanced Diagnostics.
@@ -5208,269 +5550,310 @@ export function MigrationWorkspacePanel({
           </div>
         </div>
 
-        <div className="grid grid-2">
-          <div className="panel panel-compact stack-tight" data-testid="migration-media-source-list">
-            <strong>Discovered Source-Site Images</strong>
-            {sourceDiscoveredMediaAssets.length > 0 ? (
-              <>
-                {sourceDiscoveredDeemphasizedCount > 0 ? (
-                  <div className="row-wrap-tight">
-                    <span className="hint muted">
-                      {showLowValueDiscovered
-                        ? `Showing all discovered candidates, including ${sourceDiscoveredDeemphasizedCount} low-value/rejected entries.`
-                        : `Hiding ${sourceDiscoveredDeemphasizedCount} low-value/rejected candidates by default.`}
-                    </span>
-                    <button
-                      type="button"
-                      className="button button-tertiary button-inline"
-                      onClick={() => setShowLowValueDiscovered((current) => !current)}
-                      disabled={isActionInFlight}
-                    >
-                      {showLowValueDiscovered ? "Hide low-value/rejected" : "Show low-value/rejected"}
-                    </button>
-                  </div>
-                ) : null}
-              <ul className="stack-tight">
-                {sourceDiscoveredVisibleMediaAssets.slice(0, 12).map((item, index) => {
-                  const assetId = asStringOrNull(item.asset_id) || `source-${index}`;
-                  const selected = Boolean(item.selected_for_draft);
-                  const suggestion = asRecord(item.metadata_suggestion);
-                  const suggestionStatus = asStringOrNull(suggestion.suggestion_status);
-                  const suggestionReason = toMediaSuggestionReasonLabel(asStringOrNull(suggestion.reason_code));
-                  const lifecycleLabels = toMediaLifecycleLabels(item);
-                  const remoteImportRequired = isSourceAssetImportRequired(item);
-                  const mediaUnavailableReasonCode = mediaAssetUnavailableReasonCode(item);
-                  const mediaUnavailableReason = toMediaSuggestionReasonLabel(mediaUnavailableReasonCode);
-                  const canSelectForDraft = isMediaAssetUsableForDraft(item);
-                  const canSuggestMetadata = canSelectForDraft;
-                  const candidateQuality = mediaCandidateQuality(item);
-                  const suggestionCompleted = suggestionStatus === "completed";
-                  const suggestionApplied = Boolean(item.metadata_suggestion_applied);
-                  const importMarked = selectedDiscoveredImportCandidateIds.some(
-                    (candidateAssetId) => candidateAssetId.toLowerCase() === assetId.toLowerCase(),
-                  );
-                  return (
-                    <li key={`source-media-${assetId}`} className="stack-tight">
-                      <span className="hint">
-                        {asStringOrNull(item.display_filename) || asStringOrNull(item.filename) || asStringOrNull(item.normalized_url) || assetId}
-                      </span>
-                      <span className="hint muted">Provenance: {asStringOrNull(item.provenance) || "source_site_import"}</span>
-                      {lifecycleLabels.length > 0 ? (
-                        <div className="row-wrap-tight" data-testid={`migration-media-lifecycle-${assetId}`}>
-                          {lifecycleLabels.map((label) => (
-                            <span key={`source-media-lifecycle-${assetId}-${label}`} className={toMediaLifecycleBadgeClass(label)}>
-                              {label}
-                            </span>
-                          ))}
-                        </div>
-                      ) : null}
-                      <span className="hint muted">Suggestion: {toMediaSuggestionStatusLabel(suggestionStatus)}</span>
-                      {suggestionReason ? <span className="hint muted">{suggestionReason}</span> : null}
-                      {mediaUnavailableReason && !suggestionReason ? (
-                        <span className="hint muted">{mediaUnavailableReason}</span>
-                      ) : null}
-                      {remoteImportRequired ? (
-                        <span className="hint warning">Import before using in draft or AI suggestions.</span>
-                      ) : null}
-                      {asStringOrNull(item.normalized_url) ? (
-                        <span className="hint muted">URL: {asStringOrNull(item.normalized_url)}</span>
-                      ) : null}
-                      <div className="row-wrap-tight">
-                        {remoteImportRequired && candidateQuality === "useful" ? (
-                          <>
-                            <button
-                              type="button"
-                              className="button button-primary"
-                              onClick={() => void handleImportSelectedDiscoveredMediaAssets({ assetIds: [assetId] })}
-                              disabled={isActionInFlight}
-                            >
-                              Import image
-                            </button>
-                            <button
-                              type="button"
-                              className="button button-tertiary"
-                              onClick={() => handleToggleDiscoveredImportCandidate(assetId, !importMarked)}
-                              disabled={isActionInFlight}
-                            >
-                              {importMarked ? "Unmark import" : "Mark for import"}
-                            </button>
-                          </>
-                        ) : null}
-                        {canSelectForDraft ? (
-                          <button
-                            type="button"
-                            className="button button-tertiary"
-                            onClick={() => void handleToggleMediaSelection(item, !selected)}
-                            disabled={isActionInFlight}
-                          >
-                            {selected ? "Unselect" : "Select for Draft"}
-                          </button>
-                        ) : null}
-                        {canSuggestMetadata ? (
-                          <button
-                            type="button"
-                            className="button button-tertiary"
-                            onClick={() => void handleSuggestMediaMetadata(item)}
-                            disabled={isActionInFlight}
-                          >
-                            Suggest metadata
-                          </button>
-                        ) : null}
-                        {canSuggestMetadata && suggestionCompleted && !suggestionApplied ? (
-                          <button
-                            type="button"
-                            className="button button-tertiary"
-                            onClick={() => void handleApplySuggestedMediaMetadata(item)}
-                            disabled={isActionInFlight}
-                          >
-                            Apply suggestions
-                          </button>
-                        ) : null}
-                        <button
-                          type="button"
-                          className="button button-tertiary"
-                          onClick={() => void handleEditMediaMetadata(item)}
-                          disabled={isActionInFlight}
-                        >
-                          {remoteImportRequired ? "Edit discovery notes" : "Edit Metadata"}
-                        </button>
-                      </div>
-                    </li>
-                  );
-                })}
-              </ul>
-              </>
-            ) : (
-              <span className="hint muted">No source-site images discovered yet.</span>
-            )}
+        <div className="panel panel-compact stack-tight migration-media-browser" data-testid="migration-media-source-list">
+          <div className="row-space-between">
+            <strong>Asset Browser</strong>
+            <span className="hint muted">Compact rows with one primary action per asset.</span>
           </div>
-
-          <div className="panel panel-compact stack-tight" data-testid="migration-media-uploaded-list">
-            <strong>Operator Uploaded Images</strong>
-            {operatorUploadedMediaAssets.length > 0 ? (
-              <ul className="stack-tight">
-                {operatorUploadedMediaAssets.slice(0, 12).map((item, index) => {
-                  const assetId = asStringOrNull(item.asset_id) || `upload-${index}`;
-                  const selected = Boolean(item.selected_for_draft);
-                  const suggestion = asRecord(item.metadata_suggestion);
-                  const suggestionStatus = asStringOrNull(suggestion.suggestion_status);
-                  const suggestionReason = toMediaSuggestionReasonLabel(asStringOrNull(suggestion.reason_code));
-                  const mediaUnavailableReasonCode = mediaAssetUnavailableReasonCode(item);
-                  const mediaUnavailableReason = toMediaSuggestionReasonLabel(mediaUnavailableReasonCode);
-                  const canSelectForDraft = isMediaAssetUsableForDraft(item);
-                  const canSuggestMetadata = canSelectForDraft;
-                  const lifecycleLabels = toMediaLifecycleLabels(item);
-                  const suggestionCompleted = suggestionStatus === "completed";
-                  const suggestionApplied = Boolean(item.metadata_suggestion_applied);
-                  return (
-                    <li key={`uploaded-media-${assetId}`} className="stack-tight">
-                      <span className="hint">
-                        {asStringOrNull(item.display_filename) || asStringOrNull(item.filename) || assetId}
-                      </span>
-                      <span className="hint muted">Provenance: {asStringOrNull(item.provenance) || "operator_upload"}</span>
-                      {lifecycleLabels.length > 0 ? (
-                        <div className="row-wrap-tight" data-testid={`migration-media-lifecycle-${assetId}`}>
-                          {lifecycleLabels.map((label) => (
-                            <span key={`uploaded-media-lifecycle-${assetId}-${label}`} className={toMediaLifecycleBadgeClass(label)}>
-                              {label}
-                            </span>
-                          ))}
-                        </div>
-                      ) : null}
-                      <span className="hint muted">Suggestion: {toMediaSuggestionStatusLabel(suggestionStatus)}</span>
-                      {suggestionReason ? <span className="hint muted">{suggestionReason}</span> : null}
-                      {mediaUnavailableReason && !suggestionReason ? (
-                        <span className="hint muted">{mediaUnavailableReason}</span>
-                      ) : null}
-                      <span className="hint muted">
-                        Category: {asStringOrNull(item.category) || "other"} | Alt: {asStringOrNull(item.alt_text) || "none"}
-                      </span>
-                      <span className="hint muted">Usage note: {asStringOrNull(item.usage_note) || "none"}</span>
-                      <div className="row-wrap-tight">
-                        {canSelectForDraft ? (
-                          <button
-                            type="button"
-                            className="button button-tertiary"
-                            onClick={() => void handleToggleMediaSelection(item, !selected)}
-                            disabled={isActionInFlight}
-                          >
-                            {selected ? "Unselect" : "Select for Draft"}
-                          </button>
-                        ) : null}
-                        {canSuggestMetadata ? (
-                          <button
-                            type="button"
-                            className="button button-tertiary"
-                            onClick={() => void handleSuggestMediaMetadata(item)}
-                            disabled={isActionInFlight}
-                          >
-                            Suggest metadata
-                          </button>
-                        ) : null}
-                        {canSuggestMetadata && suggestionCompleted && !suggestionApplied ? (
-                          <button
-                            type="button"
-                            className="button button-tertiary"
-                            onClick={() => void handleApplySuggestedMediaMetadata(item)}
-                            disabled={isActionInFlight}
-                          >
-                            Apply suggestions
-                          </button>
-                        ) : null}
-                        <button
-                          type="button"
-                          className="button button-tertiary"
-                          onClick={() => void handleEditMediaMetadata(item)}
-                          disabled={isActionInFlight}
-                        >
-                          Edit Metadata
-                        </button>
-                      </div>
-                    </li>
-                  );
-                })}
-              </ul>
-            ) : (
-              <span className="hint muted">No operator-uploaded images yet.</span>
-            )}
+          <div className="migration-media-filter-controls" data-testid="migration-media-filter-controls">
+            {mediaFilterOptions.map((option) => (
+              <button
+                key={`migration-media-filter-${option.value}`}
+                type="button"
+                className={mediaBrowserFilter === option.value ? "button button-secondary" : "button button-tertiary"}
+                data-testid={`migration-media-filter-${option.value}`}
+                aria-pressed={mediaBrowserFilter === option.value}
+                onClick={() => setMediaBrowserFilter(option.value)}
+                disabled={isActionInFlight}
+              >
+                {option.label} ({option.count})
+              </button>
+            ))}
+            {sourceDiscoveredDeemphasizedCount > 0 ? (
+              <button
+                type="button"
+                className="button button-tertiary"
+                onClick={() => setShowLowValueDiscovered((current) => !current)}
+                disabled={isActionInFlight}
+              >
+                {showLowValueDiscovered ? "Hide low-value/rejected" : "Show low-value/rejected"}
+              </button>
+            ) : null}
           </div>
-        </div>
-
-        <div className="panel panel-compact stack-tight" data-testid="migration-media-selected-list">
-          <strong>Selected Images Used In Draft Context</strong>
-          {selectedMediaAssets.length > 0 ? (
-            <ul className="stack-tight">
-              {selectedMediaAssets.slice(0, 12).map((item, index) => {
-                const assetId = asStringOrNull(item.asset_id) || `selected-${index}`;
-                const lifecycleLabels = toMediaLifecycleLabels(item);
+          {sourceDiscoveredDeemphasizedCount > 0 ? (
+            <span className="hint muted">
+              {showLowValueDiscovered
+                ? `Showing ${sourceDiscoveredDeemphasizedCount} low-value/rejected candidates in this view.`
+                : `${sourceDiscoveredDeemphasizedCount} low-value/rejected candidates are hidden by default.`}
+            </span>
+          ) : null}
+          {mediaBrowserVisibleAssets.length > 0 ? (
+            <div className="migration-media-browser-list">
+              {mediaBrowserVisibleAssets.slice(0, 30).map((item, index) => {
+                const lifecycleTestId = `migration-media-lifecycle-${item.assetId}`;
+                const detailsOpen = openMediaDetailsAssetIds.some(
+                  (assetId) => assetId.toLowerCase() === item.assetId.toLowerCase(),
+                );
+                const previewOpen = Boolean(item.previewUrl) && (
+                  mediaPreviewPinnedAssetId?.toLowerCase() === item.assetId.toLowerCase()
+                  || mediaPreviewHoverAssetId?.toLowerCase() === item.assetId.toLowerCase()
+                  || mediaPreviewFocusAssetId?.toLowerCase() === item.assetId.toLowerCase()
+                );
+                const previewPanelId = `migration-media-preview-panel-${item.assetId.replace(/[^a-z0-9_-]/gi, "-")}-${index}`;
+                const previewUnavailableMessage = item.remoteImportRequired
+                  ? "Preview unavailable until imported."
+                  : "Preview unavailable for this asset.";
                 return (
-                  <li key={`selected-media-${assetId}`} className="stack-tight">
-                    <span className="hint">
-                      {asStringOrNull(item.display_filename) || asStringOrNull(item.filename) || assetId}
-                    </span>
-                    {lifecycleLabels.length > 0 ? (
-                      <div className="row-wrap-tight" data-testid={`migration-media-selected-lifecycle-${assetId}`}>
-                        {lifecycleLabels.map((label) => (
-                          <span key={`selected-media-lifecycle-${assetId}-${label}`} className={toMediaLifecycleBadgeClass(label)}>
+                  <article
+                    key={`migration-media-browser-item-${item.assetId}`}
+                    className={
+                      item.candidateQuality === "useful"
+                        ? "migration-media-row"
+                        : "migration-media-row migration-media-row-deemphasized"
+                    }
+                    data-testid={`migration-media-row-${item.assetId}`}
+                  >
+                    <div className="migration-media-row-header">
+                      <div className="migration-media-row-title">
+                        <span className="text-strong">{item.displayName}</span>
+                        <span className="hint muted">{item.provenance || "unknown"}</span>
+                      </div>
+                      {item.compactReasonLabel ? (
+                        <span
+                          className={item.candidateQuality === "useful" ? "hint muted" : "hint warning"}
+                          data-testid={`migration-media-compact-reason-${item.assetId}`}
+                        >
+                          {item.compactReasonLabel}
+                        </span>
+                      ) : null}
+                    </div>
+                    {item.lifecycleLabels.length > 0 ? (
+                      <div className="row-wrap-tight" data-testid={lifecycleTestId}>
+                        {item.lifecycleLabels.map((label) => (
+                          <span key={`migration-media-lifecycle-${item.assetId}-${label}`} className={toMediaLifecycleBadgeClass(label)}>
                             {label}
                           </span>
                         ))}
                       </div>
                     ) : null}
-                    <span className="hint muted">
-                      Provenance: {asStringOrNull(item.provenance) || "unknown"} | Category: {asStringOrNull(item.category) || "other"}
-                    </span>
-                    <span className="hint muted">
-                      Alt/description: {asStringOrNull(item.alt_text) || asStringOrNull(item.description) || "none"}
-                    </span>
-                  </li>
+                    <div className="migration-media-row-controls">
+                      <div
+                        className="row-wrap-tight"
+                        onMouseEnter={() => {
+                          if (item.previewUrl) {
+                            setMediaPreviewHoverAssetId(item.assetId);
+                          }
+                        }}
+                        onMouseLeave={() => {
+                          setMediaPreviewHoverAssetId((current) =>
+                            current?.toLowerCase() === item.assetId.toLowerCase() ? null : current,
+                          );
+                        }}
+                      >
+                        {item.previewUrl ? (
+                          <button
+                            type="button"
+                            className="button button-tertiary migration-media-preview-trigger"
+                            data-testid={`migration-media-preview-trigger-${item.assetId}`}
+                            aria-expanded={previewOpen}
+                            aria-controls={previewPanelId}
+                            onFocus={() => setMediaPreviewFocusAssetId(item.assetId)}
+                            onBlur={() =>
+                              setMediaPreviewFocusAssetId((current) =>
+                                current?.toLowerCase() === item.assetId.toLowerCase() ? null : current,
+                              )
+                            }
+                            onClick={() =>
+                              setMediaPreviewPinnedAssetId((current) =>
+                                current?.toLowerCase() === item.assetId.toLowerCase() ? null : item.assetId,
+                              )
+                            }
+                          >
+                            {mediaPreviewPinnedAssetId?.toLowerCase() === item.assetId.toLowerCase() ? "Hide preview" : "Preview"}
+                          </button>
+                        ) : (
+                          <span className="hint muted" data-testid={`migration-media-preview-unavailable-${item.assetId}`}>
+                            {previewUnavailableMessage}
+                          </span>
+                        )}
+                        {item.primaryAction === "import" ? (
+                          <button
+                            type="button"
+                            className="button button-primary"
+                            data-testid={`migration-media-primary-action-${item.assetId}`}
+                            onClick={() => void handleImportSelectedDiscoveredMediaAssets({ assetIds: [item.assetId] })}
+                            disabled={isActionInFlight}
+                          >
+                            Import image
+                          </button>
+                        ) : null}
+                        {item.primaryAction === "select" ? (
+                          <button
+                            type="button"
+                            className="button button-primary"
+                            data-testid={`migration-media-primary-action-${item.assetId}`}
+                            onClick={() => void handleToggleMediaSelection(item.asset, true)}
+                            disabled={isActionInFlight}
+                          >
+                            Select for Draft
+                          </button>
+                        ) : null}
+                        {item.primaryAction === "suggest" ? (
+                          <button
+                            type="button"
+                            className="button button-primary"
+                            data-testid={`migration-media-primary-action-${item.assetId}`}
+                            onClick={() => void handleSuggestMediaMetadata(item.asset)}
+                            disabled={isActionInFlight}
+                          >
+                            Suggest metadata
+                          </button>
+                        ) : null}
+                        {item.primaryAction === "apply" ? (
+                          <button
+                            type="button"
+                            className="button button-primary"
+                            data-testid={`migration-media-primary-action-${item.assetId}`}
+                            onClick={() => void handleApplySuggestedMediaMetadata(item.asset)}
+                            disabled={isActionInFlight}
+                          >
+                            Apply suggestions
+                          </button>
+                        ) : null}
+                        {item.primaryAction === "view_details" ? (
+                          <button
+                            type="button"
+                            className="button button-tertiary"
+                            data-testid={`migration-media-primary-action-${item.assetId}`}
+                            onClick={() =>
+                              setOpenMediaDetailsAssetIds((current) => {
+                                const key = item.assetId.toLowerCase();
+                                const filtered = current.filter((assetId) => assetId.toLowerCase() !== key);
+                                return detailsOpen ? filtered : [...filtered, item.assetId];
+                              })
+                            }
+                            disabled={isActionInFlight}
+                          >
+                            View details
+                          </button>
+                        ) : null}
+                      </div>
+                      {previewOpen && item.previewUrl ? (
+                        <div className="migration-media-preview-popover" id={previewPanelId}>
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={item.previewUrl}
+                            alt={item.previewAlt}
+                            className="migration-media-thumbnail"
+                            data-testid={`migration-media-preview-image-${item.assetId}`}
+                            loading="lazy"
+                            decoding="async"
+                          />
+                        </div>
+                      ) : null}
+                    </div>
+                    <details
+                      className="migration-media-details"
+                      open={detailsOpen}
+                      onToggle={(event) => {
+                        const nextOpen = event.currentTarget.open;
+                        setOpenMediaDetailsAssetIds((current) => {
+                          const key = item.assetId.toLowerCase();
+                          const filtered = current.filter((assetId) => assetId.toLowerCase() !== key);
+                          return nextOpen ? [...filtered, item.assetId] : filtered;
+                        });
+                      }}
+                      data-testid={`migration-media-details-${item.assetId}`}
+                    >
+                      <summary>Details</summary>
+                      <div className="stack-tight">
+                        <span className="hint muted">Suggestion status: {toMediaSuggestionStatusLabel(item.suggestionStatus)}</span>
+                        {item.suggestionReason ? <span className="hint muted">{item.suggestionReason}</span> : null}
+                        {item.mediaUnavailableReason && !item.suggestionReason ? (
+                          <span className="hint muted">{item.mediaUnavailableReason}</span>
+                        ) : null}
+                        {item.remoteImportRequired ? (
+                          <span className="hint warning">Import before using in draft or AI suggestions.</span>
+                        ) : null}
+                        <span className="hint muted">Provenance: {item.provenance || "unknown"}</span>
+                        {item.normalizedUrl ? <span className="hint muted">URL: {item.normalizedUrl}</span> : null}
+                        {item.qualityReason ? (
+                          <span className="hint muted">Candidate quality reason: {item.qualityReason}</span>
+                        ) : null}
+                        {item.sourcePageUrl ? <span className="hint muted">Source page: {item.sourcePageUrl}</span> : null}
+                        <div className="row-wrap-tight">
+                          {item.remoteImportRequired && item.candidateQuality === "useful" ? (
+                            <button
+                              type="button"
+                              className="button button-tertiary"
+                              onClick={() => handleToggleDiscoveredImportCandidate(item.assetId, !item.importMarked)}
+                              disabled={isActionInFlight}
+                            >
+                              {item.importMarked ? "Unmark import" : "Mark for import"}
+                            </button>
+                          ) : null}
+                          {item.canSelectForDraft && item.selected ? (
+                            <button
+                              type="button"
+                              className="button button-tertiary"
+                              onClick={() => void handleToggleMediaSelection(item.asset, false)}
+                              disabled={isActionInFlight}
+                            >
+                              Unselect
+                            </button>
+                          ) : null}
+                          {item.canSuggestMetadata && item.suggestionCompleted ? (
+                            <button
+                              type="button"
+                              className="button button-tertiary"
+                              onClick={() => void handleSuggestMediaMetadata(item.asset, { forceRefresh: true })}
+                              disabled={isActionInFlight}
+                            >
+                              Force refresh suggestion
+                            </button>
+                          ) : null}
+                          <button
+                            type="button"
+                            className="button button-tertiary"
+                            onClick={() => void handleEditMediaMetadata(item.asset)}
+                            disabled={isActionInFlight}
+                          >
+                            {item.remoteImportRequired ? "Edit discovery notes" : "Edit Metadata"}
+                          </button>
+                        </div>
+                      </div>
+                    </details>
+                  </article>
                 );
               })}
-            </ul>
+            </div>
           ) : (
-            <span className="hint muted">No selected media assets. Draft generation should use placeholders only.</span>
+            <span className="hint muted">No media assets match the selected filter.</span>
           )}
         </div>
+
+        <details className="workspace-details-shell" data-testid="migration-media-uploaded-list">
+          <summary>Uploaded/imported snapshot</summary>
+          <div className="stack-tight">
+            <span className="hint muted">Visible uploaded assets: {mediaBrowserVisibleUploadedAssets.length}</span>
+            <span className="hint muted">Visible source assets: {mediaBrowserVisibleSourceAssets.length}</span>
+          </div>
+        </details>
+
+        <details className="workspace-details-shell" data-testid="migration-media-selected-list">
+          <summary>Selected draft-media snapshot</summary>
+          {mediaBrowserVisibleSelectedAssets.length > 0 ? (
+            <ul className="stack-tight">
+              {mediaBrowserVisibleSelectedAssets.slice(0, 12).map((item) => (
+                <li key={`selected-media-${item.assetId}`} className="hint">
+                  {item.displayName}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <span className="hint muted">No selected media assets in the current filter view.</span>
+          )}
+        </details>
       </div>
 
       <div className="grid grid-2">

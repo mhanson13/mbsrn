@@ -112,6 +112,11 @@ Draft-generate error envelope (422 detail) fields surfaced in UI workflows:
 
 Media UX note:
 - discovered source-site images and operator uploads are both visible in migration media sections
+- media rows are compact by default (name, lifecycle badges, one primary action, optional compact reason)
+- verbose metadata (full URL, provenance detail, suggestion/candidate diagnostics) is behind per-asset `Details`
+- per-asset preview is available from an explicit `Preview` trigger (hover/focus + click toggle fallback)
+- preview is bounded (`object-fit: contain`) and does not imply import/selection state change
+- when no safe preview URL is available, UI shows deterministic guidance (`Preview unavailable until imported.` or unavailable for asset)
 - selected discovered-image import is available behind feature flag `SEO_MIGRATION_REMOTE_IMAGE_IMPORT_ENABLED` (default disabled)
 - when disabled, import action shows deterministic `remote_image_import_disabled` guidance
 - discovered remote-only images show import-required guidance before draft selection or AI suggestion can run
@@ -131,6 +136,7 @@ Media UX note:
   - `Applied`
   - `Not Available` / `Rejected`
 - low-value/rejected discovered candidates are hidden/de-emphasized by default and can be revealed explicitly
+- lightweight local media filters are available (`All`, `Needs import`, `Selected`, `Uploaded/imported`, `Suggestions available`, `Low-value/rejected`)
 - batch suggestion feedback is rendered with per-asset status/reason summaries:
   - `batch_status` (`Completed`, `Partial success`, `Failed`)
   - `completed_count`, `failed_count`, `skipped_count`
