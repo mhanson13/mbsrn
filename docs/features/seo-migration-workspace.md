@@ -138,6 +138,13 @@ Destination, readiness, and diagnostics IA refinements:
   - publish destination: repository, branch, artifact root, state, expected URL
   - deploy destination: repository/ref, environment, preview URL, deploy-evidence state
   - one-line blocker text stays visible when publish/deploy are not ready
+- Section E layout is compacted into two responsive two-column surfaces:
+  - publish surface:
+    - left: destination summary + publish readiness
+    - right: GitHub publish target config + publish actions
+  - deploy surface:
+    - left: GKE deploy target details + deploy readiness
+    - right: deploy availability controls + deploy actions
 - verbose destination/runtime/config evidence is no longer primary-path content:
   - namespace and managed policy alignment
   - workflow/path/source metadata
@@ -161,6 +168,21 @@ Destination, readiness, and diagnostics IA refinements:
   - `deterministic_target_config` is expected guidance (not confirmed live evidence)
   - confirmed live evidence comes from explicit deploy/workflow result metadata (for example `deploy_result` or `workflow_output`)
 - manual follow-up capture remains available through `Refresh Deploy Status`
+
+Summary and diagnostics compaction (2026-05):
+- Reused MBSRN Context is compact by default:
+  - Audit, Recommendations, and Competitors render as inline status tiles (`Available|Missing|Stale`) with last-run timestamps.
+  - verbose per-source context text is available through `Show context detail`.
+- Draft Inputs / AI Context is compact and summary-first:
+  - `Context Signals` and `Bounded Provenance` render as dense key/value summary blocks.
+  - long recommendation-title lists are truncated in primary view and available through disclosure.
+  - this section remains informational provenance only, not an operator action surface.
+- Advanced Diagnostics is compact by default while preserving full data:
+  - Publish/Deploy diagnostics show normalized status + selected-attempt scope + concise reason + next action.
+  - raw failure/workflow/remediation fields remain under explicit `Show raw ... diagnostics fields` disclosures.
+  - publish/deploy history defaults to latest attempts plus grouped repeated failure reasons; full per-attempt history remains available under disclosure.
+  - deploy consistency defaults to grouped operator-readable status checks; raw snake_case evidence fields remain under `Show raw deploy consistency fields`.
+  - destination/config diagnostics are grouped by category (artifact, repository/workflow, runtime, domain, preview/deployment evidence) with nested details.
 
 Draft review and preview behavior:
 - Section D owns preview + review actions (`Preview Draft`, `Approve Selected Draft`, `Delete Selected Draft`)
@@ -2067,11 +2089,16 @@ In the Deploy Readiness traceability grid, use these fields for production verif
 - `Workflow run ID` and `Workflow run state`: confirms when run evidence exists.
 - `Expected URL` vs `Confirmed live URL`: expected URL is guidance; confirmed URL appears only from explicit deploy/workflow evidence.
 
-In **Advanced Diagnostics -> Deploy Diagnostics**, operator-safe failure evidence is shown directly when available:
+In **Advanced Diagnostics -> Deploy Diagnostics**, the default card is compact and operator-first:
+- normalized status (`Success|Pending|Blocked|Failed|Unknown`)
+- selected-attempt (or latest-summary fallback) context line
+- one concise reason summary
+- one concise next-action summary
+
+Verbose evidence remains available in `Show raw deploy diagnostics fields`:
 - deploy failure category/reason/stage
 - requested workflow identifier and resolved workflow path
-- workflow existence (`Yes` / `No`) at the selected target
-- workflow resolution source
+- workflow existence (`Yes` / `No`) and workflow resolution source
 - dispatch service reason code
 - remediation hint (`deploy_failure_remediation_hint`) derived deterministically from failure reason/stage evidence when a known mapping applies
 - post-conformance stage (`post_conformance_stage`) and reason text (`post_conformance_reason_text`)
@@ -2079,7 +2106,13 @@ In **Advanced Diagnostics -> Deploy Diagnostics**, operator-safe failure evidenc
 
 Use this block to diagnose workflow-lookup failures without relying only on coarse `target invalid` category labels.
 
-In **Advanced Diagnostics -> Publish Diagnostics**, workflow remediation visibility is now explicit:
+In **Advanced Diagnostics -> Publish Diagnostics**, the default card is compact and operator-first:
+- normalized status (`Success|Pending|Blocked|Failed|Unknown`)
+- selected-attempt (or latest-summary fallback) context line
+- one concise reason summary
+- one concise next-action summary
+
+Workflow remediation visibility remains explicit in `Show raw publish diagnostics fields`:
 - `workflow_remediation_attempted` (`Yes` / `No`)
 - `workflow_remediation_outcome` (attempt result classification)
 - concise next-step guidance based on remediation outcome
@@ -2166,18 +2199,17 @@ Isolation rules:
 
 `Advanced Diagnostics -> Deploy Diagnostics` includes a compact **Deploy consistency** block for per-site deploy contract visibility.
 
-Gate labels and status model:
+Grouped checks:
 - `Deployment rollout`
 - `Service endpoints`
 - `Backend health`
-- `DNS matches expected target IP`
-- `Managed certificate active`
-- `Certificate identity valid`
-- `Ingress/static IP conflict check`
-- `HTTPS probe`
+- `DNS`
+- `Managed certificate`
+- `HTTPS`
 - `Workflow integrity`
+- `Static IP / ingress policy`
 
-Primary runtime gates render one of:
+Primary statuses render one of:
 - `Pass`
 - `Blocked`
 - `Pending`
@@ -2188,11 +2220,13 @@ Workflow integrity gate renders:
 - `Warning` (`workflow_integrity_status=mismatch`)
 - `Unknown` (`workflow_integrity_status=missing` or unavailable)
 
-Field rendering and precedence:
+Rendering model and precedence:
 - selected deploy-attempt fields are authoritative when present
 - latest deploy summary backfills only missing selected-attempt values
 - existing diagnostics fallback note remains the operator cue when summary backfill is used
-- network/TLS fields are always null-safe in UI (`dns_record_matches_ingress`, `dns_expected_ip`, `dns_observed_ip`, `expected_static_ip_address`, `static_ip_status`, `static_ip_users`, `ingress_status_ip`, `ingress_status_ip_matches_static_ip`, `static_ip_bound_to_expected_forwarding_rule`, `tls_certificate_status`, `tls_domain_status`, `ingress_ip`, `ingress_conflict_detected`, `cert_identity_valid`, `deploy_https_ready`)
+- shared-root-cause warnings may group related checks (for example DNS mismatch causing TLS/HTTPS failures)
+- raw network/TLS/runtime fields are preserved under `Show raw deploy consistency fields`
+- raw fields remain null-safe in disclosure (`dns_record_matches_ingress`, `dns_expected_ip`, `dns_observed_ip`, `expected_static_ip_address`, `static_ip_status`, `static_ip_users`, `ingress_status_ip`, `ingress_status_ip_matches_static_ip`, `static_ip_bound_to_expected_forwarding_rule`, `tls_certificate_status`, `tls_domain_status`, `ingress_ip`, `ingress_conflict_detected`, `cert_identity_valid`, `deploy_https_ready`)
 - workflow integrity fields are null-safe and surfaced with the same selected-attempt-first precedence (`workflow_integrity_status`, `workflow_integrity_reason_code`)
 
 Blocked-state operator remediation text surfaced in UI:

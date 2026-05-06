@@ -64,9 +64,10 @@ The dedicated migration route (`/sites/[site_id]/migration`) keeps primary opera
   - artifact selector, quality status/issues, preview controls
   - approve/delete draft actions
 - E. Approval / Publish / Deploy:
-  - concise publish/deploy destination summary
+  - compact two-surface layout for publish + deploy
+  - publish surface: summary/readiness on left, GitHub target config + publish actions on right
+  - deploy surface: target/readiness on left, deploy availability + deploy actions on right
   - concise readiness state + one action/blocker line
-  - explicit publish/deploy actions
 - F. Advanced Diagnostics & History:
   - draft/provider execution metadata
   - media diagnostics
@@ -80,6 +81,26 @@ Deduplication rules:
 - Provider request/execution details and destination runtime/policy details are hidden by default and surfaced through disclosure in Advanced Diagnostics.
 - When readiness is `Ready: Yes`, stale historical failure traces should not be shown as primary warnings.
 - Loading/guest/auth support states should render simple support shells and must not flash authenticated diagnostics surfaces.
+
+Compact informational-summary defaults:
+- Reused MBSRN Context renders as compact inline status tiles (`Audit`, `Recommendations`, `Competitors`) with availability status and last-run text.
+- Draft Inputs / AI Context renders a compact summary-first layout:
+  - `Context Signals` dense key/value summary
+  - `Bounded Provenance` dense key/value summary
+  - long recommendation-title text is truncated in default view and disclosed through `Show full recommendation titles`
+- these sections are informational summaries, not operator action surfaces.
+
+Advanced diagnostics normalization defaults:
+- Publish Diagnostics and Deploy Diagnostics render normalized compact cards by default:
+  - status
+  - selected-attempt/latest-summary context
+  - concise reason
+  - concise next action
+- raw workflow/failure/remediation fields remain available behind per-card disclosure.
+- Publish/Deploy history defaults to latest attempts plus grouped repeated-failure summaries.
+- full per-attempt publish/deploy history remains available under `Show full publish history` / `Show full deploy history`.
+- Deploy consistency renders as grouped status checks (operator-readable labels), while raw snake_case fields remain under `Show raw deploy consistency fields`.
+- Destination / Config diagnostics render grouped categories (artifact, repository/workflow, runtime, domain, preview/deployment evidence) with nested details for lower-priority fields.
 
 Operator Requirements simplification and suggestion scratchpads:
 - `Operator Requirements` is the only operator-owned control surface for draft intent.

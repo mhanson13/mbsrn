@@ -1120,9 +1120,6 @@ describe("site migration workflow route", () => {
     expect(
       within(consistency).getByTestId("migration-deploy-consistency-gate-managed_certificate_active"),
     ).toHaveTextContent("Unknown");
-    expect(within(consistency).getByTestId("migration-deploy-consistency-gate-certificate_identity")).toHaveTextContent(
-      "Unknown",
-    );
     expect(within(consistency).getByTestId("migration-deploy-consistency-gate-ingress_conflict")).toHaveTextContent(
       "Unknown",
     );
@@ -1132,11 +1129,16 @@ describe("site migration workflow route", () => {
     expect(within(consistency).getByTestId("migration-deploy-consistency-gate-workflow_integrity")).toHaveTextContent(
       "Unknown",
     );
-    expect(within(consistency).getByTestId("migration-deploy-consistency-tls-certificate-status")).toHaveTextContent(
+    const rawConsistencyDetails = within(consistency).getByTestId("migration-deploy-consistency-raw-details");
+    expect(rawConsistencyDetails).not.toHaveAttribute("open");
+    expect(within(rawConsistencyDetails).getByTestId("migration-deploy-consistency-tls-certificate-status")).not.toBeVisible();
+    await user.click(within(rawConsistencyDetails).getByText("Show raw deploy consistency fields"));
+    expect(rawConsistencyDetails).toHaveAttribute("open");
+    expect(within(rawConsistencyDetails).getByTestId("migration-deploy-consistency-tls-certificate-status")).toHaveTextContent(
       "tls_certificate_status: Not available",
     );
     expect(
-      within(consistency).getByTestId("migration-deploy-consistency-workflow-integrity-status"),
+      within(rawConsistencyDetails).getByTestId("migration-deploy-consistency-workflow-integrity-status"),
     ).toHaveTextContent("workflow_integrity_status: Not available");
   });
 
@@ -1600,13 +1602,19 @@ describe("site migration workflow route", () => {
 
     const destinationSummary = await screen.findByTestId("migration-destination-summary");
     expect(destinationSummary).toHaveTextContent("Publish Destination");
-    expect(destinationSummary).toHaveTextContent("Deploy Destination");
     expect(destinationSummary).toHaveTextContent("Repository:");
-    expect(destinationSummary).toHaveTextContent("Environment:");
     expect(within(destinationSummary).queryByText("Managed ResourceQuota")).not.toBeInTheDocument();
     expect(within(destinationSummary).queryByText("Managed LimitRange")).not.toBeInTheDocument();
     expect(within(destinationSummary).queryByText("Managed NetworkPolicy")).not.toBeInTheDocument();
     expect(within(destinationSummary).queryByText("Kubernetes namespace")).not.toBeInTheDocument();
+
+    const deployTargetSummary = screen.getByTestId("migration-deploy-target-summary");
+    expect(deployTargetSummary).toHaveTextContent("GKE Deploy Target");
+    expect(deployTargetSummary).toHaveTextContent("Target environment key");
+    expect(within(deployTargetSummary).queryByText("Managed ResourceQuota")).not.toBeInTheDocument();
+    expect(within(deployTargetSummary).queryByText("Managed LimitRange")).not.toBeInTheDocument();
+    expect(within(deployTargetSummary).queryByText("Managed NetworkPolicy")).not.toBeInTheDocument();
+    expect(within(deployTargetSummary).queryByText("Kubernetes namespace")).not.toBeInTheDocument();
 
     const publishReadiness = screen.getByTestId("migration-publish-readiness");
     const deployReadiness = screen.getByTestId("migration-deploy-readiness");
@@ -1662,7 +1670,8 @@ describe("site migration workflow route", () => {
     expect(within(destinationSummary).getByTestId("migration-destination-publish-blocker")).toHaveTextContent(
       "GitHub publish/deploy authentication failed.",
     );
-    expect(within(destinationSummary).getByTestId("migration-destination-deploy-blocker")).toHaveTextContent(
+    const deployTargetSummary = screen.getByTestId("migration-deploy-target-summary");
+    expect(within(deployTargetSummary).getByTestId("migration-destination-deploy-blocker")).toHaveTextContent(
       "GitHub repository or workflow target was not found.",
     );
     expect(within(destinationSummary).queryByText(/Category:/i)).not.toBeInTheDocument();
@@ -1672,19 +1681,54 @@ describe("site migration workflow route", () => {
     await user.click(screen.getByText("Show detailed migration failure diagnostics"));
     const publishDiagnostics = screen.getByTestId("migration-publish-diagnostics");
     const deployDiagnostics = screen.getByTestId("migration-deploy-diagnostics");
-    expect(publishDiagnostics).toHaveTextContent("Publish failure category: config missing");
-    expect(publishDiagnostics).toHaveTextContent("Publish failure reason: authentication failed");
-    expect(deployDiagnostics).toHaveTextContent("Deploy failure category: target invalid");
-    expect(deployDiagnostics).toHaveTextContent("Deploy failure reason: workflow not dispatchable");
-    expect(deployDiagnostics).toHaveTextContent("Deploy failure stage: workflow lookup");
+    const publishRawDetails = within(publishDiagnostics).getByTestId("migration-publish-diagnostics-raw-details");
+    const deployRawDetails = within(deployDiagnostics).getByTestId("migration-deploy-diagnostics-raw-details");
+    expect(publishRawDetails).not.toHaveAttribute("open");
+    expect(deployRawDetails).not.toHaveAttribute("open");
+    await user.click(within(publishRawDetails).getByText("Show raw publish diagnostics fields"));
+    await user.click(within(deployRawDetails).getByText("Show raw deploy diagnostics fields"));
+    expect(within(publishRawDetails).getByText("Publish failure category: config missing")).toBeVisible();
+    expect(within(publishRawDetails).getByText("Publish failure reason: authentication failed")).toBeVisible();
+    expect(within(deployRawDetails).getByText("Deploy failure category: target invalid")).toBeVisible();
+    expect(within(deployRawDetails).getByText("Deploy failure reason: workflow not dispatchable")).toBeVisible();
+    expect(within(deployRawDetails).getByText("Deploy failure stage: workflow lookup")).toBeVisible();
 
     const secondaryDetails = screen.getByTestId("migration-destination-secondary-details");
     expect(secondaryDetails).not.toHaveAttribute("open");
-    const collapsedField = within(secondaryDetails).getByText("Kubernetes namespace");
+    const collapsedField = within(secondaryDetails).getByText(/Kubernetes namespace:/i);
     expect(collapsedField).not.toBeVisible();
     await user.click(within(secondaryDetails).getByText("Show full destination diagnostics"));
     expect(secondaryDetails).toHaveAttribute("open");
-    expect(within(secondaryDetails).getByText("Kubernetes namespace")).toBeVisible();
+    expect(within(secondaryDetails).getByText(/Kubernetes namespace:/i)).toBeVisible();
+  });
+
+  it("renders compact publish/deploy two-column layouts with summary-left and controls-right ownership", async () => {
+    render(<SiteMigrationWorkflowPage />);
+
+    const publishDeploySection = await screen.findByTestId("migration-publish-deploy-section");
+
+    const publishLayout = within(publishDeploySection).getByTestId("migration-publish-layout");
+    expect(publishLayout).toHaveClass("migration-publish-deploy-layout");
+    const publishLayoutLeft = within(publishLayout).getByTestId("migration-publish-layout-left");
+    const publishLayoutRight = within(publishLayout).getByTestId("migration-publish-layout-right");
+    expect(within(publishLayoutLeft).getByTestId("migration-destination-summary")).toBeInTheDocument();
+    expect(within(publishLayoutLeft).getByTestId("migration-publish-readiness")).toBeInTheDocument();
+    expect(within(publishLayoutRight).getByTestId("migration-publish-target-summary")).toBeInTheDocument();
+    expect(within(publishLayoutRight).getByRole("button", { name: "Save Publish Repository" })).toBeInTheDocument();
+    expect(within(publishLayoutRight).getByRole("button", { name: "Publish Approved Draft to GitHub" })).toBeInTheDocument();
+
+    const deployLayout = within(publishDeploySection).getByTestId("migration-deploy-layout");
+    expect(deployLayout).toHaveClass("migration-publish-deploy-layout");
+    const deployLayoutLeft = within(deployLayout).getByTestId("migration-deploy-layout-left");
+    const deployLayoutRight = within(deployLayout).getByTestId("migration-deploy-layout-right");
+    expect(within(deployLayoutLeft).getByTestId("migration-deploy-target-summary")).toBeInTheDocument();
+    expect(within(deployLayoutLeft).getByTestId("migration-deploy-readiness")).toBeInTheDocument();
+    expect(within(deployLayoutRight).getByRole("button", { name: "Save Deploy Availability" })).toBeInTheDocument();
+    expect(within(deployLayoutRight).getByRole("button", { name: "Request GKE Deploy" })).toBeInTheDocument();
+    expect(within(deployLayoutRight).getByTestId("migration-refresh-deploy-status-button")).toBeInTheDocument();
+
+    expect(within(publishDeploySection).queryByTestId("migration-publish-diagnostics")).not.toBeInTheDocument();
+    expect(within(publishDeploySection).queryByTestId("migration-deploy-diagnostics")).not.toBeInTheDocument();
   });
 
   it("shows configured repository values in concise destination summary", async () => {
@@ -1969,6 +2013,58 @@ describe("site migration workflow route", () => {
     expect(screen.getByTestId("migration-ai-execution-metadata")).toBeVisible();
   });
 
+  it("renders reused context as compact status tiles with disclosure-backed detail", async () => {
+    const user = userEvent.setup();
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(
+      buildMigrationWorkspaceSummary({
+        context_summary: {
+          ...buildMigrationWorkspaceSummary().context_summary,
+          reused_context: {
+            audit: {
+              available: true,
+              source: "latest_successful_run",
+              run_id: "audit-run-1",
+              timestamp: "2026-03-21T00:00:00Z",
+            },
+            recommendations: {
+              available: true,
+              source: "stale_snapshot",
+              run_id: "recommendation-run-1",
+              timestamp: "2026-03-11T00:00:00Z",
+              count: 1,
+            },
+            competitors: {
+              available: false,
+              source: "missing",
+              run_id: null,
+              timestamp: null,
+              count: 0,
+            },
+          },
+        },
+      }),
+    );
+
+    render(<SiteMigrationWorkflowPage />);
+
+    const reusedContext = await screen.findByTestId("migration-reused-context");
+    const compactSummary = within(reusedContext).getByTestId("migration-reused-context-compact");
+    expect(compactSummary.querySelectorAll(".migration-compact-inline-item")).toHaveLength(3);
+    expect(within(compactSummary).getByTestId("migration-reused-context-audit-status")).toHaveTextContent("Available");
+    expect(within(compactSummary).getByTestId("migration-reused-context-recommendations-status")).toHaveTextContent("Stale");
+    expect(within(compactSummary).getByTestId("migration-reused-context-competitors-status")).toHaveTextContent("Missing");
+    expect(within(compactSummary).getByTestId("migration-reused-context-audit-last-run")).toHaveTextContent("Last run:");
+
+    const detailToggle = within(reusedContext).getByText("Show context detail");
+    const detailPanel = detailToggle.closest("details");
+    expect(detailPanel).not.toBeNull();
+    expect(detailPanel as HTMLDetailsElement).not.toHaveAttribute("open");
+    expect(within(detailPanel as HTMLDetailsElement).getByText(/^Audit:/i)).not.toBeVisible();
+    await user.click(detailToggle);
+    expect(detailPanel as HTMLDetailsElement).toHaveAttribute("open");
+    expect(within(detailPanel as HTMLDetailsElement).getByText(/^Audit:/i)).toBeVisible();
+  });
+
   it("hides deploy namespace/policy/runtime evidence by default and reveals it only in destination diagnostics", async () => {
     const user = userEvent.setup();
     mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(
@@ -2002,13 +2098,39 @@ describe("site migration workflow route", () => {
     await user.click(screen.getByText("Show detailed migration failure diagnostics"));
     const destinationDetails = screen.getByTestId("migration-destination-secondary-details");
     expect(destinationDetails).not.toHaveAttribute("open");
-    expect(within(destinationDetails).getByText("Kubernetes namespace")).not.toBeVisible();
-    expect(within(destinationDetails).getByText("Managed ResourceQuota")).not.toBeVisible();
+    expect(within(destinationDetails).getByText(/Kubernetes namespace:/i)).not.toBeVisible();
+    expect(within(destinationDetails).getByText(/Managed ResourceQuota:/i)).not.toBeVisible();
 
     await user.click(within(destinationDetails).getByText("Show full destination diagnostics"));
     expect(destinationDetails).toHaveAttribute("open");
-    expect(within(destinationDetails).getByText("Kubernetes namespace")).toBeVisible();
-    expect(within(destinationDetails).getByText("Managed ResourceQuota")).toBeVisible();
+    expect(within(destinationDetails).getByText(/Kubernetes namespace:/i)).toBeVisible();
+
+    const kubernetesPolicyDetails = within(destinationDetails).getByText("Show Kubernetes policy diagnostics");
+    await user.click(kubernetesPolicyDetails);
+    expect(within(destinationDetails).getByText(/Managed ResourceQuota:/i)).toBeVisible();
+  });
+
+  it("renders destination/config diagnostics in grouped categories with nested details", async () => {
+    const user = userEvent.setup();
+    render(<SiteMigrationWorkflowPage />);
+
+    await user.click(await screen.findByText("Show detailed migration failure diagnostics"));
+    const destinationDetails = screen.getByTestId("migration-destination-secondary-details");
+    await user.click(within(destinationDetails).getByText("Show full destination diagnostics"));
+
+    const destinationDiagnostics = await within(destinationDetails).findByTestId("migration-destination-config-diagnostics");
+    expect(destinationDiagnostics).toHaveTextContent("Draft artifact");
+    expect(destinationDiagnostics).toHaveTextContent("Repository / workflow");
+    expect(destinationDiagnostics).toHaveTextContent("Kubernetes runtime");
+    expect(destinationDiagnostics).toHaveTextContent("Domain / URL");
+    expect(destinationDiagnostics).toHaveTextContent("Preview / deployment evidence");
+
+    const repositoryDetails = within(destinationDiagnostics).getByText("Show repository/workflow details");
+    const repositoryDetailPanel = repositoryDetails.closest("details");
+    expect(repositoryDetailPanel).not.toBeNull();
+    expect(repositoryDetailPanel as HTMLDetailsElement).not.toHaveAttribute("open");
+    await user.click(repositoryDetails);
+    expect(repositoryDetailPanel as HTMLDetailsElement).toHaveAttribute("open");
   });
 
   it("does not show stale failure detail lines in publish/deploy readiness cards when both readiness states are ready", async () => {
@@ -2126,8 +2248,10 @@ describe("site migration workflow route", () => {
 
     const draftInputSummary = await screen.findByTestId("migration-draft-input-summary");
     expect(draftInputSummary).toHaveTextContent("Bounded Provenance");
-    expect(draftInputSummary).toHaveTextContent("Media context included: Yes");
-    expect(draftInputSummary).toHaveTextContent("AI context blocks included:");
+    const boundedProvenance = within(draftInputSummary).getByTestId("migration-draft-input-bounded-provenance");
+    expect(boundedProvenance).toHaveTextContent("Media context included");
+    expect(boundedProvenance).toHaveTextContent("Yes");
+    expect(boundedProvenance).toHaveTextContent("AI context blocks included");
     expect(within(draftInputSummary).queryByText("Source-site images discovered:")).not.toBeInTheDocument();
     expect(within(draftInputSummary).queryByText("Operator uploaded images:")).not.toBeInTheDocument();
     expect(within(draftInputSummary).queryByText(/Provider source:/i)).not.toBeInTheDocument();
@@ -2145,6 +2269,60 @@ describe("site migration workflow route", () => {
     expect(within(sourceDetails).getByText("URL: https://legacy.example/images/front.jpg")).not.toBeVisible();
     await user.click(within(sourceDetails).getByText("Details"));
     expect(within(sourceDetails).getByText("URL: https://legacy.example/images/front.jpg")).toBeInTheDocument();
+  });
+
+  it("groups repeated publish/deploy failures and limits history summaries by default", async () => {
+    const user = userEvent.setup();
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(buildMigrationWorkspaceSummary());
+    mockFetchMigrationPublishHistory.mockResolvedValueOnce({
+      items: [
+        { timestamp: "2026-04-22T00:00:00Z", status: "failed", artifact_version_id: "a-1", failure_reason: "authentication_failed" },
+        { timestamp: "2026-04-21T00:00:00Z", status: "failed", artifact_version_id: "a-1", failure_reason: "authentication_failed" },
+        { timestamp: "2026-04-20T00:00:00Z", status: "failed", artifact_version_id: "a-1", failure_reason: "authentication_failed" },
+        { timestamp: "2026-04-19T00:00:00Z", status: "failed", artifact_version_id: "a-2", failure_reason: "workflow_not_found" },
+        { timestamp: "2026-04-18T00:00:00Z", status: "completed", artifact_version_id: "a-2" },
+        { timestamp: "2026-04-17T00:00:00Z", status: "failed", artifact_version_id: "a-3", failure_reason: "workflow_not_found" },
+      ],
+      total: 6,
+    });
+    mockFetchMigrationDeployHistory.mockResolvedValueOnce({
+      items: [
+        { timestamp: "2026-04-22T01:00:00Z", status: "failed", artifact_version_id: "a-1", failure_reason: "dns_mismatch" },
+        { timestamp: "2026-04-21T01:00:00Z", status: "failed", artifact_version_id: "a-1", failure_reason: "dns_mismatch" },
+        { timestamp: "2026-04-20T01:00:00Z", status: "failed", artifact_version_id: "a-1", failure_reason: "dns_mismatch" },
+        { timestamp: "2026-04-19T01:00:00Z", status: "failed", artifact_version_id: "a-2", failure_reason: "workflow_not_dispatchable" },
+        { timestamp: "2026-04-18T01:00:00Z", status: "completed", artifact_version_id: "a-2" },
+        { timestamp: "2026-04-17T01:00:00Z", status: "failed", artifact_version_id: "a-3", failure_reason: "workflow_not_dispatchable" },
+      ],
+      total: 6,
+    });
+
+    render(<SiteMigrationWorkflowPage />);
+
+    await user.click(await screen.findByText("Show detailed migration failure diagnostics"));
+    await user.click(screen.getByText("Show publish history"));
+    const publishHistoryLatest = await screen.findByTestId("migration-publish-history-latest");
+    expect(within(publishHistoryLatest).getAllByRole("listitem")).toHaveLength(5);
+    const publishGrouped = screen.getByTestId("migration-publish-history-grouped");
+    expect(publishGrouped).toHaveTextContent("authentication failed - 3 attempts");
+
+    const publishFullDetails = screen.getByTestId("migration-publish-history-full-details");
+    expect(publishFullDetails).not.toHaveAttribute("open");
+    await user.click(within(publishFullDetails).getByText("Show full publish history"));
+    expect(publishFullDetails).toHaveAttribute("open");
+    expect(within(publishFullDetails).getAllByRole("listitem")).toHaveLength(6);
+
+    await user.click(screen.getByText("Show deploy history"));
+    const deployHistoryLatest = await screen.findByTestId("migration-deploy-history-latest");
+    expect(within(deployHistoryLatest).getAllByRole("listitem")).toHaveLength(5);
+    const deployGrouped = screen.getByTestId("migration-deploy-history-grouped");
+    expect(deployGrouped).toHaveTextContent("dns mismatch - 3 attempts");
+
+    const deployFullDetails = screen.getByTestId("migration-deploy-history-full-details");
+    expect(deployFullDetails).not.toHaveAttribute("open");
+    await user.click(within(deployFullDetails).getByText("Show full deploy history"));
+    expect(deployFullDetails).toHaveAttribute("open");
+    expect(within(deployFullDetails).getAllByRole("listitem")).toHaveLength(6);
   });
 
   it("removes the standalone enriched section and renders field-level AI suggestion scratchpads", async () => {

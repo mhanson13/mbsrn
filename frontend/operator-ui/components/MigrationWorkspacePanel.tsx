@@ -2328,6 +2328,32 @@ interface ReusedContextEntry {
   count: number | null;
 }
 
+type NormalizedDiagnosticStatus = "success" | "pending" | "blocked" | "failed" | "unknown";
+
+interface AttemptHistoryGroup {
+  key: string;
+  label: string;
+  count: number;
+  latestTimestamp: string | null;
+  nextAction: string | null;
+}
+
+interface DeployConsistencyGroupedCheck {
+  key: string;
+  label: string;
+  status: DeployConsistencyGateStatus;
+  reason: string | null;
+}
+
+interface DeployConsistencyGroupingResult {
+  checks: DeployConsistencyGroupedCheck[];
+  sharedWarnings: Array<{
+    key: string;
+    message: string;
+    affectedChecks: string[];
+  }>;
+}
+
 function parseReusedContextEntry(value: unknown): ReusedContextEntry {
   const record = asRecord(value);
   const available = typeof record.available === "boolean" ? record.available : null;
@@ -2366,6 +2392,383 @@ function resolveReusedContextLabel(params: {
     return `Available (last run ${formattedTimestamp})`;
   }
   return "Available";
+}
+
+function resolveReusedContextStatus(params: {
+  entry: ReusedContextEntry;
+  legacyAvailable: boolean;
+}): "Available" | "Missing" | "Stale" {
+  const available = params.entry.available === null ? params.legacyAvailable : params.entry.available;
+  if (!available) {
+    return "Missing";
+  }
+  const source = (params.entry.source || "").trim().toLowerCase();
+  if (source.includes("stale")) {
+    return "Stale";
+  }
+  return "Available";
+}
+
+function formatAttemptTimestamp(value: string | null): string {
+  return formatContextTimestamp(value) || "n/a";
+}
+
+function toTimestampEpoch(value: string | null): number {
+  if (!value) {
+    return 0;
+  }
+  const parsed = Date.parse(value);
+  if (Number.isNaN(parsed)) {
+    return 0;
+  }
+  return parsed;
+}
+
+function truncateSummaryText(value: string, maxLength = 180): string {
+  const normalized = value.trim().replace(/\s+/g, " ");
+  if (!normalized) {
+    return "";
+  }
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+  return `${normalized.slice(0, Math.max(0, maxLength - 1)).trimEnd()}...`;
+}
+
+function summarizeDiagnosticReason(...values: Array<string | null | undefined>): string {
+  for (const value of values) {
+    const normalized = (value || "").trim();
+    if (normalized) {
+      return truncateSummaryText(normalized, 180);
+    }
+  }
+  return "No blocking diagnostics recorded.";
+}
+
+function summarizeListWithLimit(values: string[], maxItems = 3, maxLength = 140): {
+  summary: string;
+  truncated: boolean;
+  hiddenCount: number;
+} {
+  const normalized = values.map((item) => item.trim()).filter((item) => item.length > 0);
+  if (normalized.length === 0) {
+    return {
+      summary: "none",
+      truncated: false,
+      hiddenCount: 0,
+    };
+  }
+  const visible = normalized.slice(0, maxItems);
+  let summary = visible.join(" | ");
+  let truncated = normalized.length > maxItems;
+  if (summary.length > maxLength) {
+    summary = truncateSummaryText(summary, maxLength);
+    truncated = true;
+  }
+  return {
+    summary,
+    truncated,
+    hiddenCount: Math.max(0, normalized.length - maxItems),
+  };
+}
+
+function normalizeDiagnosticStatus(value: string | null): NormalizedDiagnosticStatus {
+  const normalized = (value || "").trim().toLowerCase();
+  if (!normalized) {
+    return "unknown";
+  }
+  if (
+    normalized === "queued" ||
+    normalized === "in_progress" ||
+    normalized === "requested" ||
+    normalized === "running" ||
+    normalized === "pending" ||
+    normalized === "provisioning"
+  ) {
+    return "pending";
+  }
+  if (
+    normalized === "failed" ||
+    normalized === "error" ||
+    normalized === "failure" ||
+    normalized.includes("failed")
+  ) {
+    return "failed";
+  }
+  if (
+    normalized === "blocked" ||
+    normalized === "not_ready" ||
+    normalized === "invalid" ||
+    normalized.includes("blocked")
+  ) {
+    return "blocked";
+  }
+  if (
+    normalized === "completed" ||
+    normalized === "succeeded" ||
+    normalized === "success" ||
+    normalized === "published" ||
+    normalized === "deployed" ||
+    normalized === "ready" ||
+    normalized === "active"
+  ) {
+    return "success";
+  }
+  return "unknown";
+}
+
+function toDiagnosticStatusLabel(value: NormalizedDiagnosticStatus): string {
+  if (value === "success") {
+    return "Success";
+  }
+  if (value === "pending") {
+    return "Pending";
+  }
+  if (value === "blocked") {
+    return "Blocked";
+  }
+  if (value === "failed") {
+    return "Failed";
+  }
+  return "Unknown";
+}
+
+function diagnosticStatusBadgeClass(value: NormalizedDiagnosticStatus): string {
+  if (value === "success") {
+    return "badge badge-success";
+  }
+  if (value === "pending") {
+    return "badge badge-warn";
+  }
+  if (value === "blocked" || value === "failed") {
+    return "badge badge-error";
+  }
+  return "badge badge-muted";
+}
+
+function groupAttemptHistory(
+  history: Array<Record<string, unknown>>,
+  mode: "publish" | "deploy",
+): AttemptHistoryGroup[] {
+  const grouped = new Map<string, AttemptHistoryGroup & { latestEpoch: number }>();
+  for (const record of history) {
+    const failureReason = asStringOrNull(record.failure_reason);
+    const dispatchReason = asStringOrNull(record.dispatch_service_reason_code);
+    const failureCategory = asStringOrNull(record.failure_category);
+    const status = asStringOrNull(record.status);
+    const reasonKey = (
+      failureReason ||
+      dispatchReason ||
+      failureCategory ||
+      status ||
+      "unknown"
+    ).trim().toLowerCase();
+    if (!reasonKey) {
+      continue;
+    }
+    const label = failureReason
+      ? formatReasonCodeLabel(failureReason)
+      : dispatchReason
+        ? formatReasonCodeLabel(dispatchReason)
+        : failureCategory
+          ? toFailureCategoryLabel(failureCategory)
+          : status
+            ? status.replace(/_/g, " ")
+            : "unknown";
+    const nextAction = mode === "deploy"
+      ? summarizeDiagnosticReason(
+          toManagedGkeConfigGuidance(dispatchReason),
+          asStringOrNull(record.post_conformance_remediation_message),
+          asStringOrNull(record.workflow_run_failure_hint),
+          asStringOrNull(record.failure_remediation_hint),
+        )
+      : summarizeDiagnosticReason(
+          toWorkflowRemediationOutcomeGuidance(asStringOrNull(record.workflow_remediation_outcome)),
+          asStringOrNull(record.failure_remediation_hint),
+        );
+    const timestamp = asStringOrNull(record.timestamp);
+    const epoch = toTimestampEpoch(timestamp);
+    const existing = grouped.get(reasonKey);
+    if (!existing) {
+      grouped.set(reasonKey, {
+        key: reasonKey,
+        label,
+        count: 1,
+        latestTimestamp: timestamp,
+        nextAction,
+        latestEpoch: epoch,
+      });
+      continue;
+    }
+    existing.count += 1;
+    if (epoch >= existing.latestEpoch) {
+      existing.latestEpoch = epoch;
+      existing.latestTimestamp = timestamp;
+      existing.nextAction = nextAction;
+      existing.label = label;
+    }
+  }
+  return Array.from(grouped.values())
+    .sort((left, right) => {
+      if (right.count !== left.count) {
+        return right.count - left.count;
+      }
+      return right.latestEpoch - left.latestEpoch;
+    })
+    .map((item) => ({
+      key: item.key,
+      label: item.label,
+      count: item.count,
+      latestTimestamp: item.latestTimestamp,
+      nextAction: item.nextAction,
+    }));
+}
+
+function groupDeployConsistency(params: {
+  deploymentRolloutStatus: DeployConsistencyGateStatus;
+  serviceEndpointsStatus: DeployConsistencyGateStatus;
+  backendHealthStatus: DeployConsistencyGateStatus;
+  dnsStatus: DeployConsistencyGateStatus;
+  managedCertificateStatus: DeployConsistencyGateStatus;
+  httpsStatus: DeployConsistencyGateStatus;
+  workflowIntegrityStatus: DeployConsistencyGateStatus;
+  ingressPolicyStatus: DeployConsistencyGateStatus;
+  tlsFailedNotVisible: boolean;
+  tlsProvisioning: boolean;
+  hasDnsMismatchReason: boolean;
+  hasIngressConflictReason: boolean;
+  workflowIntegrityReasonCode: string | null;
+}): DeployConsistencyGroupingResult {
+  const checks: DeployConsistencyGroupedCheck[] = [
+    {
+      key: "deployment_rollout",
+      label: "Deployment rollout",
+      status: params.deploymentRolloutStatus,
+      reason:
+        params.deploymentRolloutStatus === "blocked"
+          ? "Rollout verification failed."
+          : params.deploymentRolloutStatus === "pending"
+            ? "Waiting for rollout/workflow convergence."
+            : null,
+    },
+    {
+      key: "service_endpoints",
+      label: "Service endpoints",
+      status: params.serviceEndpointsStatus,
+      reason:
+        params.serviceEndpointsStatus === "blocked"
+          ? "Service endpoints are missing or unhealthy."
+          : params.serviceEndpointsStatus === "pending"
+            ? "Waiting for endpoint readiness."
+            : null,
+    },
+    {
+      key: "backend_health",
+      label: "Backend health",
+      status: params.backendHealthStatus,
+      reason:
+        params.backendHealthStatus === "blocked"
+          ? "Ingress/backend health checks are failing."
+          : params.backendHealthStatus === "pending"
+            ? "Waiting for backend health convergence."
+            : null,
+    },
+    {
+      key: "dns_matches_ingress",
+      label: "DNS",
+      status: params.dnsStatus,
+      reason:
+        params.dnsStatus === "blocked"
+          ? "DNS does not match ingress IP."
+          : params.dnsStatus === "pending"
+            ? "Waiting for DNS/ingress evidence."
+            : null,
+    },
+    {
+      key: "managed_certificate_active",
+      label: "Managed certificate",
+      status: params.managedCertificateStatus,
+      reason:
+        params.managedCertificateStatus === "blocked"
+          ? params.tlsFailedNotVisible
+            ? "Certificate is not visible to Google validation."
+            : "Managed certificate is not active."
+          : params.managedCertificateStatus === "pending" || params.tlsProvisioning
+            ? "Certificate provisioning is in progress."
+            : null,
+    },
+    {
+      key: "https_probe",
+      label: "HTTPS",
+      status: params.httpsStatus,
+      reason:
+        params.httpsStatus === "blocked"
+          ? "HTTPS verification has not passed."
+          : params.httpsStatus === "pending"
+            ? "Waiting for DNS/TLS/backend convergence."
+            : null,
+    },
+    {
+      key: "workflow_integrity",
+      label: "Workflow integrity",
+      status: params.workflowIntegrityStatus,
+      reason:
+        params.workflowIntegrityStatus === "warning"
+          ? "Managed workflow signature differs from expected template."
+          : params.workflowIntegrityStatus === "unknown"
+            ? "Workflow integrity evidence is incomplete."
+            : null,
+    },
+    {
+      key: "ingress_conflict",
+      label: "Static IP / ingress policy",
+      status: params.ingressPolicyStatus,
+      reason:
+        params.ingressPolicyStatus === "blocked"
+          ? "Ingress ownership/static IP policy conflict detected."
+          : params.ingressPolicyStatus === "pending"
+            ? "Waiting for ingress policy evidence."
+            : null,
+    },
+  ];
+
+  const sharedWarnings: DeployConsistencyGroupingResult["sharedWarnings"] = [];
+  if (
+    params.hasDnsMismatchReason &&
+    (params.managedCertificateStatus === "blocked" || params.httpsStatus === "blocked")
+  ) {
+    sharedWarnings.push({
+      key: "dns_tls_root_cause",
+      message: "DNS mismatch is likely the root cause for certificate/HTTPS failures.",
+      affectedChecks: ["DNS", "Managed certificate", "HTTPS"],
+    });
+  }
+  if (params.tlsFailedNotVisible) {
+    sharedWarnings.push({
+      key: "tls_failed_not_visible",
+      message: "Certificate visibility is still pending from external DNS evidence.",
+      affectedChecks: ["Managed certificate", "HTTPS"],
+    });
+  }
+  if (params.hasIngressConflictReason) {
+    sharedWarnings.push({
+      key: "ingress_conflict",
+      message: "Ingress/static IP conflict can block DNS, TLS, and HTTPS verification.",
+      affectedChecks: ["Static IP / ingress policy", "DNS", "HTTPS"],
+    });
+  }
+  if (params.workflowIntegrityReasonCode === "managed_workflow_signature_mismatch") {
+    sharedWarnings.push({
+      key: "workflow_integrity_mismatch",
+      message: "Workflow signature mismatch may cause non-standard deploy behavior.",
+      affectedChecks: ["Workflow integrity"],
+    });
+  }
+
+  return {
+    checks,
+    sharedWarnings,
+  };
 }
 
 function derivePublishTreeUrl(
@@ -3023,6 +3426,18 @@ export function MigrationWorkspacePanel({
   const deployPrimaryBlockerMessage = toDeployBlockerMessage(deployBlockerCodes);
   const contextSummary = asRecord(summary?.context_summary);
   const draftInputSummary = asRecord(contextSummary.draft_input_summary);
+  const recommendationCategories = asStringList(draftInputSummary.recommendation_categories_included);
+  const topRecommendationTitles = asStringList(draftInputSummary.top_recommendation_titles);
+  const recommendationCategoriesCompact = summarizeListWithLimit(recommendationCategories, 4, 110);
+  const topRecommendationTitlesCompact = summarizeListWithLimit(topRecommendationTitles, 3, 150);
+  const recommendationCategoriesSummaryValue =
+    recommendationCategoriesCompact.hiddenCount > 0
+      ? `${recommendationCategoriesCompact.summary} (+${recommendationCategoriesCompact.hiddenCount} more)`
+      : recommendationCategoriesCompact.summary;
+  const topRecommendationTitlesSummaryValue =
+    topRecommendationTitlesCompact.hiddenCount > 0
+      ? `${topRecommendationTitlesCompact.summary} (+${topRecommendationTitlesCompact.hiddenCount} more)`
+      : topRecommendationTitlesCompact.summary;
   const mediaSummaryFromContext = asRecord(contextSummary.media_assets);
   const mediaSummaryFromRoute = asRecord(mediaAssetsSnapshot);
   const mediaSummary =
@@ -4068,17 +4483,6 @@ export function MigrationWorkspacePanel({
     }
     return "unknown";
   })();
-  const deployConsistencyGates: Array<{ key: string; label: string; status: DeployConsistencyGateStatus }> = [
-    { key: "deployment_rollout", label: "Deployment rollout", status: deploymentRolloutGateStatus },
-    { key: "service_endpoints", label: "Service endpoints", status: serviceEndpointsGateStatus },
-    { key: "backend_health", label: "Backend health", status: backendHealthGateStatus },
-    { key: "dns_matches_ingress", label: "DNS matches ingress IP", status: dnsMatchesIngressGateStatus },
-    { key: "managed_certificate_active", label: "Managed certificate active", status: managedCertificateActiveGateStatus },
-    { key: "certificate_identity", label: "Certificate identity valid", status: certificateIdentityGateStatus },
-    { key: "ingress_conflict", label: "Ingress/static IP conflict check", status: ingressConflictGateStatus },
-    { key: "https_probe", label: "HTTPS probe", status: httpsProbeGateStatus },
-    { key: "workflow_integrity", label: "Workflow integrity", status: workflowIntegrityGateStatus },
-  ];
   const deployConsistencyRemediationHints = (() => {
     const hints = new Set<string>();
     if (dnsMatchesIngressGateStatus === "blocked") {
@@ -4293,6 +4697,22 @@ export function MigrationWorkspacePanel({
     entry: competitorReusedContext,
     legacyAvailable: Boolean(existingContextSummaries.competitor_summary) || Boolean(contextSummary.has_competitor_summary),
   });
+  const auditContextStatus = resolveReusedContextStatus({
+    entry: auditReusedContext,
+    legacyAvailable: Boolean(existingContextSummaries.audit_summary) || Boolean(contextSummary.has_audit_summary),
+  });
+  const recommendationContextStatus = resolveReusedContextStatus({
+    entry: recommendationReusedContext,
+    legacyAvailable:
+      Boolean(existingContextSummaries.recommendation_summary) || Boolean(contextSummary.has_recommendation_summary),
+  });
+  const competitorContextStatus = resolveReusedContextStatus({
+    entry: competitorReusedContext,
+    legacyAvailable: Boolean(existingContextSummaries.competitor_summary) || Boolean(contextSummary.has_competitor_summary),
+  });
+  const auditContextLastRun = formatContextTimestamp(auditReusedContext.timestamp);
+  const recommendationContextLastRun = formatContextTimestamp(recommendationReusedContext.timestamp);
+  const competitorContextLastRun = formatContextTimestamp(competitorReusedContext.timestamp);
   const latestArtifactForSummary = selectedArtifact || summary?.latest_artifact || artifactVersions[0] || null;
   const draftPreview = useMemo(() => buildDraftPreviewEvaluation(selectedArtifact), [selectedArtifact]);
   const activeDraftPreviewPage = useMemo(() => {
@@ -4350,6 +4770,102 @@ export function MigrationWorkspacePanel({
   const deployReady = Boolean(deployReadiness.ready);
   const publishPrimaryReadinessMessage = publishPrimaryBlockerMessage || publishReadinessReasons[0] || null;
   const deployPrimaryReadinessMessage = deploySummaryBlockerMessage || deployReadinessReasons[0] || null;
+  const publishDiagnosticsAttemptStatusRaw =
+    asStringOrNull(selectedPublishHistoryRecord.status) ||
+    asStringOrNull(migrationDiagnostics.last_publish_status) ||
+    null;
+  const deployDiagnosticsAttemptStatusRaw =
+    asStringOrNull(selectedDeployHistoryRecord.status) ||
+    asStringOrNull(migrationDiagnostics.last_deploy_status) ||
+    null;
+  const publishDiagnosticsStatus: NormalizedDiagnosticStatus = (() => {
+    if (publishDiagnosticsFailureCategory || publishDiagnosticsFailureReasonCode) {
+      return "failed";
+    }
+    const fromAttempt = normalizeDiagnosticStatus(publishDiagnosticsAttemptStatusRaw);
+    if (fromAttempt !== "unknown") {
+      return fromAttempt;
+    }
+    if (!publishReady) {
+      return "blocked";
+    }
+    if (publishReady) {
+      return "success";
+    }
+    return "unknown";
+  })();
+  const deployDiagnosticsStatus: NormalizedDiagnosticStatus = (() => {
+    if (deployDiagnosticsFailureCategory || deployFailureReasonCode || deployRunFailureReasonCode) {
+      return "failed";
+    }
+    const fromAttempt = normalizeDiagnosticStatus(deployDiagnosticsAttemptStatusRaw);
+    if (fromAttempt !== "unknown") {
+      return fromAttempt;
+    }
+    if (!deployReady) {
+      return "blocked";
+    }
+    if (deployReady) {
+      return "success";
+    }
+    return "unknown";
+  })();
+  const publishDiagnosticsReasonSummary = summarizeDiagnosticReason(
+    publishDiagnosticsFailureMessage,
+    publishDiagnosticsFailureReasonCode ? `Reason: ${formatReasonCodeLabel(publishDiagnosticsFailureReasonCode)}` : null,
+    publishDiagnosticsFailureCategory ? `Category: ${toFailureCategoryLabel(publishDiagnosticsFailureCategory)}` : null,
+    publishPrimaryReadinessMessage,
+  );
+  const publishDiagnosticsNextAction = summarizeDiagnosticReason(
+    publishWorkflowRemediationGuidance,
+    asStringOrNull(publishReadiness.operator_action),
+    publishPrimaryReadinessMessage,
+    publishDiagnosticsStatus === "success" ? "No action required." : "Review publish readiness and retry.",
+  );
+  const deployDiagnosticsReasonSummary = summarizeDiagnosticReason(
+    managedGkeConfigGuidance,
+    deployFailureMessage,
+    deployFailureReasonCode ? `Reason: ${formatReasonCodeLabel(deployFailureReasonCode)}` : null,
+    deployFailureStage ? `Stage: ${formatDispatchStageLabel(deployFailureStage)}` : null,
+    postConformanceReasonText,
+    deployPrimaryReadinessMessage,
+  );
+  const deployDiagnosticsNextAction = summarizeDiagnosticReason(
+    postConformanceGuidance,
+    deployRunFailureHint,
+    deployFailureRemediationHintDisplay,
+    managedGkeConfigGuidance,
+    asStringOrNull(deployReadiness.operator_action),
+    deployPrimaryReadinessMessage,
+    deployDiagnosticsStatus === "success" ? "No action required." : "Review deploy diagnostics and rerun deploy.",
+  );
+  const publishDiagnosticsSelectedTimestamp = asStringOrNull(selectedPublishHistoryRecord.timestamp);
+  const deployDiagnosticsSelectedTimestamp = asStringOrNull(selectedDeployHistoryRecord.timestamp);
+  const publishHistoryLatestAttempts = publishHistoryRecords.slice(-5).reverse();
+  const deployHistoryLatestAttempts = deployHistoryRecords.slice(-5).reverse();
+  const publishHistoryGroupedFailures = useMemo(
+    () => groupAttemptHistory(publishHistoryRecords, "publish"),
+    [publishHistoryRecords],
+  );
+  const deployHistoryGroupedFailures = useMemo(
+    () => groupAttemptHistory(deployHistoryRecords, "deploy"),
+    [deployHistoryRecords],
+  );
+  const deployConsistencyGrouping = groupDeployConsistency({
+    deploymentRolloutStatus: deploymentRolloutGateStatus,
+    serviceEndpointsStatus: serviceEndpointsGateStatus,
+    backendHealthStatus: backendHealthGateStatus,
+    dnsStatus: dnsMatchesIngressGateStatus,
+    managedCertificateStatus: managedCertificateActiveGateStatus,
+    httpsStatus: httpsProbeGateStatus,
+    workflowIntegrityStatus: workflowIntegrityGateStatus,
+    ingressPolicyStatus: ingressConflictGateStatus,
+    tlsFailedNotVisible,
+    tlsProvisioning,
+    hasDnsMismatchReason,
+    hasIngressConflictReason,
+    workflowIntegrityReasonCode,
+  });
 
   const hydrateFromSummary = useCallback((nextSummary: MigrationWorkspaceSummary) => {
     const workspace = nextSummary.workspace;
@@ -6240,74 +6756,188 @@ export function MigrationWorkspacePanel({
 
       <div className="panel stack workspace-section-block" data-testid="migration-reused-context">
         <h3>Reused MBSRN Context</h3>
-        <div className="grid grid-3">
-          <div className="panel panel-compact stack-tight">
-            <strong>Audit</strong>
-            <span className="hint" data-testid="migration-reused-context-audit-status">{auditContextLabel}</span>
+        <span className="hint muted">
+          Informational context availability summary. Operator actions remain in workflow sections above.
+        </span>
+        <div className="migration-compact-inline-list" data-testid="migration-reused-context-compact">
+          <div className="migration-compact-inline-item">
+            <span className="migration-compact-label">Audit</span>
+            <span
+              className={
+                auditContextStatus === "Available"
+                  ? "badge badge-success"
+                  : auditContextStatus === "Stale"
+                    ? "badge badge-warn"
+                    : "badge badge-muted"
+              }
+              data-testid="migration-reused-context-audit-status"
+            >
+              {auditContextStatus}
+            </span>
+            <span className="hint muted" data-testid="migration-reused-context-audit-last-run">
+              Last run: {auditContextLastRun || "n/a"}
+            </span>
           </div>
-          <div className="panel panel-compact stack-tight">
-            <strong>Recommendations</strong>
-            <span className="hint" data-testid="migration-reused-context-recommendations-status">{recommendationContextLabel}</span>
+          <div className="migration-compact-inline-item">
+            <span className="migration-compact-label">Recommendations</span>
+            <span
+              className={
+                recommendationContextStatus === "Available"
+                  ? "badge badge-success"
+                  : recommendationContextStatus === "Stale"
+                    ? "badge badge-warn"
+                    : "badge badge-muted"
+              }
+              data-testid="migration-reused-context-recommendations-status"
+            >
+              {recommendationContextStatus}
+            </span>
+            <span className="hint muted" data-testid="migration-reused-context-recommendations-last-run">
+              Last run: {recommendationContextLastRun || "n/a"}
+            </span>
           </div>
-          <div className="panel panel-compact stack-tight">
-            <strong>Competitors</strong>
-            <span className="hint" data-testid="migration-reused-context-competitors-status">{competitorContextLabel}</span>
+          <div className="migration-compact-inline-item">
+            <span className="migration-compact-label">Competitors</span>
+            <span
+              className={
+                competitorContextStatus === "Available"
+                  ? "badge badge-success"
+                  : competitorContextStatus === "Stale"
+                    ? "badge badge-warn"
+                    : "badge badge-muted"
+              }
+              data-testid="migration-reused-context-competitors-status"
+            >
+              {competitorContextStatus}
+            </span>
+            <span className="hint muted" data-testid="migration-reused-context-competitors-last-run">
+              Last run: {competitorContextLastRun || "n/a"}
+            </span>
           </div>
         </div>
+        <details className="workspace-details-shell migration-context-details">
+          <summary className="hint muted">Show context detail</summary>
+          <div className="stack-tight">
+            <span className="hint">Audit: {auditContextLabel}</span>
+            <span className="hint">Recommendations: {recommendationContextLabel}</span>
+            <span className="hint">Competitors: {competitorContextLabel}</span>
+          </div>
+        </details>
       </div>
 
       <div className="panel stack workspace-section-block" data-testid="migration-draft-input-summary">
         <h3>Draft Inputs / AI Context</h3>
         <span className="hint muted">
-          This summary is bounded metadata for operator inspection. It is safe to store/display and excludes raw secrets and media bytes.
+          Informational bounded metadata only. This summary excludes raw secrets and media bytes.
         </span>
-        <div className="grid grid-2">
-          <div className="panel panel-compact stack-tight">
+        <div className="migration-compact-summary-grid">
+          <div className="panel panel-compact stack-tight migration-compact-summary-block" data-testid="migration-draft-input-context-signals">
             <strong>Context Signals</strong>
-            <span className="hint">
-              Recommendations included: {asNonNegativeInt(draftInputSummary.recommendations_included_count) ?? 0}
-            </span>
-            <span className="hint">
-              Recommendation categories: {asStringList(draftInputSummary.recommendation_categories_included).join(", ") || "none"}
-            </span>
-            <span className="hint">
-              Top recommendation titles: {asStringList(draftInputSummary.top_recommendation_titles).join(" | ") || "none"}
-            </span>
-            <span className="hint">GSC signals included: {formatBooleanStateLabel(asBooleanOrNull(draftInputSummary.gsc_signals_included))}</span>
-            <span className="hint">GA4 signals included: {formatBooleanStateLabel(asBooleanOrNull(draftInputSummary.ga4_signals_included))}</span>
-            <span className="hint">
-              Competitor profiles included: {asNonNegativeInt(draftInputSummary.competitor_profiles_included_count) ?? 0}
-            </span>
-            <span className="hint">
-              Operator requirements included: {formatBooleanStateLabel(asBooleanOrNull(draftInputSummary.operator_requirements_included))}
-            </span>
-            <span className="hint">
-              Enriched business context included: {formatBooleanStateLabel(asBooleanOrNull(draftInputSummary.enriched_business_context_included))}
-            </span>
-            <span className="hint">
-              Audit findings included: {asNonNegativeInt(draftInputSummary.audit_findings_included_count) ?? 0}
-            </span>
+            <div className="migration-compact-kv">
+              <span className="migration-compact-kv-row">
+                <span className="migration-compact-kv-label">Recommendations included</span>
+                <span className="migration-compact-kv-value">
+                  {asNonNegativeInt(draftInputSummary.recommendations_included_count) ?? 0}
+                </span>
+              </span>
+              <span className="migration-compact-kv-row">
+                <span className="migration-compact-kv-label">Recommendation categories</span>
+                <span className="migration-compact-kv-value">{recommendationCategoriesSummaryValue}</span>
+              </span>
+              <span className="migration-compact-kv-row" data-testid="migration-draft-input-top-recommendations">
+                <span className="migration-compact-kv-label">Top recommendation titles</span>
+                <span className="migration-compact-kv-value">{topRecommendationTitlesSummaryValue}</span>
+              </span>
+              <span className="migration-compact-kv-row">
+                <span className="migration-compact-kv-label">GSC signals included</span>
+                <span className="migration-compact-kv-value">
+                  {formatBooleanStateLabel(asBooleanOrNull(draftInputSummary.gsc_signals_included))}
+                </span>
+              </span>
+              <span className="migration-compact-kv-row">
+                <span className="migration-compact-kv-label">GA4 signals included</span>
+                <span className="migration-compact-kv-value">
+                  {formatBooleanStateLabel(asBooleanOrNull(draftInputSummary.ga4_signals_included))}
+                </span>
+              </span>
+              <span className="migration-compact-kv-row">
+                <span className="migration-compact-kv-label">Competitor profiles included</span>
+                <span className="migration-compact-kv-value">
+                  {asNonNegativeInt(draftInputSummary.competitor_profiles_included_count) ?? 0}
+                </span>
+              </span>
+              <span className="migration-compact-kv-row">
+                <span className="migration-compact-kv-label">Operator requirements included</span>
+                <span className="migration-compact-kv-value">
+                  {formatBooleanStateLabel(asBooleanOrNull(draftInputSummary.operator_requirements_included))}
+                </span>
+              </span>
+              <span className="migration-compact-kv-row">
+                <span className="migration-compact-kv-label">Enriched supporting context included</span>
+                <span className="migration-compact-kv-value">
+                  {formatBooleanStateLabel(asBooleanOrNull(draftInputSummary.enriched_business_context_included))}
+                </span>
+              </span>
+              <span className="migration-compact-kv-row">
+                <span className="migration-compact-kv-label">Audit findings included</span>
+                <span className="migration-compact-kv-value">
+                  {asNonNegativeInt(draftInputSummary.audit_findings_included_count) ?? 0}
+                </span>
+              </span>
+            </div>
+            {topRecommendationTitlesCompact.truncated ? (
+              <details
+                className="workspace-details-shell migration-compact-details"
+                data-testid="migration-draft-input-top-recommendations-details"
+              >
+                <summary className="hint muted">Show full recommendation titles</summary>
+                {topRecommendationTitles.length > 0 ? (
+                  <ul className="stack-tight">
+                    {topRecommendationTitles.map((title, index) => (
+                      <li key={`draft-input-top-recommendation-${index}`} className="hint">
+                        {title}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <span className="hint muted">No recommendation titles available.</span>
+                )}
+              </details>
+            ) : null}
           </div>
-          <div className="panel panel-compact stack-tight">
+          <div className="panel panel-compact stack-tight migration-compact-summary-block" data-testid="migration-draft-input-bounded-provenance">
             <strong>Bounded Provenance</strong>
-            <span className="hint">
-              Media context included: {formatBooleanStateLabel(asBooleanOrNull(draftInputSummary.media_context_included))}
-            </span>
-            <span className="hint">
-              Media context trimmed: {formatBooleanStateLabel(asBooleanOrNull(draftInputSummary.media_context_trimmed))}
-            </span>
-            <span className="hint">
-              AI context blocks included: {asNonNegativeInt(draftInputSummary.ai_context_source_count) ?? 0}
-            </span>
-            <span className="hint">
-              AI context trimmed: {formatBooleanStateLabel(asBooleanOrNull(draftInputSummary.ai_context_trimmed))}
-            </span>
-            <span className="hint muted">
-              Media counts and image actions are managed in Section B. Provider execution metadata is in Advanced
-              Diagnostics.
-            </span>
+            <div className="migration-compact-kv">
+              <span className="migration-compact-kv-row">
+                <span className="migration-compact-kv-label">Media context included</span>
+                <span className="migration-compact-kv-value">
+                  {formatBooleanStateLabel(asBooleanOrNull(draftInputSummary.media_context_included))}
+                </span>
+              </span>
+              <span className="migration-compact-kv-row">
+                <span className="migration-compact-kv-label">Media context trimmed</span>
+                <span className="migration-compact-kv-value">
+                  {formatBooleanStateLabel(asBooleanOrNull(draftInputSummary.media_context_trimmed))}
+                </span>
+              </span>
+              <span className="migration-compact-kv-row">
+                <span className="migration-compact-kv-label">AI context blocks included</span>
+                <span className="migration-compact-kv-value">
+                  {asNonNegativeInt(draftInputSummary.ai_context_source_count) ?? 0}
+                </span>
+              </span>
+              <span className="migration-compact-kv-row">
+                <span className="migration-compact-kv-label">AI context trimmed</span>
+                <span className="migration-compact-kv-value">
+                  {formatBooleanStateLabel(asBooleanOrNull(draftInputSummary.ai_context_trimmed))}
+                </span>
+              </span>
+            </div>
           </div>
         </div>
+        <span className="hint muted">
+          Media counts/actions are managed in Section B. Provider execution metadata is available in Advanced Diagnostics.
+        </span>
       </div>
 
       </MigrationMediaSection>
@@ -6675,302 +7305,301 @@ export function MigrationWorkspacePanel({
             Publish writes approved artifacts to GitHub only. Deploy remains a separate explicit request.
           </span>
         </div>
-        <div className="panel panel-compact stack" data-testid="migration-destination-summary">
-          <strong>Destination Summary</strong>
-          <div className="grid grid-2 migration-destination-summary-grid">
-            <div className="panel panel-compact stack-tight">
-              <strong>Publish Destination</strong>
-              <span className="hint">Repository: {effectivePublishRepository || "Not configured"}</span>
-              <span className="hint">Branch: {effectivePublishBranch || "Not configured"}</span>
-              <span className="hint">Artifact root: {effectivePublishArtifactRoot || "/"}</span>
-              <span className="hint">State: {publishTargetStateLabel}</span>
-              <span className="hint">
-                Expected URL: {destinationSummary.publishExpectedPublishedUrl || destinationSummary.deployExpectedPublishUrl || "Not available"}
-              </span>
-              {publishPrimaryBlockerMessage ? (
-                <span className="hint warning" data-testid="migration-destination-publish-blocker">
-                  {publishPrimaryBlockerMessage}
+        <div className="migration-publish-deploy-layout-stack">
+          <div className="panel panel-compact migration-publish-deploy-layout" data-testid="migration-publish-layout">
+            <div className="migration-publish-deploy-column stack" data-testid="migration-publish-layout-left">
+              <div className="panel panel-compact stack" data-testid="migration-destination-summary">
+                <strong>Destination Summary</strong>
+                <div className="panel panel-compact stack-tight migration-publish-deploy-summary-card">
+                  <strong>Publish Destination</strong>
+                  <span className="hint">Repository: {effectivePublishRepository || "Not configured"}</span>
+                  <span className="hint">Branch: {effectivePublishBranch || "Not configured"}</span>
+                  <span className="hint">Artifact root: {effectivePublishArtifactRoot || "/"}</span>
+                  <span className="hint">State: {publishTargetStateLabel}</span>
+                  <span className="hint">
+                    Expected URL: {destinationSummary.publishExpectedPublishedUrl || destinationSummary.deployExpectedPublishUrl || "Not available"}
+                  </span>
+                  {publishPrimaryBlockerMessage ? (
+                    <span className="hint warning" data-testid="migration-destination-publish-blocker">
+                      {publishPrimaryBlockerMessage}
+                    </span>
+                  ) : null}
+                </div>
+                <span className="hint muted">
+                  Full destination/runtime/config evidence is available under Advanced Diagnostics.
                 </span>
-              ) : null}
+              </div>
+
+              <div className="panel panel-compact stack" data-testid="migration-publish-readiness">
+                <strong>Publish Readiness</strong>
+                <span className="hint">Ready: {publishReady ? "Yes" : "No"}</span>
+                <span
+                  className={publishReady ? "hint success" : "hint warning"}
+                  data-testid="migration-publish-readiness-primary-action"
+                >
+                  {publishReady
+                    ? "Action: Publish the selected approved draft when operator review is complete."
+                    : `Blocker: ${publishPrimaryReadinessMessage || "Publish target is not ready."}`}
+                </span>
+                {!publishReady && publishFailureCategory ? (
+                  <span className="hint warning">Failure category: {toFailureCategoryLabel(publishFailureCategory)}</span>
+                ) : null}
+                {!publishReady && publishFailureMessage ? <span className="hint warning">{publishFailureMessage}</span> : null}
+              </div>
             </div>
-            <div className="panel panel-compact stack-tight">
-              <strong>Deploy Destination</strong>
-              <span className="hint">Repository: {deployTraceRepo || effectivePublishRepository || "Not configured"}</span>
-              <span className="hint">Ref: {deployTraceRef || effectivePublishBranch || "Not configured"}</span>
-              <span className="hint">Environment: {deployTargetEnvironmentKey || "Not available"}</span>
-              <span className="hint">
-                Preview URL: {destinationSummary.deployPreviewUrl || destinationSummary.publishExpectedPublishedUrl || "Not available"}
-              </span>
-              <span className="hint">Deploy evidence state: {deployTargetStateLabel}</span>
-              {deploySummaryBlockerMessage ? (
-                <span className="hint warning" data-testid="migration-destination-deploy-blocker">
-                  {deploySummaryBlockerMessage}
+
+            <div className="migration-publish-deploy-column stack" data-testid="migration-publish-layout-right">
+              <div className="panel panel-compact stack" data-testid="migration-publish-target-summary">
+                <strong>GitHub Publish Target</strong>
+                <span className="hint muted" data-testid="migration-publish-target-admin-boundary">
+                  Admin controls GitHub account/owner. Operators control repository name and optional branch override.
                 </span>
-              ) : null}
-            </div>
-          </div>
-          <span className="hint muted">
-            Full destination/runtime/config evidence is available under Advanced Diagnostics.
-          </span>
-        </div>
-        <div className="grid grid-2">
-          <div className="panel panel-compact stack" data-testid="migration-publish-target-summary">
-            <strong>GitHub Publish Target</strong>
-            <span className="hint muted" data-testid="migration-publish-target-admin-boundary">
-              Admin controls GitHub account/owner. Operators control repository name and optional branch override.
-            </span>
-            <span className="hint">{adminPublishReadyLabel}</span>
-            <label className="stack-tight">
-              <span className="hint muted">Repository name (Operator-owned)</span>
-              <input
-                value={publishRepoName}
-                onChange={(event) => setPublishRepoName(event.target.value)}
-                placeholder="tnmfire"
-              />
-            </label>
-            <label className="stack-tight">
-              <span className="hint muted">Branch override (optional)</span>
-              <input value={publishBranch} onChange={(event) => setPublishBranch(event.target.value)} placeholder="main" />
-            </label>
-            <button
-              type="button"
-              className="button button-secondary"
-              onClick={() => void handleSavePublishConfig()}
-              disabled={busyAction === "save_publish_config" || busyAction === "load"}
-            >
-              {busyAction === "save_publish_config" ? "Saving..." : "Save Publish Repository"}
-            </button>
-          </div>
-
-          <div className="panel panel-compact stack">
-            <strong>GKE Deploy Target</strong>
-            <span className="hint muted" data-testid="migration-deploy-target-admin-boundary">
-              Admin controls deploy repository/workflow routing. Operators can enable deploy for this workspace and
-              review effective target diagnostics.
-            </span>
-            <label className="link-row">
-              <input type="checkbox" checked={deployEnabled} onChange={(event) => setDeployEnabled(event.target.checked)} />
-              <span>Deploy enabled for this site workspace</span>
-            </label>
-            <WorkspaceMetadataGrid data-testid="migration-deploy-target-readonly">
-              <WorkspaceMetadataItem label="Effective repository">
-                {deployTraceRepo || effectivePublishRepository || "Not configured"}
-              </WorkspaceMetadataItem>
-              <WorkspaceMetadataItem label="Effective ref / branch">
-                {deployTraceRef || effectivePublishBranch || "Not configured"}
-              </WorkspaceMetadataItem>
-              <WorkspaceMetadataItem label="Workflow identifier">
-                {deployWorkflowIdentifier || "Not configured"}
-              </WorkspaceMetadataItem>
-              <WorkspaceMetadataItem label="Target environment key">
-                {deployTargetEnvironmentKey || "Not available"}
-              </WorkspaceMetadataItem>
-              <WorkspaceMetadataItem label="Preview URL">
-                {destinationSummary.deployPreviewUrl || "Not available"}
-              </WorkspaceMetadataItem>
-              <WorkspaceMetadataItem label="Deploy evidence state">
-                {deployTargetStateLabel}
-              </WorkspaceMetadataItem>
-            </WorkspaceMetadataGrid>
-            <button
-              type="button"
-              className="button button-secondary"
-              onClick={() => void handleSaveDeployConfig()}
-              disabled={busyAction === "save_deploy_config" || busyAction === "load"}
-            >
-              {busyAction === "save_deploy_config" ? "Saving..." : "Save Deploy Availability"}
-            </button>
-          </div>
-        </div>
-
-        <div className="grid grid-2">
-          <div className="panel panel-compact stack" data-testid="migration-publish-readiness">
-            <strong>Publish Readiness</strong>
-            <span className="hint">Ready: {publishReady ? "Yes" : "No"}</span>
-            <span
-              className={publishReady ? "hint success" : "hint warning"}
-              data-testid="migration-publish-readiness-primary-action"
-            >
-              {publishReady
-                ? "Action: Publish the selected approved draft when operator review is complete."
-                : `Blocker: ${publishPrimaryReadinessMessage || "Publish target is not ready."}`}
-            </span>
-            {!publishReady && publishFailureCategory ? (
-              <span className="hint warning">Failure category: {toFailureCategoryLabel(publishFailureCategory)}</span>
-            ) : null}
-            {!publishReady && publishFailureMessage ? <span className="hint warning">{publishFailureMessage}</span> : null}
-          </div>
-          <div className="panel panel-compact stack" data-testid="migration-deploy-readiness">
-            <strong>Deploy Readiness</strong>
-            <span className="hint">Ready: {deployReady ? "Yes" : "No"}</span>
-            <span
-              className={deployReady ? "hint success" : "hint warning"}
-              data-testid="migration-deploy-readiness-primary-action"
-            >
-              {deployReady
-                ? "Action: Run deploy for the selected approved and published draft."
-                : `Blocker: ${deployPrimaryReadinessMessage || "Deploy target is not ready."}`}
-            </span>
-            {!deployReady ? (
-              <>
-                {managedGkeConfigGuidance ? (
-                  <span className="hint warning" data-testid="migration-managed-gke-config-guidance-readiness">
-                    {managedGkeConfigGuidance}
-                  </span>
-                ) : null}
-                {privateImageAuthRequired !== null ? (
-                  <span className="hint" data-testid="migration-private-image-auth-required-readiness">
-                    Private managed image auth required: {formatBooleanStateLabel(privateImageAuthRequired)}
-                  </span>
-                ) : null}
-                {privateImageCredentialsAvailableInControlPlane !== null ? (
-                  <span className="hint" data-testid="migration-private-image-credentials-control-plane-readiness">
-                    Control-plane GHCR credentials available:{" "}
-                    {formatBooleanStateLabel(privateImageCredentialsAvailableInControlPlane)}
-                  </span>
-                ) : null}
-                {targetRepoSecretsNotRequired !== null ? (
-                  <span className="hint muted" data-testid="migration-target-repo-secrets-not-required-readiness">
-                    Target repo image-pull secrets required:{" "}
-                    {targetRepoSecretsNotRequired ? "No (control-plane provisioned)" : "Unknown"}
-                  </span>
-                ) : null}
-                {imagePullSecretNotProvisioned ? (
-                  <span className="hint warning" data-testid="migration-image-pull-secret-not-provisioned-readiness">
-                    Namespace pull secret is not yet confirmed. Control-plane provisioning runs before deploy.
-                  </span>
-                ) : null}
-                {imagePullSecretProvisioningUnavailable ? (
-                  <span className="hint warning" data-testid="migration-image-pull-secret-provisioning-unavailable-readiness">
-                    Namespace pull-secret provisioning is currently unavailable. Resolve control-plane credentials or managed
-                    GKE config blockers before deploy.
-                  </span>
-                ) : null}
-                {managedSiteRolloutState ? (
-                  <span className="hint" data-testid="migration-managed-site-rollout-state-readiness">
-                    Managed site rollout state: {formatManagedSiteRolloutStateLabel(managedSiteRolloutState)}
-                  </span>
-                ) : null}
-                {managedSiteRolloutMessage ? (
-                  <span
-                    className={managedSiteRolloutFixActive ? "hint" : "hint warning"}
-                    data-testid="migration-managed-site-rollout-guidance-readiness"
-                  >
-                    {managedSiteRolloutMessage}
-                  </span>
-                ) : null}
-                {managedSiteExpectedImageRepository ? (
-                  <span className="hint" data-testid="migration-managed-site-rollout-expected-image-readiness">
-                    Expected site-scoped image repository: {managedSiteExpectedImageRepository}
-                  </span>
-                ) : null}
-                {managedSiteManifestImageReference ? (
-                  <span className="hint" data-testid="migration-managed-site-rollout-manifest-image-readiness">
-                    Managed manifest runtime image: {managedSiteManifestImageReference}
-                  </span>
-                ) : null}
-                {managedSiteObservedDeployImageReference ? (
-                  <span className="hint" data-testid="migration-managed-site-rollout-observed-image-readiness">
-                    Last observed deploy runtime image: {managedSiteObservedDeployImageReference}
-                  </span>
-                ) : null}
-                {managedSiteObservedDeployImageDigestDisplay ? (
-                  <span className="hint" data-testid="migration-managed-site-rollout-observed-digest-readiness">
-                    Last observed deploy image digest: {managedSiteObservedDeployImageDigestDisplay}
-                  </span>
-                ) : null}
-                {managedSiteRolloutFixActive !== null ? (
-                  <span
-                    className={managedSiteRolloutFixActive ? "hint" : "hint warning"}
-                    data-testid="migration-managed-site-rollout-fix-status-readiness"
-                  >
-                    Fix active:{" "}
-                    {managedSiteRolloutFixActive
-                      ? "Yes. Observed deployment image matches expected site-scoped image."
-                      : "No. The fix is not active until observed deployment image matches expected site-scoped image."}
-                  </span>
-                ) : null}
-                {showManagedGkeConfigSourceHint ? (
-                  <span className="hint muted" data-testid="migration-managed-gke-config-source-readiness">
-                    Managed deploy resolves admin platform config first; repo vars/secrets are legacy fallback only.
-                  </span>
-                ) : null}
-              </>
-            ) : null}
-          </div>
-        </div>
-
-        <div className="grid grid-2">
-          <div className="panel panel-compact stack">
-            <strong>Publish</strong>
-            {publishRepoAdoptionRequired ? (
-              <div className="panel panel-compact stack-tight" data-testid="migration-repo-adoption-panel">
-                <span className="hint warning">
-                  This repository exists but is not marked as MBSRN-managed. Adopt it to allow MBSRN to publish into it.
-                </span>
+                <span className="hint">{adminPublishReadyLabel}</span>
+                <label className="stack-tight">
+                  <span className="hint muted">Repository name (Operator-owned)</span>
+                  <input
+                    value={publishRepoName}
+                    onChange={(event) => setPublishRepoName(event.target.value)}
+                    placeholder="tnmfire"
+                  />
+                </label>
+                <label className="stack-tight">
+                  <span className="hint muted">Branch override (optional)</span>
+                  <input value={publishBranch} onChange={(event) => setPublishBranch(event.target.value)} placeholder="main" />
+                </label>
                 <button
                   type="button"
                   className="button button-secondary"
-                  onClick={() => void handleAdoptPublishRepository()}
-                  disabled={isActionInFlight}
-                  data-testid="migration-adopt-repository-button"
+                  onClick={() => void handleSavePublishConfig()}
+                  disabled={busyAction === "save_publish_config" || busyAction === "load"}
                 >
-                  {busyAction === "adopt_repository" ? "Adopting..." : "Adopt repository"}
+                  {busyAction === "save_publish_config" ? "Saving..." : "Save Publish Repository"}
+                </button>
+              </div>
+
+              <div className="panel panel-compact stack" data-testid="migration-publish-actions">
+                <strong>Publish</strong>
+                {publishRepoAdoptionRequired ? (
+                  <div className="panel panel-compact stack-tight" data-testid="migration-repo-adoption-panel">
+                    <span className="hint warning">
+                      This repository exists but is not marked as MBSRN-managed. Adopt it to allow MBSRN to publish into it.
+                    </span>
+                    <button
+                      type="button"
+                      className="button button-secondary"
+                      onClick={() => void handleAdoptPublishRepository()}
+                      disabled={isActionInFlight}
+                      data-testid="migration-adopt-repository-button"
+                    >
+                      {busyAction === "adopt_repository" ? "Adopting..." : "Adopt repository"}
+                    </button>
+                    <span className="hint muted">
+                      This writes an MBSRN management marker to the repository. After adoption, MBSRN may update managed site files.
+                    </span>
+                  </div>
+                ) : null}
+                <label className="link-row">
+                  <input type="checkbox" checked={publishDryRun} onChange={(event) => setPublishDryRun(event.target.checked)} />
+                  <span>Dry run only</span>
+                </label>
+                <input
+                  value={publishCommitMessage}
+                  onChange={(event) => setPublishCommitMessage(event.target.value)}
+                  placeholder="Commit message (optional)"
+                />
+                <input
+                  value={publishAnalyticsOverride}
+                  onChange={(event) => setPublishAnalyticsOverride(event.target.value)}
+                  placeholder="GA measurement override (optional)"
+                />
+                <button
+                  type="button"
+                  className="button button-primary"
+                  onClick={() => void handlePublishSelectedArtifact()}
+                  disabled={isActionInFlight || !canPublishSelectedArtifact}
+                >
+                  {busyAction === "publish" ? "Publishing..." : "Publish Approved Draft to GitHub"}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div className="panel panel-compact migration-publish-deploy-layout" data-testid="migration-deploy-layout">
+            <div className="migration-publish-deploy-column stack" data-testid="migration-deploy-layout-left">
+              <div className="panel panel-compact stack" data-testid="migration-deploy-target-summary">
+                <strong>GKE Deploy Target</strong>
+                <span className="hint muted" data-testid="migration-deploy-target-admin-boundary">
+                  Admin controls deploy repository/workflow routing. Operators can enable deploy for this workspace and
+                  review effective target diagnostics.
+                </span>
+                <WorkspaceMetadataGrid data-testid="migration-deploy-target-readonly">
+                  <WorkspaceMetadataItem label="Effective repository">
+                    {deployTraceRepo || effectivePublishRepository || "Not configured"}
+                  </WorkspaceMetadataItem>
+                  <WorkspaceMetadataItem label="Effective ref / branch">
+                    {deployTraceRef || effectivePublishBranch || "Not configured"}
+                  </WorkspaceMetadataItem>
+                  <WorkspaceMetadataItem label="Workflow identifier">
+                    {deployWorkflowIdentifier || "Not configured"}
+                  </WorkspaceMetadataItem>
+                  <WorkspaceMetadataItem label="Target environment key">
+                    {deployTargetEnvironmentKey || "Not available"}
+                  </WorkspaceMetadataItem>
+                  <WorkspaceMetadataItem label="Preview URL">
+                    {destinationSummary.deployPreviewUrl || destinationSummary.publishExpectedPublishedUrl || "Not available"}
+                  </WorkspaceMetadataItem>
+                  <WorkspaceMetadataItem label="Deploy evidence state">
+                    {deployTargetStateLabel}
+                  </WorkspaceMetadataItem>
+                </WorkspaceMetadataGrid>
+                {deploySummaryBlockerMessage ? (
+                  <span className="hint warning" data-testid="migration-destination-deploy-blocker">
+                    {deploySummaryBlockerMessage}
+                  </span>
+                ) : null}
+              </div>
+
+              <div className="panel panel-compact stack" data-testid="migration-deploy-readiness">
+                <strong>Deploy Readiness</strong>
+                <span className="hint">Ready: {deployReady ? "Yes" : "No"}</span>
+                <span
+                  className={deployReady ? "hint success" : "hint warning"}
+                  data-testid="migration-deploy-readiness-primary-action"
+                >
+                  {deployReady
+                    ? "Action: Run deploy for the selected approved and published draft."
+                    : `Blocker: ${deployPrimaryReadinessMessage || "Deploy target is not ready."}`}
+                </span>
+                {!deployReady ? (
+                  <>
+                    {managedGkeConfigGuidance ? (
+                      <span className="hint warning" data-testid="migration-managed-gke-config-guidance-readiness">
+                        {managedGkeConfigGuidance}
+                      </span>
+                    ) : null}
+                    {privateImageAuthRequired !== null ? (
+                      <span className="hint" data-testid="migration-private-image-auth-required-readiness">
+                        Private managed image auth required: {formatBooleanStateLabel(privateImageAuthRequired)}
+                      </span>
+                    ) : null}
+                    {privateImageCredentialsAvailableInControlPlane !== null ? (
+                      <span className="hint" data-testid="migration-private-image-credentials-control-plane-readiness">
+                        Control-plane GHCR credentials available:{" "}
+                        {formatBooleanStateLabel(privateImageCredentialsAvailableInControlPlane)}
+                      </span>
+                    ) : null}
+                    {targetRepoSecretsNotRequired !== null ? (
+                      <span className="hint muted" data-testid="migration-target-repo-secrets-not-required-readiness">
+                        Target repo image-pull secrets required:{" "}
+                        {targetRepoSecretsNotRequired ? "No (control-plane provisioned)" : "Unknown"}
+                      </span>
+                    ) : null}
+                    {imagePullSecretNotProvisioned ? (
+                      <span className="hint warning" data-testid="migration-image-pull-secret-not-provisioned-readiness">
+                        Namespace pull secret is not yet confirmed. Control-plane provisioning runs before deploy.
+                      </span>
+                    ) : null}
+                    {imagePullSecretProvisioningUnavailable ? (
+                      <span className="hint warning" data-testid="migration-image-pull-secret-provisioning-unavailable-readiness">
+                        Namespace pull-secret provisioning is currently unavailable. Resolve control-plane credentials or managed
+                        GKE config blockers before deploy.
+                      </span>
+                    ) : null}
+                    {managedSiteRolloutState ? (
+                      <span className="hint" data-testid="migration-managed-site-rollout-state-readiness">
+                        Managed site rollout state: {formatManagedSiteRolloutStateLabel(managedSiteRolloutState)}
+                      </span>
+                    ) : null}
+                    {managedSiteRolloutMessage ? (
+                      <span
+                        className={managedSiteRolloutFixActive ? "hint" : "hint warning"}
+                        data-testid="migration-managed-site-rollout-guidance-readiness"
+                      >
+                        {managedSiteRolloutMessage}
+                      </span>
+                    ) : null}
+                    {managedSiteExpectedImageRepository ? (
+                      <span className="hint" data-testid="migration-managed-site-rollout-expected-image-readiness">
+                        Expected site-scoped image repository: {managedSiteExpectedImageRepository}
+                      </span>
+                    ) : null}
+                    {managedSiteManifestImageReference ? (
+                      <span className="hint" data-testid="migration-managed-site-rollout-manifest-image-readiness">
+                        Managed manifest runtime image: {managedSiteManifestImageReference}
+                      </span>
+                    ) : null}
+                    {managedSiteObservedDeployImageReference ? (
+                      <span className="hint" data-testid="migration-managed-site-rollout-observed-image-readiness">
+                        Last observed deploy runtime image: {managedSiteObservedDeployImageReference}
+                      </span>
+                    ) : null}
+                    {managedSiteObservedDeployImageDigestDisplay ? (
+                      <span className="hint" data-testid="migration-managed-site-rollout-observed-digest-readiness">
+                        Last observed deploy image digest: {managedSiteObservedDeployImageDigestDisplay}
+                      </span>
+                    ) : null}
+                    {managedSiteRolloutFixActive !== null ? (
+                      <span
+                        className={managedSiteRolloutFixActive ? "hint" : "hint warning"}
+                        data-testid="migration-managed-site-rollout-fix-status-readiness"
+                      >
+                        Fix active:{" "}
+                        {managedSiteRolloutFixActive
+                          ? "Yes. Observed deployment image matches expected site-scoped image."
+                          : "No. The fix is not active until observed deployment image matches expected site-scoped image."}
+                      </span>
+                    ) : null}
+                    {showManagedGkeConfigSourceHint ? (
+                      <span className="hint muted" data-testid="migration-managed-gke-config-source-readiness">
+                        Managed deploy resolves admin platform config first; repo vars/secrets are legacy fallback only.
+                      </span>
+                    ) : null}
+                  </>
+                ) : null}
+              </div>
+            </div>
+
+            <div className="migration-publish-deploy-column stack" data-testid="migration-deploy-layout-right">
+              <div className="panel panel-compact stack" data-testid="migration-deploy-controls">
+                <strong>Deploy Controls</strong>
+                <label className="link-row">
+                  <input type="checkbox" checked={deployEnabled} onChange={(event) => setDeployEnabled(event.target.checked)} />
+                  <span>Deploy enabled for this site workspace</span>
+                </label>
+                <button
+                  type="button"
+                  className="button button-secondary"
+                  onClick={() => void handleSaveDeployConfig()}
+                  disabled={busyAction === "save_deploy_config" || busyAction === "load"}
+                >
+                  {busyAction === "save_deploy_config" ? "Saving..." : "Save Deploy Availability"}
+                </button>
+                <label className="link-row">
+                  <input type="checkbox" checked={deployDryRun} onChange={(event) => setDeployDryRun(event.target.checked)} />
+                  <span>Dry run only</span>
+                </label>
+                <button
+                  type="button"
+                  className="button button-primary"
+                  onClick={() => void handleDeploySelectedArtifact()}
+                  disabled={isActionInFlight || !canDeploySelectedArtifact}
+                >
+                  {busyAction === "deploy" ? "Submitting..." : "Request GKE Deploy"}
+                </button>
+                <button
+                  type="button"
+                  className="button button-secondary"
+                  onClick={() => void handleRefreshDeployStatus()}
+                  disabled={isActionInFlight || !selectedArtifactVersionIdTrimmed}
+                  data-testid="migration-refresh-deploy-status-button"
+                >
+                  {busyAction === "refresh_deploy_status" ? "Refreshing..." : "Refresh Deploy Status"}
                 </button>
                 <span className="hint muted">
-                  This writes an MBSRN management marker to the repository. After adoption, MBSRN may update managed site files.
+                  Re-checks the dispatched workflow run and captures confirmed live URL evidence when available.
                 </span>
               </div>
-            ) : null}
-            <label className="link-row">
-              <input type="checkbox" checked={publishDryRun} onChange={(event) => setPublishDryRun(event.target.checked)} />
-              <span>Dry run only</span>
-            </label>
-            <input
-              value={publishCommitMessage}
-              onChange={(event) => setPublishCommitMessage(event.target.value)}
-              placeholder="Commit message (optional)"
-            />
-            <input
-              value={publishAnalyticsOverride}
-              onChange={(event) => setPublishAnalyticsOverride(event.target.value)}
-              placeholder="GA measurement override (optional)"
-            />
-            <button
-              type="button"
-              className="button button-primary"
-              onClick={() => void handlePublishSelectedArtifact()}
-              disabled={isActionInFlight || !canPublishSelectedArtifact}
-            >
-              {busyAction === "publish" ? "Publishing..." : "Publish Approved Draft to GitHub"}
-            </button>
-          </div>
-          <div className="panel panel-compact stack">
-            <strong>Deploy</strong>
-            <label className="link-row">
-              <input type="checkbox" checked={deployDryRun} onChange={(event) => setDeployDryRun(event.target.checked)} />
-              <span>Dry run only</span>
-            </label>
-            <button
-              type="button"
-              className="button button-primary"
-              onClick={() => void handleDeploySelectedArtifact()}
-              disabled={isActionInFlight || !canDeploySelectedArtifact}
-            >
-              {busyAction === "deploy" ? "Submitting..." : "Request GKE Deploy"}
-            </button>
-            <button
-              type="button"
-              className="button button-secondary"
-              onClick={() => void handleRefreshDeployStatus()}
-              disabled={isActionInFlight || !selectedArtifactVersionIdTrimmed}
-              data-testid="migration-refresh-deploy-status-button"
-            >
-              {busyAction === "refresh_deploy_status" ? "Refreshing..." : "Refresh Deploy Status"}
-            </button>
-            <span className="hint muted">
-              Re-checks the dispatched workflow run and captures confirmed live URL evidence when available.
-            </span>
+            </div>
           </div>
         </div>
       </div>
@@ -7119,18 +7748,60 @@ export function MigrationWorkspacePanel({
                     {asString(selectedPublishHistoryRecord.status) || "unknown"}.
                   </span>
                 ) : null}
-                {publishHistory.length > 0 ? (
-                  <ul>
-                    {publishHistory.slice(-10).reverse().map((item, index) => {
-                      const record = asRecord(item);
-                      return (
-                        <li key={`publish-history-${index}`}>
-                          {asString(record.timestamp) || "n/a"} - {asString(record.status) || "unknown"} - artifact{" "}
-                          {asString(record.artifact_version) || asString(record.artifact_version_id) || "n/a"}
-                        </li>
-                      );
-                    })}
-                  </ul>
+                {publishHistoryRecords.length > 0 ? (
+                  <>
+                    <span className="hint muted">
+                      Selected/latest artifact:{" "}
+                      {asString(selectedPublishHistoryRecord.artifact_version)
+                        || asString(selectedPublishHistoryRecord.artifact_version_id)
+                        || "n/a"}
+                    </span>
+                    <div className="migration-diagnostic-history-list" data-testid="migration-publish-history-latest">
+                      <strong className="hint muted">Latest attempts (up to 5)</strong>
+                      <ul className="stack-tight">
+                        {publishHistoryLatestAttempts.map((record, index) => (
+                          <li key={`publish-history-latest-${index}`} className="hint">
+                            {formatAttemptTimestamp(asStringOrNull(record.timestamp))} ·{" "}
+                            {asString(record.status) || "unknown"}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                    {publishHistoryGroupedFailures.length > 0 ? (
+                      <div className="migration-diagnostic-history-list" data-testid="migration-publish-history-grouped">
+                        <strong className="hint muted">Grouped failure reasons</strong>
+                        <ul className="stack-tight">
+                          {publishHistoryGroupedFailures.map((group) => (
+                            <li key={`publish-history-group-${group.key}`} className="hint">
+                              {group.label} - {group.count} attempt{group.count === 1 ? "" : "s"} · latest{" "}
+                              {formatAttemptTimestamp(group.latestTimestamp)}
+                              {group.nextAction ? ` · ${group.nextAction}` : ""}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ) : null}
+                    <details
+                      className="workspace-details-shell migration-compact-details"
+                      data-testid="migration-publish-history-full-details"
+                    >
+                      <summary className="hint muted">Show full publish history</summary>
+                      <ul className="stack-tight">
+                        {publishHistoryRecords.slice().reverse().map((record, index) => {
+                          const artifactVersion =
+                            asString(record.artifact_version) || asString(record.artifact_version_id) || "n/a";
+                          const failureReason = asStringOrNull(record.failure_reason);
+                          return (
+                            <li key={`publish-history-full-${index}`} className="hint">
+                              {formatAttemptTimestamp(asStringOrNull(record.timestamp))} ·{" "}
+                              {asString(record.status) || "unknown"} · artifact {artifactVersion}
+                              {failureReason ? ` · ${formatReasonCodeLabel(failureReason)}` : ""}
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </details>
+                  </>
                 ) : (
                   <span className="hint muted">No publish actions yet.</span>
                 )}
@@ -7173,35 +7844,62 @@ export function MigrationWorkspacePanel({
                     {asString(selectedDeployHistoryRecord.status) || "unknown"}.
                   </span>
                 ) : null}
-                {deployHistory.length > 0 ? (
-                  <ul>
-                    {deployHistory.slice(-10).reverse().map((item, index) => {
-                      const record = asRecord(item);
-                      const status = asString(record.status) || "unknown";
-                      const failureReason = asStringOrNull(record.failure_reason);
-                      const failureStage = asStringOrNull(record.failure_stage);
-                      const remediationHint = asStringOrNull(record.failure_remediation_hint);
-                      const dispatchServiceReasonCode = asStringOrNull(record.dispatch_service_reason_code);
-                      const managedGkeConfigGuidanceHint = toManagedGkeConfigGuidance(dispatchServiceReasonCode);
-                      const remediationHintDisplay = managedGkeConfigGuidanceHint || remediationHint;
-                      return (
-                        <li key={`deploy-history-${index}`}>
-                          {asString(record.timestamp) || "n/a"} - {status} - artifact{" "}
-                          {asString(record.artifact_version) || asString(record.artifact_version_id) || "n/a"}
-                          {status.toLowerCase() === "failed" && (failureReason || failureStage) ? (
-                            <span className="hint warning">
-                              {" "}
-                              ({failureStage ? formatDispatchStageLabel(failureStage) : "failure"}:{" "}
-                              {failureReason ? formatReasonCodeLabel(failureReason) : "unknown"})
-                            </span>
-                          ) : null}
-                          {status.toLowerCase() === "failed" && remediationHintDisplay ? (
-                            <span className="hint warning"> - {remediationHintDisplay}</span>
-                          ) : null}
-                        </li>
-                      );
-                    })}
-                  </ul>
+                {deployHistoryRecords.length > 0 ? (
+                  <>
+                    <span className="hint muted">
+                      Selected/latest artifact:{" "}
+                      {asString(selectedDeployHistoryRecord.artifact_version)
+                        || asString(selectedDeployHistoryRecord.artifact_version_id)
+                        || "n/a"}
+                    </span>
+                    <div className="migration-diagnostic-history-list" data-testid="migration-deploy-history-latest">
+                      <strong className="hint muted">Latest attempts (up to 5)</strong>
+                      <ul className="stack-tight">
+                        {deployHistoryLatestAttempts.map((record, index) => (
+                          <li key={`deploy-history-latest-${index}`} className="hint">
+                            {formatAttemptTimestamp(asStringOrNull(record.timestamp))} ·{" "}
+                            {asString(record.status) || "unknown"}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                    {deployHistoryGroupedFailures.length > 0 ? (
+                      <div className="migration-diagnostic-history-list" data-testid="migration-deploy-history-grouped">
+                        <strong className="hint muted">Grouped failure reasons</strong>
+                        <ul className="stack-tight">
+                          {deployHistoryGroupedFailures.map((group) => (
+                            <li key={`deploy-history-group-${group.key}`} className="hint">
+                              {group.label} - {group.count} attempt{group.count === 1 ? "" : "s"} · latest{" "}
+                              {formatAttemptTimestamp(group.latestTimestamp)}
+                              {group.nextAction ? ` · ${group.nextAction}` : ""}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ) : null}
+                    <details
+                      className="workspace-details-shell migration-compact-details"
+                      data-testid="migration-deploy-history-full-details"
+                    >
+                      <summary className="hint muted">Show full deploy history</summary>
+                      <ul className="stack-tight">
+                        {deployHistoryRecords.slice().reverse().map((record, index) => {
+                          const status = asString(record.status) || "unknown";
+                          const failureReason = asStringOrNull(record.failure_reason);
+                          const failureStage = asStringOrNull(record.failure_stage);
+                          const artifactVersion =
+                            asString(record.artifact_version) || asString(record.artifact_version_id) || "n/a";
+                          return (
+                            <li key={`deploy-history-full-${index}`} className="hint">
+                              {formatAttemptTimestamp(asStringOrNull(record.timestamp))} · {status} · artifact {artifactVersion}
+                              {failureStage ? ` · ${formatDispatchStageLabel(failureStage)}` : ""}
+                              {failureReason ? ` · ${formatReasonCodeLabel(failureReason)}` : ""}
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </details>
+                  </>
                 ) : (
                   <span className="hint muted">No deploy actions yet.</span>
                 )}
@@ -7221,210 +7919,198 @@ export function MigrationWorkspacePanel({
                 <summary className="hint muted">Show full destination diagnostics</summary>
                 <div className="panel panel-compact stack-tight" data-testid="migration-destination-config-diagnostics">
                   <strong>Destination / Config Diagnostics</strong>
-                  <WorkspaceMetadataGrid>
-                    <WorkspaceMetadataItem label="Draft preview">
-                      {toDestinationStateLabel(destinationSummary.draftPreviewState)}
-                    </WorkspaceMetadataItem>
-                    <WorkspaceMetadataItem label="Draft entry file">
-                      {destinationSummary.draftPreviewEntryPath || "Not available"}
-                    </WorkspaceMetadataItem>
-                    <WorkspaceMetadataItem label="Publish runtime">
-                      {publishRuntimeStatusLabel}
-                    </WorkspaceMetadataItem>
-                    <WorkspaceMetadataItem label="Deploy runtime">
-                      {deployRuntimeStatusLabel}
-                    </WorkspaceMetadataItem>
-                    {(effectivePublishRepository || !publishReady) && publishRepositoryProvisioningGuidance ? (
-                      <WorkspaceMetadataItem label="Repository provisioning">
-                        {publishRepositoryProvisioningGuidance}
-                      </WorkspaceMetadataItem>
-                    ) : null}
-                    <WorkspaceMetadataItem label="Workflow identifier / path">
-                      {deployWorkflowIdentifier || "Not configured"}
-                    </WorkspaceMetadataItem>
-                    {deployResolvedWorkflowSource ? (
-                      <WorkspaceMetadataItem label="Workflow source">
-                        {deployResolvedWorkflowSource}
-                      </WorkspaceMetadataItem>
-                    ) : null}
-                    {deployWorkflowMode ? (
-                      <WorkspaceMetadataItem label="Deploy workflow mode">
-                        {deployWorkflowMode}
-                      </WorkspaceMetadataItem>
-                    ) : null}
-                    {deploySiteWorkflowFilePath ? (
-                      <WorkspaceMetadataItem label="Site workflow file">
-                        {deploySiteWorkflowFilePath}
-                      </WorkspaceMetadataItem>
-                    ) : null}
-                    {deployTargetEnvironmentSource ? (
-                      <WorkspaceMetadataItem label="Target environment source">
-                        {deployTargetEnvironmentSource}
-                      </WorkspaceMetadataItem>
-                    ) : null}
-                    {deployKubernetesNamespace ? (
-                      <WorkspaceMetadataItem label="Kubernetes namespace">
-                        {deployKubernetesNamespace}
-                      </WorkspaceMetadataItem>
-                    ) : null}
-                    {deployNamespaceSource ? (
-                      <WorkspaceMetadataItem label="Namespace source">
-                        {deployNamespaceSource}
-                      </WorkspaceMetadataItem>
-                    ) : null}
-                    {deployNamespaceModelStatus ? (
-                      <WorkspaceMetadataItem label="Namespace model status">
-                        {deployNamespaceModelStatus}
-                      </WorkspaceMetadataItem>
-                    ) : null}
-                    {deployWorkflowNamespaceAligned !== null ? (
-                      <WorkspaceMetadataItem label="Workflow namespace aligned">
-                        {formatBooleanStateLabel(deployWorkflowNamespaceAligned)}
-                      </WorkspaceMetadataItem>
-                    ) : null}
-                    {deployManifestNamespaceAligned !== null ? (
-                      <WorkspaceMetadataItem label="Manifest namespace aligned">
-                        {formatBooleanStateLabel(deployManifestNamespaceAligned)}
-                      </WorkspaceMetadataItem>
-                    ) : null}
-                    {managedResourceQuotaExpected !== null ? (
-                      <WorkspaceMetadataItem label="Managed ResourceQuota">
-                        {managedResourceQuotaExpected
-                          ? formatBooleanStateLabel(managedResourceQuotaPresent)
-                          : "Not enabled"}
-                      </WorkspaceMetadataItem>
-                    ) : null}
-                    {managedLimitRangeExpected !== null ? (
-                      <WorkspaceMetadataItem label="Managed LimitRange">
-                        {managedLimitRangeExpected
-                          ? formatBooleanStateLabel(managedLimitRangePresent)
-                          : "Not enabled"}
-                      </WorkspaceMetadataItem>
-                    ) : null}
-                    {managedNetworkPolicyExpected !== null ? (
-                      <WorkspaceMetadataItem label="Managed NetworkPolicy">
-                        {managedNetworkPolicyExpected
-                          ? formatBooleanStateLabel(managedNetworkPolicyPresent)
-                          : "Not enabled"}
-                      </WorkspaceMetadataItem>
-                    ) : null}
-                    {managedNamespacePoliciesAligned !== null ? (
-                      <WorkspaceMetadataItem label="Managed namespace policy set aligned">
-                        {formatBooleanStateLabel(managedNamespacePoliciesAligned)}
-                      </WorkspaceMetadataItem>
-                    ) : null}
-                    <WorkspaceMetadataItem label="Current site URL">
-                      {destinationSummary.currentSiteUrl || "Not available"}
-                    </WorkspaceMetadataItem>
-                    <WorkspaceMetadataItem label="Preview deployment">
-                      {destinationSummary.deployPreviewState === "active_live"
-                        ? "Preview deployed"
-                        : destinationSummary.deployPreviewUrl
-                          ? "Preview pending deployment evidence"
-                          : "Preview target not configured"}
-                    </WorkspaceMetadataItem>
-                    <WorkspaceMetadataItem label="Customer domain status">
-                      {destinationSummary.deployCustomerDomainState === "active_live"
-                        ? "Production domain connected"
-                        : destinationSummary.deployCustomerDomainState === "pending_cutover"
-                          ? "Production domain not yet connected"
-                          : "Production domain not configured"}
-                    </WorkspaceMetadataItem>
-                    <WorkspaceMetadataItem label="Live URL (confirmed)">
-                      {destinationSummary.deployResolvedLiveUrl || "Not yet confirmed"}
-                    </WorkspaceMetadataItem>
-                    <WorkspaceMetadataItem label="URL source">
-                      {destinationSummary.deployUrlSource || destinationSummary.publishUrlSource || "unknown"}
-                    </WorkspaceMetadataItem>
-                    <WorkspaceMetadataItem label="URL source detail">
-                      {destinationSummary.deployUrlSourceDetail || destinationSummary.publishUrlSourceDetail || "Not available"}
-                    </WorkspaceMetadataItem>
-                  </WorkspaceMetadataGrid>
+                  <div className="migration-diagnostic-groups">
+                    <div className="panel panel-compact stack-tight migration-diagnostic-group-card">
+                      <strong>Draft artifact</strong>
+                      <span className="hint">Draft preview: {toDestinationStateLabel(destinationSummary.draftPreviewState)}</span>
+                      <span className="hint">Draft entry file: {destinationSummary.draftPreviewEntryPath || "Not available"}</span>
+                      <span className="hint">Publish runtime: {publishRuntimeStatusLabel}</span>
+                      <span className="hint">Deploy runtime: {deployRuntimeStatusLabel}</span>
+                    </div>
+                    <div className="panel panel-compact stack-tight migration-diagnostic-group-card">
+                      <strong>Repository / workflow</strong>
+                      <span className="hint">Workflow identifier / path: {deployWorkflowIdentifier || "Not configured"}</span>
+                      <span className="hint">Workflow source: {deployResolvedWorkflowSource || "Not available"}</span>
+                      <span className="hint">Deploy workflow mode: {deployWorkflowMode || "Not available"}</span>
+                      {publishRepositoryProvisioningGuidance ? (
+                        <span className="hint warning">Repository provisioning: {publishRepositoryProvisioningGuidance}</span>
+                      ) : null}
+                      <details className="workspace-details-shell migration-diagnostic-group-details">
+                        <summary className="hint muted">Show repository/workflow details</summary>
+                        {deploySiteWorkflowFilePath ? (
+                          <span className="hint">Site workflow file: {deploySiteWorkflowFilePath}</span>
+                        ) : null}
+                        {deployTargetEnvironmentSource ? (
+                          <span className="hint">Target environment source: {deployTargetEnvironmentSource}</span>
+                        ) : null}
+                      </details>
+                    </div>
+                    <div className="panel panel-compact stack-tight migration-diagnostic-group-card">
+                      <strong>Kubernetes runtime</strong>
+                      <span className="hint">Kubernetes namespace: {deployKubernetesNamespace || "Not available"}</span>
+                      <span className="hint">Namespace source: {deployNamespaceSource || "Not available"}</span>
+                      <span className="hint">Namespace model status: {deployNamespaceModelStatus || "Not available"}</span>
+                      <span className="hint">
+                        Policy alignment:{" "}
+                        {managedNamespacePoliciesAligned === null
+                          ? "Unknown"
+                          : formatBooleanStateLabel(managedNamespacePoliciesAligned)}
+                      </span>
+                      <details className="workspace-details-shell migration-diagnostic-group-details">
+                        <summary className="hint muted">Show Kubernetes policy diagnostics</summary>
+                        {deployWorkflowNamespaceAligned !== null ? (
+                          <span className="hint">
+                            Workflow namespace aligned: {formatBooleanStateLabel(deployWorkflowNamespaceAligned)}
+                          </span>
+                        ) : null}
+                        {deployManifestNamespaceAligned !== null ? (
+                          <span className="hint">
+                            Manifest namespace aligned: {formatBooleanStateLabel(deployManifestNamespaceAligned)}
+                          </span>
+                        ) : null}
+                        {managedResourceQuotaExpected !== null ? (
+                          <span className="hint">
+                            Managed ResourceQuota:{" "}
+                            {managedResourceQuotaExpected ? formatBooleanStateLabel(managedResourceQuotaPresent) : "Not enabled"}
+                          </span>
+                        ) : null}
+                        {managedLimitRangeExpected !== null ? (
+                          <span className="hint">
+                            Managed LimitRange:{" "}
+                            {managedLimitRangeExpected ? formatBooleanStateLabel(managedLimitRangePresent) : "Not enabled"}
+                          </span>
+                        ) : null}
+                        {managedNetworkPolicyExpected !== null ? (
+                          <span className="hint">
+                            Managed NetworkPolicy:{" "}
+                            {managedNetworkPolicyExpected ? formatBooleanStateLabel(managedNetworkPolicyPresent) : "Not enabled"}
+                          </span>
+                        ) : null}
+                      </details>
+                    </div>
+                    <div className="panel panel-compact stack-tight migration-diagnostic-group-card">
+                      <strong>Domain / URL</strong>
+                      <span className="hint">Current site URL: {destinationSummary.currentSiteUrl || "Not available"}</span>
+                      <span className="hint">
+                        URL source: {destinationSummary.deployUrlSource || destinationSummary.publishUrlSource || "unknown"}
+                      </span>
+                      <span className="hint">
+                        URL source detail:{" "}
+                        {destinationSummary.deployUrlSourceDetail || destinationSummary.publishUrlSourceDetail || "Not available"}
+                      </span>
+                    </div>
+                    <div className="panel panel-compact stack-tight migration-diagnostic-group-card">
+                      <strong>Preview / deployment evidence</strong>
+                      <span className="hint">
+                        Preview deployment:{" "}
+                        {destinationSummary.deployPreviewState === "active_live"
+                          ? "Preview deployed"
+                          : destinationSummary.deployPreviewUrl
+                            ? "Preview pending deployment evidence"
+                            : "Preview target not configured"}
+                      </span>
+                      <span className="hint">
+                        Customer domain status:{" "}
+                        {destinationSummary.deployCustomerDomainState === "active_live"
+                          ? "Production domain connected"
+                          : destinationSummary.deployCustomerDomainState === "pending_cutover"
+                            ? "Production domain not yet connected"
+                            : "Production domain not configured"}
+                      </span>
+                      <span className="hint">Live URL (confirmed): {destinationSummary.deployResolvedLiveUrl || "Not yet confirmed"}</span>
+                    </div>
+                  </div>
                 </div>
               </details>
             ) : null}
 
             <div className="grid grid-2">
               <div className="panel panel-compact stack-tight" data-testid="migration-publish-diagnostics">
-                <strong>Publish Diagnostics</strong>
+                <div className="migration-diagnostic-card-header">
+                  <strong>Publish Diagnostics</strong>
+                  <span className={diagnosticStatusBadgeClass(publishDiagnosticsStatus)}>
+                    {toDiagnosticStatusLabel(publishDiagnosticsStatus)}
+                  </span>
+                </div>
                 <span className="hint muted">
                   {publishHistoryRecords.length > 0
                     ? "Context: selected publish attempt"
                     : "Context: latest publish summary"}
                 </span>
+                <span className="hint muted">
+                  Attempt:{" "}
+                  {publishDiagnosticsSelectedTimestamp ? formatAttemptTimestamp(publishDiagnosticsSelectedTimestamp) : "n/a"} ·{" "}
+                  {publishDiagnosticsAttemptStatusRaw || "unknown"}
+                </span>
+                <span className={publishDiagnosticsStatus === "failed" || publishDiagnosticsStatus === "blocked" ? "hint warning" : "hint"}>
+                  Reason: {publishDiagnosticsReasonSummary}
+                </span>
+                <span className="hint">Next action: {publishDiagnosticsNextAction}</span>
                 {publishDiagnosticsUsingSummaryFallback ? (
                   <span className="hint muted" data-testid="migration-publish-diagnostics-fallback-note">
-                    Missing selected-attempt fields are filled from latest publish summary diagnostics.
+                    Selected-attempt diagnostics include latest-summary fallback for missing fields.
                   </span>
                 ) : null}
-                {publishDiagnosticsFailureCategory ? (
-                  <span className="hint warning">
-                    Publish failure category:{" "}
-                    {toFailureCategoryLabel(publishDiagnosticsFailureCategory)}
+                <details className="workspace-details-shell migration-compact-details" data-testid="migration-publish-diagnostics-raw-details">
+                  <summary className="hint muted">Show raw publish diagnostics fields</summary>
+                  {publishDiagnosticsFailureCategory ? (
+                    <span className="hint warning">
+                      Publish failure category: {toFailureCategoryLabel(publishDiagnosticsFailureCategory)}
+                    </span>
+                  ) : (
+                    <span className="hint muted">No publish failure recorded.</span>
+                  )}
+                  {publishDiagnosticsFailureMessage ? (
+                    <span className="hint warning">{publishDiagnosticsFailureMessage}</span>
+                  ) : null}
+                  {publishDiagnosticsFailureReasonCode ? (
+                    <span className="hint warning">
+                      Publish failure reason: {formatReasonCodeLabel(publishDiagnosticsFailureReasonCode)}
+                    </span>
+                  ) : null}
+                  {publishFailureStageFromSelected || publishFailureStageFromSummary ? (
+                    <span className="hint">
+                      Publish failure stage: {formatDispatchStageLabel(publishFailureStageFromSelected || publishFailureStageFromSummary)}
+                    </span>
+                  ) : null}
+                  <span className="hint">
+                    Workflow remediation attempted: {formatBooleanStateLabel(publishWorkflowRemediationAttempted)}
                   </span>
-                ) : (
-                  <span className="hint muted">No publish failure recorded.</span>
-                )}
-                {publishDiagnosticsFailureMessage ? (
-                  <span className="hint warning">
-                    {publishDiagnosticsFailureMessage}
+                  <span className="hint">
+                    Workflow remediation outcome: {formatWorkflowRemediationOutcomeLabel(publishWorkflowRemediationOutcome)}
                   </span>
-                ) : null}
-                {publishDiagnosticsFailureReasonCode ? (
-                  <span className="hint warning">
-                    Publish failure reason: {formatReasonCodeLabel(publishDiagnosticsFailureReasonCode)}
-                  </span>
-                ) : null}
-                <span className="hint">
-                  Workflow remediation attempted: {formatBooleanStateLabel(publishWorkflowRemediationAttempted)}
-                </span>
-                <span className="hint">
-                  Workflow remediation outcome: {formatWorkflowRemediationOutcomeLabel(publishWorkflowRemediationOutcome)}
-                </span>
-                {publishWorkflowRemediationGuidance ? (
-                  <span className="hint warning">Next step guidance: {publishWorkflowRemediationGuidance}</span>
-                ) : null}
+                  {publishWorkflowRemediationGuidance ? (
+                    <span className="hint warning">Next step guidance: {publishWorkflowRemediationGuidance}</span>
+                  ) : null}
+                </details>
               </div>
 
               <div className="panel panel-compact stack-tight" data-testid="migration-deploy-diagnostics">
-                <strong>Deploy Diagnostics</strong>
+                <div className="migration-diagnostic-card-header">
+                  <strong>Deploy Diagnostics</strong>
+                  <span className={diagnosticStatusBadgeClass(deployDiagnosticsStatus)}>
+                    {toDiagnosticStatusLabel(deployDiagnosticsStatus)}
+                  </span>
+                </div>
                 <span className="hint muted">
                   {deployHistoryRecords.length > 0
                     ? "Context: selected deploy attempt"
                     : "Context: latest deploy summary"}
                 </span>
+                <span className="hint muted">
+                  Attempt:{" "}
+                  {deployDiagnosticsSelectedTimestamp ? formatAttemptTimestamp(deployDiagnosticsSelectedTimestamp) : "n/a"} ·{" "}
+                  {deployDiagnosticsAttemptStatusRaw || "unknown"}
+                </span>
+                <span className={deployDiagnosticsStatus === "failed" || deployDiagnosticsStatus === "blocked" ? "hint warning" : "hint"}>
+                  Reason: {deployDiagnosticsReasonSummary}
+                </span>
+                <span className="hint">Next action: {deployDiagnosticsNextAction}</span>
                 {deployDiagnosticsUsingSummaryFallback ? (
                   <span className="hint muted" data-testid="migration-deploy-diagnostics-fallback-note">
-                    Missing selected-attempt fields are filled from latest deploy summary diagnostics.
+                    Selected-attempt diagnostics include latest-summary fallback for missing fields.
                   </span>
                 ) : null}
-                <span className="hint">
-                  Deploy failure category:{" "}
-                  {deployDiagnosticsFailureCategory ? toFailureCategoryLabel(deployDiagnosticsFailureCategory) : "Not available"}
-                </span>
-                <span className="hint">
-                  Deploy failure reason: {deployFailureReasonCode ? formatReasonCodeLabel(deployFailureReasonCode) : "Not available"}
-                </span>
-                <span className="hint">
-                  Deploy failure stage: {deployFailureStage ? formatDispatchStageLabel(deployFailureStage) : "Not available"}
-                </span>
-                <span className="hint">
-                  Requested workflow identifier: {deployWorkflowIdentifierRequested || "Not available"}
-                </span>
-                <span className="hint">Resolved workflow path: {deployWorkflowFilePath || "Not available"}</span>
-                <span className="hint">
-                  Workflow exists:{" "}
-                  {formatBooleanStateLabel(deployWorkflowExists, {
-                    trueLabel: "Yes",
-                    falseLabel: "No",
-                  })}
-                </span>
-                <span className="hint">
-                  Workflow resolution source: {deployWorkflowDispatchResolutionSource || "Not available"}
-                </span>
-                <span className="hint">
-                  Dispatch service reason: {formatReasonCodeLabel(dispatchServiceReasonCode)}
-                </span>
                 {managedSiteRolloutState ? (
                   <span className="hint" data-testid="migration-managed-site-rollout-state-diagnostics">
                     Managed site rollout state: {formatManagedSiteRolloutStateLabel(managedSiteRolloutState)}
@@ -7469,59 +8155,47 @@ export function MigrationWorkspacePanel({
                       : "No. The fix is not active until observed deployment image matches expected site-scoped image."}
                   </span>
                 ) : null}
-                <div className="panel panel-compact stack-tight" data-testid="migration-deploy-consistency">
-                  <strong>Deploy consistency</strong>
-                  <span className="hint muted">
-                    Per-site deploy gates are evaluated from selected-attempt evidence first, with latest summary backfill for
-                    missing fields.
+                {managedGkeConfigGuidance ? (
+                  <span className="hint warning" data-testid="migration-managed-gke-config-guidance-diagnostics">
+                    {managedGkeConfigGuidance}
                   </span>
-                  <div className="stack-tight">
-                    {deployConsistencyGates.map((gate) => (
-                      <span
-                        key={`deploy-consistency-${gate.key}`}
-                        className="row-wrap-tight"
-                        data-testid={`migration-deploy-consistency-gate-${gate.key}`}
-                      >
-                        <span>{gate.label}</span>
-                        <span className={deployConsistencyStatusBadgeClass(gate.status)}>
-                          {toDeployConsistencyStatusLabel(gate.status)}
+                ) : null}
+                {showManagedGkeConfigSourceHint ? (
+                  <span className="hint muted" data-testid="migration-managed-gke-config-source-diagnostics">
+                    Managed deploy resolves admin platform config first; repo vars/secrets are legacy fallback only.
+                  </span>
+                ) : null}
+                <div className="panel panel-compact stack-tight" data-testid="migration-deploy-consistency">
+                  <strong>Deploy consistency checks</strong>
+                  <span className="hint muted">
+                    Grouped status checks use selected-attempt evidence first, then latest summary fallback.
+                  </span>
+                  {deployConsistencyGrouping.sharedWarnings.length > 0 ? (
+                    <div className="stack-tight">
+                      {deployConsistencyGrouping.sharedWarnings.map((warning) => (
+                        <span key={`deploy-consistency-warning-${warning.key}`} className="hint warning">
+                          {warning.message} Affected: {warning.affectedChecks.join(", ")}.
                         </span>
-                      </span>
+                      ))}
+                    </div>
+                  ) : null}
+                  <div className="migration-diagnostic-status-grid">
+                    {deployConsistencyGrouping.checks.map((check) => (
+                      <div
+                        key={`deploy-consistency-${check.key}`}
+                        className="migration-diagnostic-status-row"
+                        data-testid={`migration-deploy-consistency-gate-${check.key}`}
+                      >
+                        <span>{check.label}</span>
+                        <span className={deployConsistencyStatusBadgeClass(check.status)}>
+                          {toDeployConsistencyStatusLabel(check.status)}
+                        </span>
+                        {check.reason ? (
+                          <span className="hint muted">{check.reason}</span>
+                        ) : null}
+                      </div>
                     ))}
                   </div>
-                  <span className="hint" data-testid="migration-deploy-consistency-dns-match">
-                    dns_record_matches_ingress: {formatBooleanStateLabel(dnsRecordMatchesIngress)}
-                  </span>
-                  <span className="hint" data-testid="migration-deploy-consistency-dns-expected-ip">
-                    dns_expected_ip: {dnsExpectedIp || "Not available"}
-                  </span>
-                  <span className="hint" data-testid="migration-deploy-consistency-dns-observed-ip">
-                    dns_observed_ip: {dnsObservedIp || "Not available"}
-                  </span>
-                  <span className="hint" data-testid="migration-deploy-consistency-tls-certificate-status">
-                    tls_certificate_status: {tlsCertificateStatus || "Not available"}
-                  </span>
-                  <span className="hint" data-testid="migration-deploy-consistency-tls-domain-status">
-                    tls_domain_status: {tlsDomainStatus || "Not available"}
-                  </span>
-                  <span className="hint" data-testid="migration-deploy-consistency-ingress-ip">
-                    ingress_ip: {ingressIp || "Not available"}
-                  </span>
-                  <span className="hint" data-testid="migration-deploy-consistency-ingress-conflict">
-                    ingress_conflict_detected: {formatBooleanStateLabel(ingressConflictDetected)}
-                  </span>
-                  <span className="hint" data-testid="migration-deploy-consistency-cert-identity">
-                    cert_identity_valid: {formatBooleanStateLabel(certIdentityValid)}
-                  </span>
-                  <span className="hint" data-testid="migration-deploy-consistency-https-ready">
-                    deploy_https_ready: {formatBooleanStateLabel(deployHttpsReady)}
-                  </span>
-                  <span className="hint" data-testid="migration-deploy-consistency-workflow-integrity-status">
-                    workflow_integrity_status: {workflowIntegrityStatus || "Not available"}
-                  </span>
-                  <span className="hint" data-testid="migration-deploy-consistency-workflow-integrity-reason-code">
-                    workflow_integrity_reason_code: {workflowIntegrityReasonCode || "Not available"}
-                  </span>
                   {deployConsistencyRemediationHints.length > 0 ? (
                     <div className="stack-tight" data-testid="migration-deploy-consistency-remediation">
                       <span className="hint warning">Operator remediation</span>
@@ -7534,75 +8208,132 @@ export function MigrationWorkspacePanel({
                       </ul>
                     </div>
                   ) : null}
+                  <details className="workspace-details-shell migration-compact-details" data-testid="migration-deploy-consistency-raw-details">
+                    <summary className="hint muted">Show raw deploy consistency fields</summary>
+                    <span className="hint" data-testid="migration-deploy-consistency-dns-match">
+                      dns_record_matches_ingress: {formatBooleanStateLabel(dnsRecordMatchesIngress)}
+                    </span>
+                    <span className="hint" data-testid="migration-deploy-consistency-dns-expected-ip">
+                      dns_expected_ip: {dnsExpectedIp || "Not available"}
+                    </span>
+                    <span className="hint" data-testid="migration-deploy-consistency-dns-observed-ip">
+                      dns_observed_ip: {dnsObservedIp || "Not available"}
+                    </span>
+                    <span className="hint" data-testid="migration-deploy-consistency-tls-certificate-status">
+                      tls_certificate_status: {tlsCertificateStatus || "Not available"}
+                    </span>
+                    <span className="hint" data-testid="migration-deploy-consistency-tls-domain-status">
+                      tls_domain_status: {tlsDomainStatus || "Not available"}
+                    </span>
+                    <span className="hint" data-testid="migration-deploy-consistency-ingress-ip">
+                      ingress_ip: {ingressIp || "Not available"}
+                    </span>
+                    <span className="hint" data-testid="migration-deploy-consistency-ingress-conflict">
+                      ingress_conflict_detected: {formatBooleanStateLabel(ingressConflictDetected)}
+                    </span>
+                    <span className="hint" data-testid="migration-deploy-consistency-cert-identity">
+                      cert_identity_valid: {formatBooleanStateLabel(certIdentityValid)}
+                    </span>
+                    <span className="hint" data-testid="migration-deploy-consistency-https-ready">
+                      deploy_https_ready: {formatBooleanStateLabel(deployHttpsReady)}
+                    </span>
+                    <span className="hint" data-testid="migration-deploy-consistency-workflow-integrity-status">
+                      workflow_integrity_status: {workflowIntegrityStatus || "Not available"}
+                    </span>
+                    <span className="hint" data-testid="migration-deploy-consistency-workflow-integrity-reason-code">
+                      workflow_integrity_reason_code: {workflowIntegrityReasonCode || "Not available"}
+                    </span>
+                  </details>
                 </div>
-                {managedGkeConfigGuidance ? (
-                  <span className="hint warning" data-testid="migration-managed-gke-config-guidance-diagnostics">
-                    {managedGkeConfigGuidance}
+                <details className="workspace-details-shell migration-compact-details" data-testid="migration-deploy-diagnostics-raw-details">
+                  <summary className="hint muted">Show raw deploy diagnostics fields</summary>
+                  <span className="hint">
+                    Deploy failure category:{" "}
+                    {deployDiagnosticsFailureCategory ? toFailureCategoryLabel(deployDiagnosticsFailureCategory) : "Not available"}
                   </span>
-                ) : null}
-                {showManagedGkeConfigSourceHint ? (
-                  <span className="hint muted" data-testid="migration-managed-gke-config-source-diagnostics">
-                    Managed deploy resolves admin platform config first; repo vars/secrets are legacy fallback only.
+                  <span className="hint">
+                    Deploy failure reason:{" "}
+                    {deployFailureReasonCode ? formatReasonCodeLabel(deployFailureReasonCode) : "Not available"}
                   </span>
-                ) : null}
-                <span className="hint">Dispatch ref sent: {dispatchRefSent || "Not available"}</span>
-                <span className="hint">
-                  Workflow input keys (configured):{" "}
-                  {workflowInputsConfiguredKeys.length > 0 ? workflowInputsConfiguredKeys.join(", ") : "None"}
-                </span>
-                <span className="hint">
-                  Workflow input keys (sent): {workflowInputsSentKeys.length > 0 ? workflowInputsSentKeys.join(", ") : "None"}
-                </span>
-                <span className="hint">
-                  Workflow run lookup attempted: {formatBooleanStateLabel(workflowRunLookupAttempted)}
-                </span>
-                <span className="hint">Workflow run found: {formatBooleanStateLabel(workflowRunFound)}</span>
-                <span className="hint">
-                  Workflow job failure detected: {formatBooleanStateLabel(workflowJobFailureDetected)}
-                </span>
-                <span className="hint">Workflow run status: {workflowRunStatus || "Not available"}</span>
-                <span className="hint">Workflow run conclusion: {workflowRunConclusion || "Not available"}</span>
-                <span className="hint">Post-dispatch state: {postDispatchState || "Not available"}</span>
-                <span className="hint">
-                  Post-conformance stage: {formatReasonCodeLabel(postConformanceStage)}
-                </span>
-                <span className="hint">
-                  Post-conformance detail: {postConformanceReasonText || "Not available"}
-                </span>
-                {postConformanceGuidance ? (
-                  <span className="hint warning">Next step guidance: {postConformanceGuidance}</span>
-                ) : null}
-                <span className="hint">
-                  Workflow run failure reason:{" "}
-                  {deployRunFailureReasonCode ? formatReasonCodeLabel(deployRunFailureReasonCode) : "Not available"}
-                </span>
-                <span className="hint">
-                  Workflow run failure stage:{" "}
-                  {deployRunFailureStage ? formatReasonCodeLabel(deployRunFailureStage) : "Not available"}
-                </span>
-                <span className="hint">
-                  Workflow run failed step: {deployRunFailureStep || "Not available"}
-                </span>
-                {deployRunFailureHint ? (
-                  <span className="hint warning">Workflow run guidance: {deployRunFailureHint}</span>
-                ) : null}
-                <span className="hint">
-                  Deploy evidence contract status: {deployEvidenceContractStatus || "Not available"}
-                </span>
-                <span className="hint">
-                  Deploy evidence contract reasons:{" "}
-                  {deployEvidenceContractReasons.length > 0 ? deployEvidenceContractReasons.join(", ") : "Not available"}
-                </span>
-                <span className="hint">
-                  Expected workflow outputs: {expectedWorkflowOutputs.length > 0 ? expectedWorkflowOutputs.join(", ") : "Not available"}
-                </span>
-                {workflowContractAdvisory ? (
-                  <span className="hint warning">Workflow contract advisory: {workflowContractAdvisory}</span>
-                ) : null}
-                {deployFailureMessage ? <span className="hint warning">{deployFailureMessage}</span> : null}
-                {deployFailureRemediationHintDisplay ? (
-                  <span className="hint warning">Remediation hint: {deployFailureRemediationHintDisplay}</span>
-                ) : null}
+                  <span className="hint">
+                    Deploy failure stage: {deployFailureStage ? formatDispatchStageLabel(deployFailureStage) : "Not available"}
+                  </span>
+                  <span className="hint">
+                    Requested workflow identifier: {deployWorkflowIdentifierRequested || "Not available"}
+                  </span>
+                  <span className="hint">Resolved workflow path: {deployWorkflowFilePath || "Not available"}</span>
+                  <span className="hint">
+                    Workflow exists:{" "}
+                    {formatBooleanStateLabel(deployWorkflowExists, {
+                      trueLabel: "Yes",
+                      falseLabel: "No",
+                    })}
+                  </span>
+                  <span className="hint">
+                    Workflow resolution source: {deployWorkflowDispatchResolutionSource || "Not available"}
+                  </span>
+                  <span className="hint">
+                    Dispatch service reason: {formatReasonCodeLabel(dispatchServiceReasonCode)}
+                  </span>
+                  <span className="hint">Dispatch ref sent: {dispatchRefSent || "Not available"}</span>
+                  <span className="hint">
+                    Workflow input keys (configured):{" "}
+                    {workflowInputsConfiguredKeys.length > 0 ? workflowInputsConfiguredKeys.join(", ") : "None"}
+                  </span>
+                  <span className="hint">
+                    Workflow input keys (sent): {workflowInputsSentKeys.length > 0 ? workflowInputsSentKeys.join(", ") : "None"}
+                  </span>
+                  <span className="hint">
+                    Workflow run lookup attempted: {formatBooleanStateLabel(workflowRunLookupAttempted)}
+                  </span>
+                  <span className="hint">Workflow run found: {formatBooleanStateLabel(workflowRunFound)}</span>
+                  <span className="hint">
+                    Workflow job failure detected: {formatBooleanStateLabel(workflowJobFailureDetected)}
+                  </span>
+                  <span className="hint">Workflow run status: {workflowRunStatus || "Not available"}</span>
+                  <span className="hint">Workflow run conclusion: {workflowRunConclusion || "Not available"}</span>
+                  <span className="hint">Post-dispatch state: {postDispatchState || "Not available"}</span>
+                  <span className="hint">
+                    Post-conformance stage: {formatReasonCodeLabel(postConformanceStage)}
+                  </span>
+                  <span className="hint">
+                    Post-conformance detail: {postConformanceReasonText || "Not available"}
+                  </span>
+                  {postConformanceGuidance ? (
+                    <span className="hint warning">Next step guidance: {postConformanceGuidance}</span>
+                  ) : null}
+                  <span className="hint">
+                    Workflow run failure reason:{" "}
+                    {deployRunFailureReasonCode ? formatReasonCodeLabel(deployRunFailureReasonCode) : "Not available"}
+                  </span>
+                  <span className="hint">
+                    Workflow run failure stage:{" "}
+                    {deployRunFailureStage ? formatReasonCodeLabel(deployRunFailureStage) : "Not available"}
+                  </span>
+                  <span className="hint">
+                    Workflow run failed step: {deployRunFailureStep || "Not available"}
+                  </span>
+                  {deployRunFailureHint ? (
+                    <span className="hint warning">Workflow run guidance: {deployRunFailureHint}</span>
+                  ) : null}
+                  <span className="hint">
+                    Deploy evidence contract status: {deployEvidenceContractStatus || "Not available"}
+                  </span>
+                  <span className="hint">
+                    Deploy evidence contract reasons:{" "}
+                    {deployEvidenceContractReasons.length > 0 ? deployEvidenceContractReasons.join(", ") : "Not available"}
+                  </span>
+                  <span className="hint">
+                    Expected workflow outputs: {expectedWorkflowOutputs.length > 0 ? expectedWorkflowOutputs.join(", ") : "Not available"}
+                  </span>
+                  {workflowContractAdvisory ? (
+                    <span className="hint warning">Workflow contract advisory: {workflowContractAdvisory}</span>
+                  ) : null}
+                  {deployFailureMessage ? <span className="hint warning">{deployFailureMessage}</span> : null}
+                  {deployFailureRemediationHintDisplay ? (
+                    <span className="hint warning">Remediation hint: {deployFailureRemediationHintDisplay}</span>
+                  ) : null}
+                </details>
               </div>
             </div>
 
