@@ -186,6 +186,12 @@ Summary and diagnostics compaction (2026-05):
   - destination/config diagnostics are grouped by category (artifact, repository/workflow, runtime, domain, preview/deployment evidence) with nested details.
 
 Draft review and preview behavior:
+- Section D is a single `Draft Artifact Review` surface that groups artifact selection, draft actions, and quality review in one compact flow.
+- action ordering in Section D:
+  - selected artifact version
+  - action row (`Preview Draft`, `Approve Selected Draft`, `Delete Selected Draft`)
+  - `Artifact Quality Summary`
+- approval notes are not part of the primary Section D UI.
 - Section D owns preview + review actions (`Preview Draft`, `Approve Selected Draft`, `Delete Selected Draft`)
 - preview remains sandboxed and draft-only (`not published`, `not deployed`)
 - page map, generated files, and selected-file preview stay in a combined inspection surface

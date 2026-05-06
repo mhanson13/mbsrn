@@ -1454,6 +1454,7 @@ describe("site migration workflow route", () => {
     expect(await screen.findByText("Draft artifact v1 deleted.")).toBeInTheDocument();
     await waitFor(() => expect(mockFetchMigrationArtifactVersions).toHaveBeenCalledTimes(2));
     expect(await screen.findByTestId("migration-artifact-review-empty-state")).toBeInTheDocument();
+    expect(screen.queryByTestId("migration-artifact-quality-empty-state")).not.toBeInTheDocument();
     confirmSpy.mockRestore();
   });
 
@@ -1533,17 +1534,36 @@ describe("site migration workflow route", () => {
     );
   });
 
-  it("keeps draft review actions in Section D and out of publish/deploy controls", async () => {
+  it("renders Section D as a single Draft Artifact Review surface with top action row and quality directly below", async () => {
     render(<SiteMigrationWorkflowPage />);
 
     const reviewSection = await screen.findByTestId("migration-artifact-review-section");
+    expect(screen.getByText("D. Draft Artifact Review")).toBeInTheDocument();
+    const artifactSelect = within(reviewSection).getByLabelText("Artifact version");
+    const actionRow = within(reviewSection).getByTestId("migration-draft-review-actions-row");
+    const qualitySummary = within(reviewSection).getByTestId("migration-artifact-quality-summary");
+
+    expect(actionRow).not.toHaveClass("panel");
+    expect(
+      (artifactSelect.compareDocumentPosition(actionRow) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0,
+    ).toBe(true);
+    expect(
+      (actionRow.compareDocumentPosition(qualitySummary) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0,
+    ).toBe(true);
+
     expect(within(reviewSection).getByTestId("migration-preview-draft-button")).toBeInTheDocument();
     expect(within(reviewSection).getByTestId("migration-approve-draft-button")).toBeInTheDocument();
     expect(within(reviewSection).getByTestId("migration-delete-draft-button")).toBeInTheDocument();
+    expect(within(reviewSection).queryByTestId("migration-draft-review-actions")).not.toBeInTheDocument();
+    expect(within(reviewSection).queryByPlaceholderText("Approval notes (optional)")).not.toBeInTheDocument();
+    expect(within(reviewSection).queryByRole("button", { name: "Publish Approved Draft to GitHub" })).not.toBeInTheDocument();
+    expect(within(reviewSection).queryByRole("button", { name: "Request GKE Deploy" })).not.toBeInTheDocument();
 
     const publishDeploySection = screen.getByTestId("migration-publish-deploy-section");
     expect(within(publishDeploySection).queryByTestId("migration-approve-draft-button")).not.toBeInTheDocument();
     expect(within(publishDeploySection).queryByTestId("migration-delete-draft-button")).not.toBeInTheDocument();
+    expect(within(publishDeploySection).getByRole("button", { name: "Publish Approved Draft to GitHub" })).toBeInTheDocument();
+    expect(within(publishDeploySection).getByRole("button", { name: "Request GKE Deploy" })).toBeInTheDocument();
   });
 
   it("renders a combined page and generated-file inspection surface for selected artifacts", async () => {
@@ -3284,8 +3304,8 @@ describe("site migration workflow route", () => {
 
     expect(await screen.findByTestId("migration-workspace-panel")).toBeInTheDocument();
     expect(screen.getByTestId("migration-source-summary-empty-state")).toBeInTheDocument();
-    expect(screen.getByTestId("migration-artifact-quality-empty-state")).toBeInTheDocument();
     expect(screen.getByTestId("migration-artifact-review-empty-state")).toBeInTheDocument();
+    expect(screen.queryByTestId("migration-artifact-quality-empty-state")).not.toBeInTheDocument();
   });
 
   it("renders advanced diagnostics and history with collapsible publish/deploy history panels", async () => {

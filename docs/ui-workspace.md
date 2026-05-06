@@ -60,9 +60,11 @@ The dedicated migration route (`/sites/[site_id]/migration`) keeps primary opera
   - readiness summary + generate action
   - provider compatibility gate (`Pass|Warning|Blocking`)
   - compact media-required warning when relevant
-- D. Draft Review + Quality:
-  - artifact selector, quality status/issues, preview controls
-  - approve/delete draft actions
+- D. Draft Artifact Review:
+  - single `Draft Artifact Review` surface
+  - artifact selector near top, then one action row (`Preview Draft`, `Approve Selected Draft`, `Delete Selected Draft`)
+  - `Artifact Quality Summary` directly under the action row
+  - approval notes are not shown in the primary review UI
 - E. Approval / Publish / Deploy:
   - compact two-surface layout for publish + deploy
   - publish surface: summary/readiness on left, GitHub target config + publish actions on right

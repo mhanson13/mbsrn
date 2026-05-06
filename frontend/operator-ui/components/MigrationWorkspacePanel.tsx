@@ -393,9 +393,9 @@ function MigrationDraftReadinessSection({ children }: MigrationSectionWrapperPro
 function MigrationArtifactReviewSection({ children }: MigrationSectionWrapperProps): JSX.Element {
   return (
     <>
-      <h3 className="hint muted migration-section-title">D. Draft Review + Quality</h3>
+      <h3 className="hint muted migration-section-title">D. Draft Artifact Review</h3>
       <p className="hint muted migration-section-subtitle">
-        Review selected artifacts, resolve quality issues, and perform explicit draft approval actions.
+        Review the selected artifact, check quality, then preview, approve, or delete the draft.
       </p>
       {children}
     </>
@@ -3279,7 +3279,7 @@ export function MigrationWorkspacePanel({
   const [deployEnabled, setDeployEnabled] = useState(false);
 
   const [selectedArtifactVersionId, setSelectedArtifactVersionId] = useState("");
-  const [approvalNotes, setApprovalNotes] = useState("");
+  const approvalNotes = "";
   const [publishDryRun, setPublishDryRun] = useState(true);
   const [publishCommitMessage, setPublishCommitMessage] = useState("");
   const [publishAnalyticsOverride, setPublishAnalyticsOverride] = useState("");
@@ -6998,8 +6998,8 @@ export function MigrationWorkspacePanel({
 
       <MigrationArtifactReviewSection>
 
-      <div className="panel stack workspace-section-block">
-        <h3>Artifact Quality Summary</h3>
+      <div className="panel stack workspace-section-block" data-testid="migration-artifact-review-section">
+        <h3>Draft Artifact Review</h3>
         <label className="stack-tight">
           <span className="hint muted">Selected artifact version</span>
           <select
@@ -7020,69 +7020,8 @@ export function MigrationWorkspacePanel({
           </select>
         </label>
         {selectedArtifact ? (
-          <div className="panel panel-compact stack-tight" data-testid="migration-artifact-quality-summary">
-            <strong>Artifact Quality Summary</strong>
-            {artifactQualitySummary ? (
-              <>
-                <span
-                  className={artifactQualityBadgeClass(artifactQualitySummary.qualityStatus)}
-                  data-testid="migration-artifact-quality-status"
-                >
-                  Quality: {artifactQualityStatusLabel(artifactQualitySummary.qualityStatus)}
-                </span>
-                <span className="hint">{artifactQualitySummary.operatorSummary}</span>
-                {requiredMediaQualityIssue ? (
-                  <span className="hint warning" data-testid="migration-artifact-quality-required-media-warning">
-                    {requiredMediaQualityIssue.description}
-                  </span>
-                ) : null}
-                {artifactQualitySummary.issues.length > 0 ? (
-                  <>
-                    <strong className="hint muted">Top issues</strong>
-                    <ul className="migration-quality-issue-list" data-testid="migration-artifact-quality-issues">
-                      {artifactQualitySummary.issues.slice(0, 3).map((issue, index) => (
-                        <li className="migration-quality-issue-item" key={`artifact-quality-top-${index}-${issue.type}`}>
-                          <span className="migration-quality-issue-type">{toArtifactQualityIssueTypeLabel(issue.type)}</span>
-                          <span>{issue.description}</span>
-                        </li>
-                      ))}
-                    </ul>
-                    {artifactQualitySummary.issues.length > 3 ? (
-                      <details className="migration-quality-details">
-                        <summary className="hint muted">
-                          Show all issues ({artifactQualitySummary.issues.length})
-                        </summary>
-                        <ul className="migration-quality-issue-list">
-                          {artifactQualitySummary.issues.slice(3).map((issue, index) => (
-                            <li className="migration-quality-issue-item" key={`artifact-quality-all-${index}-${issue.type}`}>
-                              <span className="migration-quality-issue-type">{toArtifactQualityIssueTypeLabel(issue.type)}</span>
-                              <span>{issue.description}</span>
-                            </li>
-                          ))}
-                        </ul>
-                      </details>
-                    ) : null}
-                  </>
-                ) : (
-                  <span className="hint muted">No quality issues detected.</span>
-                )}
-              </>
-            ) : (
-              <span className="hint muted">No artifact quality evaluation available.</span>
-            )}
-          </div>
-        ) : (
-          <WorkspaceEmptyStateCard data-testid="migration-artifact-quality-empty-state">
-            <p className="hint muted">No artifact version selected.</p>
-          </WorkspaceEmptyStateCard>
-        )}
-      </div>
-
-      <div className="panel stack workspace-section-block" data-testid="migration-artifact-review-section">
-        <h3>Draft Artifact Review</h3>
-        {selectedArtifact ? (
           <>
-            <WorkspaceActionBar variant="secondary">
+            <div className="row-wrap-tight" data-testid="migration-draft-review-actions-row">
               <button
                 type="button"
                 className="button button-primary"
@@ -7092,47 +7031,84 @@ export function MigrationWorkspacePanel({
               >
                 {draftPreviewOpen ? "Hide Draft Preview" : "Preview Draft"}
               </button>
-              <span className="hint muted">
-                {draftPreview.available
-                  ? "Draft preview only. Not published and not deployed."
-                  : draftPreview.reason || "Preview unavailable for this artifact."}
-              </span>
-            </WorkspaceActionBar>
-            <div className="panel panel-compact stack-tight" data-testid="migration-draft-review-actions">
-              <strong>Draft Review Actions</strong>
-              <span className="hint muted">
-                Approve or delete the selected draft after review. Publish and deploy remain explicit in Section E.
-              </span>
-              <textarea
-                value={approvalNotes}
-                onChange={(event) => setApprovalNotes(event.target.value)}
-                rows={3}
-                placeholder="Approval notes (optional)"
-              />
-              <div className="row-wrap-tight">
-                <button
-                  type="button"
-                  className="button button-secondary"
-                  onClick={() => void handleApproveSelectedArtifact()}
-                  disabled={isActionInFlight || !canApproveSelectedArtifact}
-                  data-testid="migration-approve-draft-button"
-                >
-                  {busyAction === "approve" ? "Approving..." : "Approve Selected Draft"}
-                </button>
-                <button
-                  type="button"
-                  className="button button-tertiary"
-                  onClick={() => void handleDeleteSelectedArtifact()}
-                  disabled={isActionInFlight || !canDeleteSelectedArtifact}
-                  data-testid="migration-delete-draft-button"
-                >
-                  {busyAction === "delete_draft" ? "Deleting..." : "Delete Selected Draft"}
-                </button>
-              </div>
-              {!canDeleteSelectedArtifact && selectedArtifact ? (
-                <span className="hint muted">{selectedArtifactDeleteBlockedReason}</span>
-              ) : null}
+              <button
+                type="button"
+                className="button button-secondary"
+                onClick={() => void handleApproveSelectedArtifact()}
+                disabled={isActionInFlight || !canApproveSelectedArtifact}
+                data-testid="migration-approve-draft-button"
+              >
+                {busyAction === "approve" ? "Approving..." : "Approve Selected Draft"}
+              </button>
+              <button
+                type="button"
+                className="button button-tertiary"
+                onClick={() => void handleDeleteSelectedArtifact()}
+                disabled={isActionInFlight || !canDeleteSelectedArtifact}
+                data-testid="migration-delete-draft-button"
+              >
+                {busyAction === "delete_draft" ? "Deleting..." : "Delete Selected Draft"}
+              </button>
             </div>
+            <div className="panel panel-compact stack-tight" data-testid="migration-artifact-quality-summary">
+              <strong>Artifact Quality Summary</strong>
+              {artifactQualitySummary ? (
+                <>
+                  <span
+                    className={artifactQualityBadgeClass(artifactQualitySummary.qualityStatus)}
+                    data-testid="migration-artifact-quality-status"
+                  >
+                    Quality: {artifactQualityStatusLabel(artifactQualitySummary.qualityStatus)}
+                  </span>
+                  <span className="hint">{artifactQualitySummary.operatorSummary}</span>
+                  {requiredMediaQualityIssue ? (
+                    <span className="hint warning" data-testid="migration-artifact-quality-required-media-warning">
+                      {requiredMediaQualityIssue.description}
+                    </span>
+                  ) : null}
+                  {artifactQualitySummary.issues.length > 0 ? (
+                    <>
+                      <strong className="hint muted">Top issues</strong>
+                      <ul className="migration-quality-issue-list" data-testid="migration-artifact-quality-issues">
+                        {artifactQualitySummary.issues.slice(0, 3).map((issue, index) => (
+                          <li className="migration-quality-issue-item" key={`artifact-quality-top-${index}-${issue.type}`}>
+                            <span className="migration-quality-issue-type">{toArtifactQualityIssueTypeLabel(issue.type)}</span>
+                            <span>{issue.description}</span>
+                          </li>
+                        ))}
+                      </ul>
+                      {artifactQualitySummary.issues.length > 3 ? (
+                        <details className="migration-quality-details">
+                          <summary className="hint muted">
+                            Show all issues ({artifactQualitySummary.issues.length})
+                          </summary>
+                          <ul className="migration-quality-issue-list">
+                            {artifactQualitySummary.issues.slice(3).map((issue, index) => (
+                              <li className="migration-quality-issue-item" key={`artifact-quality-all-${index}-${issue.type}`}>
+                                <span className="migration-quality-issue-type">{toArtifactQualityIssueTypeLabel(issue.type)}</span>
+                                <span>{issue.description}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </details>
+                      ) : null}
+                    </>
+                  ) : (
+                    <span className="hint muted">No quality issues detected.</span>
+                  )}
+                </>
+              ) : (
+                <span className="hint muted">No artifact quality evaluation available.</span>
+              )}
+            </div>
+            <span className="hint muted">
+              {draftPreview.available
+                ? "Draft preview only. Not published and not deployed."
+                : draftPreview.reason || "Preview unavailable for this artifact."}
+            </span>
+            {!canDeleteSelectedArtifact && selectedArtifact ? (
+              <span className="hint muted">{selectedArtifactDeleteBlockedReason}</span>
+            ) : null}
             {draftPreviewOpen && draftPreview.available ? (
               <div className="panel panel-compact stack-tight migration-draft-preview-surface" data-testid="migration-draft-preview-surface">
                 <strong>Draft Preview (Read-only)</strong>
@@ -7286,9 +7262,9 @@ export function MigrationWorkspacePanel({
           </>
         ) : (
           <WorkspaceEmptyStateCard data-testid="migration-artifact-review-empty-state">
-          <p className="hint muted">No artifact version selected.</p>
-        </WorkspaceEmptyStateCard>
-      )}
+            <p className="hint muted">No artifact version selected.</p>
+          </WorkspaceEmptyStateCard>
+        )}
       </div>
 
       </MigrationArtifactReviewSection>
