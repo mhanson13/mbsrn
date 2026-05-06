@@ -117,6 +117,7 @@ const mockFetchMigrationArtifactVersions = jest.fn<Promise<MigrationArtifactVers
 const mockFetchMigrationArtifactFilePreview = jest.fn<Promise<MigrationArtifactFilePreview>, unknown[]>();
 const mockIngestMigrationSource = jest.fn<Promise<MigrationWorkspace>, unknown[]>();
 const mockUpdateMigrationRequirements = jest.fn<Promise<MigrationWorkspace>, unknown[]>();
+const mockSuggestMigrationRequirementField = jest.fn<Promise<Record<string, unknown>>, unknown[]>();
 const mockUpdateMigrationEnrichedContent = jest.fn<Promise<MigrationWorkspace>, unknown[]>();
 const mockUpdateMigrationPublishConfig = jest.fn<Promise<MigrationWorkspace>, unknown[]>();
 const mockUpdateMigrationDeployConfig = jest.fn<Promise<MigrationWorkspace>, unknown[]>();
@@ -193,6 +194,7 @@ jest.mock("../../lib/api/client", () => {
     fetchMigrationArtifactFilePreview: (...args: unknown[]) => mockFetchMigrationArtifactFilePreview(...args),
     ingestMigrationSource: (...args: unknown[]) => mockIngestMigrationSource(...args),
     updateMigrationRequirements: (...args: unknown[]) => mockUpdateMigrationRequirements(...args),
+    suggestMigrationRequirementField: (...args: unknown[]) => mockSuggestMigrationRequirementField(...args),
     updateMigrationEnrichedContent: (...args: unknown[]) => mockUpdateMigrationEnrichedContent(...args),
     updateMigrationPublishConfig: (...args: unknown[]) => mockUpdateMigrationPublishConfig(...args),
     updateMigrationDeployConfig: (...args: unknown[]) => mockUpdateMigrationDeployConfig(...args),
@@ -2145,6 +2147,178 @@ describe("site migration workflow route", () => {
     expect(within(sourceDetails).getByText("URL: https://legacy.example/images/front.jpg")).toBeInTheDocument();
   });
 
+  it("removes the standalone enriched section and renders field-level AI suggestion scratchpads", async () => {
+    render(<SiteMigrationWorkflowPage />);
+
+    expect(screen.queryByText("Enriched Replacement Content")).not.toBeInTheDocument();
+    const requirements = await screen.findByTestId("migration-operator-requirements");
+    expect(within(requirements).getByText("Operator Requirements")).toBeInTheDocument();
+    expect(within(requirements).getByTestId("migration-requirement-operator-business_objectives")).toBeInTheDocument();
+    expect(within(requirements).getByTestId("migration-requirement-operator-requested_pages")).toBeInTheDocument();
+    expect(within(requirements).getByTestId("migration-requirement-operator-must_include")).toBeInTheDocument();
+    expect(within(requirements).getByTestId("migration-requirement-operator-must_avoid")).toBeInTheDocument();
+    expect(within(requirements).getByTestId("migration-requirement-operator-tone")).toBeInTheDocument();
+    expect(within(requirements).getByTestId("migration-requirement-operator-calls_to_action")).toBeInTheDocument();
+    expect(within(requirements).getByTestId("migration-requirement-scratchpad-details-business_objectives")).toBeInTheDocument();
+    expect(within(requirements).getByTestId("migration-requirement-scratchpad-details-requested_pages")).toBeInTheDocument();
+    expect(within(requirements).getByTestId("migration-requirement-scratchpad-details-must_include")).toBeInTheDocument();
+    expect(within(requirements).getByTestId("migration-requirement-scratchpad-details-must_avoid")).toBeInTheDocument();
+    expect(within(requirements).getByTestId("migration-requirement-scratchpad-details-tone")).toBeInTheDocument();
+    expect(within(requirements).getByTestId("migration-requirement-scratchpad-details-calls_to_action")).toBeInTheDocument();
+  });
+
+  it("keeps AI suggestion drafts isolated from operator fields until explicit append/replace and save", async () => {
+    const user = userEvent.setup();
+    mockSuggestMigrationRequirementField.mockResolvedValueOnce({
+      field: "must_include",
+      suggestion_status: "completed",
+      suggested_value: ["Include local licensing proof", "Include emergency response coverage"],
+      reason_code: "requirements_suggestion_completed",
+      context_sources_used: ["source_snapshot", "recommendations_summary"],
+      retryable: false,
+      generated_at: "2026-03-21T00:03:00Z",
+    });
+
+    render(<SiteMigrationWorkflowPage />);
+
+    const requirementField = await screen.findByTestId("migration-requirement-field-must_include");
+    const operatorTextarea = within(requirementField).getByTestId(
+      "migration-requirement-operator-must_include",
+    ) as HTMLTextAreaElement;
+    expect(operatorTextarea.value).toBe("");
+
+    const scratchpadDetails = within(requirementField).getByTestId(
+      "migration-requirement-scratchpad-details-must_include",
+    );
+    await user.click(within(scratchpadDetails).getByText("AI suggestion draft"));
+    await user.click(within(requirementField).getByTestId("migration-requirement-suggest-must_include"));
+
+    await waitFor(() =>
+      expect(mockSuggestMigrationRequirementField).toHaveBeenCalledWith(
+        "token-1",
+        "biz-1",
+        "site-1",
+        {
+          field: "must_include",
+          current_value: null,
+          force_refresh: false,
+        },
+      ),
+    );
+
+    const scratchpadTextarea = within(scratchpadDetails).getByTestId(
+      "migration-requirement-scratchpad-must_include",
+    ) as HTMLTextAreaElement;
+    expect(scratchpadTextarea.value).toContain("Include local licensing proof");
+    expect(operatorTextarea.value).toBe("");
+
+    await user.type(scratchpadTextarea, "\nUse concise benefit-forward bullet points.");
+    expect(operatorTextarea.value).toBe("");
+
+    await user.click(within(scratchpadDetails).getByTestId("migration-requirement-append-must_include"));
+    expect(operatorTextarea.value).toContain("Include local licensing proof");
+
+    await user.click(within(scratchpadDetails).getByTestId("migration-requirement-replace-must_include"));
+    expect(operatorTextarea.value).toContain("Use concise benefit-forward bullet points.");
+
+    await user.click(screen.getByRole("button", { name: "Save Requirements" }));
+    await waitFor(() => expect(mockUpdateMigrationRequirements).toHaveBeenCalledTimes(1));
+    expect(mockUpdateMigrationRequirements.mock.calls[0]?.[3]).toEqual(
+      expect.objectContaining({
+        operator_requirements: expect.objectContaining({
+          must_include: expect.arrayContaining(["Include local licensing proof"]),
+        }),
+      }),
+    );
+
+    await user.click(within(scratchpadDetails).getByTestId("migration-requirement-dismiss-must_include"));
+    expect(scratchpadTextarea.value).toBe("");
+
+    mockUpdateMigrationRequirements.mockClear();
+    await user.click(screen.getByRole("button", { name: "Generate Draft Mockup" }));
+    await waitFor(() => expect(mockGenerateMigrationDraftArtifacts).toHaveBeenCalled());
+    expect(mockUpdateMigrationRequirements).not.toHaveBeenCalled();
+  });
+
+  it("uses clipboard copy when available and falls back to field-local guidance when unavailable", async () => {
+    const user = userEvent.setup();
+    mockSuggestMigrationRequirementField.mockResolvedValueOnce({
+      field: "business_objectives",
+      suggestion_status: "completed",
+      suggested_value: ["Increase qualified local quote requests"],
+      reason_code: "requirements_suggestion_completed",
+      context_sources_used: ["source_snapshot"],
+      retryable: false,
+      generated_at: "2026-03-21T00:04:00Z",
+    });
+
+    const originalClipboard = Object.getOwnPropertyDescriptor(window.navigator, "clipboard");
+    const writeText = jest.fn().mockResolvedValue(undefined);
+    Object.defineProperty(window.navigator, "clipboard", {
+      value: { writeText },
+      configurable: true,
+    });
+
+    try {
+      render(<SiteMigrationWorkflowPage />);
+
+      const requirementField = await screen.findByTestId("migration-requirement-field-business_objectives");
+      const scratchpadDetails = within(requirementField).getByTestId(
+        "migration-requirement-scratchpad-details-business_objectives",
+      );
+      await user.click(within(scratchpadDetails).getByText("AI suggestion draft"));
+      await user.click(within(requirementField).getByTestId("migration-requirement-suggest-business_objectives"));
+      await user.click(within(scratchpadDetails).getByTestId("migration-requirement-copy-business_objectives"));
+
+      await waitFor(() =>
+        expect(writeText).toHaveBeenCalledWith("Increase qualified local quote requests"),
+      );
+
+      Object.defineProperty(window.navigator, "clipboard", {
+        value: undefined,
+        configurable: true,
+      });
+
+      await user.click(within(scratchpadDetails).getByTestId("migration-requirement-copy-business_objectives"));
+      const localError = await within(requirementField).findByTestId(
+        "migration-requirement-suggestion-error-business_objectives",
+      );
+      expect(localError).toHaveTextContent("Clipboard is unavailable in this browser/session.");
+    } finally {
+      if (originalClipboard) {
+        Object.defineProperty(window.navigator, "clipboard", originalClipboard);
+      } else {
+        Object.defineProperty(window.navigator, "clipboard", {
+          value: undefined,
+          configurable: true,
+        });
+      }
+    }
+  });
+
+  it("renders field-local suggestion failures and keeps global workspace messaging quiet", async () => {
+    const user = userEvent.setup();
+    mockSuggestMigrationRequirementField.mockRejectedValueOnce(
+      new ApiRequestError("Suggestion unavailable", {
+        status: 503,
+        detail: {
+          reason_code: "requirements_suggestion_provider_unavailable",
+        },
+      }),
+    );
+
+    render(<SiteMigrationWorkflowPage />);
+
+    const requirementField = await screen.findByTestId("migration-requirement-field-tone");
+    const scratchpadDetails = within(requirementField).getByTestId("migration-requirement-scratchpad-details-tone");
+    await user.click(within(scratchpadDetails).getByText("AI suggestion draft"));
+    await user.click(within(requirementField).getByTestId("migration-requirement-suggest-tone"));
+
+    const localError = await within(requirementField).findByTestId("migration-requirement-suggestion-error-tone");
+    expect(localError).toHaveTextContent("AI provider is currently unavailable for requirement suggestions.");
+    expect(screen.queryByTestId("migration-message-stack")).not.toBeInTheDocument();
+  });
+
   it("supports media metadata suggestion actions while preserving manual metadata until apply", async () => {
     const user = userEvent.setup();
     const summary = buildMigrationWorkspaceSummary({
@@ -3719,6 +3893,7 @@ function seedCompetitorProfileGenerationDefaults(): void {
   mockFetchMigrationArtifactFilePreview.mockReset();
   mockIngestMigrationSource.mockReset();
   mockUpdateMigrationRequirements.mockReset();
+  mockSuggestMigrationRequirementField.mockReset();
   mockUpdateMigrationEnrichedContent.mockReset();
   mockUpdateMigrationPublishConfig.mockReset();
   mockUpdateMigrationDeployConfig.mockReset();
@@ -3791,6 +3966,15 @@ function seedCompetitorProfileGenerationDefaults(): void {
   mockUpdateMigrationRequirements.mockResolvedValue({
     ...defaultMigrationWorkspace,
     migration_status: "requirements_captured",
+  });
+  mockSuggestMigrationRequirementField.mockResolvedValue({
+    field: "business_objectives",
+    suggestion_status: "completed",
+    suggested_value: ["Clarify local service differentiation."],
+    reason_code: "requirements_suggestion_completed",
+    context_sources_used: ["source_snapshot", "operator_requirements"],
+    retryable: false,
+    generated_at: "2026-03-21T00:00:00Z",
   });
   mockUpdateMigrationEnrichedContent.mockResolvedValue({
     ...defaultMigrationWorkspace,

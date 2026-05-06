@@ -5,8 +5,9 @@ The migration workspace is a controlled operator workflow for replacing weak inc
 
 The incumbent site is a signal source, not a canonical source of truth. The migration workspace becomes canonical by combining:
 - imported source-site facts/signals
-- operator requirements and requested changes
-- enriched replacement content notes
+- operator requirements and requested changes (source of truth)
+- optional AI suggestion drafts that operators can apply into requirements
+- stored enriched context as lower-priority supporting context (backward compatibility)
 - existing MBSRN audit/recommendation/competitor summaries
 
 ## Trust Boundary and Lifecycle
@@ -39,7 +40,7 @@ The main site workspace remains recommendation-first and provides a migration st
 Migration workflow on the dedicated page:
 1. Create/manage workspace and set `source_url`.
 2. Run bounded source ingest.
-3. Capture requirements and enriched replacement content.
+3. Capture operator requirements and optionally use per-field AI suggestion drafts.
 4. Review preflight draft readiness (blocking vs warning-only signals).
 5. Generate and review draft artifacts.
 6. Approve an artifact version.
@@ -71,7 +72,7 @@ Operator UI now uses a tighter dashboard hierarchy for migration review without 
 
 Section ownership/deduplication rules:
 - Top Summary is the single source of truth for migration state + next action scanability (site, migration state, next action, selected draft summary, one highest-priority warning only)
-- Source + Requirements owns source ingest/snapshot and operator replacement requirements
+- Source + Requirements owns source ingest/snapshot and operator replacement requirements with optional AI suggestion scratchpads
 - Media / Images is the single source of truth for media counts and media actions
 - Draft Readiness + Generate owns readiness and provider compatibility gate (`Pass|Warning|Blocking`) for generation only
 - Draft Review + Quality owns artifact selection, quality findings, preview, approval, and delete
@@ -185,6 +186,9 @@ Current summary fields include:
   - `ga4_signals_included`
   - `competitor_profiles_included_count`
   - `operator_requirements_included`
+  - `requirement_suggestions_available_count`
+  - `requirement_suggestions_applied_count`
+  - `context_sources_used_for_requirement_suggestions`
   - `enriched_business_context_included`
   - `audit_findings_included_count`
 - media coverage:
@@ -209,6 +213,65 @@ Interpretation:
   - media counts/actions belong to `B. Media / Images` (single source of truth)
   - provider execution/request metadata belongs to `F. Advanced Diagnostics & History`
 - provider recommender outputs and SEO recommendations remain advisory; operator review is still required before approval/publish/deploy
+
+## Operator Requirements + AI Suggestion Scratchpads (2026-05)
+
+Primary model:
+- Operator Requirements are the only operator-owned source of truth for draft intent.
+- Standalone `Enriched Replacement Content` is removed from the primary workflow surface.
+- Existing enriched content remains stored and available as lower-priority supporting context for backward compatibility.
+
+Field-level suggestion support:
+- `business_objectives`
+- `requested_pages`
+- `must_include`
+- `must_avoid`
+- `tone`
+- `calls_to_action`
+
+Scratchpad behavior:
+- each field has an operator-owned textarea plus an `AI suggestion draft` scratchpad
+- scratchpad is empty by default and populated only after `Suggest requirement text`
+- scratchpad text is editable by operators
+- scratchpad text is never auto-applied and never auto-saved
+- explicit actions:
+  - `Copy`
+  - `Append to field`
+  - `Replace field`
+  - `Dismiss`
+- draft generation uses saved operator requirements only
+- unapplied scratchpad text does not affect draft generation
+
+Suggestion API:
+- `POST /api/businesses/{business_id}/seo/sites/{site_id}/migration/requirements/suggest`
+- request:
+  - `field`
+  - optional `current_value`
+  - optional `force_refresh`
+- response:
+  - `field`
+  - `suggestion_status` (`completed|failed|not_available`)
+  - `suggested_value`
+  - `reason_code`
+  - `context_sources_used`
+  - `retryable`
+  - `generated_at`
+
+Stable reason codes:
+- `requirements_suggestion_completed`
+- `requirements_suggestion_not_available`
+- `requirements_suggestion_provider_unavailable`
+- `requirements_suggestion_provider_invalid`
+- `requirements_suggestion_context_unavailable`
+- `requirements_suggestion_field_unsupported`
+- `requirements_suggestion_budget_rejected`
+
+Suggestion safety constraints:
+- bounded context only (source snapshot, operator requirements, recommendation/audit/competitor summaries, selected media summary, business/site context, optional stored enrichment support)
+- no live Google API calls required
+- no forced Google OAuth reconnect for suggestion requests
+- no secrets/tokens/storage keys/raw media bytes/base64 in suggestion responses
+- local tests mock provider behavior; no real provider calls are required for test runs
 
 ## Media Discovery, Upload, and Safety Boundaries (2026-05)
 Source-site media discovery:

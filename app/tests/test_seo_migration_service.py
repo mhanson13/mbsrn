@@ -2850,7 +2850,7 @@ def test_draft_generation_readiness_missing_operator_requirements_is_blocking(db
     )
 
 
-def test_draft_generation_readiness_missing_enriched_content_is_blocking(db_session) -> None:
+def test_draft_generation_readiness_missing_enriched_content_is_supporting_only(db_session) -> None:
     service = _build_service(db_session, _StaticMigrationProvider(_build_publishable_output()))
     business_id, site_id = _seed_business_and_site(db_session)
     service.create_or_update_workspace(
@@ -2866,15 +2866,201 @@ def test_draft_generation_readiness_missing_enriched_content_is_blocking(db_sess
     summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
     readiness = (summary.context_summary or {}).get("draft_generation_readiness")
     assert isinstance(readiness, dict)
-    assert readiness.get("status") == "not_ready"
-    assert readiness.get("hard_blocked") is True
+    assert readiness.get("status") == "ready_with_warnings"
+    assert readiness.get("hard_blocked") is False
     reasons = readiness.get("reasons") or []
-    assert any(
-        isinstance(item, dict)
-        and item.get("code") == "enriched_content_required"
-        and item.get("severity") == "blocking"
+    assert all(
+        not (
+            isinstance(item, dict)
+            and item.get("code") == "enriched_content_required"
+            and item.get("severity") == "blocking"
+        )
         for item in reasons
     )
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    [
+        "business_objectives",
+        "requested_pages",
+        "must_include",
+        "must_avoid",
+        "tone",
+        "calls_to_action",
+    ],
+)
+def test_requirements_suggestion_returns_completed_for_supported_fields_with_mock_provider(
+    db_session,
+    field_name: str,
+) -> None:
+    service = _build_service(db_session, _StaticMigrationProvider(_build_publishable_output()))
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _seed_reused_context_records(db_session, business_id=business_id, site_id=site_id)
+
+    suggestion = service.suggest_operator_requirement_field(
+        business_id=business_id,
+        site_id=site_id,
+        field=field_name,
+        current_value=None,
+        force_refresh=False,
+        principal_id="principal-1",
+    )
+
+    assert suggestion.get("field") == field_name
+    assert suggestion.get("suggestion_status") == "completed"
+    assert suggestion.get("reason_code") == "requirements_suggestion_completed"
+    assert suggestion.get("retryable") is False
+    suggested_value = suggestion.get("suggested_value")
+    assert isinstance(suggested_value, list)
+    assert len(suggested_value) >= 1
+    sources = suggestion.get("context_sources_used")
+    assert isinstance(sources, list)
+    assert "source_snapshot" in sources
+    payload_json = json.dumps(suggestion).lower()
+    assert "database_url" not in payload_json
+    assert "storage_key" not in payload_json
+    assert "raw_token" not in payload_json
+    assert "image_base64" not in payload_json
+
+
+def test_requirements_suggestion_returns_not_available_for_unsupported_field(db_session) -> None:
+    service = _build_service(db_session, _StaticMigrationProvider(_build_publishable_output()))
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+
+    suggestion = service.suggest_operator_requirement_field(
+        business_id=business_id,
+        site_id=site_id,
+        field="unsupported_field",
+        current_value=None,
+        force_refresh=False,
+        principal_id="principal-1",
+    )
+
+    assert suggestion.get("field") == "unsupported_field"
+    assert suggestion.get("suggestion_status") == "not_available"
+    assert suggestion.get("suggested_value") is None
+    assert suggestion.get("reason_code") == "requirements_suggestion_field_unsupported"
+    assert suggestion.get("retryable") is False
+
+
+@pytest.mark.parametrize(
+    "error_code,expected_status,expected_retryable",
+    [
+        ("requirements_suggestion_provider_unavailable", "failed", True),
+        ("requirements_suggestion_provider_invalid", "failed", False),
+        ("requirements_suggestion_budget_rejected", "not_available", False),
+    ],
+)
+def test_requirements_suggestion_normalizes_provider_reason_codes(
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+    error_code: str,
+    expected_status: str,
+    expected_retryable: bool,
+) -> None:
+    service = _build_service(db_session, _StaticMigrationProvider(_build_publishable_output()))
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+
+    def _raise_provider_error(**kwargs):  # noqa: ANN003
+        del kwargs
+        raise SEOMigrationValidationError(
+            "simulated requirement suggestion failure",
+            failure_category="provider_error",
+            failure_reason="unknown",
+            error_code=error_code,
+            retryable=expected_retryable,
+        )
+
+    monkeypatch.setattr(service, "_request_requirement_field_suggestion", _raise_provider_error)
+
+    suggestion = service.suggest_operator_requirement_field(
+        business_id=business_id,
+        site_id=site_id,
+        field="must_include",
+        current_value=None,
+        force_refresh=False,
+        principal_id="principal-1",
+    )
+
+    assert suggestion.get("suggestion_status") == expected_status
+    assert suggestion.get("suggested_value") is None
+    assert suggestion.get("reason_code") == error_code
+    assert suggestion.get("retryable") is expected_retryable
+
+
+def test_requirements_suggestion_returns_context_unavailable_when_context_assembly_fails(
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = _build_service(db_session, _StaticMigrationProvider(_build_publishable_output()))
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+
+    def _raise_context_failure(*, site, workspace):  # noqa: ANN001
+        del site, workspace
+        raise RuntimeError("context unavailable")
+
+    monkeypatch.setattr(service, "_assemble_context", _raise_context_failure)
+
+    suggestion = service.suggest_operator_requirement_field(
+        business_id=business_id,
+        site_id=site_id,
+        field="must_include",
+        current_value=None,
+        force_refresh=False,
+        principal_id="principal-1",
+    )
+
+    assert suggestion.get("suggestion_status") == "failed"
+    assert suggestion.get("suggested_value") is None
+    assert suggestion.get("reason_code") == "requirements_suggestion_context_unavailable"
+    assert suggestion.get("retryable") is True
+    assert suggestion.get("context_sources_used") == []
+
+
+def test_generate_draft_artifacts_does_not_include_unapplied_requirement_suggestions(
+    db_session,
+) -> None:
+    provider = _ContextCaptureMigrationProvider(_build_publishable_output())
+    service = _build_service(db_session, provider)
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+
+    before_workspace = service.get_workspace(business_id=business_id, site_id=site_id)
+    before_requirements = dict(before_workspace.operator_requirements_json or {})
+
+    suggestion = service.suggest_operator_requirement_field(
+        business_id=business_id,
+        site_id=site_id,
+        field="must_include",
+        current_value=None,
+        force_refresh=False,
+        principal_id="principal-1",
+    )
+    suggested_value = suggestion.get("suggested_value") or []
+    assert isinstance(suggested_value, list)
+    assert suggested_value
+
+    after_workspace = service.get_workspace(business_id=business_id, site_id=site_id)
+    assert dict(after_workspace.operator_requirements_json or {}) == before_requirements
+
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    assert artifact.status in {"completed", "partial"}
+    assert isinstance(provider.last_context, dict)
+
+    operator_context = (provider.last_context or {}).get("operator_requirements")
+    assert isinstance(operator_context, dict)
+    operator_context_json = json.dumps(operator_context)
+    for line in suggested_value:
+        assert str(line) not in operator_context_json
 
 
 def test_draft_generation_readiness_missing_reused_context_is_warning_only(db_session) -> None:

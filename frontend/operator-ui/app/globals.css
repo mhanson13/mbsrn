@@ -1286,6 +1286,29 @@ main {
   align-content: start;
 }
 
+.migration-requirement-grid {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.migration-requirement-field {
+  border: 1px solid var(--section-divider);
+  border-radius: var(--radius-sm);
+  background: var(--surface-subtle);
+  padding: 0.55rem;
+  display: grid;
+  gap: 0.42rem;
+}
+
+.migration-requirement-suggestion-shell {
+  border-top: 1px solid var(--section-divider);
+  padding-top: 0.25rem;
+}
+
+.migration-requirement-suggestion-shell > summary {
+  cursor: pointer;
+}
+
 .migration-media-browser {
   border-color: var(--workspace-summary-border);
 }
@@ -1417,6 +1440,16 @@ main {
 .migration-draft-preview-surface {
   max-width: 100%;
   overflow: hidden;
+}
+
+@media (min-width: 960px) {
+  .migration-requirement-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .migration-requirement-grid > label.stack-tight:last-child {
+    grid-column: 1 / -1;
+  }
 }
 
 .migration-artifact-review-grid {

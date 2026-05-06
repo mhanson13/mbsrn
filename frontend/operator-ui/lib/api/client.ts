@@ -44,6 +44,8 @@ import type {
   MigrationPublishConfigUpdateRequest,
   MigrationPublishRequest,
   MigrationPromptPreview,
+  MigrationRequirementsSuggestionRequest,
+  MigrationRequirementsSuggestionResponse,
   MigrationRequirementsUpdateRequest,
   MigrationSourceIngestRequest,
   MigrationWorkspace,
@@ -486,6 +488,22 @@ export async function updateMigrationRequirements(
     `/api/businesses/${businessId}/seo/sites/${siteId}/migration/operator-requirements`,
     {
       method: "PUT",
+      token,
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function suggestMigrationRequirementField(
+  token: string,
+  businessId: string,
+  siteId: string,
+  payload: MigrationRequirementsSuggestionRequest,
+): Promise<MigrationRequirementsSuggestionResponse> {
+  return apiRequest<MigrationRequirementsSuggestionResponse>(
+    `/api/businesses/${businessId}/seo/sites/${siteId}/migration/requirements/suggest`,
+    {
+      method: "POST",
       token,
       body: JSON.stringify(payload),
     },

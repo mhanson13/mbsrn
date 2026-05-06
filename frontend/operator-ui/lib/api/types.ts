@@ -360,6 +360,30 @@ export interface MigrationRequirementsUpdateRequest {
   operator_requirements: MigrationOperatorRequirements;
 }
 
+export type MigrationRequirementSuggestionField =
+  | "business_objectives"
+  | "requested_pages"
+  | "must_include"
+  | "must_avoid"
+  | "tone"
+  | "calls_to_action";
+
+export interface MigrationRequirementsSuggestionRequest {
+  field: MigrationRequirementSuggestionField;
+  current_value?: string | string[] | null;
+  force_refresh?: boolean;
+}
+
+export interface MigrationRequirementsSuggestionResponse {
+  field: string;
+  suggestion_status: "completed" | "failed" | "not_available" | string;
+  suggested_value: string | string[] | null;
+  reason_code: string;
+  context_sources_used: string[];
+  retryable: boolean;
+  generated_at: string | null;
+}
+
 export interface MigrationEnrichedContentUpdateRequest {
   enriched_content_notes: MigrationEnrichedContentNotes;
 }

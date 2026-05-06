@@ -116,11 +116,11 @@ _MIGRATION_DRAFT_CONTEXT_REQUIRED_KEYS = ("site_snapshot", "migration_workspace"
 _MIGRATION_DRAFT_CONTEXT_OPTIONAL_TRIM_ORDER = (
     "existing_context_summaries",
     "draft_input_summary",
-    "media_assets",
     "brand_business_facts_snapshot",
     "enriched_content_notes",
-    "operator_requirements",
     "source_snapshot",
+    "media_assets",
+    "operator_requirements",
 )
 _MIGRATION_DRAFT_MAX_TOTAL_INPUT_SIZE = 120000
 _MIGRATION_DRAFT_MAX_TRIMMING_PASSES = 3

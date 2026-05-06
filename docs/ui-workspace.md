@@ -51,7 +51,7 @@ The dedicated migration route (`/sites/[site_id]/migration`) keeps primary opera
   - one highest-priority blocker/warning line only
 - A. Source + Requirements:
   - source ingest action + source snapshot summary
-  - operator requirements + enriched replacement content
+  - operator requirements (source of truth) + optional AI suggestion drafts
 - B. Media / Images (single source of truth for media):
   - discovered/imported/uploaded/selected media state
   - media counts and media actions
@@ -80,6 +80,37 @@ Deduplication rules:
 - Provider request/execution details and destination runtime/policy details are hidden by default and surfaced through disclosure in Advanced Diagnostics.
 - When readiness is `Ready: Yes`, stale historical failure traces should not be shown as primary warnings.
 - Loading/guest/auth support states should render simple support shells and must not flash authenticated diagnostics surfaces.
+
+Operator Requirements simplification and suggestion scratchpads:
+- `Operator Requirements` is the only operator-owned control surface for draft intent.
+- standalone `Enriched Replacement Content` is no longer rendered as a primary workflow section.
+- existing enriched content remains backward-compatible as supporting context and is not removed from storage in this pass.
+- each supported requirements field includes an `AI suggestion draft` scratchpad:
+  - `Business objectives`
+  - `Requested pages`
+  - `Must include`
+  - `Must avoid`
+  - `Tone`
+  - `Calls to action`
+- scratchpad actions are explicit:
+  - `Suggest requirement text`
+  - `Copy`
+  - `Append to field`
+  - `Replace field`
+  - `Dismiss`
+- scratchpad text is optional, editable, and not auto-applied.
+- suggestions do not affect draft generation until operator moves text into the operator field and saves requirements.
+- local tests mock provider/suggestion responses; suggestion UI/API tests do not require live provider calls.
+- suggestion API does not require live Google OAuth/API calls.
+
+Suggestion reason codes:
+- `requirements_suggestion_completed`
+- `requirements_suggestion_not_available`
+- `requirements_suggestion_provider_unavailable`
+- `requirements_suggestion_provider_invalid`
+- `requirements_suggestion_context_unavailable`
+- `requirements_suggestion_field_unsupported`
+- `requirements_suggestion_budget_rejected`
 
 Google auth/integration operator cue:
 - reconnect-required Google integration states are shown as targeted integration guidance in draft diagnostics

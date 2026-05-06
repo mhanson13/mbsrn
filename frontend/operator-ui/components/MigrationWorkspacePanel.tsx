@@ -24,12 +24,12 @@ import {
   ingestMigrationSource,
   publishMigrationArtifactVersion,
   refreshMigrationDeployStatus,
+  suggestMigrationRequirementField,
   suggestMigrationMediaAssetMetadata,
   suggestMigrationMediaAssetsMetadataBatch,
   updateMigrationMediaAsset,
   updateMigrationPublishConfig,
   updateMigrationDeployConfig,
-  updateMigrationEnrichedContent,
   updateMigrationRequirements,
   uploadMigrationMediaAsset,
   upsertMigrationWorkspace,
@@ -37,8 +37,8 @@ import {
 import type {
   MigrationArtifactVersion,
   MigrationDeployConfig,
-  MigrationEnrichedContentNotes,
   MigrationOperatorRequirements,
+  MigrationRequirementSuggestionField,
   MigrationPublishConfig,
   MigrationWorkspaceSummary,
 } from "../lib/api/types";
@@ -53,7 +53,6 @@ type BusyAction =
   | "load"
   | "ingest"
   | "save_requirements"
-  | "save_enriched"
   | "save_publish_config"
   | "save_deploy_config"
   | "generate"
@@ -80,16 +79,40 @@ const EMPTY_REQUIREMENTS: MigrationOperatorRequirements = {
   additional_notes: null,
 };
 
-const EMPTY_ENRICHED_CONTENT: MigrationEnrichedContentNotes = {
-  replacement_summary: null,
-  homepage_value_proposition: null,
-  about_business: null,
-  service_highlights: [],
-  trust_signals: [],
-  faq_items: [],
-  contact_overrides: {},
-  additional_notes: null,
-};
+type RequirementSuggestionStatus = "idle" | "loading" | "completed" | "failed" | "not_available";
+
+interface RequirementSuggestionState {
+  value: string;
+  status: RequirementSuggestionStatus;
+  reasonCode: string | null;
+  errorMessage: string | null;
+  contextSourcesUsed: string[];
+  generatedAt: string | null;
+  open: boolean;
+}
+
+function createEmptyRequirementSuggestionState(): RequirementSuggestionState {
+  return {
+    value: "",
+    status: "idle",
+    reasonCode: null,
+    errorMessage: null,
+    contextSourcesUsed: [],
+    generatedAt: null,
+    open: false,
+  };
+}
+
+function createDefaultRequirementSuggestionMap(): Record<MigrationRequirementSuggestionField, RequirementSuggestionState> {
+  return {
+    business_objectives: createEmptyRequirementSuggestionState(),
+    requested_pages: createEmptyRequirementSuggestionState(),
+    must_include: createEmptyRequirementSuggestionState(),
+    must_avoid: createEmptyRequirementSuggestionState(),
+    tone: createEmptyRequirementSuggestionState(),
+    calls_to_action: createEmptyRequirementSuggestionState(),
+  };
+}
 
 const EMPTY_PUBLISH_CONFIG: MigrationPublishConfig = {
   enabled: true,
@@ -287,8 +310,8 @@ function MigrationSummarySection({
       <div className="panel panel-compact stack" data-testid="migration-draft-banner">
         <strong>Draft-only mode: generated files are review artifacts pending explicit approval/publish/deploy.</strong>
         <span className="hint">
-          Legacy source content may be incomplete or poor quality. Operator requirements and enriched content can
-          override weak source material.
+          Legacy source content may be incomplete or poor quality. Operator requirements are the source of truth, with
+          supporting context applied at lower priority.
         </span>
         <span className="hint warning">GitHub publish does not equal production deployment. Deploy remains explicit.</span>
       </div>
@@ -1572,31 +1595,6 @@ function deriveDraftContractIssueFocus(params: {
   return null;
 }
 
-function parseInputsText(value: string): Record<string, string> {
-  const lines = splitLines(value);
-  const result: Record<string, string> = {};
-  for (const line of lines) {
-    const [rawKey, ...rest] = line.split("=");
-    const key = (rawKey || "").trim();
-    const entryValue = rest.join("=").trim();
-    if (!key || !entryValue) {
-      continue;
-    }
-    result[key] = entryValue;
-  }
-  return result;
-}
-
-function stringifyInputsMap(value: unknown): string {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return "";
-  }
-  return Object.entries(value as Record<string, unknown>)
-    .map(([key, item]) => `${String(key).trim()}=${String(item || "").trim()}`)
-    .filter((line) => line !== "=")
-    .join("\n");
-}
-
 function resolveSelectedArtifactVersionId(params: {
   currentId: string;
   artifactVersions: MigrationArtifactVersion[];
@@ -1697,9 +1695,6 @@ function draftReadinessReasonMessageFromCode(code: string, severity: "warning" |
   if (normalized === "operator_requirements_required") {
     return "Add operator requirements before generating a draft.";
   }
-  if (normalized === "enriched_content_required") {
-    return "Add enriched replacement content notes before generating a draft.";
-  }
   if (normalized === "provider_config_missing") {
     return "AI provider configuration is missing or invalid for migration draft generation.";
   }
@@ -1713,7 +1708,7 @@ function draftReadinessReasonMessageFromCode(code: string, severity: "warning" |
     return "Competitor context is not available; draft quality may be limited.";
   }
   if (normalized === "enriched_content_sparse") {
-    return "Enriched replacement content is sparse; add more detail for better draft quality.";
+    return "Stored enriched supporting context is sparse; draft quality may be limited.";
   }
   if (normalized === "media_required_but_not_selected") {
     return "Operator requested real/existing media. Import/select source images or upload project photos before approval.";
@@ -1837,7 +1832,6 @@ function parseDraftReadiness(
   const fallbackSignals = {
     source_site_ingested: Boolean(contextSummary.has_source_snapshot),
     operator_requirements_present: Boolean(contextSummary.has_operator_requirements),
-    enriched_content_present: Boolean(contextSummary.has_enriched_content_notes),
     audit_available: Boolean(contextSummary.has_audit_summary),
     recommendations_available: Boolean(contextSummary.has_recommendation_summary),
     competitors_available: Boolean(contextSummary.has_competitor_summary),
@@ -1855,13 +1849,6 @@ function parseDraftReadiness(
       code: "operator_requirements_required",
       severity: "blocking",
       message: "Add operator requirements before generating a draft.",
-    });
-  }
-  if (!fallbackSignals.enriched_content_present) {
-    fallbackReasons.push({
-      code: "enriched_content_required",
-      severity: "blocking",
-      message: "Add enriched replacement content notes before generating a draft.",
     });
   }
   if (!fallbackSignals.audit_available) {
@@ -1887,19 +1874,16 @@ function parseDraftReadiness(
   }
   let fallbackScore = 0;
   if (fallbackSignals.source_site_ingested) {
-    fallbackScore += 15;
+    fallbackScore += 20;
   }
   if (fallbackSignals.operator_requirements_present) {
-    fallbackScore += 25;
-  }
-  if (fallbackSignals.enriched_content_present) {
-    fallbackScore += 25;
+    fallbackScore += 35;
   }
   if (fallbackSignals.audit_available) {
-    fallbackScore += 10;
+    fallbackScore += 15;
   }
   if (fallbackSignals.recommendations_available) {
-    fallbackScore += 10;
+    fallbackScore += 15;
   }
   if (fallbackSignals.competitors_available) {
     fallbackScore += 10;
@@ -1907,7 +1891,6 @@ function parseDraftReadiness(
   if (
     fallbackSignals.source_site_ingested &&
     fallbackSignals.operator_requirements_present &&
-    fallbackSignals.enriched_content_present &&
     fallbackSignals.audit_available &&
     fallbackSignals.recommendations_available &&
     fallbackSignals.competitors_available
@@ -1925,7 +1908,7 @@ function parseDraftReadiness(
       ? "Ready to generate draft."
       : fallbackStatus === "ready_with_warnings"
         ? "Ready, but draft quality may be limited."
-        : "Not ready yet — add enriched content and operator requirements first.";
+        : "Not ready yet — add source ingest and operator requirements first.";
 
   return {
     status: fallbackStatus,
@@ -2303,7 +2286,7 @@ function deriveMigrationNextAction(params: {
   } = params;
 
   if (draftReadiness.hardBlocked) {
-    return "Not ready yet — add source ingest, operator requirements, and enriched content first.";
+    return "Not ready yet — add source ingest and operator requirements first.";
   }
   if (!draftProviderCompatibility.supported) {
     return "Blocked: resolve AI provider compatibility before generating a draft.";
@@ -2787,6 +2770,58 @@ function toDestinationStateLabel(value: string): string {
   return normalized.replace(/_/g, " ");
 }
 
+function normalizeRequirementSuggestionText(value: string | string[] | null | undefined): string {
+  if (Array.isArray(value)) {
+    return joinLines(asStringList(value));
+  }
+  return asString(value);
+}
+
+function toRequirementSuggestionStatusLabel(value: RequirementSuggestionStatus): string {
+  if (value === "completed") {
+    return "Completed";
+  }
+  if (value === "failed") {
+    return "Failed";
+  }
+  if (value === "not_available") {
+    return "Not available";
+  }
+  if (value === "loading") {
+    return "Generating...";
+  }
+  return "Idle";
+}
+
+function toRequirementSuggestionReasonLabel(value: string | null): string {
+  const normalized = (value || "").trim().toLowerCase();
+  if (!normalized) {
+    return "";
+  }
+  if (normalized === "requirements_suggestion_context_unavailable") {
+    return "Context for suggestion is currently unavailable.";
+  }
+  if (normalized === "requirements_suggestion_provider_unavailable") {
+    return "AI provider is currently unavailable for requirement suggestions.";
+  }
+  if (normalized === "requirements_suggestion_provider_invalid") {
+    return "AI provider returned an invalid suggestion response.";
+  }
+  if (normalized === "requirements_suggestion_field_unsupported") {
+    return "This requirement field is not supported for suggestions.";
+  }
+  if (normalized === "requirements_suggestion_budget_rejected") {
+    return "Suggestion request exceeded current budget limits.";
+  }
+  if (normalized === "requirements_suggestion_not_available") {
+    return "Suggestion is not available for this field right now.";
+  }
+  if (normalized === "requirements_suggestion_completed") {
+    return "Suggestion generated.";
+  }
+  return normalized.replace(/_/g, " ");
+}
+
 export function MigrationWorkspacePanel({
   token,
   businessId,
@@ -2810,15 +2845,10 @@ export function MigrationWorkspacePanel({
   const [tonePreferences, setTonePreferences] = useState("");
   const [callsToAction, setCallsToAction] = useState("");
   const [requirementsNotes, setRequirementsNotes] = useState("");
+  const [requirementSuggestions, setRequirementSuggestions] = useState<
+    Record<MigrationRequirementSuggestionField, RequirementSuggestionState>
+  >(createDefaultRequirementSuggestionMap());
 
-  const [replacementSummary, setReplacementSummary] = useState("");
-  const [homepageValueProposition, setHomepageValueProposition] = useState("");
-  const [aboutBusiness, setAboutBusiness] = useState("");
-  const [serviceHighlights, setServiceHighlights] = useState("");
-  const [trustSignals, setTrustSignals] = useState("");
-  const [faqItems, setFaqItems] = useState("");
-  const [contactOverrides, setContactOverrides] = useState("");
-  const [enrichedNotes, setEnrichedNotes] = useState("");
   const [mediaUploadFile, setMediaUploadFile] = useState<File | null>(null);
   const [mediaUploadCategory, setMediaUploadCategory] = useState("other");
   const [mediaUploadAltText, setMediaUploadAltText] = useState("");
@@ -4334,16 +4364,6 @@ export function MigrationWorkspacePanel({
     setCallsToAction(joinLines(asStringList(rawRequirements.calls_to_action)));
     setRequirementsNotes(asString(rawRequirements.additional_notes));
 
-    const rawEnriched = asRecord(workspace.enriched_content_notes_json);
-    setReplacementSummary(asString(rawEnriched.replacement_summary));
-    setHomepageValueProposition(asString(rawEnriched.homepage_value_proposition));
-    setAboutBusiness(asString(rawEnriched.about_business));
-    setServiceHighlights(joinLines(asStringList(rawEnriched.service_highlights)));
-    setTrustSignals(joinLines(asStringList(rawEnriched.trust_signals)));
-    setFaqItems(joinLines(asStringList(rawEnriched.faq_items)));
-    setContactOverrides(stringifyInputsMap(rawEnriched.contact_overrides));
-    setEnrichedNotes(asString(rawEnriched.additional_notes));
-
     const rawPublishConfig = asRecord(workspace.publish_config_json);
     setPublishRepoName(asString(rawPublishConfig.repo_name));
     setPublishBranch(asString(rawPublishConfig.branch));
@@ -4410,6 +4430,10 @@ export function MigrationWorkspacePanel({
   useEffect(() => {
     void loadWorkspaceData(true);
   }, [loadWorkspaceData]);
+
+  useEffect(() => {
+    setRequirementSuggestions(createDefaultRequirementSuggestionMap());
+  }, [siteId]);
 
   useEffect(() => {
     setSelectedPublishHistoryIdentity((current) => {
@@ -4548,34 +4572,187 @@ export function MigrationWorkspacePanel({
     }
   };
 
-  const handleSaveEnrichedContent = async (): Promise<void> => {
-    const payload: MigrationEnrichedContentNotes = {
-      ...EMPTY_ENRICHED_CONTENT,
-      replacement_summary: asStringOrNull(replacementSummary),
-      homepage_value_proposition: asStringOrNull(homepageValueProposition),
-      about_business: asStringOrNull(aboutBusiness),
-      service_highlights: splitLines(serviceHighlights),
-      trust_signals: splitLines(trustSignals),
-      faq_items: splitLines(faqItems),
-      contact_overrides: parseInputsText(contactOverrides),
-      additional_notes: asStringOrNull(enrichedNotes),
-    };
-    setBusyAction("save_enriched");
-    setErrorMessage(null);
-    setErrorHint(null);
-    setStatusMessage(null);
-    try {
-      await updateMigrationEnrichedContent(token, businessId, siteId, {
-        enriched_content_notes: payload,
+  const updateRequirementSuggestion = useCallback(
+    (
+      field: MigrationRequirementSuggestionField,
+      updater: (current: RequirementSuggestionState) => RequirementSuggestionState,
+    ): void => {
+      setRequirementSuggestions((current) => {
+        const fieldState = current[field] || createEmptyRequirementSuggestionState();
+        return {
+          ...current,
+          [field]: updater(fieldState),
+        };
       });
-      setStatusMessage("Enriched replacement content saved.");
-      await loadWorkspaceData(false);
+    },
+    [],
+  );
+
+  const applyRequirementFieldUpdate = useCallback(
+    (field: MigrationRequirementSuggestionField, updater: (current: string) => string): void => {
+      if (field === "business_objectives") {
+        setBusinessObjectives((current) => updater(current));
+        return;
+      }
+      if (field === "requested_pages") {
+        setRequestedPages((current) => updater(current));
+        return;
+      }
+      if (field === "must_include") {
+        setMustInclude((current) => updater(current));
+        return;
+      }
+      if (field === "must_avoid") {
+        setMustAvoid((current) => updater(current));
+        return;
+      }
+      if (field === "tone") {
+        setTonePreferences((current) => updater(current));
+        return;
+      }
+      setCallsToAction((current) => updater(current));
+    },
+    [],
+  );
+
+  const readRequirementFieldValue = useCallback(
+    (field: MigrationRequirementSuggestionField): string => {
+      if (field === "business_objectives") {
+        return businessObjectives;
+      }
+      if (field === "requested_pages") {
+        return requestedPages;
+      }
+      if (field === "must_include") {
+        return mustInclude;
+      }
+      if (field === "must_avoid") {
+        return mustAvoid;
+      }
+      if (field === "tone") {
+        return tonePreferences;
+      }
+      return callsToAction;
+    },
+    [businessObjectives, callsToAction, mustAvoid, mustInclude, requestedPages, tonePreferences],
+  );
+
+  const handleSuggestRequirementField = async (
+    field: MigrationRequirementSuggestionField,
+    options?: { forceRefresh?: boolean },
+  ): Promise<void> => {
+    const currentValueLines = splitLines(readRequirementFieldValue(field));
+    updateRequirementSuggestion(field, (current) => ({
+      ...current,
+      status: "loading",
+      errorMessage: null,
+      reasonCode: null,
+      open: true,
+    }));
+    try {
+      const response = await suggestMigrationRequirementField(token, businessId, siteId, {
+        field,
+        current_value: currentValueLines.length > 0 ? currentValueLines : null,
+        force_refresh: Boolean(options?.forceRefresh),
+      });
+      const normalizedStatusRaw = asString(response.suggestion_status).trim().toLowerCase();
+      const normalizedStatus: RequirementSuggestionStatus =
+        normalizedStatusRaw === "completed" || normalizedStatusRaw === "failed" || normalizedStatusRaw === "not_available"
+          ? normalizedStatusRaw
+          : "not_available";
+      const suggestionValue = normalizeRequirementSuggestionText(response.suggested_value);
+      const normalizedReasonCode = asString(response.reason_code).trim() || null;
+      const suggestionStatus =
+        normalizedStatus === "completed" && !suggestionValue.trim() ? "not_available" : normalizedStatus;
+      const errorMessage =
+        suggestionStatus === "completed"
+          ? null
+          : toRequirementSuggestionReasonLabel(normalizedReasonCode) || "Suggestion unavailable for this field.";
+      updateRequirementSuggestion(field, (current) => ({
+        ...current,
+        value: suggestionValue,
+        status: suggestionStatus,
+        reasonCode: normalizedReasonCode,
+        errorMessage,
+        contextSourcesUsed: asStringList(response.context_sources_used),
+        generatedAt: asStringOrNull(response.generated_at),
+        open: true,
+      }));
     } catch (error) {
-      setErrorHint(null);
-      setErrorMessage(toErrorMessage(error, "Failed to save enriched content."));
-    } finally {
-      setBusyAction(null);
+      let reasonCode: string | null = null;
+      if (error instanceof ApiRequestError) {
+        const detail = asRecord(error.detail);
+        reasonCode = asStringOrNull(detail.reason_code) || asStringOrNull(detail.error_code);
+      }
+      updateRequirementSuggestion(field, (current) => ({
+        ...current,
+        status: "failed",
+        reasonCode,
+        errorMessage: toRequirementSuggestionReasonLabel(reasonCode) || toErrorMessage(error, "Failed to suggest requirement text."),
+        open: true,
+      }));
     }
+  };
+
+  const handleRequirementSuggestionCopy = async (field: MigrationRequirementSuggestionField): Promise<void> => {
+    const suggestionText = asString(requirementSuggestions[field]?.value).trim();
+    if (!suggestionText) {
+      return;
+    }
+    if (!navigator?.clipboard?.writeText) {
+      updateRequirementSuggestion(field, (current) => ({
+        ...current,
+        errorMessage: "Clipboard is unavailable in this browser/session.",
+      }));
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(suggestionText);
+      updateRequirementSuggestion(field, (current) => ({
+        ...current,
+        errorMessage: null,
+      }));
+      setStatusMessage("AI suggestion draft copied.");
+    } catch (error) {
+      updateRequirementSuggestion(field, (current) => ({
+        ...current,
+        errorMessage: toErrorMessage(error, "Clipboard copy failed."),
+      }));
+    }
+  };
+
+  const handleRequirementSuggestionAppend = (field: MigrationRequirementSuggestionField): void => {
+    const suggestionText = asString(requirementSuggestions[field]?.value).trim();
+    if (!suggestionText) {
+      return;
+    }
+    applyRequirementFieldUpdate(field, (current) => {
+      const trimmed = current.trim();
+      return trimmed ? `${trimmed}\n${suggestionText}` : suggestionText;
+    });
+    updateRequirementSuggestion(field, (current) => ({
+      ...current,
+      errorMessage: null,
+    }));
+  };
+
+  const handleRequirementSuggestionReplace = (field: MigrationRequirementSuggestionField): void => {
+    const suggestionText = asString(requirementSuggestions[field]?.value).trim();
+    if (!suggestionText) {
+      return;
+    }
+    applyRequirementFieldUpdate(field, () => suggestionText);
+    updateRequirementSuggestion(field, (current) => ({
+      ...current,
+      errorMessage: null,
+    }));
+  };
+
+  const handleRequirementSuggestionDismiss = (field: MigrationRequirementSuggestionField): void => {
+    setRequirementSuggestions((current) => ({
+      ...current,
+      [field]: createEmptyRequirementSuggestionState(),
+    }));
   };
 
   const handleUploadMediaAsset = async (): Promise<void> => {
@@ -5256,6 +5433,56 @@ export function MigrationWorkspacePanel({
     { value: "suggestions_available", label: "Suggestions available", count: mediaFilterCounts.suggestions_available },
     { value: "low_value_rejected", label: "Low-value/rejected", count: mediaFilterCounts.low_value_rejected },
   ];
+  const requirementFieldConfigs: Array<{
+    field: MigrationRequirementSuggestionField;
+    label: string;
+    rows: number;
+    value: string;
+    onChange: (value: string) => void;
+  }> = [
+    {
+      field: "business_objectives",
+      label: "Business objectives (one per line)",
+      rows: 5,
+      value: businessObjectives,
+      onChange: setBusinessObjectives,
+    },
+    {
+      field: "requested_pages",
+      label: "Requested pages (one per line)",
+      rows: 3,
+      value: requestedPages,
+      onChange: setRequestedPages,
+    },
+    {
+      field: "must_include",
+      label: "Must include (one per line)",
+      rows: 3,
+      value: mustInclude,
+      onChange: setMustInclude,
+    },
+    {
+      field: "must_avoid",
+      label: "Must avoid (one per line)",
+      rows: 3,
+      value: mustAvoid,
+      onChange: setMustAvoid,
+    },
+    {
+      field: "tone",
+      label: "Tone (one per line)",
+      rows: 3,
+      value: tonePreferences,
+      onChange: setTonePreferences,
+    },
+    {
+      field: "calls_to_action",
+      label: "Calls to action (one per line)",
+      rows: 3,
+      value: callsToAction,
+      onChange: setCallsToAction,
+    },
+  ];
 
   if (busyAction === "load" && !summary) {
     return <p className="hint muted">Loading migration workspace...</p>;
@@ -5856,98 +6083,159 @@ export function MigrationWorkspacePanel({
         </details>
       </div>
 
-      <div className="grid grid-2">
-        <div className="panel stack workspace-section-block">
-          <h3>Operator Requirements</h3>
-          <label className="stack-tight">
-            <span className="hint muted">Business objectives (one per line)</span>
-            <textarea value={businessObjectives} onChange={(event) => setBusinessObjectives(event.target.value)} rows={5} />
-          </label>
-          <label className="stack-tight">
-            <span className="hint muted">Requested pages (one per line)</span>
-            <textarea value={requestedPages} onChange={(event) => setRequestedPages(event.target.value)} rows={3} />
-          </label>
-          <label className="stack-tight">
-            <span className="hint muted">Must include (one per line)</span>
-            <textarea value={mustInclude} onChange={(event) => setMustInclude(event.target.value)} rows={3} />
-          </label>
-          <label className="stack-tight">
-            <span className="hint muted">Must avoid (one per line)</span>
-            <textarea value={mustAvoid} onChange={(event) => setMustAvoid(event.target.value)} rows={3} />
-          </label>
-          <label className="stack-tight">
-            <span className="hint muted">Tone preferences (one per line)</span>
-            <textarea value={tonePreferences} onChange={(event) => setTonePreferences(event.target.value)} rows={3} />
-          </label>
-          <label className="stack-tight">
-            <span className="hint muted">Calls to action (one per line)</span>
-            <textarea value={callsToAction} onChange={(event) => setCallsToAction(event.target.value)} rows={3} />
-          </label>
+      <div className="panel stack workspace-section-block" data-testid="migration-operator-requirements">
+        <h3>Operator Requirements</h3>
+        <span className="hint muted">
+          Operator Requirements are the source of truth for draft intent. AI suggestion drafts are optional helpers and
+          do not affect draft generation until you move them into the operator field and save requirements.
+        </span>
+        <span className="hint muted">
+          Suggestions use bounded source content, recommendations, audit findings, competitor context, selected media
+          summary, and existing business/site context.
+        </span>
+        <div className="migration-requirement-grid">
+          {requirementFieldConfigs.map((config) => {
+            const suggestionState = requirementSuggestions[config.field] || createEmptyRequirementSuggestionState();
+            const suggestionText = suggestionState.value.trim();
+            const suggestionOpen = suggestionState.open;
+            return (
+              <div
+                key={`migration-requirement-${config.field}`}
+                className="migration-requirement-field"
+                data-testid={`migration-requirement-field-${config.field}`}
+              >
+                <label className="stack-tight">
+                  <span className="hint muted">{config.label}</span>
+                  <textarea
+                    value={config.value}
+                    onChange={(event) => config.onChange(event.target.value)}
+                    rows={config.rows}
+                    data-testid={`migration-requirement-operator-${config.field}`}
+                  />
+                </label>
+                <div className="row-wrap-tight">
+                  <button
+                    type="button"
+                    className="button button-tertiary"
+                    onClick={() => void handleSuggestRequirementField(config.field)}
+                    data-testid={`migration-requirement-suggest-${config.field}`}
+                    disabled={busyAction === "load" || suggestionState.status === "loading"}
+                  >
+                    {suggestionState.status === "loading" ? "Suggesting..." : "Suggest requirement text"}
+                  </button>
+                  <span className="hint muted">
+                    Status: {toRequirementSuggestionStatusLabel(suggestionState.status)}
+                  </span>
+                </div>
+                <details
+                  className="workspace-details-shell migration-requirement-suggestion-shell"
+                  open={suggestionOpen}
+                  onToggle={(event) => {
+                    const open = event.currentTarget.open;
+                    updateRequirementSuggestion(config.field, (current) => ({
+                      ...current,
+                      open,
+                    }));
+                  }}
+                  data-testid={`migration-requirement-scratchpad-details-${config.field}`}
+                >
+                  <summary>AI suggestion draft</summary>
+                  <div className="stack-tight">
+                    <span className="hint muted">
+                      Review or edit this suggestion, then copy, append, or replace the requirement field.
+                    </span>
+                    <textarea
+                      value={suggestionState.value}
+                      onChange={(event) =>
+                        updateRequirementSuggestion(config.field, (current) => ({
+                          ...current,
+                          value: event.target.value,
+                          open: true,
+                        }))
+                      }
+                      rows={4}
+                      placeholder="No suggestion yet. Click Suggest requirement text."
+                      data-testid={`migration-requirement-scratchpad-${config.field}`}
+                    />
+                    {suggestionState.errorMessage ? (
+                      <span
+                        className="hint warning"
+                        data-testid={`migration-requirement-suggestion-error-${config.field}`}
+                      >
+                        {suggestionState.errorMessage}
+                      </span>
+                    ) : null}
+                    {suggestionState.reasonCode ? (
+                      <span
+                        className="hint muted"
+                        data-testid={`migration-requirement-suggestion-reason-${config.field}`}
+                      >
+                        Reason code: {suggestionState.reasonCode}
+                      </span>
+                    ) : null}
+                    {suggestionState.contextSourcesUsed.length > 0 ? (
+                      <span className="hint muted">
+                        Context sources: {suggestionState.contextSourcesUsed.join(", ")}
+                      </span>
+                    ) : null}
+                    <div className="row-wrap-tight">
+                      <button
+                        type="button"
+                        className="button button-secondary"
+                        onClick={() => void handleRequirementSuggestionCopy(config.field)}
+                        data-testid={`migration-requirement-copy-${config.field}`}
+                        disabled={!suggestionText}
+                      >
+                        Copy
+                      </button>
+                      <button
+                        type="button"
+                        className="button button-secondary"
+                        onClick={() => handleRequirementSuggestionAppend(config.field)}
+                        data-testid={`migration-requirement-append-${config.field}`}
+                        disabled={!suggestionText}
+                      >
+                        Append to field
+                      </button>
+                      <button
+                        type="button"
+                        className="button button-secondary"
+                        onClick={() => handleRequirementSuggestionReplace(config.field)}
+                        data-testid={`migration-requirement-replace-${config.field}`}
+                        disabled={!suggestionText}
+                      >
+                        Replace field
+                      </button>
+                      <button
+                        type="button"
+                        className="button button-tertiary"
+                        onClick={() => handleRequirementSuggestionDismiss(config.field)}
+                        data-testid={`migration-requirement-dismiss-${config.field}`}
+                        disabled={!suggestionText && suggestionState.status === "idle"}
+                      >
+                        Dismiss
+                      </button>
+                    </div>
+                  </div>
+                </details>
+              </div>
+            );
+          })}
           <label className="stack-tight">
             <span className="hint muted">Additional requirements notes</span>
             <textarea value={requirementsNotes} onChange={(event) => setRequirementsNotes(event.target.value)} rows={4} />
           </label>
-          <WorkspaceActionBar variant="secondary">
-            <button
-              type="button"
-              className="button button-secondary"
-              onClick={() => void handleSaveRequirements()}
-              disabled={busyAction === "save_requirements" || busyAction === "load"}
-            >
-              {busyAction === "save_requirements" ? "Saving..." : "Save Requirements"}
-            </button>
-          </WorkspaceActionBar>
         </div>
-
-        <div className="panel stack workspace-section-block">
-          <h3>Enriched Replacement Content</h3>
-          <label className="stack-tight">
-            <span className="hint muted">Replacement summary</span>
-            <textarea value={replacementSummary} onChange={(event) => setReplacementSummary(event.target.value)} rows={4} />
-          </label>
-          <label className="stack-tight">
-            <span className="hint muted">Homepage value proposition</span>
-            <textarea
-              value={homepageValueProposition}
-              onChange={(event) => setHomepageValueProposition(event.target.value)}
-              rows={3}
-            />
-          </label>
-          <label className="stack-tight">
-            <span className="hint muted">About business</span>
-            <textarea value={aboutBusiness} onChange={(event) => setAboutBusiness(event.target.value)} rows={3} />
-          </label>
-          <label className="stack-tight">
-            <span className="hint muted">Service highlights (one per line)</span>
-            <textarea value={serviceHighlights} onChange={(event) => setServiceHighlights(event.target.value)} rows={3} />
-          </label>
-          <label className="stack-tight">
-            <span className="hint muted">Trust signals (one per line)</span>
-            <textarea value={trustSignals} onChange={(event) => setTrustSignals(event.target.value)} rows={3} />
-          </label>
-          <label className="stack-tight">
-            <span className="hint muted">FAQ items (one per line)</span>
-            <textarea value={faqItems} onChange={(event) => setFaqItems(event.target.value)} rows={3} />
-          </label>
-          <label className="stack-tight">
-            <span className="hint muted">Contact overrides (`key=value` per line)</span>
-            <textarea value={contactOverrides} onChange={(event) => setContactOverrides(event.target.value)} rows={3} />
-          </label>
-          <label className="stack-tight">
-            <span className="hint muted">Additional enriched notes</span>
-            <textarea value={enrichedNotes} onChange={(event) => setEnrichedNotes(event.target.value)} rows={4} />
-          </label>
-          <WorkspaceActionBar variant="secondary">
-            <button
-              type="button"
-              className="button button-secondary"
-              onClick={() => void handleSaveEnrichedContent()}
-              disabled={busyAction === "save_enriched" || busyAction === "load"}
-            >
-              {busyAction === "save_enriched" ? "Saving..." : "Save Enriched Content"}
-            </button>
-          </WorkspaceActionBar>
-        </div>
+        <WorkspaceActionBar variant="secondary">
+          <button
+            type="button"
+            className="button button-secondary"
+            onClick={() => void handleSaveRequirements()}
+            disabled={busyAction === "save_requirements" || busyAction === "load"}
+          >
+            {busyAction === "save_requirements" ? "Saving..." : "Save Requirements"}
+          </button>
+        </WorkspaceActionBar>
       </div>
 
       <div className="panel stack workspace-section-block" data-testid="migration-reused-context">

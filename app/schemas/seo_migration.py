@@ -221,6 +221,25 @@ class SEOMigrationRequirementsUpdateRequest(BaseModel):
     operator_requirements: SEOMigrationOperatorRequirements
 
 
+class SEOMigrationRequirementsSuggestionRequest(BaseModel):
+    field: str
+    current_value: str | list[str] | None = None
+    force_refresh: bool = False
+
+    @field_validator("field", mode="before")
+    @classmethod
+    def _normalize_field(cls, value: object) -> str:
+        normalized = _normalize_optional_text(value, max_length=80)
+        return (normalized or "").lower()
+
+    @field_validator("current_value", mode="before")
+    @classmethod
+    def _normalize_current_value(cls, value: object) -> str | list[str] | None:
+        if isinstance(value, list):
+            return _normalize_string_list(value, max_items=20, max_item_length=240)
+        return _normalize_optional_text(value, max_length=5000)
+
+
 class SEOMigrationEnrichedContentUpdateRequest(BaseModel):
     enriched_content_notes: SEOMigrationEnrichedContentNotes
 
@@ -301,6 +320,16 @@ class SEOMigrationDraftReadinessRead(BaseModel):
     media_requirement_satisfied: bool = True
     media_requirement_warning_reason: str | None = None
     operator_action: str
+
+
+class SEOMigrationRequirementsSuggestionRead(BaseModel):
+    field: str
+    suggestion_status: str
+    suggested_value: str | list[str] | None = None
+    reason_code: str
+    context_sources_used: list[str] = Field(default_factory=list)
+    retryable: bool = False
+    generated_at: str | None = None
 
 
 class SEOMigrationMediaAssetUpdateRequest(BaseModel):

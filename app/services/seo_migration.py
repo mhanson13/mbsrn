@@ -523,23 +523,39 @@ _DRAFT_PROVIDER_COMPAT_REASON_CODES = {
     "unknown_provider_capability",
 }
 
-_DRAFT_READINESS_SCORE_SOURCE_SITE = 15
-_DRAFT_READINESS_SCORE_OPERATOR_REQUIREMENTS = 25
-_DRAFT_READINESS_SCORE_ENRICHED_CONTENT = 25
-_DRAFT_READINESS_SCORE_AUDIT = 10
-_DRAFT_READINESS_SCORE_RECOMMENDATIONS = 10
+_DRAFT_READINESS_SCORE_SOURCE_SITE = 20
+_DRAFT_READINESS_SCORE_OPERATOR_REQUIREMENTS = 35
+_DRAFT_READINESS_SCORE_AUDIT = 15
+_DRAFT_READINESS_SCORE_RECOMMENDATIONS = 15
 _DRAFT_READINESS_SCORE_COMPETITORS = 10
 _DRAFT_READINESS_COMPLETENESS_BONUS = 5
 
 _DRAFT_READINESS_REASON_SOURCE_REQUIRED = "source_site_ingest_required"
 _DRAFT_READINESS_REASON_OPERATOR_REQUIRED = "operator_requirements_required"
-_DRAFT_READINESS_REASON_ENRICHED_REQUIRED = "enriched_content_required"
 _DRAFT_READINESS_REASON_PROVIDER_CONFIG_REQUIRED = "provider_config_missing"
 _DRAFT_READINESS_REASON_AUDIT_UNAVAILABLE = "audit_context_unavailable"
 _DRAFT_READINESS_REASON_RECOMMENDATIONS_UNAVAILABLE = "recommendations_context_unavailable"
 _DRAFT_READINESS_REASON_COMPETITORS_UNAVAILABLE = "competitors_context_unavailable"
 _DRAFT_READINESS_REASON_ENRICHED_SPARSE = "enriched_content_sparse"
 _DRAFT_READINESS_REASON_MEDIA_REQUIRED_NOT_SELECTED = "media_required_but_not_selected"
+_REQUIREMENTS_SUGGESTION_SUPPORTED_FIELDS = {
+    "business_objectives",
+    "requested_pages",
+    "must_include",
+    "must_avoid",
+    "tone",
+    "calls_to_action",
+}
+_REQUIREMENTS_SUGGESTION_STATUS_COMPLETED = "completed"
+_REQUIREMENTS_SUGGESTION_STATUS_FAILED = "failed"
+_REQUIREMENTS_SUGGESTION_STATUS_NOT_AVAILABLE = "not_available"
+_REQUIREMENTS_SUGGESTION_REASON_COMPLETED = "requirements_suggestion_completed"
+_REQUIREMENTS_SUGGESTION_REASON_NOT_AVAILABLE = "requirements_suggestion_not_available"
+_REQUIREMENTS_SUGGESTION_REASON_PROVIDER_UNAVAILABLE = "requirements_suggestion_provider_unavailable"
+_REQUIREMENTS_SUGGESTION_REASON_PROVIDER_INVALID = "requirements_suggestion_provider_invalid"
+_REQUIREMENTS_SUGGESTION_REASON_CONTEXT_UNAVAILABLE = "requirements_suggestion_context_unavailable"
+_REQUIREMENTS_SUGGESTION_REASON_FIELD_UNSUPPORTED = "requirements_suggestion_field_unsupported"
+_REQUIREMENTS_SUGGESTION_REASON_BUDGET_REJECTED = "requirements_suggestion_budget_rejected"
 _MEDIA_REQUIREMENT_HINTS = (
     "real project photo",
     "real project photos",
@@ -2097,6 +2113,587 @@ class SEOMigrationService:
         self.session.commit()
         self.session.refresh(workspace)
         return workspace
+
+    def suggest_operator_requirement_field(
+        self,
+        *,
+        business_id: str,
+        site_id: str,
+        field: str,
+        current_value: object,
+        force_refresh: bool,
+        principal_id: str | None,
+    ) -> dict[str, object]:
+        del force_refresh
+        del principal_id
+        workspace = self.get_workspace(business_id=business_id, site_id=site_id)
+        site = self._require_site(business_id=business_id, site_id=site_id)
+        normalized_field = (_normalize_string(field, max_length=80) or "").lower()
+        if normalized_field not in _REQUIREMENTS_SUGGESTION_SUPPORTED_FIELDS:
+            return {
+                "field": normalized_field or "unsupported",
+                "suggestion_status": _REQUIREMENTS_SUGGESTION_STATUS_NOT_AVAILABLE,
+                "suggested_value": None,
+                "reason_code": _REQUIREMENTS_SUGGESTION_REASON_FIELD_UNSUPPORTED,
+                "context_sources_used": [],
+                "retryable": False,
+                "generated_at": None,
+            }
+
+        normalized_current_value: str | list[str] | None
+        if isinstance(current_value, list):
+            normalized_current_value = _normalize_string_list(
+                current_value,
+                max_items=20,
+                max_item_length=240,
+            )
+        else:
+            normalized_current_value = _normalize_string(current_value, max_length=5000)
+
+        try:
+            context_json, context_summary = self._assemble_context(site=site, workspace=workspace)
+        except Exception:  # noqa: BLE001
+            return {
+                "field": normalized_field,
+                "suggestion_status": _REQUIREMENTS_SUGGESTION_STATUS_FAILED,
+                "suggested_value": None,
+                "reason_code": _REQUIREMENTS_SUGGESTION_REASON_CONTEXT_UNAVAILABLE,
+                "context_sources_used": [],
+                "retryable": True,
+                "generated_at": None,
+            }
+
+        media_assets_payload = self._collect_workspace_media_assets(workspace=workspace)
+        suggestion_context, context_sources_used = self._build_requirement_suggestion_context(
+            field=normalized_field,
+            site=site,
+            workspace=workspace,
+            context_json=context_json,
+            context_summary=context_summary,
+            media_assets_payload=media_assets_payload,
+        )
+
+        try:
+            suggestion_value = self._request_requirement_field_suggestion(
+                field=normalized_field,
+                current_value=normalized_current_value,
+                suggestion_context=suggestion_context,
+            )
+        except SEOMigrationValidationError as exc:
+            error_code = _normalize_string(exc.error_code, max_length=80) or ""
+            reason_code = (
+                error_code
+                if error_code
+                in {
+                    _REQUIREMENTS_SUGGESTION_REASON_NOT_AVAILABLE,
+                    _REQUIREMENTS_SUGGESTION_REASON_PROVIDER_UNAVAILABLE,
+                    _REQUIREMENTS_SUGGESTION_REASON_PROVIDER_INVALID,
+                    _REQUIREMENTS_SUGGESTION_REASON_CONTEXT_UNAVAILABLE,
+                    _REQUIREMENTS_SUGGESTION_REASON_FIELD_UNSUPPORTED,
+                    _REQUIREMENTS_SUGGESTION_REASON_BUDGET_REJECTED,
+                }
+                else _REQUIREMENTS_SUGGESTION_REASON_PROVIDER_UNAVAILABLE
+            )
+            status_value = (
+                _REQUIREMENTS_SUGGESTION_STATUS_NOT_AVAILABLE
+                if reason_code
+                in {
+                    _REQUIREMENTS_SUGGESTION_REASON_NOT_AVAILABLE,
+                    _REQUIREMENTS_SUGGESTION_REASON_FIELD_UNSUPPORTED,
+                    _REQUIREMENTS_SUGGESTION_REASON_BUDGET_REJECTED,
+                }
+                else _REQUIREMENTS_SUGGESTION_STATUS_FAILED
+            )
+            return {
+                "field": normalized_field,
+                "suggestion_status": status_value,
+                "suggested_value": None,
+                "reason_code": reason_code,
+                "context_sources_used": context_sources_used,
+                "retryable": bool(exc.retryable),
+                "generated_at": None,
+            }
+
+        normalized_suggestion_value = self._normalize_requirement_suggestion_value(
+            field=normalized_field,
+            value=suggestion_value,
+        )
+        if normalized_suggestion_value is None:
+            return {
+                "field": normalized_field,
+                "suggestion_status": _REQUIREMENTS_SUGGESTION_STATUS_NOT_AVAILABLE,
+                "suggested_value": None,
+                "reason_code": _REQUIREMENTS_SUGGESTION_REASON_NOT_AVAILABLE,
+                "context_sources_used": context_sources_used,
+                "retryable": False,
+                "generated_at": None,
+            }
+        return {
+            "field": normalized_field,
+            "suggestion_status": _REQUIREMENTS_SUGGESTION_STATUS_COMPLETED,
+            "suggested_value": normalized_suggestion_value,
+            "reason_code": _REQUIREMENTS_SUGGESTION_REASON_COMPLETED,
+            "context_sources_used": context_sources_used,
+            "retryable": False,
+            "generated_at": utc_now().isoformat(),
+        }
+
+    def _build_requirement_suggestion_context(
+        self,
+        *,
+        field: str,
+        site: SEOSite,
+        workspace: SEOMigrationWorkspace,
+        context_json: dict[str, object],
+        context_summary: dict[str, object],
+        media_assets_payload: dict[str, object],
+    ) -> tuple[dict[str, object], list[str]]:
+        source_snapshot = _normalize_json_dict(context_json.get("source_snapshot"))
+        operator_requirements = _normalize_json_dict(workspace.operator_requirements_json)
+        enriched_notes = _normalize_json_dict(workspace.enriched_content_notes_json)
+        brand_business_facts = _normalize_json_dict(context_json.get("brand_business_facts_snapshot"))
+        draft_input_summary = _normalize_json_dict(context_summary.get("draft_input_summary"))
+        existing_context_summaries = _normalize_json_dict(context_json.get("existing_context_summaries"))
+        recommendation_summary = _normalize_json_dict(existing_context_summaries.get("recommendation_summary"))
+        audit_summary = _normalize_json_dict(existing_context_summaries.get("audit_summary"))
+        competitor_summary = _normalize_json_dict(existing_context_summaries.get("competitor_summary"))
+
+        recommendation_titles = _normalize_string_list(
+            draft_input_summary.get("top_recommendation_titles"),
+            max_items=6,
+            max_item_length=180,
+        )
+        recommendation_categories = _normalize_string_list(
+            draft_input_summary.get("recommendation_categories_included"),
+            max_items=6,
+            max_item_length=80,
+        )
+        audit_findings: list[str] = []
+        for item in _coerce_object_list(audit_summary.get("top_issues"), max_items=6):
+            issue_record = _normalize_json_dict(item)
+            issue_text = (
+                _normalize_string(issue_record.get("title"), max_length=220)
+                or _normalize_string(issue_record.get("issue"), max_length=220)
+                or _normalize_string(issue_record.get("summary"), max_length=220)
+            )
+            if issue_text:
+                audit_findings.append(issue_text)
+        competitor_highlights: list[str] = []
+        for item in _coerce_object_list(competitor_summary.get("top_gaps"), max_items=6):
+            gap_record = _normalize_json_dict(item)
+            gap_text = (
+                _normalize_string(gap_record.get("title"), max_length=220)
+                or _normalize_string(gap_record.get("gap"), max_length=220)
+                or _normalize_string(gap_record.get("summary"), max_length=220)
+            )
+            if gap_text:
+                competitor_highlights.append(gap_text)
+        media_categories = _collect_media_categories(
+            _normalize_media_asset_list(media_assets_payload.get("selected_assets"), max_items=24),
+            max_items=8,
+        )
+        selected_media_count = max(0, int(media_assets_payload.get("selected_assets_count") or 0))
+        selected_usable_media_count = max(
+            0,
+            int(media_assets_payload.get("selected_usable_assets_count") or 0),
+        )
+        context_sources_used: list[str] = []
+        if source_snapshot:
+            context_sources_used.append("source_snapshot")
+        if operator_requirements:
+            context_sources_used.append("operator_requirements")
+        if recommendation_titles or recommendation_categories or recommendation_summary:
+            context_sources_used.append("recommendations_summary")
+        if audit_findings or audit_summary:
+            context_sources_used.append("audit_summary")
+        if competitor_highlights or competitor_summary:
+            context_sources_used.append("competitor_summary")
+        if selected_media_count > 0 or media_categories:
+            context_sources_used.append("selected_media_summary")
+        if enriched_notes:
+            context_sources_used.append("enriched_supporting")
+        if brand_business_facts:
+            context_sources_used.append("business_site_context")
+
+        suggestion_context: dict[str, object] = {
+            "field": field,
+            "site": {
+                "site_id": site.id,
+                "display_name": _normalize_string(site.display_name, max_length=120),
+                "normalized_domain": _normalize_string(site.normalized_domain, max_length=255),
+                "industry": _normalize_string(site.industry, max_length=160),
+                "primary_location": _normalize_string(site.primary_location, max_length=160),
+                "service_areas": _normalize_string_list(site.service_areas_json, max_items=8, max_item_length=120),
+            },
+            "source_snapshot": {
+                "title": _normalize_string(source_snapshot.get("title"), max_length=220),
+                "meta_description": _normalize_string(source_snapshot.get("meta_description"), max_length=600),
+                "headings": _normalize_string_list(source_snapshot.get("headings"), max_items=12, max_item_length=180),
+                "service_blocks": _normalize_string_list(
+                    source_snapshot.get("service_blocks"),
+                    max_items=8,
+                    max_item_length=180,
+                ),
+            },
+            "operator_requirements": {
+                "business_objectives": _normalize_string_list(
+                    operator_requirements.get("business_objectives"),
+                    max_items=12,
+                    max_item_length=220,
+                ),
+                "requested_pages": _normalize_string_list(
+                    operator_requirements.get("requested_pages"),
+                    max_items=12,
+                    max_item_length=220,
+                ),
+                "must_include": _normalize_string_list(
+                    operator_requirements.get("must_include"),
+                    max_items=12,
+                    max_item_length=220,
+                ),
+                "must_avoid": _normalize_string_list(
+                    operator_requirements.get("must_avoid"),
+                    max_items=12,
+                    max_item_length=220,
+                ),
+                "tone_preferences": _normalize_string_list(
+                    operator_requirements.get("tone_preferences"),
+                    max_items=12,
+                    max_item_length=220,
+                ),
+                "calls_to_action": _normalize_string_list(
+                    operator_requirements.get("calls_to_action"),
+                    max_items=12,
+                    max_item_length=220,
+                ),
+                "additional_notes": _normalize_string(operator_requirements.get("additional_notes"), max_length=1200),
+            },
+            "recommendations": {
+                "top_titles": recommendation_titles,
+                "categories": recommendation_categories,
+            },
+            "audit": {
+                "overall_health_summary": _normalize_string(
+                    audit_summary.get("overall_health_summary"),
+                    max_length=500,
+                ),
+                "top_findings": audit_findings,
+            },
+            "competitors": {
+                "overall_gap_summary": _normalize_string(
+                    competitor_summary.get("overall_gap_summary"),
+                    max_length=500,
+                ),
+                "top_gaps": competitor_highlights,
+            },
+            "selected_media_summary": {
+                "selected_media_count": selected_media_count,
+                "selected_usable_media_count": selected_usable_media_count,
+                "categories": media_categories,
+            },
+            "enriched_supporting": {
+                "replacement_summary": _normalize_string(enriched_notes.get("replacement_summary"), max_length=600),
+                "homepage_value_proposition": _normalize_string(
+                    enriched_notes.get("homepage_value_proposition"),
+                    max_length=600,
+                ),
+                "about_business": _normalize_string(enriched_notes.get("about_business"), max_length=600),
+                "service_highlights": _normalize_string_list(
+                    enriched_notes.get("service_highlights"),
+                    max_items=10,
+                    max_item_length=220,
+                ),
+                "trust_signals": _normalize_string_list(
+                    enriched_notes.get("trust_signals"),
+                    max_items=10,
+                    max_item_length=220,
+                ),
+                "faq_items": _normalize_string_list(
+                    enriched_notes.get("faq_items"),
+                    max_items=8,
+                    max_item_length=220,
+                ),
+                "additional_notes": _normalize_string(enriched_notes.get("additional_notes"), max_length=800),
+            },
+            "business_site_context": {
+                "display_name": _normalize_string(brand_business_facts.get("display_name"), max_length=160),
+                "industry": _normalize_string(brand_business_facts.get("industry"), max_length=160),
+                "primary_location": _normalize_string(brand_business_facts.get("primary_location"), max_length=160),
+            },
+        }
+        return suggestion_context, context_sources_used[:8]
+
+    def _request_requirement_field_suggestion(
+        self,
+        *,
+        field: str,
+        current_value: str | list[str] | None,
+        suggestion_context: dict[str, object],
+    ) -> object:
+        provider_name = (_normalize_string(self.provider_name, max_length=64) or "").lower()
+        if provider_name.startswith("mock"):
+            return self._build_mock_requirement_field_suggestion(
+                field=field,
+                current_value=current_value,
+                suggestion_context=suggestion_context,
+            )
+        if provider_name != "openai":
+            raise SEOMigrationValidationError(
+                "Requirement suggestion is not available for this provider.",
+                failure_category="config_missing",
+                failure_reason="unsupported_configuration",
+                error_code=_REQUIREMENTS_SUGGESTION_REASON_NOT_AVAILABLE,
+                retryable=False,
+            )
+        return self._request_openai_requirement_field_suggestion(
+            field=field,
+            current_value=current_value,
+            suggestion_context=suggestion_context,
+        )
+
+    def _request_openai_requirement_field_suggestion(
+        self,
+        *,
+        field: str,
+        current_value: str | list[str] | None,
+        suggestion_context: dict[str, object],
+    ) -> object:
+        api_key = _normalize_string(getattr(self.artifact_provider, "api_key", None), max_length=300)
+        api_base_url = _normalize_string(getattr(self.artifact_provider, "api_base_url", None), max_length=300)
+        model_name = _normalize_string(getattr(self.artifact_provider, "model_name", None), max_length=128) or _normalize_string(
+            self.provider_model_name,
+            max_length=128,
+        )
+        timeout_seconds_raw = getattr(self.artifact_provider, "timeout_seconds", None)
+        timeout_seconds = max(1, int(timeout_seconds_raw)) if isinstance(timeout_seconds_raw, int) else 30
+        if api_key is None:
+            raise SEOMigrationValidationError(
+                "AI provider credentials are unavailable for requirement suggestion.",
+                failure_category="config_missing",
+                failure_reason="unsupported_configuration",
+                error_code=_REQUIREMENTS_SUGGESTION_REASON_PROVIDER_UNAVAILABLE,
+                retryable=False,
+            )
+        if api_base_url is None:
+            api_base_url = "https://api.openai.com/v1"
+        if model_name is None:
+            model_name = "gpt-4o-mini"
+
+        schema = {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "suggested_value": {
+                    "type": ["array", "string", "null"],
+                    "items": {"type": "string"},
+                }
+            },
+            "required": ["suggested_value"],
+        }
+        user_payload = {
+            "field": field,
+            "current_value": current_value,
+            "suggestion_context": suggestion_context,
+        }
+        payload = {
+            "model": model_name,
+            "input": [
+                {
+                    "role": "system",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": (
+                                "You draft bounded requirement text for SMB website migration operators. "
+                                "Use the provided context only. Keep output concise and practical. "
+                                "Return only schema-valid JSON and never include secrets."
+                            ),
+                        }
+                    ],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": (
+                                "Suggest operator-owned requirement text for one field. "
+                                "Do not reference hidden infrastructure details. "
+                                "Return useful short list items the operator can edit.\n"
+                                f"{json.dumps(user_payload, ensure_ascii=True, separators=(',', ':'))}"
+                            ),
+                        }
+                    ],
+                },
+            ],
+            "text": {
+                "format": {
+                    "type": "json_schema",
+                    "name": "seo_migration_requirement_suggestion",
+                    "schema": schema,
+                    "strict": True,
+                }
+            },
+        }
+        body = json.dumps(payload, ensure_ascii=True).encode("utf-8")
+        request = urllib.request.Request(
+            url=api_base_url.rstrip("/") + "/responses",
+            data=body,
+            method="POST",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+        )
+        try:
+            execution_response = execute_json_request(
+                request=request,
+                policy=AIExecutionPolicy(
+                    feature_area="migration_requirements_suggestion",
+                    timeout_seconds=timeout_seconds,
+                    max_attempts=1,
+                    max_input_size=120_000,
+                ),
+            )
+        except AIExecutionError as exc:
+            reason_code = _REQUIREMENTS_SUGGESTION_REASON_PROVIDER_UNAVAILABLE
+            if exc.normalized_failure.reason == "request_too_large":
+                reason_code = _REQUIREMENTS_SUGGESTION_REASON_BUDGET_REJECTED
+            elif exc.normalized_failure.reason in {"response_malformed"}:
+                reason_code = _REQUIREMENTS_SUGGESTION_REASON_PROVIDER_INVALID
+            raise SEOMigrationValidationError(
+                "Requirement suggestion provider request failed.",
+                failure_category="provider_error",
+                failure_reason="unknown",
+                error_code=reason_code,
+                retryable=bool(exc.normalized_failure.retryable),
+            ) from exc
+        try:
+            response_json = json.loads(execution_response.body_text)
+        except json.JSONDecodeError as exc:
+            raise SEOMigrationValidationError(
+                "Requirement suggestion response could not be parsed.",
+                failure_category="provider_error",
+                failure_reason="unknown",
+                error_code=_REQUIREMENTS_SUGGESTION_REASON_PROVIDER_INVALID,
+                retryable=True,
+            ) from exc
+        if not isinstance(response_json, dict):
+            raise SEOMigrationValidationError(
+                "Requirement suggestion response was invalid.",
+                failure_category="provider_error",
+                failure_reason="unknown",
+                error_code=_REQUIREMENTS_SUGGESTION_REASON_PROVIDER_INVALID,
+                retryable=True,
+            )
+        output_text = _extract_responses_output_text(response_json)
+        if output_text is None:
+            raise SEOMigrationValidationError(
+                "Requirement suggestion output was empty.",
+                failure_category="provider_error",
+                failure_reason="unknown",
+                error_code=_REQUIREMENTS_SUGGESTION_REASON_PROVIDER_INVALID,
+                retryable=True,
+            )
+        try:
+            suggestion_payload = json.loads(output_text)
+        except json.JSONDecodeError as exc:
+            raise SEOMigrationValidationError(
+                "Requirement suggestion output could not be parsed.",
+                failure_category="provider_error",
+                failure_reason="unknown",
+                error_code=_REQUIREMENTS_SUGGESTION_REASON_PROVIDER_INVALID,
+                retryable=True,
+            ) from exc
+        if not isinstance(suggestion_payload, dict):
+            raise SEOMigrationValidationError(
+                "Requirement suggestion output was invalid.",
+                failure_category="provider_error",
+                failure_reason="unknown",
+                error_code=_REQUIREMENTS_SUGGESTION_REASON_PROVIDER_INVALID,
+                retryable=True,
+            )
+        return suggestion_payload.get("suggested_value")
+
+    def _build_mock_requirement_field_suggestion(
+        self,
+        *,
+        field: str,
+        current_value: str | list[str] | None,
+        suggestion_context: dict[str, object],
+    ) -> list[str]:
+        del current_value
+        site_context = _normalize_json_dict(suggestion_context.get("site"))
+        source_context = _normalize_json_dict(suggestion_context.get("source_snapshot"))
+        recommendation_context = _normalize_json_dict(suggestion_context.get("recommendations"))
+        media_context = _normalize_json_dict(suggestion_context.get("selected_media_summary"))
+        industry = _normalize_string(site_context.get("industry"), max_length=120) or "local service"
+        location = _normalize_string(site_context.get("primary_location"), max_length=120)
+        top_heading = _normalize_string_list(source_context.get("headings"), max_items=1, max_item_length=120)
+        top_recommendation = _normalize_string_list(
+            recommendation_context.get("top_titles"),
+            max_items=1,
+            max_item_length=120,
+        )
+        media_category = _normalize_string_list(media_context.get("categories"), max_items=1, max_item_length=80)
+        if field == "business_objectives":
+            return [
+                f"Clarify the {industry} value proposition for high-intent visitors.",
+                (
+                    f"Increase qualified quote requests from {location} visitors."
+                    if location
+                    else "Increase qualified quote requests from website visitors."
+                ),
+                (
+                    f"Address priority SEO theme: {top_recommendation[0]}."
+                    if top_recommendation
+                    else "Strengthen trust and conversion messaging across key pages."
+                ),
+            ]
+        if field == "requested_pages":
+            return ["Homepage", "Services", "About", "Contact"]
+        if field == "must_include":
+            lines = [
+                "Clear service areas and response expectations.",
+                "Trust proof: licenses, certifications, and customer outcomes.",
+            ]
+            if top_heading:
+                lines.append(f"Preserve useful source intent from heading: {top_heading[0]}.")
+            return lines
+        if field == "must_avoid":
+            return [
+                "Avoid unverifiable superlatives or compliance claims.",
+                "Avoid keyword stuffing and duplicate paragraph blocks.",
+            ]
+        if field == "tone":
+            return [
+                "Clear, practical, and confidence-building.",
+                "Professional and local-service oriented.",
+            ]
+        if field == "calls_to_action":
+            lines = ["Request a Quote", "Schedule Service"]
+            if media_category:
+                lines.append(f"View {media_category[0].replace('_', ' ')} examples")
+            return lines
+        return []
+
+    def _normalize_requirement_suggestion_value(self, *, field: str, value: object) -> list[str] | str | None:
+        if field not in _REQUIREMENTS_SUGGESTION_SUPPORTED_FIELDS:
+            return None
+        if isinstance(value, list):
+            normalized_list = _normalize_string_list(value, max_items=12, max_item_length=220)
+            return normalized_list or None
+        normalized_text = _normalize_string(value, max_length=5000)
+        if normalized_text is None:
+            return None
+        split_items = _normalize_string_list(
+            [part.strip() for part in normalized_text.split("\n") if part.strip()],
+            max_items=12,
+            max_item_length=220,
+        )
+        if split_items:
+            return split_items
+        return None
 
     def update_enriched_content_notes(
         self,
@@ -10955,14 +11552,6 @@ class SEOMigrationService:
                     message="Add operator requirements before generating a draft.",
                 )
             )
-        if not signals["enriched_content_present"]:
-            blocking_reasons.append(
-                SEOMigrationDraftReadinessReason(
-                    code=_DRAFT_READINESS_REASON_ENRICHED_REQUIRED,
-                    severity="blocking",
-                    message="Add enriched replacement content notes before generating a draft.",
-                )
-            )
         if not signals["draft_provider_configured"]:
             blocking_reasons.append(
                 SEOMigrationDraftReadinessReason(
@@ -11023,8 +11612,6 @@ class SEOMigrationService:
             score += _DRAFT_READINESS_SCORE_SOURCE_SITE
         if signals["operator_requirements_present"]:
             score += _DRAFT_READINESS_SCORE_OPERATOR_REQUIREMENTS
-        if signals["enriched_content_present"]:
-            score += _DRAFT_READINESS_SCORE_ENRICHED_CONTENT
         if signals["audit_available"]:
             score += _DRAFT_READINESS_SCORE_AUDIT
         if signals["recommendations_available"]:
@@ -11034,7 +11621,6 @@ class SEOMigrationService:
         if (
             signals["source_site_ingested"]
             and signals["operator_requirements_present"]
-            and signals["enriched_content_present"]
             and signals["audit_available"]
             and signals["recommendations_available"]
             and signals["competitors_available"]
@@ -11111,13 +11697,8 @@ class SEOMigrationService:
         blocking = set(blocking_codes)
         if (
             _DRAFT_READINESS_REASON_OPERATOR_REQUIRED in blocking
-            and _DRAFT_READINESS_REASON_ENRICHED_REQUIRED in blocking
         ):
-            return "Not ready yet — add operator requirements and enriched replacement content first."
-        if _DRAFT_READINESS_REASON_OPERATOR_REQUIRED in blocking:
             return "Not ready yet — add operator requirements first."
-        if _DRAFT_READINESS_REASON_ENRICHED_REQUIRED in blocking:
-            return "Not ready yet — add enriched replacement content first."
         if _DRAFT_READINESS_REASON_SOURCE_REQUIRED in blocking:
             return "Not ready yet — run source ingest first."
         if _DRAFT_READINESS_REASON_PROVIDER_CONFIG_REQUIRED in blocking:
@@ -12361,6 +12942,9 @@ class SEOMigrationService:
             "operator_requirements_included": bool(operator_requirements) or bool(
                 context_summary.get("has_operator_requirements")
             ),
+            "requirement_suggestions_available_count": 0,
+            "requirement_suggestions_applied_count": 0,
+            "context_sources_used_for_requirement_suggestions": [],
             "enriched_business_context_included": bool(enriched_notes) or bool(business_facts),
             "audit_findings_included_count": max(0, int(audit_findings_count)),
             "source_site_images_discovered_count": max(

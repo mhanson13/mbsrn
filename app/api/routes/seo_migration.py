@@ -34,6 +34,8 @@ from app.schemas.seo_migration import (
     SEOMigrationPublishActionRead,
     SEOMigrationPublishConfigUpdateRequest,
     SEOMigrationPublishRequest,
+    SEOMigrationRequirementsSuggestionRead,
+    SEOMigrationRequirementsSuggestionRequest,
     SEOMigrationRepositoryAdoptActionRead,
     SEOMigrationPromptPreviewRead,
     SEOMigrationRequirementsUpdateRequest,
@@ -575,6 +577,37 @@ def update_seo_migration_operator_requirements(
     except SEOMigrationNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     return _to_workspace_read(workspace)
+
+
+@router.post(
+    "/sites/{site_id}/migration/requirements/suggest",
+    response_model=SEOMigrationRequirementsSuggestionRead,
+)
+def suggest_seo_migration_requirements_field(
+    business_id: str,
+    site_id: str,
+    payload: SEOMigrationRequirementsSuggestionRequest,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    migration_service: SEOMigrationService = Depends(get_seo_migration_service),
+) -> SEOMigrationRequirementsSuggestionRead:
+    scoped_business_id = resolve_tenant_business_id(
+        tenant_context=tenant_context,
+        requested_business_id=business_id,
+    )
+    try:
+        suggestion_payload = migration_service.suggest_operator_requirement_field(
+            business_id=scoped_business_id,
+            site_id=site_id,
+            field=payload.field,
+            current_value=payload.current_value,
+            force_refresh=payload.force_refresh,
+            principal_id=tenant_context.principal_id,
+        )
+    except SEOMigrationNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except SEOMigrationValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=_validation_error_detail(exc)) from exc
+    return SEOMigrationRequirementsSuggestionRead.model_validate(suggestion_payload)
 
 
 @router.put("/sites/{site_id}/migration/enriched-content", response_model=SEOMigrationWorkspaceRead)

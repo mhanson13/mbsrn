@@ -853,6 +853,105 @@ def _prepare_workspace_for_draft_generation(client: TestClient, *, business_id: 
     assert enriched_response.status_code == 200
 
 
+def test_requirements_suggestion_endpoint_returns_completed_payload_for_supported_fields(db_session) -> None:
+    business_id = "11111111-1111-1111-1111-111111111111"
+    site_id = "22222222-2222-2222-2222-222222222222"
+    _seed_business_and_site(db_session, business_id=business_id, site_id=site_id)
+    client = _make_client(db_session, business_id=business_id)
+    workspace_response = client.put(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/workspace",
+        json={"source_url": "https://legacy.example"},
+    )
+    assert workspace_response.status_code == 200
+    _prepare_workspace_for_draft_generation(client, business_id=business_id, site_id=site_id)
+
+    response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/requirements/suggest",
+        json={
+            "field": "must_include",
+            "current_value": ["Include emergency response coverage"],
+            "force_refresh": False,
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload.get("field") == "must_include"
+    assert payload.get("suggestion_status") == "completed"
+    assert payload.get("reason_code") == "requirements_suggestion_completed"
+    assert isinstance(payload.get("suggested_value"), list)
+    assert payload.get("retryable") is False
+    assert isinstance(payload.get("context_sources_used"), list)
+    payload_json = json.dumps(payload).lower()
+    assert "database_url" not in payload_json
+    assert "storage_key" not in payload_json
+    assert "raw_token" not in payload_json
+    assert "image_base64" not in payload_json
+
+
+def test_requirements_suggestion_endpoint_returns_not_available_for_unsupported_fields(db_session) -> None:
+    business_id = "11111111-1111-1111-1111-111111111111"
+    site_id = "22222222-2222-2222-2222-222222222222"
+    _seed_business_and_site(db_session, business_id=business_id, site_id=site_id)
+    client = _make_client(db_session, business_id=business_id)
+    workspace_response = client.put(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/workspace",
+        json={"source_url": "https://legacy.example"},
+    )
+    assert workspace_response.status_code == 200
+    _prepare_workspace_for_draft_generation(client, business_id=business_id, site_id=site_id)
+
+    response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/requirements/suggest",
+        json={
+            "field": "unsupported_field",
+            "current_value": None,
+            "force_refresh": False,
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload.get("suggestion_status") == "not_available"
+    assert payload.get("suggested_value") is None
+    assert payload.get("reason_code") == "requirements_suggestion_field_unsupported"
+
+
+def test_requirements_suggestion_endpoint_maps_provider_unavailable_without_google_dependency(db_session) -> None:
+    business_id = "11111111-1111-1111-1111-111111111111"
+    site_id = "22222222-2222-2222-2222-222222222222"
+    _seed_business_and_site(db_session, business_id=business_id, site_id=site_id)
+    provider = MockSEOMigrationArtifactGenerationProvider(
+        provider_name="openai",
+        model_name="gpt-4o-mini",
+        prompt_version="seo-migration-v1",
+    )
+    client = _make_client(
+        db_session,
+        business_id=business_id,
+        artifact_provider=provider,
+    )
+    workspace_response = client.put(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/workspace",
+        json={"source_url": "https://legacy.example"},
+    )
+    assert workspace_response.status_code == 200
+    _prepare_workspace_for_draft_generation(client, business_id=business_id, site_id=site_id)
+
+    response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/requirements/suggest",
+        json={
+            "field": "tone",
+            "current_value": ["Clear and practical"],
+            "force_refresh": False,
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload.get("field") == "tone"
+    assert payload.get("suggestion_status") == "failed"
+    assert payload.get("suggested_value") is None
+    assert payload.get("reason_code") == "requirements_suggestion_provider_unavailable"
+
+
 def test_migration_api_happy_path_workflow(db_session) -> None:
     business_id = "11111111-1111-1111-1111-111111111111"
     site_id = "22222222-2222-2222-2222-222222222222"
