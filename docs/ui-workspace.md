@@ -53,8 +53,8 @@ The dedicated migration route (`/sites/[site_id]/migration`) keeps primary opera
   - source ingest action + source snapshot summary
   - operator requirements (source of truth) + optional AI suggestion drafts
 - B. Media / Images (single source of truth for media):
-  - discovered/imported/uploaded/selected media state
-  - media counts and media actions
+  - Site Images state (`Discovered Source Images`, `Imported Images`, `Uploaded Images`, `Selected Images`)
+  - image counts and image actions
   - media-required readiness cue
 - C. Draft Readiness + Generate:
   - readiness summary + generate action
@@ -171,21 +171,41 @@ Draft-generate error envelope (422 detail) fields surfaced in UI workflows:
 
 Media UX note:
 - discovered source-site images and operator uploads are both visible in migration media sections
-- media rows are compact by default (name, lifecycle badges, one primary action, optional compact reason)
-- verbose metadata (full URL, provenance detail, suggestion/candidate diagnostics) is behind per-asset `Details`
-- per-asset preview is available from an explicit `Preview` trigger (hover/focus + click toggle fallback)
+- Site Images render in a compact responsive image-card grid:
+  - desktop: up to 4 columns
+  - tablet: 2 columns
+  - mobile: 1 column
+- card defaults are compact (thumbnail/preview placeholder, short name, source/status badges, one primary action)
+- verbose metadata (full URL, provenance detail, suggestion/candidate diagnostics) is behind per-image `Image details`
+- per-image preview is available from an explicit `Preview` trigger (hover/focus + click toggle fallback)
 - preview is bounded (`object-fit: contain`) and does not imply import/selection state change
-- when no safe preview URL is available, UI shows deterministic guidance (`Preview unavailable until imported.` or unavailable for asset)
+- when no safe preview URL is available, UI shows deterministic reason cues:
+  - `preview_url_missing`
+  - `preview_url_unsafe`
+  - `image_not_imported`
+  - `unsupported_image_type`
+  - `storage_preview_not_available`
 - selected discovered-image import is available behind feature flag `SEO_MIGRATION_REMOTE_IMAGE_IMPORT_ENABLED` (default disabled)
 - when disabled, import action shows deterministic `remote_image_import_disabled` guidance
 - discovered remote-only images show import-required guidance before draft selection or AI suggestion can run
 - discovered remote-only lifecycle gating:
   - primary action is import (`Import image` or marked `Import Selected Source Images`)
-  - `Select for Draft`, `Suggest metadata`, and `Apply suggestions` are not active until import completes
+  - `Select for Draft`, `Analyze image`, and `Apply suggestions` are not active until import completes
   - edit action is labeled as discovery-notes editing while still unimported
 - no hotlink fallback is used for this workflow; images must be imported into workspace control before analysis/use
 - diagnostics should surface safe import rejection reason codes without exposing storage paths or raw bytes
 - AI suggestions are editable and are stored separately from operator-authored metadata until explicitly applied
+- image acquisition controls stay visible at top of Media / Images:
+  - `Upload images` (compact disclosure)
+  - `Import Selected Source Images`
+  - `Discover / Refresh Source Images` (reuses existing ingest path)
+- each image card exposes an operator-safe reference token (for example `@image(backflow-4)`):
+  - `Copy reference`
+  - `Insert into requirements` (local operator field update only)
+- helper examples are shown in UI:
+  - `Use @image(backflow-4) on the Services page hero.`
+  - `Use @image(backflow-4) on the Fire Sprinkler Services page near the backflow prevention section.`
+- image references affect draft generation only after operators save the updated Operator Requirements.
 - lifecycle/status labels are rendered per asset to clarify state transitions:
   - `Discovered`
   - `Uploaded`

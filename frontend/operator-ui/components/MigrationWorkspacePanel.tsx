@@ -714,19 +714,19 @@ function toMediaSuggestionReasonLabel(value: string | null): string | null {
     return "Image must be imported before AI metadata can be suggested.";
   }
   if (normalized === "media_asset_not_imported") {
-    return "Import before using in draft or AI suggestions.";
+    return "Import before using in draft or AI image analysis.";
   }
   if (normalized === "media_asset_not_available") {
-    return "Media asset is not currently available for draft or AI suggestion actions.";
+    return "Image is not currently available for draft or AI analysis actions.";
   }
   if (normalized === "media_asset_low_value") {
     return "Image was classified as low-value and is excluded from draft/suggestion actions.";
   }
   if (normalized === "media_asset_rejected") {
-    return "Image was rejected and cannot be used for draft or AI suggestions.";
+    return "Image was rejected and cannot be used for draft or AI analysis.";
   }
   if (normalized === "media_action_not_allowed_for_state") {
-    return "Action is not allowed for this media lifecycle state.";
+    return "Action is not allowed for this image lifecycle state.";
   }
   if (normalized === "placeholder_image_detected") {
     return "Candidate was classified as placeholder-like imagery.";
@@ -741,7 +741,7 @@ function toMediaSuggestionReasonLabel(value: string | null): string | null {
     return "Candidate appears to be a non-image URL.";
   }
   if (normalized === "image_analysis_not_available") {
-    return "AI image analysis is not available for this asset in the current runtime.";
+    return "AI image analysis is not available for this image in the current runtime.";
   }
   if (normalized === "unsupported_image_type") {
     return "Unsupported image type for AI metadata suggestion.";
@@ -756,13 +756,13 @@ function toMediaSuggestionReasonLabel(value: string | null): string | null {
     return "AI provider returned an invalid metadata suggestion response.";
   }
   if (normalized === "media_asset_not_found") {
-    return "Media asset was not found for suggestion.";
+    return "Image was not found for suggestion.";
   }
   if (normalized === "media_asset_not_authorized") {
-    return "Media asset is not authorized for this workspace.";
+    return "Image is not authorized for this workspace.";
   }
   if (normalized === "media_suggestion_batch_limit_reached") {
-    return "Batch suggestion request exceeds the allowed asset count.";
+    return "Batch suggestion request exceeds the allowed image count.";
   }
   if (normalized === "remote_image_import_disabled") {
     return "Remote source image import is currently disabled for this environment.";
@@ -932,6 +932,13 @@ function toMediaAssetDisplayName(asset: Record<string, unknown>, fallback: strin
   return fallback;
 }
 
+type MediaPreviewUnavailableReasonCode =
+  | "preview_url_missing"
+  | "preview_url_unsafe"
+  | "image_not_imported"
+  | "unsupported_image_type"
+  | "storage_preview_not_available";
+
 function isPrivateOrBlockedHostname(hostname: string): boolean {
   const normalized = hostname.trim().toLowerCase();
   if (!normalized) {
@@ -975,13 +982,12 @@ function isPrivateOrBlockedHostname(hostname: string): boolean {
   return false;
 }
 
-function resolveSafeMediaPreviewUrl(asset: Record<string, unknown>): string | null {
-  const normalizedUrl = asStringOrNull(asset.normalized_url);
-  if (!normalizedUrl) {
+function resolveSafeMediaPreviewUrl(rawUrl: string | null): string | null {
+  if (!rawUrl) {
     return null;
   }
   try {
-    const parsed = new URL(normalizedUrl);
+    const parsed = new URL(rawUrl);
     const protocol = parsed.protocol.trim().toLowerCase();
     if (protocol !== "https:" && protocol !== "http:") {
       return null;
@@ -997,6 +1003,107 @@ function resolveSafeMediaPreviewUrl(asset: Record<string, unknown>): string | nu
   }
 }
 
+function resolveMediaPreviewAvailability(
+  asset: Record<string, unknown>,
+  options: { remoteImportRequired: boolean },
+): { previewUrl: string | null; reasonCode: MediaPreviewUnavailableReasonCode | null } {
+  const contentType = (asStringOrNull(asset.content_type) || "").trim().toLowerCase();
+  if (contentType && !contentType.startsWith("image/")) {
+    return {
+      previewUrl: null,
+      reasonCode: "unsupported_image_type",
+    };
+  }
+  const candidateUrls = [
+    asStringOrNull(asset.preview_url),
+    asStringOrNull(asset.display_url),
+    asStringOrNull(asset.normalized_url),
+  ].filter((value): value is string => Boolean(value));
+  let hadUnsafeCandidate = false;
+  for (const candidateUrl of candidateUrls) {
+    const safePreviewUrl = resolveSafeMediaPreviewUrl(candidateUrl);
+    if (safePreviewUrl) {
+      return {
+        previewUrl: safePreviewUrl,
+        reasonCode: null,
+      };
+    }
+    hadUnsafeCandidate = true;
+  }
+  const provenance = (asStringOrNull(asset.provenance) || "").trim().toLowerCase();
+  const importStatus = (asStringOrNull(asset.import_status) || "").trim().toLowerCase();
+  const isControlledImage =
+    provenance === "operator_upload"
+    || importStatus === "imported"
+    || importStatus === "selected"
+    || importStatus === "available"
+    || importStatus === "uploaded";
+  if (options.remoteImportRequired) {
+    return {
+      previewUrl: null,
+      reasonCode: hadUnsafeCandidate ? "preview_url_unsafe" : "image_not_imported",
+    };
+  }
+  if (hadUnsafeCandidate) {
+    return {
+      previewUrl: null,
+      reasonCode: "preview_url_unsafe",
+    };
+  }
+  if (isControlledImage) {
+    return {
+      previewUrl: null,
+      reasonCode: "storage_preview_not_available",
+    };
+  }
+  return {
+    previewUrl: null,
+    reasonCode: "preview_url_missing",
+  };
+}
+
+function toMediaPreviewUnavailableReasonLabel(value: MediaPreviewUnavailableReasonCode | null): string | null {
+  if (value === "preview_url_missing") {
+    return "Preview unavailable (preview_url_missing).";
+  }
+  if (value === "preview_url_unsafe") {
+    return "Preview unavailable (preview_url_unsafe).";
+  }
+  if (value === "image_not_imported") {
+    return "Preview unavailable until imported (image_not_imported).";
+  }
+  if (value === "unsupported_image_type") {
+    return "Preview unavailable for unsupported image type (unsupported_image_type).";
+  }
+  if (value === "storage_preview_not_available") {
+    return "Storage preview not available (storage_preview_not_available).";
+  }
+  return null;
+}
+
+function toImageReferenceSlug(displayName: string, fallbackAssetId: string): string {
+  const normalizedDisplayName = displayName
+    .trim()
+    .toLowerCase()
+    .replace(/\.[a-z0-9]{2,6}$/i, "");
+  const fromDisplayName = normalizedDisplayName
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+/, "")
+    .replace(/-+$/, "")
+    .slice(0, 28);
+  if (fromDisplayName) {
+    return fromDisplayName;
+  }
+  const normalizedFallback = fallbackAssetId
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+/, "")
+    .replace(/-+$/, "")
+    .slice(0, 28);
+  return normalizedFallback || "image-reference";
+}
+
 function toMediaPreviewAltText(asset: Record<string, unknown>): string {
   const suggestion = asRecord(asset.metadata_suggestion);
   return (
@@ -1004,7 +1111,7 @@ function toMediaPreviewAltText(asset: Record<string, unknown>): string {
     asStringOrNull(suggestion.suggested_alt_text) ||
     asStringOrNull(asset.display_filename) ||
     asStringOrNull(asset.filename) ||
-    "Media preview"
+    "Image preview"
   );
 }
 
@@ -3593,7 +3700,7 @@ export function MigrationWorkspacePanel({
 
     const selectedImportLookup = new Set(selectedDiscoveredImportCandidateIds.map((item) => item.toLowerCase()));
 
-    return Array.from(byAssetKey.values())
+    const mergedAssets = Array.from(byAssetKey.values())
       .map((asset, index) => {
         const assetId =
           asStringOrNull(asset.asset_id)
@@ -3607,7 +3714,10 @@ export function MigrationWorkspacePanel({
         const unavailableReasonCode = mediaAssetUnavailableReasonCode(asset);
         const unavailableReason = toMediaSuggestionReasonLabel(unavailableReasonCode);
         const canSelectForDraft = isMediaAssetUsableForDraft(asset);
-        const canSuggestMetadata = canSelectForDraft;
+        const canSuggestMetadata =
+          canSelectForDraft
+          && !remoteImportRequired
+          && suggestionStatus !== "not_available";
         const selected = Boolean(asset.selected_for_draft);
         const candidateQuality = mediaCandidateQuality(asset);
         const suggestionCompleted = suggestionStatus === "completed";
@@ -3621,6 +3731,28 @@ export function MigrationWorkspacePanel({
           || importStatus === "selected"
           || importStatus === "available"
           || importStatus === "uploaded";
+        const previewAvailability = resolveMediaPreviewAvailability(asset, { remoteImportRequired });
+        const previewUnavailableReason = toMediaPreviewUnavailableReasonLabel(previewAvailability.reasonCode);
+        const analysisUnavailableInRuntime =
+          suggestionStatus === "not_available"
+          && (
+            (asStringOrNull(suggestion.reason_code) || "").trim().toLowerCase() === "image_analysis_not_available"
+            || (asStringOrNull(suggestion.reason_code) || "").trim().toLowerCase() === "provider_unavailable"
+          );
+        const metadataStatusLabel = suggestionApplied
+          ? "Metadata applied"
+          : suggestionCompleted
+            ? "Suggestion ready"
+            : suggestionStatus === "pending"
+              ? "Analysis pending"
+              : suggestionStatus === "not_available"
+                ? "Analysis unavailable"
+                : null;
+        const sourceBadgeLabel = provenance === "operator_upload"
+          ? "Uploaded"
+          : remoteImportRequired
+            ? "Discovered"
+            : "Imported";
         let primaryAction: MediaPrimaryAction = "view_details";
         if (remoteImportRequired && candidateQuality === "useful") {
           primaryAction = "import";
@@ -3633,19 +3765,22 @@ export function MigrationWorkspacePanel({
         }
         const compactReasonLabel =
           primaryAction === "import"
-            ? "Needs import before draft/suggestion actions."
+            ? "Import before draft selection or AI analysis."
             : primaryAction === "apply"
               ? "Suggestions ready to apply."
               : primaryAction === "suggest" && suggestionReason
                 ? suggestionReason
-                : unavailableReason || suggestionReason;
+                : unavailableReason || suggestionReason || previewUnavailableReason;
         return {
           asset,
           assetId,
           displayName: toMediaAssetDisplayName(asset, assetId),
+          sourceBadgeLabel,
+          metadataStatusLabel,
           lifecycleLabels,
           suggestionStatus,
           suggestionReason,
+          analysisUnavailableInRuntime,
           selected,
           canSelectForDraft,
           canSuggestMetadata,
@@ -3659,12 +3794,15 @@ export function MigrationWorkspacePanel({
           isImportedOrUploaded,
           primaryAction,
           compactReasonLabel,
-          previewUrl: resolveSafeMediaPreviewUrl(asset),
+          previewUrl: previewAvailability.previewUrl,
+          previewUnavailableReasonCode: previewAvailability.reasonCode,
+          previewUnavailableReason,
           previewAlt: toMediaPreviewAltText(asset),
           provenance: asStringOrNull(asset.provenance),
           normalizedUrl: asStringOrNull(asset.normalized_url),
           qualityReason: asStringOrNull(asset.quality_reason),
           sourcePageUrl: asStringOrNull(asset.source_page_url),
+          imageReferenceSlugBase: toImageReferenceSlug(toMediaAssetDisplayName(asset, assetId), assetId),
         };
       })
       .sort((left, right) => {
@@ -3695,6 +3833,19 @@ export function MigrationWorkspacePanel({
         }
         return left.displayName.localeCompare(right.displayName, undefined, { sensitivity: "base" });
       });
+    const slugCounts = new Map<string, number>();
+    return mergedAssets.map((item) => {
+      const baseSlug = item.imageReferenceSlugBase;
+      const seenCount = slugCounts.get(baseSlug) ?? 0;
+      const nextCount = seenCount + 1;
+      slugCounts.set(baseSlug, nextCount);
+      const imageReferenceSlug = seenCount === 0 ? baseSlug : `${baseSlug}-${nextCount}`;
+      return {
+        ...item,
+        imageReferenceSlug,
+        imageReferenceToken: `@image(${imageReferenceSlug})`,
+      };
+    });
   }, [
     operatorUploadedMediaAssets,
     selectedDiscoveredImportCandidateIds,
@@ -5271,6 +5422,36 @@ export function MigrationWorkspacePanel({
     }));
   };
 
+  const handleCopyImageReference = async (referenceToken: string): Promise<void> => {
+    if (!referenceToken.trim()) {
+      return;
+    }
+    if (!navigator?.clipboard?.writeText) {
+      setErrorHint(null);
+      setErrorMessage("Clipboard is unavailable in this browser/session. Copy the image reference manually.");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(referenceToken);
+      setStatusMessage(`Copied image reference ${referenceToken}.`);
+    } catch (error) {
+      setErrorHint(null);
+      setErrorMessage(toErrorMessage(error, "Clipboard copy failed."));
+    }
+  };
+
+  const handleInsertImageReferenceIntoRequirements = (referenceToken: string): void => {
+    if (!referenceToken.trim()) {
+      return;
+    }
+    setMustInclude((current) => {
+      const trimmed = current.trim();
+      const instruction = `Use ${referenceToken}`;
+      return trimmed ? `${trimmed}\n${instruction}` : instruction;
+    });
+    setStatusMessage("Image reference inserted into Must include. Save Requirements to apply it to draft generation.");
+  };
+
   const handleUploadMediaAsset = async (): Promise<void> => {
     if (!mediaUploadFile) {
       setErrorHint(null);
@@ -5390,7 +5571,7 @@ export function MigrationWorkspacePanel({
     const assetId = asStringOrNull(asset.asset_id);
     if (!assetId) {
       setErrorHint(null);
-      setErrorMessage("Media asset id is missing.");
+      setErrorMessage("Image id is missing.");
       return;
     }
     if (selectedForDraft) {
@@ -5399,7 +5580,7 @@ export function MigrationWorkspacePanel({
         setErrorHint(null);
         setErrorMessage(
           toMediaSuggestionReasonLabel(unavailableReasonCode)
-            || "This media asset is not currently available for draft selection.",
+            || "This image is not currently available for draft selection.",
         );
         return;
       }
@@ -5414,13 +5595,13 @@ export function MigrationWorkspacePanel({
       });
       setStatusMessage(
         selectedForDraft
-          ? "Media asset selected for draft context."
-          : "Media asset removed from draft context.",
+          ? "Image selected for draft context."
+          : "Image removed from draft context.",
       );
       await loadWorkspaceData(false);
     } catch (error) {
       setErrorHint(null);
-      setErrorMessage(toErrorMessage(error, "Failed to update media asset selection."));
+      setErrorMessage(toErrorMessage(error, "Failed to update image selection."));
     } finally {
       setBusyAction(null);
     }
@@ -5430,7 +5611,7 @@ export function MigrationWorkspacePanel({
     const assetId = asStringOrNull(asset.asset_id);
     if (!assetId) {
       setErrorHint(null);
-      setErrorMessage("Media asset id is missing.");
+      setErrorMessage("Image id is missing.");
       return;
     }
     const currentAlt = asString(asset.alt_text);
@@ -5483,7 +5664,7 @@ export function MigrationWorkspacePanel({
     const assetId = asStringOrNull(asset.asset_id);
     if (!assetId) {
       setErrorHint(null);
-      setErrorMessage("Media asset id is missing.");
+      setErrorMessage("Image id is missing.");
       return;
     }
     const unavailableReasonCode = mediaAssetUnavailableReasonCode(asset);
@@ -5491,7 +5672,7 @@ export function MigrationWorkspacePanel({
       setErrorHint(null);
       setErrorMessage(
         toMediaSuggestionReasonLabel(unavailableReasonCode)
-          || "This media asset is not currently available for AI metadata suggestions.",
+          || "This image is not currently available for AI metadata suggestions.",
       );
       return;
     }
@@ -5520,7 +5701,7 @@ export function MigrationWorkspacePanel({
   ): Promise<void> => {
     if (selectedMediaAssetIds.length === 0) {
       setErrorHint(null);
-      setErrorMessage("Select at least one media asset before running batch metadata suggestion.");
+      setErrorMessage("Select at least one image before running batch metadata suggestion.");
       return;
     }
     setBusyAction("suggest_media_batch");
@@ -5540,7 +5721,7 @@ export function MigrationWorkspacePanel({
       await loadWorkspaceData(false);
     } catch (error) {
       setErrorHint(null);
-      setErrorMessage(toErrorMessage(error, "Failed to suggest metadata for selected media assets."));
+      setErrorMessage(toErrorMessage(error, "Failed to suggest metadata for selected images."));
     } finally {
       setBusyAction(null);
     }
@@ -5550,19 +5731,19 @@ export function MigrationWorkspacePanel({
     const assetId = asStringOrNull(asset.asset_id);
     if (!assetId) {
       setErrorHint(null);
-      setErrorMessage("Media asset id is missing.");
+      setErrorMessage("Image id is missing.");
       return;
     }
     const suggestion = asRecord(asset.metadata_suggestion);
     const suggestionStatus = (asStringOrNull(suggestion.suggestion_status) || "").trim().toLowerCase();
     if (suggestionStatus !== "completed") {
       setErrorHint(null);
-      setErrorMessage("AI metadata suggestions are not available to apply for this asset yet.");
+      setErrorMessage("AI metadata suggestions are not available to apply for this image yet.");
       return;
     }
     if (Boolean(asset.metadata_suggestion_applied)) {
       setErrorHint(null);
-      setErrorMessage("Suggested metadata has already been applied for this asset.");
+      setErrorMessage("Suggested metadata has already been applied for this image.");
       return;
     }
     setBusyAction("update_media");
@@ -5573,7 +5754,7 @@ export function MigrationWorkspacePanel({
       await updateMigrationMediaAsset(token, businessId, siteId, assetId, {
         apply_suggested_metadata: true,
       });
-      setStatusMessage("Suggested metadata applied to media asset.");
+      setStatusMessage("Suggested metadata applied to image.");
       await loadWorkspaceData(false);
     } catch (error) {
       setErrorHint(null);
@@ -6082,10 +6263,16 @@ export function MigrationWorkspacePanel({
       <div className="panel stack workspace-section-block" data-testid="migration-media-section">
         <h3>Media / Images</h3>
         <span className="hint muted">
-          Manage source-discovered and operator-uploaded image assets. Only selected assets are included in draft AI context.
+          Manage discovered, imported, and uploaded Site Images. Only Selected Images are included in draft AI context.
         </span>
         <span className="hint muted">
-          Preview is view-only. Import/select/suggest/apply actions remain explicit and unchanged.
+          Preview is view-only. Import/select/analyze/apply actions remain explicit and unchanged.
+        </span>
+        <span className="hint muted" data-testid="migration-image-reference-hint">
+          Tip: copy or insert image references into requirements. Example: Use @image(backflow-4) on the Services page hero.
+        </span>
+        <span className="hint muted" data-testid="migration-image-reference-hint-secondary">
+          Example: Use @image(backflow-4) on the Fire Sprinkler Services page near the backflow prevention section.
         </span>
         {mediaRequiredByOperator ? (
           <div className="panel panel-compact stack-tight" data-testid="migration-media-required-callout">
@@ -6109,78 +6296,11 @@ export function MigrationWorkspacePanel({
         ) : null}
         <div className="grid grid-2">
           <div className="panel panel-compact stack-tight" data-testid="migration-media-operator-actions">
-            <strong>Operator Actions</strong>
+            <strong>Image Actions</strong>
             <span className="hint muted">
-              Upload photos for galleries/pages and explicitly select which assets may be used in draft generation.
+              Pull in more Site Images, then select Draft Images and run AI image analysis where available.
             </span>
-            <label className="stack-tight">
-              <span className="hint muted">Upload image</span>
-              <input
-                type="file"
-                accept="image/jpeg,image/png,image/webp,image/gif"
-                onChange={(event) => {
-                  const file = event.target.files && event.target.files.length > 0 ? event.target.files[0] : null;
-                  setMediaUploadFile(file);
-                }}
-              />
-            </label>
-            <label className="stack-tight">
-              <span className="hint muted">Category</span>
-              <select
-                value={mediaUploadCategory}
-                onChange={(event) => setMediaUploadCategory(event.target.value)}
-              >
-                <option value="other">other</option>
-                <option value="customer_gallery">customer_gallery</option>
-                <option value="project_gallery">project_gallery</option>
-                <option value="before_after">before_after</option>
-                <option value="team">team</option>
-                <option value="company">company</option>
-                <option value="service_page">service_page</option>
-                <option value="hero">hero</option>
-                <option value="logo">logo</option>
-              </select>
-            </label>
-            <label className="stack-tight">
-              <span className="hint muted">Alt text</span>
-              <input value={mediaUploadAltText} onChange={(event) => setMediaUploadAltText(event.target.value)} />
-            </label>
-            <label className="stack-tight">
-              <span className="hint muted">Description</span>
-              <textarea
-                value={mediaUploadDescription}
-                onChange={(event) => setMediaUploadDescription(event.target.value)}
-                rows={2}
-              />
-            </label>
-            <label className="stack-tight">
-              <span className="hint muted">Usage note</span>
-              <input value={mediaUploadUsageNote} onChange={(event) => setMediaUploadUsageNote(event.target.value)} />
-            </label>
-            <label className="stack-tight">
-              <span className="hint muted">Page/gallery assignment</span>
-              <input
-                value={mediaUploadPageAssignment}
-                onChange={(event) => setMediaUploadPageAssignment(event.target.value)}
-              />
-            </label>
-            <label className="link-row">
-              <input
-                type="checkbox"
-                checked={mediaUploadSelectedForDraft}
-                onChange={(event) => setMediaUploadSelectedForDraft(event.target.checked)}
-              />
-              <span>Select for draft context on upload</span>
-            </label>
             <WorkspaceActionBar variant="secondary">
-              <button
-                type="button"
-                className="button button-secondary"
-                onClick={() => void handleUploadMediaAsset()}
-                disabled={isActionInFlight || !mediaUploadFile}
-              >
-                {busyAction === "upload_media" ? "Uploading..." : "Upload Workspace Image"}
-              </button>
               <button
                 type="button"
                 className={discoveredImportRequiredCount > 0 ? "button button-primary" : "button button-tertiary"}
@@ -6195,36 +6315,114 @@ export function MigrationWorkspacePanel({
                 onClick={() => void handleSuggestSelectedMediaMetadataBatch()}
                 disabled={isActionInFlight || selectedMediaAssetIds.length === 0}
               >
-                {busyAction === "suggest_media_batch"
-                  ? "Suggesting Selected..."
-                  : "Suggest Metadata for Selected"}
+                {busyAction === "suggest_media_batch" ? "Analyzing Selected..." : "Analyze Selected Images"}
+              </button>
+              <button
+                type="button"
+                className="button button-tertiary"
+                onClick={() => void handleIngestSource()}
+                disabled={busyAction === "ingest" || busyAction === "load" || !sourceUrl.trim()}
+              >
+                {busyAction === "ingest" ? "Refreshing..." : "Discover / Refresh Source Images"}
               </button>
             </WorkspaceActionBar>
+            <details className="workspace-details-shell" data-testid="migration-media-upload-disclosure">
+              <summary>Upload images</summary>
+              <div className="stack-tight">
+                <label className="stack-tight">
+                  <span className="hint muted">Upload image file</span>
+                  <input
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp,image/gif"
+                    onChange={(event) => {
+                      const file = event.target.files && event.target.files.length > 0 ? event.target.files[0] : null;
+                      setMediaUploadFile(file);
+                    }}
+                  />
+                </label>
+                <label className="stack-tight">
+                  <span className="hint muted">Category</span>
+                  <select
+                    value={mediaUploadCategory}
+                    onChange={(event) => setMediaUploadCategory(event.target.value)}
+                  >
+                    <option value="other">other</option>
+                    <option value="customer_gallery">customer_gallery</option>
+                    <option value="project_gallery">project_gallery</option>
+                    <option value="before_after">before_after</option>
+                    <option value="team">team</option>
+                    <option value="company">company</option>
+                    <option value="service_page">service_page</option>
+                    <option value="hero">hero</option>
+                    <option value="logo">logo</option>
+                  </select>
+                </label>
+                <label className="stack-tight">
+                  <span className="hint muted">Alt text</span>
+                  <input value={mediaUploadAltText} onChange={(event) => setMediaUploadAltText(event.target.value)} />
+                </label>
+                <label className="stack-tight">
+                  <span className="hint muted">Description</span>
+                  <textarea
+                    value={mediaUploadDescription}
+                    onChange={(event) => setMediaUploadDescription(event.target.value)}
+                    rows={2}
+                  />
+                </label>
+                <label className="stack-tight">
+                  <span className="hint muted">Usage note</span>
+                  <input value={mediaUploadUsageNote} onChange={(event) => setMediaUploadUsageNote(event.target.value)} />
+                </label>
+                <label className="stack-tight">
+                  <span className="hint muted">Page/gallery assignment</span>
+                  <input
+                    value={mediaUploadPageAssignment}
+                    onChange={(event) => setMediaUploadPageAssignment(event.target.value)}
+                  />
+                </label>
+                <label className="link-row">
+                  <input
+                    type="checkbox"
+                    checked={mediaUploadSelectedForDraft}
+                    onChange={(event) => setMediaUploadSelectedForDraft(event.target.checked)}
+                  />
+                  <span>Select image for draft context on upload</span>
+                </label>
+                <button
+                  type="button"
+                  className="button button-secondary"
+                  onClick={() => void handleUploadMediaAsset()}
+                  disabled={isActionInFlight || !mediaUploadFile}
+                >
+                  {busyAction === "upload_media" ? "Uploading..." : "Upload images"}
+                </button>
+              </div>
+            </details>
             {discoveredImportRequiredCount > 0 ? (
               <span className="hint warning">
-                Source images are awaiting import. Import selected source images before draft selection or AI suggestions.
+                Discovered Source Images are awaiting import. Import selected source images before draft selection or AI analysis.
               </span>
             ) : null}
           </div>
 
           <div className="panel panel-compact stack-tight" data-testid="migration-media-counts">
-            <strong>Media Counts</strong>
-            <span className="hint">Discovered from source site: {sourceDiscoveredMediaCount}</span>
+            <strong>Image Counts</strong>
+            <span className="hint">Discovered Source Images: {sourceDiscoveredMediaCount}</span>
             <span className="hint">Useful discovered candidates: {usefulDiscoveredImagesCount}</span>
             <span className="hint">Low-value discovered candidates: {lowValueDiscoveredImagesCount}</span>
             <span className="hint">Rejected discovered candidates: {rejectedDiscoveredImagesCount}</span>
-            <span className="hint">Imported/selected from source: {sourceImportedMediaCount}</span>
-            <span className="hint">Operator uploaded: {operatorUploadedMediaCount}</span>
-            <span className="hint">Selected for draft context: {selectedMediaAssetsCount}</span>
-            <span className="hint">Selected usable media assets: {selectedUsableMediaAssetsCount}</span>
-            <span className="hint">Usable media assets in workspace: {usableMediaAssetsCount}</span>
-            <span className="hint">Selected discovered awaiting import: {selectedDiscoveredImportCandidateIds.length}</span>
+            <span className="hint">Imported Images: {sourceImportedMediaCount}</span>
+            <span className="hint">Uploaded Images: {operatorUploadedMediaCount}</span>
+            <span className="hint">Selected Images: {selectedMediaAssetsCount}</span>
+            <span className="hint">Selected usable images: {selectedUsableMediaAssetsCount}</span>
+            <span className="hint">Usable images in workspace: {usableMediaAssetsCount}</span>
+            <span className="hint">Selected discovered images awaiting import: {selectedDiscoveredImportCandidateIds.length}</span>
             <span className="hint">
-              Asset categories in workspace: {mediaAssetCategories.length > 0 ? mediaAssetCategories.join(", ") : "none"}
+              Image categories in workspace: {mediaAssetCategories.length > 0 ? mediaAssetCategories.join(", ") : "none"}
             </span>
             {mediaSelectedAssetsTrimmed ? (
               <span className="hint warning">
-                Selected media context was trimmed to stay inside AI budget constraints.
+                Selected image context was trimmed to stay inside AI budget constraints.
               </span>
             ) : null}
             {mediaImportBatchStatus ? (
@@ -6288,15 +6486,15 @@ export function MigrationWorkspacePanel({
               </details>
             ) : null}
             <span className="hint muted">
-              Media fetch/import rejection reasons are listed under Advanced Diagnostics.
+              Image fetch/import rejection reasons are listed under Advanced Diagnostics.
             </span>
           </div>
         </div>
 
         <div className="panel panel-compact stack-tight migration-media-browser" data-testid="migration-media-source-list">
           <div className="row-space-between">
-            <strong>Asset Browser</strong>
-            <span className="hint muted">Compact rows with one primary action per asset.</span>
+            <strong>Site Images</strong>
+            <span className="hint muted">Compact image cards with one primary next action.</span>
           </div>
           <div className="migration-media-filter-controls" data-testid="migration-media-filter-controls">
             {mediaFilterOptions.map((option) => (
@@ -6331,7 +6529,7 @@ export function MigrationWorkspacePanel({
             </span>
           ) : null}
           {mediaBrowserVisibleAssets.length > 0 ? (
-            <div className="migration-media-browser-list">
+            <div className="migration-media-browser-list migration-media-image-grid" data-testid="migration-media-image-grid">
               {mediaBrowserVisibleAssets.slice(0, 30).map((item, index) => {
                 const lifecycleTestId = `migration-media-lifecycle-${item.assetId}`;
                 const detailsOpen = openMediaDetailsAssetIds.some(
@@ -6343,23 +6541,63 @@ export function MigrationWorkspacePanel({
                   || mediaPreviewFocusAssetId?.toLowerCase() === item.assetId.toLowerCase()
                 );
                 const previewPanelId = `migration-media-preview-panel-${item.assetId.replace(/[^a-z0-9_-]/gi, "-")}-${index}`;
-                const previewUnavailableMessage = item.remoteImportRequired
-                  ? "Preview unavailable until imported."
-                  : "Preview unavailable for this asset.";
+                const previewUnavailableMessage = item.previewUnavailableReason || "Preview unavailable.";
                 return (
                   <article
                     key={`migration-media-browser-item-${item.assetId}`}
                     className={
                       item.candidateQuality === "useful"
-                        ? "migration-media-row"
-                        : "migration-media-row migration-media-row-deemphasized"
+                        ? "migration-media-row migration-media-card"
+                        : "migration-media-row migration-media-card migration-media-row-deemphasized"
                     }
                     data-testid={`migration-media-row-${item.assetId}`}
                   >
+                    <div
+                      className="migration-media-card-preview-shell"
+                      onMouseEnter={() => {
+                        if (item.previewUrl) {
+                          setMediaPreviewHoverAssetId(item.assetId);
+                        }
+                      }}
+                      onMouseLeave={() => {
+                        setMediaPreviewHoverAssetId((current) =>
+                          current?.toLowerCase() === item.assetId.toLowerCase() ? null : current,
+                        );
+                      }}
+                    >
+                      {item.previewUrl ? (
+                        <>
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={item.previewUrl}
+                            alt={item.previewAlt}
+                            className="migration-media-card-thumbnail"
+                            loading="lazy"
+                            decoding="async"
+                          />
+                          {previewOpen ? (
+                            <div className="migration-media-preview-popover" id={previewPanelId}>
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img
+                                src={item.previewUrl}
+                                alt={item.previewAlt}
+                                className="migration-media-thumbnail"
+                                data-testid={`migration-media-preview-image-${item.assetId}`}
+                                loading="lazy"
+                                decoding="async"
+                              />
+                            </div>
+                          ) : null}
+                        </>
+                      ) : (
+                        <div className="migration-media-card-preview-unavailable" data-testid={`migration-media-preview-unavailable-${item.assetId}`}>
+                          {previewUnavailableMessage}
+                        </div>
+                      )}
+                    </div>
                     <div className="migration-media-row-header">
                       <div className="migration-media-row-title">
                         <span className="text-strong">{item.displayName}</span>
-                        <span className="hint muted">{item.provenance || "unknown"}</span>
                       </div>
                       {item.compactReasonLabel ? (
                         <span
@@ -6367,6 +6605,15 @@ export function MigrationWorkspacePanel({
                           data-testid={`migration-media-compact-reason-${item.assetId}`}
                         >
                           {item.compactReasonLabel}
+                        </span>
+                      ) : null}
+                    </div>
+                    <div className="row-wrap-tight migration-media-card-badges">
+                      <span className="badge badge-muted">{item.sourceBadgeLabel}</span>
+                      {item.selected ? <span className="badge badge-success">Selected for Draft</span> : null}
+                      {item.metadataStatusLabel ? (
+                        <span className={item.metadataStatusLabel === "Analysis unavailable" ? "badge badge-warn" : "badge badge-success"}>
+                          {item.metadataStatusLabel}
                         </span>
                       ) : null}
                     </div>
@@ -6379,20 +6626,29 @@ export function MigrationWorkspacePanel({
                         ))}
                       </div>
                     ) : null}
+                    <div className="migration-media-reference-row">
+                      <code data-testid={`migration-media-reference-token-${item.assetId}`}>{item.imageReferenceToken}</code>
+                      <div className="row-wrap-tight">
+                        <button
+                          type="button"
+                          className="button button-tertiary button-inline"
+                          onClick={() => void handleCopyImageReference(item.imageReferenceToken)}
+                          data-testid={`migration-media-copy-reference-${item.assetId}`}
+                        >
+                          Copy reference
+                        </button>
+                        <button
+                          type="button"
+                          className="button button-tertiary button-inline"
+                          onClick={() => handleInsertImageReferenceIntoRequirements(item.imageReferenceToken)}
+                          data-testid={`migration-media-insert-reference-${item.assetId}`}
+                        >
+                          Insert into requirements
+                        </button>
+                      </div>
+                    </div>
                     <div className="migration-media-row-controls">
-                      <div
-                        className="row-wrap-tight"
-                        onMouseEnter={() => {
-                          if (item.previewUrl) {
-                            setMediaPreviewHoverAssetId(item.assetId);
-                          }
-                        }}
-                        onMouseLeave={() => {
-                          setMediaPreviewHoverAssetId((current) =>
-                            current?.toLowerCase() === item.assetId.toLowerCase() ? null : current,
-                          );
-                        }}
-                      >
+                      <div className="row-wrap-tight">
                         {item.previewUrl ? (
                           <button
                             type="button"
@@ -6414,11 +6670,7 @@ export function MigrationWorkspacePanel({
                           >
                             {mediaPreviewPinnedAssetId?.toLowerCase() === item.assetId.toLowerCase() ? "Hide preview" : "Preview"}
                           </button>
-                        ) : (
-                          <span className="hint muted" data-testid={`migration-media-preview-unavailable-${item.assetId}`}>
-                            {previewUnavailableMessage}
-                          </span>
-                        )}
+                        ) : null}
                         {item.primaryAction === "import" ? (
                           <button
                             type="button"
@@ -6449,7 +6701,7 @@ export function MigrationWorkspacePanel({
                             onClick={() => void handleSuggestMediaMetadata(item.asset)}
                             disabled={isActionInFlight}
                           >
-                            Suggest metadata
+                            Analyze image
                           </button>
                         ) : null}
                         {item.primaryAction === "apply" ? (
@@ -6481,19 +6733,6 @@ export function MigrationWorkspacePanel({
                           </button>
                         ) : null}
                       </div>
-                      {previewOpen && item.previewUrl ? (
-                        <div className="migration-media-preview-popover" id={previewPanelId}>
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img
-                            src={item.previewUrl}
-                            alt={item.previewAlt}
-                            className="migration-media-thumbnail"
-                            data-testid={`migration-media-preview-image-${item.assetId}`}
-                            loading="lazy"
-                            decoding="async"
-                          />
-                        </div>
-                      ) : null}
                     </div>
                     <details
                       className="migration-media-details"
@@ -6508,15 +6747,23 @@ export function MigrationWorkspacePanel({
                       }}
                       data-testid={`migration-media-details-${item.assetId}`}
                     >
-                      <summary>Details</summary>
+                      <summary>Image details</summary>
                       <div className="stack-tight">
-                        <span className="hint muted">Suggestion status: {toMediaSuggestionStatusLabel(item.suggestionStatus)}</span>
+                        <span className="hint muted">Analysis status: {toMediaSuggestionStatusLabel(item.suggestionStatus)}</span>
                         {item.suggestionReason ? <span className="hint muted">{item.suggestionReason}</span> : null}
                         {item.mediaUnavailableReason && !item.suggestionReason ? (
                           <span className="hint muted">{item.mediaUnavailableReason}</span>
                         ) : null}
+                        {item.analysisUnavailableInRuntime ? (
+                          <span className="hint warning">AI image analysis is unavailable in this runtime for this image.</span>
+                        ) : null}
+                        {item.previewUnavailableReasonCode ? (
+                          <span className="hint muted" data-testid={`migration-media-preview-reason-${item.assetId}`}>
+                            Preview reason: {item.previewUnavailableReasonCode}
+                          </span>
+                        ) : null}
                         {item.remoteImportRequired ? (
-                          <span className="hint warning">Import before using in draft or AI suggestions.</span>
+                          <span className="hint warning">Import before AI analysis.</span>
                         ) : null}
                         <span className="hint muted">Provenance: {item.provenance || "unknown"}</span>
                         {item.normalizedUrl ? <span className="hint muted">URL: {item.normalizedUrl}</span> : null}
@@ -6552,7 +6799,7 @@ export function MigrationWorkspacePanel({
                               onClick={() => void handleSuggestMediaMetadata(item.asset, { forceRefresh: true })}
                               disabled={isActionInFlight}
                             >
-                              Force refresh suggestion
+                              Re-analyze image
                             </button>
                           ) : null}
                           <button
@@ -6561,7 +6808,7 @@ export function MigrationWorkspacePanel({
                             onClick={() => void handleEditMediaMetadata(item.asset)}
                             disabled={isActionInFlight}
                           >
-                            {item.remoteImportRequired ? "Edit discovery notes" : "Edit Metadata"}
+                            {item.remoteImportRequired ? "Edit discovery notes" : "Edit image metadata"}
                           </button>
                         </div>
                       </div>
@@ -6571,20 +6818,20 @@ export function MigrationWorkspacePanel({
               })}
             </div>
           ) : (
-            <span className="hint muted">No media assets match the selected filter.</span>
+            <span className="hint muted">No images match the selected filter.</span>
           )}
         </div>
 
         <details className="workspace-details-shell" data-testid="migration-media-uploaded-list">
-          <summary>Uploaded/imported snapshot</summary>
+          <summary>Uploaded/Imported Images snapshot</summary>
           <div className="stack-tight">
-            <span className="hint muted">Visible uploaded assets: {mediaBrowserVisibleUploadedAssets.length}</span>
-            <span className="hint muted">Visible source assets: {mediaBrowserVisibleSourceAssets.length}</span>
+            <span className="hint muted">Visible Uploaded Images: {mediaBrowserVisibleUploadedAssets.length}</span>
+            <span className="hint muted">Visible Discovered/Imported Source Images: {mediaBrowserVisibleSourceAssets.length}</span>
           </div>
         </details>
 
         <details className="workspace-details-shell" data-testid="migration-media-selected-list">
-          <summary>Selected draft-media snapshot</summary>
+          <summary>Selected Draft Images snapshot</summary>
           {mediaBrowserVisibleSelectedAssets.length > 0 ? (
             <ul className="stack-tight">
               {mediaBrowserVisibleSelectedAssets.slice(0, 12).map((item) => (
@@ -6594,7 +6841,7 @@ export function MigrationWorkspacePanel({
               ))}
             </ul>
           ) : (
-            <span className="hint muted">No selected media assets in the current filter view.</span>
+            <span className="hint muted">No Selected Images in the current filter view.</span>
           )}
         </details>
       </div>
@@ -6608,6 +6855,14 @@ export function MigrationWorkspacePanel({
         <span className="hint muted">
           Suggestions use bounded source content, recommendations, audit findings, competitor context, selected media
           summary, and existing business/site context.
+        </span>
+        <span className="hint muted" data-testid="migration-requirements-image-reference-hint">
+          Copy image references from Site Images and paste them into your requirements. Example: Use @image(backflow-4)
+          on the Services page hero.
+        </span>
+        <span className="hint muted" data-testid="migration-requirements-image-reference-hint-secondary">
+          Example: Use @image(backflow-4) on the Fire Sprinkler Services page near the backflow prevention section.
+          Image references affect draft generation only after you save requirements.
         </span>
         <div className="migration-requirement-grid">
           {requirementFieldConfigs.map((config) => {
@@ -6961,7 +7216,7 @@ export function MigrationWorkspacePanel({
           ) : null}
           {mediaRequiredByOperator ? (
             <span className="hint muted">
-              Selected usable media assets: {selectedUsableMediaAssetsCount}
+              Selected usable images: {selectedUsableMediaAssetsCount}
             </span>
           ) : null}
           {draftReadiness.reasons.length > 0 ? (

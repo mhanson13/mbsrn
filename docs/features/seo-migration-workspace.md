@@ -328,42 +328,74 @@ Workspace/site scoping contract:
 - cross-site update/select attempts return not-found behavior rather than mutating another workspace
 
 Media / Images compact browser behavior:
-- migration media UI now uses compact asset rows instead of verbose stacked cards
-- default row content is intentionally minimal:
-  - short asset name
-  - lifecycle badges
+- migration media UI now uses compact Site Image cards in a responsive grid instead of verbose stacked rows
+- default card content is intentionally minimal:
+  - short image name
+  - thumbnail preview (or compact preview-unavailable placeholder)
+  - source/status badges (`Uploaded`, `Discovered`, `Imported`, `Selected for Draft`)
+  - image reference token (`@image(...)`)
   - one primary next action
   - optional compact reason label
-- verbose metadata remains available, but is disclosure-only per asset:
+- grid density:
+  - desktop: up to 4 columns
+  - tablet: 2 columns
+  - mobile: 1 column
+- acquisition controls are visible at the top of the section:
+  - `Upload images` (disclosure)
+  - `Import Selected Source Images`
+  - `Discover / Refresh Source Images` (reuses existing ingest path)
+- example helper text shown in UI:
+  - `Use @image(backflow-4) on the Services page hero.`
+  - `Use @image(backflow-4) on the Fire Sprinkler Services page near the backflow prevention section.`
+- image reference controls:
+  - `Copy reference`
+  - `Insert into requirements` (local operator-field update only)
+- image references do not affect draft generation until saved in Operator Requirements
+- verbose metadata remains available, but is disclosure-only per image:
   - full URL
   - provenance details
   - suggestion and candidate-quality diagnostics
 - primary action gating remains behaviorally unchanged:
-  - discovered unimported useful asset -> `Import image`
-  - imported/uploaded unselected usable asset -> `Select for Draft`
-  - selected usable asset without completed suggestion -> `Suggest metadata`
+  - discovered unimported useful image -> `Import image`
+  - imported/uploaded unselected usable image -> `Select for Draft`
+  - selected usable image without completed suggestion -> `Analyze image`
   - completed suggestion not yet applied -> `Apply suggestions`
   - unavailable/low-value/rejected -> details-only action
 - secondary actions remain available under details:
   - edit metadata (or discovery notes while unimported)
-  - unselect selected assets
+  - unselect selected images
   - mark/unmark discovered import candidates
-  - force-refresh suggestion (when compatible)
-- lightweight local filters prioritize actionable assets first:
+  - re-analyze image (when compatible)
+- lightweight local filters prioritize actionable images first:
   - `All`, `Needs import`, `Selected`, `Uploaded/imported`, `Suggestions available`, `Low-value/rejected`
 - low-value/rejected discovered candidates remain hidden/de-emphasized by default unless explicitly shown
+- AI metadata suggestion action labels are image-specific:
+  - per-image: `Analyze image`
+  - batch: `Analyze Selected Images`
+- if AI image analysis is unavailable in the runtime, cards show concise unavailable guidance and do not show a misleading active analyze action
+- image placement/operator intent guidance is intentionally requirements-first:
+  - copy/insert image references into Operator Requirements
+  - save requirements before generating draft so references are included in draft context
 
 Preview behavior and safety contract:
 - preview is display-only and never changes import/selection/suggestion state
 - preview trigger supports keyboard focus and click toggle fallback in addition to hover/focus affordance
-- safe preview URLs are derived from bounded existing asset metadata only; no new backend import/URL semantics were introduced
+- safe preview URLs are derived from bounded existing image metadata only; no new backend import/URL semantics were introduced
 - query/hash components are stripped before rendering preview URLs
 - private/internal/metadata/local host targets are blocked from preview rendering
-- when preview cannot be safely rendered, UI shows deterministic guidance (`Preview unavailable until imported.` or unavailable for that asset)
+- preview unavailable reasons are explicit and deterministic:
+  - `preview_url_missing`
+  - `preview_url_unsafe`
+  - `image_not_imported`
+  - `unsupported_image_type`
+  - `storage_preview_not_available`
 - preview surfaces remain metadata-safe:
   - no storage keys
   - no local filesystem paths
   - no raw bytes/base64
+- preview does not imply imported/selected/published state
+- uploaded/imported images with safe preview URLs can preview directly
+- discovered/unimported images keep import-first action gating; preview availability remains bounded by safe URL checks
 
 Operator uploads:
 - uploads are stored as workspace-scoped media assets with provenance `operator_upload`
@@ -494,7 +526,7 @@ Media lifecycle action rules (coherence pass, 2026-05):
   - primary action is `Import image` (or `Import Selected Source Images` for marked candidates)
   - draft selection and AI suggestion actions are not active until asset is imported/controlled
 - uploaded/imported assets:
-  - support `Select for Draft`, `Suggest metadata`, and `Apply suggestions` (when suggestion is completed and not already applied)
+  - support `Select for Draft`, `Analyze image`, and `Apply suggestions` (when suggestion is completed and not already applied)
 - low-value/rejected discovered candidates:
   - are excluded from draft selection and AI suggestion actions
   - remain visible via diagnostics/secondary controls only

@@ -1489,6 +1489,7 @@ main {
 .migration-media-browser-list {
   display: grid;
   gap: 0.58rem;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .migration-media-row {
@@ -1499,6 +1500,11 @@ main {
   padding: 0.5rem 0.56rem;
   display: grid;
   gap: 0.38rem;
+}
+
+.migration-media-card {
+  align-content: start;
+  min-height: 18.75rem;
 }
 
 .migration-media-row-deemphasized {
@@ -1517,6 +1523,49 @@ main {
   min-width: 0;
   display: grid;
   gap: 0.12rem;
+}
+
+.migration-media-card-preview-shell {
+  position: relative;
+  width: 100%;
+  min-height: 8.5rem;
+  border: 1px solid var(--section-divider);
+  border-radius: calc(var(--radius-sm) - 2px);
+  background: var(--surface-muted);
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+
+.migration-media-card-thumbnail {
+  width: 100%;
+  height: 100%;
+  max-height: 11rem;
+  object-fit: cover;
+  background: var(--surface-muted);
+}
+
+.migration-media-card-preview-unavailable {
+  padding: 0.45rem;
+  text-align: center;
+  font-size: 0.8rem;
+  color: var(--workspace-summary-muted);
+}
+
+.migration-media-card-badges {
+  align-items: center;
+}
+
+.migration-media-reference-row {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.migration-media-reference-row code {
+  display: inline-block;
+  width: fit-content;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 .migration-media-row-controls {
@@ -3420,6 +3469,10 @@ code {
 }
 
 @media (max-width: 960px) {
+  .migration-media-browser-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .operator-focus-grid {
     grid-template-columns: 1fr;
   }
@@ -3528,6 +3581,10 @@ code {
 }
 
 @media (max-width: 640px) {
+  .migration-media-browser-list {
+    grid-template-columns: 1fr;
+  }
+
   .topnav-brand-link strong {
     display: none;
   }

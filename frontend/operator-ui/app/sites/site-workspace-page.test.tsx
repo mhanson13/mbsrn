@@ -2278,16 +2278,30 @@ describe("site migration workflow route", () => {
 
     const mediaSection = await screen.findByTestId("migration-media-section");
     expect(within(mediaSection).getByText("Media / Images")).toBeInTheDocument();
-    expect(within(mediaSection).getByText("Discovered from source site: 2")).toBeInTheDocument();
-    expect(within(mediaSection).getByText("Selected for draft context: 1")).toBeInTheDocument();
-    expect(within(mediaSection).getByRole("button", { name: "Upload Workspace Image" })).toBeInTheDocument();
+    expect(within(mediaSection).getByText("Discovered Source Images: 2")).toBeInTheDocument();
+    expect(within(mediaSection).getByText("Selected Images: 1")).toBeInTheDocument();
+    expect(within(mediaSection).getByRole("button", { name: "Analyze Selected Images" })).toBeInTheDocument();
+    expect(within(mediaSection).getByRole("button", { name: "Discover / Refresh Source Images" })).toBeInTheDocument();
+    expect(within(mediaSection).getByTestId("migration-media-upload-disclosure")).toBeInTheDocument();
+    expect(within(mediaSection).getByTestId("migration-image-reference-hint")).toHaveTextContent(
+      "Use @image(backflow-4) on the Services page hero.",
+    );
+    expect(within(mediaSection).getByTestId("migration-image-reference-hint-secondary")).toHaveTextContent(
+      "Use @image(backflow-4) on the Fire Sprinkler Services page near the backflow prevention section.",
+    );
 
     const sourceList = within(mediaSection).getByTestId("migration-media-source-list");
-    expect(within(sourceList).getByTestId("migration-media-row-srcimg-1")).toBeInTheDocument();
-    const sourceDetails = within(sourceList).getByTestId("migration-media-details-srcimg-1");
+    expect(within(sourceList).getByText("Site Images")).toBeInTheDocument();
+    expect(within(sourceList).queryByText("Asset Browser")).not.toBeInTheDocument();
+    const imageGrid = within(sourceList).getByTestId("migration-media-image-grid");
+    expect(imageGrid).toHaveClass("migration-media-image-grid");
+    const sourceImageCard = within(sourceList).getByTestId("migration-media-row-srcimg-1");
+    expect(sourceImageCard).toHaveClass("migration-media-card");
+    expect(within(sourceList).getByTestId("migration-media-reference-token-srcimg-1")).toHaveTextContent("@image(");
+    const sourceDetails = within(sourceImageCard).getByTestId("migration-media-details-srcimg-1");
     expect(sourceDetails).not.toHaveAttribute("open");
     expect(within(sourceDetails).getByText("URL: https://legacy.example/images/front.jpg")).not.toBeVisible();
-    await user.click(within(sourceDetails).getByText("Details"));
+    await user.click(within(sourceDetails).getByText("Image details"));
     expect(within(sourceDetails).getByText("URL: https://legacy.example/images/front.jpg")).toBeInTheDocument();
   });
 
@@ -2363,6 +2377,12 @@ describe("site migration workflow route", () => {
     expect(within(requirements).getByTestId("migration-requirement-scratchpad-details-must_avoid")).toBeInTheDocument();
     expect(within(requirements).getByTestId("migration-requirement-scratchpad-details-tone")).toBeInTheDocument();
     expect(within(requirements).getByTestId("migration-requirement-scratchpad-details-calls_to_action")).toBeInTheDocument();
+    expect(within(requirements).getByTestId("migration-requirements-image-reference-hint")).toHaveTextContent(
+      "Use @image(backflow-4) on the Services page hero.",
+    );
+    expect(within(requirements).getByTestId("migration-requirements-image-reference-hint-secondary")).toHaveTextContent(
+      "Use @image(backflow-4) on the Fire Sprinkler Services page near the backflow prevention section.",
+    );
   });
 
   it("keeps AI suggestion drafts isolated from operator fields until explicit append/replace and save", async () => {
@@ -2618,7 +2638,7 @@ describe("site migration workflow route", () => {
 
     const mediaSection = await screen.findByTestId("migration-media-section");
     expect(
-      within(mediaSection).getByText("Preview is view-only. Import/select/suggest/apply actions remain explicit and unchanged."),
+      within(mediaSection).getByText("Preview is view-only. Import/select/analyze/apply actions remain explicit and unchanged."),
     ).toBeInTheDocument();
     expect(within(mediaSection).queryByText("Category: project_gallery | Alt: Manual alt text")).not.toBeInTheDocument();
     expect(within(mediaSection).getAllByText("AI provider is unavailable for image metadata suggestion.").length).toBeGreaterThan(0);
@@ -2627,8 +2647,8 @@ describe("site migration workflow route", () => {
     expect(within(uploadedRow).getByTestId("migration-media-primary-action-upl-1")).toHaveTextContent("Apply suggestions");
 
     const uploadedDetails = within(sourceList).getByTestId("migration-media-details-upl-1");
-    await user.click(within(uploadedDetails).getByText("Details"));
-    await user.click(within(uploadedDetails).getByRole("button", { name: "Force refresh suggestion" }));
+    await user.click(within(uploadedDetails).getByText("Image details"));
+    await user.click(within(uploadedDetails).getByRole("button", { name: "Re-analyze image" }));
     await waitFor(() =>
       expect(mockSuggestMigrationMediaAssetMetadata).toHaveBeenCalledWith("token-1", "biz-1", "site-1", "upl-1", {
         forceRefresh: true,
@@ -2651,8 +2671,8 @@ describe("site migration workflow route", () => {
         media_assets: {
           source_discovered_count: 2,
           source_imported_count: 1,
-          operator_uploaded_count: 0,
-          selected_assets_count: 1,
+          operator_uploaded_count: 1,
+          selected_assets_count: 2,
           media_asset_categories: ["hero"],
           selected_assets_trimmed: false,
           diagnostics: [],
@@ -2673,7 +2693,15 @@ describe("site migration workflow route", () => {
               selected_for_draft: false,
             },
           ],
-          operator_uploaded: [],
+          operator_uploaded: [
+            {
+              asset_id: "uploaded-missing",
+              display_filename: "crew.jpg",
+              provenance: "operator_upload",
+              import_status: "uploaded",
+              selected_for_draft: true,
+            },
+          ],
           selected_assets: [
             {
               asset_id: "safe-1",
@@ -2681,6 +2709,13 @@ describe("site migration workflow route", () => {
               provenance: "source_site_import",
               import_status: "selected",
               alt_text: "Safe hero image",
+              selected_for_draft: true,
+            },
+            {
+              asset_id: "uploaded-missing",
+              display_filename: "crew.jpg",
+              provenance: "operator_upload",
+              import_status: "uploaded",
               selected_for_draft: true,
             },
           ],
@@ -2699,7 +2734,10 @@ describe("site migration workflow route", () => {
     const mediaSection = await screen.findByTestId("migration-media-section");
     const sourceList = within(mediaSection).getByTestId("migration-media-source-list");
     expect(within(sourceList).getByTestId("migration-media-preview-unavailable-blocked-1")).toHaveTextContent(
-      "Preview unavailable until imported.",
+      "preview_url_unsafe",
+    );
+    expect(within(sourceList).getByTestId("migration-media-preview-unavailable-uploaded-missing")).toHaveTextContent(
+      "storage_preview_not_available",
     );
 
     await user.click(within(sourceList).getByTestId("migration-media-preview-trigger-safe-1"));
@@ -2710,6 +2748,92 @@ describe("site migration workflow route", () => {
     expect(previewSrc).not.toContain("token=");
     expect(previewSrc).not.toContain("C:\\");
     expect(previewSrc).not.toContain("base64");
+  });
+
+  it("shows image reference tokens and supports copy/insert into requirements with clipboard fallback", async () => {
+    const user = userEvent.setup();
+    const summary = buildMigrationWorkspaceSummary({
+      context_summary: {
+        ...buildMigrationWorkspaceSummary().context_summary,
+        media_assets: {
+          source_discovered_count: 0,
+          source_imported_count: 0,
+          operator_uploaded_count: 1,
+          selected_assets_count: 1,
+          media_asset_categories: ["service_page"],
+          selected_assets_trimmed: false,
+          diagnostics: [],
+          source_discovered: [],
+          operator_uploaded: [
+            {
+              asset_id: "img-ref-1",
+              display_filename: "backflow-4.jpg",
+              provenance: "operator_upload",
+              selected_for_draft: true,
+            },
+          ],
+          selected_assets: [
+            {
+              asset_id: "img-ref-1",
+              display_filename: "backflow-4.jpg",
+              provenance: "operator_upload",
+              selected_for_draft: true,
+            },
+          ],
+        },
+      },
+    });
+    const mediaAssetsPayload = (summary.context_summary as Record<string, unknown>).media_assets as Record<
+      string,
+      unknown
+    >;
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(summary);
+    mockFetchMigrationMediaAssets.mockResolvedValue(mediaAssetsPayload);
+
+    const originalClipboard = Object.getOwnPropertyDescriptor(window.navigator, "clipboard");
+    const writeText = jest.fn().mockResolvedValue(undefined);
+    Object.defineProperty(window.navigator, "clipboard", {
+      value: { writeText },
+      configurable: true,
+    });
+
+    try {
+      render(<SiteMigrationWorkflowPage />);
+
+      const mediaSection = await screen.findByTestId("migration-media-section");
+      const sourceList = within(mediaSection).getByTestId("migration-media-source-list");
+      const tokenLabel = within(sourceList).getByTestId("migration-media-reference-token-img-ref-1");
+      expect(tokenLabel).toHaveTextContent("@image(backflow-4)");
+
+      await user.click(within(sourceList).getByTestId("migration-media-copy-reference-img-ref-1"));
+      await waitFor(() => expect(writeText).toHaveBeenCalledWith("@image(backflow-4)"));
+
+      const mustIncludeField = (await screen.findByTestId(
+        "migration-requirement-operator-must_include",
+      )) as HTMLTextAreaElement;
+      const mustIncludeBeforeInsert = mustIncludeField.value;
+      await user.click(within(sourceList).getByTestId("migration-media-insert-reference-img-ref-1"));
+      expect(mustIncludeField.value).toContain("Use @image(backflow-4)");
+      expect(mustIncludeField.value.length).toBeGreaterThanOrEqual(mustIncludeBeforeInsert.length);
+
+      Object.defineProperty(window.navigator, "clipboard", {
+        value: undefined,
+        configurable: true,
+      });
+      await user.click(within(sourceList).getByTestId("migration-media-copy-reference-img-ref-1"));
+      expect(
+        await screen.findByText("Clipboard is unavailable in this browser/session. Copy the image reference manually."),
+      ).toBeInTheDocument();
+    } finally {
+      if (originalClipboard) {
+        Object.defineProperty(window.navigator, "clipboard", originalClipboard);
+      } else {
+        Object.defineProperty(window.navigator, "clipboard", {
+          value: undefined,
+          configurable: true,
+        });
+      }
+    }
   });
 
   it("shows apply-suggestions only for completed and unapplied suggestions", async () => {
@@ -2794,9 +2918,71 @@ describe("site migration workflow route", () => {
     const mediaSection = await screen.findByTestId("migration-media-section");
     const sourceList = within(mediaSection).getByTestId("migration-media-source-list");
     expect(within(sourceList).getByTestId("migration-media-primary-action-ready-1")).toHaveTextContent("Apply suggestions");
-    expect(within(sourceList).getByTestId("migration-media-primary-action-pending-1")).toHaveTextContent("Suggest metadata");
+    expect(within(sourceList).getByTestId("migration-media-primary-action-pending-1")).toHaveTextContent("Analyze image");
     expect(within(sourceList).getByTestId("migration-media-primary-action-applied-1")).toHaveTextContent("View details");
     expect(within(sourceList).getAllByRole("button", { name: "Apply suggestions" })).toHaveLength(1);
+  });
+
+  it("shows analysis-unavailable guidance without an active analyze action when runtime support is missing", async () => {
+    const summary = buildMigrationWorkspaceSummary({
+      context_summary: {
+        ...buildMigrationWorkspaceSummary().context_summary,
+        media_assets: {
+          source_discovered_count: 0,
+          source_imported_count: 0,
+          operator_uploaded_count: 1,
+          selected_assets_count: 1,
+          media_asset_categories: ["hero"],
+          selected_assets_trimmed: false,
+          diagnostics: [],
+          source_discovered: [],
+          operator_uploaded: [
+            {
+              asset_id: "runtime-na-1",
+              display_filename: "runtime-na.jpg",
+              provenance: "operator_upload",
+              selected_for_draft: true,
+              metadata_suggestion: {
+                suggestion_status: "not_available",
+                reason_code: "image_analysis_not_available",
+              },
+            },
+          ],
+          selected_assets: [
+            {
+              asset_id: "runtime-na-1",
+              display_filename: "runtime-na.jpg",
+              provenance: "operator_upload",
+              selected_for_draft: true,
+              metadata_suggestion: {
+                suggestion_status: "not_available",
+                reason_code: "image_analysis_not_available",
+              },
+            },
+          ],
+        },
+      },
+    });
+    const mediaAssetsPayload = (summary.context_summary as Record<string, unknown>).media_assets as Record<
+      string,
+      unknown
+    >;
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(summary);
+    mockFetchMigrationMediaAssets.mockResolvedValue(mediaAssetsPayload);
+
+    render(<SiteMigrationWorkflowPage />);
+
+    const mediaSection = await screen.findByTestId("migration-media-section");
+    const sourceList = within(mediaSection).getByTestId("migration-media-source-list");
+    const runtimeUnavailableRow = within(sourceList).getByTestId("migration-media-row-runtime-na-1");
+    expect(within(runtimeUnavailableRow).getByTestId("migration-media-primary-action-runtime-na-1")).toHaveTextContent(
+      "View details",
+    );
+    expect(within(runtimeUnavailableRow).queryByRole("button", { name: "Analyze image" })).not.toBeInTheDocument();
+
+    const details = within(runtimeUnavailableRow).getByTestId("migration-media-details-runtime-na-1");
+    await userEvent.setup().click(within(details).getByText("Image details"));
+    expect(details).toHaveTextContent("AI image analysis is unavailable in this runtime for this image.");
   });
 
   it("runs batch media metadata suggestion for selected assets and renders lifecycle/status feedback", async () => {
@@ -2898,7 +3084,7 @@ describe("site migration workflow route", () => {
     render(<SiteMigrationWorkflowPage />);
 
     const mediaSection = await screen.findByTestId("migration-media-section");
-    const batchActionButton = within(mediaSection).getByRole("button", { name: "Suggest Metadata for Selected" });
+    const batchActionButton = within(mediaSection).getByRole("button", { name: "Analyze Selected Images" });
     expect(batchActionButton).toBeInTheDocument();
 
     expect(within(mediaSection).getByTestId("migration-media-lifecycle-upl-1")).toHaveTextContent("Uploaded");
@@ -2921,7 +3107,7 @@ describe("site migration workflow route", () => {
     const batchFeedback = within(mediaSection).getByTestId("migration-media-batch-feedback");
     expect(batchFeedback).toHaveTextContent("Status: Partial success");
     expect(batchFeedback).toHaveTextContent("Completed: 1 | Failed: 0 | Skipped: 1");
-    expect(within(batchFeedback).getByText(/Import before using in draft or AI suggestions/i)).toBeInTheDocument();
+    expect(within(batchFeedback).getByText(/Import before using in draft or AI image analysis/i)).toBeInTheDocument();
   });
 
   it("imports discovered source images through import-first actions and renders feedback", async () => {
@@ -2977,7 +3163,7 @@ describe("site migration workflow route", () => {
     const mediaSection = await screen.findByTestId("migration-media-section");
     const sourceList = within(mediaSection).getByTestId("migration-media-source-list");
     expect(within(sourceList).queryByRole("button", { name: "Select for Draft" })).not.toBeInTheDocument();
-    expect(within(sourceList).queryByRole("button", { name: "Suggest metadata" })).not.toBeInTheDocument();
+    expect(within(sourceList).queryByRole("button", { name: "Analyze image" })).not.toBeInTheDocument();
     await user.click(within(sourceList).getByRole("button", { name: "Import image" }));
 
     await waitFor(() =>
@@ -3102,9 +3288,9 @@ describe("site migration workflow route", () => {
 
     const mediaSection = await screen.findByTestId("migration-media-section");
     const sourceList = within(mediaSection).getByTestId("migration-media-source-list");
-    expect(sourceList).toHaveTextContent("Import before using in draft or AI suggestions.");
+    expect(sourceList).toHaveTextContent("Import before using in draft or AI image analysis.");
     expect(within(sourceList).getByRole("button", { name: "Import image" })).toBeInTheDocument();
-    expect(within(sourceList).queryByRole("button", { name: "Suggest metadata" })).not.toBeInTheDocument();
+    expect(within(sourceList).queryByRole("button", { name: "Analyze image" })).not.toBeInTheDocument();
     expect(within(sourceList).queryByRole("button", { name: "Select for Draft" })).not.toBeInTheDocument();
     expect(within(sourceList).queryByRole("button", { name: "Apply suggestions" })).not.toBeInTheDocument();
     expect(sourceList).not.toHaveTextContent("transparent_placeholder.png");
