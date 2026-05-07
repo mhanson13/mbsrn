@@ -77,6 +77,7 @@ class SEOAnalyticsSiteSummaryRead(BaseModel):
     ga4_error_reason: (
         Literal[
             "not_configured",
+            "permission_denied",
             "access_denied",
             "property_not_found",
             "invalid_property_format",

@@ -39,6 +39,14 @@ logger = logging.getLogger(__name__)
 
 _GA4_DATA_FRESHNESS_THRESHOLD_HOURS = 48
 _SEARCH_CONSOLE_DATA_FRESHNESS_THRESHOLD_HOURS = 72
+_GA4_EXPECTED_UNAVAILABLE_REASONS = frozenset(
+    {
+        "not_configured",
+        "permission_denied",
+        "invalid_property_format",
+        "property_not_found",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -230,12 +238,15 @@ class SEOAnalyticsService:
         except GA4AnalyticsProviderError as exc:
             diagnostic_reason = _classify_ga4_runtime_error_reason(exc)
             failed_checked_at = _utcnow()
-            logger.warning(
-                "seo_analytics_unavailable business_id=%s site_id=%s ga4_reason=%s reason=%s",
+            log_level = logging.INFO if diagnostic_reason in _GA4_EXPECTED_UNAVAILABLE_REASONS else logging.WARNING
+            logger.log(
+                log_level,
+                "seo_analytics_unavailable business_id=%s site_id=%s ga4_reason=%s ga4_health_status=%s reason=%s",
                 business_id,
                 site_id,
                 diagnostic_reason,
-                str(exc),
+                _ga4_health_status_for_reason(diagnostic_reason),
+                _ga4_reason_log_detail(reason_code=diagnostic_reason, error=exc),
             )
             return SEOAnalyticsSiteSummaryRead(
                 business_id=business_id,
@@ -1178,10 +1189,10 @@ def _classify_ga4_configuration_error_reason(error: Exception) -> str:
         return "unknown_error"
     if "not configured" in message or "property id is required" in message or "credentials are required" in message:
         return "not_configured"
+    if _is_ga4_permission_denied_message(message):
+        return "permission_denied"
     if "invalid" in message and "property" in message:
         return "invalid_property_format"
-    if "access denied" in message or "permission denied" in message:
-        return "access_denied"
     if "404" in message or "not found" in message:
         return "property_not_found"
     if "credentials" in message or "authorize" in message:
@@ -1193,8 +1204,8 @@ def _classify_ga4_runtime_error_reason(error: Exception) -> str:
     message = str(error or "").strip().lower()
     if not message:
         return "unknown_error"
-    if "permission_denied" in message or "permission denied" in message or "access denied" in message:
-        return "access_denied"
+    if _is_ga4_permission_denied_message(message):
+        return "permission_denied"
     if "invalid argument" in message or "invalid property" in message or "malformed" in message:
         return "invalid_property_format"
     if "404" in message or "not found" in message or "unknown property" in message:
@@ -1202,6 +1213,60 @@ def _classify_ga4_runtime_error_reason(error: Exception) -> str:
     if "not configured" in message:
         return "not_configured"
     return "unknown_error"
+
+
+def _is_ga4_permission_denied_message(message: str) -> bool:
+    normalized = str(message or "").strip().lower()
+    if not normalized:
+        return False
+    permission_markers = (
+        "permission_denied",
+        "permission denied",
+        "insufficient permissions",
+        "insufficient permission",
+        "insufficient authentication scopes",
+        "insufficient scope",
+        "does not have sufficient permissions",
+        "doesn't have sufficient permissions",
+        "access denied",
+        "forbidden",
+    )
+    if any(marker in normalized for marker in permission_markers):
+        return True
+    return "403" in normalized and ("http error" in normalized or "status code" in normalized or "code" in normalized)
+
+
+def _ga4_health_status_for_reason(reason_code: str) -> str:
+    normalized = str(reason_code or "").strip().lower()
+    if normalized == "permission_denied":
+        return "permission_denied"
+    if normalized == "not_configured":
+        return "not_configured"
+    if normalized in {"invalid_property_format", "property_not_found"}:
+        return "invalid_property"
+    return "unavailable"
+
+
+def _ga4_reason_log_detail(*, reason_code: str, error: Exception) -> str:
+    normalized = str(reason_code or "").strip().lower()
+    if normalized == "permission_denied":
+        return "ga4_property_permission_denied"
+    if normalized == "not_configured":
+        return "ga4_not_configured"
+    if normalized in {"invalid_property_format", "property_not_found"}:
+        return "ga4_property_invalid_or_not_found"
+    if normalized == "unknown_error":
+        return _summarize_error_message(error)
+    return normalized or _summarize_error_message(error)
+
+
+def _summarize_error_message(error: Exception, *, max_length: int = 180) -> str:
+    normalized = " ".join(str(error or "").split())
+    if not normalized:
+        normalized = error.__class__.__name__
+    if len(normalized) <= max_length:
+        return normalized
+    return f"{normalized[: max_length - 3]}..."
 
 
 def _ga4_site_metrics_have_data(metrics: SEOAnalyticsSiteMetricsSummaryRead) -> bool:
@@ -1298,12 +1363,16 @@ def _build_ga4_health(
             data_available = True
             health_message = "GA4 is available for recommendation context."
             health_reason = None
-    elif normalized_reason == "access_denied":
+    elif normalized_reason in {"permission_denied", "access_denied"}:
         health_status = "permission_denied"
+        health_reason = "permission_denied"
         property_verified = False
         reachable = False
         data_available = False
-        health_message = "Verify the connected Google account can read this GA4 property."
+        health_message = (
+            "MBSRN cannot read this GA4 property. Verify the connected Google account or service account has "
+            "Viewer access to the property."
+        )
     elif normalized_reason in {"invalid_property_format", "property_not_found"}:
         health_status = "invalid_property"
         property_verified = False

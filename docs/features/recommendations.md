@@ -777,11 +777,15 @@ Operator inputs:
 Operator-visible diagnostics:
 
 - `not_configured`
-- `access_denied`
+- `permission_denied`
 - `property_not_found`
 - `invalid_property_format`
 - `no_data`
 - `unknown_error`
+
+Notes:
+- GA4 permission failures are normalized to `permission_denied`.
+- Older payloads may still contain legacy `access_denied` values during transition.
 
 Operational requirements:
 

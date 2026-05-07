@@ -302,9 +302,10 @@ class _DeterministicRecommendationSearchConsoleProvider:
 
 
 class _FailingRecommendationAnalyticsProvider:
-    def __init__(self) -> None:
+    def __init__(self, *, message: str = "GA4 request failed: PERMISSION_DENIED") -> None:
         self.fetch_site_metrics_calls = 0
         self.fetch_window_metrics_calls = 0
+        self.message = message
 
     def is_configured(self) -> bool:
         return True
@@ -319,7 +320,7 @@ class _FailingRecommendationAnalyticsProvider:
     ) -> GA4SiteMetricsResult:
         self.fetch_site_metrics_calls += 1
         del site_domain, period_days, top_pages_limit, ga4_property_id
-        raise GA4AnalyticsProviderError("GA4 request failed: PERMISSION_DENIED")
+        raise GA4AnalyticsProviderError(self.message)
 
     def fetch_window_metrics(
         self,
@@ -332,7 +333,7 @@ class _FailingRecommendationAnalyticsProvider:
     ) -> GA4SitePeriodMetrics:
         self.fetch_window_metrics_calls += 1
         del site_domain, start_date, end_date, page_path, ga4_property_id
-        raise GA4AnalyticsProviderError("GA4 request failed: PERMISSION_DENIED")
+        raise GA4AnalyticsProviderError(self.message)
 
 
 def _seed_other_business(db_session) -> Business:
@@ -846,6 +847,59 @@ def test_recommendation_measurement_context_degrades_when_ga4_provider_errors(db
     search_context = first_item.get("recommendation_search_console_context") or {}
     assert measurement_context.get("measurement_status") == "unavailable"
     assert search_context.get("search_console_status") == "available"
+
+
+def test_recommendation_measurement_context_permission_denied_stays_unavailable(
+    db_session,
+    seeded_business,
+) -> None:
+    analytics_service = SEOAnalyticsService(
+        provider=_FailingRecommendationAnalyticsProvider(
+            message=(
+                "GA4 request failed: User does not have sufficient permissions for this property. "
+                "To learn more about Property ID, see https://developers.google.com/analytics/devguides/reporting/data/v1/property-id."
+            ),
+        ),
+        search_console_provider=_DeterministicRecommendationSearchConsoleProvider(),
+    )
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        analytics_service=analytics_service,
+    )
+    site_id = _create_site(
+        client,
+        seeded_business.id,
+        domain="ga4-permission-denied.example",
+        ga4_property_id="2000000002",
+        search_console_property_url="sc-domain:ga4-permission-denied.example",
+        search_console_enabled=True,
+    )
+    audit_run_id = _seed_completed_audit_run(db_session, business_id=seeded_business.id, site_id=site_id)
+    run_response = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs",
+        json={"audit_run_id": audit_run_id},
+    )
+    assert run_response.status_code == 201
+    run_id = run_response.json()["id"]
+
+    list_recommendations = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs/{run_id}/recommendations"
+    )
+    assert list_recommendations.status_code == 200
+    payload = list_recommendations.json()
+    assert payload["items"]
+    first_item = payload["items"][0]
+    measurement_context = first_item.get("recommendation_measurement_context") or {}
+    assert measurement_context.get("measurement_status") == "unavailable"
+    assert measurement_context.get("measurement_status") != "unknown"
+
+    analytics_summary = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/analytics/site-summary")
+    assert analytics_summary.status_code == 200
+    summary_payload = analytics_summary.json()
+    assert summary_payload["ga4_error_reason"] == "permission_denied"
+    assert summary_payload["ga4_health"]["ga4_health_status"] == "permission_denied"
+    assert summary_payload["ga4_health"]["ga4_health_reason"] == "permission_denied"
 
 
 def test_recommendation_run_requires_lineage_and_completed_inputs(db_session, seeded_business) -> None:

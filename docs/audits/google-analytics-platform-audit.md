@@ -113,7 +113,7 @@ Phase 1 GA4 connection/property health visibility is now implemented as a compac
 - Production deploy docs describe secret wiring for GA4 credentials and optional global property env.
 
 ### 3.7 Failure handling
-- Bounded reason mapping exists (`not_configured`, `access_denied`, `property_not_found`, `invalid_property_format`, `no_data`, `unknown_error`).
+- Bounded reason mapping exists (`not_configured`, `permission_denied`, `property_not_found`, `invalid_property_format`, `no_data`, `unknown_error`).
 - Errors are normalized for UI-safe operator messaging.
 - Missing finer-grained classifications (quota/rate-limit/transient retry hints) and no retry/backoff strategy.
 

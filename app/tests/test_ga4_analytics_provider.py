@@ -13,6 +13,7 @@ from app.integrations.ga4_analytics_provider import (
     GA4AnalyticsProviderError,
     GoogleAnalyticsDataAPIClient,
 )
+from app.services.seo_analytics import _classify_ga4_runtime_error_reason
 
 
 def test_google_ga4_client_uses_site_scoped_property_for_reports(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -161,6 +162,65 @@ def test_google_ga4_client_request_json_maps_http_errors_without_token_leak(
     assert "permission_denied" in message.lower()
     assert "fake-token-value" not in message
     assert "bearer" not in message.lower()
+
+
+@pytest.mark.parametrize(
+    "provider_message",
+    [
+        "User does not have sufficient permissions for this property.",
+        "permission denied",
+        "insufficient permissions",
+    ],
+)
+def test_google_ga4_client_permission_denied_variants_classify_to_permission_denied(
+    monkeypatch: pytest.MonkeyPatch,
+    provider_message: str,
+) -> None:
+    client = GoogleAnalyticsDataAPIClient(property_id="2000000002")
+    monkeypatch.setattr(client, "_resolve_access_token", lambda: "fake-token")
+    error_payload = {"error": {"message": provider_message}}
+
+    def _raise_http_error(*args, **kwargs):  # noqa: ANN002, ANN003
+        del args, kwargs
+        raise HTTPError(
+            url="https://analyticsdata.googleapis.com/v1beta/properties/2000000002:runReport",
+            code=403,
+            msg="Forbidden",
+            hdrs=None,
+            fp=BytesIO(json.dumps(error_payload).encode("utf-8")),
+        )
+
+    monkeypatch.setattr(ga4_provider_module, "urlopen", _raise_http_error)
+
+    with pytest.raises(GA4AnalyticsProviderError) as exc_info:
+        client._request_json(url="https://example.invalid", method="POST", body={"foo": "bar"})
+
+    assert _classify_ga4_runtime_error_reason(exc_info.value) == "permission_denied"
+    assert "fake-token" not in str(exc_info.value).lower()
+
+
+def test_google_ga4_client_http_403_forbidden_classifies_to_permission_denied(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = GoogleAnalyticsDataAPIClient(property_id="2000000002")
+    monkeypatch.setattr(client, "_resolve_access_token", lambda: "fake-token")
+
+    def _raise_http_error(*args, **kwargs):  # noqa: ANN002, ANN003
+        del args, kwargs
+        raise HTTPError(
+            url="https://analyticsdata.googleapis.com/v1beta/properties/2000000002:runReport",
+            code=403,
+            msg="Forbidden",
+            hdrs=None,
+            fp=BytesIO(b""),
+        )
+
+    monkeypatch.setattr(ga4_provider_module, "urlopen", _raise_http_error)
+
+    with pytest.raises(GA4AnalyticsProviderError) as exc_info:
+        client._request_json(url="https://example.invalid", method="POST", body={"foo": "bar"})
+
+    assert _classify_ga4_runtime_error_reason(exc_info.value) == "permission_denied"
 
 
 def test_google_ga4_client_request_json_surfaces_rate_limit_message(monkeypatch: pytest.MonkeyPatch) -> None:

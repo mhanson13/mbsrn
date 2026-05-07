@@ -37,6 +37,8 @@ Health states are bounded and operator-safe:
 
 Operator guidance is shown inline with short next actions (for example, add a property ID, verify GA4 read access, or retry when temporarily unavailable).
 
+Permission failures are normalized as `permission_denied` with operator-safe messaging.
+
 Boundary:
 - health is derived from the selected site property only
 - no global/default GA4 property fallback is used for site health

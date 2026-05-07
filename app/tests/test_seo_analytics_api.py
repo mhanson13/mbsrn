@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import logging
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+import pytest
 
 from app.api.deps import TenantContext, get_db, get_seo_analytics_service, get_tenant_context
 from app.api.routes.seo import router as seo_router
@@ -540,12 +542,26 @@ def test_site_analytics_summary_reports_invalid_property_format_reason(db_sessio
     assert payload["ga4_health"]["ga4_health_status"] == "invalid_property"
 
 
-def test_site_analytics_summary_reports_access_denied_reason(db_session, seeded_business) -> None:
+@pytest.mark.parametrize(
+    "provider_message",
+    [
+        "GA4 request failed: PERMISSION_DENIED",
+        "GA4 request failed: User does not have sufficient permissions for this property.",
+        "GA4 request failed: permission denied",
+        "GA4 request failed: insufficient permissions",
+        "GA4 request failed: HTTP Error 403: Forbidden",
+    ],
+)
+def test_site_analytics_summary_reports_permission_denied_reason(
+    db_session,
+    seeded_business,
+    provider_message: str,
+) -> None:
     client = _make_client(
         db_session,
         business_id=seeded_business.id,
         analytics_service=SEOAnalyticsService(
-            provider=_GA4ErrorProvider("GA4 request failed: PERMISSION_DENIED"),
+            provider=_GA4ErrorProvider(provider_message),
             settings=SEOAnalyticsServiceSettings(period_days=7, top_pages_limit=3),
         ),
     )
@@ -562,9 +578,52 @@ def test_site_analytics_summary_reports_access_denied_reason(db_session, seeded_
     assert payload["available"] is False
     assert payload["status"] == "unavailable"
     assert payload["ga4_status"] == "error"
-    assert payload["ga4_error_reason"] == "access_denied"
+    assert payload["ga4_error_reason"] == "permission_denied"
     assert payload["ga4_health"]["ga4_health_status"] == "permission_denied"
-    assert payload["ga4_health"]["ga4_health_message"] == "Verify the connected Google account can read this GA4 property."
+    assert payload["ga4_health"]["ga4_health_reason"] == "permission_denied"
+    assert payload["ga4_health"]["ga4_health_message"] == (
+        "MBSRN cannot read this GA4 property. Verify the connected Google account or service account has Viewer "
+        "access to the property."
+    )
+
+
+def test_site_analytics_summary_logs_permission_denied_with_sanitized_reason(
+    db_session,
+    seeded_business,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO, logger="app.services.seo_analytics")
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        analytics_service=SEOAnalyticsService(
+            provider=_GA4ErrorProvider(
+                "GA4 request failed: User does not have sufficient permissions for this property. "
+                "To learn more about Property ID, see https://developers.google.com/analytics/devguides/reporting/data/v1/property-id."  # noqa: E501
+            ),
+            settings=SEOAnalyticsServiceSettings(period_days=7, top_pages_limit=3),
+        ),
+    )
+    site_id = _create_site(
+        client,
+        seeded_business.id,
+        domain="analytics-access-denied-log.example",
+        ga4_property_id="2000000002",
+    )
+
+    response = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/analytics/site-summary")
+    assert response.status_code == 200
+
+    unavailable_logs = [record for record in caplog.records if "seo_analytics_unavailable" in record.getMessage()]
+    assert unavailable_logs
+    latest_log = unavailable_logs[-1]
+    latest_message = latest_log.getMessage().lower()
+    assert latest_log.levelno == logging.INFO
+    assert "ga4_reason=permission_denied" in latest_message
+    assert "ga4_health_status=permission_denied" in latest_message
+    assert "reason=ga4_property_permission_denied" in latest_message
+    assert "does not have sufficient permissions" not in latest_message
+    assert "developers.google.com/analytics" not in latest_message
 
 
 def test_site_analytics_summary_reports_property_not_found_reason(db_session, seeded_business) -> None:
