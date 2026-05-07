@@ -2949,12 +2949,15 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 workflow_run_failure_reason_code,
                 workflow_run_failure_stage,
                 workflow_run_failure_step,
+                failure_workflow_output,
             ) = self._resolve_workflow_run_failure_details(
                 target=target,
                 workflow_run_id=run_id,
                 workflow_run_status=run_status,
                 workflow_run_conclusion=run_conclusion,
             )
+            if failure_workflow_output:
+                workflow_output = failure_workflow_output
 
         return SEOMigrationGitHubDeployRunStatusResult(
             repo_owner=target.repo_owner,
@@ -3041,12 +3044,15 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 workflow_run_failure_reason_code,
                 workflow_run_failure_stage,
                 workflow_run_failure_step,
+                failure_workflow_output,
             ) = self._resolve_workflow_run_failure_details(
                 target=target,
                 workflow_run_id=workflow_run_id,
                 workflow_run_status=workflow_run_status,
                 workflow_run_conclusion=workflow_run_conclusion,
             )
+            if failure_workflow_output:
+                workflow_output = failure_workflow_output
 
         return (
             workflow_run_id,
@@ -3198,12 +3204,12 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         workflow_run_id: int | None,
         workflow_run_status: str | None,
         workflow_run_conclusion: str | None,
-    ) -> tuple[str | None, str | None, str | None]:
+    ) -> tuple[str | None, str | None, str | None, dict[str, str] | None]:
         run_id = workflow_run_id if isinstance(workflow_run_id, int) and workflow_run_id > 0 else None
         run_status = (_coerce_string(workflow_run_status) or "").strip().lower()
         run_conclusion = (_coerce_string(workflow_run_conclusion) or "").strip().lower()
         if run_id is None or run_status != "completed" or run_conclusion in {"", "success"}:
-            return None, None, None
+            return None, None, None, None
 
         jobs_response = self._request_json(
             method="GET",
@@ -3246,25 +3252,54 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             failed_step_name=failed_step_name,
             run_conclusion=run_conclusion,
         )
+        workflow_output: dict[str, str] | None = None
         if reason_code == "workflow_run_failed" and failed_job_id is not None:
-            cloudsql_reason_code, cloudsql_failure_stage = self._classify_cloudsql_proxy_failure_from_job_logs(
+            (
+                cloudsql_reason_code,
+                cloudsql_failure_stage,
+                extracted_runtime_network_state,
+            ) = self._classify_cloudsql_proxy_failure_from_job_logs(
                 target=target,
                 job_id=failed_job_id,
             )
+            if extracted_runtime_network_state:
+                workflow_output = extracted_runtime_network_state
             if cloudsql_reason_code:
                 reason_code = cloudsql_reason_code
                 if cloudsql_failure_stage:
                     failure_stage = cloudsql_failure_stage
-        return reason_code, failure_stage, failed_step_name
+        probe_failure_reason_codes = {
+            _DEPLOY_RUNTIME_REASON_INGRESS_BACKEND_502,
+            _DEPLOY_RUNTIME_REASON_REACHABLE_BUT_TLS_MISMATCH,
+            _DEPLOY_RUNTIME_REASON_HTTPS_PROBE_TIMEOUT,
+            _DEPLOY_RUNTIME_REASON_HTTPS_PROBE_EMPTY_REPLY,
+            _DEPLOY_RUNTIME_REASON_HTTPS_PROBE_NOT_ATTEMPTED,
+            _DEPLOY_RUNTIME_REASON_HTTPS_PROBE_FAILED_AFTER_CONTROL_PLANE_READY,
+        }
+        if reason_code in probe_failure_reason_codes:
+            if workflow_output is None:
+                workflow_output = {}
+            if "deploy_https_ready" not in workflow_output:
+                workflow_output["deploy_https_ready"] = "false"
+            if "https_probe_error_summary" not in workflow_output:
+                if reason_code == _DEPLOY_RUNTIME_REASON_HTTPS_PROBE_NOT_ATTEMPTED:
+                    workflow_output["https_probe_error_summary"] = (
+                        "reason=https_probe_not_attempted;detail=https_probe_not_attempted"
+                    )
+                else:
+                    workflow_output["https_probe_error_summary"] = (
+                        f"reason={reason_code};detail=probe_failure_summary_unavailable"
+                    )
+        return reason_code, failure_stage, failed_step_name, workflow_output
 
     def _classify_cloudsql_proxy_failure_from_job_logs(
         self,
         *,
         target: SEOMigrationGitHubDeployTarget,
         job_id: int,
-    ) -> tuple[str | None, str | None]:
+    ) -> tuple[str | None, str | None, dict[str, str]]:
         if job_id <= 0:
-            return None, None
+            return None, None, {}
         logs_text = self._request_text(
             method="GET",
             path=(
@@ -3285,7 +3320,9 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             },
             error_stage="workflow_result_lookup",
         )
-        return _classify_cloudsql_proxy_failure_from_log_text(logs_text)
+        reason_code, failure_stage = _classify_cloudsql_proxy_failure_from_log_text(logs_text)
+        runtime_network_state = _extract_resolve_live_url_state_from_log_text(logs_text)
+        return reason_code, failure_stage, runtime_network_state
 
     def _request_text(
         self,
@@ -8565,6 +8602,12 @@ _DEPLOY_RUNTIME_REASON_PUBLIC_IMAGE_PULL_FAILED = "public_image_pull_failed"
 _DEPLOY_RUNTIME_REASON_PRIVATE_IMAGE_PULL_FORBIDDEN = "private_image_pull_forbidden"
 _DEPLOY_RUNTIME_REASON_REACHABLE_BUT_TLS_MISMATCH = "reachable_but_tls_certificate_mismatch"
 _DEPLOY_RUNTIME_REASON_INGRESS_PENDING_BUT_HOST_REACHABLE = "ingress_address_pending_but_hostname_reachable"
+_DEPLOY_RUNTIME_REASON_HTTPS_PROBE_TIMEOUT = "https_probe_timeout"
+_DEPLOY_RUNTIME_REASON_HTTPS_PROBE_EMPTY_REPLY = "https_probe_empty_reply"
+_DEPLOY_RUNTIME_REASON_HTTPS_PROBE_NOT_ATTEMPTED = "https_probe_not_attempted"
+_DEPLOY_RUNTIME_REASON_HTTPS_PROBE_FAILED_AFTER_CONTROL_PLANE_READY = (
+    "https_probe_failed_after_control_plane_ready"
+)
 _DEPLOY_GKE_CONFIG_MISSING_REASON_PRIORITY: tuple[str, ...] = (
     _DEPLOY_DISPATCH_SERVICE_REASON_MISSING_CLUSTER_NAME,
     _DEPLOY_DISPATCH_SERVICE_REASON_MISSING_CLUSTER_LOCATION,
@@ -9003,6 +9046,8 @@ def _render_managed_deploy_workflow_yaml(
         "      live_url: ${{ steps.resolve_live_url.outputs.live_url }}\n"
         "      resolved_live_url: ${{ steps.resolve_live_url.outputs.resolved_live_url }}\n"
         "      deployed_url: ${{ steps.resolve_live_url.outputs.deployed_url }}\n"
+        "      host_reachable: ${{ steps.resolve_live_url.outputs.host_reachable }}\n"
+        "      host_reachability_scheme: ${{ steps.resolve_live_url.outputs.host_reachability_scheme }}\n"
         "      dns_record_matches_ingress: ${{ steps.resolve_live_url.outputs.dns_record_matches_ingress }}\n"
         "      dns_expected_ip: ${{ steps.resolve_live_url.outputs.dns_expected_ip }}\n"
         "      dns_observed_ip: ${{ steps.resolve_live_url.outputs.dns_observed_ip }}\n"
@@ -9017,6 +9062,7 @@ def _render_managed_deploy_workflow_yaml(
         "      ingress_ip: ${{ steps.resolve_live_url.outputs.ingress_ip }}\n"
         "      ingress_conflict_detected: ${{ steps.resolve_live_url.outputs.ingress_conflict_detected }}\n"
         "      cert_identity_valid: ${{ steps.resolve_live_url.outputs.cert_identity_valid }}\n"
+        "      https_probe_error_summary: ${{ steps.resolve_live_url.outputs.https_probe_error_summary }}\n"
         "      deploy_https_ready: ${{ steps.resolve_live_url.outputs.deploy_https_ready }}\n"
         "      site_runtime_image_reference: ${{ steps.resolve_site_runtime_image.outputs.site_runtime_image_reference }}\n"
         "      site_runtime_image_selection_mode: ${{ steps.resolve_site_runtime_image.outputs.site_runtime_image_selection_mode }}\n"
@@ -9461,7 +9507,34 @@ def _render_managed_deploy_workflow_yaml(
         "          observed_managed_certificate_status=\"\"\n"
         "          observed_managed_certificate_domain_status=\"\"\n"
         "          https_probe_error_summary=\"\"\n"
+        "          https_probe_attempted=false\n"
+        "          http_fallback_attempted=false\n"
         "          live_url=\"\"\n"
+        "          set_https_probe_error_summary() {\n"
+        "            local probe_reason=\"$1\"\n"
+        "            local probe_exit_code=\"${2:-}\"\n"
+        "            local probe_status_code=\"${3:-}\"\n"
+        "            local probe_output_path=\"${4:-}\"\n"
+        "            local probe_detail=\"\"\n"
+        "            if [ -n \"$probe_output_path\" ] && [ -f \"$probe_output_path\" ]; then\n"
+        "              probe_detail=\"$(head -n 1 \"$probe_output_path\" | tr -d '\\r' | tr '\\t' ' ' | sed 's/[[:space:]]\\+/ /g' | cut -c1-160)\"\n"
+        "            fi\n"
+        "            if [ -z \"$probe_detail\" ]; then\n"
+        "              probe_detail=\"$probe_reason\"\n"
+        "            fi\n"
+        "            https_probe_error_summary=\"reason=$probe_reason\"\n"
+        "            if [ -n \"$probe_exit_code\" ]; then\n"
+        "              https_probe_error_summary=\"$https_probe_error_summary;exit_code=$probe_exit_code\"\n"
+        "            fi\n"
+        "            if [ -n \"$probe_status_code\" ]; then\n"
+        "              https_probe_error_summary=\"$https_probe_error_summary;status=$probe_status_code\"\n"
+        "            fi\n"
+        "            if [ -n \"${http_fallback_attempted:-}\" ]; then\n"
+        "              https_probe_error_summary=\"$https_probe_error_summary;http_fallback_attempted=$http_fallback_attempted\"\n"
+        "            fi\n"
+        "            https_probe_error_summary=\"$https_probe_error_summary;detail=$probe_detail\"\n"
+        "            https_probe_error_summary=\"$(echo \"$https_probe_error_summary\" | tr -d '\\r' | cut -c1-240)\"\n"
+        "          }\n"
         "          emit_resolve_live_url_state() {\n"
         "            echo \"resolve_live_url_state_host_reachable=$host_reachable\"\n"
         "            echo \"resolve_live_url_state_host_reachability_scheme=$host_reachability_scheme\"\n"
@@ -9658,10 +9731,12 @@ def _render_managed_deploy_workflow_yaml(
         "            fi\n"
         "            if [ -n \"$preview_host\" ]; then\n"
         "              https_probe_output=\"$(mktemp)\"\n"
+        "              https_probe_attempted=true\n"
         "              if https_code=\"$(curl --silent --show-error --connect-timeout 5 --max-time 10 --output /dev/null --write-out '%{http_code}' \"https://$preview_host\" 2>\"$https_probe_output\")\"; then\n"
         "                if echo \"$https_code\" | grep -Eq '^[1-5][0-9][0-9]$'; then\n"
-        "                  if echo \"$https_code\" | grep -Eq '^5[0-9][0-9]$'; then\n"
+        "                  if [ \"$https_code\" = \"502\" ]; then\n"
         "                    backend_502_detected=true\n"
+        "                    set_https_probe_error_summary \"ingress_backend_502\" \"\" \"$https_code\" \"$https_probe_output\"\n"
         "                    echo \"deploy_runtime_reason_code=ingress_backend_502\"\n"
         "                    echo \"Expected preview hostname responded with ${https_code} over HTTPS, indicating backend unhealthy state.\"\n"
         "                    rm -f \"$https_probe_output\"\n"
@@ -9679,17 +9754,19 @@ def _render_managed_deploy_workflow_yaml(
         "                  tls_mismatch_detected=true\n"
         "                  echo \"Expected preview hostname is reachable but TLS certificate does not match.\"\n"
         "                  echo \"deploy_runtime_reason_code=reachable_but_tls_certificate_mismatch\"\n"
-        "                  https_probe_error_summary=\"$(head -n 1 \"$https_probe_output\" | tr -d '\\r' | cut -c1-240)\"\n"
+        "                  set_https_probe_error_summary \"reachable_but_tls_certificate_mismatch\" \"$https_exit\" \"\" \"$https_probe_output\"\n"
         "                  cat \"$https_probe_output\"\n"
         "                  rm -f \"$https_probe_output\"\n"
         "                  break\n"
         "                fi\n"
         "              fi\n"
         "              rm -f \"$https_probe_output\"\n"
+        "              http_fallback_attempted=true\n"
         "              http_code=\"$(curl --silent --show-error --connect-timeout 5 --max-time 10 --output /dev/null --write-out '%{http_code}' \"http://$preview_host\" 2>/dev/null || true)\"\n"
         "              if echo \"$http_code\" | grep -Eq '^[1-5][0-9][0-9]$'; then\n"
-        "                if echo \"$http_code\" | grep -Eq '^5[0-9][0-9]$'; then\n"
+        "                if [ \"$http_code\" = \"502\" ]; then\n"
         "                  backend_502_detected=true\n"
+        "                  set_https_probe_error_summary \"ingress_backend_502\" \"\" \"$http_code\" \"\"\n"
         "                  echo \"deploy_runtime_reason_code=ingress_backend_502\"\n"
         "                  echo \"Expected preview hostname responded with ${http_code} over HTTP, indicating backend unhealthy state.\"\n"
         "                  break\n"
@@ -9732,6 +9809,9 @@ def _render_managed_deploy_workflow_yaml(
         "            exit 1\n"
         "          fi\n"
         "          if [ \"$backend_502_detected\" = true ]; then\n"
+        "            if [ -z \"$https_probe_error_summary\" ]; then\n"
+        "              set_https_probe_error_summary \"ingress_backend_502\" \"\" \"502\" \"\"\n"
+        "            fi\n"
         "            echo \"deploy_runtime_reason_message=Ingress hostname is reachable but backend returned 5xx.\"\n"
         "            kubectl get service site-web --namespace \"$K8S_NAMESPACE\" -o wide || true\n"
         "            kubectl describe service site-web --namespace \"$K8S_NAMESPACE\" || true\n"
@@ -9755,6 +9835,10 @@ def _render_managed_deploy_workflow_yaml(
         "            live_url=\"http://$ingress_ip\"\n"
         "          fi\n"
         "          if [ -z \"$live_url\" ]; then\n"
+        "            if [ \"$https_probe_attempted\" != \"true\" ]; then\n"
+        "              https_probe_error_summary=\"reason=https_probe_not_attempted;detail=https_probe_not_attempted\"\n"
+        "              echo \"deploy_runtime_reason_code=https_probe_not_attempted\"\n"
+        "            fi\n"
         "            echo \"Ingress created but external address is not assigned yet for namespace $K8S_NAMESPACE.\"\n"
         "            echo \"Likely rollout blocker: ingress/load balancer provisioning still in progress.\"\n"
         "            echo \"This may take several minutes on GKE.\"\n"
@@ -9803,6 +9887,10 @@ def _render_managed_deploy_workflow_yaml(
             "            exit 1\n"
         "          fi\n"
         "          if [ -z \"$preview_host\" ]; then\n"
+        "            if [ \"$https_probe_attempted\" != \"true\" ]; then\n"
+        "              https_probe_error_summary=\"reason=https_probe_not_attempted;detail=preview_host_missing\"\n"
+        "              echo \"deploy_runtime_reason_code=https_probe_not_attempted\"\n"
+        "            fi\n"
         "            echo \"deploy_runtime_reason_code=ingress_address_pending\"\n"
         "            echo \"deploy_runtime_reason_message=Preview hostname is missing; cannot validate DNS/TLS identity.\"\n"
         "            exit 1\n"
@@ -10219,20 +10307,57 @@ def _render_managed_deploy_workflow_yaml(
         "            echo \"deploy_runtime_reason_message=ManagedCertificate status is not ACTIVE yet.\"\n"
         "            exit 1\n"
         "          fi\n"
+        "          static_ip_alignment_ready=false\n"
+        "          if [ -n \"$expected_static_ip_address\" ]; then\n"
+        "            if [ \"$ingress_status_ip_matches_static_ip\" = \"true\" ] || [ \"$static_ip_bound_to_expected_forwarding_rule\" = \"true\" ]; then\n"
+        "              static_ip_alignment_ready=true\n"
+        "            fi\n"
+        "          else\n"
+        "            static_ip_alignment_ready=true\n"
+        "          fi\n"
+        "          control_plane_ready=false\n"
+        "          if [ \"$dns_record_matches_ingress\" = \"true\" ] \\\n"
+        "            && [ \"$cert_identity_valid\" = \"true\" ] \\\n"
+        "            && [ \"$static_ip_alignment_ready\" = \"true\" ] \\\n"
+        "            && [ \"$normalized_domain_status\" = \"ACTIVE\" ] \\\n"
+        "            && [ \"$normalized_cert_status\" = \"ACTIVE\" ]; then\n"
+        "            control_plane_ready=true\n"
+        "          fi\n"
         "          https_verify_output=\"$(mktemp)\"\n"
+        "          https_probe_attempted=true\n"
         "          if ! https_verify_code=\"$(curl --silent --show-error --connect-timeout 5 --max-time 10 --output /dev/null --write-out '%{http_code}' \"https://$preview_host\" 2>\"$https_verify_output\")\"; then\n"
         "            https_verify_exit=$?\n"
-        "            https_probe_error_summary=\"$(head -n 1 \"$https_verify_output\" | tr -d '\\r' | cut -c1-240)\"\n"
         "            if [ \"$https_verify_exit\" -eq 60 ] || grep -qiE 'SSL certificate problem|SSL_ERROR_BAD_CERT_DOMAIN|certificate subject name|no alternative certificate subject name' \"$https_verify_output\"; then\n"
+        "              set_https_probe_error_summary \"reachable_but_tls_certificate_mismatch\" \"$https_verify_exit\" \"\" \"$https_verify_output\"\n"
         "              if [ \"$pre_shared_cert_controller_cross_site_evidence\" = true ]; then\n"
         "                echo \"deploy_runtime_reason_code=stale_pre_shared_cert_binding_detected\"\n"
         "              fi\n"
         "              echo \"deploy_runtime_reason_code=tls_certificate_bound_to_wrong_site\"\n"
         "              echo \"deploy_runtime_reason_code=reachable_but_tls_certificate_mismatch\"\n"
+        "            elif [ \"$https_verify_exit\" -eq 28 ]; then\n"
+        "              set_https_probe_error_summary \"https_probe_timeout\" \"$https_verify_exit\" \"\" \"$https_verify_output\"\n"
+        "              echo \"deploy_runtime_reason_code=https_probe_timeout\"\n"
+        "              if [ \"$control_plane_ready\" = \"true\" ]; then\n"
+        "                echo \"deploy_runtime_reason_code=https_probe_failed_after_control_plane_ready\"\n"
+        "                echo \"deploy_runtime_reason_message=DNS, IP, and certificate are ready, but HTTPS probe to preview host timed out.\"\n"
+        "              fi\n"
+        "            elif [ \"$https_verify_exit\" -eq 52 ]; then\n"
+        "              set_https_probe_error_summary \"https_probe_empty_reply\" \"$https_verify_exit\" \"\" \"$https_verify_output\"\n"
+        "              echo \"deploy_runtime_reason_code=https_probe_empty_reply\"\n"
+        "              if [ \"$control_plane_ready\" = \"true\" ]; then\n"
+        "                echo \"deploy_runtime_reason_code=https_probe_failed_after_control_plane_ready\"\n"
+        "                echo \"deploy_runtime_reason_message=DNS, IP, and certificate are ready, but HTTPS probe returned an empty reply.\"\n"
+        "              fi\n"
         "            else\n"
         "              if [ -z \"$ingress_status_ip\" ] && [ -z \"$expected_static_ip_address\" ] && [ \"$host_reachable\" != \"true\" ]; then\n"
+        "                set_https_probe_error_summary \"ingress_address_pending\" \"$https_verify_exit\" \"\" \"$https_verify_output\"\n"
         "                echo \"deploy_runtime_reason_code=ingress_address_pending\"\n"
+        "              elif [ \"$control_plane_ready\" = \"true\" ]; then\n"
+        "                set_https_probe_error_summary \"https_probe_failed_after_control_plane_ready\" \"$https_verify_exit\" \"\" \"$https_verify_output\"\n"
+        "                echo \"deploy_runtime_reason_code=https_probe_failed_after_control_plane_ready\"\n"
+        "                echo \"deploy_runtime_reason_message=DNS, IP, and certificate are ready, but HTTPS probe to preview host is not yet successful. Check load balancer backend health, service endpoints, and app runtime readiness.\"\n"
         "              else\n"
+        "                set_https_probe_error_summary \"https_probe_failed\" \"$https_verify_exit\" \"\" \"$https_verify_output\"\n"
         "                echo \"deploy_runtime_reason_code=https_probe_failed\"\n"
         "              fi\n"
         "            fi\n"
@@ -10242,13 +10367,44 @@ def _render_managed_deploy_workflow_yaml(
         "          fi\n"
         "          rm -f \"$https_verify_output\"\n"
         "          if ! echo \"$https_verify_code\" | grep -Eq '^[1-5][0-9][0-9]$'; then\n"
-        "            echo \"deploy_runtime_reason_code=https_probe_failed\"\n"
-        "            echo \"deploy_runtime_reason_message=HTTPS probe did not return an HTTP status code.\"\n"
+        "            if [ \"$control_plane_ready\" = \"true\" ]; then\n"
+        "              set_https_probe_error_summary \"https_probe_failed_after_control_plane_ready\" \"\" \"$https_verify_code\" \"\"\n"
+        "              echo \"deploy_runtime_reason_code=https_probe_failed_after_control_plane_ready\"\n"
+        "              echo \"deploy_runtime_reason_message=DNS, IP, and certificate are ready, but HTTPS probe to the preview host is not yet successful. Check load balancer backend health, service endpoints, and app runtime readiness.\"\n"
+        "            else\n"
+        "              set_https_probe_error_summary \"https_probe_failed\" \"\" \"$https_verify_code\" \"\"\n"
+        "              echo \"deploy_runtime_reason_code=https_probe_failed\"\n"
+        "              echo \"deploy_runtime_reason_message=HTTPS probe did not return a valid HTTP status code.\"\n"
+        "            fi\n"
+        "            exit 1\n"
+        "          fi\n"
+        "          if [ \"$https_verify_code\" = \"502\" ]; then\n"
+        "            set_https_probe_error_summary \"ingress_backend_502\" \"\" \"$https_verify_code\" \"\"\n"
+        "            echo \"deploy_runtime_reason_code=ingress_backend_502\"\n"
+        "            echo \"deploy_runtime_reason_message=HTTPS probe reached ingress but backend returned 502.\"\n"
         "            exit 1\n"
         "          fi\n"
         "          if echo \"$https_verify_code\" | grep -Eq '^5[0-9][0-9]$'; then\n"
-        "            echo \"deploy_runtime_reason_code=ingress_backend_502\"\n"
-        "            echo \"deploy_runtime_reason_message=HTTPS probe reached ingress but backend returned 5xx.\"\n"
+        "            if [ \"$control_plane_ready\" = \"true\" ]; then\n"
+        "              set_https_probe_error_summary \"https_probe_failed_after_control_plane_ready\" \"\" \"$https_verify_code\" \"\"\n"
+        "              echo \"deploy_runtime_reason_code=https_probe_failed_after_control_plane_ready\"\n"
+        "              echo \"deploy_runtime_reason_message=DNS, IP, and certificate are ready, but HTTPS probe to the preview host is not yet successful. Check load balancer backend health, service endpoints, and app runtime readiness.\"\n"
+        "            else\n"
+        "              set_https_probe_error_summary \"https_probe_failed\" \"\" \"$https_verify_code\" \"\"\n"
+        "              echo \"deploy_runtime_reason_code=https_probe_failed\"\n"
+        "              echo \"deploy_runtime_reason_message=HTTPS probe returned 5xx before backend reached ready state.\"\n"
+        "            fi\n"
+        "            exit 1\n"
+        "          fi\n"
+        "          if echo \"$https_verify_code\" | grep -Eq '^4[0-9][0-9]$'; then\n"
+        "            if [ \"$control_plane_ready\" = \"true\" ]; then\n"
+        "              set_https_probe_error_summary \"https_probe_failed_after_control_plane_ready\" \"\" \"$https_verify_code\" \"\"\n"
+        "              echo \"deploy_runtime_reason_code=https_probe_failed_after_control_plane_ready\"\n"
+        "              echo \"deploy_runtime_reason_message=DNS, IP, and certificate are ready, but HTTPS probe to the preview host is not yet successful. Check load balancer backend health, service endpoints, and app runtime readiness.\"\n"
+        "            else\n"
+        "              set_https_probe_error_summary \"https_probe_failed\" \"\" \"$https_verify_code\" \"\"\n"
+        "              echo \"deploy_runtime_reason_code=https_probe_failed\"\n"
+        "            fi\n"
         "            exit 1\n"
         "          fi\n"
         "          deploy_https_ready=true\n"
@@ -10275,6 +10431,9 @@ def _render_managed_deploy_workflow_yaml(
         "            echo \"ingress_ip=$ingress_ip\"\n"
         "            echo \"ingress_conflict_detected=$ingress_conflict_detected\"\n"
         "            echo \"cert_identity_valid=$cert_identity_valid\"\n"
+        "            echo \"host_reachable=$host_reachable\"\n"
+        "            echo \"host_reachability_scheme=$host_reachability_scheme\"\n"
+        "            echo \"https_probe_error_summary=$https_probe_error_summary\"\n"
         "            echo \"deploy_https_ready=$deploy_https_ready\"\n"
         "          } >> \"$GITHUB_OUTPUT\"\n"
         "      - name: Emit managed deployment metadata\n"
@@ -11139,8 +11298,16 @@ def _classify_cloudsql_proxy_failure_from_log_text(
         return _DEPLOY_RUNTIME_REASON_PRIVATE_IMAGE_PULL_FORBIDDEN, "rollout_verify"
     if "deploy_runtime_reason_code=reachable_but_tls_certificate_mismatch" in normalized:
         return _DEPLOY_RUNTIME_REASON_REACHABLE_BUT_TLS_MISMATCH, "ingress_evidence"
+    if "deploy_runtime_reason_code=https_probe_timeout" in normalized:
+        return _DEPLOY_RUNTIME_REASON_HTTPS_PROBE_TIMEOUT, "ingress_evidence"
+    if "deploy_runtime_reason_code=https_probe_empty_reply" in normalized:
+        return _DEPLOY_RUNTIME_REASON_HTTPS_PROBE_EMPTY_REPLY, "ingress_evidence"
+    if "deploy_runtime_reason_code=https_probe_not_attempted" in normalized:
+        return _DEPLOY_RUNTIME_REASON_HTTPS_PROBE_NOT_ATTEMPTED, "ingress_evidence"
+    if "deploy_runtime_reason_code=https_probe_failed_after_control_plane_ready" in normalized:
+        return _DEPLOY_RUNTIME_REASON_HTTPS_PROBE_FAILED_AFTER_CONTROL_PLANE_READY, "ingress_evidence"
     if "deploy_runtime_reason_code=https_probe_failed" in normalized:
-        return "ingress_verify", "ingress_evidence"
+        return _DEPLOY_RUNTIME_REASON_HTTPS_PROBE_FAILED_AFTER_CONTROL_PLANE_READY, "ingress_evidence"
     if "deploy_runtime_reason_code=ingress_address_pending_but_hostname_reachable" in normalized:
         return _DEPLOY_RUNTIME_REASON_INGRESS_PENDING_BUT_HOST_REACHABLE, "ingress_evidence"
     if "deploy_runtime_reason_code=image_pull_secret_missing" in normalized:
@@ -11167,6 +11334,61 @@ def _classify_cloudsql_proxy_failure_from_log_text(
     if has_proxy_marker and has_connection_failure:
         return "cloudsql_proxy_connection_failed", "manifest_apply"
     return None, None
+
+
+def _extract_resolve_live_url_state_from_log_text(log_text: str | None) -> dict[str, str]:
+    normalized = str(log_text or "")
+    if not normalized:
+        return {}
+
+    max_lengths: dict[str, int] = {
+        "host_reachable": 8,
+        "host_reachability_scheme": 12,
+        "live_url": 240,
+        "dns_record_matches_ingress": 8,
+        "dns_expected_ip": 64,
+        "dns_observed_ip": 64,
+        "expected_static_ip_address": 64,
+        "static_ip_status": 32,
+        "static_ip_users": 720,
+        "ingress_status_ip": 64,
+        "ingress_status_ip_matches_static_ip": 8,
+        "static_ip_bound_to_expected_forwarding_rule": 8,
+        "tls_certificate_status": 64,
+        "tls_domain_status": 64,
+        "observed_managed_certificate_domains": 240,
+        "observed_managed_certificate_status": 64,
+        "observed_managed_certificate_domain_status": 64,
+        "https_probe_error_summary": 240,
+        "cert_identity_valid": 8,
+        "deploy_https_ready": 8,
+    }
+    output: dict[str, str] = {}
+    ansi_escape = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+
+    for raw_line in normalized.splitlines():
+        cleaned_line = ansi_escape.sub("", raw_line).strip()
+        if "resolve_live_url_state_" not in cleaned_line:
+            continue
+        match = re.search(r"(resolve_live_url_state_[a-z0-9_]+)=(.*)$", cleaned_line)
+        if match is None:
+            continue
+        raw_key = str(match.group(1) or "").strip().lower()
+        raw_value = str(match.group(2) or "").strip()
+        if not raw_key.startswith("resolve_live_url_state_"):
+            continue
+        normalized_key = raw_key[len("resolve_live_url_state_") :]
+        if normalized_key not in max_lengths:
+            continue
+        sanitized_value = _sanitize_github_error_message(
+            raw_value,
+            max_length=max_lengths[normalized_key],
+        )
+        if sanitized_value is None:
+            continue
+        output[normalized_key] = sanitized_value
+
+    return output
 
 
 def _classify_rollout_blocker_hints_from_describe_outputs(

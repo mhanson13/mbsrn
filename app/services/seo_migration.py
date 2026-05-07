@@ -413,6 +413,12 @@ _DEPLOY_RUN_FAILURE_REASON_PUBLIC_IMAGE_PULL_FAILED = "public_image_pull_failed"
 _DEPLOY_RUN_FAILURE_REASON_PRIVATE_IMAGE_PULL_FORBIDDEN = "private_image_pull_forbidden"
 _DEPLOY_RUN_FAILURE_REASON_REACHABLE_BUT_TLS_MISMATCH = "reachable_but_tls_certificate_mismatch"
 _DEPLOY_RUN_FAILURE_REASON_INGRESS_PENDING_BUT_HOST_REACHABLE = "ingress_address_pending_but_hostname_reachable"
+_DEPLOY_RUN_FAILURE_REASON_HTTPS_PROBE_TIMEOUT = "https_probe_timeout"
+_DEPLOY_RUN_FAILURE_REASON_HTTPS_PROBE_EMPTY_REPLY = "https_probe_empty_reply"
+_DEPLOY_RUN_FAILURE_REASON_HTTPS_PROBE_NOT_ATTEMPTED = "https_probe_not_attempted"
+_DEPLOY_RUN_FAILURE_REASON_HTTPS_PROBE_FAILED_AFTER_CONTROL_PLANE_READY = (
+    "https_probe_failed_after_control_plane_ready"
+)
 _DEPLOY_RUN_FAILURE_STAGE_GCP_AUTH = "gcp_auth"
 _DEPLOY_RUN_FAILURE_STAGE_CLUSTER_CREDENTIALS = "cluster_credentials"
 _DEPLOY_RUN_FAILURE_STAGE_MANIFEST_APPLY = "manifest_apply"
@@ -6738,6 +6744,9 @@ class SEOMigrationService:
         ingress_ip = runtime_network_readiness.get("ingress_ip")
         ingress_conflict_detected = runtime_network_readiness.get("ingress_conflict_detected")
         cert_identity_valid = runtime_network_readiness.get("cert_identity_valid")
+        host_reachable = runtime_network_readiness.get("host_reachable")
+        host_reachability_scheme = runtime_network_readiness.get("host_reachability_scheme")
+        https_probe_error_summary = runtime_network_readiness.get("https_probe_error_summary")
         deploy_https_ready = runtime_network_readiness.get("deploy_https_ready")
         workflow_integrity_status = None
         workflow_integrity_reason_code = None
@@ -7263,6 +7272,9 @@ class SEOMigrationService:
             "ingress_ip": ingress_ip,
             "ingress_conflict_detected": ingress_conflict_detected,
             "cert_identity_valid": cert_identity_valid,
+            "host_reachable": host_reachable,
+            "host_reachability_scheme": host_reachability_scheme,
+            "https_probe_error_summary": https_probe_error_summary,
             "deploy_https_ready": deploy_https_ready,
             "expected_static_ip_name": expected_static_ip_name,
             "expected_static_ip_address": expected_static_ip_address,
@@ -8761,6 +8773,9 @@ class SEOMigrationService:
             "ingress_ip",
             "ingress_conflict_detected",
             "cert_identity_valid",
+            "host_reachable",
+            "host_reachability_scheme",
+            "https_probe_error_summary",
             "deploy_https_ready",
             "workflow_integrity_status",
             "workflow_integrity_reason_code",
@@ -9112,6 +9127,19 @@ class SEOMigrationService:
                 bool(next_item.get("cert_identity_valid"))
                 if isinstance(next_item.get("cert_identity_valid"), bool)
                 else None
+            ),
+            "host_reachable": (
+                bool(next_item.get("host_reachable"))
+                if isinstance(next_item.get("host_reachable"), bool)
+                else None
+            ),
+            "host_reachability_scheme": _normalize_string(
+                next_item.get("host_reachability_scheme"),
+                max_length=12,
+            ),
+            "https_probe_error_summary": _normalize_string(
+                next_item.get("https_probe_error_summary"),
+                max_length=240,
             ),
             "deploy_https_ready": (
                 bool(next_item.get("deploy_https_ready"))
@@ -9531,6 +9559,19 @@ class SEOMigrationService:
                 bool(history_item.get("cert_identity_valid"))
                 if isinstance(history_item.get("cert_identity_valid"), bool)
                 else None
+            ),
+            "host_reachable": (
+                bool(history_item.get("host_reachable"))
+                if isinstance(history_item.get("host_reachable"), bool)
+                else None
+            ),
+            "host_reachability_scheme": _normalize_string(
+                history_item.get("host_reachability_scheme"),
+                max_length=12,
+            ),
+            "https_probe_error_summary": _normalize_string(
+                history_item.get("https_probe_error_summary"),
+                max_length=240,
             ),
             "deploy_https_ready": (
                 bool(history_item.get("deploy_https_ready"))
@@ -15107,6 +15148,15 @@ class SEOMigrationService:
                 workflow_output_payload.get("ingress_conflict_detected")
             ),
             "cert_identity_valid": _coerce_optional_bool(workflow_output_payload.get("cert_identity_valid")),
+            "host_reachable": _coerce_optional_bool(workflow_output_payload.get("host_reachable")),
+            "host_reachability_scheme": _normalize_string(
+                workflow_output_payload.get("host_reachability_scheme"),
+                max_length=12,
+            ),
+            "https_probe_error_summary": _normalize_string(
+                workflow_output_payload.get("https_probe_error_summary"),
+                max_length=240,
+            ),
             "deploy_https_ready": _coerce_optional_bool(workflow_output_payload.get("deploy_https_ready")),
         }
 
@@ -15785,6 +15835,19 @@ class SEOMigrationService:
                     bool(item.get("cert_identity_valid"))
                     if isinstance(item.get("cert_identity_valid"), bool)
                     else None
+                ),
+                "host_reachable": (
+                    bool(item.get("host_reachable"))
+                    if isinstance(item.get("host_reachable"), bool)
+                    else None
+                ),
+                "host_reachability_scheme": _normalize_string(
+                    item.get("host_reachability_scheme"),
+                    max_length=12,
+                ),
+                "https_probe_error_summary": _normalize_string(
+                    item.get("https_probe_error_summary"),
+                    max_length=240,
                 ),
                 "deploy_https_ready": (
                     bool(item.get("deploy_https_ready"))
@@ -16957,6 +17020,29 @@ class SEOMigrationService:
                 else None
             )
         )
+        host_reachable = (
+            bool(latest_traceability.get("host_reachable"))
+            if isinstance(latest_traceability.get("host_reachable"), bool)
+            else (
+                bool(target_summary.get("host_reachable"))
+                if isinstance(target_summary.get("host_reachable"), bool)
+                else None
+            )
+        )
+        host_reachability_scheme = _normalize_string(
+            latest_traceability.get("host_reachability_scheme"),
+            max_length=12,
+        ) or _normalize_string(
+            target_summary.get("host_reachability_scheme"),
+            max_length=12,
+        )
+        https_probe_error_summary = _normalize_string(
+            latest_traceability.get("https_probe_error_summary"),
+            max_length=240,
+        ) or _normalize_string(
+            target_summary.get("https_probe_error_summary"),
+            max_length=240,
+        )
         deploy_https_ready = (
             bool(latest_traceability.get("deploy_https_ready"))
             if isinstance(latest_traceability.get("deploy_https_ready"), bool)
@@ -17066,6 +17152,9 @@ class SEOMigrationService:
             "ingress_ip": ingress_ip,
             "ingress_conflict_detected": ingress_conflict_detected,
             "cert_identity_valid": cert_identity_valid,
+            "host_reachable": host_reachable,
+            "host_reachability_scheme": host_reachability_scheme,
+            "https_probe_error_summary": https_probe_error_summary,
             "deploy_https_ready": deploy_https_ready,
             "workflow_integrity_status": workflow_integrity_status,
             "workflow_integrity_reason_code": workflow_integrity_reason_code,
@@ -17172,6 +17261,9 @@ class SEOMigrationService:
                 "ingress_ip": ingress_ip,
                 "ingress_conflict_detected": ingress_conflict_detected,
                 "cert_identity_valid": cert_identity_valid,
+                "host_reachable": host_reachable,
+                "host_reachability_scheme": host_reachability_scheme,
+                "https_probe_error_summary": https_probe_error_summary,
                 "deploy_https_ready": deploy_https_ready,
                 "workflow_integrity_status": workflow_integrity_status,
                 "workflow_integrity_reason_code": workflow_integrity_reason_code,
@@ -18846,6 +18938,10 @@ def _normalize_workflow_run_failure_reason_code(value: object) -> str | None:
         _DEPLOY_RUN_FAILURE_REASON_PRIVATE_IMAGE_PULL_FORBIDDEN,
         _DEPLOY_RUN_FAILURE_REASON_REACHABLE_BUT_TLS_MISMATCH,
         _DEPLOY_RUN_FAILURE_REASON_INGRESS_PENDING_BUT_HOST_REACHABLE,
+        _DEPLOY_RUN_FAILURE_REASON_HTTPS_PROBE_TIMEOUT,
+        _DEPLOY_RUN_FAILURE_REASON_HTTPS_PROBE_EMPTY_REPLY,
+        _DEPLOY_RUN_FAILURE_REASON_HTTPS_PROBE_NOT_ATTEMPTED,
+        _DEPLOY_RUN_FAILURE_REASON_HTTPS_PROBE_FAILED_AFTER_CONTROL_PLANE_READY,
     }
     if normalized_lower in allowed:
         return normalized_lower
@@ -20070,6 +20166,26 @@ def _derive_workflow_run_failure_hint(
         return (
             "Expected hostname is reachable but TLS certificate is bound to another site. "
             "Verify managed certificate identity and ingress annotations."
+        )
+    if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_HTTPS_PROBE_TIMEOUT:
+        return (
+            "HTTPS probe to the preview host timed out. Verify load balancer backend health, service endpoints, "
+            "and application runtime readiness."
+        )
+    if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_HTTPS_PROBE_EMPTY_REPLY:
+        return (
+            "HTTPS probe reached the preview host but returned an empty reply. Verify service endpoints, backend "
+            "health checks, and runtime HTTP response behavior."
+        )
+    if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_HTTPS_PROBE_NOT_ATTEMPTED:
+        return (
+            "HTTPS probe was not attempted yet because deploy evidence was incomplete. "
+            "Verify preview hostname/ingress assignment and rerun deploy status refresh."
+        )
+    if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_HTTPS_PROBE_FAILED_AFTER_CONTROL_PLANE_READY:
+        return (
+            "DNS, IP, and certificate are ready, but HTTPS probe to the preview host is not yet successful. "
+            "Check load balancer backend health, service endpoints, and app runtime readiness."
         )
     if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_INGRESS_PENDING_BUT_HOST_REACHABLE:
         return (

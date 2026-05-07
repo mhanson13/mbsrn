@@ -181,6 +181,38 @@ For migration-driven site repos, MBSRN acts as a control-plane orchestrator:
 Operational implication:
 - a repo can contain published artifact files but is not considered deploy-ready until workflow provisioning/verification succeeds on the target ref.
 
+### Managed Site HTTPS Readiness Diagnostics
+
+Managed site deploy readiness requires successful HTTPS reachability, not just control-plane alignment.
+
+Important state:
+- DNS/static IP/ingress/certificate checks can all be valid while `deploy_https_ready=false`.
+- In this state, deploy diagnostics should preserve bounded probe evidence in `https_probe_error_summary`.
+- Expected reason-code families include:
+  - `https_probe_failed_after_control_plane_ready`
+  - `https_probe_timeout`
+  - `https_probe_empty_reply`
+  - `https_probe_not_attempted`
+  - `ingress_backend_502` (kept distinct when backend returns 502)
+
+Typical causes:
+- backend service endpoints are not ready
+- BackendConfig health checks do not match runtime behavior
+- site runtime is not yet serving `/` successfully
+- external load balancer convergence lag
+
+Safe verification commands:
+
+```bash
+kubectl -n <namespace> get ingress
+kubectl -n <namespace> get service site-web -o wide
+kubectl -n <namespace> get endpoints site-web
+kubectl -n <namespace> get pods -l app=site-web
+kubectl -n <namespace> describe ingress site-web
+kubectl -n <namespace> describe backendconfig site-web-backend-config-<site>
+curl -Iv https://<preview-host>/
+```
+
 ## Required GitHub Secrets/Variables
 
 GitHub variable:

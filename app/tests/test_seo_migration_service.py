@@ -6336,6 +6336,101 @@ def test_refresh_deploy_status_dns_mismatch_sets_dns_failure_and_blocks_https_re
     assert deploy_readiness.get("deploy_https_ready") is False
 
 
+def test_refresh_deploy_status_https_probe_timeout_after_control_plane_ready_surfaces_probe_summary(
+    db_session,
+) -> None:
+    publisher = _RecordingGitHubPublisher(
+        deploy_workflow_run_id=910101,
+        deploy_workflow_run_status="in_progress",
+        refresh_workflow_run_id=910101,
+        refresh_workflow_run_status="completed",
+        refresh_workflow_run_conclusion="failure",
+        refresh_workflow_run_failure_reason_code="https_probe_timeout",
+        refresh_workflow_run_failure_stage="ingress_evidence",
+        refresh_workflow_run_failure_step="Resolve live URL from ingress status",
+        refresh_workflow_output={
+            "dns_record_matches_ingress": "true",
+            "dns_expected_ip": "34.95.101.96",
+            "dns_observed_ip": "34.95.101.96",
+            "tls_certificate_status": "ACTIVE",
+            "tls_domain_status": "ACTIVE",
+            "cert_identity_valid": "true",
+            "host_reachable": "false",
+            "host_reachability_scheme": "https",
+            "https_probe_error_summary": (
+                "reason=https_probe_timeout;exit_code=28;status=000;"
+                "detail=operation timed out after control plane was ready"
+            ),
+            "deploy_https_ready": "false",
+        },
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    artifact = _prepare_and_request_deploy(service, business_id=business_id, site_id=site_id)
+
+    refresh_result = service.refresh_deploy_run_status(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        principal_id="principal-1",
+    )
+    assert refresh_result.result.get("workflow_run_failure_reason_code") == "https_probe_timeout"
+    assert refresh_result.result.get("deploy_https_ready") is False
+    assert refresh_result.result.get("host_reachable") is False
+    assert refresh_result.result.get("host_reachability_scheme") == "https"
+    assert "https_probe_timeout" in str(refresh_result.result.get("https_probe_error_summary") or "")
+
+    summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
+    deploy_readiness = summary.deploy_readiness or {}
+    assert deploy_readiness.get("deploy_https_ready") is False
+    assert deploy_readiness.get("host_reachable") is False
+    assert "https_probe_timeout" in str(deploy_readiness.get("https_probe_error_summary") or "")
+    assert "backend health" in str(deploy_readiness.get("last_workflow_run_failure_hint") or "").lower()
+
+
+def test_refresh_deploy_status_https_probe_not_attempted_surfaces_reason_and_hint(db_session) -> None:
+    publisher = _RecordingGitHubPublisher(
+        deploy_workflow_run_id=910102,
+        deploy_workflow_run_status="in_progress",
+        refresh_workflow_run_id=910102,
+        refresh_workflow_run_status="completed",
+        refresh_workflow_run_conclusion="failure",
+        refresh_workflow_run_failure_reason_code="https_probe_not_attempted",
+        refresh_workflow_run_failure_stage="ingress_evidence",
+        refresh_workflow_run_failure_step="Resolve live URL from ingress status",
+        refresh_workflow_output={
+            "host_reachable": "false",
+            "https_probe_error_summary": "reason=https_probe_not_attempted;detail=preview_host_missing",
+            "deploy_https_ready": "false",
+        },
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    artifact = _prepare_and_request_deploy(service, business_id=business_id, site_id=site_id)
+
+    refresh_result = service.refresh_deploy_run_status(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        principal_id="principal-1",
+    )
+    assert refresh_result.result.get("workflow_run_failure_reason_code") == "https_probe_not_attempted"
+    assert refresh_result.result.get("deploy_https_ready") is False
+    assert refresh_result.result.get("host_reachable") is False
+    assert "https_probe_not_attempted" in str(refresh_result.result.get("https_probe_error_summary") or "")
+    assert "not attempted" in str(refresh_result.result.get("workflow_run_failure_hint") or "").lower()
+
+
 def test_refresh_deploy_status_certificate_domain_mismatch_blocks_https_ready(db_session) -> None:
     publisher = _RecordingGitHubPublisher(
         deploy_workflow_run_id=910002,

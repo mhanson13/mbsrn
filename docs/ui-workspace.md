@@ -108,6 +108,7 @@ Advanced diagnostics normalization defaults:
 - full per-attempt publish/deploy history remains available under `Show full publish history` / `Show full deploy history`.
 - Deploy consistency renders as grouped status checks (operator-readable labels), while raw snake_case fields remain under `Show raw deploy consistency fields`.
 - Destination / Config diagnostics render grouped categories (artifact, repository/workflow, runtime, domain, preview/deployment evidence) with nested details for lower-priority fields.
+- deploy HTTPS diagnostics preserve bounded probe evidence (`https_probe_error_summary`) and control-plane-ready probe-failure reason codes (`https_probe_failed_after_control_plane_ready`, `https_probe_timeout`, `https_probe_empty_reply`, `https_probe_not_attempted`) without exposing raw unsafe curl output.
 
 Operator Requirements simplification and suggestion scratchpads:
 - `Operator Requirements` is the only operator-owned control surface for draft intent.

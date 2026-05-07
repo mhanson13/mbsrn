@@ -2186,6 +2186,22 @@ Resolve-live-url failure diagnostics are evidence-first:
 - workflow gathers ingress status, reserved static-IP metadata, DNS A-record observation, and ManagedCertificate domain/status evidence before terminal failure classification.
 - failure-state trap fields (`resolve_live_url_state_*`) should include populated `expected_static_ip_address`, `dns_expected_ip`, `dns_observed_ip`, and ManagedCertificate status/domain fields when that evidence is available from cluster/GCP APIs.
 - empty trap fields now primarily indicate upstream evidence is genuinely unavailable (for example missing ingress/static-IP/hostname), not premature early exit ordering.
+- when `deploy_https_ready=false`, probe evidence is expected to remain populated via bounded `https_probe_error_summary` unless no probe was attempted (`https_probe_not_attempted`).
+- control-plane-ready but host-unreachable states are explicitly classified:
+  - `https_probe_failed_after_control_plane_ready`
+  - `https_probe_timeout`
+  - `https_probe_empty_reply`
+  - `https_probe_not_attempted`
+- `ingress_backend_502` remains a distinct classification when HTTPS reaches ingress and backend returns 502.
+
+Operator verification commands for control-plane-ready / HTTPS-not-ready:
+- `kubectl -n <namespace> get ingress`
+- `kubectl -n <namespace> get service site-web -o wide`
+- `kubectl -n <namespace> get endpoints site-web`
+- `kubectl -n <namespace> get pods -l app=site-web`
+- `kubectl -n <namespace> describe ingress site-web`
+- `kubectl -n <namespace> describe backendconfig site-web-backend-config-<site>`
+- `curl -Iv https://<preview-host>/`
 
 Blocking reason-code examples:
 - DNS mismatch:
@@ -2265,7 +2281,7 @@ Rendering model and precedence:
 - existing diagnostics fallback note remains the operator cue when summary backfill is used
 - shared-root-cause warnings may group related checks (for example DNS mismatch causing TLS/HTTPS failures)
 - raw network/TLS/runtime fields are preserved under `Show raw deploy consistency fields`
-- raw fields remain null-safe in disclosure (`dns_record_matches_ingress`, `dns_expected_ip`, `dns_observed_ip`, `expected_static_ip_address`, `static_ip_status`, `static_ip_users`, `ingress_status_ip`, `ingress_status_ip_matches_static_ip`, `static_ip_bound_to_expected_forwarding_rule`, `tls_certificate_status`, `tls_domain_status`, `ingress_ip`, `ingress_conflict_detected`, `cert_identity_valid`, `deploy_https_ready`)
+- raw fields remain null-safe in disclosure (`dns_record_matches_ingress`, `dns_expected_ip`, `dns_observed_ip`, `expected_static_ip_address`, `static_ip_status`, `static_ip_users`, `ingress_status_ip`, `ingress_status_ip_matches_static_ip`, `static_ip_bound_to_expected_forwarding_rule`, `tls_certificate_status`, `tls_domain_status`, `ingress_ip`, `ingress_conflict_detected`, `cert_identity_valid`, `host_reachable`, `host_reachability_scheme`, `https_probe_error_summary`, `deploy_https_ready`)
 - workflow integrity fields are null-safe and surfaced with the same selected-attempt-first precedence (`workflow_integrity_status`, `workflow_integrity_reason_code`)
 
 Blocked-state operator remediation text surfaced in UI:

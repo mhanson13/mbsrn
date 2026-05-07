@@ -23,6 +23,7 @@ from app.integrations.seo_migration_github_publisher import (
     _render_managed_deploy_workflow_yaml,
     _render_managed_gke_manifest_files,
     _classify_cloudsql_proxy_failure_from_log_text,
+    _extract_resolve_live_url_state_from_log_text,
     _classify_rollout_blocker_hints_from_describe_outputs,
     _resolve_google_credential_principal,
     derive_site_kubernetes_namespace,
@@ -5945,13 +5946,63 @@ def test_classify_cloudsql_proxy_failure_maps_managed_certificate_pending_to_tls
     assert failure_stage == "ingress_evidence"
 
 
-def test_classify_cloudsql_proxy_failure_maps_https_probe_failed_to_ingress_verify() -> None:
+def test_classify_cloudsql_proxy_failure_maps_https_probe_failed_to_control_plane_ready_reason() -> None:
     reason_code, failure_stage = _classify_cloudsql_proxy_failure_from_log_text(
         "deploy_runtime_reason_code=https_probe_failed"
     )
 
-    assert reason_code == "ingress_verify"
+    assert reason_code == "https_probe_failed_after_control_plane_ready"
     assert failure_stage == "ingress_evidence"
+
+
+def test_classify_cloudsql_proxy_failure_maps_https_probe_timeout_reason() -> None:
+    reason_code, failure_stage = _classify_cloudsql_proxy_failure_from_log_text(
+        "deploy_runtime_reason_code=https_probe_timeout"
+    )
+
+    assert reason_code == "https_probe_timeout"
+    assert failure_stage == "ingress_evidence"
+
+
+def test_classify_cloudsql_proxy_failure_maps_https_probe_empty_reply_reason() -> None:
+    reason_code, failure_stage = _classify_cloudsql_proxy_failure_from_log_text(
+        "deploy_runtime_reason_code=https_probe_empty_reply"
+    )
+
+    assert reason_code == "https_probe_empty_reply"
+    assert failure_stage == "ingress_evidence"
+
+
+def test_classify_cloudsql_proxy_failure_maps_https_probe_not_attempted_reason() -> None:
+    reason_code, failure_stage = _classify_cloudsql_proxy_failure_from_log_text(
+        "deploy_runtime_reason_code=https_probe_not_attempted"
+    )
+
+    assert reason_code == "https_probe_not_attempted"
+    assert failure_stage == "ingress_evidence"
+
+
+def test_extract_resolve_live_url_state_from_log_text_parses_sanitized_probe_details() -> None:
+    state = _extract_resolve_live_url_state_from_log_text(
+        "\n".join(
+            [
+                "resolve_live_url_state_host_reachable=false",
+                "resolve_live_url_state_host_reachability_scheme=https",
+                (
+                    "resolve_live_url_state_https_probe_error_summary="
+                    "reason=https_probe_timeout;exit_code=28;status=000;"
+                    "detail=connection timed out while waiting for headers"
+                ),
+                "resolve_live_url_state_deploy_https_ready=false",
+            ]
+        )
+    )
+
+    assert state.get("host_reachable") == "false"
+    assert state.get("host_reachability_scheme") == "https"
+    assert state.get("deploy_https_ready") == "false"
+    assert "https_probe_timeout" in str(state.get("https_probe_error_summary") or "")
+    assert len(str(state.get("https_probe_error_summary") or "")) <= 240
 
 
 def test_classify_cloudsql_proxy_failure_maps_managed_site_static_ip_missing_reason() -> None:
@@ -7266,10 +7317,16 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "host_reachable=false" in workflow_yaml
     assert "tls_mismatch_detected=false" in workflow_yaml
     assert "backend_502_detected=false" in workflow_yaml
+    assert "https_probe_attempted=false" in workflow_yaml
+    assert "http_fallback_attempted=false" in workflow_yaml
     assert "if [ -z \"$preview_host\" ] && [ -n \"$ingress_spec_host\" ]; then" in workflow_yaml
     assert "Expected preview hostname responded over HTTPS" in workflow_yaml
     assert "Expected preview hostname responded over HTTP" in workflow_yaml
     assert "deploy_runtime_reason_code=reachable_but_tls_certificate_mismatch" in workflow_yaml
+    assert "deploy_runtime_reason_code=https_probe_timeout" in workflow_yaml
+    assert "deploy_runtime_reason_code=https_probe_empty_reply" in workflow_yaml
+    assert "deploy_runtime_reason_code=https_probe_not_attempted" in workflow_yaml
+    assert "deploy_runtime_reason_code=https_probe_failed_after_control_plane_ready" in workflow_yaml
     assert "deploy_runtime_reason_code=ingress_address_pending_but_hostname_reachable" in workflow_yaml
     assert "if [ \"$tls_mismatch_detected\" = true ]; then" in workflow_yaml
     assert "if [ \"$backend_502_detected\" = true ]; then" in workflow_yaml
@@ -7304,6 +7361,9 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "echo \"ingress_ip=$ingress_ip\"" in workflow_yaml
     assert "echo \"ingress_conflict_detected=$ingress_conflict_detected\"" in workflow_yaml
     assert "echo \"cert_identity_valid=$cert_identity_valid\"" in workflow_yaml
+    assert "echo \"host_reachable=$host_reachable\"" in workflow_yaml
+    assert "echo \"host_reachability_scheme=$host_reachability_scheme\"" in workflow_yaml
+    assert "echo \"https_probe_error_summary=$https_probe_error_summary\"" in workflow_yaml
     assert "echo \"deploy_https_ready=$deploy_https_ready\"" in workflow_yaml
     assert "--format='json(name,address,status,users)'" in workflow_yaml
     assert "dns_expected_ip=\"$expected_static_ip_address\"" in workflow_yaml
@@ -7521,6 +7581,8 @@ def test_rendered_managed_workflow_yaml_parses_embedded_certificate_evaluation_s
     assert "resolve_live_url_state_ingress_status_ip" in run_script
     assert "resolve_live_url_state_observed_managed_certificate_domains" in run_script
     assert "resolve_live_url_state_https_probe_error_summary" in run_script
+    assert "set_https_probe_error_summary() {" in run_script
+    assert "http_fallback_attempted=$http_fallback_attempted" in run_script
     assert "collect_resolve_live_url_evidence() {" in run_script
     assert "collect_resolve_live_url_evidence" in run_script
     assert "STATIC_IP_METADATA_JSON=\"$static_ip_metadata_json\" python - <<'PY'" in run_script
@@ -7535,9 +7597,16 @@ def test_rendered_managed_workflow_yaml_parses_embedded_certificate_evaluation_s
     assert 'if [ -z "$ingress_ip" ] && [ "$host_reachable" != "true" ]; then' in run_script
     assert 'if [ -z "$ingress_ip" ]; then' not in run_script
     assert 'echo "live_url=$live_url"' in run_script
+    assert 'echo "host_reachable=$host_reachable"' in run_script
+    assert 'echo "host_reachability_scheme=$host_reachability_scheme"' in run_script
+    assert 'echo "https_probe_error_summary=$https_probe_error_summary"' in run_script
     assert 'echo "deploy_https_ready=$deploy_https_ready"' in run_script
     assert 'echo "deploy_runtime_reason_code=ingress_address_pending"' in run_script
     assert 'echo "deploy_runtime_reason_code=ingress_backend_502"' in run_script
+    assert 'echo "deploy_runtime_reason_code=https_probe_timeout"' in run_script
+    assert 'echo "deploy_runtime_reason_code=https_probe_empty_reply"' in run_script
+    assert 'echo "deploy_runtime_reason_code=https_probe_not_attempted"' in run_script
+    assert 'echo "deploy_runtime_reason_code=https_probe_failed_after_control_plane_ready"' in run_script
     assert 'echo "deploy_runtime_reason_code=reachable_but_tls_certificate_mismatch"' in run_script
     assert 'echo "deploy_runtime_reason_code=tls_certificate_bound_to_wrong_site"' in run_script
     assert 'echo "deploy_runtime_reason_code=managed_certificate_metadata_unavailable"' in run_script
