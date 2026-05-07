@@ -12,6 +12,9 @@
 - [Competitor Profile Retention](features/seo-competitor-profile-generation-retention.md)
 - [SEO Migration Workspace (Phase 1-4)](features/seo-migration-workspace.md)
 
+## Audits
+- [Google Analytics (GA4) Platform Audit](audits/google-analytics-platform-audit.md)
+
 ## API and Architecture (Current)
 - [API Overview](api.md)
 - [Architecture](architecture.md)

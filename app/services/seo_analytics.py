@@ -173,6 +173,8 @@ class SEOAnalyticsService:
                 site_domain=normalized_domain,
                 period_days=period_days,
                 top_pages_limit=top_pages_limit,
+                # Site-scoped GA4 property is authoritative when available.
+                ga4_property_id=normalized_site_ga4_property_id,
             )
         except GA4AnalyticsProviderConfigurationError as exc:
             diagnostic_reason = _classify_ga4_configuration_error_reason(exc)
@@ -562,9 +564,16 @@ class SEOAnalyticsService:
         site_domain: str | None,
         recommendation_created_at: datetime,
         page_path: str | None,
+        ga4_property_id: str | None,
     ) -> SEOAnalyticsBeforeAfterComparison | None:
         normalized_domain = _normalize_site_domain(site_domain)
-        if not normalized_domain or not self.provider.is_configured():
+        normalized_property_id = _clean_identifier(ga4_property_id)
+        if (
+            not normalized_domain
+            or not normalized_property_id
+            or not _is_valid_ga4_property_id(normalized_property_id)
+            or not self.provider.is_configured()
+        ):
             return None
 
         period_days = max(1, min(int(self.settings.period_days), 30))
@@ -594,6 +603,7 @@ class SEOAnalyticsService:
                 start_date=before_start,
                 end_date=before_end,
                 page_path=normalized_page_path,
+                ga4_property_id=normalized_property_id,
             )
             if normalized_page_path
             else None
@@ -604,6 +614,7 @@ class SEOAnalyticsService:
                 start_date=after_start,
                 end_date=after_end,
                 page_path=normalized_page_path,
+                ga4_property_id=normalized_property_id,
             )
             if normalized_page_path
             else None
@@ -620,12 +631,14 @@ class SEOAnalyticsService:
             start_date=before_start,
             end_date=before_end,
             page_path=None,
+            ga4_property_id=normalized_property_id,
         )
         site_after = self._fetch_window_summary(
             site_domain=normalized_domain,
             start_date=after_start,
             end_date=after_end,
             page_path=None,
+            ga4_property_id=normalized_property_id,
         )
         if site_before is not None and site_after is not None:
             return SEOAnalyticsBeforeAfterComparison(
@@ -802,6 +815,7 @@ class SEOAnalyticsService:
         start_date: date,
         end_date: date,
         page_path: str | None,
+        ga4_property_id: str,
     ) -> SEOAnalyticsWindowSummary | None:
         if start_date > end_date:
             return None
@@ -814,6 +828,7 @@ class SEOAnalyticsService:
                 start_date=start_date.isoformat(),
                 end_date=end_date.isoformat(),
                 page_path=page_path,
+                ga4_property_id=ga4_property_id,
             )
         except (GA4AnalyticsProviderConfigurationError, GA4AnalyticsProviderError):
             return None

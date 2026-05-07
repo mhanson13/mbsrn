@@ -252,6 +252,8 @@ Current summary fields include:
 Interpretation:
 - this is bounded metadata for trust and debugging, not a full prompt dump
 - values represent context presence/counts and budget behavior, not guaranteed quality of source data
+- `ga4_signals_included` is derived from site-scoped GA4 configuration only and does not use global/default GA4 property fallback
+- missing GA4 does not block migration drafts; GA4-driven context is simply omitted/marked unavailable
 - in the primary workflow UI, this section is provenance-only:
   - media counts/actions belong to `B. Media / Images` (single source of truth)
   - provider execution/request metadata belongs to `F. Advanced Diagnostics & History`

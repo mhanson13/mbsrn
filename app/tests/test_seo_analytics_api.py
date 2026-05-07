@@ -106,6 +106,8 @@ def _create_site(
 class _WindowComparisonProvider:
     def __init__(self, *, fail_page_windows: bool = False) -> None:
         self.fail_page_windows = fail_page_windows
+        self.fetch_site_metrics_property_ids: list[str | None] = []
+        self.fetch_window_metrics_property_ids: list[str | None] = []
 
     def is_configured(self) -> bool:
         return True
@@ -116,7 +118,9 @@ class _WindowComparisonProvider:
         site_domain: str,
         period_days: int,
         top_pages_limit: int,
+        ga4_property_id: str | None = None,
     ) -> GA4SiteMetricsResult:
+        self.fetch_site_metrics_property_ids.append(ga4_property_id)
         del site_domain, period_days
         return GA4SiteMetricsResult(
             current_period=GA4SitePeriodMetrics(users=300, sessions=420, pageviews=640, organic_search_sessions=250),
@@ -141,7 +145,9 @@ class _WindowComparisonProvider:
         start_date: str,
         end_date: str,
         page_path: str | None = None,
+        ga4_property_id: str | None = None,
     ) -> GA4SitePeriodMetrics:
+        self.fetch_window_metrics_property_ids.append(ga4_property_id)
         del site_domain, end_date
         if page_path:
             if self.fail_page_windows:
@@ -171,8 +177,9 @@ class _GA4AccountDiscoveryProvider:
         site_domain: str,
         period_days: int,
         top_pages_limit: int,
+        ga4_property_id: str | None = None,
     ) -> GA4SiteMetricsResult:
-        del site_domain, period_days, top_pages_limit
+        del site_domain, period_days, top_pages_limit, ga4_property_id
         raise GA4AnalyticsProviderError("site summary unavailable in discovery stub")
 
 
@@ -193,8 +200,9 @@ class _GA4ErrorProvider:
         site_domain: str,
         period_days: int,
         top_pages_limit: int,
+        ga4_property_id: str | None = None,
     ) -> GA4SiteMetricsResult:
-        del site_domain, period_days, top_pages_limit
+        del site_domain, period_days, top_pages_limit, ga4_property_id
         raise GA4AnalyticsProviderError(self.message)
 
     def fetch_window_metrics(
@@ -204,8 +212,9 @@ class _GA4ErrorProvider:
         start_date: str,
         end_date: str,
         page_path: str | None = None,
+        ga4_property_id: str | None = None,
     ) -> GA4SitePeriodMetrics:
-        del site_domain, start_date, end_date, page_path
+        del site_domain, start_date, end_date, page_path, ga4_property_id
         raise GA4AnalyticsProviderError(self.message)
 
 
@@ -223,8 +232,9 @@ class _GA4NoDataProvider:
         site_domain: str,
         period_days: int,
         top_pages_limit: int,
+        ga4_property_id: str | None = None,
     ) -> GA4SiteMetricsResult:
-        del site_domain, period_days, top_pages_limit
+        del site_domain, period_days, top_pages_limit, ga4_property_id
         return GA4SiteMetricsResult(
             current_period=GA4SitePeriodMetrics(users=0, sessions=0, pageviews=0, organic_search_sessions=0),
             previous_period=GA4SitePeriodMetrics(users=0, sessions=0, pageviews=0, organic_search_sessions=0),
@@ -239,8 +249,9 @@ class _GA4NoDataProvider:
         start_date: str,
         end_date: str,
         page_path: str | None = None,
+        ga4_property_id: str | None = None,
     ) -> GA4SitePeriodMetrics:
-        del site_domain, start_date, end_date, page_path
+        del site_domain, start_date, end_date, page_path, ga4_property_id
         return GA4SitePeriodMetrics(users=0, sessions=0, pageviews=0, organic_search_sessions=0)
 
 
@@ -764,6 +775,52 @@ def test_match_recommendation_to_top_page_returns_none_when_no_hint_or_context_m
 
 
 def test_build_recommendation_before_after_comparison_prefers_page_metrics() -> None:
+    provider = _WindowComparisonProvider(fail_page_windows=False)
+    service = SEOAnalyticsService(
+        provider=provider,
+        settings=SEOAnalyticsServiceSettings(period_days=7, top_pages_limit=3),
+    )
+
+    comparison = service.build_recommendation_before_after_comparison(
+        site_domain="client.example",
+        recommendation_created_at=datetime(2026, 1, 15, 10, 0, 0),
+        page_path="/services/flooring",
+        ga4_property_id="2000000002",
+    )
+
+    assert comparison is not None
+    assert comparison.comparison_scope == "page"
+    assert comparison.before_window.start_date.isoformat() == "2026-01-08"
+    assert comparison.before_window.end_date.isoformat() == "2026-01-14"
+    assert comparison.before_window.sessions == 120
+    assert comparison.after_window.sessions == 150
+    assert provider.fetch_window_metrics_property_ids
+    assert set(provider.fetch_window_metrics_property_ids) == {"2000000002"}
+
+
+def test_build_recommendation_before_after_comparison_falls_back_to_site_metrics() -> None:
+    provider = _WindowComparisonProvider(fail_page_windows=True)
+    service = SEOAnalyticsService(
+        provider=provider,
+        settings=SEOAnalyticsServiceSettings(period_days=7, top_pages_limit=3),
+    )
+
+    comparison = service.build_recommendation_before_after_comparison(
+        site_domain="client.example",
+        recommendation_created_at=datetime(2026, 1, 15, 10, 0, 0),
+        page_path="/services/flooring",
+        ga4_property_id="2000000002",
+    )
+
+    assert comparison is not None
+    assert comparison.comparison_scope == "site"
+    assert comparison.before_window.sessions == 370
+    assert comparison.after_window.sessions == 420
+    assert provider.fetch_window_metrics_property_ids
+    assert set(provider.fetch_window_metrics_property_ids) == {"2000000002"}
+
+
+def test_build_recommendation_before_after_comparison_returns_none_without_site_property() -> None:
     service = SEOAnalyticsService(
         provider=_WindowComparisonProvider(fail_page_windows=False),
         settings=SEOAnalyticsServiceSettings(period_days=7, top_pages_limit=3),
@@ -773,32 +830,10 @@ def test_build_recommendation_before_after_comparison_prefers_page_metrics() -> 
         site_domain="client.example",
         recommendation_created_at=datetime(2026, 1, 15, 10, 0, 0),
         page_path="/services/flooring",
+        ga4_property_id=None,
     )
 
-    assert comparison is not None
-    assert comparison.comparison_scope == "page"
-    assert comparison.before_window.start_date.isoformat() == "2026-01-08"
-    assert comparison.before_window.end_date.isoformat() == "2026-01-14"
-    assert comparison.before_window.sessions == 120
-    assert comparison.after_window.sessions == 150
-
-
-def test_build_recommendation_before_after_comparison_falls_back_to_site_metrics() -> None:
-    service = SEOAnalyticsService(
-        provider=_WindowComparisonProvider(fail_page_windows=True),
-        settings=SEOAnalyticsServiceSettings(period_days=7, top_pages_limit=3),
-    )
-
-    comparison = service.build_recommendation_before_after_comparison(
-        site_domain="client.example",
-        recommendation_created_at=datetime(2026, 1, 15, 10, 0, 0),
-        page_path="/services/flooring",
-    )
-
-    assert comparison is not None
-    assert comparison.comparison_scope == "site"
-    assert comparison.before_window.sessions == 370
-    assert comparison.after_window.sessions == 420
+    assert comparison is None
 
 
 def test_search_console_site_summary_returns_metrics_with_mock_provider(db_session, seeded_business) -> None:

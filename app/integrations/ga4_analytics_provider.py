@@ -73,6 +73,7 @@ class GA4AnalyticsProvider(Protocol):
         site_domain: str,
         period_days: int,
         top_pages_limit: int,
+        ga4_property_id: str | None = None,
     ) -> GA4SiteMetricsResult: ...
 
     def fetch_window_metrics(
@@ -82,6 +83,7 @@ class GA4AnalyticsProvider(Protocol):
         start_date: str,
         end_date: str,
         page_path: str | None = None,
+        ga4_property_id: str | None = None,
     ) -> GA4SitePeriodMetrics: ...
 
 
@@ -99,8 +101,9 @@ class DisabledGA4AnalyticsProvider:
         site_domain: str,
         period_days: int,
         top_pages_limit: int,
+        ga4_property_id: str | None = None,
     ) -> GA4SiteMetricsResult:
-        del site_domain, period_days, top_pages_limit
+        del site_domain, period_days, top_pages_limit, ga4_property_id
         raise GA4AnalyticsProviderConfigurationError("GA4 analytics is not configured.")
 
     def fetch_window_metrics(
@@ -110,8 +113,9 @@ class DisabledGA4AnalyticsProvider:
         start_date: str,
         end_date: str,
         page_path: str | None = None,
+        ga4_property_id: str | None = None,
     ) -> GA4SitePeriodMetrics:
-        del site_domain, start_date, end_date, page_path
+        del site_domain, start_date, end_date, page_path, ga4_property_id
         raise GA4AnalyticsProviderConfigurationError("GA4 analytics is not configured.")
 
 
@@ -141,8 +145,9 @@ class MockGA4AnalyticsProvider:
         site_domain: str,
         period_days: int,
         top_pages_limit: int,
+        ga4_property_id: str | None = None,
     ) -> GA4SiteMetricsResult:
-        del period_days
+        del period_days, ga4_property_id
         normalized_domain = _normalize_domain(site_domain)
         seed = sum(ord(character) for character in normalized_domain) % 57
         current_users = 140 + seed
@@ -188,7 +193,9 @@ class MockGA4AnalyticsProvider:
         start_date: str,
         end_date: str,
         page_path: str | None = None,
+        ga4_property_id: str | None = None,
     ) -> GA4SitePeriodMetrics:
+        del ga4_property_id
         seed_components = (
             f"{_normalize_domain(site_domain)}|{start_date}|{end_date}|{(page_path or '').strip().lower()}"
         )
@@ -225,7 +232,9 @@ class GoogleAnalyticsDataAPIClient:
         self._auth_request: Any | None = None
 
     def is_configured(self) -> bool:
-        return bool(self.property_id)
+        # Per-site GA4 property scoping is supported on each request, so provider
+        # availability does not depend on a global default property id.
+        return True
 
     def fetch_account_summaries(self, *, page_size: int = 20) -> tuple[GA4AccountSummary, ...]:
         bounded_page_size = max(1, min(int(page_size), 200))
@@ -271,9 +280,9 @@ class GoogleAnalyticsDataAPIClient:
         site_domain: str,
         period_days: int,
         top_pages_limit: int,
+        ga4_property_id: str | None = None,
     ) -> GA4SiteMetricsResult:
-        if not self.is_configured():
-            raise GA4AnalyticsProviderConfigurationError("GA4 property id is required.")
+        scoped_property_id = self._resolve_ga4_property_id(ga4_property_id)
         normalized_domain = _normalize_domain(site_domain)
         if not normalized_domain:
             raise GA4AnalyticsProviderConfigurationError("A normalized site domain is required for GA4 analytics.")
@@ -288,23 +297,27 @@ class GoogleAnalyticsDataAPIClient:
             site_domain=normalized_domain,
             start_date=f"{current_start_offset}daysAgo",
             end_date="today",
+            ga4_property_id=scoped_property_id,
         )
         previous_period = self._fetch_period_metrics(
             site_domain=normalized_domain,
             start_date=f"{previous_start_offset}daysAgo",
             end_date=f"{previous_end_offset}daysAgo",
+            ga4_property_id=scoped_property_id,
         )
         current_top_pages = self._fetch_top_pages(
             site_domain=normalized_domain,
             start_date=f"{current_start_offset}daysAgo",
             end_date="today",
             limit=bounded_top_pages_limit,
+            ga4_property_id=scoped_property_id,
         )
         previous_top_pages = self._fetch_top_pages(
             site_domain=normalized_domain,
             start_date=f"{previous_start_offset}daysAgo",
             end_date=f"{previous_end_offset}daysAgo",
             limit=bounded_top_pages_limit,
+            ga4_property_id=scoped_property_id,
         )
         previous_top_pages_by_path = {item.page_path: item for item in previous_top_pages}
         merged_top_pages: list[GA4TopPageMetrics] = []
@@ -335,9 +348,9 @@ class GoogleAnalyticsDataAPIClient:
         start_date: str,
         end_date: str,
         page_path: str | None = None,
+        ga4_property_id: str | None = None,
     ) -> GA4SitePeriodMetrics:
-        if not self.is_configured():
-            raise GA4AnalyticsProviderConfigurationError("GA4 property id is required.")
+        scoped_property_id = self._resolve_ga4_property_id(ga4_property_id)
         normalized_domain = _normalize_domain(site_domain)
         if not normalized_domain:
             raise GA4AnalyticsProviderConfigurationError("A normalized site domain is required for GA4 analytics.")
@@ -346,6 +359,7 @@ class GoogleAnalyticsDataAPIClient:
             start_date=start_date,
             end_date=end_date,
             page_path=page_path,
+            ga4_property_id=scoped_property_id,
         )
 
     def _fetch_period_metrics(
@@ -355,6 +369,7 @@ class GoogleAnalyticsDataAPIClient:
         start_date: str,
         end_date: str,
         page_path: str | None = None,
+        ga4_property_id: str,
     ) -> GA4SitePeriodMetrics:
         site_filter = self._build_site_filter(site_domain)
         page_filter = self._build_page_filter(page_path)
@@ -364,7 +379,10 @@ class GoogleAnalyticsDataAPIClient:
             "metrics": [{"name": "totalUsers"}, {"name": "sessions"}, {"name": "screenPageViews"}],
             "dimensionFilter": period_filter,
         }
-        metrics_response = self._request_report(body=base_payload)
+        metrics_response = self._request_report(
+            body=base_payload,
+            ga4_property_id=ga4_property_id,
+        )
         row = _first_row(metrics_response)
         users = _metric_value(row, index=0)
         sessions = _metric_value(row, index=1)
@@ -390,7 +408,10 @@ class GoogleAnalyticsDataAPIClient:
             "metrics": [{"name": "sessions"}],
             "dimensionFilter": {"andGroup": {"expressions": organic_filter_expressions}},
         }
-        organic_response = self._request_report(body=organic_payload)
+        organic_response = self._request_report(
+            body=organic_payload,
+            ga4_property_id=ga4_property_id,
+        )
         organic_row = _first_row(organic_response)
         organic_sessions = _metric_value(organic_row, index=0)
 
@@ -408,6 +429,7 @@ class GoogleAnalyticsDataAPIClient:
         start_date: str,
         end_date: str,
         limit: int,
+        ga4_property_id: str,
     ) -> list[GA4TopPagePeriodMetrics]:
         payload: dict[str, Any] = {
             "dateRanges": [{"startDate": start_date, "endDate": end_date}],
@@ -417,7 +439,10 @@ class GoogleAnalyticsDataAPIClient:
             "orderBys": [{"metric": {"metricName": "screenPageViews"}, "desc": True}],
             "limit": str(limit),
         }
-        response_payload = self._request_report(body=payload)
+        response_payload = self._request_report(
+            body=payload,
+            ga4_property_id=ga4_property_id,
+        )
         rows = response_payload.get("rows")
         if not isinstance(rows, list):
             return []
@@ -496,9 +521,22 @@ class GoogleAnalyticsDataAPIClient:
             }
         }
 
-    def _request_report(self, *, body: dict[str, Any]) -> dict[str, Any]:
-        endpoint = f"{self.api_base_url}/properties/{self.property_id}:runReport"
+    def _request_report(
+        self,
+        *,
+        body: dict[str, Any],
+        ga4_property_id: str,
+    ) -> dict[str, Any]:
+        endpoint = f"{self.api_base_url}/properties/{ga4_property_id}:runReport"
         return self._request_json(url=endpoint, method="POST", body=body)
+
+    def _resolve_ga4_property_id(self, ga4_property_id: str | None) -> str:
+        scoped_property_id = str(ga4_property_id or "").strip() or self.property_id
+        if not scoped_property_id:
+            raise GA4AnalyticsProviderConfigurationError("GA4 property id is required.")
+        if not scoped_property_id.isdigit():
+            raise GA4AnalyticsProviderConfigurationError("GA4 property id format is invalid.")
+        return scoped_property_id
 
     def _request_json(
         self,

@@ -489,7 +489,11 @@ When this appears:
 When this is suppressed or downgraded:
 - `no_match`: recommendation has no conservative page-level match
 - `unavailable`: analytics is temporarily unavailable
-- `not_configured`: GA4 is not configured for the workspace
+- `not_configured`: GA4 property is not configured for the selected site
+
+Property scoping contract:
+- recommendation analytics uses `site.ga4_property_id` as the authoritative GA4 property
+- recommendation analytics does not fall back to a global/default GA4 property for site-scoped measurement context
 
 Interpretation boundary:
 - traffic context is directional support only
@@ -764,7 +768,7 @@ Key properties:
 
 ### GA4 Connect + Diagnostic Status
 
-Site workspace now includes a compact **Connect GA4** control for per-site property setup plus normalized diagnostic status.
+Per-site GA4 setup is owned by **Google Profile** and recommendation surfaces consume that site-scoped property configuration.
 
 Operator inputs:
 
@@ -784,6 +788,7 @@ Operational requirements:
 - GA4 property must be configured on the site record
 - workspace GA4 credential context (service account JSON or ADC) must have read access to that property
 - diagnostics remain directional/read-only and do not change recommendation logic
+- recommendation measurement context remains site-scoped and does not use global/default property fallback
 
 ### GA4 Last Data Seen + Freshness
 

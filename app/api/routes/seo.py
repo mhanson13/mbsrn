@@ -761,6 +761,7 @@ def _build_recommendation_measurement_context_by_id(
     site_analytics_summary: SEOAnalyticsSiteSummaryRead,
     seo_analytics_service: SEOAnalyticsService,
     site_domain: str | None,
+    ga4_property_id: str | None,
 ) -> dict[str, SEORecommendationMeasurementContextRead]:
     if not recommendations:
         return {}
@@ -798,6 +799,7 @@ def _build_recommendation_measurement_context_by_id(
             site_domain=site_domain,
             recommendation_created_at=recommendation.created_at,
             page_path=matched_page_path,
+            ga4_property_id=ga4_property_id,
         )
 
         if comparison is not None:
@@ -1044,6 +1046,7 @@ def _attach_measurement_context_to_recommendations(
     search_console_site_summary: SEOSearchConsoleSiteSummaryRead,
     seo_analytics_service: SEOAnalyticsService,
     site_domain: str | None,
+    ga4_property_id: str | None,
     search_console_property_url: str | None,
     search_console_enabled: bool,
 ) -> list[SEORecommendationRead]:
@@ -1054,6 +1057,7 @@ def _attach_measurement_context_to_recommendations(
         site_analytics_summary=site_analytics_summary,
         seo_analytics_service=seo_analytics_service,
         site_domain=site_domain,
+        ga4_property_id=ga4_property_id,
     )
     search_console_context_by_recommendation_id = _build_recommendation_search_console_context_by_id(
         recommendations=recommendations,
@@ -3706,6 +3710,8 @@ def get_seo_recommendation_workspace_summary(
             business_id=scoped_business_id,
             site_id=site_id,
             site_domain=site.base_url or site.normalized_domain,
+            ga4_property_id=site.ga4_property_id,
+            enforce_site_ga4_property=True,
         )
         search_console_site_summary = seo_analytics_service.get_search_console_site_summary(
             business_id=scoped_business_id,
@@ -3719,6 +3725,7 @@ def get_seo_recommendation_workspace_summary(
             search_console_site_summary=search_console_site_summary,
             seo_analytics_service=seo_analytics_service,
             site_domain=site.base_url or site.normalized_domain,
+            ga4_property_id=site.ga4_property_id,
             search_console_property_url=site.search_console_property_url,
             search_console_enabled=bool(site.search_console_enabled),
         )
@@ -3849,6 +3856,8 @@ def list_seo_recommendations_for_run(
         business_id=scoped_business_id,
         site_id=site_id,
         site_domain=site.base_url or site.normalized_domain,
+        ga4_property_id=site.ga4_property_id,
+        enforce_site_ga4_property=True,
     )
     search_console_site_summary = seo_analytics_service.get_search_console_site_summary(
         business_id=scoped_business_id,
@@ -3862,6 +3871,7 @@ def list_seo_recommendations_for_run(
         search_console_site_summary=search_console_site_summary,
         seo_analytics_service=seo_analytics_service,
         site_domain=site.base_url or site.normalized_domain,
+        ga4_property_id=site.ga4_property_id,
         search_console_property_url=site.search_console_property_url,
         search_console_enabled=bool(site.search_console_enabled),
     )
@@ -3918,6 +3928,8 @@ def list_seo_recommendations(
         business_id=scoped_business_id,
         site_id=site_id,
         site_domain=site.base_url or site.normalized_domain,
+        ga4_property_id=site.ga4_property_id,
+        enforce_site_ga4_property=True,
     )
     search_console_site_summary = seo_analytics_service.get_search_console_site_summary(
         business_id=scoped_business_id,
@@ -3931,6 +3943,7 @@ def list_seo_recommendations(
         search_console_site_summary=search_console_site_summary,
         seo_analytics_service=seo_analytics_service,
         site_domain=site.base_url or site.normalized_domain,
+        ga4_property_id=site.ga4_property_id,
         search_console_property_url=site.search_console_property_url,
         search_console_enabled=bool(site.search_console_enabled),
     )
@@ -3994,6 +4007,8 @@ def patch_seo_recommendation(
         business_id=scoped_business_id,
         site_id=site_id,
         site_domain=site.base_url or site.normalized_domain,
+        ga4_property_id=site.ga4_property_id,
+        enforce_site_ga4_property=True,
     )
     search_console_site_summary = seo_analytics_service.get_search_console_site_summary(
         business_id=scoped_business_id,
@@ -4007,6 +4022,7 @@ def patch_seo_recommendation(
         search_console_site_summary=search_console_site_summary,
         seo_analytics_service=seo_analytics_service,
         site_domain=site.base_url or site.normalized_domain,
+        ga4_property_id=site.ga4_property_id,
         search_console_property_url=site.search_console_property_url,
         search_console_enabled=bool(site.search_console_enabled),
     )
@@ -4301,6 +4317,8 @@ def get_seo_recommendation(
         business_id=scoped_business_id,
         site_id=site_id,
         site_domain=site.base_url or site.normalized_domain,
+        ga4_property_id=site.ga4_property_id,
+        enforce_site_ga4_property=True,
     )
     search_console_site_summary = seo_analytics_service.get_search_console_site_summary(
         business_id=scoped_business_id,
@@ -4314,6 +4332,7 @@ def get_seo_recommendation(
         search_console_site_summary=search_console_site_summary,
         seo_analytics_service=seo_analytics_service,
         site_domain=site.base_url or site.normalized_domain,
+        ga4_property_id=site.ga4_property_id,
         search_console_property_url=site.search_console_property_url,
         search_console_enabled=bool(site.search_console_enabled),
     )
@@ -4366,6 +4385,8 @@ def get_seo_recommendation_run_report(
         business_id=scoped_business_id,
         site_id=site_id,
         site_domain=site.base_url or site.normalized_domain,
+        ga4_property_id=site.ga4_property_id,
+        enforce_site_ga4_property=True,
     )
     search_console_site_summary = seo_analytics_service.get_search_console_site_summary(
         business_id=scoped_business_id,
@@ -4379,6 +4400,7 @@ def get_seo_recommendation_run_report(
         search_console_site_summary=search_console_site_summary,
         seo_analytics_service=seo_analytics_service,
         site_domain=site.base_url or site.normalized_domain,
+        ga4_property_id=site.ga4_property_id,
         search_console_property_url=site.search_console_property_url,
         search_console_enabled=bool(site.search_console_enabled),
     )

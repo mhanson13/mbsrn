@@ -12,7 +12,12 @@ from app.core.config import get_settings
 from app.core.time import utc_now
 from app.api.routes.seo import router as seo_router
 from app.api.routes.seo import router_v1 as seo_v1_router
-from app.integrations.ga4_analytics_provider import GA4SiteMetricsResult, GA4SitePeriodMetrics, GA4TopPageMetrics
+from app.integrations.ga4_analytics_provider import (
+    GA4AnalyticsProviderError,
+    GA4SiteMetricsResult,
+    GA4SitePeriodMetrics,
+    GA4TopPageMetrics,
+)
 from app.integrations.search_console_analytics_provider import (
     SearchConsolePeriodMetrics,
     SearchConsoleSiteMetricsResult,
@@ -89,6 +94,11 @@ def _make_client(
 
 
 class _DeterministicRecommendationAnalyticsProvider:
+    def __init__(self, *, expected_property_id: str | None = None) -> None:
+        self.expected_property_id = expected_property_id
+        self.fetch_site_metrics_property_ids: list[str | None] = []
+        self.fetch_window_metrics_property_ids: list[str | None] = []
+
     def is_configured(self) -> bool:
         return True
 
@@ -98,7 +108,9 @@ class _DeterministicRecommendationAnalyticsProvider:
         site_domain: str,
         period_days: int,
         top_pages_limit: int,
+        ga4_property_id: str | None = None,
     ) -> GA4SiteMetricsResult:
+        self._record_property_id(ga4_property_id, target="site_metrics")
         del site_domain, period_days
         top_pages = (
             GA4TopPageMetrics(
@@ -140,7 +152,9 @@ class _DeterministicRecommendationAnalyticsProvider:
         start_date: str,
         end_date: str,
         page_path: str | None = None,
+        ga4_property_id: str | None = None,
     ) -> GA4SitePeriodMetrics:
+        self._record_property_id(ga4_property_id, target="window_metrics")
         del site_domain, start_date
         is_after_window = end_date == date.today().isoformat()
         if page_path:
@@ -170,6 +184,16 @@ class _DeterministicRecommendationAnalyticsProvider:
             pageviews=620,
             organic_search_sessions=220,
         )
+
+    def _record_property_id(self, ga4_property_id: str | None, *, target: str) -> None:
+        if target == "site_metrics":
+            self.fetch_site_metrics_property_ids.append(ga4_property_id)
+        else:
+            self.fetch_window_metrics_property_ids.append(ga4_property_id)
+        if self.expected_property_id is None:
+            return
+        if ga4_property_id != self.expected_property_id:
+            raise GA4AnalyticsProviderError("unexpected_property_scope")
 
 
 class _DeterministicRecommendationSearchConsoleProvider:
@@ -277,6 +301,40 @@ class _DeterministicRecommendationSearchConsoleProvider:
         )
 
 
+class _FailingRecommendationAnalyticsProvider:
+    def __init__(self) -> None:
+        self.fetch_site_metrics_calls = 0
+        self.fetch_window_metrics_calls = 0
+
+    def is_configured(self) -> bool:
+        return True
+
+    def fetch_site_metrics(
+        self,
+        *,
+        site_domain: str,
+        period_days: int,
+        top_pages_limit: int,
+        ga4_property_id: str | None = None,
+    ) -> GA4SiteMetricsResult:
+        self.fetch_site_metrics_calls += 1
+        del site_domain, period_days, top_pages_limit, ga4_property_id
+        raise GA4AnalyticsProviderError("GA4 request failed: PERMISSION_DENIED")
+
+    def fetch_window_metrics(
+        self,
+        *,
+        site_domain: str,
+        start_date: str,
+        end_date: str,
+        page_path: str | None = None,
+        ga4_property_id: str | None = None,
+    ) -> GA4SitePeriodMetrics:
+        self.fetch_window_metrics_calls += 1
+        del site_domain, start_date, end_date, page_path, ga4_property_id
+        raise GA4AnalyticsProviderError("GA4 request failed: PERMISSION_DENIED")
+
+
 def _seed_other_business(db_session) -> Business:
     other_business = Business(
         id=str(uuid4()),
@@ -320,6 +378,7 @@ def _create_site(
     domain: str = "client.example",
     search_console_property_url: str | None = None,
     search_console_enabled: bool | None = None,
+    ga4_property_id: str | None = None,
 ) -> str:
     payload: dict[str, object] = {
         "display_name": f"Client Site {domain}",
@@ -329,6 +388,8 @@ def _create_site(
         payload["search_console_property_url"] = search_console_property_url
     if search_console_enabled is not None:
         payload["search_console_enabled"] = search_console_enabled
+    if ga4_property_id is not None:
+        payload["ga4_property_id"] = ga4_property_id
     create_site = client.post(
         f"/api/businesses/{business_id}/seo/sites",
         json=payload,
@@ -555,6 +616,7 @@ def test_create_recommendation_run_from_persisted_inputs(db_session, seeded_busi
         seeded_business.id,
         search_console_property_url="sc-domain:client.example",
         search_console_enabled=True,
+        ga4_property_id="2000000002",
     )
     audit_run_id = _seed_completed_audit_run(
         db_session,
@@ -611,6 +673,181 @@ def test_create_recommendation_run_from_persisted_inputs(db_session, seeded_busi
     assert "by_effort_bucket" in report_payload["rollups"]
 
 
+def test_recommendation_measurement_context_uses_site_ga4_property_id(db_session, seeded_business) -> None:
+    analytics_provider = _DeterministicRecommendationAnalyticsProvider(expected_property_id="2000000002")
+    analytics_service = SEOAnalyticsService(
+        provider=analytics_provider,
+        search_console_provider=_DeterministicRecommendationSearchConsoleProvider(),
+    )
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        analytics_service=analytics_service,
+    )
+    site_id = _create_site(
+        client,
+        seeded_business.id,
+        domain="ga4-scope-primary.example",
+        ga4_property_id="2000000002",
+        search_console_property_url="sc-domain:ga4-scope-primary.example",
+        search_console_enabled=True,
+    )
+    audit_run_id = _seed_completed_audit_run(db_session, business_id=seeded_business.id, site_id=site_id)
+    run_response = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs",
+        json={"audit_run_id": audit_run_id},
+    )
+    assert run_response.status_code == 201
+    run_id = run_response.json()["id"]
+
+    list_recommendations = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs/{run_id}/recommendations"
+    )
+    assert list_recommendations.status_code == 200
+    payload = list_recommendations.json()
+    assert payload["items"]
+    assert all(
+        (item.get("recommendation_measurement_context") or {}).get("measurement_status") == "available"
+        for item in payload["items"]
+    )
+    assert analytics_provider.fetch_site_metrics_property_ids
+    assert set(analytics_provider.fetch_site_metrics_property_ids) == {"2000000002"}
+    assert analytics_provider.fetch_window_metrics_property_ids
+    assert set(analytics_provider.fetch_window_metrics_property_ids) == {"2000000002"}
+
+
+def test_recommendation_measurement_context_missing_site_property_skips_ga4_provider(db_session, seeded_business) -> None:
+    analytics_provider = _DeterministicRecommendationAnalyticsProvider()
+    analytics_service = SEOAnalyticsService(
+        provider=analytics_provider,
+        search_console_provider=_DeterministicRecommendationSearchConsoleProvider(),
+    )
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        analytics_service=analytics_service,
+    )
+    site_id = _create_site(
+        client,
+        seeded_business.id,
+        domain="ga4-scope-missing.example",
+        search_console_property_url="sc-domain:ga4-scope-missing.example",
+        search_console_enabled=True,
+    )
+    audit_run_id = _seed_completed_audit_run(db_session, business_id=seeded_business.id, site_id=site_id)
+    run_response = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs",
+        json={"audit_run_id": audit_run_id},
+    )
+    assert run_response.status_code == 201
+    run_id = run_response.json()["id"]
+
+    list_recommendations = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs/{run_id}/recommendations"
+    )
+    assert list_recommendations.status_code == 200
+    payload = list_recommendations.json()
+    assert payload["items"]
+    assert all(
+        (item.get("recommendation_measurement_context") or {}).get("measurement_status") == "not_configured"
+        for item in payload["items"]
+    )
+    assert analytics_provider.fetch_site_metrics_property_ids == []
+    assert analytics_provider.fetch_window_metrics_property_ids == []
+
+
+def test_recommendation_measurement_context_is_scoped_per_site_property(db_session, seeded_business) -> None:
+    analytics_provider = _DeterministicRecommendationAnalyticsProvider()
+    analytics_service = SEOAnalyticsService(
+        provider=analytics_provider,
+        search_console_provider=_DeterministicRecommendationSearchConsoleProvider(),
+    )
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        analytics_service=analytics_service,
+    )
+    site_a = _create_site(client, seeded_business.id, domain="ga4-a.example", ga4_property_id="2000000002")
+    site_b = _create_site(client, seeded_business.id, domain="ga4-b.example", ga4_property_id="2000000003")
+
+    audit_run_a = _seed_completed_audit_run(db_session, business_id=seeded_business.id, site_id=site_a)
+    run_a = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_a}/recommendation-runs",
+        json={"audit_run_id": audit_run_a},
+    )
+    assert run_a.status_code == 201
+    run_a_id = run_a.json()["id"]
+
+    audit_run_b = _seed_completed_audit_run(db_session, business_id=seeded_business.id, site_id=site_b)
+    run_b = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_b}/recommendation-runs",
+        json={"audit_run_id": audit_run_b},
+    )
+    assert run_b.status_code == 201
+    run_b_id = run_b.json()["id"]
+
+    start_site_metric_calls = len(analytics_provider.fetch_site_metrics_property_ids)
+    start_window_calls = len(analytics_provider.fetch_window_metrics_property_ids)
+    list_a = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_a}/recommendation-runs/{run_a_id}/recommendations")
+    assert list_a.status_code == 200
+    site_a_metric_ids = analytics_provider.fetch_site_metrics_property_ids[start_site_metric_calls:]
+    site_a_window_ids = analytics_provider.fetch_window_metrics_property_ids[start_window_calls:]
+    assert site_a_metric_ids
+    assert set(site_a_metric_ids) == {"2000000002"}
+    assert site_a_window_ids
+    assert set(site_a_window_ids) == {"2000000002"}
+
+    start_site_metric_calls = len(analytics_provider.fetch_site_metrics_property_ids)
+    start_window_calls = len(analytics_provider.fetch_window_metrics_property_ids)
+    list_b = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_b}/recommendation-runs/{run_b_id}/recommendations")
+    assert list_b.status_code == 200
+    site_b_metric_ids = analytics_provider.fetch_site_metrics_property_ids[start_site_metric_calls:]
+    site_b_window_ids = analytics_provider.fetch_window_metrics_property_ids[start_window_calls:]
+    assert site_b_metric_ids
+    assert set(site_b_metric_ids) == {"2000000003"}
+    assert site_b_window_ids
+    assert set(site_b_window_ids) == {"2000000003"}
+
+
+def test_recommendation_measurement_context_degrades_when_ga4_provider_errors(db_session, seeded_business) -> None:
+    analytics_service = SEOAnalyticsService(
+        provider=_FailingRecommendationAnalyticsProvider(),
+        search_console_provider=_DeterministicRecommendationSearchConsoleProvider(),
+    )
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        analytics_service=analytics_service,
+    )
+    site_id = _create_site(
+        client,
+        seeded_business.id,
+        domain="ga4-error-degrade.example",
+        ga4_property_id="2000000002",
+        search_console_property_url="sc-domain:ga4-error-degrade.example",
+        search_console_enabled=True,
+    )
+    audit_run_id = _seed_completed_audit_run(db_session, business_id=seeded_business.id, site_id=site_id)
+    run_response = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs",
+        json={"audit_run_id": audit_run_id},
+    )
+    assert run_response.status_code == 201
+    run_id = run_response.json()["id"]
+
+    list_recommendations = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs/{run_id}/recommendations"
+    )
+    assert list_recommendations.status_code == 200
+    payload = list_recommendations.json()
+    assert payload["items"]
+    first_item = payload["items"][0]
+    measurement_context = first_item.get("recommendation_measurement_context") or {}
+    search_context = first_item.get("recommendation_search_console_context") or {}
+    assert measurement_context.get("measurement_status") == "unavailable"
+    assert search_context.get("search_console_status") == "available"
+
+
 def test_recommendation_run_requires_lineage_and_completed_inputs(db_session, seeded_business) -> None:
     client = _make_client(db_session, business_id=seeded_business.id)
     site_id = _create_site(
@@ -618,6 +855,7 @@ def test_recommendation_run_requires_lineage_and_completed_inputs(db_session, se
         seeded_business.id,
         search_console_property_url="sc-domain:client.example",
         search_console_enabled=True,
+        ga4_property_id="2000000002",
     )
 
     missing_lineage = client.post(
@@ -711,6 +949,7 @@ def test_phase2_v1_site_scoped_recommendation_routes(db_session, seeded_business
         seeded_business.id,
         search_console_property_url="sc-domain:client.example",
         search_console_enabled=True,
+        ga4_property_id="2000000002",
     )
     audit_run_id = _seed_completed_audit_run(db_session, business_id=seeded_business.id, site_id=site_id)
 
@@ -3510,6 +3749,7 @@ def test_recommendation_workspace_summary_adds_page_measurement_context_when_mat
         seeded_business.id,
         search_console_property_url="sc-domain:client.example",
         search_console_enabled=True,
+        ga4_property_id="2000000002",
     )
     audit_run_id = _seed_completed_audit_run(
         db_session,
