@@ -2993,7 +2993,7 @@ function deriveMigrationDestinationSummary(params: {
   const deployResolvedLiveCandidate =
     asStringOrNull(deployDestination.active_url) || asStringOrNull(deployDestination.resolved_live_url);
   const deployResolvedLiveUrl =
-    deployUrlSource === "deploy_result" || deployUrlSource === "workflow_output"
+    deployUrlSource === "deploy_result" || deployUrlSource === "workflow_output" || deployUrlSource === "current_live_probe"
       ? deployResolvedLiveCandidate
       : asStringOrNull(deployDestination.active_url);
   const deployResolvedLiveHost = extractHostnameFromUrl(deployResolvedLiveUrl);
@@ -3263,7 +3263,7 @@ function toDestinationStateLabel(value: string): string {
     return "Configured";
   }
   if (normalized === "active_live") {
-    return "Active/live";
+    return "Confirmed Live";
   }
   if (normalized === "expected_after_deploy") {
     return "Expected after deploy";
@@ -4407,6 +4407,42 @@ export function MigrationWorkspacePanel({
   const backendHealthHealthyFromSummary =
     asBooleanOrNull(deployReadiness.gce_backend_healthy) ?? asBooleanOrNull(deployReadiness.backend_healthy);
   const backendHealthHealthy = backendHealthHealthyFromSelected ?? backendHealthHealthyFromSummary;
+  const currentLiveUrl = asStringOrNull(deployReadiness.current_live_url);
+  const currentHostReachable = asBooleanOrNull(deployReadiness.current_host_reachable);
+  const currentHostReachabilityScheme = asStringOrNull(deployReadiness.current_host_reachability_scheme);
+  const currentDeployHttpsReady = asBooleanOrNull(deployReadiness.current_deploy_https_ready);
+  const currentCertIdentityValid = asBooleanOrNull(deployReadiness.current_cert_identity_valid);
+  const currentHttpsProbeStatusCode = (() => {
+    const value = deployReadiness.current_https_probe_status_code;
+    return typeof value === "number" && Number.isFinite(value) ? Math.round(value) : null;
+  })();
+  const currentHttpsProbeErrorSummary = asStringOrNull(deployReadiness.current_https_probe_error_summary);
+  const currentLiveEvidenceCheckedAt = asStringOrNull(deployReadiness.current_live_evidence_checked_at);
+  const currentLiveEvidenceSource = asStringOrNull(deployReadiness.current_live_evidence_source);
+  const currentLiveRuntimeStatus = asStringOrNull(deployReadiness.current_live_runtime_status);
+  const currentLiveRuntimeSource = asStringOrNull(deployReadiness.current_live_runtime_source) || currentLiveEvidenceSource;
+  const currentLiveRuntimeNote = asStringOrNull(deployReadiness.current_live_runtime_note);
+  const selectedWorkflowAttemptStatus =
+    asStringOrNull(deployReadiness.selected_workflow_attempt_status) || workflowRunStatus;
+  const selectedWorkflowAttemptConclusion =
+    asStringOrNull(deployReadiness.selected_workflow_attempt_conclusion) || workflowRunConclusion;
+  const selectedWorkflowFailedStep =
+    asStringOrNull(deployReadiness.selected_workflow_failed_step) || deployRunFailureStep;
+  const selectedWorkflowFailureStage =
+    asStringOrNull(deployReadiness.selected_workflow_failure_stage) || deployRunFailureStage;
+  const selectedWorkflowFailureReason =
+    asStringOrNull(deployReadiness.selected_workflow_failure_reason) || deployRunFailureReasonCode;
+  const selectedWorkflowAttemptFailed = Boolean(
+    (selectedWorkflowAttemptStatus || "").trim().toLowerCase() === "completed" &&
+      (selectedWorkflowAttemptConclusion || "").trim().toLowerCase() !== "success" &&
+      (selectedWorkflowAttemptConclusion || "").trim().length > 0,
+  );
+  const currentLiveEvidenceHealthy = currentDeployHttpsReady === true;
+  const currentLiveHealthySelectedWorkflowFailureNote =
+    currentLiveRuntimeNote ||
+    (currentLiveEvidenceHealthy && selectedWorkflowAttemptFailed
+      ? "Selected deploy workflow failed during evidence collection, but current live HTTPS evidence is healthy."
+      : null);
   const dnsRecordMatchesIngressFromSelected = asBooleanOrNull(selectedDeployHistoryRecord.dns_record_matches_ingress);
   const dnsRecordMatchesIngressFromSummary = asBooleanOrNull(deployReadiness.dns_record_matches_ingress);
   const dnsRecordMatchesIngress = dnsRecordMatchesIngressFromSelected ?? dnsRecordMatchesIngressFromSummary;
@@ -4430,10 +4466,10 @@ export function MigrationWorkspacePanel({
   const ingressConflictDetected = ingressConflictDetectedFromSelected ?? ingressConflictDetectedFromSummary;
   const certIdentityValidFromSelected = asBooleanOrNull(selectedDeployHistoryRecord.cert_identity_valid);
   const certIdentityValidFromSummary = asBooleanOrNull(deployReadiness.cert_identity_valid);
-  const certIdentityValid = certIdentityValidFromSelected ?? certIdentityValidFromSummary;
+  const certIdentityValid = currentCertIdentityValid ?? certIdentityValidFromSelected ?? certIdentityValidFromSummary;
   const deployHttpsReadyFromSelected = asBooleanOrNull(selectedDeployHistoryRecord.deploy_https_ready);
   const deployHttpsReadyFromSummary = asBooleanOrNull(deployReadiness.deploy_https_ready);
-  const deployHttpsReady = deployHttpsReadyFromSelected ?? deployHttpsReadyFromSummary;
+  const deployHttpsReady = currentDeployHttpsReady ?? deployHttpsReadyFromSelected ?? deployHttpsReadyFromSummary;
   const workflowIntegrityStatusFromSelected = asStringOrNull(selectedDeployHistoryRecord.workflow_integrity_status);
   const workflowIntegrityStatusFromSummary = asStringOrNull(deployReadiness.workflow_integrity_status);
   const workflowIntegrityStatus =
@@ -4452,12 +4488,14 @@ export function MigrationWorkspacePanel({
   const normalizedPostConformanceStage = (postConformanceStage || "").trim().toLowerCase();
   const normalizedTlsCertificateStatus = normalizeUpperOrNull(tlsCertificateStatus);
   const normalizedTlsDomainStatus = normalizeUpperOrNull(tlsDomainStatus);
+  const suppressHistoricalDeployFailureReasons = currentLiveEvidenceHealthy && selectedWorkflowAttemptFailed;
   const deployConsistencyReasonCodeSet = new Set(
     [normalizedDispatchServiceReasonCode, normalizedDeployFailureReasonCode, normalizedDeployRunFailureReasonCode]
       .map((value) => value.trim())
       .filter((value) => value.length > 0),
   );
-  const hasDeployConsistencyReasonCode = (code: string): boolean => deployConsistencyReasonCodeSet.has(code);
+  const hasDeployConsistencyReasonCode = (code: string): boolean =>
+    suppressHistoricalDeployFailureReasons ? false : deployConsistencyReasonCodeSet.has(code);
   const dnsMismatchReasonCodes = new Set([
     "dns_record_mismatch",
     "dns_points_to_old_ingress_ip",
@@ -4560,6 +4598,9 @@ export function MigrationWorkspacePanel({
     return "unknown";
   })();
   const dnsMatchesIngressGateStatus: DeployConsistencyGateStatus = (() => {
+    if (currentLiveEvidenceHealthy) {
+      return "pass";
+    }
     if (dnsRecordMatchesIngress === true) {
       return "pass";
     }
@@ -4599,6 +4640,9 @@ export function MigrationWorkspacePanel({
     return "unknown";
   })();
   const ingressConflictGateStatus: DeployConsistencyGateStatus = (() => {
+    if (currentLiveEvidenceHealthy) {
+      return "pass";
+    }
     if (ingressConflictDetected === true || hasIngressConflictReason) {
       return "blocked";
     }
@@ -4946,6 +4990,9 @@ export function MigrationWorkspacePanel({
     return "unknown";
   })();
   const deployDiagnosticsStatus: NormalizedDiagnosticStatus = (() => {
+    if (currentLiveEvidenceHealthy) {
+      return "success";
+    }
     if (deployDiagnosticsFailureCategory || deployFailureReasonCode || deployRunFailureReasonCode) {
       return "failed";
     }
@@ -4974,6 +5021,8 @@ export function MigrationWorkspacePanel({
     publishDiagnosticsStatus === "success" ? "No action required." : "Review publish readiness and retry.",
   );
   const deployDiagnosticsReasonSummary = summarizeDiagnosticReason(
+    currentLiveHealthySelectedWorkflowFailureNote,
+    currentLiveEvidenceHealthy ? "Current runtime evidence: HTTPS probe succeeded." : null,
     managedGkeConfigGuidance,
     deployFailureMessage,
     deployFailureReasonCode ? `Reason: ${formatReasonCodeLabel(deployFailureReasonCode)}` : null,
@@ -4982,6 +5031,7 @@ export function MigrationWorkspacePanel({
     deployPrimaryReadinessMessage,
   );
   const deployDiagnosticsNextAction = summarizeDiagnosticReason(
+    currentLiveEvidenceHealthy ? "No action required." : null,
     postConformanceGuidance,
     deployRunFailureHint,
     deployFailureRemediationHintDisplay,
@@ -7682,7 +7732,21 @@ export function MigrationWorkspacePanel({
                   <WorkspaceMetadataItem label="Deploy evidence state">
                     {deployTargetStateLabel}
                   </WorkspaceMetadataItem>
+                  <WorkspaceMetadataItem label="Live URL (current)">
+                    {currentLiveUrl || destinationSummary.deployResolvedLiveUrl || "Not yet confirmed"}
+                  </WorkspaceMetadataItem>
+                  <WorkspaceMetadataItem label="Current evidence source">
+                    {currentLiveRuntimeSource || destinationSummary.deployUrlSource || "unknown"}
+                  </WorkspaceMetadataItem>
+                  <WorkspaceMetadataItem label="Current HTTPS ready">
+                    {formatBooleanStateLabel(currentDeployHttpsReady ?? deployHttpsReady)}
+                  </WorkspaceMetadataItem>
                 </WorkspaceMetadataGrid>
+                {currentLiveHealthySelectedWorkflowFailureNote ? (
+                  <span className="hint" data-testid="migration-deploy-current-live-note">
+                    {currentLiveHealthySelectedWorkflowFailureNote}
+                  </span>
+                ) : null}
                 {deploySummaryBlockerMessage ? (
                   <span className="hint warning" data-testid="migration-destination-deploy-blocker">
                     {deploySummaryBlockerMessage}
@@ -7701,6 +7765,11 @@ export function MigrationWorkspacePanel({
                     ? "Action: Run deploy for the selected approved and published draft."
                     : `Blocker: ${deployPrimaryReadinessMessage || "Deploy target is not ready."}`}
                 </span>
+                {currentLiveHealthySelectedWorkflowFailureNote ? (
+                  <span className="hint" data-testid="migration-deploy-readiness-current-live-note">
+                    {currentLiveHealthySelectedWorkflowFailureNote}
+                  </span>
+                ) : null}
                 {!deployReady ? (
                   <>
                     {managedGkeConfigGuidance ? (
@@ -8355,10 +8424,47 @@ export function MigrationWorkspacePanel({
                     {deployDiagnosticsSelectedTimestamp ? formatAttemptTimestamp(deployDiagnosticsSelectedTimestamp) : "n/a"} ·{" "}
                     {deployDiagnosticsAttemptStatusRaw || "unknown"}
                   </span>
+                  <span className="hint muted">
+                    Selected workflow attempt: {selectedWorkflowAttemptStatus || "unknown"} ·{" "}
+                    {selectedWorkflowAttemptConclusion || "unknown"}
+                  </span>
+                  {selectedWorkflowFailureReason || selectedWorkflowFailureStage || selectedWorkflowFailedStep ? (
+                    <span className="hint muted">
+                      Selected workflow failure:{" "}
+                      {selectedWorkflowFailureReason ? formatReasonCodeLabel(selectedWorkflowFailureReason) : "Not available"}
+                      {selectedWorkflowFailureStage ? ` @ ${formatReasonCodeLabel(selectedWorkflowFailureStage)}` : ""}
+                      {selectedWorkflowFailedStep ? ` (${selectedWorkflowFailedStep})` : ""}
+                    </span>
+                  ) : null}
                   <span className={deployDiagnosticsStatus === "failed" || deployDiagnosticsStatus === "blocked" ? "hint warning" : "hint"}>
                     Reason: {deployDiagnosticsReasonSummary}
                   </span>
                   <span className="hint">Next action: {deployDiagnosticsNextAction}</span>
+                  <div className="panel panel-compact stack-tight" data-testid="migration-current-live-runtime-evidence">
+                    <strong>Current Live Runtime Evidence</strong>
+                    <span className="hint">
+                      HTTPS Ready: {formatBooleanStateLabel(currentDeployHttpsReady ?? deployHttpsReady)}
+                    </span>
+                    <span className="hint">Host reachable: {formatBooleanStateLabel(currentHostReachable)}</span>
+                    <span className="hint">Scheme: {currentHostReachabilityScheme || "Not available"}</span>
+                    <span className="hint">Live URL: {currentLiveUrl || destinationSummary.deployResolvedLiveUrl || "Not available"}</span>
+                    <span className="hint">
+                      Cert identity valid: {formatBooleanStateLabel(currentCertIdentityValid ?? certIdentityValid)}
+                    </span>
+                    <span className="hint">
+                      Checked at: {currentLiveEvidenceCheckedAt ? formatAttemptTimestamp(currentLiveEvidenceCheckedAt) : "Not available"}
+                    </span>
+                    <span className="hint">Source: {currentLiveRuntimeSource || "Not available"}</span>
+                    {currentHttpsProbeStatusCode !== null ? (
+                      <span className="hint">HTTPS probe status: {currentHttpsProbeStatusCode}</span>
+                    ) : null}
+                    {currentDeployHttpsReady === false && currentHttpsProbeErrorSummary ? (
+                      <span className="hint warning">Probe summary: {currentHttpsProbeErrorSummary}</span>
+                    ) : null}
+                    {currentLiveHealthySelectedWorkflowFailureNote ? (
+                      <span className="hint">{currentLiveHealthySelectedWorkflowFailureNote}</span>
+                    ) : null}
+                  </div>
                   {deployDiagnosticsUsingSummaryFallback ? (
                     <span className="hint muted" data-testid="migration-deploy-diagnostics-fallback-note">
                       Selected-attempt diagnostics include latest-summary fallback for missing fields.
@@ -8491,6 +8597,21 @@ export function MigrationWorkspacePanel({
                         <span className="hint" data-testid="migration-deploy-consistency-https-ready">
                           deploy_https_ready: {formatBooleanStateLabel(deployHttpsReady)}
                         </span>
+                        <span className="hint" data-testid="migration-deploy-consistency-current-live-url">
+                          current_live_url: {currentLiveUrl || "Not available"}
+                        </span>
+                        <span className="hint" data-testid="migration-deploy-consistency-current-host-reachable">
+                          current_host_reachable: {formatBooleanStateLabel(currentHostReachable)}
+                        </span>
+                        <span className="hint" data-testid="migration-deploy-consistency-current-https-ready">
+                          current_deploy_https_ready: {formatBooleanStateLabel(currentDeployHttpsReady)}
+                        </span>
+                        <span className="hint" data-testid="migration-deploy-consistency-current-cert-identity">
+                          current_cert_identity_valid: {formatBooleanStateLabel(currentCertIdentityValid)}
+                        </span>
+                        <span className="hint" data-testid="migration-deploy-consistency-current-runtime-source">
+                          current_live_runtime_source: {currentLiveRuntimeSource || "Not available"}
+                        </span>
                         <span className="hint" data-testid="migration-deploy-consistency-workflow-integrity-status">
                           workflow_integrity_status: {workflowIntegrityStatus || "Not available"}
                         </span>
@@ -8547,6 +8668,23 @@ export function MigrationWorkspacePanel({
                     </span>
                     <span className="hint">Workflow run status: {workflowRunStatus || "Not available"}</span>
                     <span className="hint">Workflow run conclusion: {workflowRunConclusion || "Not available"}</span>
+                    <span className="hint">
+                      selected_workflow_attempt_status: {selectedWorkflowAttemptStatus || "Not available"}
+                    </span>
+                    <span className="hint">
+                      selected_workflow_attempt_conclusion: {selectedWorkflowAttemptConclusion || "Not available"}
+                    </span>
+                    <span className="hint">
+                      selected_workflow_failure_reason:{" "}
+                      {selectedWorkflowFailureReason ? formatReasonCodeLabel(selectedWorkflowFailureReason) : "Not available"}
+                    </span>
+                    <span className="hint">
+                      selected_workflow_failure_stage:{" "}
+                      {selectedWorkflowFailureStage ? formatReasonCodeLabel(selectedWorkflowFailureStage) : "Not available"}
+                    </span>
+                    <span className="hint">
+                      selected_workflow_failed_step: {selectedWorkflowFailedStep || "Not available"}
+                    </span>
                     <span className="hint">Post-dispatch state: {postDispatchState || "Not available"}</span>
                     <span className="hint">
                       Post-conformance stage: {formatReasonCodeLabel(postConformanceStage)}
@@ -8580,6 +8718,39 @@ export function MigrationWorkspacePanel({
                     </span>
                     <span className="hint">
                       Expected workflow outputs: {expectedWorkflowOutputs.length > 0 ? expectedWorkflowOutputs.join(", ") : "Not available"}
+                    </span>
+                    <span className="hint">
+                      current_live_runtime_status: {currentLiveRuntimeStatus || "Not available"}
+                    </span>
+                    <span className="hint">
+                      current_live_runtime_source: {currentLiveRuntimeSource || "Not available"}
+                    </span>
+                    <span className="hint">current_live_url: {currentLiveUrl || "Not available"}</span>
+                    <span className="hint">
+                      current_host_reachable: {formatBooleanStateLabel(currentHostReachable)}
+                    </span>
+                    <span className="hint">
+                      current_host_reachability_scheme: {currentHostReachabilityScheme || "Not available"}
+                    </span>
+                    <span className="hint">
+                      current_deploy_https_ready: {formatBooleanStateLabel(currentDeployHttpsReady)}
+                    </span>
+                    <span className="hint">
+                      current_cert_identity_valid: {formatBooleanStateLabel(currentCertIdentityValid)}
+                    </span>
+                    <span className="hint">
+                      current_https_probe_status_code:{" "}
+                      {currentHttpsProbeStatusCode !== null ? String(currentHttpsProbeStatusCode) : "Not available"}
+                    </span>
+                    <span className="hint">
+                      current_https_probe_error_summary: {currentHttpsProbeErrorSummary || "Not available"}
+                    </span>
+                    <span className="hint">
+                      current_live_evidence_checked_at:{" "}
+                      {currentLiveEvidenceCheckedAt ? formatAttemptTimestamp(currentLiveEvidenceCheckedAt) : "Not available"}
+                    </span>
+                    <span className="hint">
+                      current_live_evidence_source: {currentLiveEvidenceSource || "Not available"}
                     </span>
                     {workflowContractAdvisory ? (
                       <span className="hint warning">Workflow contract advisory: {workflowContractAdvisory}</span>

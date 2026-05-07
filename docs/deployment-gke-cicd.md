@@ -189,6 +189,14 @@ Important state:
 - DNS/static IP/ingress/certificate checks can all be valid while `deploy_https_ready=false`.
 - In this state, deploy diagnostics should preserve bounded probe evidence in `https_probe_error_summary`.
 - `deploy_https_ready=false` with blank `https_probe_error_summary` is a diagnostics regression and should trigger workflow/template verification.
+- selected workflow attempt outcome and current runtime outcome are distinct:
+  - selected workflow failure remains historical evidence
+  - current runtime state is derived from latest bounded HTTPS probe evidence when available
+  - current runtime evidence precedence: `current_live_probe` -> `workflow_output` -> selected attempt -> summary fallback -> historical failure
+- if selected workflow evidence collection failed but current live HTTPS probe succeeds, operator UI should report current runtime as healthy while preserving the failed selected attempt in history/diagnostics.
+- static-IP reconciliation rules:
+  - static IP ensure/describe uses bounded re-describe before classifying `managed_site_static_ip_address_missing`
+  - stale selected-attempt static-IP-missing failures remain historical context and must not override healthy current live HTTPS evidence
 - Expected reason-code families include:
   - `https_probe_failed_after_control_plane_ready`
   - `https_probe_timeout`

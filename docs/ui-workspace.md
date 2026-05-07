@@ -70,6 +70,7 @@ The dedicated migration route (`/sites/[site_id]/migration`) keeps primary opera
   - publish surface: summary/readiness on left, GitHub target config + publish actions on right
   - deploy surface: target/readiness on left, deploy availability + deploy actions on right
   - concise readiness state + one action/blocker line
+  - deploy evidence state can show `Confirmed Live` when current live HTTPS probe evidence is healthy
 - F. Advanced Diagnostics & History:
   - draft/provider execution metadata
   - media diagnostics
@@ -109,6 +110,17 @@ Advanced diagnostics normalization defaults:
 - Deploy consistency renders as grouped status checks (operator-readable labels), while raw snake_case fields remain under `Show raw deploy consistency fields`.
 - Destination / Config diagnostics render grouped categories (artifact, repository/workflow, runtime, domain, preview/deployment evidence) with nested details for lower-priority fields.
 - deploy HTTPS diagnostics preserve bounded probe evidence (`https_probe_error_summary`) and control-plane-ready probe-failure reason codes (`https_probe_failed_after_control_plane_ready`, `https_probe_timeout`, `https_probe_empty_reply`, `https_probe_not_attempted`) without exposing raw unsafe curl output.
+- deploy diagnostics separates selected workflow attempt outcome from current runtime evidence:
+  - selected attempt status/failure remains visible as selected-attempt/historical context
+  - `Current Live Runtime Evidence` card shows the current probe-backed runtime state (`HTTPS Ready`, host reachability, scheme, live URL, cert identity, checked-at, source)
+  - when selected workflow evidence collection failed but current runtime is healthy, UI note states:
+    - `Selected deploy workflow failed during evidence collection, but current live HTTPS evidence is healthy.`
+- deploy runtime evidence precedence:
+  1. `current_live_probe`
+  2. successful `workflow_output`
+  3. selected attempt diagnostics
+  4. latest summary fallback
+  5. historical failure detail
 
 Operator Requirements simplification and suggestion scratchpads:
 - `Operator Requirements` is the only operator-owned control surface for draft intent.

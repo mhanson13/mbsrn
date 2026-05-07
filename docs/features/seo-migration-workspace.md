@@ -166,7 +166,19 @@ Destination, readiness, and diagnostics IA refinements:
   - publish/deploy history remains collapsible under Advanced Diagnostics
 - URL confirmation semantics are unchanged:
   - `deterministic_target_config` is expected guidance (not confirmed live evidence)
-  - confirmed live evidence comes from explicit deploy/workflow result metadata (for example `deploy_result` or `workflow_output`)
+  - confirmed live evidence comes from explicit deploy/workflow result metadata or current refresh probe metadata (`deploy_result`, `workflow_output`, `current_live_probe`)
+- workflow-attempt vs current-runtime separation:
+  - selected workflow attempt status/failure remains visible in deploy diagnostics/history as selected-attempt context
+  - current runtime state is evaluated separately and can be marked healthy from bounded live HTTPS probe evidence
+  - when selected workflow evidence collection failed but current live HTTPS probe succeeds, the operator-facing note is:
+    - `Selected deploy workflow failed during evidence collection, but current live HTTPS evidence is healthy.`
+- deploy evidence precedence for current runtime state:
+  1. current live HTTPS probe evidence
+  2. successful workflow output evidence
+  3. selected attempt diagnostics
+  4. latest summary fallback
+  5. historical failure detail
+- stale selected-attempt static IP failures (for example `managed_site_static_ip_address_missing`) remain in selected/history diagnostics and do not override current runtime live status when current live HTTPS evidence is healthy.
 - manual follow-up capture remains available through `Refresh Deploy Status`
 
 Summary and diagnostics compaction (2026-05):
@@ -180,6 +192,7 @@ Summary and diagnostics compaction (2026-05):
 - Advanced Diagnostics is compact by default while preserving full data:
   - subsection shells are visually normalized to the `Draft / Provider Diagnostics` pattern (title, helper text, consistent bordered/rounded shell, aligned disclosure/content spacing)
   - Publish/Deploy diagnostics show normalized status + selected-attempt scope + concise reason + next action.
+  - Deploy diagnostics include a compact `Current Live Runtime Evidence` card (HTTPS ready, host reachability, scheme, live URL, cert identity, checked-at, source, bounded probe summary on failure).
   - raw failure/workflow/remediation fields remain under explicit `Show raw ... diagnostics fields` disclosures.
   - publish/deploy history defaults to latest attempts plus grouped repeated failure reasons; full per-attempt history remains available under disclosure.
   - deploy consistency defaults to grouped operator-readable status checks; raw snake_case evidence fields remain under `Show raw deploy consistency fields`.

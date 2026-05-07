@@ -41,6 +41,7 @@ from app.integrations.seo_migration_github_publisher import (
     MisconfiguredSEOMigrationGitHubPublisher,
     SEOMigrationGitHubActionsSecretUpsertResult,
     SEOMigrationGitHubDeployTarget,
+    SEOMigrationGitHubLiveRuntimeProbeResult,
     SEOMigrationGitHubManagedSiteDnsEnsureResult,
     SEOMigrationGitHubManagedSiteStaticIPEnsureResult,
     SEOMigrationGitHubRepoAdoptionResult,
@@ -306,6 +307,7 @@ _DEPLOY_RESTRICTED_CONFIG_FIELDS = ("repo_owner", "repo_name", "workflow_id", "r
 _MIGRATION_URL_SOURCE_DETERMINISTIC_TARGET_CONFIG = "deterministic_target_config"
 _MIGRATION_URL_SOURCE_WORKFLOW_OUTPUT = "workflow_output"
 _MIGRATION_URL_SOURCE_DEPLOY_RESULT = "deploy_result"
+_MIGRATION_URL_SOURCE_CURRENT_LIVE_PROBE = "current_live_probe"
 _MIGRATION_URL_SOURCE_UNKNOWN = "unknown"
 _DEPLOY_EXPECTED_WORKFLOW_OUTPUT_KEYS: tuple[str, ...] = (
     "resolved_live_url",
@@ -8834,6 +8836,31 @@ class SEOMigrationService:
                         level=logging.INFO,
                     )
 
+        current_live_runtime = self._refresh_current_live_runtime_evidence(
+            site_id=site_id,
+            repo_name=repo_name,
+            target_inputs=target_inputs,
+            existing_live_url=existing_live_url,
+            refreshed_network_readiness=refreshed_network_readiness,
+        )
+        for current_live_field in (
+            "current_live_url",
+            "current_host_reachable",
+            "current_host_reachability_scheme",
+            "current_deploy_https_ready",
+            "current_cert_identity_valid",
+            "current_https_probe_status_code",
+            "current_https_probe_error_summary",
+            "current_live_evidence_checked_at",
+            "current_live_evidence_source",
+            "current_live_runtime_status",
+            "current_live_runtime_source",
+        ):
+            current_live_value = current_live_runtime.get(current_live_field)
+            if next_item.get(current_live_field) != current_live_value:
+                next_item[current_live_field] = current_live_value
+                updated = True
+
         post_dispatch_state = _derive_post_dispatch_state(
             dispatch_attempted=dispatch_attempted,
             dispatch_result_stage=dispatch_result_stage,
@@ -9105,6 +9132,14 @@ class SEOMigrationService:
             "workflow_run_failure_stage": workflow_run_failure_stage,
             "workflow_run_failure_step": workflow_run_failure_step,
             "workflow_run_failure_hint": workflow_run_failure_hint,
+            "selected_workflow_attempt_status": _normalize_string(refresh_result.workflow_run_status, max_length=40),
+            "selected_workflow_attempt_conclusion": _normalize_string(
+                refresh_result.workflow_run_conclusion,
+                max_length=40,
+            ),
+            "selected_workflow_failed_step": workflow_run_failure_step,
+            "selected_workflow_failure_stage": workflow_run_failure_stage,
+            "selected_workflow_failure_reason": workflow_run_failure_reason_code,
             "resolved_live_url": existing_live_url,
             "url_source": existing_url_source,
             "url_source_detail": existing_url_source_detail,
@@ -9145,6 +9180,47 @@ class SEOMigrationService:
                 bool(next_item.get("deploy_https_ready"))
                 if isinstance(next_item.get("deploy_https_ready"), bool)
                 else None
+            ),
+            "current_live_url": _normalize_url_candidate(next_item.get("current_live_url")),
+            "current_host_reachable": (
+                bool(next_item.get("current_host_reachable"))
+                if isinstance(next_item.get("current_host_reachable"), bool)
+                else None
+            ),
+            "current_host_reachability_scheme": _normalize_string(
+                next_item.get("current_host_reachability_scheme"),
+                max_length=12,
+            ),
+            "current_deploy_https_ready": (
+                bool(next_item.get("current_deploy_https_ready"))
+                if isinstance(next_item.get("current_deploy_https_ready"), bool)
+                else None
+            ),
+            "current_cert_identity_valid": (
+                bool(next_item.get("current_cert_identity_valid"))
+                if isinstance(next_item.get("current_cert_identity_valid"), bool)
+                else None
+            ),
+            "current_https_probe_status_code": _coerce_int(next_item.get("current_https_probe_status_code")),
+            "current_https_probe_error_summary": _normalize_string(
+                next_item.get("current_https_probe_error_summary"),
+                max_length=240,
+            ),
+            "current_live_evidence_checked_at": _normalize_string(
+                next_item.get("current_live_evidence_checked_at"),
+                max_length=64,
+            ),
+            "current_live_evidence_source": _normalize_string(
+                next_item.get("current_live_evidence_source"),
+                max_length=80,
+            ),
+            "current_live_runtime_status": _normalize_string(
+                next_item.get("current_live_runtime_status"),
+                max_length=24,
+            ),
+            "current_live_runtime_source": _normalize_string(
+                next_item.get("current_live_runtime_source"),
+                max_length=80,
             ),
             "workflow_integrity_status": _normalize_workflow_integrity_status(
                 next_item.get("workflow_integrity_status")
@@ -9537,6 +9613,21 @@ class SEOMigrationService:
                 failure_reason=history_item.get("workflow_run_failure_reason_code"),
                 post_dispatch_state=history_item.get("post_dispatch_state"),
             ),
+            "selected_workflow_attempt_status": _normalize_string(history_item.get("workflow_run_status"), max_length=40),
+            "selected_workflow_attempt_conclusion": _normalize_string(
+                history_item.get("workflow_run_conclusion"),
+                max_length=40,
+            ),
+            "selected_workflow_failed_step": _normalize_string(
+                history_item.get("workflow_run_failure_step"),
+                max_length=200,
+            ),
+            "selected_workflow_failure_stage": _normalize_workflow_run_failure_stage(
+                history_item.get("workflow_run_failure_stage")
+            ),
+            "selected_workflow_failure_reason": _normalize_workflow_run_failure_reason_code(
+                history_item.get("workflow_run_failure_reason_code")
+            ),
             "resolved_live_url": _normalize_url_candidate(history_item.get("resolved_live_url")),
             "url_source": _normalize_migration_url_source(history_item.get("url_source")),
             "url_source_detail": _normalize_string(history_item.get("url_source_detail"), max_length=120),
@@ -9577,6 +9668,47 @@ class SEOMigrationService:
                 bool(history_item.get("deploy_https_ready"))
                 if isinstance(history_item.get("deploy_https_ready"), bool)
                 else None
+            ),
+            "current_live_url": _normalize_url_candidate(history_item.get("current_live_url")),
+            "current_host_reachable": (
+                bool(history_item.get("current_host_reachable"))
+                if isinstance(history_item.get("current_host_reachable"), bool)
+                else None
+            ),
+            "current_host_reachability_scheme": _normalize_string(
+                history_item.get("current_host_reachability_scheme"),
+                max_length=12,
+            ),
+            "current_deploy_https_ready": (
+                bool(history_item.get("current_deploy_https_ready"))
+                if isinstance(history_item.get("current_deploy_https_ready"), bool)
+                else None
+            ),
+            "current_cert_identity_valid": (
+                bool(history_item.get("current_cert_identity_valid"))
+                if isinstance(history_item.get("current_cert_identity_valid"), bool)
+                else None
+            ),
+            "current_https_probe_status_code": _coerce_int(history_item.get("current_https_probe_status_code")),
+            "current_https_probe_error_summary": _normalize_string(
+                history_item.get("current_https_probe_error_summary"),
+                max_length=240,
+            ),
+            "current_live_evidence_checked_at": _normalize_string(
+                history_item.get("current_live_evidence_checked_at"),
+                max_length=64,
+            ),
+            "current_live_evidence_source": _normalize_string(
+                history_item.get("current_live_evidence_source"),
+                max_length=80,
+            ),
+            "current_live_runtime_status": _normalize_string(
+                history_item.get("current_live_runtime_status"),
+                max_length=24,
+            ),
+            "current_live_runtime_source": _normalize_string(
+                history_item.get("current_live_runtime_source"),
+                max_length=80,
             ),
             "workflow_integrity_status": _normalize_workflow_integrity_status(
                 history_item.get("workflow_integrity_status")
@@ -14827,7 +14959,12 @@ class SEOMigrationService:
         )
         confirmed_live_url = (
             resolved_live_url
-            if resolved_live_url_source in {_MIGRATION_URL_SOURCE_DEPLOY_RESULT, _MIGRATION_URL_SOURCE_WORKFLOW_OUTPUT}
+            if resolved_live_url_source
+            in {
+                _MIGRATION_URL_SOURCE_DEPLOY_RESULT,
+                _MIGRATION_URL_SOURCE_WORKFLOW_OUTPUT,
+                _MIGRATION_URL_SOURCE_CURRENT_LIVE_PROBE,
+            }
             else None
         )
         resolved_live_host = _extract_hostname_for_url(confirmed_live_url)
@@ -14872,7 +15009,12 @@ class SEOMigrationService:
             preview_state = "active_live"
         else:
             preview_state = "expected_after_deploy"
-        deployed_live = bool(workspace.last_deployed_at)
+        current_deploy_https_ready = (
+            bool(deploy_readiness.get("current_deploy_https_ready"))
+            if isinstance(deploy_readiness.get("current_deploy_https_ready"), bool)
+            else None
+        )
+        deployed_live = bool(workspace.last_deployed_at) or bool(current_deploy_https_ready and confirmed_live_url)
         deploy_state = "unknown"
         if confirmed_live_url and deployed_live:
             deploy_state = "active_live"
@@ -14923,6 +15065,45 @@ class SEOMigrationService:
                     resolved_live_url_source_detail
                     if resolved_live_url_source_detail is not None
                     else expected_publish_url_source_detail
+                ),
+                "current_live_url": _normalize_url_candidate(deploy_readiness.get("current_live_url")),
+                "current_host_reachable": (
+                    bool(deploy_readiness.get("current_host_reachable"))
+                    if isinstance(deploy_readiness.get("current_host_reachable"), bool)
+                    else None
+                ),
+                "current_host_reachability_scheme": _normalize_string(
+                    deploy_readiness.get("current_host_reachability_scheme"),
+                    max_length=12,
+                ),
+                "current_deploy_https_ready": current_deploy_https_ready,
+                "current_cert_identity_valid": (
+                    bool(deploy_readiness.get("current_cert_identity_valid"))
+                    if isinstance(deploy_readiness.get("current_cert_identity_valid"), bool)
+                    else None
+                ),
+                "current_https_probe_status_code": _coerce_int(
+                    deploy_readiness.get("current_https_probe_status_code")
+                ),
+                "current_https_probe_error_summary": _normalize_string(
+                    deploy_readiness.get("current_https_probe_error_summary"),
+                    max_length=240,
+                ),
+                "current_live_evidence_checked_at": _normalize_string(
+                    deploy_readiness.get("current_live_evidence_checked_at"),
+                    max_length=64,
+                ),
+                "current_live_evidence_source": _normalize_string(
+                    deploy_readiness.get("current_live_evidence_source"),
+                    max_length=80,
+                ),
+                "current_live_runtime_status": _normalize_string(
+                    deploy_readiness.get("current_live_runtime_status"),
+                    max_length=24,
+                ),
+                "current_live_runtime_source": _normalize_string(
+                    deploy_readiness.get("current_live_runtime_source"),
+                    max_length=80,
                 ),
                 "is_deployed": deployed_live,
                 "last_deployed_at": (
@@ -15132,6 +15313,13 @@ class SEOMigrationService:
             workflow_output_payload = _normalize_history_inputs(getattr(deploy_result, "workflow_outputs", {}))
         if not workflow_output_payload:
             workflow_output_payload = _normalize_history_inputs(getattr(deploy_result, "outputs", {}))
+        current_https_probe_status_code: int | None = _coerce_int(
+            workflow_output_payload.get("current_https_probe_status_code")
+        )
+        if current_https_probe_status_code is None:
+            current_https_probe_status_code = _coerce_int(workflow_output_payload.get("https_probe_status_code"))
+        if current_https_probe_status_code is not None and current_https_probe_status_code <= 0:
+            current_https_probe_status_code = None
         return {
             "dns_record_matches_ingress": _coerce_optional_bool(
                 workflow_output_payload.get("dns_record_matches_ingress")
@@ -15158,6 +15346,49 @@ class SEOMigrationService:
                 max_length=240,
             ),
             "deploy_https_ready": _coerce_optional_bool(workflow_output_payload.get("deploy_https_ready")),
+            "current_live_url": _normalize_url_candidate(workflow_output_payload.get("current_live_url"))
+            or _normalize_url_candidate(workflow_output_payload.get("live_url")),
+            "current_host_reachable": _coerce_optional_bool(workflow_output_payload.get("current_host_reachable"))
+            if "current_host_reachable" in workflow_output_payload
+            else _coerce_optional_bool(workflow_output_payload.get("host_reachable")),
+            "current_host_reachability_scheme": _normalize_string(
+                workflow_output_payload.get("current_host_reachability_scheme"),
+                max_length=12,
+            )
+            or _normalize_string(workflow_output_payload.get("host_reachability_scheme"), max_length=12),
+            "current_deploy_https_ready": _coerce_optional_bool(workflow_output_payload.get("current_deploy_https_ready"))
+            if "current_deploy_https_ready" in workflow_output_payload
+            else _coerce_optional_bool(workflow_output_payload.get("deploy_https_ready")),
+            "current_cert_identity_valid": _coerce_optional_bool(workflow_output_payload.get("current_cert_identity_valid"))
+            if "current_cert_identity_valid" in workflow_output_payload
+            else _coerce_optional_bool(workflow_output_payload.get("cert_identity_valid")),
+            "current_https_probe_status_code": current_https_probe_status_code,
+            "current_https_probe_error_summary": _normalize_string(
+                workflow_output_payload.get("current_https_probe_error_summary"),
+                max_length=240,
+            )
+            or _normalize_string(workflow_output_payload.get("https_probe_error_summary"), max_length=240),
+            "current_live_evidence_checked_at": _normalize_string(
+                workflow_output_payload.get("current_live_evidence_checked_at"),
+                max_length=64,
+            ),
+            "current_live_evidence_source": _normalize_string(
+                workflow_output_payload.get("current_live_evidence_source"),
+                max_length=80,
+            )
+            or (
+                _MIGRATION_URL_SOURCE_WORKFLOW_OUTPUT
+                if _normalize_url_candidate(workflow_output_payload.get("live_url"))
+                else None
+            ),
+            "current_live_runtime_status": _normalize_string(
+                workflow_output_payload.get("current_live_runtime_status"),
+                max_length=24,
+            ),
+            "current_live_runtime_source": _normalize_string(
+                workflow_output_payload.get("current_live_runtime_source"),
+                max_length=80,
+            ),
         }
 
     def _resolve_latest_deploy_live_url(
@@ -15176,6 +15407,203 @@ class SEOMigrationService:
             repo_name=repo_name,
             ref=ref,
         )
+
+    @staticmethod
+    def _derive_current_live_runtime_status(
+        *,
+        current_deploy_https_ready: bool | None,
+        current_host_reachable: bool | None,
+        current_live_evidence_checked_at: str | None,
+    ) -> str:
+        if current_deploy_https_ready is True:
+            return "success"
+        if current_host_reachable is False:
+            return "blocked"
+        if current_host_reachable is True and current_deploy_https_ready is False:
+            return "blocked"
+        if current_live_evidence_checked_at:
+            return "pending"
+        return "unknown"
+
+    def _resolve_current_live_probe_url_for_refresh(
+        self,
+        *,
+        site_id: str,
+        repo_name: str,
+        target_inputs: dict[str, str],
+        existing_live_url: str | None,
+    ) -> str | None:
+        normalized_live_url = _normalize_url_candidate(existing_live_url)
+        if normalized_live_url and normalized_live_url.lower().startswith("https://"):
+            return normalized_live_url
+
+        input_probe_url, _ = self._resolve_url_candidate_from_inputs(
+            target_inputs,
+            preferred_keys=("preview_url", "deploy_url", "public_url", "site_url", "url"),
+        )
+        if input_probe_url:
+            if input_probe_url.lower().startswith("https://"):
+                return input_probe_url
+            if input_probe_url.lower().startswith("http://"):
+                return f"https://{input_probe_url[len('http://') :]}"
+
+        preview_hostname, _ = _safe_derive_preview_hostname_for_summary(
+            repo_name=repo_name or site_id,
+            site_id=site_id,
+        )
+        if preview_hostname:
+            return f"https://{preview_hostname}"
+
+        return None
+
+    def _refresh_current_live_runtime_evidence(
+        self,
+        *,
+        site_id: str,
+        repo_name: str,
+        target_inputs: dict[str, str],
+        existing_live_url: str | None,
+        refreshed_network_readiness: dict[str, object],
+    ) -> dict[str, object]:
+        current_live_url = _normalize_url_candidate(refreshed_network_readiness.get("current_live_url"))
+        current_host_reachable = _coerce_optional_bool(refreshed_network_readiness.get("current_host_reachable"))
+        current_host_reachability_scheme = _normalize_string(
+            refreshed_network_readiness.get("current_host_reachability_scheme"),
+            max_length=12,
+        )
+        current_deploy_https_ready = _coerce_optional_bool(refreshed_network_readiness.get("current_deploy_https_ready"))
+        current_cert_identity_valid = _coerce_optional_bool(refreshed_network_readiness.get("current_cert_identity_valid"))
+        current_https_probe_status_code = _coerce_int(refreshed_network_readiness.get("current_https_probe_status_code"))
+        if current_https_probe_status_code is not None and current_https_probe_status_code <= 0:
+            current_https_probe_status_code = None
+        current_https_probe_error_summary = _normalize_string(
+            refreshed_network_readiness.get("current_https_probe_error_summary"),
+            max_length=240,
+        )
+        current_live_evidence_checked_at = _normalize_string(
+            refreshed_network_readiness.get("current_live_evidence_checked_at"),
+            max_length=64,
+        )
+        current_live_evidence_source = _normalize_string(
+            refreshed_network_readiness.get("current_live_evidence_source"),
+            max_length=80,
+        )
+        current_live_runtime_source = _normalize_string(
+            refreshed_network_readiness.get("current_live_runtime_source"),
+            max_length=80,
+        )
+        if current_live_runtime_source is None:
+            current_live_runtime_source = current_live_evidence_source
+
+        probe_url = self._resolve_current_live_probe_url_for_refresh(
+            site_id=site_id,
+            repo_name=repo_name,
+            target_inputs=target_inputs,
+            existing_live_url=current_live_url or existing_live_url,
+        )
+        probe_attempted = False
+
+        if probe_url:
+            try:
+                probe_result = self.github_publisher.probe_live_runtime_https(probe_url=probe_url)
+            except SEOMigrationGitHubPublisherError as exc:
+                probe_attempted = True
+                current_live_url = _normalize_url_candidate(probe_url)
+                current_host_reachable = False
+                current_host_reachability_scheme = "https"
+                current_deploy_https_ready = False
+                current_cert_identity_valid = None
+                current_https_probe_status_code = None
+                current_https_probe_error_summary = _compose_https_probe_error_summary(
+                    "https_probe_failed_after_control_plane_ready",
+                    detail=exc.safe_message,
+                )
+                current_live_evidence_checked_at = utc_now().isoformat()
+                current_live_evidence_source = _MIGRATION_URL_SOURCE_CURRENT_LIVE_PROBE
+                current_live_runtime_source = _MIGRATION_URL_SOURCE_CURRENT_LIVE_PROBE
+            else:
+                if isinstance(probe_result, SEOMigrationGitHubLiveRuntimeProbeResult):
+                    probe_attempted = True
+                    current_live_url = _normalize_url_candidate(probe_result.live_url) or _normalize_url_candidate(
+                        probe_result.probe_url
+                    )
+                    current_host_reachable = (
+                        bool(probe_result.host_reachable)
+                        if isinstance(probe_result.host_reachable, bool)
+                        else None
+                    )
+                    current_host_reachability_scheme = _normalize_string(
+                        probe_result.host_reachability_scheme,
+                        max_length=12,
+                    )
+                    current_deploy_https_ready = (
+                        bool(probe_result.deploy_https_ready)
+                        if isinstance(probe_result.deploy_https_ready, bool)
+                        else None
+                    )
+                    current_cert_identity_valid = (
+                        bool(probe_result.cert_identity_valid)
+                        if isinstance(probe_result.cert_identity_valid, bool)
+                        else None
+                    )
+                    current_https_probe_status_code = (
+                        int(probe_result.https_probe_status_code)
+                        if isinstance(probe_result.https_probe_status_code, int)
+                        and probe_result.https_probe_status_code > 0
+                        else None
+                    )
+                    current_https_probe_error_summary = _normalize_string(
+                        probe_result.https_probe_error_summary,
+                        max_length=240,
+                    )
+                    current_live_evidence_checked_at = _normalize_string(
+                        probe_result.checked_at,
+                        max_length=64,
+                    ) or utc_now().isoformat()
+                    current_live_evidence_source = _normalize_string(
+                        probe_result.source,
+                        max_length=80,
+                    ) or _MIGRATION_URL_SOURCE_CURRENT_LIVE_PROBE
+                    current_live_runtime_source = current_live_evidence_source
+        else:
+            current_live_evidence_source = current_live_evidence_source or _MIGRATION_URL_SOURCE_UNKNOWN
+            current_live_runtime_source = current_live_runtime_source or current_live_evidence_source
+
+        if current_deploy_https_ready is True:
+            current_host_reachable = True if current_host_reachable is None else current_host_reachable
+            current_host_reachability_scheme = current_host_reachability_scheme or "https"
+            current_cert_identity_valid = True if current_cert_identity_valid is None else current_cert_identity_valid
+            current_https_probe_error_summary = None
+            if current_live_url is None:
+                current_live_url = _normalize_url_candidate(probe_url) or _normalize_url_candidate(existing_live_url)
+        elif current_deploy_https_ready is False and not current_https_probe_error_summary:
+            current_https_probe_error_summary = _compose_https_probe_error_summary(
+                "https_probe_not_attempted" if not probe_attempted else "https_probe_failed_after_control_plane_ready",
+                detail="current_live_probe_not_attempted" if not probe_attempted else "current_live_probe_failed",
+            )
+
+        current_live_runtime_status = _normalize_string(
+            refreshed_network_readiness.get("current_live_runtime_status"),
+            max_length=24,
+        ) or self._derive_current_live_runtime_status(
+            current_deploy_https_ready=current_deploy_https_ready,
+            current_host_reachable=current_host_reachable,
+            current_live_evidence_checked_at=current_live_evidence_checked_at,
+        )
+
+        return {
+            "current_live_url": current_live_url,
+            "current_host_reachable": current_host_reachable,
+            "current_host_reachability_scheme": current_host_reachability_scheme,
+            "current_deploy_https_ready": current_deploy_https_ready,
+            "current_cert_identity_valid": current_cert_identity_valid,
+            "current_https_probe_status_code": current_https_probe_status_code,
+            "current_https_probe_error_summary": current_https_probe_error_summary,
+            "current_live_evidence_checked_at": current_live_evidence_checked_at,
+            "current_live_evidence_source": current_live_evidence_source,
+            "current_live_runtime_status": current_live_runtime_status,
+            "current_live_runtime_source": current_live_runtime_source,
+        }
 
     @staticmethod
     def _resolve_url_candidate_from_inputs(
@@ -15853,6 +16281,47 @@ class SEOMigrationService:
                     bool(item.get("deploy_https_ready"))
                     if isinstance(item.get("deploy_https_ready"), bool)
                     else None
+                ),
+                "current_live_url": _normalize_url_candidate(item.get("current_live_url")),
+                "current_host_reachable": (
+                    bool(item.get("current_host_reachable"))
+                    if isinstance(item.get("current_host_reachable"), bool)
+                    else None
+                ),
+                "current_host_reachability_scheme": _normalize_string(
+                    item.get("current_host_reachability_scheme"),
+                    max_length=12,
+                ),
+                "current_deploy_https_ready": (
+                    bool(item.get("current_deploy_https_ready"))
+                    if isinstance(item.get("current_deploy_https_ready"), bool)
+                    else None
+                ),
+                "current_cert_identity_valid": (
+                    bool(item.get("current_cert_identity_valid"))
+                    if isinstance(item.get("current_cert_identity_valid"), bool)
+                    else None
+                ),
+                "current_https_probe_status_code": _coerce_int(item.get("current_https_probe_status_code")),
+                "current_https_probe_error_summary": _normalize_string(
+                    item.get("current_https_probe_error_summary"),
+                    max_length=240,
+                ),
+                "current_live_evidence_checked_at": _normalize_string(
+                    item.get("current_live_evidence_checked_at"),
+                    max_length=64,
+                ),
+                "current_live_evidence_source": _normalize_string(
+                    item.get("current_live_evidence_source"),
+                    max_length=80,
+                ),
+                "current_live_runtime_status": _normalize_string(
+                    item.get("current_live_runtime_status"),
+                    max_length=24,
+                ),
+                "current_live_runtime_source": _normalize_string(
+                    item.get("current_live_runtime_source"),
+                    max_length=80,
                 ),
                 "workflow_integrity_status": _normalize_workflow_integrity_status(
                     item.get("workflow_integrity_status")
@@ -17058,6 +17527,67 @@ class SEOMigrationService:
         workflow_integrity_reason_code = _normalize_workflow_integrity_reason_code(
             latest_traceability.get("workflow_integrity_reason_code")
         ) or _normalize_workflow_integrity_reason_code(target_summary.get("workflow_integrity_reason_code"))
+        selected_workflow_attempt_status = _normalize_string(
+            latest_traceability.get("workflow_run_status"),
+            max_length=40,
+        )
+        selected_workflow_attempt_conclusion = _normalize_string(
+            latest_traceability.get("workflow_run_conclusion"),
+            max_length=40,
+        )
+        selected_workflow_failed_step = _normalize_string(
+            latest_traceability.get("workflow_run_failure_step"),
+            max_length=200,
+        )
+        selected_workflow_failure_stage = _normalize_workflow_run_failure_stage(
+            latest_traceability.get("workflow_run_failure_stage")
+        )
+        selected_workflow_failure_reason = _normalize_workflow_run_failure_reason_code(
+            latest_traceability.get("workflow_run_failure_reason_code")
+        )
+        current_live_url = _normalize_url_candidate(latest_traceability.get("current_live_url"))
+        current_host_reachable = (
+            bool(latest_traceability.get("current_host_reachable"))
+            if isinstance(latest_traceability.get("current_host_reachable"), bool)
+            else None
+        )
+        current_host_reachability_scheme = _normalize_string(
+            latest_traceability.get("current_host_reachability_scheme"),
+            max_length=12,
+        )
+        current_deploy_https_ready = (
+            bool(latest_traceability.get("current_deploy_https_ready"))
+            if isinstance(latest_traceability.get("current_deploy_https_ready"), bool)
+            else None
+        )
+        current_cert_identity_valid = (
+            bool(latest_traceability.get("current_cert_identity_valid"))
+            if isinstance(latest_traceability.get("current_cert_identity_valid"), bool)
+            else None
+        )
+        current_https_probe_status_code = _coerce_int(latest_traceability.get("current_https_probe_status_code"))
+        if current_https_probe_status_code is not None and current_https_probe_status_code <= 0:
+            current_https_probe_status_code = None
+        current_https_probe_error_summary = _normalize_string(
+            latest_traceability.get("current_https_probe_error_summary"),
+            max_length=240,
+        )
+        current_live_evidence_checked_at = _normalize_string(
+            latest_traceability.get("current_live_evidence_checked_at"),
+            max_length=64,
+        )
+        current_live_evidence_source = _normalize_string(
+            latest_traceability.get("current_live_evidence_source"),
+            max_length=80,
+        )
+        current_live_runtime_source = _normalize_string(
+            latest_traceability.get("current_live_runtime_source"),
+            max_length=80,
+        ) or current_live_evidence_source
+        current_live_runtime_status = _normalize_string(
+            latest_traceability.get("current_live_runtime_status"),
+            max_length=24,
+        )
         latest_resolved_live_url = _normalize_url_candidate(latest_traceability.get("resolved_live_url"))
         latest_post_dispatch_state = _normalize_string(latest_traceability.get("post_dispatch_state"), max_length=80)
         derived_https_ready = bool(
@@ -17065,10 +17595,59 @@ class SEOMigrationService:
             and latest_resolved_live_url
             and latest_resolved_live_url.lower().startswith("https://")
         )
-        if deploy_https_ready is None:
-            deploy_https_ready = derived_https_ready
+        workflow_deploy_https_ready = deploy_https_ready
+        if workflow_deploy_https_ready is None:
+            workflow_deploy_https_ready = derived_https_ready
         else:
-            deploy_https_ready = bool(deploy_https_ready and derived_https_ready)
+            workflow_deploy_https_ready = bool(workflow_deploy_https_ready and derived_https_ready)
+        if current_deploy_https_ready is True:
+            deploy_https_ready = True
+        elif current_deploy_https_ready is False:
+            deploy_https_ready = False
+        else:
+            deploy_https_ready = workflow_deploy_https_ready
+        if current_deploy_https_ready is True:
+            if current_host_reachable is None:
+                current_host_reachable = True
+            if current_host_reachability_scheme is None:
+                current_host_reachability_scheme = "https"
+            if current_cert_identity_valid is None:
+                current_cert_identity_valid = True
+            current_https_probe_error_summary = None
+            # Current live HTTPS success is authoritative for current runtime readiness.
+            dns_record_matches_ingress = True
+            ingress_conflict_detected = False
+            cert_identity_valid = True
+            tls_certificate_status = "ACTIVE"
+            tls_domain_status = "ACTIVE"
+        if current_live_runtime_status is None:
+            current_live_runtime_status = self._derive_current_live_runtime_status(
+                current_deploy_https_ready=current_deploy_https_ready,
+                current_host_reachable=current_host_reachable,
+                current_live_evidence_checked_at=current_live_evidence_checked_at,
+            )
+        selected_workflow_attempt_failed = bool(
+            selected_workflow_attempt_status == "completed"
+            and selected_workflow_attempt_conclusion
+            and selected_workflow_attempt_conclusion != "success"
+        )
+        current_live_runtime_note = (
+            "Selected deploy workflow failed during evidence collection, but current live HTTPS evidence is healthy."
+            if current_deploy_https_ready is True and selected_workflow_attempt_failed
+            else None
+        )
+        if current_host_reachable is not None:
+            host_reachable = current_host_reachable
+        if current_host_reachability_scheme is not None:
+            host_reachability_scheme = current_host_reachability_scheme
+        if current_cert_identity_valid is not None:
+            cert_identity_valid = current_cert_identity_valid
+        if current_deploy_https_ready is True:
+            https_probe_error_summary = None
+        elif current_https_probe_error_summary:
+            https_probe_error_summary = current_https_probe_error_summary
+        if current_live_url and current_deploy_https_ready is True:
+            latest_resolved_live_url = current_live_url
         reason_candidates = {
             _normalize_dispatch_service_reason_code(dispatch_service_reason_code),
             _normalize_dispatch_service_reason_code(last_failure_dispatch_service_reason_code),
@@ -17156,6 +17735,23 @@ class SEOMigrationService:
             "host_reachability_scheme": host_reachability_scheme,
             "https_probe_error_summary": https_probe_error_summary,
             "deploy_https_ready": deploy_https_ready,
+            "selected_workflow_attempt_status": selected_workflow_attempt_status,
+            "selected_workflow_attempt_conclusion": selected_workflow_attempt_conclusion,
+            "selected_workflow_failed_step": selected_workflow_failed_step,
+            "selected_workflow_failure_stage": selected_workflow_failure_stage,
+            "selected_workflow_failure_reason": selected_workflow_failure_reason,
+            "current_live_url": current_live_url,
+            "current_host_reachable": current_host_reachable,
+            "current_host_reachability_scheme": current_host_reachability_scheme,
+            "current_deploy_https_ready": current_deploy_https_ready,
+            "current_cert_identity_valid": current_cert_identity_valid,
+            "current_https_probe_status_code": current_https_probe_status_code,
+            "current_https_probe_error_summary": current_https_probe_error_summary,
+            "current_live_evidence_checked_at": current_live_evidence_checked_at,
+            "current_live_evidence_source": current_live_evidence_source,
+            "current_live_runtime_status": current_live_runtime_status,
+            "current_live_runtime_source": current_live_runtime_source,
+            "current_live_runtime_note": current_live_runtime_note,
             "workflow_integrity_status": workflow_integrity_status,
             "workflow_integrity_reason_code": workflow_integrity_reason_code,
             "workflow_conformance_checked": workflow_conformance_checked,
@@ -17265,6 +17861,17 @@ class SEOMigrationService:
                 "host_reachability_scheme": host_reachability_scheme,
                 "https_probe_error_summary": https_probe_error_summary,
                 "deploy_https_ready": deploy_https_ready,
+                "current_live_url": current_live_url,
+                "current_host_reachable": current_host_reachable,
+                "current_host_reachability_scheme": current_host_reachability_scheme,
+                "current_deploy_https_ready": current_deploy_https_ready,
+                "current_cert_identity_valid": current_cert_identity_valid,
+                "current_https_probe_status_code": current_https_probe_status_code,
+                "current_https_probe_error_summary": current_https_probe_error_summary,
+                "current_live_evidence_checked_at": current_live_evidence_checked_at,
+                "current_live_evidence_source": current_live_evidence_source,
+                "current_live_runtime_status": current_live_runtime_status,
+                "current_live_runtime_source": current_live_runtime_source,
                 "workflow_integrity_status": workflow_integrity_status,
                 "workflow_integrity_reason_code": workflow_integrity_reason_code,
                 "managed_deploy_secret_available": managed_deploy_secret_available,
@@ -20486,6 +21093,20 @@ def _resolve_deploy_history_live_url(
         if normalized_ref and str(item.get("ref") or "").strip() != normalized_ref:
             continue
 
+        current_live_url = _normalize_url_candidate(item.get("current_live_url"))
+        current_live_https_ready = (
+            bool(item.get("current_deploy_https_ready"))
+            if isinstance(item.get("current_deploy_https_ready"), bool)
+            else None
+        )
+        if current_live_url and current_live_https_ready is True:
+            current_source = _normalize_migration_url_source(item.get("current_live_evidence_source"))
+            return (
+                current_live_url,
+                current_source if current_source != _MIGRATION_URL_SOURCE_UNKNOWN else _MIGRATION_URL_SOURCE_CURRENT_LIVE_PROBE,
+                _normalize_string(item.get("current_live_runtime_source"), max_length=120),
+            )
+
         resolved_live_url = _normalize_url_candidate(item.get("resolved_live_url"))
         if not resolved_live_url:
             resolved_live_url = _normalize_url_candidate(item.get("active_url"))
@@ -21654,6 +22275,7 @@ def _normalize_migration_url_source(value: object) -> str:
         _MIGRATION_URL_SOURCE_DETERMINISTIC_TARGET_CONFIG,
         _MIGRATION_URL_SOURCE_WORKFLOW_OUTPUT,
         _MIGRATION_URL_SOURCE_DEPLOY_RESULT,
+        _MIGRATION_URL_SOURCE_CURRENT_LIVE_PROBE,
     }:
         return normalized_lower
     return _MIGRATION_URL_SOURCE_UNKNOWN
@@ -21661,11 +22283,29 @@ def _normalize_migration_url_source(value: object) -> str:
 
 def _confirmed_live_url_source_rank(source: object) -> int:
     normalized = _normalize_migration_url_source(source)
+    if normalized == _MIGRATION_URL_SOURCE_CURRENT_LIVE_PROBE:
+        return 3
     if normalized == _MIGRATION_URL_SOURCE_DEPLOY_RESULT:
         return 2
     if normalized == _MIGRATION_URL_SOURCE_WORKFLOW_OUTPUT:
         return 1
     return 0
+
+
+def _compose_https_probe_error_summary(
+    reason: str,
+    *,
+    detail: object | None = None,
+    status_code: int | None = None,
+) -> str:
+    normalized_reason = _normalize_string(reason, max_length=80) or "https_probe_failed_after_control_plane_ready"
+    summary = f"reason={normalized_reason}"
+    if isinstance(status_code, int) and status_code > 0:
+        summary = f"{summary};status={status_code}"
+    normalized_detail = _normalize_string(detail, max_length=120)
+    if normalized_detail:
+        summary = f"{summary};detail={normalized_detail}"
+    return summary[:240]
 
 
 def _normalize_url_candidate(value: object) -> str | None:

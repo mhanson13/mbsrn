@@ -245,6 +245,20 @@ class SEOMigrationGitHubDeployRunStatusResult:
 
 
 @dataclass(frozen=True)
+class SEOMigrationGitHubLiveRuntimeProbeResult:
+    probe_url: str
+    checked_at: str
+    source: str
+    live_url: str | None = None
+    host_reachable: bool | None = None
+    host_reachability_scheme: str | None = None
+    deploy_https_ready: bool | None = None
+    cert_identity_valid: bool | None = None
+    https_probe_status_code: int | None = None
+    https_probe_error_summary: str | None = None
+
+
+@dataclass(frozen=True)
 class SEOMigrationGitHubWorkflowProvisionResult:
     repo_owner: str
     repo_name: str
@@ -532,6 +546,14 @@ class SEOMigrationGitHubPublisher:
         dispatched_at: str | None = None,
     ) -> SEOMigrationGitHubDeployRunStatusResult | None:
         del target, dispatched_at
+        return None
+
+    def probe_live_runtime_https(
+        self,
+        *,
+        probe_url: str,
+    ) -> SEOMigrationGitHubLiveRuntimeProbeResult | None:
+        del probe_url
         return None
 
     def ensure_deploy_workflow(
@@ -833,6 +855,14 @@ class MisconfiguredSEOMigrationGitHubPublisher(SEOMigrationGitHubPublisher):
             code=self.reason_code,
             safe_message=self.safe_message,
         )
+
+    def probe_live_runtime_https(
+        self,
+        *,
+        probe_url: str,
+    ) -> SEOMigrationGitHubLiveRuntimeProbeResult | None:
+        del probe_url
+        return None
 
     def check_deploy_target_readiness(
         self,
@@ -2997,6 +3027,156 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             workflow_run_id=workflow_run_id,
             dispatched_at=dispatched_at_candidate,
         )
+
+    def probe_live_runtime_https(
+        self,
+        *,
+        probe_url: str,
+    ) -> SEOMigrationGitHubLiveRuntimeProbeResult | None:
+        normalized_probe_url = _normalize_url(_coerce_string(probe_url))
+        checked_at = utc_now().isoformat()
+
+        def _build_summary(
+            reason: str,
+            *,
+            status_code: int | None = None,
+            detail: str | None = None,
+        ) -> str:
+            summary = f"reason={reason}"
+            if isinstance(status_code, int) and status_code > 0:
+                summary = f"{summary};status={status_code}"
+            detail_text = (_coerce_string(detail) or "").replace("\r", " ").replace("\n", " ").strip()
+            if detail_text:
+                summary = f"{summary};detail={detail_text[:120]}"
+            return summary[:240]
+
+        if not normalized_probe_url or not normalized_probe_url.lower().startswith("https://"):
+            return SEOMigrationGitHubLiveRuntimeProbeResult(
+                probe_url=normalized_probe_url or "",
+                checked_at=checked_at,
+                source="current_live_probe",
+                live_url=None,
+                host_reachable=False,
+                host_reachability_scheme="https",
+                deploy_https_ready=False,
+                cert_identity_valid=None,
+                https_probe_status_code=None,
+                https_probe_error_summary=_build_summary(
+                    "https_probe_not_attempted",
+                    detail="invalid_or_missing_probe_url",
+                ),
+            )
+
+        request = urllib.request.Request(
+            url=normalized_probe_url,
+            data=None,
+            method="HEAD",
+            headers={
+                "User-Agent": "MBSRN-MigrationPublisher/1.0",
+                "Accept": "*/*",
+            },
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=min(self.timeout_seconds, 10)) as response:
+                status_code = int(getattr(response, "status", 0) or 0)
+                resolved_url = _normalize_url(_coerce_string(getattr(response, "url", None))) or normalized_probe_url
+                if 200 <= status_code < 400:
+                    return SEOMigrationGitHubLiveRuntimeProbeResult(
+                        probe_url=normalized_probe_url,
+                        checked_at=checked_at,
+                        source="current_live_probe",
+                        live_url=resolved_url,
+                        host_reachable=True,
+                        host_reachability_scheme="https",
+                        deploy_https_ready=True,
+                        cert_identity_valid=True,
+                        https_probe_status_code=status_code,
+                        https_probe_error_summary=None,
+                    )
+                reason_code = "ingress_backend_502" if status_code == 502 else "https_probe_failed_after_control_plane_ready"
+                return SEOMigrationGitHubLiveRuntimeProbeResult(
+                    probe_url=normalized_probe_url,
+                    checked_at=checked_at,
+                    source="current_live_probe",
+                    live_url=resolved_url,
+                    host_reachable=True,
+                    host_reachability_scheme="https",
+                    deploy_https_ready=False,
+                    cert_identity_valid=True,
+                    https_probe_status_code=status_code,
+                    https_probe_error_summary=_build_summary(reason_code, status_code=status_code),
+                )
+        except urllib.error.HTTPError as exc:
+            status_code = int(getattr(exc, "code", 0) or 0)
+            reason_code = "ingress_backend_502" if status_code == 502 else "https_probe_failed_after_control_plane_ready"
+            return SEOMigrationGitHubLiveRuntimeProbeResult(
+                probe_url=normalized_probe_url,
+                checked_at=checked_at,
+                source="current_live_probe",
+                live_url=normalized_probe_url,
+                host_reachable=True,
+                host_reachability_scheme="https",
+                deploy_https_ready=False,
+                cert_identity_valid=True,
+                https_probe_status_code=status_code if status_code > 0 else None,
+                https_probe_error_summary=_build_summary(reason_code, status_code=status_code if status_code > 0 else None),
+            )
+        except (TimeoutError, socket.timeout) as exc:
+            return SEOMigrationGitHubLiveRuntimeProbeResult(
+                probe_url=normalized_probe_url,
+                checked_at=checked_at,
+                source="current_live_probe",
+                live_url=None,
+                host_reachable=False,
+                host_reachability_scheme="https",
+                deploy_https_ready=False,
+                cert_identity_valid=None,
+                https_probe_status_code=None,
+                https_probe_error_summary=_build_summary("https_probe_timeout", detail=str(exc)),
+            )
+        except urllib.error.URLError as exc:
+            reason_text = str(getattr(exc, "reason", exc) or "").strip()
+            reason_text_lower = reason_text.lower()
+            reason_code = "https_probe_failed_after_control_plane_ready"
+            cert_identity_valid: bool | None = None
+            if isinstance(getattr(exc, "reason", None), ssl.SSLCertVerificationError):
+                reason_code = "reachable_but_tls_certificate_mismatch"
+                cert_identity_valid = False
+            elif isinstance(getattr(exc, "reason", None), ssl.SSLError):
+                reason_code = "reachable_but_tls_certificate_mismatch"
+                cert_identity_valid = False
+            elif "certificate" in reason_text_lower or "hostname" in reason_text_lower or "tls" in reason_text_lower:
+                reason_code = "reachable_but_tls_certificate_mismatch"
+                cert_identity_valid = False
+            elif "timed out" in reason_text_lower or "timeout" in reason_text_lower:
+                reason_code = "https_probe_timeout"
+            elif "empty" in reason_text_lower or "eof" in reason_text_lower:
+                reason_code = "https_probe_empty_reply"
+            return SEOMigrationGitHubLiveRuntimeProbeResult(
+                probe_url=normalized_probe_url,
+                checked_at=checked_at,
+                source="current_live_probe",
+                live_url=None,
+                host_reachable=False,
+                host_reachability_scheme="https",
+                deploy_https_ready=False,
+                cert_identity_valid=cert_identity_valid,
+                https_probe_status_code=None,
+                https_probe_error_summary=_build_summary(reason_code, detail=reason_text),
+            )
+        except Exception as exc:  # pragma: no cover - defensive guardrail
+            return SEOMigrationGitHubLiveRuntimeProbeResult(
+                probe_url=normalized_probe_url,
+                checked_at=checked_at,
+                source="current_live_probe",
+                live_url=None,
+                host_reachable=False,
+                host_reachability_scheme="https",
+                deploy_https_ready=False,
+                cert_identity_valid=None,
+                https_probe_status_code=None,
+                https_probe_error_summary=_build_summary("https_probe_failed_after_control_plane_ready", detail=str(exc)),
+            )
 
     def _try_capture_post_dispatch_workflow_result(
         self,

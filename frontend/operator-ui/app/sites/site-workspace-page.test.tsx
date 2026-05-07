@@ -1784,6 +1784,134 @@ describe("site migration workflow route", () => {
     expect(destinationSummary).not.toHaveTextContent("Operator-set");
   });
 
+  it("prioritizes current live runtime evidence over selected workflow failure for current deploy state", async () => {
+    const user = userEvent.setup();
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(
+      buildMigrationWorkspaceSummary({
+        context_summary: {
+          ...buildMigrationWorkspaceSummary().context_summary,
+          destination_summary: {
+            publish_destination: {
+              repository: "mhanson13/lars-construction",
+              branch: "main",
+              state: "configured",
+            },
+            deploy_destination: {
+              target_repository: "mhanson13/lars-construction",
+              ref: "main",
+              state: "active_live",
+              active_url: "https://lars-construction.site.mbsrn.com/",
+              preview_url: "https://lars-construction.site.mbsrn.com/",
+              url_source: "current_live_probe",
+            },
+          },
+        },
+        deploy_readiness: {
+          ready: false,
+          reasons: ["Selected workflow attempt failed during ingress evidence collection."],
+          selected_workflow_attempt_status: "completed",
+          selected_workflow_attempt_conclusion: "failure",
+          selected_workflow_failed_step: "Resolve live URL from ingress status",
+          selected_workflow_failure_stage: "ingress_evidence",
+          selected_workflow_failure_reason: "managed_site_static_ip_address_missing",
+          current_deploy_https_ready: true,
+          current_live_url: "https://lars-construction.site.mbsrn.com/",
+          current_host_reachable: true,
+          current_host_reachability_scheme: "https",
+          current_cert_identity_valid: true,
+          current_live_evidence_checked_at: "2026-05-07T01:20:00Z",
+          current_live_evidence_source: "current_live_probe",
+          current_live_runtime_status: "success",
+          current_live_runtime_source: "current_live_probe",
+          target: {
+            enabled: true,
+            repo_owner: "mhanson13",
+            repo_name: "lars-construction",
+            workflow_id: "deploy-lars-construction-www-prod.yml",
+            ref: "main",
+            deploy_workflow_mode: "site_repo_template_v1",
+            target_environment_key: "gke_prod",
+            target_environment_source: "admin_config",
+            site_workflow_file_path: ".github/workflows/deploy-lars-construction-www-prod.yml",
+          },
+        },
+        deploy_history: [
+          {
+            timestamp: "2026-05-07T01:15:00Z",
+            status: "failed",
+            artifact_version_id: "migration-artifact-1",
+            workflow_run_status: "completed",
+            workflow_run_conclusion: "failure",
+            workflow_run_failure_reason_code: "managed_site_static_ip_address_missing",
+            workflow_run_failure_stage: "ingress_evidence",
+            workflow_run_failure_step: "Resolve live URL from ingress status",
+            current_live_url: "https://lars-construction.site.mbsrn.com/",
+            current_deploy_https_ready: true,
+            current_live_evidence_source: "current_live_probe",
+            current_live_runtime_source: "current_live_probe",
+          },
+        ],
+      }),
+    );
+    mockFetchMigrationDeployHistory.mockResolvedValueOnce({
+      items: [
+        {
+          timestamp: "2026-05-07T01:15:00Z",
+          status: "failed",
+          artifact_version_id: "migration-artifact-1",
+          workflow_run_status: "completed",
+          workflow_run_conclusion: "failure",
+          workflow_run_failure_reason_code: "managed_site_static_ip_address_missing",
+          workflow_run_failure_stage: "ingress_evidence",
+          workflow_run_failure_step: "Resolve live URL from ingress status",
+          current_live_url: "https://lars-construction.site.mbsrn.com/",
+          current_deploy_https_ready: true,
+          current_live_evidence_source: "current_live_probe",
+          current_live_runtime_source: "current_live_probe",
+        },
+      ],
+      total: 1,
+    });
+
+    render(<SiteMigrationWorkflowPage />);
+
+    const deployTargetSummary = await screen.findByTestId("migration-deploy-target-summary");
+    expect(deployTargetSummary).toHaveTextContent("Deploy evidence state");
+    expect(deployTargetSummary).toHaveTextContent("Confirmed Live");
+    expect(deployTargetSummary).toHaveTextContent("Live URL (current)");
+    expect(deployTargetSummary).toHaveTextContent("https://lars-construction.site.mbsrn.com/");
+    expect(deployTargetSummary).toHaveTextContent("Current evidence source");
+    expect(deployTargetSummary).toHaveTextContent("current_live_probe");
+    expect(within(deployTargetSummary).getByTestId("migration-deploy-current-live-note")).toHaveTextContent(
+      "Selected deploy workflow failed during evidence collection, but current live HTTPS evidence is healthy.",
+    );
+    expect(
+      within(screen.getByTestId("migration-deploy-readiness")).getByTestId("migration-deploy-readiness-current-live-note"),
+    ).toBeInTheDocument();
+
+    await user.click(await screen.findByText("Show detailed migration failure diagnostics"));
+
+    const deployDiagnostics = screen.getByTestId("migration-deploy-diagnostics");
+    expect(deployDiagnostics).toHaveTextContent(/Deploy Diagnostics\s*Success/i);
+    expect(deployDiagnostics).toHaveTextContent("Selected workflow attempt: completed · failure");
+    expect(deployDiagnostics).toHaveTextContent("Selected workflow failure: managed site static ip address missing");
+
+    const currentLiveCard = screen.getByTestId("migration-current-live-runtime-evidence");
+    expect(currentLiveCard).toHaveTextContent("HTTPS Ready: Yes");
+    expect(currentLiveCard).toHaveTextContent("Host reachable: Yes");
+    expect(currentLiveCard).toHaveTextContent("Scheme: https");
+    expect(currentLiveCard).toHaveTextContent("Live URL: https://lars-construction.site.mbsrn.com/");
+    expect(currentLiveCard).toHaveTextContent("Source: current_live_probe");
+
+    const deployConsistency = screen.getByTestId("migration-deploy-consistency");
+    expect(within(deployConsistency).getByTestId("migration-deploy-consistency-gate-https_probe")).toHaveTextContent(
+      "Pass",
+    );
+    expect(within(deployConsistency).getByTestId("migration-deploy-consistency-gate-ingress_conflict")).toHaveTextContent(
+      "Pass",
+    );
+  });
+
   it("shows repository provisioning guidance in destination diagnostics when publish will auto-create a missing repo", async () => {
     const user = userEvent.setup();
     mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(

@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import io
 import json
+import socket
 import subprocess
 import urllib.error
 import urllib.request
@@ -14,6 +15,7 @@ import yaml
 from app.core.time import utc_now
 from app.integrations.seo_migration_github_publisher import (
     GitHubSEOMigrationPublisher,
+    SEOMigrationGitHubLiveRuntimeProbeResult,
     SEOMigrationGitHubDeployTarget,
     SEOMigrationGitHubPublishFile,
     SEOMigrationGitHubPublishTarget,
@@ -35,9 +37,10 @@ from app.integrations.seo_migration_github_publisher import (
 
 
 class _FakeHTTPResponse:
-    def __init__(self, *, status: int, body: str = "") -> None:
+    def __init__(self, *, status: int, body: str = "", url: str | None = None) -> None:
         self.status = status
         self._body = body.encode("utf-8")
+        self.url = url or ""
 
     def read(self) -> bytes:
         return self._body
@@ -5898,6 +5901,58 @@ def test_refresh_deploy_run_status_classifies_failed_run_step(monkeypatch) -> No
     assert result.workflow_run_failure_stage == "gcp_auth"
     assert result.workflow_run_failure_step == "Authenticate to GCP"
     assert len(calls) == 2
+
+
+def test_probe_live_runtime_https_marks_success_with_https_200(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _FakeHTTPResponse(
+                status=200,
+                body="",
+                url="https://lars-construction.site.mbsrn.com/",
+            )
+        ],
+        calls,
+    )
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    result = publisher.probe_live_runtime_https(
+        probe_url="https://lars-construction.site.mbsrn.com/",
+    )
+
+    assert isinstance(result, SEOMigrationGitHubLiveRuntimeProbeResult)
+    assert result.host_reachable is True
+    assert result.host_reachability_scheme == "https"
+    assert result.deploy_https_ready is True
+    assert result.cert_identity_valid is True
+    assert result.https_probe_status_code == 200
+    assert result.https_probe_error_summary is None
+    assert result.live_url == "https://lars-construction.site.mbsrn.com/"
+    assert len(calls) == 1
+
+
+def test_probe_live_runtime_https_classifies_timeout(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+
+    def _stub(request, timeout=None):  # type: ignore[no-untyped-def]
+        del timeout
+        calls.append((request.get_method(), request.full_url))
+        raise urllib.error.URLError(socket.timeout("timed out"))
+
+    monkeypatch.setattr(urllib.request, "urlopen", _stub)
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    result = publisher.probe_live_runtime_https(
+        probe_url="https://lars-construction.site.mbsrn.com/",
+    )
+
+    assert isinstance(result, SEOMigrationGitHubLiveRuntimeProbeResult)
+    assert result.host_reachable is False
+    assert result.deploy_https_ready is False
+    assert result.cert_identity_valid is None
+    assert result.https_probe_status_code is None
+    assert "reason=https_probe_timeout" in str(result.https_probe_error_summary or "")
+    assert len(calls) == 1
 
 
 def test_classify_cloudsql_proxy_failure_prefers_specific_dns_sub_reason() -> None:

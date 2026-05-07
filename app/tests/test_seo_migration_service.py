@@ -28,6 +28,7 @@ from app.integrations.seo_migration_github_publisher import (
     SEOMigrationGitHubDeployRunStatusResult,
     SEOMigrationGitHubDeployTarget,
     SEOMigrationGitHubImagePullSecretProvisionResult,
+    SEOMigrationGitHubLiveRuntimeProbeResult,
     SEOMigrationGitHubManagedSiteDnsEnsureResult,
     SEOMigrationGitHubManagedSiteStaticIPEnsureResult,
     SEOMigrationGitHubPublishFile,
@@ -208,6 +209,11 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         refresh_error_code: str | None = None,
         refresh_error_message: str | None = None,
         refresh_error_stage: str | None = None,
+        fail_current_live_probe: bool = False,
+        current_live_probe_error_code: str | None = None,
+        current_live_probe_error_message: str | None = None,
+        current_live_probe_error_stage: str | None = None,
+        current_live_probe_result: dict[str, object] | None = None,
         deploy_error_code: str | None = None,
         deploy_error_message: str | None = None,
         deploy_error_stage: str | None = None,
@@ -322,6 +328,11 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         self.refresh_error_code = refresh_error_code
         self.refresh_error_message = refresh_error_message
         self.refresh_error_stage = refresh_error_stage
+        self.fail_current_live_probe = fail_current_live_probe
+        self.current_live_probe_error_code = current_live_probe_error_code
+        self.current_live_probe_error_message = current_live_probe_error_message
+        self.current_live_probe_error_stage = current_live_probe_error_stage
+        self.current_live_probe_result = dict(current_live_probe_result or {})
         self.deploy_error_code = deploy_error_code
         self.deploy_error_message = deploy_error_message
         self.deploy_error_stage = deploy_error_stage
@@ -431,6 +442,7 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         ] = []
         self.deploy_call_order: list[str] = []
         self.refresh_calls: list[tuple[SEOMigrationGitHubDeployTarget, int, str | None]] = []
+        self.current_live_probe_calls: list[str] = []
         self.lookup_calls: list[tuple[SEOMigrationGitHubDeployTarget, str | None]] = []
         self.secret_upsert_calls: list[tuple[str, str, str, str]] = []
         self.publish_preflight_calls: list[
@@ -943,6 +955,85 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
             workflow_run_failure_stage=self.lookup_workflow_run_failure_stage,
             workflow_run_failure_step=self.lookup_workflow_run_failure_step,
             refreshed_at="2026-04-07T12:15:00+00:00",
+        )
+
+    def probe_live_runtime_https(
+        self,
+        *,
+        probe_url: str,
+    ) -> SEOMigrationGitHubLiveRuntimeProbeResult | None:
+        self.current_live_probe_calls.append(probe_url)
+        if self.fail_current_live_probe or self.current_live_probe_error_code:
+            raise SEOMigrationGitHubPublisherError(
+                code=self.current_live_probe_error_code or "https_probe_failed_after_control_plane_ready",
+                safe_message=self.current_live_probe_error_message or "Simulated current live probe failure.",
+                stage=self.current_live_probe_error_stage or "ingress_evidence",
+            )
+        if not self.current_live_probe_result:
+            return None
+        probe_checked_at = str(
+            self.current_live_probe_result.get("checked_at")
+            or self.current_live_probe_result.get("current_live_evidence_checked_at")
+            or "2026-04-07T12:15:00+00:00"
+        )
+        status_code_raw = self.current_live_probe_result.get("https_probe_status_code")
+        if not isinstance(status_code_raw, int):
+            status_code_raw = self.current_live_probe_result.get("current_https_probe_status_code")
+        status_code = int(status_code_raw) if isinstance(status_code_raw, int) and status_code_raw > 0 else None
+        return SEOMigrationGitHubLiveRuntimeProbeResult(
+            probe_url=str(self.current_live_probe_result.get("probe_url") or probe_url),
+            checked_at=probe_checked_at,
+            source=str(
+                self.current_live_probe_result.get("source")
+                or self.current_live_probe_result.get("current_live_evidence_source")
+                or "current_live_probe"
+            ),
+            live_url=str(
+                self.current_live_probe_result.get("live_url")
+                or self.current_live_probe_result.get("current_live_url")
+                or ""
+            )
+            or None,
+            host_reachable=(
+                bool(self.current_live_probe_result.get("host_reachable"))
+                if isinstance(self.current_live_probe_result.get("host_reachable"), bool)
+                else (
+                    bool(self.current_live_probe_result.get("current_host_reachable"))
+                    if isinstance(self.current_live_probe_result.get("current_host_reachable"), bool)
+                    else None
+                )
+            ),
+            host_reachability_scheme=str(
+                self.current_live_probe_result.get("host_reachability_scheme")
+                or self.current_live_probe_result.get("current_host_reachability_scheme")
+                or ""
+            )
+            or None,
+            deploy_https_ready=(
+                bool(self.current_live_probe_result.get("deploy_https_ready"))
+                if isinstance(self.current_live_probe_result.get("deploy_https_ready"), bool)
+                else (
+                    bool(self.current_live_probe_result.get("current_deploy_https_ready"))
+                    if isinstance(self.current_live_probe_result.get("current_deploy_https_ready"), bool)
+                    else None
+                )
+            ),
+            cert_identity_valid=(
+                bool(self.current_live_probe_result.get("cert_identity_valid"))
+                if isinstance(self.current_live_probe_result.get("cert_identity_valid"), bool)
+                else (
+                    bool(self.current_live_probe_result.get("current_cert_identity_valid"))
+                    if isinstance(self.current_live_probe_result.get("current_cert_identity_valid"), bool)
+                    else None
+                )
+            ),
+            https_probe_status_code=status_code,
+            https_probe_error_summary=str(
+                self.current_live_probe_result.get("https_probe_error_summary")
+                or self.current_live_probe_result.get("current_https_probe_error_summary")
+                or ""
+            )
+            or None,
         )
 
     def ensure_deploy_workflow(
@@ -6289,6 +6380,125 @@ def test_refresh_deploy_status_updates_run_metadata_and_captures_workflow_output
     assert any('"event": "seo_migration_workflow_output_url_captured_via_refresh"' in item for item in refresh_logs)
     assert any('"event": "seo_migration_deploy_status_refresh_completed"' in item for item in refresh_logs)
     assert "GIT_TOKEN" not in " ".join(refresh_logs)
+
+
+def test_refresh_deploy_status_current_live_probe_overrides_selected_failed_attempt_for_current_runtime(
+    db_session,
+) -> None:
+    publisher = _RecordingGitHubPublisher(
+        deploy_workflow_run_id=777888,
+        deploy_workflow_run_status="in_progress",
+        refresh_workflow_run_id=777888,
+        refresh_workflow_run_status="completed",
+        refresh_workflow_run_conclusion="failure",
+        refresh_workflow_run_failure_reason_code="managed_site_static_ip_address_missing",
+        refresh_workflow_run_failure_stage="ingress_evidence",
+        refresh_workflow_run_failure_step="Resolve live URL from ingress status",
+        refresh_workflow_output={
+            "host_reachable": "false",
+            "deploy_https_ready": "false",
+            "https_probe_error_summary": "",
+        },
+        current_live_probe_result={
+            "live_url": "https://lars-construction.site.mbsrn.com/",
+            "host_reachable": True,
+            "host_reachability_scheme": "https",
+            "deploy_https_ready": True,
+            "cert_identity_valid": True,
+            "https_probe_status_code": 200,
+            "https_probe_error_summary": None,
+            "source": "current_live_probe",
+            "checked_at": "2026-04-07T12:15:00+00:00",
+        },
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    artifact = _prepare_and_request_deploy(service, business_id=business_id, site_id=site_id)
+
+    refresh_result = service.refresh_deploy_run_status(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        principal_id="principal-1",
+    )
+    assert refresh_result.result.get("workflow_run_conclusion") == "failure"
+    assert refresh_result.result.get("selected_workflow_attempt_conclusion") == "failure"
+    assert refresh_result.result.get("selected_workflow_failure_reason") == "managed_site_static_ip_address_missing"
+    assert refresh_result.result.get("current_deploy_https_ready") is True
+    assert refresh_result.result.get("current_live_url") == "https://lars-construction.site.mbsrn.com/"
+    assert refresh_result.result.get("current_live_runtime_status") == "success"
+    assert refresh_result.result.get("current_live_evidence_source") == "current_live_probe"
+
+    workspace = service.get_workspace(business_id=business_id, site_id=site_id)
+    deploy_history = workspace.deploy_history_json or []
+    assert deploy_history
+    latest_entry = deploy_history[-1]
+    assert latest_entry.get("workflow_run_conclusion") == "failure"
+    assert latest_entry.get("workflow_run_failure_reason_code") == "managed_site_static_ip_address_missing"
+    assert latest_entry.get("current_deploy_https_ready") is True
+    assert latest_entry.get("current_live_url") == "https://lars-construction.site.mbsrn.com/"
+
+    summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
+    deploy_readiness = summary.deploy_readiness or {}
+    destination = (summary.context_summary or {}).get("destination_summary") or {}
+    deploy_destination = destination.get("deploy_destination") or {}
+    assert deploy_readiness.get("deploy_https_ready") is True
+    assert deploy_readiness.get("current_deploy_https_ready") is True
+    assert deploy_readiness.get("selected_workflow_attempt_conclusion") == "failure"
+    assert deploy_readiness.get("selected_workflow_failure_reason") == "managed_site_static_ip_address_missing"
+    assert "current live HTTPS evidence is healthy" in str(deploy_readiness.get("current_live_runtime_note") or "")
+    assert deploy_readiness.get("dns_record_matches_ingress") is True
+    assert deploy_readiness.get("ingress_conflict_detected") is False
+    assert deploy_readiness.get("tls_certificate_status") == "ACTIVE"
+    assert deploy_readiness.get("tls_domain_status") == "ACTIVE"
+    assert deploy_destination.get("state") == "active_live"
+    assert deploy_destination.get("active_url") == "https://lars-construction.site.mbsrn.com/"
+    assert deploy_destination.get("url_source") == "current_live_probe"
+    assert publisher.current_live_probe_calls
+
+
+def test_refresh_deploy_status_current_live_probe_failure_sets_bounded_summary(db_session) -> None:
+    publisher = _RecordingGitHubPublisher(
+        deploy_workflow_run_id=910115,
+        deploy_workflow_run_status="in_progress",
+        refresh_workflow_run_id=910115,
+        refresh_workflow_run_status="completed",
+        refresh_workflow_run_conclusion="failure",
+        refresh_workflow_run_failure_reason_code="ingress_endpoint_not_ready",
+        refresh_workflow_run_failure_stage="ingress_evidence",
+        refresh_workflow_run_failure_step="Resolve live URL from ingress status",
+        refresh_workflow_output={
+            "host_reachable": "false",
+            "deploy_https_ready": "false",
+        },
+        fail_current_live_probe=True,
+        current_live_probe_error_message="temporary probe timeout",
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    artifact = _prepare_and_request_deploy(service, business_id=business_id, site_id=site_id)
+
+    refresh_result = service.refresh_deploy_run_status(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        principal_id="principal-1",
+    )
+    assert refresh_result.result.get("current_deploy_https_ready") is False
+    assert refresh_result.result.get("current_live_runtime_status") in {"blocked", "pending"}
+    assert "reason=https_probe_failed_after_control_plane_ready" in str(
+        refresh_result.result.get("current_https_probe_error_summary") or ""
+    )
 
 
 def test_refresh_deploy_status_dns_mismatch_sets_dns_failure_and_blocks_https_ready(db_session) -> None:
