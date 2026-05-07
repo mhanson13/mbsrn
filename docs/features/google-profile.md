@@ -16,9 +16,31 @@ Compatibility route:
 - Google Profile connection/reconnect state
 - location verification workflow state
 - GA4 property setup for the selected site
+- compact GA4 property health for the selected site
 - site-wide migration analytics insertion rules (`enabled`, measurement id, insertion mode)
 
 GA4 setup and analytics insertion rules were intentionally moved out of the site workspace/migration route so execution surfaces stay focused on migration and recommendation actions.
+
+## GA4 Property Health (Phase 1)
+
+Google Profile now shows a compact, site-scoped GA4 health strip for the currently selected site.
+
+Health states are bounded and operator-safe:
+- Not configured
+- Configured
+- Reachable
+- No recent data
+- Permission issue
+- Invalid property
+- Temporarily unavailable
+- Unknown
+
+Operator guidance is shown inline with short next actions (for example, add a property ID, verify GA4 read access, or retry when temporarily unavailable).
+
+Boundary:
+- health is derived from the selected site property only
+- no global/default GA4 property fallback is used for site health
+- no tokens/credentials/raw Google error payloads are exposed
 
 ## Boundary
 - No secrets or credential values are exposed in UI.

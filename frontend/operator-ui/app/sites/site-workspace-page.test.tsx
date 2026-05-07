@@ -246,6 +246,14 @@ describe("site workspace modernized structure", () => {
     expect(await screen.findByRole("link", { name: "Open Google Profile" })).toHaveAttribute("href", "/google-profile");
   });
 
+  it("shows compact site-scoped GA4 health in workspace summary metadata", async () => {
+    render(<SiteWorkspacePage />);
+
+    const ga4SummaryCard = await screen.findByTestId("workspace-summary-ga4-onboarding");
+    expect(ga4SummaryCard).toHaveTextContent("Not configured");
+    expect(ga4SummaryCard).toHaveTextContent("Add a GA4 property ID for this site.");
+  });
+
   it("does not load embedded migration workspace APIs on the main site workspace route", async () => {
     render(<SiteWorkspacePage />);
 
@@ -3911,6 +3919,18 @@ function buildSiteAnalyticsSummary(
     ga4_last_successful_fetch_at: "2026-03-21T17:30:00Z",
     ga4_last_data_timestamp: "2026-03-21T16:00:00Z",
     ga4_data_freshness_status: "fresh",
+    ga4_health: {
+      ga4_configured: true,
+      ga4_property_id_present: true,
+      ga4_property_verified: true,
+      ga4_reachable: true,
+      ga4_data_available: true,
+      ga4_last_checked_at: "2026-03-21T17:30:00Z",
+      ga4_health_status: "reachable",
+      ga4_health_reason: null,
+      ga4_health_message: "GA4 is available for recommendation context.",
+      ga4_health_source: "site_property",
+    },
     message: null,
     data_source: "ga4_mock",
     site_metrics_summary: {

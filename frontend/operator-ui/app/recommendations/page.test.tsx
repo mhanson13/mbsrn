@@ -780,6 +780,48 @@ describe("recommendations queue optimistic workflows", () => {
     expect(screen.queryByTestId("recommendation-expanded-search-context-rec-measure-2")).not.toBeInTheDocument();
   });
 
+  it("renders compact GA4 health messaging when recommendation measurement context is unavailable", async () => {
+    const notConfiguredRecommendation = {
+      ...createRecommendation("rec-ga4-health-1", "open", "high", "GA4 missing property context"),
+      recommendation_measurement_context: {
+        measurement_status: "not_configured",
+      },
+    } satisfies Recommendation;
+    const unavailableRecommendation = {
+      ...createRecommendation("rec-ga4-health-2", "open", "medium", "GA4 unavailable context"),
+      recommendation_measurement_context: {
+        measurement_status: "unavailable",
+      },
+    } satisfies Recommendation;
+    mockFetchRecommendations.mockResolvedValueOnce(
+      createListResponse(
+        [notConfiguredRecommendation, unavailableRecommendation],
+        {
+          total: 2,
+          open: 2,
+          accepted: 0,
+          dismissed: 0,
+          high_priority: 1,
+        },
+      ),
+    );
+
+    const user = userEvent.setup();
+    render(<RecommendationsPage />);
+
+    const firstCell = await screen.findByTestId("recommendation-decisiveness-rec-ga4-health-1");
+    await user.click(within(firstCell).getByRole("button", { name: "View details" }));
+    expect(screen.getByTestId("recommendation-expanded-measurement-health-rec-ga4-health-1")).toHaveTextContent(
+      "GA4 context omitted: Add a GA4 property ID for this site.",
+    );
+
+    const secondCell = screen.getByTestId("recommendation-decisiveness-rec-ga4-health-2");
+    await user.click(within(secondCell).getByRole("button", { name: "View details" }));
+    expect(screen.getByTestId("recommendation-expanded-measurement-health-rec-ga4-health-2")).toHaveTextContent(
+      "GA4 context unavailable: Verify GA4 property access and retry.",
+    );
+  });
+
   it("renders execution-readiness guidance only in expanded recommendation details", async () => {
     const recommendation = {
       ...createRecommendation("rec-execution-1", "open", "high", "Clarify metadata for service pages"),

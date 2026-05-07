@@ -984,6 +984,21 @@ function buildRecommendationSinceLine(
   );
 }
 
+function buildRecommendationGa4HealthLine(
+  measurementContext: RecommendationMeasurementContextView | null,
+): string | null {
+  if (!measurementContext) {
+    return null;
+  }
+  if (measurementContext.measurementStatus === "not_configured") {
+    return "GA4 context omitted: Add a GA4 property ID for this site.";
+  }
+  if (measurementContext.measurementStatus === "unavailable") {
+    return "GA4 context unavailable: Verify GA4 property access and retry.";
+  }
+  return null;
+}
+
 function normalizeRecommendationSearchConsoleContext(
   item: Recommendation,
 ): RecommendationSearchConsoleContextView | null {
@@ -3101,6 +3116,7 @@ function RecommendationsPageContent() {
                 const recommendationMeasurementContext = normalizeRecommendationMeasurementContext(item);
                 const recommendationMeasurementLine = buildRecommendationMeasurementLine(recommendationMeasurementContext);
                 const recommendationSinceLine = buildRecommendationSinceLine(recommendationMeasurementContext);
+                const recommendationGa4HealthLine = buildRecommendationGa4HealthLine(recommendationMeasurementContext);
                 const recommendationSearchConsoleContext = normalizeRecommendationSearchConsoleContext(item);
                 const recommendationSearchVisibilityLine = buildRecommendationSearchVisibilityLine(
                   recommendationSearchConsoleContext,
@@ -3268,6 +3284,11 @@ function RecommendationsPageContent() {
                         {recommendationMeasurementContext?.measurementStatus === "no_match" ? (
                           <p className="hint muted" data-testid={`recommendation-measurement-no-match-${item.id}`}>
                             No page-level measurement match available.
+                          </p>
+                        ) : null}
+                        {recommendationGa4HealthLine ? (
+                          <p className="hint muted" data-testid={`recommendation-measurement-health-${item.id}`}>
+                            {recommendationGa4HealthLine}
                           </p>
                         ) : null}
                         {recommendationSearchVisibilityLine ? (
@@ -3512,6 +3533,7 @@ function RecommendationsPageContent() {
                 const recommendationMeasurementContext = normalizeRecommendationMeasurementContext(item);
                 const recommendationMeasurementLine = buildRecommendationMeasurementLine(recommendationMeasurementContext);
                 const recommendationSinceLine = buildRecommendationSinceLine(recommendationMeasurementContext);
+                const recommendationGa4HealthLine = buildRecommendationGa4HealthLine(recommendationMeasurementContext);
                 const recommendationSearchConsoleContext = normalizeRecommendationSearchConsoleContext(item);
                 const recommendationSearchVisibilityLine = buildRecommendationSearchVisibilityLine(
                   recommendationSearchConsoleContext,
@@ -3779,6 +3801,11 @@ function RecommendationsPageContent() {
                             {recommendationMeasurementContext?.measurementStatus === "no_match" ? (
                               <p className="hint muted" data-testid={`recommendation-expanded-measurement-no-match-${item.id}`}>
                                 No page-level measurement match available.
+                              </p>
+                            ) : null}
+                            {recommendationGa4HealthLine ? (
+                              <p className="hint muted" data-testid={`recommendation-expanded-measurement-health-${item.id}`}>
+                                {recommendationGa4HealthLine}
                               </p>
                             ) : null}
                             {recommendationSearchVisibilityLine ? (

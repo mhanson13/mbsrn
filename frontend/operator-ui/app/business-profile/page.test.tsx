@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import BusinessProfilePage from "./page";
-import type { GoogleBusinessProfileConnectionStatusResponse } from "../../lib/api/types";
+import type { GoogleBusinessProfileConnectionStatusResponse, SiteAnalyticsSummaryResponse } from "../../lib/api/types";
 
 type OperatorContextMockValue = {
   loading: boolean;
@@ -29,6 +29,7 @@ const mockFetchGoogleBusinessProfileLocations = jest.fn<
   Promise<{ locations: Array<unknown> }>,
   unknown[]
 >();
+const mockFetchSiteAnalyticsSummary = jest.fn<Promise<SiteAnalyticsSummaryResponse>, unknown[]>();
 const mockFetchMigrationWorkspaceSummary = jest.fn<Promise<unknown>, unknown[]>();
 const mockUpdateMigrationAnalyticsConfig = jest.fn<Promise<unknown>, unknown[]>();
 const mockUpsertMigrationWorkspace = jest.fn<Promise<unknown>, unknown[]>();
@@ -43,6 +44,7 @@ jest.mock("../../lib/api/client", () => {
     ...actual,
     fetchGoogleBusinessProfileConnection: (...args: unknown[]) => mockFetchGoogleBusinessProfileConnection(...args),
     fetchGoogleBusinessProfileLocations: (...args: unknown[]) => mockFetchGoogleBusinessProfileLocations(...args),
+    fetchSiteAnalyticsSummary: (...args: unknown[]) => mockFetchSiteAnalyticsSummary(...args),
     fetchMigrationWorkspaceSummary: (...args: unknown[]) => mockFetchMigrationWorkspaceSummary(...args),
     updateMigrationAnalyticsConfig: (...args: unknown[]) => mockUpdateMigrationAnalyticsConfig(...args),
     upsertMigrationWorkspace: (...args: unknown[]) => mockUpsertMigrationWorkspace(...args),
@@ -68,6 +70,39 @@ function buildDisconnectedConnection(
   };
 }
 
+function buildSiteAnalyticsSummary(
+  overrides: Partial<SiteAnalyticsSummaryResponse> = {},
+): SiteAnalyticsSummaryResponse {
+  return {
+    business_id: "biz-1",
+    site_id: "site-1",
+    available: false,
+    status: "not_configured",
+    ga4_status: "not_configured",
+    ga4_error_reason: "not_configured",
+    ga4_last_successful_fetch_at: null,
+    ga4_last_data_timestamp: null,
+    ga4_data_freshness_status: "unknown",
+    ga4_health: {
+      ga4_configured: false,
+      ga4_property_id_present: false,
+      ga4_property_verified: null,
+      ga4_reachable: null,
+      ga4_data_available: null,
+      ga4_last_checked_at: null,
+      ga4_health_status: "not_configured",
+      ga4_health_reason: "not_configured",
+      ga4_health_message: "Add a GA4 property ID for this site.",
+      ga4_health_source: "unavailable",
+    },
+    message: "Google Analytics property is not configured for this site.",
+    data_source: null,
+    site_metrics_summary: null,
+    top_pages_summary: [],
+    ...overrides,
+  };
+}
+
 describe("business profile callback notice UX", () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -85,6 +120,7 @@ describe("business profile callback notice UX", () => {
     });
     mockFetchGoogleBusinessProfileConnection.mockResolvedValue(buildDisconnectedConnection());
     mockFetchGoogleBusinessProfileLocations.mockResolvedValue({ locations: [] });
+    mockFetchSiteAnalyticsSummary.mockResolvedValue(buildSiteAnalyticsSummary());
     mockFetchMigrationWorkspaceSummary.mockResolvedValue({
       workspace: {
         analytics_config_json: {
@@ -228,5 +264,56 @@ describe("business profile callback notice UX", () => {
         },
       ),
     );
+  });
+
+  it("renders compact GA4 property health for the selected site", async () => {
+    mockUseOperatorContext.mockReturnValue({
+      loading: false,
+      error: null,
+      token: "token-1",
+      businessId: "biz-1",
+      sites: [
+        {
+          id: "site-1",
+          display_name: "Main Site",
+          normalized_domain: "example.com",
+          business_id: "biz-1",
+          ga4_property_id: "123456789",
+        },
+      ],
+      selectedSiteId: "site-1",
+      setSelectedSiteId: jest.fn(),
+      refreshSites: jest.fn(),
+    });
+    mockFetchSiteAnalyticsSummary.mockResolvedValue(
+      buildSiteAnalyticsSummary({
+        available: true,
+        status: "ok",
+        ga4_status: "connected",
+        ga4_error_reason: null,
+        ga4_health: {
+          ga4_configured: true,
+          ga4_property_id_present: true,
+          ga4_property_verified: true,
+          ga4_reachable: true,
+          ga4_data_available: true,
+          ga4_last_checked_at: "2026-05-01T12:00:00Z",
+          ga4_health_status: "reachable",
+          ga4_health_reason: null,
+          ga4_health_message: "GA4 is available for recommendation context.",
+          ga4_health_source: "site_property",
+        },
+      }),
+    );
+
+    render(<BusinessProfilePage />);
+
+    await waitFor(() =>
+      expect(mockFetchSiteAnalyticsSummary).toHaveBeenCalledWith("token-1", "biz-1", "site-1"),
+    );
+    expect(await screen.findByTestId("google-profile-ga4-health")).toBeInTheDocument();
+    expect(screen.getByText("GA4 property health")).toBeInTheDocument();
+    expect(screen.getByText("Reachable")).toBeInTheDocument();
+    expect(screen.getByText("GA4 is available for recommendation context.")).toBeInTheDocument();
   });
 });

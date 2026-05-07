@@ -31,6 +31,15 @@ Phase 0 hardening from this audit is now implemented:
 - dedicated provider unit tests were added for GA4 auth/error/payload handling and site-scoped property routing
 - regression coverage now includes missing-property skip behavior, cross-site property isolation, and graceful GA4 error degradation
 
+## 1.2) Phase 1 Status (2026-05-07)
+
+Phase 1 GA4 connection/property health visibility is now implemented as a compact, site-scoped status layer:
+- site analytics summary responses include additive `ga4_health` fields with bounded operator-safe status/message values
+- health is derived from the selected site property path only; no global/default GA4 property fallback is used
+- Google Profile and site workspace surfaces show compact per-site GA4 health state + next-step guidance
+- recommendation detail surfaces now explicitly show when GA4 measurement context is omitted/unavailable
+- GA4 health visibility is additive and does not change recommendation scoring, migration planning logic, or deploy behavior
+
 ## 2) Current Implementation Inventory
 
 | File | Purpose | GA4 Role | Area | Risk | Notes |

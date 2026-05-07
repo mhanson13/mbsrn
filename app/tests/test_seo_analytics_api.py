@@ -385,6 +385,10 @@ def test_site_analytics_summary_returns_metrics_with_mock_provider(db_session, s
     assert payload["ga4_last_successful_fetch_at"] is not None
     assert payload["ga4_last_data_timestamp"] is not None
     assert payload["ga4_data_freshness_status"] == "fresh"
+    assert payload["ga4_health"]["ga4_health_status"] == "reachable"
+    assert payload["ga4_health"]["ga4_reachable"] is True
+    assert payload["ga4_health"]["ga4_data_available"] is True
+    assert payload["ga4_health"]["ga4_health_message"] == "GA4 is available for recommendation context."
     assert len(payload["top_pages_summary"]) == 3
     first_top_page = payload["top_pages_summary"][0]
     assert "page_path" in first_top_page
@@ -429,6 +433,8 @@ def test_site_analytics_summary_degrades_cleanly_when_not_configured(db_session,
     assert payload["ga4_last_successful_fetch_at"] is None
     assert payload["ga4_last_data_timestamp"] is None
     assert payload["ga4_data_freshness_status"] == "unknown"
+    assert payload["ga4_health"]["ga4_health_status"] == "configured"
+    assert payload["ga4_health"]["ga4_property_id_present"] is True
     assert payload["site_metrics_summary"] is None
     assert payload["top_pages_summary"] == []
 
@@ -454,7 +460,58 @@ def test_site_analytics_summary_reports_site_level_not_configured_when_property_
     assert payload["status"] == "not_configured"
     assert payload["ga4_status"] == "not_configured"
     assert payload["ga4_error_reason"] == "not_configured"
+    assert payload["ga4_health"]["ga4_health_status"] == "not_configured"
+    assert payload["ga4_health"]["ga4_property_id_present"] is False
     assert payload["message"] == "Google Analytics property is not configured for this site."
+
+
+def test_site_analytics_summary_missing_site_property_skips_provider_call(db_session, seeded_business) -> None:
+    provider = _WindowComparisonProvider()
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        analytics_service=SEOAnalyticsService(
+            provider=provider,
+            settings=SEOAnalyticsServiceSettings(period_days=7, top_pages_limit=3),
+        ),
+    )
+    site_id = _create_site(client, seeded_business.id, domain="analytics-missing-property-skip.example")
+
+    response = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/analytics/site-summary")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "not_configured"
+    assert provider.fetch_site_metrics_property_ids == []
+
+
+def test_site_analytics_summary_uses_site_scoped_property_per_site(db_session, seeded_business) -> None:
+    provider = _WindowComparisonProvider()
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        analytics_service=SEOAnalyticsService(
+            provider=provider,
+            settings=SEOAnalyticsServiceSettings(period_days=7, top_pages_limit=3),
+        ),
+    )
+    site_a_id = _create_site(
+        client,
+        seeded_business.id,
+        domain="analytics-scope-a.example",
+        ga4_property_id="2000000002",
+    )
+    site_b_id = _create_site(
+        client,
+        seeded_business.id,
+        domain="analytics-scope-b.example",
+        ga4_property_id="3000000003",
+    )
+
+    response_a = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_a_id}/analytics/site-summary")
+    response_b = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_b_id}/analytics/site-summary")
+    assert response_a.status_code == 200
+    assert response_b.status_code == 200
+    assert provider.fetch_site_metrics_property_ids == ["2000000002", "3000000003"]
 
 
 def test_site_analytics_summary_reports_invalid_property_format_reason(db_session, seeded_business) -> None:
@@ -480,6 +537,7 @@ def test_site_analytics_summary_reports_invalid_property_format_reason(db_sessio
     assert payload["status"] == "unavailable"
     assert payload["ga4_status"] == "error"
     assert payload["ga4_error_reason"] == "invalid_property_format"
+    assert payload["ga4_health"]["ga4_health_status"] == "invalid_property"
 
 
 def test_site_analytics_summary_reports_access_denied_reason(db_session, seeded_business) -> None:
@@ -505,6 +563,8 @@ def test_site_analytics_summary_reports_access_denied_reason(db_session, seeded_
     assert payload["status"] == "unavailable"
     assert payload["ga4_status"] == "error"
     assert payload["ga4_error_reason"] == "access_denied"
+    assert payload["ga4_health"]["ga4_health_status"] == "permission_denied"
+    assert payload["ga4_health"]["ga4_health_message"] == "Verify the connected Google account can read this GA4 property."
 
 
 def test_site_analytics_summary_reports_property_not_found_reason(db_session, seeded_business) -> None:
@@ -530,6 +590,7 @@ def test_site_analytics_summary_reports_property_not_found_reason(db_session, se
     assert payload["status"] == "unavailable"
     assert payload["ga4_status"] == "error"
     assert payload["ga4_error_reason"] == "property_not_found"
+    assert payload["ga4_health"]["ga4_health_status"] == "invalid_property"
 
 
 def test_site_analytics_summary_reports_connected_with_no_data_reason(db_session, seeded_business) -> None:
@@ -558,6 +619,9 @@ def test_site_analytics_summary_reports_connected_with_no_data_reason(db_session
     assert payload["ga4_last_successful_fetch_at"] is not None
     assert payload["ga4_last_data_timestamp"] is None
     assert payload["ga4_data_freshness_status"] == "unknown"
+    assert payload["ga4_health"]["ga4_health_status"] == "no_data"
+    assert payload["ga4_health"]["ga4_reachable"] is True
+    assert payload["ga4_health"]["ga4_data_available"] is False
 
 
 def test_site_analytics_summary_enforces_tenant_scope(db_session, seeded_business) -> None:

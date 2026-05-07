@@ -14,6 +14,7 @@ import {
   disconnectGoogleBusinessProfile,
   fetchGoogleBusinessProfileConnection,
   fetchGoogleBusinessProfileLocations,
+  fetchSiteAnalyticsSummary,
   fetchMigrationWorkspaceSummary,
   fetchGoogleBusinessProfileVerificationStatus,
   retryGoogleBusinessProfileLocationVerification,
@@ -28,6 +29,7 @@ import type {
   GoogleBusinessProfileFlatLocation,
   GoogleBusinessProfileVerificationGuidance,
   GoogleBusinessProfileVerificationStatusResponse,
+  SiteAnalyticsSummaryResponse,
 } from "../../lib/api/types";
 import {
   VerificationCodeEntry,
@@ -61,6 +63,9 @@ export default function BusinessProfilePage() {
   const [ga4SaveMessage, setGa4SaveMessage] = useState<string | null>(null);
   const [ga4SaveError, setGa4SaveError] = useState<string | null>(null);
   const [ga4SaveLoading, setGa4SaveLoading] = useState(false);
+  const [ga4HealthSummary, setGa4HealthSummary] = useState<SiteAnalyticsSummaryResponse | null>(null);
+  const [ga4HealthLoading, setGa4HealthLoading] = useState(false);
+  const [ga4HealthError, setGa4HealthError] = useState<string | null>(null);
   const [analyticsEnabled, setAnalyticsEnabled] = useState(true);
   const [analyticsMeasurementId, setAnalyticsMeasurementId] = useState("");
   const [analyticsMode, setAnalyticsMode] = useState<"publish_only" | "publish_and_deploy">("publish_and_deploy");
@@ -185,10 +190,52 @@ export default function BusinessProfilePage() {
   );
   const normalizedGa4PropertyId = ga4PropertyIdInput.trim();
   const ga4PropertyFormatInvalid = normalizedGa4PropertyId.length > 0 && !/^\d{4,20}$/.test(normalizedGa4PropertyId);
+  const selectedSiteId = selectedSite?.id || null;
+  const selectedSiteGa4PropertyId = selectedSite?.ga4_property_id || null;
+  const ga4HealthStatus = ga4HealthSummary?.ga4_health?.ga4_health_status
+    || inferGa4HealthStatus(ga4HealthSummary);
+  const ga4HealthLabel = formatGa4HealthStatusLabel(ga4HealthStatus);
+  const ga4HealthMessage = ga4HealthSummary?.ga4_health?.ga4_health_message
+    || ga4DiagnosticReasonMessage(ga4HealthSummary?.ga4_error_reason)
+    || "GA4 health is unavailable for this site.";
+  const ga4HealthNextAction = ga4HealthNextActionMessage(ga4HealthStatus);
 
   useEffect(() => {
     setGa4PropertyIdInput(selectedSite?.ga4_property_id?.trim() || "");
   }, [selectedSite?.ga4_property_id, selectedSite?.id]);
+
+  useEffect(() => {
+    if (!context.token || !context.businessId || !selectedSiteId) {
+      setGa4HealthSummary(null);
+      setGa4HealthError(null);
+      setGa4HealthLoading(false);
+      return;
+    }
+    let cancelled = false;
+    const loadGa4Health = async () => {
+      setGa4HealthLoading(true);
+      setGa4HealthError(null);
+      try {
+        const summary = await fetchSiteAnalyticsSummary(context.token, context.businessId, selectedSiteId);
+        if (!cancelled) {
+          setGa4HealthSummary(summary);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setGa4HealthSummary(null);
+          setGa4HealthError(err instanceof Error ? err.message : "Failed to load GA4 health.");
+        }
+      } finally {
+        if (!cancelled) {
+          setGa4HealthLoading(false);
+        }
+      }
+    };
+    void loadGa4Health();
+    return () => {
+      cancelled = true;
+    };
+  }, [context.businessId, context.token, selectedSiteGa4PropertyId, selectedSiteId]);
 
   useEffect(() => {
     if (!context.token || !context.businessId || !selectedSite) {
@@ -565,6 +612,16 @@ export default function BusinessProfilePage() {
             <p className="hint muted">
               Enter the numeric GA4 property ID for this site (not the G- measurement ID).
             </p>
+            <div className="panel panel-compact stack-tight" data-testid="google-profile-ga4-health">
+              <div className="link-row">
+                <strong>GA4 property health</strong>
+                <span className={`badge ${ga4HealthBadgeClass(ga4HealthStatus)}`}>{ga4HealthLabel}</span>
+              </div>
+              {ga4HealthLoading ? <p className="hint muted">Checking GA4 property health...</p> : null}
+              <p className="hint muted">{ga4HealthMessage}</p>
+              {ga4HealthNextAction ? <p className="hint muted">{ga4HealthNextAction}</p> : null}
+              {ga4HealthError ? <p className="hint error">{ga4HealthError}</p> : null}
+            </div>
             {ga4PropertyFormatInvalid ? (
               <p className="hint warning">Use only the numeric GA4 property ID (for example, 123456789).</p>
             ) : null}
@@ -841,6 +898,154 @@ function locationBadge(location: GoogleBusinessProfileFlatLocation): { label: st
     return { label: "Not verified", className: "badge-muted" };
   }
   return { label: "Unknown", className: "badge-muted" };
+}
+
+function inferGa4HealthStatus(
+  summary: SiteAnalyticsSummaryResponse | null,
+):
+  | "configured"
+  | "not_configured"
+  | "reachable"
+  | "unavailable"
+  | "permission_denied"
+  | "invalid_property"
+  | "no_data"
+  | "unknown" {
+  if (!summary) {
+    return "unknown";
+  }
+  const status = (summary.ga4_status || "").trim().toLowerCase();
+  const reason = (summary.ga4_error_reason || "").trim().toLowerCase();
+  if (status === "connected") {
+    return reason === "no_data" ? "no_data" : "reachable";
+  }
+  if (status === "configured") {
+    return "configured";
+  }
+  if (status === "not_configured") {
+    return "not_configured";
+  }
+  if (reason === "access_denied") {
+    return "permission_denied";
+  }
+  if (reason === "property_not_found" || reason === "invalid_property_format") {
+    return "invalid_property";
+  }
+  if (status === "error") {
+    return "unavailable";
+  }
+  return "unknown";
+}
+
+function formatGa4HealthStatusLabel(
+  status:
+    | "configured"
+    | "not_configured"
+    | "reachable"
+    | "unavailable"
+    | "permission_denied"
+    | "invalid_property"
+    | "no_data"
+    | "unknown",
+): string {
+  if (status === "not_configured") {
+    return "Not configured";
+  }
+  if (status === "configured") {
+    return "Configured";
+  }
+  if (status === "reachable") {
+    return "Reachable";
+  }
+  if (status === "no_data") {
+    return "No recent data";
+  }
+  if (status === "permission_denied") {
+    return "Permission issue";
+  }
+  if (status === "invalid_property") {
+    return "Invalid property";
+  }
+  if (status === "unavailable") {
+    return "Temporarily unavailable";
+  }
+  return "Unknown";
+}
+
+function ga4HealthBadgeClass(
+  status:
+    | "configured"
+    | "not_configured"
+    | "reachable"
+    | "unavailable"
+    | "permission_denied"
+    | "invalid_property"
+    | "no_data"
+    | "unknown",
+): string {
+  if (status === "reachable") {
+    return "badge-success";
+  }
+  if (status === "configured" || status === "no_data") {
+    return "badge-warn";
+  }
+  if (status === "not_configured" || status === "unknown") {
+    return "badge-muted";
+  }
+  return "badge-error";
+}
+
+function ga4DiagnosticReasonMessage(
+  reason: SiteAnalyticsSummaryResponse["ga4_error_reason"] | null | undefined,
+): string | null {
+  if (!reason) {
+    return null;
+  }
+  if (reason === "not_configured") {
+    return "Add a GA4 property ID for this site.";
+  }
+  if (reason === "access_denied") {
+    return "Verify the connected Google account can read this GA4 property.";
+  }
+  if (reason === "property_not_found") {
+    return "The configured GA4 property was not found.";
+  }
+  if (reason === "invalid_property_format") {
+    return "Use only the numeric GA4 property ID (for example, 123456789).";
+  }
+  if (reason === "no_data") {
+    return "GA4 is reachable, but no recent data was returned.";
+  }
+  return "GA4 is temporarily unavailable for this site.";
+}
+
+function ga4HealthNextActionMessage(
+  status:
+    | "configured"
+    | "not_configured"
+    | "reachable"
+    | "unavailable"
+    | "permission_denied"
+    | "invalid_property"
+    | "no_data"
+    | "unknown",
+): string | null {
+  if (status === "not_configured") {
+    return "Next: Add a GA4 property ID for this site.";
+  }
+  if (status === "permission_denied") {
+    return "Next: Verify the connected Google account can read this GA4 property.";
+  }
+  if (status === "invalid_property") {
+    return "Next: Save a valid numeric GA4 property ID for this site.";
+  }
+  if (status === "no_data") {
+    return "Next: Confirm this property has traffic in the selected date range.";
+  }
+  if (status === "unavailable") {
+    return "Next: Retry after a short delay and verify workspace GA4 credentials.";
+  }
+  return null;
 }
 
 function normalizeVerificationError(

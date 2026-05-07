@@ -790,6 +790,18 @@ Operational requirements:
 - diagnostics remain directional/read-only and do not change recommendation logic
 - recommendation measurement context remains site-scoped and does not use global/default property fallback
 
+### GA4 Health Visibility (Phase 1)
+
+Recommendation detail views now show compact GA4 measurement-health messaging when measurement context is not available:
+
+- `GA4 context omitted: Add a GA4 property ID for this site.`
+- `GA4 context unavailable: Verify GA4 property access and retry.`
+
+This is a visibility-only improvement:
+- no recommendation scoring/prioritization changes
+- no recommendation generation semantics changes
+- Search Console context behavior remains unchanged
+
 ### GA4 Last Data Seen + Freshness
 
 Workspace GA4 cards now include explicit freshness indicators:

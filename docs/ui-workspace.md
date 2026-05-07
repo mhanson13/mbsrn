@@ -39,6 +39,26 @@ Service-focus provenance is available in `competitor_prompt_preview.prompt_metri
 
 These fields are intended for diagnostics and API-level inspection.
 
+## Site Workspace GA4 Health (Phase 1)
+
+The site workspace now exposes a compact, site-scoped GA4 health summary (no dashboard cards).
+
+Behavior:
+- GA4 health is derived from the selected site property only.
+- No global/default GA4 property fallback is used for site-level health/readiness context.
+- Missing or unavailable GA4 context does not block workspace loading or recommendation rendering.
+- Recommendation detail surfaces now show explicit GA4-context omission/unavailable messaging instead of silent absence.
+
+Operator-safe status labels:
+- `Not configured`
+- `Configured`
+- `Reachable`
+- `No recent data`
+- `Permission issue`
+- `Invalid property`
+- `Temporarily unavailable`
+- `Unknown`
+
 ## Site SEO Migration Workspace IA (2026-05)
 
 The dedicated migration route (`/sites/[site_id]/migration`) keeps primary operator workflow and diagnostics separated:

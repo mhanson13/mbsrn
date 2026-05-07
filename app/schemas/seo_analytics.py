@@ -42,6 +42,30 @@ class SEOAnalyticsTopPageRead(BaseModel):
     sessions_delta_percent: float | None = None
 
 
+class SEOGA4HealthRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    ga4_configured: bool = False
+    ga4_property_id_present: bool = False
+    ga4_property_verified: bool | None = None
+    ga4_reachable: bool | None = None
+    ga4_data_available: bool | None = None
+    ga4_last_checked_at: datetime | None = None
+    ga4_health_status: Literal[
+        "configured",
+        "not_configured",
+        "reachable",
+        "unavailable",
+        "permission_denied",
+        "invalid_property",
+        "no_data",
+        "unknown",
+    ] = "unknown"
+    ga4_health_reason: str | None = None
+    ga4_health_message: str | None = None
+    ga4_health_source: Literal["site_property", "unavailable"] = "site_property"
+
+
 class SEOAnalyticsSiteSummaryRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -64,6 +88,7 @@ class SEOAnalyticsSiteSummaryRead(BaseModel):
     ga4_last_successful_fetch_at: datetime | None = None
     ga4_last_data_timestamp: datetime | None = None
     ga4_data_freshness_status: Literal["fresh", "stale", "unknown"] = "unknown"
+    ga4_health: SEOGA4HealthRead = Field(default_factory=SEOGA4HealthRead)
     message: str | None = None
     data_source: str | None = None
     site_metrics_summary: SEOAnalyticsSiteMetricsSummaryRead | None = None

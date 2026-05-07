@@ -947,6 +947,27 @@ export interface SiteAnalyticsTopPageSummary {
   sessions_delta_percent: number | null;
 }
 
+export interface SiteGA4Health {
+  ga4_configured: boolean;
+  ga4_property_id_present: boolean;
+  ga4_property_verified: boolean | null;
+  ga4_reachable: boolean | null;
+  ga4_data_available: boolean | null;
+  ga4_last_checked_at: string | null;
+  ga4_health_status:
+    | "configured"
+    | "not_configured"
+    | "reachable"
+    | "unavailable"
+    | "permission_denied"
+    | "invalid_property"
+    | "no_data"
+    | "unknown";
+  ga4_health_reason: string | null;
+  ga4_health_message: string | null;
+  ga4_health_source: "site_property" | "unavailable";
+}
+
 export interface SiteAnalyticsSummaryResponse {
   business_id: string;
   site_id: string;
@@ -964,6 +985,7 @@ export interface SiteAnalyticsSummaryResponse {
   ga4_last_successful_fetch_at?: string | null;
   ga4_last_data_timestamp?: string | null;
   ga4_data_freshness_status?: "fresh" | "stale" | "unknown";
+  ga4_health?: SiteGA4Health | null;
   message: string | null;
   data_source: string | null;
   site_metrics_summary: SiteAnalyticsMetricsSummary | null;

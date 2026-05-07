@@ -1234,6 +1234,105 @@ function ga4DiagnosticReasonMessage(
   return "GA4 connection failed for an unknown reason. Verify the site property ID and workspace GA4 access.";
 }
 
+function inferGa4HealthStatus(
+  status: SiteAnalyticsSummaryResponse["ga4_status"] | string | null | undefined,
+  reason: SiteAnalyticsSummaryResponse["ga4_error_reason"] | null | undefined,
+):
+  | "configured"
+  | "not_configured"
+  | "reachable"
+  | "unavailable"
+  | "permission_denied"
+  | "invalid_property"
+  | "no_data"
+  | "unknown" {
+  const normalizedStatus = (status || "").trim().toLowerCase();
+  const normalizedReason = (reason || "").trim().toLowerCase();
+  if (normalizedStatus === "connected") {
+    return normalizedReason === "no_data" ? "no_data" : "reachable";
+  }
+  if (normalizedStatus === "configured") {
+    return "configured";
+  }
+  if (normalizedStatus === "not_configured") {
+    return "not_configured";
+  }
+  if (normalizedReason === "access_denied") {
+    return "permission_denied";
+  }
+  if (normalizedReason === "invalid_property_format" || normalizedReason === "property_not_found") {
+    return "invalid_property";
+  }
+  if (normalizedStatus === "error") {
+    return "unavailable";
+  }
+  return "unknown";
+}
+
+function formatGa4HealthStatusLabel(
+  status:
+    | "configured"
+    | "not_configured"
+    | "reachable"
+    | "unavailable"
+    | "permission_denied"
+    | "invalid_property"
+    | "no_data"
+    | "unknown",
+): string {
+  if (status === "not_configured") {
+    return "Not configured";
+  }
+  if (status === "configured") {
+    return "Configured";
+  }
+  if (status === "reachable") {
+    return "Reachable";
+  }
+  if (status === "no_data") {
+    return "No recent data";
+  }
+  if (status === "permission_denied") {
+    return "Permission issue";
+  }
+  if (status === "invalid_property") {
+    return "Invalid property";
+  }
+  if (status === "unavailable") {
+    return "Temporarily unavailable";
+  }
+  return "Unknown";
+}
+
+function ga4HealthNextActionMessage(
+  status:
+    | "configured"
+    | "not_configured"
+    | "reachable"
+    | "unavailable"
+    | "permission_denied"
+    | "invalid_property"
+    | "no_data"
+    | "unknown",
+): string | null {
+  if (status === "not_configured") {
+    return "Add a GA4 property ID for this site.";
+  }
+  if (status === "permission_denied") {
+    return "Verify the connected Google account can read this GA4 property.";
+  }
+  if (status === "invalid_property") {
+    return "Update this site with a valid numeric GA4 property ID.";
+  }
+  if (status === "no_data") {
+    return "GA4 is reachable, but no recent data was returned.";
+  }
+  if (status === "unavailable") {
+    return "Retry after a short delay if workspace credentials are healthy.";
+  }
+  return null;
+}
+
 function normalizeTimelineStatus(value: string | null | undefined): string {
   const normalized = (value || "").trim();
   return normalized || "-";
@@ -6996,6 +7095,13 @@ export default function SiteWorkspacePage() {
     || (ga4ConnectivityStatus === "connected"
       ? "GA4 measurements are being read successfully for this site."
       : "GA4 connection diagnostics are unavailable.");
+  const ga4Health = siteAnalyticsSummary?.ga4_health || null;
+  const ga4HealthStatus = ga4Health?.ga4_health_status || inferGa4HealthStatus(ga4ConnectivityStatus, ga4ConnectivityReason);
+  const ga4HealthStatusLabel = formatGa4HealthStatusLabel(ga4HealthStatus);
+  const ga4HealthMessage = ga4Health?.ga4_health_message
+    || ga4DiagnosticReasonMessage(ga4ConnectivityReason)
+    || "GA4 health is unavailable for this site.";
+  const ga4HealthNextAction = ga4HealthNextActionMessage(ga4HealthStatus);
   const ga4OnboardingStatusCode = ga4OnboardingStatus?.ga4_onboarding_status || "unavailable";
   const ga4OnboardingValue = (() => {
     if (ga4OnboardingStatusCode === "stream_configured" || ga4OnboardingStatusCode === "property_configured") {
@@ -7009,13 +7115,16 @@ export default function SiteWorkspacePage() {
     }
     return "Unavailable";
   })();
-  const ga4OnboardingDetail = ga4OnboardingStatus
+  const ga4OnboardingDiscoveryDetail = ga4OnboardingStatus
     ? (
       ga4OnboardingStatus.account_discovery_available
         ? (ga4OnboardingStatus.message || "GA4 onboarding status available.")
         : "Account discovery is not enabled. Enter your GA4 property ID directly."
     )
     : ga4OnboardingError || "Account discovery is not enabled. Enter your GA4 property ID directly.";
+  const ga4OnboardingDetail = `${ga4HealthStatusLabel}: ${ga4HealthMessage}${
+    ga4HealthNextAction ? ` ${ga4HealthNextAction}` : ""
+  } ${ga4OnboardingDiscoveryDetail}`.trim();
   const ga4OnboardingTone = (() => {
     if (ga4OnboardingStatusCode === "stream_configured" || ga4OnboardingStatusCode === "property_configured") {
       return "success";
@@ -7209,13 +7318,12 @@ export default function SiteWorkspacePage() {
       key: "ga4",
       label: "GA4 measurement connected",
       done: hasGa4Configured,
-      doneDetail: ga4ConnectivityStatus === "connected"
-        ? "GA4 is connected and returning measurement signals."
-        : "GA4 property is configured and ready for measurement checks.",
-      pendingDetail: ga4ConnectivityStatus === "error"
-        ? (ga4DiagnosticReasonMessage(ga4ConnectivityReason)
-          || "GA4 connection failed. Verify property access and try again.")
-        : "Add this site’s GA4 property ID to enable traffic visibility context.",
+      doneDetail: `${ga4HealthStatusLabel}: ${ga4HealthMessage}`,
+      pendingDetail: ga4HealthNextAction
+        || (ga4ConnectivityStatus === "error"
+          ? (ga4DiagnosticReasonMessage(ga4ConnectivityReason)
+            || "GA4 connection failed. Verify property access and try again.")
+          : "Add this site’s GA4 property ID to enable traffic visibility context."),
       actionHref: "/google-profile",
       actionLabel: "Open Google Profile",
     },
