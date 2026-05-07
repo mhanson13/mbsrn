@@ -8006,6 +8006,13 @@ class SEOMigrationService:
             history=normalized_history,
             artifact_version_id=artifact.id,
         )
+        refresh_history_scope = "requested_artifact"
+        if history_index is None:
+            history_index = _find_latest_deploy_history_index_for_refresh_any_artifact(
+                history=normalized_history
+            )
+            if history_index is not None:
+                refresh_history_scope = "latest_deploy_record"
         if history_index is None:
             return self._build_deploy_refresh_no_change_result(
                 business_id=business_id,
@@ -8020,6 +8027,22 @@ class SEOMigrationService:
             )
 
         target_history_item = _normalize_json_dict(normalized_history[history_index])
+        if refresh_history_scope == "latest_deploy_record":
+            self._emit_structured_service_log(
+                payload={
+                    "event": "seo_migration_deploy_status_refresh_fallback_to_latest_record",
+                    "business_id": business_id,
+                    "site_id": site_id,
+                    "workspace_id": workspace.id,
+                    "requested_artifact_version_id": artifact.id,
+                    "fallback_artifact_version_id": _normalize_string(
+                        target_history_item.get("artifact_version_id"),
+                        max_length=80,
+                    ),
+                },
+                fallback_message="seo_migration_deploy_status_refresh_fallback_to_latest_record",
+                level=logging.INFO,
+            )
         deploy_trace_id = _normalize_string(target_history_item.get("deploy_trace_id"), max_length=80)
         workflow_identifier = _derive_workflow_identifier(
             workflow_id=target_history_item.get("workflow_id"),
@@ -8148,7 +8171,67 @@ class SEOMigrationService:
             or _normalize_workflow_id_for_deploy(target_history_item.get("workflow_id"))
         )
         ref = _normalize_string(target_history_item.get("ref"), max_length=120)
+        target_inputs = _normalize_history_inputs(target_history_item.get("inputs"))
+        target_readiness_summary = _normalize_json_dict(readiness.get("target"))
+        if not repo_owner:
+            repo_owner = _normalize_string(target_readiness_summary.get("repo_owner"), max_length=80)
+        if not repo_name:
+            repo_name = _normalize_string(target_readiness_summary.get("repo_name"), max_length=120)
+        if not workflow_id:
+            workflow_id = (
+                _normalize_workflow_path_for_deploy(target_readiness_summary.get("workflow_identifier_used"))
+                or _normalize_workflow_path_for_deploy(target_readiness_summary.get("workflow_identifier"))
+                or _normalize_workflow_path_for_deploy(target_readiness_summary.get("workflow_id"))
+                or _normalize_workflow_path_for_deploy(target_readiness_summary.get("site_workflow_file_path"))
+                or _normalize_workflow_path_for_deploy(target_readiness_summary.get("workflow_file_path"))
+                or _normalize_workflow_id_for_deploy(target_readiness_summary.get("workflow_identifier_used"))
+                or _normalize_workflow_id_for_deploy(target_readiness_summary.get("workflow_identifier"))
+                or _normalize_workflow_id_for_deploy(target_readiness_summary.get("workflow_id"))
+            )
+        if not ref:
+            ref = _normalize_string(target_readiness_summary.get("ref"), max_length=120) or _normalize_string(
+                target_readiness_summary.get("branch"),
+                max_length=120,
+            )
         if not repo_owner or not repo_name or not workflow_id or not ref:
+            fallback_current_live_runtime = self._refresh_current_live_runtime_evidence(
+                site_id=site_id,
+                repo_name=repo_name or site_id,
+                target_inputs=target_inputs,
+                existing_live_url=_normalize_url_candidate(target_history_item.get("resolved_live_url")),
+                refreshed_network_readiness={},
+            )
+            fallback_runtime_updated = False
+            for current_live_field in (
+                "current_live_url",
+                "current_host_reachable",
+                "current_host_reachability_scheme",
+                "current_deploy_https_ready",
+                "current_cert_identity_valid",
+                "current_https_probe_status_code",
+                "current_https_probe_error_summary",
+                "current_live_evidence_checked_at",
+                "current_live_evidence_source",
+                "current_live_runtime_status",
+                "current_live_runtime_source",
+            ):
+                current_live_value = fallback_current_live_runtime.get(current_live_field)
+                if target_history_item.get(current_live_field) != current_live_value:
+                    target_history_item[current_live_field] = current_live_value
+                    fallback_runtime_updated = True
+            if fallback_runtime_updated:
+                normalized_history[history_index] = _normalize_json_dict(target_history_item)
+                workspace.deploy_history_json = normalized_history
+                workspace.updated_by_principal_id = principal_id
+                self._update_workspace_readiness_statuses(workspace=workspace, site=site)
+                self.seo_migration_repository.save_workspace(workspace)
+                self.session.commit()
+                self.session.refresh(workspace)
+                readiness = self._build_deploy_readiness(
+                    site=site,
+                    workspace=workspace,
+                    artifact=artifact,
+                )
             return self._build_deploy_refresh_no_change_result(
                 business_id=business_id,
                 site_id=site_id,
@@ -8163,7 +8246,6 @@ class SEOMigrationService:
             )
 
         dispatched_at = _normalize_string(target_history_item.get("dispatched_at"), max_length=64)
-        target_inputs = _normalize_history_inputs(target_history_item.get("inputs"))
         deploy_target = SEOMigrationGitHubDeployTarget(
             repo_owner=repo_owner,
             repo_name=repo_name,
@@ -9040,6 +9122,7 @@ class SEOMigrationService:
             "status": refresh_status,
             "artifact_version_id": artifact.id,
             "artifact_version": artifact.version,
+            "refresh_history_scope": refresh_history_scope,
             "timestamp": utc_now().isoformat(),
             "repo_owner": repo_owner,
             "repo_name": repo_name,
@@ -21285,6 +21368,19 @@ def _find_latest_deploy_history_index_for_refresh(
         if _coerce_bool(item.get("dry_run"), default=False):
             continue
         if str(item.get("artifact_version_id") or "").strip() != artifact_id:
+            continue
+        return index
+    return None
+
+
+def _find_latest_deploy_history_index_for_refresh_any_artifact(
+    *, history: list[dict[str, object]]
+) -> int | None:
+    for index in range(len(history) - 1, -1, -1):
+        item = _normalize_json_dict(history[index])
+        if str(item.get("action") or "").strip().lower() != "deploy":
+            continue
+        if _coerce_bool(item.get("dry_run"), default=False):
             continue
         return index
     return None

@@ -180,6 +180,7 @@ Destination, readiness, and diagnostics IA refinements:
   5. historical failure detail
 - stale selected-attempt static IP failures (for example `managed_site_static_ip_address_missing`) remain in selected/history diagnostics and do not override current runtime live status when current live HTTPS evidence is healthy.
 - manual follow-up capture remains available through `Refresh Deploy Status`
+  - refresh evaluates the route/workspace site id and can fall back to the latest deploy record for that site when the currently selected artifact has no deploy record, so current-live probe fields can still be populated.
 
 Summary and diagnostics compaction (2026-05):
 - Reused MBSRN Context is compact by default:

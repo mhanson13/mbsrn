@@ -6501,6 +6501,135 @@ def test_refresh_deploy_status_current_live_probe_failure_sets_bounded_summary(d
     )
 
 
+def test_refresh_deploy_status_falls_back_to_latest_deploy_record_for_current_live_probe(
+    db_session,
+) -> None:
+    publisher = _RecordingGitHubPublisher(
+        deploy_workflow_run_id=910116,
+        deploy_workflow_run_status="in_progress",
+        refresh_workflow_run_id=910116,
+        refresh_workflow_run_status="completed",
+        refresh_workflow_run_conclusion="failure",
+        refresh_workflow_run_failure_reason_code="ingress_endpoint_not_ready",
+        refresh_workflow_run_failure_stage="ingress_evidence",
+        refresh_workflow_run_failure_step="Resolve live URL from ingress status",
+        current_live_probe_result={
+            "live_url": "https://sc-mechanical.site.mbsrn.com/",
+            "host_reachable": True,
+            "host_reachability_scheme": "https",
+            "deploy_https_ready": True,
+            "cert_identity_valid": True,
+            "https_probe_status_code": 200,
+            "source": "current_live_probe",
+            "checked_at": "2026-04-07T12:25:00+00:00",
+        },
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    deployed_artifact = _prepare_and_request_deploy(service, business_id=business_id, site_id=site_id)
+    non_deployed_artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+
+    refresh_result = service.refresh_deploy_run_status(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=non_deployed_artifact.id,
+        principal_id="principal-1",
+    )
+    assert refresh_result.result.get("refresh_history_scope") == "latest_deploy_record"
+    assert refresh_result.result.get("current_deploy_https_ready") is True
+    assert refresh_result.result.get("current_live_url") == "https://sc-mechanical.site.mbsrn.com/"
+    assert publisher.current_live_probe_calls
+
+    workspace = service.get_workspace(business_id=business_id, site_id=site_id)
+    deploy_history = workspace.deploy_history_json or []
+    assert deploy_history
+    latest_entry = deploy_history[-1]
+    assert latest_entry.get("artifact_version_id") == deployed_artifact.id
+    assert latest_entry.get("current_deploy_https_ready") is True
+    assert latest_entry.get("current_live_url") == "https://sc-mechanical.site.mbsrn.com/"
+
+
+def test_refresh_deploy_status_metadata_missing_still_persists_current_live_probe_fields(
+    db_session,
+) -> None:
+    publisher = _RecordingGitHubPublisher(
+        deploy_workflow_run_id=910117,
+        deploy_workflow_run_status="in_progress",
+        current_live_probe_result={
+            "live_url": "https://sc-mechanical.site.mbsrn.com/",
+            "host_reachable": True,
+            "host_reachability_scheme": "https",
+            "deploy_https_ready": True,
+            "cert_identity_valid": True,
+            "https_probe_status_code": 200,
+            "source": "current_live_probe",
+            "checked_at": "2026-04-07T12:30:00+00:00",
+        },
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    artifact = _prepare_and_request_deploy(service, business_id=business_id, site_id=site_id)
+
+    workspace = service.get_workspace(business_id=business_id, site_id=site_id)
+    deploy_history = [dict(item) for item in (workspace.deploy_history_json or []) if isinstance(item, dict)]
+    assert deploy_history
+    latest_entry = dict(deploy_history[-1])
+    latest_entry["repo_owner"] = None
+    latest_entry["repo_name"] = None
+    latest_entry["workflow_id"] = None
+    latest_entry["workflow_identifier_used"] = None
+    latest_entry["workflow_file_path"] = None
+    latest_entry["ref"] = None
+    deploy_history[-1] = latest_entry
+    workspace.deploy_history_json = deploy_history
+    workspace.publish_config_json = {
+        "enabled": True,
+        "repo_owner": None,
+        "repo_name": None,
+        "branch": None,
+        "artifact_root": None,
+    }
+    workspace.deploy_config_json = {
+        "enabled": True,
+        "workflow_id": None,
+        "ref": None,
+    }
+    db_session.add(workspace)
+    db_session.commit()
+
+    refresh_result = service.refresh_deploy_run_status(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        principal_id="principal-1",
+    )
+    assert refresh_result.result.get("status") == "no_change"
+    assert refresh_result.result.get("no_change_reason") == "deploy_target_metadata_missing"
+    assert refresh_result.result.get("current_deploy_https_ready") is True
+    assert refresh_result.result.get("current_live_url") == "https://sc-mechanical.site.mbsrn.com/"
+    assert publisher.current_live_probe_calls
+
+    refreshed_workspace = service.get_workspace(business_id=business_id, site_id=site_id)
+    refreshed_history = refreshed_workspace.deploy_history_json or []
+    assert refreshed_history
+    refreshed_latest_entry = refreshed_history[-1]
+    assert refreshed_latest_entry.get("current_deploy_https_ready") is True
+    assert refreshed_latest_entry.get("current_live_url") == "https://sc-mechanical.site.mbsrn.com/"
+    assert refreshed_latest_entry.get("current_live_evidence_source") == "current_live_probe"
+
+
 def test_refresh_deploy_status_dns_mismatch_sets_dns_failure_and_blocks_https_ready(db_session) -> None:
     publisher = _RecordingGitHubPublisher(
         deploy_workflow_run_id=910001,

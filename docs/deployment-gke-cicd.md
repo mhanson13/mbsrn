@@ -193,6 +193,7 @@ Important state:
   - selected workflow failure remains historical evidence
   - current runtime state is derived from latest bounded HTTPS probe evidence when available
   - current runtime evidence precedence: `current_live_probe` -> `workflow_output` -> selected attempt -> summary fallback -> historical failure
+  - refresh is scoped to the active route/workspace site id and may fall back to the latest deploy record for that site when selected artifact history is missing
 - if selected workflow evidence collection failed but current live HTTPS probe succeeds, operator UI should report current runtime as healthy while preserving the failed selected attempt in history/diagnostics.
 - static-IP reconciliation rules:
   - static IP ensure/describe uses bounded re-describe before classifying `managed_site_static_ip_address_missing`

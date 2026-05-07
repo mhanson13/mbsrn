@@ -71,6 +71,7 @@ The dedicated migration route (`/sites/[site_id]/migration`) keeps primary opera
   - deploy surface: target/readiness on left, deploy availability + deploy actions on right
   - concise readiness state + one action/blocker line
   - deploy evidence state can show `Confirmed Live` when current live HTTPS probe evidence is healthy
+  - `Refresh Deploy Status` is scoped to the route site id; when selected artifact history is missing it can still refresh current-live evidence from the latest deploy record for that site
 - F. Advanced Diagnostics & History:
   - draft/provider execution metadata
   - media diagnostics

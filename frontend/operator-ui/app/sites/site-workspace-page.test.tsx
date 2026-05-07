@@ -1912,6 +1912,46 @@ describe("site migration workflow route", () => {
     );
   });
 
+  it("uses the route site id for deploy status refresh when global site selection differs", async () => {
+    const user = userEvent.setup();
+    const setSelectedSiteId = jest.fn();
+    navigationState.params = { site_id: "site-2" };
+    mockUseOperatorContext.mockReturnValue(
+      baseContext({
+        sites: [
+          buildSite({
+            id: "site-1",
+            display_name: "Lars Construction",
+            base_url: "https://lars-construction.com/",
+            normalized_domain: "lars-construction.com",
+          }),
+          buildSite({
+            id: "site-2",
+            display_name: "S&C Mechanical",
+            base_url: "https://sc-mechanical.com/",
+            normalized_domain: "sc-mechanical.com",
+          }),
+        ],
+        selectedSiteId: "site-1",
+        setSelectedSiteId,
+      }),
+    );
+
+    render(<SiteMigrationWorkflowPage />);
+
+    const refreshButton = await screen.findByTestId("migration-refresh-deploy-status-button");
+    await user.click(refreshButton);
+
+    await waitFor(() => expect(mockRefreshMigrationDeployStatus).toHaveBeenCalled());
+    expect(mockRefreshMigrationDeployStatus).toHaveBeenLastCalledWith(
+      "token-1",
+      "biz-1",
+      "site-2",
+      { artifact_version_id: "migration-artifact-1" },
+    );
+    expect(setSelectedSiteId).toHaveBeenCalledWith("site-2");
+  });
+
   it("shows repository provisioning guidance in destination diagnostics when publish will auto-create a missing repo", async () => {
     const user = userEvent.setup();
     mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(
