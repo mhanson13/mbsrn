@@ -188,6 +188,7 @@ Managed site deploy readiness requires successful HTTPS reachability, not just c
 Important state:
 - DNS/static IP/ingress/certificate checks can all be valid while `deploy_https_ready=false`.
 - In this state, deploy diagnostics should preserve bounded probe evidence in `https_probe_error_summary`.
+- `deploy_https_ready=false` with blank `https_probe_error_summary` is a diagnostics regression and should trigger workflow/template verification.
 - Expected reason-code families include:
   - `https_probe_failed_after_control_plane_ready`
   - `https_probe_timeout`

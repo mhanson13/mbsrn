@@ -23,6 +23,7 @@ from app.integrations.seo_migration_github_publisher import (
     _render_managed_deploy_workflow_yaml,
     _render_managed_gke_manifest_files,
     _classify_cloudsql_proxy_failure_from_log_text,
+    _derive_https_probe_error_summary_for_failure,
     _extract_resolve_live_url_state_from_log_text,
     _classify_rollout_blocker_hints_from_describe_outputs,
     _resolve_google_credential_principal,
@@ -5684,7 +5685,11 @@ def test_dispatch_deploy_classifies_failed_run_step_for_diagnostics(monkeypatch)
     assert result.workflow_run_id == 99994
     assert result.workflow_run_status == "completed"
     assert result.workflow_run_conclusion == "failure"
-    assert result.workflow_output is None
+    assert result.workflow_output is not None
+    assert result.workflow_output.get("deploy_https_ready") == "false"
+    assert result.workflow_output.get("https_probe_error_summary") == (
+        "reason=https_probe_failed_after_control_plane_ready;detail=probe_attempted_without_error_summary"
+    )
     assert result.workflow_run_failure_reason_code == "ingress_endpoint_not_ready"
     assert result.workflow_run_failure_stage == "ingress_evidence"
     assert result.workflow_run_failure_step == "Resolve live URL from ingress status"
@@ -6003,6 +6008,87 @@ def test_extract_resolve_live_url_state_from_log_text_parses_sanitized_probe_det
     assert state.get("deploy_https_ready") == "false"
     assert "https_probe_timeout" in str(state.get("https_probe_error_summary") or "")
     assert len(str(state.get("https_probe_error_summary") or "")) <= 240
+
+
+def test_derive_https_probe_error_summary_for_failure_maps_dns_reason() -> None:
+    summary = _derive_https_probe_error_summary_for_failure(
+        reason_code="dns_record_mismatch",
+        failure_stage="ingress_evidence",
+    )
+
+    assert summary == "reason=dns_not_ready;detail=dns_record_not_aligned_with_expected_ingress_target"
+
+
+def test_derive_https_probe_error_summary_for_failure_maps_timeout_reason() -> None:
+    summary = _derive_https_probe_error_summary_for_failure(
+        reason_code="https_probe_timeout",
+        failure_stage="ingress_evidence",
+    )
+
+    assert summary == "reason=https_probe_timeout;detail=https_probe_timed_out"
+
+
+def test_derive_https_probe_error_summary_for_failure_falls_back_for_ingress_stage_unknown_reason() -> None:
+    summary = _derive_https_probe_error_summary_for_failure(
+        reason_code="unknown_ingress_reason",
+        failure_stage="ingress_evidence",
+    )
+
+    assert summary == "reason=https_probe_failed_after_control_plane_ready;detail=probe_attempted_without_error_summary"
+
+
+def test_resolve_workflow_run_failure_details_backfills_blank_probe_summary_from_log_reason(monkeypatch) -> None:
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    target = _dispatch_target()
+
+    def _fake_request_json(*, method, path, expected_statuses=(200,), **kwargs):  # type: ignore[no-untyped-def]
+        del expected_statuses, kwargs
+        assert method == "GET"
+        if "/actions/runs/123/jobs" in path:
+            return {
+                "jobs": [
+                        {
+                            "id": 456,
+                            "name": "deploy",
+                            "conclusion": "failure",
+                            "steps": [
+                                {"name": "Unknown deploy failure step", "conclusion": "failure"},
+                            ],
+                        }
+                    ]
+                }
+        raise AssertionError(f"Unexpected JSON path: {path}")
+
+    def _fake_request_text(*, method, path, expected_statuses=(200,), **kwargs):  # type: ignore[no-untyped-def]
+        del expected_statuses, kwargs
+        assert method == "GET"
+        assert path.endswith("/actions/jobs/456/logs")
+        return "\n".join(
+            [
+                "deploy_runtime_reason_code=https_probe_timeout",
+                "resolve_live_url_state_host_reachable=false",
+                "resolve_live_url_state_deploy_https_ready=false",
+                "resolve_live_url_state_https_probe_error_summary=",
+            ]
+        )
+
+    monkeypatch.setattr(publisher, "_request_json", _fake_request_json)
+    monkeypatch.setattr(publisher, "_request_text", _fake_request_text)
+
+    reason_code, failure_stage, failed_step_name, workflow_output = publisher._resolve_workflow_run_failure_details(
+        target=target,
+        workflow_run_id=123,
+        workflow_run_status="completed",
+        workflow_run_conclusion="failure",
+    )
+
+    assert reason_code == "https_probe_timeout"
+    assert failure_stage == "ingress_evidence"
+    assert failed_step_name == "Unknown deploy failure step"
+    assert workflow_output is not None
+    assert workflow_output.get("deploy_https_ready") == "false"
+    assert workflow_output.get("host_reachable") == "false"
+    assert workflow_output.get("https_probe_error_summary") == "reason=https_probe_timeout;detail=https_probe_timed_out"
 
 
 def test_classify_cloudsql_proxy_failure_maps_managed_site_static_ip_missing_reason() -> None:
@@ -7319,6 +7405,11 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "backend_502_detected=false" in workflow_yaml
     assert "https_probe_attempted=false" in workflow_yaml
     assert "http_fallback_attempted=false" in workflow_yaml
+    assert "ensure_https_probe_error_summary() {" in workflow_yaml
+    assert "ensure_https_probe_error_summary" in workflow_yaml
+    assert "fallback_reason=\"dns_not_ready\"" in workflow_yaml
+    assert "fallback_reason=\"cert_not_ready\"" in workflow_yaml
+    assert "fallback_reason=\"host_resolution_pending\"" in workflow_yaml
     assert "if [ -z \"$preview_host\" ] && [ -n \"$ingress_spec_host\" ]; then" in workflow_yaml
     assert "Expected preview hostname responded over HTTPS" in workflow_yaml
     assert "Expected preview hostname responded over HTTP" in workflow_yaml
@@ -7582,6 +7673,11 @@ def test_rendered_managed_workflow_yaml_parses_embedded_certificate_evaluation_s
     assert "resolve_live_url_state_observed_managed_certificate_domains" in run_script
     assert "resolve_live_url_state_https_probe_error_summary" in run_script
     assert "set_https_probe_error_summary() {" in run_script
+    assert "ensure_https_probe_error_summary() {" in run_script
+    assert "fallback_reason=\"dns_not_ready\"" in run_script
+    assert "fallback_reason=\"cert_not_ready\"" in run_script
+    assert "fallback_reason=\"host_resolution_pending\"" in run_script
+    assert "ensure_https_probe_error_summary" in run_script
     assert "http_fallback_attempted=$http_fallback_attempted" in run_script
     assert "collect_resolve_live_url_evidence() {" in run_script
     assert "collect_resolve_live_url_evidence" in run_script

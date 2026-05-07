@@ -2187,6 +2187,7 @@ Resolve-live-url failure diagnostics are evidence-first:
 - failure-state trap fields (`resolve_live_url_state_*`) should include populated `expected_static_ip_address`, `dns_expected_ip`, `dns_observed_ip`, and ManagedCertificate status/domain fields when that evidence is available from cluster/GCP APIs.
 - empty trap fields now primarily indicate upstream evidence is genuinely unavailable (for example missing ingress/static-IP/hostname), not premature early exit ordering.
 - when `deploy_https_ready=false`, probe evidence is expected to remain populated via bounded `https_probe_error_summary` unless no probe was attempted (`https_probe_not_attempted`).
+- `deploy_https_ready=false` with blank `https_probe_error_summary` is treated as a diagnostics regression.
 - control-plane-ready but host-unreachable states are explicitly classified:
   - `https_probe_failed_after_control_plane_ready`
   - `https_probe_timeout`

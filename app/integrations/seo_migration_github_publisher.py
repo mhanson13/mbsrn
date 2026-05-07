@@ -3268,28 +3268,19 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 reason_code = cloudsql_reason_code
                 if cloudsql_failure_stage:
                     failure_stage = cloudsql_failure_stage
-        probe_failure_reason_codes = {
-            _DEPLOY_RUNTIME_REASON_INGRESS_BACKEND_502,
-            _DEPLOY_RUNTIME_REASON_REACHABLE_BUT_TLS_MISMATCH,
-            _DEPLOY_RUNTIME_REASON_HTTPS_PROBE_TIMEOUT,
-            _DEPLOY_RUNTIME_REASON_HTTPS_PROBE_EMPTY_REPLY,
-            _DEPLOY_RUNTIME_REASON_HTTPS_PROBE_NOT_ATTEMPTED,
-            _DEPLOY_RUNTIME_REASON_HTTPS_PROBE_FAILED_AFTER_CONTROL_PLANE_READY,
-        }
-        if reason_code in probe_failure_reason_codes:
+        ingress_failure_stages = {"ingress_verify", "ingress_evidence"}
+        if failure_stage in ingress_failure_stages:
             if workflow_output is None:
                 workflow_output = {}
             if "deploy_https_ready" not in workflow_output:
                 workflow_output["deploy_https_ready"] = "false"
             if "https_probe_error_summary" not in workflow_output:
-                if reason_code == _DEPLOY_RUNTIME_REASON_HTTPS_PROBE_NOT_ATTEMPTED:
-                    workflow_output["https_probe_error_summary"] = (
-                        "reason=https_probe_not_attempted;detail=https_probe_not_attempted"
-                    )
-                else:
-                    workflow_output["https_probe_error_summary"] = (
-                        f"reason={reason_code};detail=probe_failure_summary_unavailable"
-                    )
+                fallback_probe_summary = _derive_https_probe_error_summary_for_failure(
+                    reason_code=reason_code,
+                    failure_stage=failure_stage,
+                )
+                if fallback_probe_summary is not None:
+                    workflow_output["https_probe_error_summary"] = fallback_probe_summary
         return reason_code, failure_stage, failed_step_name, workflow_output
 
     def _classify_cloudsql_proxy_failure_from_job_logs(
@@ -9509,6 +9500,7 @@ def _render_managed_deploy_workflow_yaml(
         "          https_probe_error_summary=\"\"\n"
         "          https_probe_attempted=false\n"
         "          http_fallback_attempted=false\n"
+        "          control_plane_ready=false\n"
         "          live_url=\"\"\n"
         "          set_https_probe_error_summary() {\n"
         "            local probe_reason=\"$1\"\n"
@@ -9535,7 +9527,48 @@ def _render_managed_deploy_workflow_yaml(
         "            https_probe_error_summary=\"$https_probe_error_summary;detail=$probe_detail\"\n"
         "            https_probe_error_summary=\"$(echo \"$https_probe_error_summary\" | tr -d '\\r' | cut -c1-240)\"\n"
         "          }\n"
+        "          ensure_https_probe_error_summary() {\n"
+        "            if [ \"$deploy_https_ready\" = \"true\" ]; then\n"
+        "              return\n"
+        "            fi\n"
+        "            if [ -n \"$https_probe_error_summary\" ]; then\n"
+        "              return\n"
+        "            fi\n"
+        "            fallback_reason=\"\"\n"
+        "            fallback_detail=\"\"\n"
+        "            normalized_cert_status_local=\"$(echo \"${tls_certificate_status:-}\" | tr '[:lower:]' '[:upper:]' | tr -d '[:space:]')\"\n"
+        "            normalized_domain_status_local=\"$(echo \"${tls_domain_status:-}\" | tr '[:lower:]' '[:upper:]' | tr -d '[:space:]')\"\n"
+        "            if [ \"${https_probe_attempted:-false}\" = \"true\" ]; then\n"
+        "              if [ \"${control_plane_ready:-false}\" = \"true\" ]; then\n"
+        "                fallback_reason=\"https_probe_failed_after_control_plane_ready\"\n"
+        "                fallback_detail=\"probe_attempted_without_error_summary\"\n"
+        "              else\n"
+        "                fallback_reason=\"https_probe_failed\"\n"
+        "                fallback_detail=\"probe_attempted_without_error_summary\"\n"
+        "              fi\n"
+        "            elif [ \"${dns_record_matches_ingress:-false}\" != \"true\" ]; then\n"
+        "              fallback_reason=\"dns_not_ready\"\n"
+        "              fallback_detail=\"dns_record_not_aligned_with_expected_ingress_target\"\n"
+        "            elif [ -z \"${preview_host:-}\" ] || { [ -z \"${ingress_ip:-}\" ] && [ \"${host_reachable:-false}\" != \"true\" ]; }; then\n"
+        "              fallback_reason=\"host_resolution_pending\"\n"
+        "              fallback_detail=\"preview_host_or_ingress_not_ready\"\n"
+        "            elif [ \"${cert_identity_valid:-false}\" != \"true\" ] \\\n"
+        "              || [ \"$normalized_cert_status_local\" != \"ACTIVE\" ] \\\n"
+        "              || [ \"$normalized_domain_status_local\" != \"ACTIVE\" ]; then\n"
+        "              fallback_reason=\"cert_not_ready\"\n"
+        "              fallback_detail=\"managed_certificate_not_active_or_identity_mismatch\"\n"
+        "            else\n"
+        "              fallback_reason=\"https_probe_not_attempted\"\n"
+        "              fallback_detail=\"https_probe_not_attempted\"\n"
+        "            fi\n"
+        "            https_probe_error_summary=\"reason=$fallback_reason;detail=$fallback_detail\"\n"
+        "            if [ \"${https_probe_attempted:-false}\" = \"true\" ]; then\n"
+        "              https_probe_error_summary=\"$https_probe_error_summary;http_fallback_attempted=${http_fallback_attempted:-false}\"\n"
+        "            fi\n"
+        "            https_probe_error_summary=\"$(echo \"$https_probe_error_summary\" | tr -d '\\r' | cut -c1-240)\"\n"
+        "          }\n"
         "          emit_resolve_live_url_state() {\n"
+        "            ensure_https_probe_error_summary\n"
         "            echo \"resolve_live_url_state_host_reachable=$host_reachable\"\n"
         "            echo \"resolve_live_url_state_host_reachability_scheme=$host_reachability_scheme\"\n"
         "            echo \"resolve_live_url_state_live_url=$live_url\"\n"
@@ -11389,6 +11422,71 @@ def _extract_resolve_live_url_state_from_log_text(log_text: str | None) -> dict[
         output[normalized_key] = sanitized_value
 
     return output
+
+
+def _derive_https_probe_error_summary_for_failure(
+    *,
+    reason_code: str | None,
+    failure_stage: str | None,
+) -> str | None:
+    normalized_reason = (_coerce_string(reason_code) or "").strip().lower()
+    normalized_stage = (_coerce_string(failure_stage) or "").strip().lower()
+    if normalized_stage not in {"ingress_verify", "ingress_evidence"}:
+        return None
+
+    reason_to_summary: dict[str, str] = {
+        _DEPLOY_RUNTIME_REASON_HTTPS_PROBE_TIMEOUT: "https_probe_timeout",
+        _DEPLOY_RUNTIME_REASON_HTTPS_PROBE_EMPTY_REPLY: "https_probe_empty_reply",
+        _DEPLOY_RUNTIME_REASON_HTTPS_PROBE_NOT_ATTEMPTED: "https_probe_not_attempted",
+        _DEPLOY_RUNTIME_REASON_HTTPS_PROBE_FAILED_AFTER_CONTROL_PLANE_READY: (
+            "https_probe_failed_after_control_plane_ready"
+        ),
+        _DEPLOY_RUNTIME_REASON_INGRESS_BACKEND_502: "ingress_backend_502",
+        _DEPLOY_RUNTIME_REASON_REACHABLE_BUT_TLS_MISMATCH: "cert_not_ready",
+        _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_BOUND_TO_WRONG_SITE: "cert_not_ready",
+        _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_CERTIFICATE_ANNOTATION_MISMATCH: "cert_not_ready",
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_IDENTITY_MISMATCH: "cert_not_ready",
+        _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_PROVISIONING: "cert_not_ready",
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_FAILED_NOT_VISIBLE: "cert_not_ready",
+        _DEPLOY_DISPATCH_SERVICE_REASON_DNS_RECORD_MISMATCH: "dns_not_ready",
+        _DEPLOY_DISPATCH_SERVICE_REASON_DNS_POINTS_TO_OLD_INGRESS_IP: "dns_not_ready",
+        _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_IP_ASSIGNED_BUT_DNS_NOT_UPDATED: "dns_not_ready",
+        _DEPLOY_RUNTIME_REASON_INGRESS_PENDING_BUT_HOST_REACHABLE: "host_resolution_pending",
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_MISSING: "host_resolution_pending",
+        _DEPLOY_DISPATCH_SERVICE_REASON_EXPECTED_STATIC_IP_NOT_BOUND_TO_INGRESS: "host_resolution_pending",
+        _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_STATIC_IP_NOT_ALLOWED: "host_resolution_pending",
+        _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_STATIC_IP_CONFLICT: "host_resolution_pending",
+    }
+    summary_reason = reason_to_summary.get(normalized_reason)
+    if summary_reason is None:
+        if normalized_stage == "ingress_evidence":
+            summary_reason = "https_probe_failed_after_control_plane_ready"
+        else:
+            summary_reason = "host_resolution_pending"
+
+    detail = "probe_failure_summary_unavailable"
+    if summary_reason == "dns_not_ready":
+        detail = "dns_record_not_aligned_with_expected_ingress_target"
+    elif summary_reason == "cert_not_ready":
+        detail = "certificate_identity_or_status_not_ready"
+    elif summary_reason == "host_resolution_pending":
+        detail = "ingress_hostname_or_endpoint_not_ready"
+    elif summary_reason == "https_probe_not_attempted":
+        detail = "https_probe_not_attempted"
+    elif summary_reason == "https_probe_failed_after_control_plane_ready":
+        detail = "probe_attempted_without_error_summary"
+    elif summary_reason == "ingress_backend_502":
+        detail = "ingress_backend_returned_502"
+    elif summary_reason == "https_probe_timeout":
+        detail = "https_probe_timed_out"
+    elif summary_reason == "https_probe_empty_reply":
+        detail = "https_probe_returned_empty_reply"
+
+    summary = f"reason={summary_reason};detail={detail}"
+    sanitized_summary = _sanitize_github_error_message(summary, max_length=240)
+    if sanitized_summary:
+        return sanitized_summary
+    return "reason=https_probe_failed_after_control_plane_ready;detail=probe_failure_summary_unavailable"
 
 
 def _classify_rollout_blocker_hints_from_describe_outputs(
