@@ -330,6 +330,52 @@ describe("business profile callback notice UX", () => {
     expect(screen.getByText("GA4 is available for recommendation context.")).toBeInTheDocument();
   });
 
+  it("renders safely when GA4 scope metadata fields are missing or null", async () => {
+    mockUseOperatorContext.mockReturnValue({
+      loading: false,
+      error: null,
+      token: "token-1",
+      businessId: "biz-1",
+      sites: [
+        {
+          id: "site-1",
+          display_name: "Main Site",
+          normalized_domain: "example.com",
+          business_id: "biz-1",
+          ga4_property_id: "123456789",
+        },
+      ],
+      selectedSiteId: "site-1",
+      setSelectedSiteId: jest.fn(),
+      refreshSites: jest.fn(),
+    });
+    mockFetchGoogleBusinessProfileConnection.mockResolvedValue(
+      buildDisconnectedConnection({
+        ga4_scope_granted: undefined,
+        required_ga4_scope: undefined,
+      }),
+    );
+    mockFetchSiteAnalyticsSummary.mockResolvedValue(
+      buildSiteAnalyticsSummary({
+        ga4_status: "error",
+        ga4_error_reason: "missing_oauth_scope",
+        ga4_health: null,
+      }),
+    );
+
+    render(<BusinessProfilePage />);
+
+    expect(await screen.findByTestId("google-profile-ga4-health")).toBeInTheDocument();
+    expect(screen.getByText("GA4 property health")).toBeInTheDocument();
+    expect(screen.getByText("GA4 authorization missing")).toBeInTheDocument();
+    expect(
+      screen.getByText("GA4 authorization is missing. Reconnect Google with Analytics read-only access."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Next: Verify runtime GA4 credentials include Analytics read-only scope."),
+    ).toBeInTheDocument();
+  });
+
   it("shows reconnect-with-ga4-access guidance when GA4 scope is missing", async () => {
     mockUseOperatorContext.mockReturnValue({
       loading: false,

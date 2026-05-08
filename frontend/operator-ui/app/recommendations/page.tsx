@@ -806,12 +806,16 @@ function deriveRecommendationCompetitorInsight(item: Recommendation): string | n
   return truncateRecommendationEvidence(value, 220);
 }
 
+function normalizeLowerCaseString(value: unknown): string {
+  return typeof value === "string" ? value.trim().toLowerCase() : "";
+}
+
 function normalizeRecommendationMeasurementContext(item: Recommendation): RecommendationMeasurementContextView | null {
   const raw = item.recommendation_measurement_context;
   if (!raw || typeof raw !== "object") {
     return null;
   }
-  const measurementStatus = (raw.measurement_status || "").trim().toLowerCase();
+  const measurementStatus = normalizeLowerCaseString(raw.measurement_status);
   if (
     measurementStatus !== "available"
     && measurementStatus !== "no_match"
@@ -1009,7 +1013,7 @@ function normalizeRecommendationSearchConsoleContext(
   if (!raw || typeof raw !== "object") {
     return null;
   }
-  const searchConsoleStatus = (raw.search_console_status || "").trim().toLowerCase();
+  const searchConsoleStatus = normalizeLowerCaseString(raw.search_console_status);
   if (
     searchConsoleStatus !== "available"
     && searchConsoleStatus !== "no_match"

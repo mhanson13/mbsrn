@@ -830,6 +830,7 @@ Recommendation-surface behavior:
 - expanded recommendation details now include a compact GA4 insight availability line when measurement context is available:
   - `GA4 insights available for this site.`
 - omission/unavailable lines from Phase 1 remain in place for `not_configured`/`unavailable` states.
+- null/partial GA4 measurement metadata is treated as unavailable/no-match context and does not break recommendation page rendering.
 
 ### GA4 Last Data Seen + Freshness
 

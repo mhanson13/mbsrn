@@ -53,6 +53,7 @@ Boundary:
 - no global/default GA4 property fallback is used for site health
 - no tokens/credentials/raw Google error payloads are exposed
 - health also includes bounded auth-mode context (`user_oauth`, `service_account`, `adc`, etc.) so operators know whether to reconnect OAuth or grant property Viewer access
+- missing or partial GA4 scope/health metadata degrades to safe status messaging and does not block Google Profile page rendering
 
 ## GA4 Insight Surface Boundary (Phase 2)
 

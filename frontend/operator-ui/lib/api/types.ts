@@ -973,36 +973,36 @@ export interface SiteGA4Health {
 }
 
 export interface SiteGA4TopLandingPageInsight {
-  path: string;
-  title: string | null;
-  sessions: number | null;
-  active_users: number | null;
-  views: number | null;
-  engagement_rate: number | null;
-  average_engagement_time_seconds: number | null;
-  trend_label: "improving" | "declining" | "steady" | "unknown";
-  operator_hint: string | null;
+  path?: string | null;
+  title?: string | null;
+  sessions?: number | null;
+  active_users?: number | null;
+  views?: number | null;
+  engagement_rate?: number | null;
+  average_engagement_time_seconds?: number | null;
+  trend_label?: "improving" | "declining" | "steady" | "unknown" | null;
+  operator_hint?: string | null;
 }
 
 export interface SiteGA4TrafficTrendInsight {
-  current_sessions: number | null;
-  previous_sessions: number | null;
-  sessions_delta_percent: number | null;
-  current_active_users: number | null;
-  previous_active_users: number | null;
-  active_users_delta_percent: number | null;
-  trend_label: "improving" | "declining" | "steady" | "unknown";
-  operator_hint: string | null;
+  current_sessions?: number | null;
+  previous_sessions?: number | null;
+  sessions_delta_percent?: number | null;
+  current_active_users?: number | null;
+  previous_active_users?: number | null;
+  active_users_delta_percent?: number | null;
+  trend_label?: "improving" | "declining" | "steady" | "unknown" | null;
+  operator_hint?: string | null;
 }
 
 export interface SiteGA4EngagementTrendInsight {
-  current_engagement_rate: number | null;
-  previous_engagement_rate: number | null;
-  engagement_rate_delta_percent: number | null;
-  current_average_engagement_time_seconds: number | null;
-  previous_average_engagement_time_seconds: number | null;
-  trend_label: "improving" | "declining" | "steady" | "unknown";
-  operator_hint: string | null;
+  current_engagement_rate?: number | null;
+  previous_engagement_rate?: number | null;
+  engagement_rate_delta_percent?: number | null;
+  current_average_engagement_time_seconds?: number | null;
+  previous_average_engagement_time_seconds?: number | null;
+  trend_label?: "improving" | "declining" | "steady" | "unknown" | null;
+  operator_hint?: string | null;
 }
 
 export interface SiteGA4Insights {
@@ -1015,13 +1015,13 @@ export interface SiteGA4Insights {
     | "no_data"
     | "unavailable"
     | "unknown";
-  source: "site_property" | "unavailable";
-  date_range_label: string | null;
-  checked_at: string | null;
-  top_landing_pages: SiteGA4TopLandingPageInsight[];
-  traffic_trend: SiteGA4TrafficTrendInsight | null;
-  engagement_trend: SiteGA4EngagementTrendInsight | null;
-  message: string | null;
+  source?: "site_property" | "unavailable" | null;
+  date_range_label?: string | null;
+  checked_at?: string | null;
+  top_landing_pages?: SiteGA4TopLandingPageInsight[] | null;
+  traffic_trend?: SiteGA4TrafficTrendInsight | null;
+  engagement_trend?: SiteGA4EngagementTrendInsight | null;
+  message?: string | null;
 }
 
 export interface SiteAnalyticsSummaryResponse {
@@ -2523,8 +2523,8 @@ export interface GoogleBusinessProfileConnectionStatusResponse {
   reconnect_required: boolean;
   required_scopes_satisfied: boolean;
   token_status: GoogleBusinessProfileTokenStatus;
-  ga4_scope_granted: boolean | null;
-  required_ga4_scope: string;
+  ga4_scope_granted?: boolean | null;
+  required_ga4_scope?: string | null;
 }
 
 export interface GoogleBusinessProfileConnectStartResponse {
@@ -2532,9 +2532,9 @@ export interface GoogleBusinessProfileConnectStartResponse {
   state_expires_at: string;
   provider: string;
   required_scope: string;
-  required_scopes: string[];
-  ga4_scope_requested: boolean;
-  required_ga4_scope: string;
+  required_scopes?: string[] | null;
+  ga4_scope_requested?: boolean | null;
+  required_ga4_scope?: string | null;
 }
 
 export interface GoogleBusinessProfileDisconnectResponse {

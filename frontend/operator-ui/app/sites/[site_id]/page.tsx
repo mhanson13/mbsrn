@@ -1237,6 +1237,25 @@ function ga4DiagnosticReasonMessage(
   return "GA4 connection failed for an unknown reason. Verify the site property ID and workspace GA4 access.";
 }
 
+function normalizeLowerCaseString(value: unknown): string {
+  return typeof value === "string" ? value.trim().toLowerCase() : "";
+}
+
+function normalizeOptionalString(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const normalized = value.trim();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function normalizeNumericValue(value: unknown): number | null {
+  if (typeof value !== "number" || Number.isNaN(value) || !Number.isFinite(value)) {
+    return null;
+  }
+  return value;
+}
+
 function inferGa4HealthStatus(
   status: SiteAnalyticsSummaryResponse["ga4_status"] | string | null | undefined,
   reason: SiteAnalyticsSummaryResponse["ga4_error_reason"] | null | undefined,
@@ -1250,8 +1269,8 @@ function inferGa4HealthStatus(
   | "invalid_property"
   | "no_data"
   | "unknown" {
-  const normalizedStatus = (status || "").trim().toLowerCase();
-  const normalizedReason = (reason || "").trim().toLowerCase();
+  const normalizedStatus = normalizeLowerCaseString(status);
+  const normalizedReason = normalizeLowerCaseString(reason);
   if (normalizedStatus === "connected") {
     return normalizedReason === "no_data" ? "no_data" : "reachable";
   }
@@ -1423,8 +1442,106 @@ function ga4InsightsToneForTrend(
   return "neutral";
 }
 
+function normalizeGa4TrendLabel(value: unknown): "improving" | "declining" | "steady" | "unknown" {
+  const normalized = normalizeLowerCaseString(value);
+  if (normalized === "improving" || normalized === "declining" || normalized === "steady") {
+    return normalized;
+  }
+  return "unknown";
+}
+
+function normalizeGa4InsightsStatusValue(
+  value: unknown,
+): "available" | "not_configured" | "missing_oauth_scope" | "permission_denied" | "invalid_property" | "no_data"
+  | "unavailable" | "unknown" | null {
+  const normalized = normalizeLowerCaseString(value);
+  if (
+    normalized === "available"
+    || normalized === "not_configured"
+    || normalized === "missing_oauth_scope"
+    || normalized === "permission_denied"
+    || normalized === "invalid_property"
+    || normalized === "no_data"
+    || normalized === "unavailable"
+    || normalized === "unknown"
+  ) {
+    return normalized;
+  }
+  return null;
+}
+
+function normalizeGa4TopLandingPages(
+  value: unknown,
+): Array<{ path: string; sessions: number | null; trend_label: "improving" | "declining" | "steady" | "unknown"; operator_hint: string | null }> {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
+    .map((item) => ({
+      path: normalizeOptionalString(item.path) || "/",
+      sessions: normalizeNumericValue(item.sessions),
+      trend_label: normalizeGa4TrendLabel(item.trend_label),
+      operator_hint: normalizeOptionalString(item.operator_hint),
+    }));
+}
+
+function normalizeGa4TrafficTrend(
+  value: unknown,
+): {
+  current_sessions: number | null;
+  previous_sessions: number | null;
+  sessions_delta_percent: number | null;
+  current_active_users: number | null;
+  previous_active_users: number | null;
+  active_users_delta_percent: number | null;
+  trend_label: "improving" | "declining" | "steady" | "unknown";
+  operator_hint: string | null;
+} | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const raw = value as Record<string, unknown>;
+  return {
+    current_sessions: normalizeNumericValue(raw.current_sessions),
+    previous_sessions: normalizeNumericValue(raw.previous_sessions),
+    sessions_delta_percent: normalizeNumericValue(raw.sessions_delta_percent),
+    current_active_users: normalizeNumericValue(raw.current_active_users),
+    previous_active_users: normalizeNumericValue(raw.previous_active_users),
+    active_users_delta_percent: normalizeNumericValue(raw.active_users_delta_percent),
+    trend_label: normalizeGa4TrendLabel(raw.trend_label),
+    operator_hint: normalizeOptionalString(raw.operator_hint),
+  };
+}
+
+function normalizeGa4EngagementTrend(
+  value: unknown,
+): {
+  current_engagement_rate: number | null;
+  previous_engagement_rate: number | null;
+  engagement_rate_delta_percent: number | null;
+  current_average_engagement_time_seconds: number | null;
+  previous_average_engagement_time_seconds: number | null;
+  trend_label: "improving" | "declining" | "steady" | "unknown";
+  operator_hint: string | null;
+} | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const raw = value as Record<string, unknown>;
+  return {
+    current_engagement_rate: normalizeNumericValue(raw.current_engagement_rate),
+    previous_engagement_rate: normalizeNumericValue(raw.previous_engagement_rate),
+    engagement_rate_delta_percent: normalizeNumericValue(raw.engagement_rate_delta_percent),
+    current_average_engagement_time_seconds: normalizeNumericValue(raw.current_average_engagement_time_seconds),
+    previous_average_engagement_time_seconds: normalizeNumericValue(raw.previous_average_engagement_time_seconds),
+    trend_label: normalizeGa4TrendLabel(raw.trend_label),
+    operator_hint: normalizeOptionalString(raw.operator_hint),
+  };
+}
+
 function formatGa4PercentValue(value: number | null | undefined): string {
-  if (typeof value !== "number" || Number.isNaN(value)) {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
     return "Not available";
   }
   const rounded = Math.round(value * 1000) / 10;
@@ -1433,7 +1550,7 @@ function formatGa4PercentValue(value: number | null | undefined): string {
 }
 
 function formatGa4DurationSeconds(value: number | null | undefined): string {
-  if (typeof value !== "number" || Number.isNaN(value)) {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
     return "Not available";
   }
   const rounded = Math.round(value);
@@ -1441,7 +1558,7 @@ function formatGa4DurationSeconds(value: number | null | undefined): string {
 }
 
 function formatGa4TopLandingPagesCompactList(
-  pages: Array<{ path: string; sessions: number | null }>,
+  pages: Array<{ path?: string | null; sessions?: number | null }>,
 ): string {
   if (!pages.length) {
     return "No landing-page summaries returned for this period.";
@@ -1449,7 +1566,7 @@ function formatGa4TopLandingPagesCompactList(
   return pages
     .slice(0, 3)
     .map((page) => {
-      const normalizedPath = (page.path || "").trim() || "/";
+      const normalizedPath = normalizeOptionalString(page.path) || "/";
       const sessions = Math.max(0, Number(page.sessions) || 0);
       return `${normalizedPath} (${sessions.toLocaleString()} sessions)`;
     })
@@ -2819,7 +2936,7 @@ function normalizeRecommendationMeasurementContext(
   if (!raw || typeof raw !== "object") {
     return null;
   }
-  const measurementStatus = (raw.measurement_status || "").trim().toLowerCase();
+  const measurementStatus = normalizeLowerCaseString(raw.measurement_status);
   if (
     measurementStatus !== "available"
     && measurementStatus !== "no_match"
@@ -3096,7 +3213,7 @@ function normalizeRecommendationSearchConsoleContext(
   if (!raw || typeof raw !== "object") {
     return null;
   }
-  const searchConsoleStatus = (raw.search_console_status || "").trim().toLowerCase();
+  const searchConsoleStatus = normalizeLowerCaseString(raw.search_console_status);
   if (
     searchConsoleStatus !== "available"
     && searchConsoleStatus !== "no_match"
@@ -7148,7 +7265,9 @@ export default function SiteWorkspacePage() {
     || ga4DiagnosticReasonMessage(ga4ConnectivityReason)
     || "GA4 health is unavailable for this site.";
   const ga4HealthNextAction = ga4HealthNextActionMessage(ga4HealthStatus);
-  const ga4Insights = siteAnalyticsSummary?.ga4_insights || null;
+  const ga4Insights = siteAnalyticsSummary?.ga4_insights && typeof siteAnalyticsSummary.ga4_insights === "object"
+    ? siteAnalyticsSummary.ga4_insights
+    : null;
   const ga4InsightsStatus: "available"
     | "not_configured"
     | "missing_oauth_scope"
@@ -7157,17 +7276,8 @@ export default function SiteWorkspacePage() {
     | "no_data"
     | "unavailable"
     | "unknown" = (() => {
-    const normalizedStatus = (ga4Insights?.status || "").trim().toLowerCase();
-    if (
-      normalizedStatus === "available"
-      || normalizedStatus === "not_configured"
-      || normalizedStatus === "missing_oauth_scope"
-      || normalizedStatus === "permission_denied"
-      || normalizedStatus === "invalid_property"
-      || normalizedStatus === "no_data"
-      || normalizedStatus === "unavailable"
-      || normalizedStatus === "unknown"
-    ) {
+    const normalizedStatus = normalizeGa4InsightsStatusValue(ga4Insights?.status);
+    if (normalizedStatus) {
       return normalizedStatus;
     }
     if (ga4HealthStatus === "reachable" || ga4HealthStatus === "configured") {
@@ -7194,12 +7304,13 @@ export default function SiteWorkspacePage() {
     return "unknown";
   })();
   const ga4InsightsStatusLabel = formatGa4InsightsStatusLabel(ga4InsightsStatus);
-  const ga4InsightsDateRangeLabel = ga4Insights?.date_range_label || "Last 7 days vs previous 7 days";
-  const ga4InsightsBaseMessage = ga4Insights?.message
+  const ga4InsightsDateRangeLabel = normalizeOptionalString(ga4Insights?.date_range_label)
+    || "Last 7 days vs previous 7 days";
+  const ga4InsightsBaseMessage = normalizeOptionalString(ga4Insights?.message)
     || ga4HealthMessage
     || "GA4 insights are unavailable for this site.";
   const ga4InsightsUnavailableDetail = `${ga4InsightsBaseMessage} ${ga4InsightsDateRangeLabel}`.trim();
-  const ga4TopLandingPages = (ga4Insights?.top_landing_pages || []).slice(0, 5);
+  const ga4TopLandingPages = normalizeGa4TopLandingPages(ga4Insights?.top_landing_pages).slice(0, 5);
   const ga4TopLandingLeadHint = ga4TopLandingPages[0]?.operator_hint || null;
   const ga4TopLandingValue = ga4InsightsStatus === "available"
     ? `${ga4TopLandingPages.length} page${ga4TopLandingPages.length === 1 ? "" : "s"}`
@@ -7212,7 +7323,7 @@ export default function SiteWorkspacePage() {
   const ga4TopLandingTone = ga4InsightsStatus === "available"
     ? ga4InsightsToneForTrend(ga4TopLandingPages[0]?.trend_label)
     : ga4InsightsToneForStatus(ga4InsightsStatus);
-  const ga4TrafficTrend = ga4Insights?.traffic_trend || null;
+  const ga4TrafficTrend = normalizeGa4TrafficTrend(ga4Insights?.traffic_trend);
   const ga4TrafficTrendValue = ga4InsightsStatus === "available" && ga4TrafficTrend
     ? `${formatSignedPercent(ga4TrafficTrend.sessions_delta_percent)} sessions`
     : ga4InsightsStatusLabel;
@@ -7226,7 +7337,7 @@ export default function SiteWorkspacePage() {
   const ga4TrafficTrendTone = ga4InsightsStatus === "available"
     ? ga4InsightsToneForTrend(ga4TrafficTrend?.trend_label)
     : ga4InsightsToneForStatus(ga4InsightsStatus);
-  const ga4EngagementTrend = ga4Insights?.engagement_trend || null;
+  const ga4EngagementTrend = normalizeGa4EngagementTrend(ga4Insights?.engagement_trend);
   const ga4EngagementTrendValue = ga4InsightsStatus === "available" && ga4EngagementTrend
     ? `${formatSignedPercent(ga4EngagementTrend.engagement_rate_delta_percent)} engagement`
     : ga4InsightsStatusLabel;

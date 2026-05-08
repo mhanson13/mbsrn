@@ -41,6 +41,7 @@ import type {
   SearchConsoleSiteSummaryResponse,
   SEOAuditRunListResponse,
   SEOSite,
+  SiteGA4Insights,
   SiteAnalyticsSummaryResponse,
 } from "../../lib/api/types";
 
@@ -254,6 +255,27 @@ describe("site workspace modernized structure", () => {
     expect(ga4SummaryCard).toHaveTextContent("Add a GA4 property ID for this site.");
   });
 
+  it("renders safely when GA4 health and GA4 insights are null", async () => {
+    seedRichWorkspaceData();
+    mockFetchSiteAnalyticsSummary.mockResolvedValue(
+      buildSiteAnalyticsSummary({
+        ga4_health: null,
+        ga4_insights: null,
+      }),
+    );
+
+    render(<SiteWorkspacePage />);
+
+    const ga4SummaryCard = await screen.findByTestId("workspace-summary-ga4-onboarding");
+    const topLandingCard = screen.getByTestId("workspace-summary-ga4-top-landing-pages");
+    const trafficCard = screen.getByTestId("workspace-summary-traffic");
+    const engagementCard = screen.getByTestId("workspace-summary-ga4-engagement-trend");
+    expect(ga4SummaryCard).toHaveTextContent("Reachable");
+    expect(topLandingCard).toHaveTextContent("0 pages");
+    expect(trafficCard).toHaveTextContent("Available");
+    expect(engagementCard).toHaveTextContent("Available");
+  });
+
   it("renders compact GA4 insight cards in the workspace snapshot when insights are available", async () => {
     seedRichWorkspaceData();
     mockFetchSiteAnalyticsSummary.mockResolvedValue(
@@ -373,6 +395,51 @@ describe("site workspace modernized structure", () => {
       expect(engagementCard).toHaveTextContent("+9.6% engagement");
       expect(engagementCard).toHaveTextContent("Engagement 57%");
     });
+  });
+
+  it("renders safely with partial or malformed GA4 insight payload shapes", async () => {
+    seedRichWorkspaceData();
+    mockFetchSiteAnalyticsSummary.mockResolvedValue(
+      buildSiteAnalyticsSummary({
+        ga4_health: {
+          ga4_configured: true,
+          ga4_property_id_present: true,
+          ga4_property_verified: true,
+          ga4_reachable: true,
+          ga4_data_available: true,
+          ga4_last_checked_at: "2026-03-21T17:30:00Z",
+          ga4_health_status: "reachable",
+          ga4_health_reason: null,
+          ga4_health_message: "GA4 is available for recommendation context.",
+          ga4_health_source: "site_property",
+          ga4_scope_granted: null,
+          ga4_required_scope: "https://www.googleapis.com/auth/analytics.readonly",
+          ga4_auth_mode: "service_account",
+        },
+        ga4_insights: {
+          status: "available",
+          source: "site_property",
+          date_range_label: null,
+          checked_at: null,
+          top_landing_pages: null,
+          traffic_trend: { current_sessions: 120 } as unknown as SiteGA4Insights["traffic_trend"],
+          engagement_trend: { current_engagement_rate: 0.42 } as unknown as SiteGA4Insights["engagement_trend"],
+          message: null,
+        },
+      }),
+    );
+
+    render(<SiteWorkspacePage />);
+
+    const topLandingCard = await screen.findByTestId("workspace-summary-ga4-top-landing-pages");
+    const trafficCard = screen.getByTestId("workspace-summary-traffic");
+    const engagementCard = screen.getByTestId("workspace-summary-ga4-engagement-trend");
+    expect(topLandingCard).toBeInTheDocument();
+    expect(trafficCard).toBeInTheDocument();
+    expect(engagementCard).toBeInTheDocument();
+    expect(topLandingCard).not.toHaveTextContent("undefined");
+    expect(trafficCard).not.toHaveTextContent("NaN");
+    expect(engagementCard).not.toHaveTextContent("NaN");
   });
 
   it.each([

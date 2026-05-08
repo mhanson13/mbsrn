@@ -825,6 +825,56 @@ describe("recommendations queue optimistic workflows", () => {
     );
   });
 
+  it("renders safely when recommendation GA4 measurement context is null or partial", async () => {
+    const malformedRecommendation = {
+      ...createRecommendation("rec-ga4-null-1", "open", "medium", "Malformed GA4 context"),
+      recommendation_measurement_context: {
+        measurement_status: 42,
+      } as unknown as Recommendation["recommendation_measurement_context"],
+    } satisfies Recommendation;
+    const partialRecommendation = {
+      ...createRecommendation("rec-ga4-null-2", "open", "medium", "Partial GA4 context"),
+      recommendation_measurement_context: {
+        measurement_status: "available",
+        sessions: {
+          current: null,
+          previous: null,
+          delta_absolute: null,
+          delta_percent: null,
+        },
+        pageviews: null,
+      } as unknown as Recommendation["recommendation_measurement_context"],
+    } satisfies Recommendation;
+
+    mockFetchRecommendations.mockResolvedValueOnce(
+      createListResponse([malformedRecommendation, partialRecommendation], {
+        total: 2,
+        open: 2,
+        accepted: 0,
+        dismissed: 0,
+        high_priority: 0,
+      }),
+    );
+
+    const user = userEvent.setup();
+    render(<RecommendationsPage />);
+
+    const malformedCell = await screen.findByTestId("recommendation-decisiveness-rec-ga4-null-1");
+    await user.click(within(malformedCell).getByRole("button", { name: "View details" }));
+    expect(
+      screen.queryByTestId("recommendation-expanded-measurement-health-rec-ga4-null-1"),
+    ).not.toBeInTheDocument();
+
+    const partialCell = screen.getByTestId("recommendation-decisiveness-rec-ga4-null-2");
+    await user.click(within(partialCell).getByRole("button", { name: "View details" }));
+    expect(screen.getByTestId("recommendation-expanded-measurement-health-rec-ga4-null-2")).toHaveTextContent(
+      "GA4 insights available for this site.",
+    );
+    expect(
+      screen.queryByTestId("recommendation-expanded-measurement-context-rec-ga4-null-2"),
+    ).not.toBeInTheDocument();
+  });
+
   it("renders execution-readiness guidance only in expanded recommendation details", async () => {
     const recommendation = {
       ...createRecommendation("rec-execution-1", "open", "high", "Clarify metadata for service pages"),

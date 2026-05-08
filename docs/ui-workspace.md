@@ -47,6 +47,7 @@ Behavior:
 - GA4 health is derived from the selected site property only.
 - No global/default GA4 property fallback is used for site-level health/readiness context.
 - Missing or unavailable GA4 context does not block workspace loading or recommendation rendering.
+- Null/partial GA4 health or insight payloads degrade to bounded fallback labels/messages (`Unknown`, `Not available`, `GA4 unavailable`) instead of breaking workspace rendering.
 - Recommendation detail surfaces now show explicit GA4-context omission/unavailable messaging instead of silent absence.
 - Workspace Snapshot now includes compact GA4 insight cards:
   - `Top landing pages` (bounded to top 5 shown)

@@ -194,7 +194,7 @@ export default function BusinessProfilePage() {
   const selectedSiteGa4PropertyId = selectedSite?.ga4_property_id || null;
   const ga4HealthStatus = ga4HealthSummary?.ga4_health?.ga4_health_status
     || inferGa4HealthStatus(ga4HealthSummary);
-  const ga4AuthMode = ga4HealthSummary?.ga4_health?.ga4_auth_mode || "unknown";
+  const ga4AuthMode = normalizeGa4AuthMode(ga4HealthSummary?.ga4_health?.ga4_auth_mode);
   const ga4HealthLabel = formatGa4HealthStatusLabel(ga4HealthStatus);
   const ga4HealthMessage = ga4HealthSummary?.ga4_health?.ga4_health_message
     || ga4DiagnosticReasonMessage(ga4HealthSummary?.ga4_error_reason)
@@ -916,6 +916,26 @@ function locationBadge(location: GoogleBusinessProfileFlatLocation): { label: st
   return { label: "Unknown", className: "badge-muted" };
 }
 
+function normalizeLowerCaseString(value: unknown): string {
+  return typeof value === "string" ? value.trim().toLowerCase() : "";
+}
+
+function normalizeGa4AuthMode(
+  value: unknown,
+): "user_oauth" | "service_account" | "adc" | "mock" | "unavailable" | "unknown" {
+  const normalized = normalizeLowerCaseString(value);
+  if (
+    normalized === "user_oauth"
+    || normalized === "service_account"
+    || normalized === "adc"
+    || normalized === "mock"
+    || normalized === "unavailable"
+  ) {
+    return normalized;
+  }
+  return "unknown";
+}
+
 function inferGa4HealthStatus(
   summary: SiteAnalyticsSummaryResponse | null,
 ):
@@ -931,8 +951,8 @@ function inferGa4HealthStatus(
   if (!summary) {
     return "unknown";
   }
-  const status = (summary.ga4_status || "").trim().toLowerCase();
-  const reason = (summary.ga4_error_reason || "").trim().toLowerCase();
+  const status = normalizeLowerCaseString(summary.ga4_status);
+  const reason = normalizeLowerCaseString(summary.ga4_error_reason);
   if (status === "connected") {
     return reason === "no_data" ? "no_data" : "reachable";
   }
