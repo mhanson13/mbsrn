@@ -13,7 +13,7 @@ A bounded operator-journey pass aligned site-level recommendation flows across:
 ### What changed
 
 - Site operator page was simplified to avoid duplicated recommendation framing.
-- Recommendation execution remains the single primary workflow lane in the site workspace.
+- Site workspace remains a command center/launchpad; recommendation execution stays on dedicated recommendation routes.
 - Migration was moved out of the main site workspace into the dedicated route:
   - `/sites/[site_id]/migration`
 - Site workspace now keeps a concise migration status + launch CTA instead of an embedded migration console.
@@ -159,18 +159,19 @@ Boundary:
 - presentation-only
 - no recommendation generation, run/narrative behavior, polling, or mutation semantics changed
 
-## Site Workspace Recommendation Presentation Expectations
+## Site Workspace Recommendation Boundary Expectations
 
-The site operator route (`/sites/[site_id]`) now frames recommendation execution as a distinct operational lane:
+The site operator route (`/sites/[site_id]`) is a command-center launchpad, not a recommendation execution surface:
 
 - top-level hero/control surface communicates current urgency and recommended next action
-- recommendation execution remains the primary workflow lane on the page
-- supporting context (competitor/trust/activity) remains visible but visually secondary to recommendation execution
+- recommendation content on Site Workspace is compact summary/launcher framing only
+- full recommendation execution (queue, decisioning, run detail, narratives) remains on `/recommendations` routes
+- supporting context (competitor/trust/activity) remains summary-level on Site Workspace
 - migration is launched from a dedicated CTA to `/sites/[site_id]/migration` instead of an embedded tab
 
-This is still presentation-only:
-- recommendation generation, run/narrative behavior, action semantics, and polling contracts are unchanged.
-- no backend/provider/API behavior changed.
+This remains presentation-only:
+- recommendation generation, run/narrative behavior, action semantics, and polling contracts are unchanged
+- no backend/provider/API behavior changed
 
 ## Action Control Layer (Frontend)
 
@@ -203,6 +204,10 @@ Derived from existing action-state cues:
 - `blocked_unavailable`: blocked control with explicit reason
 - `completed_acted`: completed muted control, optional review output
 - `informational_only`: non-actionable informational/blocked cue
+
+Operator wording boundary:
+- recommendation surfaces label this state as `Recommendation output ready`
+- automation surfaces label orchestration state as `Workflow output ready`
 
 ### Operator-visible behavior
 

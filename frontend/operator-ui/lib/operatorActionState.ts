@@ -88,10 +88,10 @@ export function deriveRecommendationOperatorActionState(
     if (input.automationLinkedOutput) {
       return cue(
         "automation_output_ready",
-        "Automation output ready",
+        "Recommendation output ready",
         "badge badge-success",
         "success",
-        "Automation produced this recommendation output for operator review.",
+        "Generated recommendation output is ready for operator review.",
         "Review details and decide whether to apply or dismiss.",
       );
     }
@@ -178,10 +178,10 @@ export function deriveRecommendationRunOperatorActionState(
     if (input.producedRecommendationCount > 0 && input.automationLinkedOutput) {
       return cue(
         "automation_output_ready",
-        "Automation output ready",
+        "Recommendation output ready",
         "badge badge-success",
         "success",
-        "Completed run produced recommendation output linked to automation execution.",
+        "Completed run produced recommendation output linked to workflow execution.",
         "Review generated recommendations and apply highest-priority actions first.",
       );
     }
@@ -246,12 +246,12 @@ export function deriveAutomationRunOperatorActionState(
   if (normalizedStatus === "completed" && hasLinkedOutput) {
     return cue(
       "automation_output_ready",
-      "Automation output ready",
+      "Workflow output ready",
       "badge badge-success",
       "success",
       input.hasNarrativeOutput
-        ? "Automation completed with linked recommendation and narrative outputs."
-        : "Automation completed with linked recommendation output.",
+        ? "Workflow completed with linked recommendation and narrative outputs."
+        : "Workflow completed with linked recommendation output.",
       "Review linked outputs and confirm the next recommendation action.",
     );
   }

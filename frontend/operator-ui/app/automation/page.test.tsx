@@ -263,7 +263,7 @@ describe("automation page shared-shell framing", () => {
     expect(screen.getByTestId("automation-primary-actions")).toBeInTheDocument();
     expect(screen.getByTestId("automation-quick-scan")).toBeInTheDocument();
     const quickScanItem = screen.getByTestId("automation-quick-scan-item-run-1");
-    expect(quickScanItem).toHaveTextContent("Automation output ready");
+    expect(quickScanItem).toHaveTextContent("Workflow output ready");
     expect(quickScanItem).toHaveTextContent("completed");
     expect(quickScanItem).toHaveTextContent("No blocker");
     expect(screen.getByText("Total runs")).toBeInTheDocument();
@@ -272,6 +272,19 @@ describe("automation page shared-shell framing", () => {
     expect(screen.getByText("Failed")).toBeInTheDocument();
     expect(screen.getByTestId("automation-non-publishing-banner")).toHaveTextContent(
       "This automation analyzes your site and generates recommendations. It does not make changes to your website.",
+    );
+    expect(screen.getByTestId("automation-boundary-note")).toHaveTextContent(
+      "Use Audit Runs for findings and history, Recommendations for decisioning, and Competitors for profile generation/review.",
+    );
+    expect(screen.getByTestId("automation-boundary-links")).toHaveTextContent("Open dedicated workflow pages");
+    expect(screen.getByRole("link", { name: "Open Audit Runs" })).toHaveAttribute("href", "/audits");
+    expect(screen.getByRole("link", { name: "Open Recommendations" })).toHaveAttribute(
+      "href",
+      "/recommendations?site_id=site-1",
+    );
+    expect(screen.getByRole("link", { name: "Open Competitors" })).toHaveAttribute(
+      "href",
+      "/competitors?site_id=site-1",
     );
     expect(screen.getByTestId("automation-config-summary")).toHaveTextContent("Automation configuration");
     expect(screen.getByTestId("automation-config-summary")).toHaveTextContent(
@@ -289,7 +302,7 @@ describe("automation page shared-shell framing", () => {
     expect(screen.getByTestId("automation-latest-run-status-strip")).toBeInTheDocument();
     expect(screen.getByTestId("automation-latest-run-summary")).toHaveTextContent("Complete");
     expect(screen.getByTestId("automation-latest-run-summary")).toHaveTextContent("Next step:");
-    expect(screen.getByText("Review recommendation run output")).toBeInTheDocument();
+    expect(screen.getByText("Open recommendation run output")).toBeInTheDocument();
     expect(screen.getByText("Review latest narrative output")).toBeInTheDocument();
     const latestControls = screen.getByTestId("automation-latest-run-controls");
     expect(latestControls).toHaveTextContent("Review output");

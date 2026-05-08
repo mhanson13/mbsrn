@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
@@ -9,6 +10,7 @@ import {
   OperatorPageHero,
   OperatorPageSectionStack,
 } from "../../components/layout/OperatorPageSurface";
+import { RouteActionCluster } from "../../components/layout/RouteActionCluster";
 import { SectionCard } from "../../components/layout/SectionCard";
 import { SectionHeader } from "../../components/layout/SectionHeader";
 import { SummaryStatCard } from "../../components/layout/SummaryStatCard";
@@ -16,7 +18,7 @@ import { WorkspaceEmptyStateCard } from "../../components/layout/WorkspaceEmptyS
 import { WorkspaceMessageStack } from "../../components/layout/WorkspaceMessageStack";
 import { WorkspaceTableShell } from "../../components/layout/WorkspaceTableShell";
 import { useOperatorContext } from "../../components/useOperatorContext";
-import { ApiRequestError, fetchAuditRuns } from "../../lib/api/client";
+import { ApiRequestError, createAuditRun, fetchAuditRuns } from "../../lib/api/client";
 import type { SEOAuditRun } from "../../lib/api/types";
 
 function formatDateTime(value: string | null): string {
@@ -88,12 +90,52 @@ function safeAuditErrorMessage(error: unknown): string {
   return "Unable to load audit runs right now. Please try again.";
 }
 
+function safeAuditRunStartErrorMessage(error: unknown): string {
+  if (error instanceof ApiRequestError) {
+    if (error.status === 401) {
+      return "Session expired. Sign in again.";
+    }
+    if (error.status === 403) {
+      return "You are not authorized to run audits for this site.";
+    }
+    if (error.status === 404) {
+      return "Selected site context could not be resolved. Re-select the site and try again.";
+    }
+    if (error.status === 409) {
+      return "An audit run is already in progress for this site.";
+    }
+    if (error.status === 422) {
+      return "This site is missing required audit inputs. Update site settings and retry.";
+    }
+  }
+  return "Unable to start an audit run right now. Please try again.";
+}
+
+function deriveAuditRunRecencyMs(run: SEOAuditRun): number {
+  const createdAtMs = Date.parse(run.created_at);
+  if (Number.isFinite(createdAtMs)) {
+    return createdAtMs;
+  }
+  const startedAtMs = run.started_at ? Date.parse(run.started_at) : Number.NaN;
+  if (Number.isFinite(startedAtMs)) {
+    return startedAtMs;
+  }
+  const updatedAtMs = Date.parse(run.updated_at);
+  if (Number.isFinite(updatedAtMs)) {
+    return updatedAtMs;
+  }
+  return 0;
+}
+
 export default function AuditsPage() {
   const router = useRouter();
   const context = useOperatorContext();
   const [runs, setRuns] = useState<SEOAuditRun[]>([]);
   const [loadingRuns, setLoadingRuns] = useState(false);
   const [runsError, setRunsError] = useState<string | null>(null);
+  const [triggerRunPending, setTriggerRunPending] = useState(false);
+  const [triggerRunError, setTriggerRunError] = useState<string | null>(null);
+  const [triggerRunSuccess, setTriggerRunSuccess] = useState<string | null>(null);
 
   const selectedSite = context.sites.find((site) => site.id === context.selectedSiteId) || null;
   const completedRuns = runs.filter((run) => run.status.toLowerCase() === "completed").length;
@@ -102,6 +144,40 @@ export default function AuditsPage() {
     return normalized === "queued" || normalized === "running";
   }).length;
   const failedRuns = runs.filter((run) => run.status.toLowerCase() === "failed").length;
+  const latestRun = runs.reduce<SEOAuditRun | null>((currentLatest, run) => {
+    if (!currentLatest) {
+      return run;
+    }
+    const latestMs = deriveAuditRunRecencyMs(currentLatest);
+    const candidateMs = deriveAuditRunRecencyMs(run);
+    return candidateMs > latestMs ? run : currentLatest;
+  }, null);
+  const recommendationsHref = context.selectedSiteId
+    ? `/recommendations?site_id=${encodeURIComponent(context.selectedSiteId)}`
+    : "/recommendations";
+
+  async function handleRunAuditNow(): Promise<void> {
+    if (!context.selectedSiteId) {
+      setTriggerRunError("Select a site before running an audit.");
+      return;
+    }
+    setTriggerRunPending(true);
+    setTriggerRunError(null);
+    setTriggerRunSuccess(null);
+    try {
+      const createdRun = await createAuditRun(context.token, context.businessId, context.selectedSiteId, {});
+      setRuns((current) => {
+        const deduped = current.filter((item) => item.id !== createdRun.id);
+        const merged = [createdRun, ...deduped];
+        return merged.sort((left, right) => deriveAuditRunRecencyMs(right) - deriveAuditRunRecencyMs(left));
+      });
+      setTriggerRunSuccess("Audit run started. Refresh the run detail as new findings complete.");
+    } catch (error) {
+      setTriggerRunError(safeAuditRunStartErrorMessage(error));
+    } finally {
+      setTriggerRunPending(false);
+    }
+  }
 
   useEffect(() => {
     if (context.loading || context.error || !context.selectedSiteId) {
@@ -225,15 +301,71 @@ export default function AuditsPage() {
         <SectionCard variant="summary" className="role-surface-support">
           <SectionHeader
             title="Audit run list"
-            subtitle="Select a site and open individual runs for details."
+            subtitle="Review findings history and run outcomes. Use Recommendations to decide what to do next."
             headingLevel={2}
             variant="support"
           />
+          <RouteActionCluster
+            data-testid="audits-page-actions"
+            primaryActions={(
+              <button
+                type="button"
+                className="button button-primary"
+                onClick={() => {
+                  void handleRunAuditNow();
+                }}
+                disabled={triggerRunPending || loadingRuns}
+                data-testid="audits-run-audit-button"
+              >
+                {triggerRunPending ? "Starting audit..." : "Run Audit"}
+              </button>
+            )}
+            secondaryActions={(
+              <Link className="button button-secondary" href={recommendationsHref}>
+                Open Recommendations
+              </Link>
+            )}
+            shortcutActions={(
+              <>
+                {latestRun ? (
+                  <Link
+                    className="button button-tertiary"
+                    href={`/audits/${latestRun.id}`}
+                    data-testid="audits-open-latest-findings-link"
+                  >
+                    View Latest Findings
+                  </Link>
+                ) : null}
+                {selectedSite ? (
+                  <Link className="button button-tertiary" href={`/sites/${selectedSite.id}`}>
+                    Open Site Workspace
+                  </Link>
+                ) : null}
+              </>
+            )}
+          />
+          <p className="hint muted" data-testid="audits-boundary-note">
+            Audit Runs own evidence and history. Recommendation decisions stay on the Recommendations page.
+          </p>
 
           {loadingRuns || runsError ? (
             <WorkspaceMessageStack data-testid="audits-page-message-stack">
               {loadingRuns ? <p className="hint muted">Loading audit runs...</p> : null}
               {runsError ? <p className="hint error">{runsError}</p> : null}
+            </WorkspaceMessageStack>
+          ) : null}
+          {triggerRunError || triggerRunSuccess ? (
+            <WorkspaceMessageStack data-testid="audits-page-trigger-messages">
+              {triggerRunError ? (
+                <p className="hint error" data-testid="audits-run-audit-error">
+                  {triggerRunError}
+                </p>
+              ) : null}
+              {triggerRunSuccess ? (
+                <p className="hint" data-testid="audits-run-audit-success">
+                  {triggerRunSuccess}
+                </p>
+              ) : null}
             </WorkspaceMessageStack>
           ) : null}
 

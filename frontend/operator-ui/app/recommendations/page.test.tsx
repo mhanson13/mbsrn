@@ -1306,7 +1306,7 @@ describe("recommendations queue optimistic workflows", () => {
     await screen.findByText("Recommendation One");
     const quickScanItem = screen.getByTestId("recommendation-quick-scan-item-rec-1");
     expect(quickScanItem).toHaveTextContent("Automation-triggered output");
-    expect(quickScanItem).toHaveTextContent("Automation output ready");
+    expect(quickScanItem).toHaveTextContent("Recommendation output ready");
     const quickScanControls = screen.getByTestId("recommendation-action-controls-rec-1");
     expect(quickScanControls).toHaveTextContent("Review output");
     expect(quickScanControls).toHaveTextContent("Mark completed");
@@ -1368,7 +1368,7 @@ describe("recommendations queue optimistic workflows", () => {
     expect(await screen.findByText("Decision captured: deferred")).toBeInTheDocument();
     expect(screen.getByTestId("recommendation-quick-scan-item-rec-31")).toHaveTextContent("Recommendation-only review");
     expect(screen.getByTestId("recommendation-quick-scan-item-rec-31")).toHaveTextContent(
-      "Automation output review deferred.",
+      "Output review deferred.",
     );
   });
 
@@ -1437,7 +1437,7 @@ describe("recommendations queue optimistic workflows", () => {
     );
     expect(await screen.findByText("Decision captured: rejected")).toBeInTheDocument();
     expect(screen.getByTestId("recommendation-quick-scan-item-rec-41")).toHaveTextContent("Blocked / unavailable");
-    expect(screen.getByTestId("recommendation-quick-scan-item-rec-41")).toHaveTextContent("Automation output rejected.");
+    expect(screen.getByTestId("recommendation-quick-scan-item-rec-41")).toHaveTextContent("Output rejected.");
   });
 
   it("renders canonical next-step lineage from recommendation payload", async () => {

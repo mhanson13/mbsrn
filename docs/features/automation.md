@@ -4,6 +4,19 @@
 
 `Run automation` is an internal SEO workflow trigger. It does **not** publish or modify external websites.
 
+## Workflow Boundary (Audit vs Recommendations vs Automation)
+
+Automation is the orchestration surface for repeatable multi-step runs.
+
+- Audit Runs: evidence, findings, and run history.
+- Recommendations: operator decisions, queue review, and output acceptance/rejection/completion.
+- Automation: run lifecycle orchestration across audit, competitor, recommendation, and narrative steps.
+
+Use Automation to run and monitor workflow steps, then move to dedicated pages for detailed execution review:
+- `Open Audit Runs` for findings and run evidence.
+- `Open Recommendations` for decisioning and queue actions.
+- `Open Competitors` for competitor generation/review workflow.
+
 ## Operator Run Initiation
 
 - Recommendation surfaces use `Generate automation run (preview)` to route into Automation with recommendation context.

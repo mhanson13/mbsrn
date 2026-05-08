@@ -50,7 +50,9 @@ Primary Site Workspace surfaces:
 - compact latest-activity summary
 
 Workflow ownership boundaries:
+- Audit Runs page owns audit execution (when available), findings evidence, and run history.
 - Recommendations page owns recommendation queue, run history, narratives, and apply execution.
+- Automation page owns repeatable multi-step workflow orchestration and run lifecycle.
 - Competitors page owns competitor generation/review workflow, run tables, and candidate/debug inspection.
 - Migration workflow remains on `/sites/[site_id]/migration`.
 - Prompt/provider debug details stay in dedicated workflow/diagnostics surfaces, not inline in the primary Site Workspace.

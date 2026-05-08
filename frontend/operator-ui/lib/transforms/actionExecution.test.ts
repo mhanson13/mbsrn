@@ -118,7 +118,7 @@ describe("deriveActionControls", () => {
 
     expect(decisionState).toMatchObject({
       actionStateCode: "completed_acted",
-      outcome: "Automation output accepted.",
+      outcome: "Output accepted.",
       nextStep: "Track execution impact or move to the next recommended action.",
     });
   });
@@ -128,7 +128,7 @@ describe("deriveActionControls", () => {
 
     expect(decisionState).toMatchObject({
       actionStateCode: "blocked_unavailable",
-      outcome: "Automation output rejected.",
+      outcome: "Output rejected.",
       nextStep: "Review recommendation context or adjust inputs before retrying.",
       blockedReason: "Operator rejected this output after review.",
     });
@@ -139,7 +139,7 @@ describe("deriveActionControls", () => {
 
     expect(decisionState).toMatchObject({
       actionStateCode: "recommendation_only_review",
-      outcome: "Automation output review deferred.",
+      outcome: "Output review deferred.",
       nextStep: "Return later to review this output before acting.",
     });
   });
@@ -194,7 +194,7 @@ describe("deriveActionControls", () => {
 
     expect(presentation.label).toBe("Blocked / unavailable");
     expect(presentation.badgeClass).toBe("badge badge-error");
-    expect(presentation.outcome).toBe("Automation output rejected.");
+    expect(presentation.outcome).toBe("Output rejected.");
   });
 
   it("uses decision-driven completed presentation for accepted decisions", () => {
@@ -209,7 +209,7 @@ describe("deriveActionControls", () => {
 
     expect(presentation.label).toBe("Completed / acted on");
     expect(presentation.badgeClass).toBe("badge badge-success");
-    expect(presentation.outcome).toBe("Automation output accepted.");
+    expect(presentation.outcome).toBe("Output accepted.");
     expect(presentation.nextStep).toBe("Track execution impact or move to the next recommended action.");
   });
 
@@ -225,7 +225,7 @@ describe("deriveActionControls", () => {
 
     expect(presentation.label).toBe("Recommendation-only review");
     expect(presentation.badgeClass).toBe("badge badge-warn");
-    expect(presentation.outcome).toBe("Automation output review deferred.");
+    expect(presentation.outcome).toBe("Output review deferred.");
     expect(presentation.nextStep).toBe("Return later to review this output before acting.");
   });
 });

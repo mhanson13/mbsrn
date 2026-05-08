@@ -440,6 +440,24 @@ function buildAutomationStatusHref(siteId: string): string {
   return query ? `/automation?${query}` : "/automation";
 }
 
+function buildRecommendationsHref(siteId: string): string {
+  const params = new URLSearchParams();
+  if (siteId.trim().length > 0) {
+    params.set("site_id", siteId);
+  }
+  const query = params.toString();
+  return query ? `/recommendations?${query}` : "/recommendations";
+}
+
+function buildCompetitorsHref(siteId: string): string {
+  const params = new URLSearchParams();
+  if (siteId.trim().length > 0) {
+    params.set("site_id", siteId);
+  }
+  const query = params.toString();
+  return query ? `/competitors?${query}` : "/competitors";
+}
+
 type AutomationTriggerContext = {
   siteId: string | null;
   recommendationId: string | null;
@@ -1070,7 +1088,7 @@ export default function AutomationPage() {
     <PageContainer width="wide" density="compact">
       <OperatorPageHero
         title="Automation Run History"
-        subtitle="Monitor automated recommendation and workflow run outcomes."
+        subtitle="Monitor repeatable workflow runs that orchestrate audits, competitor analysis, and recommendation generation."
         headingLevel={1}
         data-testid="automation-page-hero"
         summary={(
@@ -1161,7 +1179,7 @@ export default function AutomationPage() {
                   className="button button-tertiary"
                   href={buildAutomationRecommendationRunHref(latestRecommendationRunOutputId, latestRun.site_id)}
                 >
-                  Review recommendation output
+                  Open recommendation output
                 </Link>
               ) : null}
               {context.selectedSiteId ? (
@@ -1178,7 +1196,7 @@ export default function AutomationPage() {
         <SectionCard variant="summary" className="role-surface-support">
           <SectionHeader
             title="Automation operations"
-            subtitle="Run controls, configuration, and execution-state context for the selected site."
+            subtitle="Automation orchestrates workflow runs. Recommendation decisions and queue review stay on Recommendations."
             headingLevel={2}
             variant="support"
           />
@@ -1188,6 +1206,9 @@ export default function AutomationPage() {
             {itemsError ? <p className="hint error">{itemsError}</p> : null}
             <p className="hint muted" data-testid="automation-non-publishing-banner">
               This automation analyzes your site and generates recommendations. It does not make changes to your website.
+            </p>
+            <p className="hint muted" data-testid="automation-boundary-note">
+              Use Audit Runs for findings and history, Recommendations for decisioning, and Competitors for profile generation/review.
             </p>
             {triggerContext.recommendationTitle ? (
               <p className="hint muted" data-testid="automation-trigger-context">
@@ -1201,6 +1222,17 @@ export default function AutomationPage() {
               </p>
             ) : null}
           </WorkspaceMessageStack>
+          <div className="panel panel-compact stack-tight workspace-section-block" data-testid="automation-boundary-links">
+            <span className="text-strong">Open dedicated workflow pages</span>
+            <span className="hint muted">
+              Automation run history stays here. Full findings and execution review live on dedicated pages.
+            </span>
+            <div className="link-row">
+              <Link href="/audits">Open Audit Runs</Link>
+              <Link href={buildRecommendationsHref(context.selectedSiteId || "")}>Open Recommendations</Link>
+              <Link href={buildCompetitorsHref(context.selectedSiteId || "")}>Open Competitors</Link>
+            </div>
+          </div>
           <div className="panel panel-compact stack-tight workspace-section-block" data-testid="automation-config-summary">
           <span className="text-strong">Automation configuration</span>
           <span className="hint muted">
@@ -1342,7 +1374,7 @@ export default function AutomationPage() {
           <SectionCard variant="summary" className="role-surface-support" data-testid="automation-latest-run-summary">
             <SectionHeader
               title="Latest automation outcome"
-              subtitle="Summary-first lifecycle and output visibility for the most recent run."
+              subtitle="Summary-first lifecycle and workflow-step visibility for the most recent run."
               headingLevel={2}
               variant="support"
             />
@@ -1464,7 +1496,7 @@ export default function AutomationPage() {
                     <Link
                       href={buildAutomationRecommendationRunHref(latestRecommendationRunOutputId, latestRun.site_id)}
                     >
-                      Review recommendation run output
+                      Open recommendation run output
                     </Link>
                   ) : null}
                   {latestRecommendationRunOutputId && latestRecommendationNarrativeOutputId ? (
@@ -1489,7 +1521,7 @@ export default function AutomationPage() {
         <SectionCard variant="summary" className="role-surface-support">
           <SectionHeader
             title="Run quick scan"
-            subtitle="Summary-first cards show automation status, blockers, and follow-up urgency before deep history review."
+            subtitle="Summary-first cards show workflow status, blockers, and cross-page follow-up before deep history review."
             headingLevel={2}
             variant="support"
           />

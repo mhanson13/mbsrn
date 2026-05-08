@@ -246,7 +246,7 @@ describe("recommendation run detail page presentation", () => {
     expect(screen.getByText("Run origin")).toBeInTheDocument();
     expect(screen.getByText("Operator action state")).toBeInTheDocument();
     expect(screen.getByText("Automation-triggered")).toBeInTheDocument();
-    expect(screen.getAllByText("Automation output ready").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Recommendation output ready").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Automation run automation-run-1 (scheduled)").length).toBeGreaterThan(0);
     const actionControls = screen.getByTestId("recommendation-run-action-controls");
     expect(actionControls).toHaveTextContent("Review output");
@@ -408,7 +408,7 @@ describe("recommendation run detail page presentation", () => {
       "Return later to review this output before acting.",
     );
     expect(screen.getByTestId("recommendation-run-output-review")).toHaveTextContent(
-      "Automation output review deferred.",
+      "Output review deferred.",
     );
   });
 

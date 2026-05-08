@@ -49,9 +49,9 @@ const ACTION_STATE_DEFAULTS: Record<ActionExecutionStateCode, ActionStateDefault
     nextStep: "Review recommendation details and decide whether to proceed or defer.",
   },
   automation_output_ready: {
-    label: "Automation output ready",
+    label: "Output ready for review",
     badgeClass: "badge badge-success",
-    outcome: "Automation output is ready for operator review.",
+    outcome: "Generated output is ready for operator review.",
     nextStep: "Review output and capture a decision.",
   },
   waiting_on_automation: {
@@ -114,7 +114,7 @@ export function deriveDecisionState(decision: ActionDecision): ActionDecisionSta
     return {
       decision,
       actionStateCode: "completed_acted",
-      outcome: "Automation output accepted.",
+      outcome: "Output accepted.",
       nextStep: "Track execution impact or move to the next recommended action.",
     };
   }
@@ -123,14 +123,14 @@ export function deriveDecisionState(decision: ActionDecision): ActionDecisionSta
       decision,
       actionStateCode: "blocked_unavailable",
       blockedReason: "Operator rejected this output after review.",
-      outcome: "Automation output rejected.",
+      outcome: "Output rejected.",
       nextStep: "Review recommendation context or adjust inputs before retrying.",
     };
   }
   return {
     decision,
     actionStateCode: "recommendation_only_review",
-    outcome: "Automation output review deferred.",
+    outcome: "Output review deferred.",
     nextStep: "Return later to review this output before acting.",
   };
 }
@@ -142,7 +142,7 @@ export function applyActionDecisionLocally(item: ActionExecutionItem, decision: 
     outputId: currentOutputReview?.outputId || item.linkedOutputId || null,
     summary: currentOutputReview?.summary || decisionState.outcome,
     details: currentOutputReview?.details || null,
-    sourceLabel: currentOutputReview?.sourceLabel || item.outputReview?.sourceLabel || "Automation output",
+    sourceLabel: currentOutputReview?.sourceLabel || item.outputReview?.sourceLabel || "Workflow output",
     stepDetails: currentOutputReview?.stepDetails || null,
   };
 
