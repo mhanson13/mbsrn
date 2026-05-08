@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import logging
 import os
 from pathlib import Path
 import subprocess
@@ -3326,6 +3327,103 @@ def test_draft_generation_readiness_emits_structured_log(db_session, caplog) -> 
     assert isinstance(latest.get("hard_blocked"), bool)
     assert isinstance(latest.get("blocking_reason_codes"), list)
     assert isinstance(latest.get("warning_reason_codes"), list)
+    assert latest.get("evaluation_context") == "workspace_summary"
+
+
+def test_draft_generation_readiness_expected_operator_blockers_log_info(db_session, caplog) -> None:
+    service = _build_service(db_session, _StaticMigrationProvider(_build_publishable_output()))
+    business_id, site_id = _seed_business_and_site(db_session)
+    service.create_or_update_workspace(
+        business_id=business_id,
+        site_id=site_id,
+        source_url="https://legacy.example/",
+        operator_requirements={},
+        enriched_content_notes={"replacement_summary": "Prepared content."},
+        principal_id="principal-1",
+    )
+
+    caplog.set_level(logging.INFO, logger="app.services.seo_migration")
+    service.get_workspace_summary(business_id=business_id, site_id=site_id)
+    records = [
+        record
+        for record in caplog.records
+        if isinstance(record.__dict__.get("json_fields"), dict)
+        and record.__dict__["json_fields"].get("event") == "seo_migration_readiness_evaluation"
+    ]
+    assert records
+    latest_record = records[-1]
+    latest_payload = latest_record.__dict__["json_fields"]
+    assert latest_record.levelno == logging.INFO
+    assert latest_payload.get("readiness_status") == "not_ready"
+    assert latest_payload.get("hard_blocked") is True
+    blocking_codes = set(latest_payload.get("blocking_reason_codes") or [])
+    assert "source_site_ingest_required" in blocking_codes
+    assert "operator_requirements_required" in blocking_codes
+
+
+def test_draft_generation_readiness_generate_attempt_blocked_logs_warning_not_error(db_session, caplog) -> None:
+    tracking_provider = _TrackingMigrationProvider(_build_publishable_output())
+    service = _build_service(db_session, tracking_provider)
+    business_id, site_id = _seed_business_and_site(db_session)
+    service.create_or_update_workspace(
+        business_id=business_id,
+        site_id=site_id,
+        source_url="https://legacy.example/",
+        operator_requirements={},
+        enriched_content_notes={"replacement_summary": "Prepared content."},
+        principal_id="principal-1",
+    )
+    _mark_workspace_ingested(service, business_id=business_id, site_id=site_id)
+
+    caplog.set_level(logging.INFO, logger="app.services.seo_migration")
+    with pytest.raises(SEOMigrationValidationError, match="Not ready yet"):
+        service.generate_draft_artifacts(
+            business_id=business_id,
+            site_id=site_id,
+            principal_id="principal-1",
+        )
+    assert tracking_provider.call_count == 0
+    records = [
+        record
+        for record in caplog.records
+        if isinstance(record.__dict__.get("json_fields"), dict)
+        and record.__dict__["json_fields"].get("event") == "seo_migration_readiness_evaluation"
+    ]
+    assert records
+    latest_record = records[-1]
+    latest_payload = latest_record.__dict__["json_fields"]
+    assert latest_payload.get("evaluation_context") == "draft_generate_attempt"
+    assert latest_payload.get("readiness_status") == "not_ready"
+    assert latest_record.levelno == logging.WARNING
+    assert latest_record.levelno < logging.ERROR
+
+
+def test_draft_generation_readiness_unknown_blocker_logs_warning_non_error(db_session, caplog) -> None:
+    service = _build_service(db_session, _StaticMigrationProvider(_build_publishable_output()))
+    business_id, site_id = _seed_business_and_site(db_session)
+
+    caplog.set_level(logging.INFO, logger="app.services.seo_migration")
+    service._log_draft_readiness_evaluation(
+        business_id=business_id,
+        site_id=site_id,
+        workspace_id="workspace-1",
+        readiness_status="not_ready",
+        readiness_score=0,
+        hard_blocked=True,
+        blocking_reason_codes=["unexpected_blocker_state"],
+        warning_reason_codes=[],
+        log_context="workspace_summary",
+    )
+    records = [
+        record
+        for record in caplog.records
+        if isinstance(record.__dict__.get("json_fields"), dict)
+        and record.__dict__["json_fields"].get("event") == "seo_migration_readiness_evaluation"
+    ]
+    assert records
+    latest_record = records[-1]
+    assert latest_record.levelno == logging.WARNING
+    assert latest_record.levelno < logging.ERROR
 
 
 def test_generate_artifacts_is_blocked_by_provider_compatibility_before_provider_call(db_session) -> None:

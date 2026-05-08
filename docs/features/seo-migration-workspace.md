@@ -718,6 +718,7 @@ Runtime behavior:
 - generate draft endpoint performs this preflight check first
 - if `hard_blocked=true`, provider is not called and API returns a sanitized validation error
 - readiness evaluations emit structured logs: `event=seo_migration_readiness_evaluation`
+- routine readiness outcomes (including expected operator blockers such as missing ingest or requirements) are logged as non-error telemetry; error severity is reserved for unexpected runtime/platform failures
 - when live Google fetch is not required for draft generation, Google reconnect can surface as warning-only readiness guidance instead of a hard block
 
 ## Draft Provider Compatibility Preflight

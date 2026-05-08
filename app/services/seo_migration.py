@@ -546,6 +546,15 @@ _DRAFT_READINESS_REASON_RECOMMENDATIONS_UNAVAILABLE = "recommendations_context_u
 _DRAFT_READINESS_REASON_COMPETITORS_UNAVAILABLE = "competitors_context_unavailable"
 _DRAFT_READINESS_REASON_ENRICHED_SPARSE = "enriched_content_sparse"
 _DRAFT_READINESS_REASON_MEDIA_REQUIRED_NOT_SELECTED = "media_required_but_not_selected"
+_MIGRATION_EXPECTED_OPERATOR_BLOCKER_REASON_CODES = {
+    _DRAFT_READINESS_REASON_SOURCE_REQUIRED,
+    _DRAFT_READINESS_REASON_OPERATOR_REQUIRED,
+    _DRAFT_READINESS_REASON_PROVIDER_CONFIG_REQUIRED,
+    _DRAFT_READINESS_REASON_MEDIA_REQUIRED_NOT_SELECTED,
+    "media_required",
+    "no_approved_artifact",
+    "artifact_approval_required",
+}
 _REQUIREMENTS_SUGGESTION_SUPPORTED_FIELDS = {
     "business_objectives",
     "requested_pages",
@@ -10111,6 +10120,7 @@ class SEOMigrationService:
             workspace=workspace,
             context_summary=context_summary_for_readiness,
             emit_log=True,
+            log_context="readiness_preflight",
         )
         readiness_reason_list = (
             list(readiness_payload.get("reasons"))
@@ -10344,6 +10354,7 @@ class SEOMigrationService:
             workspace=workspace,
             context_summary=context_summary,
             emit_log=True,
+            log_context="draft_generate_attempt",
         )
         if bool(draft_readiness.get("hard_blocked")):
             first_blocking_reason = next(
@@ -11063,6 +11074,7 @@ class SEOMigrationService:
             workspace=workspace,
             context_summary=context_summary,
             emit_log=True,
+            log_context="workspace_summary",
         )
         draft_provider_compatibility = self._evaluate_draft_provider_compatibility(
             business_id=business_id,
@@ -11757,6 +11769,7 @@ class SEOMigrationService:
         workspace: SEOMigrationWorkspace,
         context_summary: dict[str, object],
         emit_log: bool,
+        log_context: str = "workspace_summary",
     ) -> dict[str, object]:
         normalized_summary = _normalize_json_dict(context_summary)
         reused_context = _normalize_json_dict(normalized_summary.get("reused_context"))
@@ -11941,6 +11954,7 @@ class SEOMigrationService:
                 hard_blocked=hard_blocked,
                 blocking_reason_codes=[item.code for item in blocking_reasons],
                 warning_reason_codes=[item.code for item in warning_reasons],
+                log_context=log_context,
             )
         return payload
 
@@ -11997,7 +12011,11 @@ class SEOMigrationService:
         hard_blocked: bool,
         blocking_reason_codes: list[str],
         warning_reason_codes: list[str],
+        log_context: str,
     ) -> None:
+        normalized_log_context = _normalize_string(log_context, max_length=40) or "workspace_summary"
+        normalized_blocking_reason_codes = [item for item in blocking_reason_codes if item]
+        normalized_warning_reason_codes = [item for item in warning_reason_codes if item]
         payload: dict[str, object] = {
             "event": _MIGRATION_READINESS_LOG_EVENT,
             "timestamp": utc_now().isoformat(),
@@ -12008,15 +12026,54 @@ class SEOMigrationService:
             "readiness_status": _normalize_string(readiness_status, max_length=40),
             "readiness_score": max(0, int(readiness_score)),
             "hard_blocked": bool(hard_blocked),
-            "blocking_reason_codes": [item for item in blocking_reason_codes if item],
-            "warning_reason_codes": [item for item in warning_reason_codes if item],
+            "blocking_reason_codes": normalized_blocking_reason_codes,
+            "warning_reason_codes": normalized_warning_reason_codes,
+            "evaluation_context": normalized_log_context,
         }
-        level = logging.WARNING if hard_blocked else logging.INFO
+        level = self._resolve_draft_readiness_evaluation_log_level(
+            readiness_status=readiness_status,
+            hard_blocked=hard_blocked,
+            blocking_reason_codes=normalized_blocking_reason_codes,
+            warning_reason_codes=normalized_warning_reason_codes,
+            log_context=normalized_log_context,
+        )
         self._emit_structured_service_log(
             payload=payload,
             fallback_message=_MIGRATION_READINESS_LOG_EVENT,
             level=level,
         )
+
+    @staticmethod
+    def _resolve_draft_readiness_evaluation_log_level(
+        *,
+        readiness_status: str,
+        hard_blocked: bool,
+        blocking_reason_codes: list[str],
+        warning_reason_codes: list[str],
+        log_context: str,
+    ) -> int:
+        normalized_status = _normalize_string(readiness_status, max_length=40) or "unknown"
+        normalized_context = _normalize_string(log_context, max_length=40) or "workspace_summary"
+        blocking = {item for item in blocking_reason_codes if item}
+        warnings = {item for item in warning_reason_codes if item}
+
+        if normalized_status == "ready":
+            return logging.INFO
+        if normalized_status == "ready_with_warnings":
+            return logging.INFO
+        if normalized_status == "not_ready":
+            if blocking and blocking.issubset(_MIGRATION_EXPECTED_OPERATOR_BLOCKER_REASON_CODES):
+                # Preserve operator-attempt visibility without polluting error telemetry.
+                if normalized_context == "draft_generate_attempt":
+                    return logging.WARNING
+                return logging.INFO
+            return logging.WARNING
+
+        if hard_blocked and blocking:
+            return logging.WARNING
+        if warnings:
+            return logging.INFO
+        return logging.INFO
 
     def _evaluate_draft_provider_compatibility(
         self,
