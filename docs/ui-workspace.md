@@ -39,6 +39,26 @@ Service-focus provenance is available in `competitor_prompt_preview.prompt_metri
 
 These fields are intended for diagnostics and API-level inspection.
 
+## Site Workspace Boundaries (Command Center)
+
+The Site Workspace (`/sites/[site_id]`) is now a compact site-level launchpad, not a full execution surface.
+
+Primary Site Workspace surfaces:
+- site hero / identity and "What matters now"
+- compact workspace snapshot and setup checklist
+- workflow launchers (Recommendations, Competitors, Migration, Google Profile)
+- compact latest-activity summary
+
+Workflow ownership boundaries:
+- Recommendations page owns recommendation queue, run history, narratives, and apply execution.
+- Competitors page owns competitor generation/review workflow, run tables, and candidate/debug inspection.
+- Migration workflow remains on `/sites/[site_id]/migration`.
+- Prompt/provider debug details stay in dedicated workflow/diagnostics surfaces, not inline in the primary Site Workspace.
+
+Accessibility/DOM contract:
+- Site Workspace keeps unique tab/panel ids for launchpad content.
+- duplicate recommendation panel ids are not rendered concurrently.
+
 ## Site Workspace GA4 Health + Insights (Phase 2)
 
 The site workspace now exposes compact, site-scoped GA4 health plus insight summaries (still no dashboard sprawl).
