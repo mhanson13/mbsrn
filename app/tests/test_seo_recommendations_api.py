@@ -14,8 +14,11 @@ from app.api.routes.seo import router as seo_router
 from app.api.routes.seo import router_v1 as seo_v1_router
 from app.integrations.ga4_analytics_provider import (
     GA4AnalyticsProviderError,
+    GA4EngagementTrendMetrics,
+    GA4OperatorInsightsResult,
     GA4SiteMetricsResult,
     GA4SitePeriodMetrics,
+    GA4TopLandingPageMetrics,
     GA4TopPageMetrics,
 )
 from app.integrations.search_console_analytics_provider import (
@@ -194,6 +197,137 @@ class _DeterministicRecommendationAnalyticsProvider:
             return
         if ga4_property_id != self.expected_property_id:
             raise GA4AnalyticsProviderError("unexpected_property_scope")
+
+
+class _DecliningTrafficRecommendationAnalyticsProvider(_DeterministicRecommendationAnalyticsProvider):
+    def fetch_site_metrics(
+        self,
+        *,
+        site_domain: str,
+        period_days: int,
+        top_pages_limit: int,
+        ga4_property_id: str | None = None,
+    ) -> GA4SiteMetricsResult:
+        self._record_property_id(ga4_property_id, target="site_metrics")
+        del site_domain, period_days
+        top_pages = (
+            GA4TopPageMetrics(
+                page_path="/services/heating",
+                current_pageviews=120,
+                previous_pageviews=170,
+                current_sessions=90,
+                previous_sessions=130,
+            ),
+            GA4TopPageMetrics(
+                page_path="/services/cooling",
+                current_pageviews=92,
+                previous_pageviews=121,
+                current_sessions=74,
+                previous_sessions=96,
+            ),
+        )[: max(1, top_pages_limit)]
+        return GA4SiteMetricsResult(
+            current_period=GA4SitePeriodMetrics(
+                users=210,
+                sessions=310,
+                pageviews=480,
+                organic_search_sessions=188,
+            ),
+            previous_period=GA4SitePeriodMetrics(
+                users=270,
+                sessions=390,
+                pageviews=610,
+                organic_search_sessions=250,
+            ),
+            top_pages=top_pages,
+            data_source="ga4_mock",
+        )
+
+
+class _DecliningEngagementRecommendationAnalyticsProvider(_DeterministicRecommendationAnalyticsProvider):
+    def fetch_site_metrics(
+        self,
+        *,
+        site_domain: str,
+        period_days: int,
+        top_pages_limit: int,
+        ga4_property_id: str | None = None,
+    ) -> GA4SiteMetricsResult:
+        self._record_property_id(ga4_property_id, target="site_metrics")
+        del site_domain, period_days
+        top_pages = (
+            GA4TopPageMetrics(
+                page_path="/services/heating",
+                current_pageviews=220,
+                previous_pageviews=210,
+                current_sessions=160,
+                previous_sessions=154,
+            ),
+            GA4TopPageMetrics(
+                page_path="/about",
+                current_pageviews=118,
+                previous_pageviews=110,
+                current_sessions=90,
+                previous_sessions=84,
+            ),
+        )[: max(1, top_pages_limit)]
+        return GA4SiteMetricsResult(
+            current_period=GA4SitePeriodMetrics(
+                users=320,
+                sessions=448,
+                pageviews=704,
+                organic_search_sessions=268,
+            ),
+            previous_period=GA4SitePeriodMetrics(
+                users=314,
+                sessions=440,
+                pageviews=691,
+                organic_search_sessions=261,
+            ),
+            top_pages=top_pages,
+            data_source="ga4_mock",
+        )
+
+    def fetch_operator_insights(
+        self,
+        *,
+        site_domain: str,
+        period_days: int,
+        top_landing_pages_limit: int,
+        ga4_property_id: str | None = None,
+    ) -> GA4OperatorInsightsResult:
+        self._record_property_id(ga4_property_id, target="site_metrics")
+        del site_domain, period_days
+        top_landing_pages = (
+            GA4TopLandingPageMetrics(
+                page_path="/services/heating",
+                page_title="Heating Services",
+                sessions=160,
+                active_users=141,
+                views=220,
+                engagement_rate=0.39,
+                average_engagement_time_seconds=43.2,
+            ),
+            GA4TopLandingPageMetrics(
+                page_path="/about",
+                page_title="About",
+                sessions=90,
+                active_users=77,
+                views=118,
+                engagement_rate=0.36,
+                average_engagement_time_seconds=39.4,
+            ),
+        )[: max(1, top_landing_pages_limit)]
+        return GA4OperatorInsightsResult(
+            top_landing_pages=top_landing_pages,
+            engagement_trend=GA4EngagementTrendMetrics(
+                current_engagement_rate=0.32,
+                previous_engagement_rate=0.51,
+                current_average_engagement_time_seconds=44.0,
+                previous_average_engagement_time_seconds=72.0,
+            ),
+            data_source="ga4_mock",
+        )
 
 
 class _DeterministicRecommendationSearchConsoleProvider:
@@ -753,6 +887,8 @@ def test_recommendation_measurement_context_missing_site_property_skips_ga4_prov
         (item.get("recommendation_measurement_context") or {}).get("measurement_status") == "not_configured"
         for item in payload["items"]
     )
+    assert all(item.get("ga4_priority_context_available") is False for item in payload["items"])
+    assert all(item.get("ga4_context_source") == "ga4_insights_not_configured" for item in payload["items"])
     assert analytics_provider.fetch_site_metrics_property_ids == []
     assert analytics_provider.fetch_window_metrics_property_ids == []
 
@@ -900,6 +1036,238 @@ def test_recommendation_measurement_context_permission_denied_stays_unavailable(
     assert summary_payload["ga4_error_reason"] == "permission_denied"
     assert summary_payload["ga4_health"]["ga4_health_status"] == "permission_denied"
     assert summary_payload["ga4_health"]["ga4_health_reason"] == "permission_denied"
+    assert all(item.get("ga4_priority_context_available") is False for item in payload["items"])
+    assert all(item.get("ga4_context_source") == "ga4_insights_permission_denied" for item in payload["items"])
+
+
+def test_recommendation_ga4_priority_context_top_landing_page_signal(db_session, seeded_business) -> None:
+    analytics_provider = _DeterministicRecommendationAnalyticsProvider(expected_property_id="2000000002")
+    analytics_service = SEOAnalyticsService(
+        provider=analytics_provider,
+        search_console_provider=_DeterministicRecommendationSearchConsoleProvider(),
+    )
+    client = _make_client(db_session, business_id=seeded_business.id, analytics_service=analytics_service)
+    site_id = _create_site(
+        client,
+        seeded_business.id,
+        domain="ga4-priority-top-landing.example",
+        ga4_property_id="2000000002",
+        search_console_property_url="sc-domain:ga4-priority-top-landing.example",
+        search_console_enabled=True,
+    )
+    audit_run_id = _seed_completed_audit_run(db_session, business_id=seeded_business.id, site_id=site_id)
+    run_response = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs",
+        json={"audit_run_id": audit_run_id},
+    )
+    assert run_response.status_code == 201
+    run_id = run_response.json()["id"]
+
+    db_session.add(
+        SEORecommendation(
+            id=str(uuid4()),
+            business_id=seeded_business.id,
+            site_id=site_id,
+            recommendation_run_id=run_id,
+            audit_run_id=audit_run_id,
+            comparison_run_id=None,
+            rule_key="homepage_visibility_clarity",
+            category="CONTENT",
+            severity="WARNING",
+            title="Improve homepage trust and CTA clarity",
+            rationale="Homepage updates should clarify trust signals and CTA hierarchy.",
+            priority_score=88,
+            priority_band="high",
+            effort_bucket="MEDIUM",
+            status="open",
+            created_at=utc_now(),
+        )
+    )
+    db_session.commit()
+
+    list_recommendations = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs/{run_id}/recommendations"
+    )
+    assert list_recommendations.status_code == 200
+    payload = list_recommendations.json()
+    by_rule_key = {item["rule_key"]: item for item in payload["items"]}
+    assert "homepage_visibility_clarity" in by_rule_key
+    context_item = by_rule_key["homepage_visibility_clarity"]
+    assert context_item["priority_score"] == 88
+    assert context_item["priority_band"] == "high"
+    assert context_item.get("ga4_priority_context_available") is True
+    assert context_item.get("ga4_priority_signal") == "top_landing_page"
+    assert context_item.get("ga4_supporting_page_path") == "/"
+    assert "top landing page" in str(context_item.get("ga4_priority_hint", "")).lower()
+    assert "sessions:" in str(context_item.get("ga4_supporting_metric_summary", "")).lower()
+    assert context_item.get("ga4_context_source") == "ga4_insights"
+
+
+def test_recommendation_ga4_priority_context_traffic_decline_signal(db_session, seeded_business) -> None:
+    analytics_service = SEOAnalyticsService(
+        provider=_DecliningTrafficRecommendationAnalyticsProvider(expected_property_id="2000000002"),
+        search_console_provider=_DeterministicRecommendationSearchConsoleProvider(),
+    )
+    client = _make_client(db_session, business_id=seeded_business.id, analytics_service=analytics_service)
+    site_id = _create_site(
+        client,
+        seeded_business.id,
+        domain="ga4-priority-traffic-decline.example",
+        ga4_property_id="2000000002",
+        search_console_property_url="sc-domain:ga4-priority-traffic-decline.example",
+        search_console_enabled=True,
+    )
+    audit_run_id = _seed_completed_audit_run(db_session, business_id=seeded_business.id, site_id=site_id)
+    run_response = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs",
+        json={"audit_run_id": audit_run_id},
+    )
+    assert run_response.status_code == 201
+    run_id = run_response.json()["id"]
+
+    db_session.add(
+        SEORecommendation(
+            id=str(uuid4()),
+            business_id=seeded_business.id,
+            site_id=site_id,
+            recommendation_run_id=run_id,
+            audit_run_id=audit_run_id,
+            comparison_run_id=None,
+            rule_key="sitewide_internal_link_refresh",
+            category="SEO",
+            severity="WARNING",
+            title="Apply sitewide internal-link hygiene updates",
+            rationale="A sitewide pass can restore page discoverability and crawl consistency.",
+            priority_score=84,
+            priority_band="high",
+            effort_bucket="MEDIUM",
+            status="open",
+            created_at=utc_now(),
+        )
+    )
+    db_session.commit()
+
+    list_recommendations = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs/{run_id}/recommendations"
+    )
+    assert list_recommendations.status_code == 200
+    payload = list_recommendations.json()
+    by_rule_key = {item["rule_key"]: item for item in payload["items"]}
+    context_item = by_rule_key["sitewide_internal_link_refresh"]
+    assert context_item.get("ga4_priority_context_available") is True
+    assert context_item.get("ga4_priority_signal") == "traffic_decline"
+    assert "declining" in str(context_item.get("ga4_priority_hint", "")).lower()
+    assert "sessions change" in str(context_item.get("ga4_supporting_metric_summary", "")).lower()
+    assert context_item.get("ga4_context_source") == "ga4_insights"
+
+
+def test_recommendation_ga4_priority_context_engagement_decline_signal(db_session, seeded_business) -> None:
+    analytics_service = SEOAnalyticsService(
+        provider=_DecliningEngagementRecommendationAnalyticsProvider(expected_property_id="2000000002"),
+        search_console_provider=_DeterministicRecommendationSearchConsoleProvider(),
+    )
+    client = _make_client(db_session, business_id=seeded_business.id, analytics_service=analytics_service)
+    site_id = _create_site(
+        client,
+        seeded_business.id,
+        domain="ga4-priority-engagement-decline.example",
+        ga4_property_id="2000000002",
+        search_console_property_url="sc-domain:ga4-priority-engagement-decline.example",
+        search_console_enabled=True,
+    )
+    audit_run_id = _seed_completed_audit_run(db_session, business_id=seeded_business.id, site_id=site_id)
+    run_response = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs",
+        json={"audit_run_id": audit_run_id},
+    )
+    assert run_response.status_code == 201
+    run_id = run_response.json()["id"]
+
+    db_session.add(
+        SEORecommendation(
+            id=str(uuid4()),
+            business_id=seeded_business.id,
+            site_id=site_id,
+            recommendation_run_id=run_id,
+            audit_run_id=audit_run_id,
+            comparison_run_id=None,
+            rule_key="improve_service_page_cta_copy",
+            category="CONTENT",
+            severity="WARNING",
+            title="Improve service-page CTA clarity and supporting copy",
+            rationale="Clarify service-page copy and CTA flow for better on-page engagement.",
+            priority_score=78,
+            priority_band="medium",
+            effort_bucket="MEDIUM",
+            status="open",
+            created_at=utc_now(),
+        )
+    )
+    db_session.commit()
+
+    list_recommendations = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs/{run_id}/recommendations"
+    )
+    assert list_recommendations.status_code == 200
+    payload = list_recommendations.json()
+    by_rule_key = {item["rule_key"]: item for item in payload["items"]}
+    context_item = by_rule_key["improve_service_page_cta_copy"]
+    assert context_item.get("ga4_priority_context_available") is True
+    assert context_item.get("ga4_priority_signal") == "engagement_decline"
+    assert "engagement is weaker" in str(context_item.get("ga4_priority_hint", "")).lower()
+    assert "engagement rate change" in str(context_item.get("ga4_supporting_metric_summary", "")).lower()
+    assert context_item.get("ga4_context_source") == "ga4_insights"
+
+
+def test_recommendation_ga4_priority_context_is_additive_and_preserves_order(db_session, seeded_business) -> None:
+    site_domain = "ga4-priority-order-preserved.example"
+    site_property_id = "2000000002"
+    baseline_client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        analytics_service=SEOAnalyticsService(
+            provider=_DeterministicRecommendationAnalyticsProvider(expected_property_id=site_property_id),
+            search_console_provider=_DeterministicRecommendationSearchConsoleProvider(),
+        ),
+    )
+    site_id = _create_site(
+        baseline_client,
+        seeded_business.id,
+        domain=site_domain,
+        ga4_property_id=site_property_id,
+        search_console_property_url=f"sc-domain:{site_domain}",
+        search_console_enabled=True,
+    )
+    audit_run_id = _seed_completed_audit_run(db_session, business_id=seeded_business.id, site_id=site_id)
+    run_response = baseline_client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs",
+        json={"audit_run_id": audit_run_id},
+    )
+    assert run_response.status_code == 201
+    run_id = run_response.json()["id"]
+
+    with_ga4_response = baseline_client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs/{run_id}/recommendations"
+    )
+    assert with_ga4_response.status_code == 200
+    with_ga4_items = with_ga4_response.json()["items"]
+
+    degraded_client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        analytics_service=SEOAnalyticsService(
+            provider=_FailingRecommendationAnalyticsProvider(message="GA4 request failed: timeout"),
+            search_console_provider=_DeterministicRecommendationSearchConsoleProvider(),
+        ),
+    )
+    without_ga4_response = degraded_client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs/{run_id}/recommendations"
+    )
+    assert without_ga4_response.status_code == 200
+    without_ga4_items = without_ga4_response.json()["items"]
+
+    assert [item["id"] for item in with_ga4_items] == [item["id"] for item in without_ga4_items]
+    assert [item["priority_score"] for item in with_ga4_items] == [item["priority_score"] for item in without_ga4_items]
 
 
 def test_recommendation_run_requires_lineage_and_completed_inputs(db_session, seeded_business) -> None:

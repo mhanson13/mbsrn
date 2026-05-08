@@ -825,6 +825,78 @@ describe("recommendations queue optimistic workflows", () => {
     );
   });
 
+  it("renders compact GA4 priority context hints when available", async () => {
+    const recommendation = {
+      ...createRecommendation("rec-ga4-priority-1", "open", "high", "Homepage trust improvements"),
+      ga4_priority_context_available: true,
+      ga4_priority_signal: "top_landing_page",
+      ga4_priority_hint:
+        "This recommendation targets a top landing page with active traffic, so updates here may have faster near-term visibility.",
+      ga4_supporting_page_path: "/",
+      ga4_supporting_metric_summary: "Sessions: 160; Active users: 141; Views: 220",
+      ga4_context_source: "ga4_insights",
+    } satisfies Recommendation;
+    mockFetchRecommendations.mockResolvedValueOnce(
+      createListResponse([recommendation], {
+        total: 1,
+        open: 1,
+        accepted: 0,
+        dismissed: 0,
+        high_priority: 1,
+      }),
+    );
+
+    const user = userEvent.setup();
+    render(<RecommendationsPage />);
+
+    const row = await screen.findByTestId("recommendation-decisiveness-rec-ga4-priority-1");
+    await user.click(within(row).getByRole("button", { name: "View details" }));
+
+    const ga4PriorityLine = screen.getByTestId("recommendation-expanded-ga4-priority-context-rec-ga4-priority-1");
+    expect(ga4PriorityLine).toHaveTextContent("Analytics context (GA4):");
+    expect(ga4PriorityLine).toHaveTextContent("top landing page");
+    expect(ga4PriorityLine).toHaveTextContent("Page: /");
+    expect(ga4PriorityLine).toHaveTextContent("Sessions: 160");
+  });
+
+  it("does not render noisy GA4 priority context lines when unavailable or malformed", async () => {
+    const unavailableRecommendation = {
+      ...createRecommendation("rec-ga4-priority-2", "open", "medium", "General metadata update"),
+      ga4_priority_context_available: false,
+      ga4_context_source: "ga4_insights_not_configured",
+    } satisfies Recommendation;
+    const malformedRecommendation = {
+      ...createRecommendation("rec-ga4-priority-3", "open", "medium", "Service page copy refresh"),
+      ga4_priority_context_available: true,
+      ga4_priority_signal: "unexpected_signal" as unknown as Recommendation["ga4_priority_signal"],
+      ga4_priority_hint: null,
+    } satisfies Recommendation;
+    mockFetchRecommendations.mockResolvedValueOnce(
+      createListResponse([unavailableRecommendation, malformedRecommendation], {
+        total: 2,
+        open: 2,
+        accepted: 0,
+        dismissed: 0,
+        high_priority: 0,
+      }),
+    );
+
+    const user = userEvent.setup();
+    render(<RecommendationsPage />);
+
+    const firstRow = await screen.findByTestId("recommendation-decisiveness-rec-ga4-priority-2");
+    await user.click(within(firstRow).getByRole("button", { name: "View details" }));
+    expect(
+      screen.queryByTestId("recommendation-expanded-ga4-priority-context-rec-ga4-priority-2"),
+    ).not.toBeInTheDocument();
+
+    const secondRow = screen.getByTestId("recommendation-decisiveness-rec-ga4-priority-3");
+    await user.click(within(secondRow).getByRole("button", { name: "View details" }));
+    expect(
+      screen.queryByTestId("recommendation-expanded-ga4-priority-context-rec-ga4-priority-3"),
+    ).not.toBeInTheDocument();
+  });
+
   it("renders safely when recommendation GA4 measurement context is null or partial", async () => {
     const malformedRecommendation = {
       ...createRecommendation("rec-ga4-null-1", "open", "medium", "Malformed GA4 context"),

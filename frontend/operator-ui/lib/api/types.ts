@@ -2282,6 +2282,12 @@ export interface Recommendation {
   recommendation_measurement_context?: RecommendationMeasurementContext | null;
   recommendation_search_console_context?: RecommendationSearchConsoleContext | null;
   recommendation_effectiveness_context?: RecommendationEffectivenessContext | null;
+  ga4_priority_context_available?: boolean;
+  ga4_priority_signal?: "top_landing_page" | "traffic_decline" | "engagement_decline" | null;
+  ga4_priority_hint?: string | null;
+  ga4_supporting_page_path?: string | null;
+  ga4_supporting_metric_summary?: string | null;
+  ga4_context_source?: string | null;
   action_lineage?: ActionLineageResponse | null;
   decision_reason: string | null;
   created_at: string;

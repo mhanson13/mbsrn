@@ -350,6 +350,22 @@ _WORKSPACE_RECOMMENDATION_TARGET_ALLOWED_CONTEXTS = {
     "sitewide",
     "general",
 }
+_GA4_PRIORITY_TRAFFIC_DECLINE_THRESHOLD_PERCENT = -5.0
+_GA4_PRIORITY_ENGAGEMENT_DECLINE_THRESHOLD_PERCENT = -5.0
+_GA4_PRIORITY_CONTENT_HINT_KEYWORDS = (
+    "content",
+    "copy",
+    "readability",
+    "clarity",
+    "call to action",
+    "cta",
+    "title",
+    "meta",
+    "heading",
+    "trust",
+    "service",
+    "page quality",
+)
 logger = logging.getLogger(__name__)
 
 
@@ -894,6 +910,274 @@ def _build_recommendation_measurement_context_by_id(
     return context_by_recommendation_id
 
 
+def _normalize_ga4_insight_path(value: object) -> str | None:
+    compacted = _compact_workspace_text(value, max_length=512)
+    if compacted is None:
+        return None
+    parsed = urlparse(compacted)
+    normalized = (parsed.path or compacted).strip()
+    if not normalized:
+        normalized = "/"
+    if not normalized.startswith("/"):
+        normalized = f"/{normalized}"
+    normalized = re.sub(r"/+", "/", normalized)
+    if normalized != "/":
+        normalized = normalized.rstrip("/")
+    return normalized or "/"
+
+
+def _collect_recommendation_path_candidates(
+    recommendation: SEORecommendationRead,
+) -> list[str]:
+    candidates: list[str] = []
+    seen: set[str] = set()
+
+    def add_candidate(raw_value: object) -> None:
+        candidate = _normalize_ga4_insight_path(raw_value)
+        if candidate is None:
+            return
+        if candidate in seen:
+            return
+        seen.add(candidate)
+        candidates.append(candidate)
+
+    target_context = _normalize_workspace_recommendation_target_context(recommendation.recommendation_target_context)
+    if target_context == "homepage":
+        add_candidate("/")
+    for hint in recommendation.recommendation_target_page_hints:
+        compact_hint = _compact_workspace_text(hint, max_length=220)
+        if compact_hint is None:
+            continue
+        if compact_hint.lower() == "homepage":
+            add_candidate("/")
+            continue
+        add_candidate(compact_hint)
+    return candidates
+
+
+def _is_ga4_priority_homepage_or_sitewide_recommendation(
+    recommendation: SEORecommendationRead,
+) -> bool:
+    target_context = _normalize_workspace_recommendation_target_context(recommendation.recommendation_target_context)
+    if target_context in {"homepage", "sitewide"}:
+        return True
+    for candidate_path in _collect_recommendation_path_candidates(recommendation):
+        if _is_workspace_homepage_path(candidate_path):
+            return True
+    title_hint = str(recommendation.title or "").strip().lower()
+    rule_key_hint = str(recommendation.rule_key or "").strip().lower()
+    return "homepage" in title_hint or "homepage" in rule_key_hint
+
+
+def _is_ga4_priority_content_recommendation(
+    recommendation: SEORecommendationRead,
+) -> bool:
+    if recommendation.category == "CONTENT":
+        return True
+    execution_type = str(recommendation.execution_type or "").strip().lower()
+    if execution_type in {"content_update", "page_update", "metadata_update"}:
+        return True
+    combined_text = " ".join(
+        (
+            str(recommendation.rule_key or ""),
+            str(recommendation.title or ""),
+            str(recommendation.rationale or ""),
+        )
+    ).lower()
+    return any(keyword in combined_text for keyword in _GA4_PRIORITY_CONTENT_HINT_KEYWORDS)
+
+
+def _ga4_trend_is_declining(
+    *,
+    trend_label: object,
+    primary_delta_percent: float | None,
+    secondary_delta_percent: float | None = None,
+    threshold_percent: float,
+) -> bool:
+    normalized_label = str(trend_label or "").strip().lower()
+    if normalized_label == "declining":
+        return True
+    for value in (primary_delta_percent, secondary_delta_percent):
+        if value is None:
+            continue
+        if value <= threshold_percent:
+            return True
+    return False
+
+
+def _safe_ratio_delta_percent(*, current: float | None, previous: float | None) -> float | None:
+    if current is None or previous is None:
+        return None
+    if previous <= 0:
+        return None
+    return round(((current - previous) / previous) * 100, 2)
+
+
+def _format_ga4_priority_delta_percent(value: float | None) -> str | None:
+    if value is None:
+        return None
+    rounded = round(value, 1)
+    prefix = "+" if rounded > 0 else ""
+    return f"{prefix}{rounded}%"
+
+
+def _build_ga4_priority_metric_summary_for_landing_page(landing_page: object) -> str | None:
+    sessions = getattr(landing_page, "sessions", None)
+    active_users = getattr(landing_page, "active_users", None)
+    views = getattr(landing_page, "views", None)
+    parts: list[str] = []
+    if isinstance(sessions, (int, float)):
+        parts.append(f"Sessions: {int(max(0, sessions))}")
+    if isinstance(active_users, (int, float)):
+        parts.append(f"Active users: {int(max(0, active_users))}")
+    if isinstance(views, (int, float)):
+        parts.append(f"Views: {int(max(0, views))}")
+    return "; ".join(parts) if parts else None
+
+
+def _build_ga4_priority_metric_summary_for_traffic(traffic_trend: object) -> str | None:
+    sessions_delta_percent = _format_ga4_priority_delta_percent(
+        getattr(traffic_trend, "sessions_delta_percent", None),
+    )
+    active_users_delta_percent = _format_ga4_priority_delta_percent(
+        getattr(traffic_trend, "active_users_delta_percent", None),
+    )
+    parts: list[str] = []
+    if sessions_delta_percent is not None:
+        parts.append(f"Sessions change: {sessions_delta_percent}")
+    if active_users_delta_percent is not None:
+        parts.append(f"Active users change: {active_users_delta_percent}")
+    return "; ".join(parts) if parts else None
+
+
+def _build_ga4_priority_metric_summary_for_engagement(engagement_trend: object) -> str | None:
+    engagement_rate_delta_percent = _format_ga4_priority_delta_percent(
+        getattr(engagement_trend, "engagement_rate_delta_percent", None),
+    )
+    average_time_delta_percent = _format_ga4_priority_delta_percent(
+        _safe_ratio_delta_percent(
+            current=getattr(engagement_trend, "current_average_engagement_time_seconds", None),
+            previous=getattr(engagement_trend, "previous_average_engagement_time_seconds", None),
+        )
+    )
+    parts: list[str] = []
+    if engagement_rate_delta_percent is not None:
+        parts.append(f"Engagement rate change: {engagement_rate_delta_percent}")
+    if average_time_delta_percent is not None:
+        parts.append(f"Avg engagement time change: {average_time_delta_percent}")
+    return "; ".join(parts) if parts else None
+
+
+def _build_recommendation_ga4_priority_context_by_id(
+    *,
+    recommendations: list[SEORecommendationRead],
+    site_analytics_summary: SEOAnalyticsSiteSummaryRead,
+) -> dict[str, dict[str, object]]:
+    if not recommendations:
+        return {}
+
+    ga4_insights = site_analytics_summary.ga4_insights
+    if ga4_insights is None:
+        return {
+            recommendation.id: {
+                "ga4_priority_context_available": False,
+                "ga4_context_source": "ga4_insights_missing",
+            }
+            for recommendation in recommendations
+        }
+
+    insights_status = str(ga4_insights.status or "").strip().lower() or "unknown"
+    if insights_status != "available":
+        return {
+            recommendation.id: {
+                "ga4_priority_context_available": False,
+                "ga4_context_source": f"ga4_insights_{insights_status}",
+            }
+            for recommendation in recommendations
+        }
+
+    landing_page_by_path: dict[str, object] = {}
+    for landing_page in ga4_insights.top_landing_pages or []:
+        normalized_path = _normalize_ga4_insight_path(getattr(landing_page, "path", None))
+        if normalized_path is None:
+            continue
+        if normalized_path not in landing_page_by_path:
+            landing_page_by_path[normalized_path] = landing_page
+
+    traffic_trend = ga4_insights.traffic_trend
+    engagement_trend = ga4_insights.engagement_trend
+    traffic_declining = (
+        traffic_trend is not None
+        and _ga4_trend_is_declining(
+            trend_label=getattr(traffic_trend, "trend_label", None),
+            primary_delta_percent=getattr(traffic_trend, "sessions_delta_percent", None),
+            secondary_delta_percent=getattr(traffic_trend, "active_users_delta_percent", None),
+            threshold_percent=_GA4_PRIORITY_TRAFFIC_DECLINE_THRESHOLD_PERCENT,
+        )
+    )
+    engagement_declining = (
+        engagement_trend is not None
+        and _ga4_trend_is_declining(
+            trend_label=getattr(engagement_trend, "trend_label", None),
+            primary_delta_percent=getattr(engagement_trend, "engagement_rate_delta_percent", None),
+            threshold_percent=_GA4_PRIORITY_ENGAGEMENT_DECLINE_THRESHOLD_PERCENT,
+        )
+    )
+
+    context_by_recommendation_id: dict[str, dict[str, object]] = {}
+    for recommendation in recommendations:
+        candidate_paths = _collect_recommendation_path_candidates(recommendation)
+        matched_path = next((path for path in candidate_paths if path in landing_page_by_path), None)
+        if matched_path is not None:
+            supporting_summary = _build_ga4_priority_metric_summary_for_landing_page(
+                landing_page_by_path[matched_path]
+            )
+            context_by_recommendation_id[recommendation.id] = {
+                "ga4_priority_context_available": True,
+                "ga4_priority_signal": "top_landing_page",
+                "ga4_priority_hint": (
+                    "This recommendation targets a top landing page with active traffic, "
+                    "so updates here may have faster near-term visibility."
+                ),
+                "ga4_supporting_page_path": matched_path,
+                "ga4_supporting_metric_summary": supporting_summary,
+                "ga4_context_source": "ga4_insights",
+            }
+            continue
+
+        if traffic_declining and _is_ga4_priority_homepage_or_sitewide_recommendation(recommendation):
+            context_by_recommendation_id[recommendation.id] = {
+                "ga4_priority_context_available": True,
+                "ga4_priority_signal": "traffic_decline",
+                "ga4_priority_hint": (
+                    "Recent GA4 traffic is declining, so high-confidence homepage and sitewide SEO fixes "
+                    "are more urgent."
+                ),
+                "ga4_supporting_metric_summary": _build_ga4_priority_metric_summary_for_traffic(traffic_trend),
+                "ga4_context_source": "ga4_insights",
+            }
+            continue
+
+        if engagement_declining and _is_ga4_priority_content_recommendation(recommendation):
+            context_by_recommendation_id[recommendation.id] = {
+                "ga4_priority_context_available": True,
+                "ga4_priority_signal": "engagement_decline",
+                "ga4_priority_hint": (
+                    "Recent GA4 engagement is weaker, so content clarity and CTA-focused improvements "
+                    "are likely higher leverage."
+                ),
+                "ga4_supporting_metric_summary": _build_ga4_priority_metric_summary_for_engagement(engagement_trend),
+                "ga4_context_source": "ga4_insights",
+            }
+            continue
+
+        context_by_recommendation_id[recommendation.id] = {
+            "ga4_priority_context_available": False,
+            "ga4_context_source": "ga4_insights_available_no_priority_signal",
+        }
+    return context_by_recommendation_id
+
+
 def _build_recommendation_search_console_context_by_id(
     *,
     recommendations: list[SEORecommendationRead],
@@ -1066,6 +1350,10 @@ def _attach_measurement_context_to_recommendations(
         search_console_property_url=search_console_property_url,
         search_console_enabled=search_console_enabled,
     )
+    ga4_priority_context_by_recommendation_id = _build_recommendation_ga4_priority_context_by_id(
+        recommendations=recommendations,
+        site_analytics_summary=site_analytics_summary,
+    )
     return [
         recommendation.model_copy(
             update={
@@ -1077,6 +1365,7 @@ def _attach_measurement_context_to_recommendations(
                     traffic_context=context_by_recommendation_id.get(recommendation.id),
                     search_context=search_console_context_by_recommendation_id.get(recommendation.id),
                 ),
+                **ga4_priority_context_by_recommendation_id.get(recommendation.id, {}),
             }
         )
         for recommendation in recommendations

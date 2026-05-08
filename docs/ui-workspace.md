@@ -49,6 +49,7 @@ Behavior:
 - Missing or unavailable GA4 context does not block workspace loading or recommendation rendering.
 - Null/partial GA4 health or insight payloads degrade to bounded fallback labels/messages (`Unknown`, `Not available`, `GA4 unavailable`) instead of breaking workspace rendering.
 - Recommendation detail surfaces now show explicit GA4-context omission/unavailable messaging instead of silent absence.
+- Recommendation detail surfaces also show compact additive GA4 priority hints when available (for example top landing-page match, traffic decline, engagement decline), without changing recommendation scoring/order.
 - Workspace Snapshot now includes compact GA4 insight cards:
   - `Top landing pages` (bounded to top 5 shown)
   - `Traffic trend` (sessions/active users directional summary)

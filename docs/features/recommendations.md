@@ -832,6 +832,30 @@ Recommendation-surface behavior:
 - omission/unavailable lines from Phase 1 remain in place for `not_configured`/`unavailable` states.
 - null/partial GA4 measurement metadata is treated as unavailable/no-match context and does not break recommendation page rendering.
 
+### GA4 Additive Priority Context (Phase 3)
+
+Recommendation payloads now include additive, deterministic GA4 priority context fields:
+
+- `ga4_priority_context_available`
+- `ga4_priority_signal`
+- `ga4_priority_hint`
+- `ga4_supporting_page_path`
+- `ga4_supporting_metric_summary`
+- `ga4_context_source`
+
+Signal precedence (single signal per recommendation to avoid UI noise):
+1. `top_landing_page`
+2. `traffic_decline` (homepage/sitewide recommendations)
+3. `engagement_decline` (content/page-quality recommendations)
+
+Behavior boundaries:
+- uses existing `ga4_insights` only (site-scoped property path)
+- no global/default GA4 property fallback
+- GA4 is optional and never blocks recommendation generation/display
+- recommendation scoring, priority score/band, and ordering are unchanged
+- compact hint appears only when `ga4_priority_context_available=true`
+- unavailable/missing GA4 states stay non-blocking and map to bounded `ga4_context_source` reasons
+
 ### GA4 Last Data Seen + Freshness
 
 Workspace GA4 cards now include explicit freshness indicators:

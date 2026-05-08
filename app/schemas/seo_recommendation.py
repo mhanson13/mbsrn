@@ -47,6 +47,7 @@ SEORecommendationEffectivenessStatus = Literal["available", "partial", "insuffic
 SEORecommendationEffectivenessDirection = Literal["up", "down", "flat", "unknown"]
 SEORecommendationEffectivenessTrend = Literal["improving", "flat", "declining", "insufficient_data"]
 SEORecommendationEffectivenessConfidence = Literal["high", "moderate", "low"]
+SEORecommendationGA4PrioritySignal = Literal["top_landing_page", "traffic_decline", "engagement_decline"]
 SEORecommendationPriorityLevel = Literal["high", "medium", "low"]
 SEORecommendationEffortHint = Literal["quick_win", "moderate", "larger_change"]
 SEORecommendationCompetitorEvidenceTrustTier = Literal[
@@ -187,6 +188,9 @@ _RECOMMENDATION_BLOCKING_REASON_MAX_CHARS = 220
 _RECOMMENDATION_MEASUREMENT_PATH_MAX_CHARS = 220
 _RECOMMENDATION_SEARCH_QUERY_MAX_CHARS = 120
 _RECOMMENDATION_EFFECTIVENESS_SUMMARY_MAX_CHARS = 220
+_RECOMMENDATION_GA4_PRIORITY_HINT_MAX_CHARS = 220
+_RECOMMENDATION_GA4_SUPPORTING_METRIC_SUMMARY_MAX_CHARS = 180
+_RECOMMENDATION_GA4_CONTEXT_SOURCE_MAX_CHARS = 80
 _RECOMMENDATION_EVIDENCE_TRACE_MAX_CHARS = 80
 _RECOMMENDATION_EVIDENCE_TRACE_MAX_ITEMS = 5
 _RECOMMENDATION_TARGET_PAGE_HINT_MAX_CHARS = 120
@@ -3313,6 +3317,15 @@ class SEORecommendationRead(BaseModel):
     recommendation_measurement_context: SEORecommendationMeasurementContextRead | None = None
     recommendation_search_console_context: SEORecommendationSearchConsoleContextRead | None = None
     recommendation_effectiveness_context: SEORecommendationEffectivenessContextRead | None = None
+    ga4_priority_context_available: bool = False
+    ga4_priority_signal: SEORecommendationGA4PrioritySignal | None = None
+    ga4_priority_hint: str | None = Field(default=None, max_length=_RECOMMENDATION_GA4_PRIORITY_HINT_MAX_CHARS)
+    ga4_supporting_page_path: str | None = Field(default=None, max_length=_RECOMMENDATION_MEASUREMENT_PATH_MAX_CHARS)
+    ga4_supporting_metric_summary: str | None = Field(
+        default=None,
+        max_length=_RECOMMENDATION_GA4_SUPPORTING_METRIC_SUMMARY_MAX_CHARS,
+    )
+    ga4_context_source: str | None = Field(default=None, max_length=_RECOMMENDATION_GA4_CONTEXT_SOURCE_MAX_CHARS)
     execution_type: SEORecommendationExecutionType = "mixed"
     execution_scope: str | None = Field(
         default=None,
@@ -3534,6 +3547,47 @@ class SEORecommendationRead(BaseModel):
             return SEORecommendationEffectivenessContextRead.model_validate(value)
         except Exception:  # noqa: BLE001
             return None
+
+    @field_validator("ga4_priority_context_available", mode="before")
+    @classmethod
+    def normalize_ga4_priority_context_available(cls, value: Any) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return bool(value)
+        normalized = str(value or "").strip().lower()
+        return normalized in {"1", "true", "yes", "y", "available"}
+
+    @field_validator("ga4_priority_signal", mode="before")
+    @classmethod
+    def normalize_ga4_priority_signal(
+        cls,
+        value: Any,
+    ) -> SEORecommendationGA4PrioritySignal | None:
+        normalized = str(value or "").strip().lower()
+        if normalized not in {"top_landing_page", "traffic_decline", "engagement_decline"}:
+            return None
+        return normalized  # type: ignore[return-value]
+
+    @field_validator("ga4_priority_hint", mode="before")
+    @classmethod
+    def normalize_ga4_priority_hint(cls, value: Any) -> str | None:
+        return _compact_text(value, max_length=_RECOMMENDATION_GA4_PRIORITY_HINT_MAX_CHARS)
+
+    @field_validator("ga4_supporting_page_path", mode="before")
+    @classmethod
+    def normalize_ga4_supporting_page_path(cls, value: Any) -> str | None:
+        return _compact_text(value, max_length=_RECOMMENDATION_MEASUREMENT_PATH_MAX_CHARS)
+
+    @field_validator("ga4_supporting_metric_summary", mode="before")
+    @classmethod
+    def normalize_ga4_supporting_metric_summary(cls, value: Any) -> str | None:
+        return _compact_text(value, max_length=_RECOMMENDATION_GA4_SUPPORTING_METRIC_SUMMARY_MAX_CHARS)
+
+    @field_validator("ga4_context_source", mode="before")
+    @classmethod
+    def normalize_ga4_context_source(cls, value: Any) -> str | None:
+        return _compact_text(value, max_length=_RECOMMENDATION_GA4_CONTEXT_SOURCE_MAX_CHARS)
 
     @field_validator("execution_type", mode="before")
     @classmethod

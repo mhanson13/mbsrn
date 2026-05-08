@@ -141,6 +141,14 @@ type RecommendationMeasurementContextView = {
   } | null;
 };
 
+type RecommendationGa4PriorityContextView = {
+  available: boolean;
+  signal: "top_landing_page" | "traffic_decline" | "engagement_decline";
+  hint: string;
+  supportingPagePath: string | null;
+  supportingMetricSummary: string | null;
+};
+
 type RecommendationSearchConsoleContextView = {
   searchConsoleStatus: "available" | "no_match" | "unavailable" | "not_configured";
   matchedPagePath: string | null;
@@ -1004,6 +1012,58 @@ function buildRecommendationGa4HealthLine(
     return "GA4 context unavailable: Verify GA4 property access and retry.";
   }
   return null;
+}
+
+function normalizeRecommendationGa4PriorityContext(
+  item: Recommendation,
+): RecommendationGa4PriorityContextView | null {
+  if (item.ga4_priority_context_available !== true) {
+    return null;
+  }
+  const rawSignal = normalizeLowerCaseString(item.ga4_priority_signal);
+  if (
+    rawSignal !== "top_landing_page"
+    && rawSignal !== "traffic_decline"
+    && rawSignal !== "engagement_decline"
+  ) {
+    return null;
+  }
+  const hint = typeof item.ga4_priority_hint === "string" ? item.ga4_priority_hint.trim() : "";
+  if (!hint) {
+    return null;
+  }
+  const supportingPagePath = typeof item.ga4_supporting_page_path === "string"
+    ? item.ga4_supporting_page_path.trim() || null
+    : null;
+  const supportingMetricSummary = typeof item.ga4_supporting_metric_summary === "string"
+    ? item.ga4_supporting_metric_summary.trim() || null
+    : null;
+  return {
+    available: true,
+    signal: rawSignal,
+    hint,
+    supportingPagePath,
+    supportingMetricSummary,
+  };
+}
+
+function buildRecommendationGa4PriorityLine(
+  ga4PriorityContext: RecommendationGa4PriorityContextView | null,
+): string | null {
+  if (!ga4PriorityContext || !ga4PriorityContext.available) {
+    return null;
+  }
+  const detailParts: string[] = [];
+  if (ga4PriorityContext.supportingPagePath) {
+    detailParts.push(`Page: ${ga4PriorityContext.supportingPagePath}`);
+  }
+  if (ga4PriorityContext.supportingMetricSummary) {
+    detailParts.push(ga4PriorityContext.supportingMetricSummary);
+  }
+  if (detailParts.length === 0) {
+    return ga4PriorityContext.hint;
+  }
+  return `${ga4PriorityContext.hint} ${detailParts.join(" · ")}`;
 }
 
 function normalizeRecommendationSearchConsoleContext(
@@ -3124,6 +3184,8 @@ function RecommendationsPageContent() {
                 const recommendationMeasurementLine = buildRecommendationMeasurementLine(recommendationMeasurementContext);
                 const recommendationSinceLine = buildRecommendationSinceLine(recommendationMeasurementContext);
                 const recommendationGa4HealthLine = buildRecommendationGa4HealthLine(recommendationMeasurementContext);
+                const recommendationGa4PriorityContext = normalizeRecommendationGa4PriorityContext(item);
+                const recommendationGa4PriorityLine = buildRecommendationGa4PriorityLine(recommendationGa4PriorityContext);
                 const recommendationSearchConsoleContext = normalizeRecommendationSearchConsoleContext(item);
                 const recommendationSearchVisibilityLine = buildRecommendationSearchVisibilityLine(
                   recommendationSearchConsoleContext,
@@ -3296,6 +3358,12 @@ function RecommendationsPageContent() {
                         {recommendationGa4HealthLine ? (
                           <p className="hint muted" data-testid={`recommendation-measurement-health-${item.id}`}>
                             {recommendationGa4HealthLine}
+                          </p>
+                        ) : null}
+                        {recommendationGa4PriorityLine ? (
+                          <p className="hint muted" data-testid={`recommendation-ga4-priority-context-${item.id}`}>
+                            <span className="text-strong">Analytics context (GA4):</span>{" "}
+                            {recommendationGa4PriorityLine}
                           </p>
                         ) : null}
                         {recommendationSearchVisibilityLine ? (
@@ -3541,6 +3609,8 @@ function RecommendationsPageContent() {
                 const recommendationMeasurementLine = buildRecommendationMeasurementLine(recommendationMeasurementContext);
                 const recommendationSinceLine = buildRecommendationSinceLine(recommendationMeasurementContext);
                 const recommendationGa4HealthLine = buildRecommendationGa4HealthLine(recommendationMeasurementContext);
+                const recommendationGa4PriorityContext = normalizeRecommendationGa4PriorityContext(item);
+                const recommendationGa4PriorityLine = buildRecommendationGa4PriorityLine(recommendationGa4PriorityContext);
                 const recommendationSearchConsoleContext = normalizeRecommendationSearchConsoleContext(item);
                 const recommendationSearchVisibilityLine = buildRecommendationSearchVisibilityLine(
                   recommendationSearchConsoleContext,
@@ -3813,6 +3883,12 @@ function RecommendationsPageContent() {
                             {recommendationGa4HealthLine ? (
                               <p className="hint muted" data-testid={`recommendation-expanded-measurement-health-${item.id}`}>
                                 {recommendationGa4HealthLine}
+                              </p>
+                            ) : null}
+                            {recommendationGa4PriorityLine ? (
+                              <p className="hint muted" data-testid={`recommendation-expanded-ga4-priority-context-${item.id}`}>
+                                <span className="text-strong">Analytics context (GA4):</span>{" "}
+                                {recommendationGa4PriorityLine}
                               </p>
                             ) : null}
                             {recommendationSearchVisibilityLine ? (

@@ -68,13 +68,25 @@ Google reconnect + GA4 authorization behavior is now scope-aware:
   - `unavailable`
 - Health payloads also expose bounded GA4 auth mode (`user_oauth`, `service_account`, `adc`, etc.) so operator guidance can clearly separate reconnect-vs-Viewer-access actions.
 
+## 1.5) Phase 3 Status (2026-05-08)
+
+Phase 3 additive recommendation-context wiring is now implemented with deterministic, non-scoring GA4 hints:
+- recommendation payloads include bounded GA4 priority context fields (`ga4_priority_context_available`, `ga4_priority_signal`, `ga4_priority_hint`, `ga4_supporting_page_path`, `ga4_supporting_metric_summary`, `ga4_context_source`)
+- signal precedence is conservative and noise-controlled:
+  1. top landing-page match
+  2. traffic decline (sitewide/homepage-oriented recommendations)
+  3. engagement decline (content/page-quality-oriented recommendations)
+- context is derived from existing site-scoped `ga4_insights` only
+- GA4 remains optional/non-blocking; unavailable states fail closed to bounded context-source reasons
+- recommendation scoring and ordering are unchanged
+
 ## 2) Current Implementation Inventory
 
 | File | Purpose | GA4 Role | Area | Risk | Notes |
 |---|---|---|---|---|---|
 | `app/integrations/ga4_analytics_provider.py` | GA4 API client + mock + disabled provider | Core GA4 query/auth logic | Backend | High | Uses `analytics.readonly`, `runReport`, Admin account summaries |
 | `app/services/seo_analytics.py` | GA4/Search Console service mapping | Site summary, onboarding, recommendation windows | Backend | High | GA4 status/freshness/error normalization lives here |
-| `app/api/routes/seo.py` | SEO routes | GA4 site summary + onboarding + recommendation context attachment | Backend | High | Site-summary enforces site GA4 config; recommendation routes currently do not |
+| `app/api/routes/seo.py` | SEO routes | GA4 site summary + onboarding + recommendation context attachment | Backend | High | Site-summary and recommendation enrichment enforce site-scoped GA4 property usage |
 | `app/api/deps.py` | Dependency wiring | Instantiates GA4 provider from settings | Backend | High | Provider property comes from app settings (`GA4_PROPERTY_ID`) |
 | `app/core/config.py` | Runtime config | GA4 env contract | Backend | Medium | Includes mock toggle and API base URL overrides |
 | `app/models/seo_site.py` | ORM model | Stores per-site GA4 onboarding fields | Backend | Medium | `ga4_onboarding_status`, account/property/stream/measurement IDs |
@@ -164,7 +176,7 @@ Google reconnect + GA4 authorization behavior is now scope-aware:
 ### 4.3 Tenant/data isolation risks
 - Site/business route scoping exists.
 - **Medium/High risk**: shared-credential account discovery can expose broad GA account names/counts if service credential is over-permissioned across tenants.
-- **High risk**: recommendation paths may query GA4 via app-level property context without strict per-site property enforcement.
+- Site-scoped GA4 property enforcement for recommendation analytics is now in place; residual risk is limited to future regressions and is covered by regression tests.
 
 ### 4.4 Tests and live-call safety
 - API/service tests are mock/stub-heavy and deterministic.
@@ -254,7 +266,7 @@ What is covered well:
 
 What is missing or weak:
 - No dedicated low-level GA4 provider test suite (auth fallback, HTTP error parsing, timeout handling, host filter behavior).
-- No tests asserting recommendation routes enforce site-level GA4 property contract.
+- Recommendation route tests now assert site-level GA4 property enforcement and cross-site isolation.
 - Limited explicit tests for quota/rate-limit and malformed partial GA4 response payloads.
 - No UI tests for account-discovery-based GA4 property selection flow (because flow is not implemented).
 
@@ -265,7 +277,7 @@ Real-call posture:
 
 | ID | Severity | Risk | Evidence | Recommendation |
 |---|---|---|---|---|
-| GA4-R1 | High | Recommendation GA4 context may use app-global property instead of site property | `get_site_summary` usage in recommendation routes omits site property enforcement; provider bound to settings property | Enforce per-site property in recommendation analytics path and add regression tests |
+| GA4-R1 | Resolved (monitor) | Recommendation GA4 context may use app-global property instead of site property | Recommendation routes now enforce site-scoped property and tests cover missing-property + cross-site isolation paths | Keep regression coverage in CI and block fallback reintroduction |
 | GA4-R2 | High | Shared-credential account discovery may leak broad account metadata across tenants | `/ga4-accessible-accounts` returns service-credential account summaries | Scope/filter account discovery or restrict endpoint visibility to admin + scoped mappings |
 | GA4-R3 | Medium | No dedicated GA4 provider tests | No `test_ga4_analytics_provider.py` equivalent to Search Console provider tests | Add provider-level unit tests for auth/timeout/error parsing/filter construction |
 | GA4-R4 | Medium | Operator value remains limited beyond compact GA4 summaries | Phase 2 added top landing/traffic/engagement cards, but no conversions/events/source-medium and no prioritization wiring yet | Add phase-3 prioritization hooks + phase-4/5 deeper GA4 outcome usage |
