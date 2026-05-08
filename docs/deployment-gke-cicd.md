@@ -107,6 +107,7 @@ This produces OCI-compatible images suitable for containerd on GKE.
   - builds/pushes `frontend/www` image
   - applies website-only `k8s/www-*` resources
   - keeps `app.mbsrn.com` operator deployment path isolated
+  - `frontend/www` runs Next.js standalone mode; production image optimization requires `sharp` in runtime dependencies
 
 ### Deployment Path Precedence
 - Production-authoritative path:

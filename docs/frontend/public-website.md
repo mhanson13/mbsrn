@@ -38,6 +38,20 @@ Pages:
 
 No environment variables are required for the current static-first website.
 
+## Next.js Standalone Image Optimization Requirement
+
+`frontend/www` builds with Next.js `output: "standalone"` and uses `next/image`.
+In production runtime, image optimization requires `sharp` to be present in the standalone bundle.
+
+`sharp` is a production dependency of `frontend/www` and should be validated before deploy:
+
+```bash
+cd frontend/www
+npm ci
+npm run build
+npm run validate:standalone-runtime
+```
+
 ## Deployment
 
 Production website deployment is handled by:
@@ -112,6 +126,7 @@ For the final combined production cutover flow across both hosts (`app` + `www`)
 - `cd frontend/www && npm run lint`
 - `cd frontend/www && npm run typecheck`
 - `cd frontend/www && npm run build`
+- `cd frontend/www && npm run validate:standalone-runtime`
 - Confirm public pages still compile:
   - `/`
   - `/features`
@@ -208,6 +223,7 @@ Open `https://www.mbsrn.com/` and verify:
 - cert stuck `Provisioning`/`Failed`: verify host DNS points to ingress LB IP and wait for managed cert issuance.
 - TLS pending/invalid: check managed certificate status and DNS host mapping.
 - Route works but missing styles/assets: verify `frontend/www/public/*` assets are present in image.
+- repeated `sharp-missing-in-production` logs: verify `frontend/www/package.json` includes `sharp` in `dependencies`, rebuild image, and rerun `npm run validate:standalone-runtime`.
 - OAuth branding rejected: verify exact URLs and authorized domain in Google Cloud console.
 
 Managed certificate status commands:
