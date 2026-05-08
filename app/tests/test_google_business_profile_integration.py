@@ -383,6 +383,9 @@ def test_google_business_profile_connect_start_builds_expected_authorization_req
     payload = _start_connect(client)
     assert payload["provider"] == "google_business_profile"
     assert payload["required_scope"] == "https://www.googleapis.com/auth/business.manage"
+    assert payload["required_scopes"] == ["https://www.googleapis.com/auth/business.manage"]
+    assert payload["ga4_scope_requested"] is False
+    assert payload["required_ga4_scope"] == "https://www.googleapis.com/auth/analytics.readonly"
 
     authorization_url = str(payload["authorization_url"])
     parsed = urlparse(authorization_url)
@@ -414,6 +417,40 @@ def test_google_business_profile_connect_start_builds_expected_authorization_req
         key_version=state_row.code_verifier_key_version or "",
     )
     assert query["code_challenge"] == [_pkce_challenge_from_verifier(verifier)]
+
+
+def test_google_business_profile_connect_start_can_request_ga4_readonly_scope(
+    db_session,
+    seeded_business,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _seed_principal(db_session, business_id=seeded_business.id, principal_id="admin-connect-ga4")
+    oauth_client = _StubGoogleOAuthClient()
+    client = _make_integrations_client(
+        db_session,
+        oauth_client=oauth_client,
+        business_id=seeded_business.id,
+        principal_id="admin-connect-ga4",
+    )
+
+    response = client.post("/api/integrations/google/business-profile/connect/start?include_ga4_access=true")
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["required_scope"] == "https://www.googleapis.com/auth/business.manage"
+    assert payload["ga4_scope_requested"] is True
+    assert payload["required_ga4_scope"] == "https://www.googleapis.com/auth/analytics.readonly"
+    assert payload["required_scopes"] == [
+        "https://www.googleapis.com/auth/analytics.readonly",
+        "https://www.googleapis.com/auth/business.manage",
+    ]
+
+    authorization_url = str(payload["authorization_url"])
+    query = parse_qs(urlparse(authorization_url).query)
+    scopes = set(query["scope"][0].split(" "))
+    assert "https://www.googleapis.com/auth/business.manage" in scopes
+    assert "https://www.googleapis.com/auth/analytics.readonly" in scopes
+    assert "https://www.googleapis.com/auth/analytics.edit" not in scopes
+    assert "https://www.googleapis.com/auth/analytics.manage.users" not in scopes
 
 
 def test_google_business_profile_callback_rejects_invalid_state(
@@ -792,6 +829,8 @@ def test_google_business_profile_connection_status_contract_is_stable(
         "reconnect_required",
         "required_scopes_satisfied",
         "token_status",
+        "ga4_scope_granted",
+        "required_ga4_scope",
     }
     assert payload["provider"] == "google_business_profile"
     assert payload["connected"] is True
@@ -799,6 +838,49 @@ def test_google_business_profile_connection_status_contract_is_stable(
     assert payload["reconnect_required"] is False
     assert payload["required_scopes_satisfied"] is True
     assert payload["token_status"] == "usable"
+    assert payload["ga4_scope_granted"] is False
+    assert payload["required_ga4_scope"] == "https://www.googleapis.com/auth/analytics.readonly"
+
+
+def test_google_business_profile_connection_status_reports_ga4_scope_granted_when_present(
+    db_session,
+    seeded_business,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _seed_principal(db_session, business_id=seeded_business.id, principal_id="admin-status-ga4")
+    oauth_client = _StubGoogleOAuthClient()
+    oauth_client.exchange_map["status-code-ga4"] = GoogleOAuthTokenResponse(
+        access_token="status-access-token",
+        token_type="Bearer",
+        expires_in=3600,
+        refresh_token="status-refresh-token",
+        scope=(
+            "https://www.googleapis.com/auth/business.manage "
+            "https://www.googleapis.com/auth/analytics.readonly"
+        ),
+        id_token_subject=None,
+        id_token_email=None,
+    )
+    client = _make_integrations_client(
+        db_session,
+        oauth_client=oauth_client,
+        business_id=seeded_business.id,
+        principal_id="admin-status-ga4",
+    )
+
+    start_payload = _start_connect(client)
+    state = _extract_state(str(start_payload["authorization_url"]))
+    callback = client.get(
+        "/api/integrations/google/business-profile/connect/callback",
+        params={"state": state, "code": "status-code-ga4"},
+    )
+    assert callback.status_code == 200
+
+    status_response = client.get("/api/integrations/google/business-profile/connection")
+    assert status_response.status_code == 200
+    payload = status_response.json()
+    assert payload["ga4_scope_granted"] is True
+    assert payload["required_ga4_scope"] == "https://www.googleapis.com/auth/analytics.readonly"
 
 
 def test_google_business_profile_callback_requires_refresh_token_for_initial_connection(

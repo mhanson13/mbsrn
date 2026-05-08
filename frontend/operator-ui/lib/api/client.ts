@@ -1503,9 +1503,14 @@ export async function fetchGoogleBusinessProfileConnection(
 
 export async function startGoogleBusinessProfileConnect(
   token: string,
+  options?: { includeGa4Access?: boolean },
 ): Promise<GoogleBusinessProfileConnectStartResponse> {
+  const includeGa4Access = options?.includeGa4Access === true;
+  const endpoint = includeGa4Access
+    ? "/api/integrations/google/business-profile/connect/start?include_ga4_access=true"
+    : "/api/integrations/google/business-profile/connect/start";
   return apiRequest<GoogleBusinessProfileConnectStartResponse>(
-    "/api/integrations/google/business-profile/connect/start",
+    endpoint,
     {
       method: "POST",
       token,

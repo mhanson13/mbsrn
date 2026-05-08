@@ -48,6 +48,32 @@ class GA4TopPagePeriodMetrics:
 
 
 @dataclass(frozen=True)
+class GA4TopLandingPageMetrics:
+    page_path: str
+    page_title: str | None
+    sessions: int
+    active_users: int
+    views: int
+    engagement_rate: float | None
+    average_engagement_time_seconds: float | None
+
+
+@dataclass(frozen=True)
+class GA4EngagementTrendMetrics:
+    current_engagement_rate: float | None
+    previous_engagement_rate: float | None
+    current_average_engagement_time_seconds: float | None
+    previous_average_engagement_time_seconds: float | None
+
+
+@dataclass(frozen=True)
+class GA4OperatorInsightsResult:
+    top_landing_pages: tuple[GA4TopLandingPageMetrics, ...]
+    engagement_trend: GA4EngagementTrendMetrics
+    data_source: str
+
+
+@dataclass(frozen=True)
 class GA4AccountSummary:
     account_id: str
     display_name: str
@@ -86,6 +112,15 @@ class GA4AnalyticsProvider(Protocol):
         ga4_property_id: str | None = None,
     ) -> GA4SitePeriodMetrics: ...
 
+    def fetch_operator_insights(
+        self,
+        *,
+        site_domain: str,
+        period_days: int,
+        top_landing_pages_limit: int,
+        ga4_property_id: str | None = None,
+    ) -> GA4OperatorInsightsResult: ...
+
 
 class DisabledGA4AnalyticsProvider:
     def is_configured(self) -> bool:
@@ -116,6 +151,17 @@ class DisabledGA4AnalyticsProvider:
         ga4_property_id: str | None = None,
     ) -> GA4SitePeriodMetrics:
         del site_domain, start_date, end_date, page_path, ga4_property_id
+        raise GA4AnalyticsProviderConfigurationError("GA4 analytics is not configured.")
+
+    def fetch_operator_insights(
+        self,
+        *,
+        site_domain: str,
+        period_days: int,
+        top_landing_pages_limit: int,
+        ga4_property_id: str | None = None,
+    ) -> GA4OperatorInsightsResult:
+        del site_domain, period_days, top_landing_pages_limit, ga4_property_id
         raise GA4AnalyticsProviderConfigurationError("GA4 analytics is not configured.")
 
 
@@ -210,6 +256,42 @@ class MockGA4AnalyticsProvider:
             sessions=sessions,
             pageviews=pageviews,
             organic_search_sessions=organic_sessions,
+        )
+
+    def fetch_operator_insights(
+        self,
+        *,
+        site_domain: str,
+        period_days: int,
+        top_landing_pages_limit: int,
+        ga4_property_id: str | None = None,
+    ) -> GA4OperatorInsightsResult:
+        del period_days, ga4_property_id
+        normalized_domain = _normalize_domain(site_domain)
+        seed = sum(ord(character) for character in normalized_domain) % 57
+        bounded_limit = max(1, min(int(top_landing_pages_limit), 10))
+        top_landing_pages = tuple(
+            GA4TopLandingPageMetrics(
+                page_path="/" if index == 0 else f"/services/{index}",
+                page_title="Home" if index == 0 else f"Service Page {index}",
+                sessions=max(1, (220 + seed) // (index + 1)),
+                active_users=max(1, (170 + seed) // (index + 1)),
+                views=max(1, (340 + seed) // (index + 1)),
+                engagement_rate=round(max(0.12, min(0.9, 0.48 + ((seed % 9) * 0.03) - (index * 0.02))), 4),
+                average_engagement_time_seconds=float(max(20, 110 - (index * 12) + (seed % 11))),
+            )
+            for index in range(bounded_limit)
+        )
+        engagement_trend = GA4EngagementTrendMetrics(
+            current_engagement_rate=round(max(0.15, min(0.9, 0.57 + ((seed % 5) * 0.01))), 4),
+            previous_engagement_rate=round(max(0.15, min(0.9, 0.53 + ((seed % 5) * 0.01))), 4),
+            current_average_engagement_time_seconds=float(max(20, 86 + (seed % 15))),
+            previous_average_engagement_time_seconds=float(max(20, 79 + (seed % 12))),
+        )
+        return GA4OperatorInsightsResult(
+            top_landing_pages=top_landing_pages,
+            engagement_trend=engagement_trend,
+            data_source="ga4_mock",
         )
 
 
@@ -362,6 +444,55 @@ class GoogleAnalyticsDataAPIClient:
             ga4_property_id=scoped_property_id,
         )
 
+    def fetch_operator_insights(
+        self,
+        *,
+        site_domain: str,
+        period_days: int,
+        top_landing_pages_limit: int,
+        ga4_property_id: str | None = None,
+    ) -> GA4OperatorInsightsResult:
+        scoped_property_id = self._resolve_ga4_property_id(ga4_property_id)
+        normalized_domain = _normalize_domain(site_domain)
+        if not normalized_domain:
+            raise GA4AnalyticsProviderConfigurationError("A normalized site domain is required for GA4 analytics.")
+
+        bounded_period_days = max(1, min(int(period_days), 30))
+        bounded_top_landing_limit = max(1, min(int(top_landing_pages_limit), 10))
+        current_start_offset = bounded_period_days - 1
+        previous_end_offset = bounded_period_days
+        previous_start_offset = (bounded_period_days * 2) - 1
+
+        top_landing_pages = self._fetch_operator_top_landing_pages(
+            site_domain=normalized_domain,
+            start_date=f"{current_start_offset}daysAgo",
+            end_date="today",
+            limit=bounded_top_landing_limit,
+            ga4_property_id=scoped_property_id,
+        )
+        current_engagement_rate, current_avg_duration = self._fetch_operator_engagement_metrics(
+            site_domain=normalized_domain,
+            start_date=f"{current_start_offset}daysAgo",
+            end_date="today",
+            ga4_property_id=scoped_property_id,
+        )
+        previous_engagement_rate, previous_avg_duration = self._fetch_operator_engagement_metrics(
+            site_domain=normalized_domain,
+            start_date=f"{previous_start_offset}daysAgo",
+            end_date=f"{previous_end_offset}daysAgo",
+            ga4_property_id=scoped_property_id,
+        )
+        return GA4OperatorInsightsResult(
+            top_landing_pages=tuple(top_landing_pages),
+            engagement_trend=GA4EngagementTrendMetrics(
+                current_engagement_rate=current_engagement_rate,
+                previous_engagement_rate=previous_engagement_rate,
+                current_average_engagement_time_seconds=current_avg_duration,
+                previous_average_engagement_time_seconds=previous_avg_duration,
+            ),
+            data_source="ga4",
+        )
+
     def _fetch_period_metrics(
         self,
         *,
@@ -466,6 +597,86 @@ class GoogleAnalyticsDataAPIClient:
             if len(top_pages) >= limit:
                 break
         return top_pages
+
+    def _fetch_operator_top_landing_pages(
+        self,
+        *,
+        site_domain: str,
+        start_date: str,
+        end_date: str,
+        limit: int,
+        ga4_property_id: str,
+    ) -> list[GA4TopLandingPageMetrics]:
+        payload: dict[str, Any] = {
+            "dateRanges": [{"startDate": start_date, "endDate": end_date}],
+            "dimensions": [{"name": "pagePath"}, {"name": "pageTitle"}],
+            "metrics": [
+                {"name": "sessions"},
+                {"name": "activeUsers"},
+                {"name": "screenPageViews"},
+                {"name": "engagementRate"},
+                {"name": "averageSessionDuration"},
+            ],
+            "dimensionFilter": self._build_site_filter(site_domain),
+            "orderBys": [{"metric": {"metricName": "sessions"}, "desc": True}],
+            "limit": str(limit),
+        }
+        response_payload = self._request_report(
+            body=payload,
+            ga4_property_id=ga4_property_id,
+        )
+        rows = response_payload.get("rows")
+        if not isinstance(rows, list):
+            return []
+        top_pages: list[GA4TopLandingPageMetrics] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            dimensions = row.get("dimensionValues")
+            if not isinstance(dimensions, list) or not dimensions:
+                continue
+            raw_path = _dimension_value(dimensions, index=0)
+            if not raw_path:
+                continue
+            raw_title = _dimension_value(dimensions, index=1)
+            normalized_title = raw_title[:180] if raw_title else None
+            top_pages.append(
+                GA4TopLandingPageMetrics(
+                    page_path=raw_path[:220],
+                    page_title=normalized_title,
+                    sessions=_metric_value(row, index=0),
+                    active_users=_metric_value(row, index=1),
+                    views=_metric_value(row, index=2),
+                    engagement_rate=_metric_float_value(row, index=3),
+                    average_engagement_time_seconds=_metric_float_value(row, index=4),
+                )
+            )
+            if len(top_pages) >= limit:
+                break
+        return top_pages
+
+    def _fetch_operator_engagement_metrics(
+        self,
+        *,
+        site_domain: str,
+        start_date: str,
+        end_date: str,
+        ga4_property_id: str,
+    ) -> tuple[float | None, float | None]:
+        payload: dict[str, Any] = {
+            "dateRanges": [{"startDate": start_date, "endDate": end_date}],
+            "metrics": [{"name": "engagementRate"}, {"name": "averageSessionDuration"}],
+            "dimensionFilter": self._build_site_filter(site_domain),
+        }
+        response_payload = self._request_report(
+            body=payload,
+            ga4_property_id=ga4_property_id,
+        )
+        row = _first_row(response_payload)
+        return (
+            _metric_float_value(row, index=0),
+            _metric_float_value(row, index=1),
+        )
 
     def _build_site_filter(self, site_domain: str) -> dict[str, Any]:
         host_values = [site_domain]
@@ -683,6 +894,25 @@ def _metric_value(row: dict[str, Any], *, index: int) -> int:
         return max(0, int(float(raw)))
     except ValueError:
         return 0
+
+
+def _metric_float_value(row: dict[str, Any], *, index: int) -> float | None:
+    values = row.get("metricValues")
+    if not isinstance(values, list) or index >= len(values):
+        return None
+    metric_payload = values[index]
+    if not isinstance(metric_payload, dict):
+        return None
+    raw = str(metric_payload.get("value") or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = float(raw)
+    except ValueError:
+        return None
+    if not parsed >= 0:
+        return None
+    return parsed
 
 
 def _first_row(payload: dict[str, Any]) -> dict[str, Any]:

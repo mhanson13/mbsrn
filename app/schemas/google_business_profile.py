@@ -10,6 +10,9 @@ class GoogleBusinessProfileConnectStartResponse(BaseModel):
     state_expires_at: str
     provider: str
     required_scope: str
+    required_scopes: list[str] = Field(default_factory=list)
+    ga4_scope_requested: bool = False
+    required_ga4_scope: str = "https://www.googleapis.com/auth/analytics.readonly"
 
 
 class GoogleBusinessProfileConnectionStatusResponse(BaseModel):
@@ -24,6 +27,8 @@ class GoogleBusinessProfileConnectionStatusResponse(BaseModel):
     reconnect_required: bool
     required_scopes_satisfied: bool
     token_status: Literal["usable", "refresh_required", "reconnect_required", "insufficient_scope"]
+    ga4_scope_granted: bool | None = None
+    required_ga4_scope: str = "https://www.googleapis.com/auth/analytics.readonly"
 
 
 class GoogleBusinessProfileDisconnectResponse(BaseModel):

@@ -254,6 +254,181 @@ describe("site workspace modernized structure", () => {
     expect(ga4SummaryCard).toHaveTextContent("Add a GA4 property ID for this site.");
   });
 
+  it("renders compact GA4 insight cards in the workspace snapshot when insights are available", async () => {
+    seedRichWorkspaceData();
+    mockFetchSiteAnalyticsSummary.mockResolvedValue(
+      buildSiteAnalyticsSummary({
+        ga4_insights: {
+          status: "available",
+          source: "site_property",
+          date_range_label: "Last 28 days vs previous 28 days",
+          checked_at: "2026-03-21T17:35:00Z",
+          top_landing_pages: [
+            {
+              path: "/",
+              title: "Home",
+              sessions: 220,
+              active_users: 180,
+              views: 330,
+              engagement_rate: 0.61,
+              average_engagement_time_seconds: 85,
+              trend_label: "improving",
+              operator_hint: "Engagement looks healthy. Preserve this page during future migration or content changes.",
+            },
+            {
+              path: "/services",
+              title: "Services",
+              sessions: 130,
+              active_users: 100,
+              views: 210,
+              engagement_rate: 0.43,
+              average_engagement_time_seconds: 62,
+              trend_label: "declining",
+              operator_hint: "High-traffic page with weaker engagement. Review CTA clarity and above-the-fold content.",
+            },
+            {
+              path: "/contact",
+              title: "Contact",
+              sessions: 72,
+              active_users: 61,
+              views: 95,
+              engagement_rate: 0.52,
+              average_engagement_time_seconds: 58,
+              trend_label: "steady",
+              operator_hint: "Traffic is steady. Review internal links and CTA clarity for incremental gains.",
+            },
+            {
+              path: "/about",
+              title: "About",
+              sessions: 50,
+              active_users: 40,
+              views: 78,
+              engagement_rate: 0.49,
+              average_engagement_time_seconds: 54,
+              trend_label: "steady",
+              operator_hint: "Traffic is steady. Review internal links and CTA clarity for incremental gains.",
+            },
+            {
+              path: "/financing",
+              title: "Financing",
+              sessions: 34,
+              active_users: 28,
+              views: 52,
+              engagement_rate: 0.45,
+              average_engagement_time_seconds: 51,
+              trend_label: "steady",
+              operator_hint: "Traffic is steady. Review internal links and CTA clarity for incremental gains.",
+            },
+            {
+              path: "/blog",
+              title: "Blog",
+              sessions: 20,
+              active_users: 16,
+              views: 30,
+              engagement_rate: 0.41,
+              average_engagement_time_seconds: 44,
+              trend_label: "declining",
+              operator_hint: "Traffic declined versus the prior period. Check freshness, search visibility, and internal links.",
+            },
+          ],
+          traffic_trend: {
+            current_sessions: 530,
+            previous_sessions: 460,
+            sessions_delta_percent: 15.2,
+            current_active_users: 420,
+            previous_active_users: 370,
+            active_users_delta_percent: 13.5,
+            trend_label: "improving",
+            operator_hint: "Traffic improved versus the prior period. Preserve winning pages while refining weaker pages.",
+          },
+          engagement_trend: {
+            current_engagement_rate: 0.57,
+            previous_engagement_rate: 0.52,
+            engagement_rate_delta_percent: 9.6,
+            current_average_engagement_time_seconds: 82,
+            previous_average_engagement_time_seconds: 75,
+            trend_label: "improving",
+            operator_hint: "Engagement improved versus the prior period. Keep these content patterns in future updates.",
+          },
+          message: "GA4 insights are available for this site.",
+        },
+      }),
+    );
+
+    render(<SiteWorkspacePage />);
+
+    await waitFor(() => expect(mockFetchSiteAnalyticsSummary).toHaveBeenCalled());
+
+    const topLandingCard = await screen.findByTestId("workspace-summary-ga4-top-landing-pages");
+    expect(topLandingCard).toHaveTextContent("Top landing pages");
+    const trafficCard = screen.getByTestId("workspace-summary-traffic");
+    const engagementCard = screen.getByTestId("workspace-summary-ga4-engagement-trend");
+    await waitFor(() => {
+      expect(topLandingCard).toHaveTextContent("5 pages");
+      expect(topLandingCard).toHaveTextContent("/ (220 sessions)");
+      expect(trafficCard).toHaveTextContent("Traffic trend");
+      expect(trafficCard).toHaveTextContent("+15.2% sessions");
+      expect(trafficCard).toHaveTextContent("530 sessions vs 460");
+      expect(engagementCard).toHaveTextContent("Engagement trend");
+      expect(engagementCard).toHaveTextContent("+9.6% engagement");
+      expect(engagementCard).toHaveTextContent("Engagement 57%");
+    });
+  });
+
+  it.each([
+    {
+      status: "not_configured",
+      message: "Add a GA4 property ID for this site before using analytics insights.",
+      expectedLabel: "Not configured",
+    },
+    {
+      status: "permission_denied",
+      message: "Verify GA4 property access before using analytics insights.",
+      expectedLabel: "Permission issue",
+    },
+    {
+      status: "no_data",
+      message: "GA4 is reachable, but no recent traffic was returned for this period.",
+      expectedLabel: "No recent data",
+    },
+    {
+      status: "unavailable",
+      message: "GA4 insights are temporarily unavailable. Retry after a short delay.",
+      expectedLabel: "Temporarily unavailable",
+    },
+  ] as const)(
+    "renders safe compact GA4 insight fallback cards for $status",
+    async ({ status, message, expectedLabel }) => {
+      seedRichWorkspaceData();
+      mockFetchSiteAnalyticsSummary.mockResolvedValue(
+        buildSiteAnalyticsSummary({
+          ga4_insights: {
+            status,
+            source: status === "not_configured" ? "unavailable" : "site_property",
+            date_range_label: "Last 28 days vs previous 28 days",
+            checked_at: null,
+            top_landing_pages: [],
+            traffic_trend: null,
+            engagement_trend: null,
+            message,
+          },
+        }),
+      );
+
+      render(<SiteWorkspacePage />);
+
+      const topLandingCard = await screen.findByTestId("workspace-summary-ga4-top-landing-pages");
+      const trafficCard = screen.getByTestId("workspace-summary-traffic");
+      const engagementCard = screen.getByTestId("workspace-summary-ga4-engagement-trend");
+      await waitFor(() => {
+        expect(topLandingCard).toHaveTextContent(expectedLabel);
+        expect(topLandingCard).toHaveTextContent(message);
+        expect(trafficCard).toHaveTextContent(expectedLabel);
+        expect(engagementCard).toHaveTextContent(expectedLabel);
+      });
+    },
+  );
+
   it("does not load embedded migration workspace APIs on the main site workspace route", async () => {
     render(<SiteWorkspacePage />);
 
@@ -3902,6 +4077,8 @@ function buildGoogleBusinessProfileConnection(
     reconnect_required: false,
     required_scopes_satisfied: true,
     token_status: "usable",
+    ga4_scope_granted: false,
+    required_ga4_scope: "https://www.googleapis.com/auth/analytics.readonly",
     ...overrides,
   };
 }
@@ -3930,6 +4107,48 @@ function buildSiteAnalyticsSummary(
       ga4_health_reason: null,
       ga4_health_message: "GA4 is available for recommendation context.",
       ga4_health_source: "site_property",
+      ga4_scope_granted: null,
+      ga4_required_scope: "https://www.googleapis.com/auth/analytics.readonly",
+      ga4_auth_mode: "service_account",
+    },
+    ga4_insights: {
+      status: "available",
+      source: "site_property",
+      date_range_label: "Last 7 days vs previous 7 days",
+      checked_at: "2026-03-21T17:30:00Z",
+      top_landing_pages: [
+        {
+          path: "/",
+          title: "Home",
+          sessions: 140,
+          active_users: 112,
+          views: 210,
+          engagement_rate: 0.58,
+          average_engagement_time_seconds: 76,
+          trend_label: "improving",
+          operator_hint: "Engagement looks healthy. Preserve this page during future migration or content changes.",
+        },
+      ],
+      traffic_trend: {
+        current_sessions: 310,
+        previous_sessions: 280,
+        sessions_delta_percent: 10.7,
+        current_active_users: 220,
+        previous_active_users: 200,
+        active_users_delta_percent: 10,
+        trend_label: "improving",
+        operator_hint: "Traffic improved versus the prior period. Preserve winning pages while refining weaker pages.",
+      },
+      engagement_trend: {
+        current_engagement_rate: 0.58,
+        previous_engagement_rate: 0.54,
+        engagement_rate_delta_percent: 7.4,
+        current_average_engagement_time_seconds: 76,
+        previous_average_engagement_time_seconds: 71,
+        trend_label: "improving",
+        operator_hint: "Engagement improved versus the prior period. Keep these content patterns in future updates.",
+      },
+      message: "GA4 insights are available for this site.",
     },
     message: null,
     data_source: "ga4_mock",

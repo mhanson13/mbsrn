@@ -1219,8 +1219,11 @@ function ga4DiagnosticReasonMessage(
   if (reason === "not_configured") {
     return "GA4 is not connected for this site yet. Add the GA4 property ID, then confirm data can be read.";
   }
-  if (reason === "access_denied") {
+  if (reason === "access_denied" || reason === "permission_denied") {
     return "This property is not accessible. Ensure the service account has Viewer access.";
+  }
+  if (reason === "missing_oauth_scope") {
+    return "GA4 authorization scope is missing. Reconnect Google with GA4 read-only access or verify runtime credentials include analytics.readonly.";
   }
   if (reason === "property_not_found") {
     return "This GA4 property ID was not found.";
@@ -1242,6 +1245,7 @@ function inferGa4HealthStatus(
   | "not_configured"
   | "reachable"
   | "unavailable"
+  | "missing_oauth_scope"
   | "permission_denied"
   | "invalid_property"
   | "no_data"
@@ -1256,6 +1260,9 @@ function inferGa4HealthStatus(
   }
   if (normalizedStatus === "not_configured") {
     return "not_configured";
+  }
+  if (normalizedReason === "missing_oauth_scope") {
+    return "missing_oauth_scope";
   }
   if (normalizedReason === "access_denied") {
     return "permission_denied";
@@ -1275,6 +1282,7 @@ function formatGa4HealthStatusLabel(
     | "not_configured"
     | "reachable"
     | "unavailable"
+    | "missing_oauth_scope"
     | "permission_denied"
     | "invalid_property"
     | "no_data"
@@ -1291,6 +1299,9 @@ function formatGa4HealthStatusLabel(
   }
   if (status === "no_data") {
     return "No recent data";
+  }
+  if (status === "missing_oauth_scope") {
+    return "GA4 authorization missing";
   }
   if (status === "permission_denied") {
     return "Permission issue";
@@ -1310,6 +1321,7 @@ function ga4HealthNextActionMessage(
     | "not_configured"
     | "reachable"
     | "unavailable"
+    | "missing_oauth_scope"
     | "permission_denied"
     | "invalid_property"
     | "no_data"
@@ -1321,6 +1333,9 @@ function ga4HealthNextActionMessage(
   if (status === "permission_denied") {
     return "Verify the connected Google account can read this GA4 property.";
   }
+  if (status === "missing_oauth_scope") {
+    return "Reconnect Google with GA4 read-only access and retry.";
+  }
   if (status === "invalid_property") {
     return "Update this site with a valid numeric GA4 property ID.";
   }
@@ -1331,6 +1346,114 @@ function ga4HealthNextActionMessage(
     return "Retry after a short delay if workspace credentials are healthy.";
   }
   return null;
+}
+
+function formatGa4InsightsStatusLabel(
+  status:
+    | "available"
+    | "not_configured"
+    | "missing_oauth_scope"
+    | "permission_denied"
+    | "invalid_property"
+    | "no_data"
+    | "unavailable"
+    | "unknown",
+): string {
+  if (status === "not_configured") {
+    return "Not configured";
+  }
+  if (status === "permission_denied") {
+    return "Permission issue";
+  }
+  if (status === "missing_oauth_scope") {
+    return "Authorization missing";
+  }
+  if (status === "invalid_property") {
+    return "Invalid property";
+  }
+  if (status === "no_data") {
+    return "No recent data";
+  }
+  if (status === "unavailable") {
+    return "Temporarily unavailable";
+  }
+  if (status === "available") {
+    return "Available";
+  }
+  return "Unknown";
+}
+
+function ga4InsightsToneForStatus(
+  status:
+    | "available"
+    | "not_configured"
+    | "missing_oauth_scope"
+    | "permission_denied"
+    | "invalid_property"
+    | "no_data"
+    | "unavailable"
+    | "unknown",
+): "neutral" | "success" | "warning" | "danger" {
+  if (status === "available") {
+    return "success";
+  }
+  if (status === "not_configured" || status === "no_data") {
+    return "warning";
+  }
+  if (
+    status === "permission_denied"
+    || status === "missing_oauth_scope"
+    || status === "invalid_property"
+    || status === "unavailable"
+  ) {
+    return "danger";
+  }
+  return "neutral";
+}
+
+function ga4InsightsToneForTrend(
+  trendLabel: "improving" | "declining" | "steady" | "unknown" | null | undefined,
+): "neutral" | "success" | "warning" | "danger" {
+  if (trendLabel === "improving") {
+    return "success";
+  }
+  if (trendLabel === "declining") {
+    return "warning";
+  }
+  return "neutral";
+}
+
+function formatGa4PercentValue(value: number | null | undefined): string {
+  if (typeof value !== "number" || Number.isNaN(value)) {
+    return "Not available";
+  }
+  const rounded = Math.round(value * 1000) / 10;
+  const formatted = Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
+  return `${formatted}%`;
+}
+
+function formatGa4DurationSeconds(value: number | null | undefined): string {
+  if (typeof value !== "number" || Number.isNaN(value)) {
+    return "Not available";
+  }
+  const rounded = Math.round(value);
+  return `${rounded}s`;
+}
+
+function formatGa4TopLandingPagesCompactList(
+  pages: Array<{ path: string; sessions: number | null }>,
+): string {
+  if (!pages.length) {
+    return "No landing-page summaries returned for this period.";
+  }
+  return pages
+    .slice(0, 3)
+    .map((page) => {
+      const normalizedPath = (page.path || "").trim() || "/";
+      const sessions = Math.max(0, Number(page.sessions) || 0);
+      return `${normalizedPath} (${sessions.toLocaleString()} sessions)`;
+    })
+    .join(" · ");
 }
 
 function normalizeTimelineStatus(value: string | null | undefined): string {
@@ -7014,87 +7137,10 @@ export default function SiteWorkspacePage() {
     const normalizedStatus = normalizeAutomationRunStatus(run.status);
     return normalizedStatus === "queued" || normalizedStatus === "running";
   });
-  const siteTrafficMetricsSummary = siteAnalyticsSummary?.site_metrics_summary || null;
-  const trafficTrendValue = siteTrafficMetricsSummary
-    ? `${siteTrafficMetricsSummary.users.current.toLocaleString()} users`
-    : "Unavailable";
-  const trafficTrendPrimaryDetail = siteTrafficMetricsSummary
-    ? `${siteTrafficMetricsSummary.sessions.current.toLocaleString()} sessions (${formatSignedPercent(
-      siteTrafficMetricsSummary.sessions.delta_percent,
-    )} vs prior period)`
-    : siteAnalyticsSummary?.message || siteAnalyticsError || "Google Analytics data is not available for this site yet.";
-  const ga4TrendStatus: IntegrationRenderStatus = (() => {
-    const rawStatus = siteAnalyticsSummary?.ga4_status
-      || ((selectedSite?.ga4_property_id || "").trim() ? "configured" : "not_configured");
-    if (
-      rawStatus === "connected"
-      || rawStatus === "configured"
-      || rawStatus === "not_configured"
-      || rawStatus === "error"
-    ) {
-      return rawStatus;
-    }
-    return "not_configured";
-  })();
-  const ga4FreshnessStatus = normalizeDataFreshnessStatus(siteAnalyticsSummary?.ga4_data_freshness_status);
-  const ga4LastDataTimestamp = siteAnalyticsSummary?.ga4_last_data_timestamp || null;
-  const ga4LastSuccessfulFetchAt = siteAnalyticsSummary?.ga4_last_successful_fetch_at || null;
-  const ga4LastDataSeenLabel = ga4LastDataTimestamp
-    ? `${formatRelativeTime(ga4LastDataTimestamp)} (${formatDateTime(ga4LastDataTimestamp)})`
-    : "No data seen yet";
-  const ga4LastSuccessfulSyncLabel = ga4LastSuccessfulFetchAt
-    ? `${formatRelativeTime(ga4LastSuccessfulFetchAt)} (${formatDateTime(ga4LastSuccessfulFetchAt)})`
-    : "No successful sync observed yet";
-  const ga4FreshnessErrorMessage = ga4TrendStatus === "error"
-    ? ga4DiagnosticReasonMessage(siteAnalyticsSummary?.ga4_error_reason)
-    : null;
-  const trafficTrendDetail = (
-    <>
-      <span>{trafficTrendPrimaryDetail}</span>
-      {renderIntegrationStatus({
-        status: ga4TrendStatus,
-        freshness: ga4FreshnessStatus,
-        errorMessage: ga4FreshnessErrorMessage,
-        lastDataSeenLabel: ga4LastDataSeenLabel,
-        lastSyncLabel: ga4LastSuccessfulSyncLabel,
-        integrationType: "ga4",
-        testIdPrefix: "workspace-ga4",
-      })}
-    </>
-  );
-  const trafficTrendTone = integrationSummaryTone(ga4TrendStatus, ga4FreshnessStatus);
   const ga4ConnectivityStatus = siteAnalyticsSummary?.ga4_status
     || ((selectedSite?.ga4_property_id || "").trim() ? "configured" : "not_configured");
   const ga4ConnectivityReason = siteAnalyticsSummary?.ga4_error_reason
     || (ga4ConnectivityStatus === "not_configured" ? "not_configured" : null);
-  const ga4ConnectivityLabel = (() => {
-    if (ga4ConnectivityStatus === "connected") {
-      return "Connected";
-    }
-    if (ga4ConnectivityStatus === "configured") {
-      return "Configured";
-    }
-    if (ga4ConnectivityStatus === "error") {
-      return "Error";
-    }
-    return "Not configured";
-  })();
-  const ga4ConnectivityBadgeClass = (() => {
-    if (ga4ConnectivityStatus === "connected") {
-      return "badge badge-success";
-    }
-    if (ga4ConnectivityStatus === "configured") {
-      return "badge badge-muted";
-    }
-    if (ga4ConnectivityStatus === "error") {
-      return "badge badge-warn";
-    }
-    return "badge badge-muted";
-  })();
-  const ga4ConnectivityDetail = ga4DiagnosticReasonMessage(ga4ConnectivityReason)
-    || (ga4ConnectivityStatus === "connected"
-      ? "GA4 measurements are being read successfully for this site."
-      : "GA4 connection diagnostics are unavailable.");
   const ga4Health = siteAnalyticsSummary?.ga4_health || null;
   const ga4HealthStatus = ga4Health?.ga4_health_status || inferGa4HealthStatus(ga4ConnectivityStatus, ga4ConnectivityReason);
   const ga4HealthStatusLabel = formatGa4HealthStatusLabel(ga4HealthStatus);
@@ -7102,6 +7148,98 @@ export default function SiteWorkspacePage() {
     || ga4DiagnosticReasonMessage(ga4ConnectivityReason)
     || "GA4 health is unavailable for this site.";
   const ga4HealthNextAction = ga4HealthNextActionMessage(ga4HealthStatus);
+  const ga4Insights = siteAnalyticsSummary?.ga4_insights || null;
+  const ga4InsightsStatus: "available"
+    | "not_configured"
+    | "missing_oauth_scope"
+    | "permission_denied"
+    | "invalid_property"
+    | "no_data"
+    | "unavailable"
+    | "unknown" = (() => {
+    const normalizedStatus = (ga4Insights?.status || "").trim().toLowerCase();
+    if (
+      normalizedStatus === "available"
+      || normalizedStatus === "not_configured"
+      || normalizedStatus === "missing_oauth_scope"
+      || normalizedStatus === "permission_denied"
+      || normalizedStatus === "invalid_property"
+      || normalizedStatus === "no_data"
+      || normalizedStatus === "unavailable"
+      || normalizedStatus === "unknown"
+    ) {
+      return normalizedStatus;
+    }
+    if (ga4HealthStatus === "reachable" || ga4HealthStatus === "configured") {
+      return "available";
+    }
+    if (ga4HealthStatus === "permission_denied") {
+      return "permission_denied";
+    }
+    if (ga4HealthStatus === "missing_oauth_scope") {
+      return "missing_oauth_scope";
+    }
+    if (ga4HealthStatus === "invalid_property") {
+      return "invalid_property";
+    }
+    if (ga4HealthStatus === "no_data") {
+      return "no_data";
+    }
+    if (ga4HealthStatus === "not_configured") {
+      return "not_configured";
+    }
+    if (ga4HealthStatus === "unavailable") {
+      return "unavailable";
+    }
+    return "unknown";
+  })();
+  const ga4InsightsStatusLabel = formatGa4InsightsStatusLabel(ga4InsightsStatus);
+  const ga4InsightsDateRangeLabel = ga4Insights?.date_range_label || "Last 7 days vs previous 7 days";
+  const ga4InsightsBaseMessage = ga4Insights?.message
+    || ga4HealthMessage
+    || "GA4 insights are unavailable for this site.";
+  const ga4InsightsUnavailableDetail = `${ga4InsightsBaseMessage} ${ga4InsightsDateRangeLabel}`.trim();
+  const ga4TopLandingPages = (ga4Insights?.top_landing_pages || []).slice(0, 5);
+  const ga4TopLandingLeadHint = ga4TopLandingPages[0]?.operator_hint || null;
+  const ga4TopLandingValue = ga4InsightsStatus === "available"
+    ? `${ga4TopLandingPages.length} page${ga4TopLandingPages.length === 1 ? "" : "s"}`
+    : ga4InsightsStatusLabel;
+  const ga4TopLandingDetail = ga4InsightsStatus === "available"
+    ? `${formatGa4TopLandingPagesCompactList(ga4TopLandingPages)}${
+      ga4TopLandingLeadHint ? ` · ${ga4TopLandingLeadHint}` : ""
+    }`
+    : ga4InsightsUnavailableDetail;
+  const ga4TopLandingTone = ga4InsightsStatus === "available"
+    ? ga4InsightsToneForTrend(ga4TopLandingPages[0]?.trend_label)
+    : ga4InsightsToneForStatus(ga4InsightsStatus);
+  const ga4TrafficTrend = ga4Insights?.traffic_trend || null;
+  const ga4TrafficTrendValue = ga4InsightsStatus === "available" && ga4TrafficTrend
+    ? `${formatSignedPercent(ga4TrafficTrend.sessions_delta_percent)} sessions`
+    : ga4InsightsStatusLabel;
+  const ga4TrafficTrendDetail = ga4InsightsStatus === "available" && ga4TrafficTrend
+    ? `${Math.max(0, Number(ga4TrafficTrend.current_sessions) || 0).toLocaleString()} sessions vs ${
+      Math.max(0, Number(ga4TrafficTrend.previous_sessions) || 0).toLocaleString()
+    } · ${Math.max(0, Number(ga4TrafficTrend.current_active_users) || 0).toLocaleString()} active users (${
+      formatSignedPercent(ga4TrafficTrend.active_users_delta_percent)
+    } vs prior period). ${ga4TrafficTrend.operator_hint || ga4InsightsDateRangeLabel}`
+    : ga4InsightsUnavailableDetail;
+  const ga4TrafficTrendTone = ga4InsightsStatus === "available"
+    ? ga4InsightsToneForTrend(ga4TrafficTrend?.trend_label)
+    : ga4InsightsToneForStatus(ga4InsightsStatus);
+  const ga4EngagementTrend = ga4Insights?.engagement_trend || null;
+  const ga4EngagementTrendValue = ga4InsightsStatus === "available" && ga4EngagementTrend
+    ? `${formatSignedPercent(ga4EngagementTrend.engagement_rate_delta_percent)} engagement`
+    : ga4InsightsStatusLabel;
+  const ga4EngagementTrendDetail = ga4InsightsStatus === "available" && ga4EngagementTrend
+    ? `Engagement ${formatGa4PercentValue(ga4EngagementTrend.current_engagement_rate)} vs ${
+      formatGa4PercentValue(ga4EngagementTrend.previous_engagement_rate)
+    } · Avg time ${formatGa4DurationSeconds(ga4EngagementTrend.current_average_engagement_time_seconds)} vs ${
+      formatGa4DurationSeconds(ga4EngagementTrend.previous_average_engagement_time_seconds)
+    }. ${ga4EngagementTrend.operator_hint || ga4InsightsDateRangeLabel}`
+    : ga4InsightsUnavailableDetail;
+  const ga4EngagementTrendTone = ga4InsightsStatus === "available"
+    ? ga4InsightsToneForTrend(ga4EngagementTrend?.trend_label)
+    : ga4InsightsToneForStatus(ga4InsightsStatus);
   const ga4OnboardingStatusCode = ga4OnboardingStatus?.ga4_onboarding_status || "unavailable";
   const ga4OnboardingValue = (() => {
     if (ga4OnboardingStatusCode === "stream_configured" || ga4OnboardingStatusCode === "property_configured") {
@@ -7983,12 +8121,28 @@ export default function SiteWorkspacePage() {
             data-testid="workspace-summary-automation"
           />
           <SummaryStatCard
+            label="Top landing pages"
+            value={ga4TopLandingValue}
+            detail={ga4TopLandingDetail}
+            tone={ga4TopLandingTone}
+            variant="elevated"
+            data-testid="workspace-summary-ga4-top-landing-pages"
+          />
+          <SummaryStatCard
             label="Traffic trend"
-            value={trafficTrendValue}
-            detail={trafficTrendDetail}
-            tone={trafficTrendTone}
+            value={ga4TrafficTrendValue}
+            detail={ga4TrafficTrendDetail}
+            tone={ga4TrafficTrendTone}
             variant="elevated"
             data-testid="workspace-summary-traffic"
+          />
+          <SummaryStatCard
+            label="Engagement trend"
+            value={ga4EngagementTrendValue}
+            detail={ga4EngagementTrendDetail}
+            tone={ga4EngagementTrendTone}
+            variant="elevated"
+            data-testid="workspace-summary-ga4-engagement-trend"
           />
           <SummaryStatCard
             label="GA4 onboarding"

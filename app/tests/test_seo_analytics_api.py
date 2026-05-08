@@ -13,9 +13,12 @@ from app.api.routes.seo import router_v1 as seo_v1_router
 from app.integrations.ga4_analytics_provider import (
     GA4AccountSummary,
     DisabledGA4AnalyticsProvider,
+    GA4EngagementTrendMetrics,
     GA4AnalyticsProviderError,
+    GA4OperatorInsightsResult,
     GA4SiteMetricsResult,
     GA4SitePeriodMetrics,
+    GA4TopLandingPageMetrics,
     GA4TopPageMetrics,
     MockGA4AnalyticsProvider,
 )
@@ -110,6 +113,7 @@ class _WindowComparisonProvider:
         self.fail_page_windows = fail_page_windows
         self.fetch_site_metrics_property_ids: list[str | None] = []
         self.fetch_window_metrics_property_ids: list[str | None] = []
+        self.fetch_operator_insights_property_ids: list[str | None] = []
 
     def is_configured(self) -> bool:
         return True
@@ -160,6 +164,40 @@ class _WindowComparisonProvider:
         if start_date == "2026-01-08":
             return GA4SitePeriodMetrics(users=260, sessions=370, pageviews=560, organic_search_sessions=220)
         return GA4SitePeriodMetrics(users=300, sessions=420, pageviews=640, organic_search_sessions=250)
+
+    def fetch_operator_insights(
+        self,
+        *,
+        site_domain: str,
+        period_days: int,
+        top_landing_pages_limit: int,
+        ga4_property_id: str | None = None,
+    ) -> GA4OperatorInsightsResult:
+        self.fetch_operator_insights_property_ids.append(ga4_property_id)
+        del period_days
+        bounded_limit = max(1, min(int(top_landing_pages_limit), 10))
+        top_pages = tuple(
+            GA4TopLandingPageMetrics(
+                page_path="/" if index == 0 else f"/services/{index}",
+                page_title=f"{site_domain} page {index + 1}",
+                sessions=max(1, 180 - (index * 22)),
+                active_users=max(1, 140 - (index * 18)),
+                views=max(1, 240 - (index * 30)),
+                engagement_rate=0.62 - (index * 0.03),
+                average_engagement_time_seconds=82.0 - (index * 5.5),
+            )
+            for index in range(bounded_limit)
+        )
+        return GA4OperatorInsightsResult(
+            top_landing_pages=top_pages,
+            engagement_trend=GA4EngagementTrendMetrics(
+                current_engagement_rate=0.58,
+                previous_engagement_rate=0.51,
+                current_average_engagement_time_seconds=86.0,
+                previous_average_engagement_time_seconds=78.0,
+            ),
+            data_source="ga4_mock",
+        )
 
 
 class _GA4AccountDiscoveryProvider:
@@ -391,6 +429,22 @@ def test_site_analytics_summary_returns_metrics_with_mock_provider(db_session, s
     assert payload["ga4_health"]["ga4_reachable"] is True
     assert payload["ga4_health"]["ga4_data_available"] is True
     assert payload["ga4_health"]["ga4_health_message"] == "GA4 is available for recommendation context."
+    assert payload["ga4_insights"]["status"] == "available"
+    assert payload["ga4_insights"]["source"] == "site_property"
+    assert payload["ga4_insights"]["date_range_label"] == "Last 7 days vs previous 7 days"
+    assert payload["ga4_insights"]["checked_at"] is not None
+    assert payload["ga4_insights"]["message"] == "GA4 insights are available for this site."
+    assert len(payload["ga4_insights"]["top_landing_pages"]) <= 5
+    assert payload["ga4_insights"]["top_landing_pages"]
+    assert payload["ga4_insights"]["top_landing_pages"][0]["path"]
+    assert payload["ga4_insights"]["top_landing_pages"][0]["operator_hint"]
+    assert payload["ga4_insights"]["traffic_trend"]["current_sessions"] > 0
+    assert payload["ga4_insights"]["engagement_trend"]["trend_label"] in {
+        "improving",
+        "declining",
+        "steady",
+        "unknown",
+    }
     assert len(payload["top_pages_summary"]) == 3
     first_top_page = payload["top_pages_summary"][0]
     assert "page_path" in first_top_page
@@ -437,6 +491,10 @@ def test_site_analytics_summary_degrades_cleanly_when_not_configured(db_session,
     assert payload["ga4_data_freshness_status"] == "unknown"
     assert payload["ga4_health"]["ga4_health_status"] == "configured"
     assert payload["ga4_health"]["ga4_property_id_present"] is True
+    assert payload["ga4_insights"]["status"] == "not_configured"
+    assert payload["ga4_insights"]["top_landing_pages"] == []
+    assert payload["ga4_insights"]["traffic_trend"] is None
+    assert payload["ga4_insights"]["engagement_trend"] is None
     assert payload["site_metrics_summary"] is None
     assert payload["top_pages_summary"] == []
 
@@ -464,6 +522,9 @@ def test_site_analytics_summary_reports_site_level_not_configured_when_property_
     assert payload["ga4_error_reason"] == "not_configured"
     assert payload["ga4_health"]["ga4_health_status"] == "not_configured"
     assert payload["ga4_health"]["ga4_property_id_present"] is False
+    assert payload["ga4_insights"]["status"] == "not_configured"
+    assert payload["ga4_insights"]["source"] == "unavailable"
+    assert payload["ga4_insights"]["message"] == "Add a GA4 property ID for this site before using analytics insights."
     assert payload["message"] == "Google Analytics property is not configured for this site."
 
 
@@ -484,6 +545,7 @@ def test_site_analytics_summary_missing_site_property_skips_provider_call(db_ses
     payload = response.json()
     assert payload["status"] == "not_configured"
     assert provider.fetch_site_metrics_property_ids == []
+    assert provider.fetch_operator_insights_property_ids == []
 
 
 def test_site_analytics_summary_uses_site_scoped_property_per_site(db_session, seeded_business) -> None:
@@ -514,6 +576,7 @@ def test_site_analytics_summary_uses_site_scoped_property_per_site(db_session, s
     assert response_a.status_code == 200
     assert response_b.status_code == 200
     assert provider.fetch_site_metrics_property_ids == ["2000000002", "3000000003"]
+    assert provider.fetch_operator_insights_property_ids == ["2000000002", "3000000003"]
 
 
 def test_site_analytics_summary_reports_invalid_property_format_reason(db_session, seeded_business) -> None:
@@ -540,6 +603,7 @@ def test_site_analytics_summary_reports_invalid_property_format_reason(db_sessio
     assert payload["ga4_status"] == "error"
     assert payload["ga4_error_reason"] == "invalid_property_format"
     assert payload["ga4_health"]["ga4_health_status"] == "invalid_property"
+    assert payload["ga4_insights"]["status"] == "invalid_property"
 
 
 @pytest.mark.parametrize(
@@ -585,6 +649,48 @@ def test_site_analytics_summary_reports_permission_denied_reason(
         "MBSRN cannot read this GA4 property. Verify the connected Google account or service account has Viewer "
         "access to the property."
     )
+    assert payload["ga4_insights"]["status"] == "permission_denied"
+    assert payload["ga4_insights"]["message"] == "Verify GA4 property access before using analytics insights."
+
+
+@pytest.mark.parametrize(
+    "provider_message",
+    [
+        "GA4 request failed: Request had insufficient authentication scopes.",
+        "GA4 request failed: insufficient authentication scopes",
+        "GA4 request failed: insufficient scope to read analytics.readonly",
+    ],
+)
+def test_site_analytics_summary_reports_missing_oauth_scope_reason(
+    db_session,
+    seeded_business,
+    provider_message: str,
+) -> None:
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        analytics_service=SEOAnalyticsService(
+            provider=_GA4ErrorProvider(provider_message),
+            settings=SEOAnalyticsServiceSettings(period_days=7, top_pages_limit=3),
+        ),
+    )
+    site_id = _create_site(
+        client,
+        seeded_business.id,
+        domain="analytics-missing-scope.example",
+        ga4_property_id="2000000002",
+    )
+
+    response = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/analytics/site-summary")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["available"] is False
+    assert payload["status"] == "unavailable"
+    assert payload["ga4_status"] == "error"
+    assert payload["ga4_error_reason"] == "missing_oauth_scope"
+    assert payload["ga4_health"]["ga4_health_status"] == "missing_oauth_scope"
+    assert payload["ga4_health"]["ga4_health_reason"] == "missing_oauth_scope"
+    assert payload["ga4_insights"]["status"] == "missing_oauth_scope"
 
 
 def test_site_analytics_summary_logs_permission_denied_with_sanitized_reason(
@@ -626,6 +732,40 @@ def test_site_analytics_summary_logs_permission_denied_with_sanitized_reason(
     assert "developers.google.com/analytics" not in latest_message
 
 
+def test_site_analytics_summary_logs_missing_oauth_scope_as_expected_unavailable(
+    db_session,
+    seeded_business,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO, logger="app.services.seo_analytics")
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        analytics_service=SEOAnalyticsService(
+            provider=_GA4ErrorProvider("GA4 request failed: Request had insufficient authentication scopes."),
+            settings=SEOAnalyticsServiceSettings(period_days=7, top_pages_limit=3),
+        ),
+    )
+    site_id = _create_site(
+        client,
+        seeded_business.id,
+        domain="analytics-missing-scope-log.example",
+        ga4_property_id="2000000002",
+    )
+
+    response = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/analytics/site-summary")
+    assert response.status_code == 200
+
+    unavailable_logs = [record for record in caplog.records if "seo_analytics_unavailable" in record.getMessage()]
+    assert unavailable_logs
+    latest_log = unavailable_logs[-1]
+    latest_message = latest_log.getMessage().lower()
+    assert latest_log.levelno == logging.INFO
+    assert "ga4_reason=missing_oauth_scope" in latest_message
+    assert "ga4_health_status=missing_oauth_scope" in latest_message
+    assert "reason=ga4_missing_oauth_scope" in latest_message
+
+
 def test_site_analytics_summary_reports_property_not_found_reason(db_session, seeded_business) -> None:
     client = _make_client(
         db_session,
@@ -650,6 +790,36 @@ def test_site_analytics_summary_reports_property_not_found_reason(db_session, se
     assert payload["ga4_status"] == "error"
     assert payload["ga4_error_reason"] == "property_not_found"
     assert payload["ga4_health"]["ga4_health_status"] == "invalid_property"
+    assert payload["ga4_insights"]["status"] == "invalid_property"
+
+
+def test_site_analytics_summary_maps_runtime_timeouts_to_unavailable_ga4_insights(
+    db_session,
+    seeded_business,
+) -> None:
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        analytics_service=SEOAnalyticsService(
+            provider=_GA4ErrorProvider("GA4 request timed out."),
+            settings=SEOAnalyticsServiceSettings(period_days=7, top_pages_limit=3),
+        ),
+    )
+    site_id = _create_site(
+        client,
+        seeded_business.id,
+        domain="analytics-timeout.example",
+        ga4_property_id="2000000002",
+    )
+
+    response = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/analytics/site-summary")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ga4_status"] == "error"
+    assert payload["ga4_error_reason"] == "unknown_error"
+    assert payload["ga4_health"]["ga4_health_status"] == "unavailable"
+    assert payload["ga4_insights"]["status"] == "unavailable"
+    assert payload["ga4_insights"]["message"] == "GA4 insights are temporarily unavailable. Retry after a short delay."
 
 
 def test_site_analytics_summary_reports_connected_with_no_data_reason(db_session, seeded_business) -> None:
@@ -681,6 +851,10 @@ def test_site_analytics_summary_reports_connected_with_no_data_reason(db_session
     assert payload["ga4_health"]["ga4_health_status"] == "no_data"
     assert payload["ga4_health"]["ga4_reachable"] is True
     assert payload["ga4_health"]["ga4_data_available"] is False
+    assert payload["ga4_insights"]["status"] == "no_data"
+    assert payload["ga4_insights"]["top_landing_pages"] == []
+    assert payload["ga4_insights"]["traffic_trend"] is None
+    assert payload["ga4_insights"]["engagement_trend"] is None
 
 
 def test_site_analytics_summary_enforces_tenant_scope(db_session, seeded_business) -> None:

@@ -990,6 +990,9 @@ function buildRecommendationGa4HealthLine(
   if (!measurementContext) {
     return null;
   }
+  if (measurementContext.measurementStatus === "available") {
+    return "GA4 insights available for this site.";
+  }
   if (measurementContext.measurementStatus === "not_configured") {
     return "GA4 context omitted: Add a GA4 property ID for this site.";
   }

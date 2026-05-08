@@ -54,6 +54,9 @@ class GoogleBusinessProfileConnectStartResult:
     state_expires_at: str
     provider: str
     required_scope: str
+    required_scopes: tuple[str, ...]
+    ga4_scope_requested: bool
+    required_ga4_scope: str
 
 
 @dataclass(frozen=True)
@@ -69,6 +72,8 @@ class GoogleBusinessProfileConnectionStatusResult:
     reconnect_required: bool
     required_scopes_satisfied: bool
     token_status: TokenUsabilityStatus
+    ga4_scope_granted: bool | None
+    required_ga4_scope: str
 
 
 @dataclass(frozen=True)
@@ -83,6 +88,8 @@ class GoogleBusinessProfileTokenUseResult:
     required_scopes_satisfied: bool
     token_status: TokenUsabilityStatus
     access_token: str | None
+    ga4_scope_granted: bool | None
+    required_ga4_scope: str
 
 
 @dataclass(frozen=True)
@@ -132,6 +139,7 @@ class GoogleBusinessProfileTokenRewrapSummary:
 class GoogleBusinessProfileConnectionService:
     PROVIDER = "google_business_profile"
     BUSINESS_PROFILE_SCOPE = "https://www.googleapis.com/auth/business.manage"
+    GA4_ANALYTICS_READONLY_SCOPE = "https://www.googleapis.com/auth/analytics.readonly"
 
     TOKEN_STATUS_USABLE: TokenUsabilityStatus = "usable"
     TOKEN_STATUS_REFRESH_REQUIRED: TokenUsabilityStatus = "refresh_required"
@@ -193,8 +201,15 @@ class GoogleBusinessProfileConnectionService:
         *,
         business_id: str,
         principal_id: str,
+        include_ga4_scope: bool = False,
     ) -> GoogleBusinessProfileConnectStartResult:
         self._ensure_business_and_active_principal(business_id=business_id, principal_id=principal_id)
+        requested_scopes = self._normalize_required_scopes(
+            (
+                self.BUSINESS_PROFILE_SCOPE,
+                self.GA4_ANALYTICS_READONLY_SCOPE if include_ga4_scope else "",
+            )
+        )
 
         raw_state = secrets.token_urlsafe(32)
         code_verifier = _generate_pkce_code_verifier()
@@ -220,6 +235,7 @@ class GoogleBusinessProfileConnectionService:
         auth_url = self.build_auth_url(
             state=raw_state,
             code_challenge=code_challenge,
+            scopes=requested_scopes,
         )
         self.auth_audit_service.record_event(
             business_id=business_id,
@@ -230,6 +246,8 @@ class GoogleBusinessProfileConnectionService:
             details={
                 "provider": self.PROVIDER,
                 "scope": self.BUSINESS_PROFILE_SCOPE,
+                "requested_scopes": list(requested_scopes),
+                "ga4_scope_requested": include_ga4_scope,
             },
         )
         self.session.commit()
@@ -238,13 +256,17 @@ class GoogleBusinessProfileConnectionService:
             state_expires_at=expires_at.isoformat(),
             provider=self.PROVIDER,
             required_scope=self.BUSINESS_PROFILE_SCOPE,
+            required_scopes=requested_scopes,
+            ga4_scope_requested=include_ga4_scope,
+            required_ga4_scope=self.GA4_ANALYTICS_READONLY_SCOPE,
         )
 
-    def build_auth_url(self, *, state: str, code_challenge: str) -> str:
+    def build_auth_url(self, *, state: str, code_challenge: str, scopes: tuple[str, ...] | None = None) -> str:
+        requested_scopes = scopes or self._normalize_required_scopes((self.BUSINESS_PROFILE_SCOPE,))
         return self.oauth_client.build_auth_url(
             redirect_uri=self.redirect_uri,
             state=state,
-            scopes=(self.BUSINESS_PROFILE_SCOPE,),
+            scopes=requested_scopes,
             access_type="offline",
             include_granted_scopes=True,
             prompt="consent",
@@ -976,6 +998,7 @@ class GoogleBusinessProfileConnectionService:
         granted_scopes = self._normalize_scopes(connection.granted_scopes)
         granted_set = set(granted_scopes)
         required_scopes_satisfied = all(scope in granted_set for scope in required)
+        ga4_scope_granted = self.GA4_ANALYTICS_READONLY_SCOPE in granted_set
         refresh_token_present = bool(connection.refresh_token_encrypted)
 
         reconnect_required = False
@@ -1006,6 +1029,8 @@ class GoogleBusinessProfileConnectionService:
             reconnect_required=reconnect_required,
             required_scopes_satisfied=required_scopes_satisfied,
             token_status=token_status,
+            ga4_scope_granted=ga4_scope_granted,
+            required_ga4_scope=self.GA4_ANALYTICS_READONLY_SCOPE,
         )
 
     def _status_without_connection(
@@ -1026,6 +1051,8 @@ class GoogleBusinessProfileConnectionService:
             reconnect_required=True,
             required_scopes_satisfied=not required_scopes,
             token_status=self.TOKEN_STATUS_RECONNECT_REQUIRED,
+            ga4_scope_granted=None,
+            required_ga4_scope=self.GA4_ANALYTICS_READONLY_SCOPE,
         )
 
     def _status_with_override(
@@ -1049,6 +1076,8 @@ class GoogleBusinessProfileConnectionService:
             reconnect_required=reconnect_required,
             required_scopes_satisfied=base.required_scopes_satisfied,
             token_status=token_status,
+            ga4_scope_granted=base.ga4_scope_granted,
+            required_ga4_scope=base.required_ga4_scope,
         )
 
     def _token_use_from_status(
@@ -1068,6 +1097,8 @@ class GoogleBusinessProfileConnectionService:
             required_scopes_satisfied=status.required_scopes_satisfied,
             token_status=status.token_status,
             access_token=access_token,
+            ga4_scope_granted=status.ga4_scope_granted,
+            required_ga4_scope=status.required_ga4_scope,
         )
 
     def _access_token_needs_refresh(self, connection: ProviderConnection) -> bool:

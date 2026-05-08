@@ -777,6 +777,7 @@ Operator inputs:
 Operator-visible diagnostics:
 
 - `not_configured`
+- `missing_oauth_scope`
 - `permission_denied`
 - `property_not_found`
 - `invalid_property_format`
@@ -784,6 +785,7 @@ Operator-visible diagnostics:
 - `unknown_error`
 
 Notes:
+- `missing_oauth_scope` indicates GA4 read scope is missing (`analytics.readonly`) and reconnect is required when OAuth-based auth is used.
 - GA4 permission failures are normalized to `permission_denied`.
 - Older payloads may still contain legacy `access_denied` values during transition.
 
@@ -805,6 +807,29 @@ This is a visibility-only improvement:
 - no recommendation scoring/prioritization changes
 - no recommendation generation semantics changes
 - Search Console context behavior remains unchanged
+
+### GA4 Compact Insights (Phase 2)
+
+Site workspace now exposes compact GA4 insight cards for the selected site:
+- `Top landing pages` (bounded summary, top 5 max shown)
+- `Traffic trend` (sessions + active-user directional comparison)
+- `Engagement trend` (engagement-rate/time directional comparison)
+
+Design boundaries:
+- no charts, no wide analytics dashboard surfaces, no drilldown tables
+- no conversions/events/source-medium panels in this phase
+- no recommendation scoring or prioritization changes in this phase
+- no migration planning changes in this phase
+
+Site-scoped safety rules:
+- insights use `site.ga4_property_id` only
+- no global/default GA4 property fallback is used for site-scoped insights
+- missing/unavailable GA4 is rendered with bounded status messaging (`not_configured`, `missing_oauth_scope`, `permission_denied`, `invalid_property`, `no_data`, `unavailable`) instead of failing recommendation flows
+
+Recommendation-surface behavior:
+- expanded recommendation details now include a compact GA4 insight availability line when measurement context is available:
+  - `GA4 insights available for this site.`
+- omission/unavailable lines from Phase 1 remain in place for `not_configured`/`unavailable` states.
 
 ### GA4 Last Data Seen + Freshness
 

@@ -755,6 +755,9 @@ describe("recommendations queue optimistic workflows", () => {
     expect(screen.getByTestId("recommendation-expanded-measurement-since-rec-measure-1")).toHaveTextContent(
       "Since this recommendation: page trend: sessions ↑ 23.1%, pageviews ↑ 15.8%.",
     );
+    expect(screen.getByTestId("recommendation-expanded-measurement-health-rec-measure-1")).toHaveTextContent(
+      "GA4 insights available for this site.",
+    );
     expect(screen.getByTestId("recommendation-expanded-search-context-rec-measure-1")).toHaveTextContent(
       "Recent search visibility for this page/topic: / — 48 clicks (+33.3% vs prior period), 1,100 impressions (+12.2% vs prior period), avg position 7.8",
     );

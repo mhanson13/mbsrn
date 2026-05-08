@@ -33,6 +33,7 @@ const mockFetchSiteAnalyticsSummary = jest.fn<Promise<SiteAnalyticsSummaryRespon
 const mockFetchMigrationWorkspaceSummary = jest.fn<Promise<unknown>, unknown[]>();
 const mockUpdateMigrationAnalyticsConfig = jest.fn<Promise<unknown>, unknown[]>();
 const mockUpsertMigrationWorkspace = jest.fn<Promise<unknown>, unknown[]>();
+const mockStartGoogleBusinessProfileConnect = jest.fn<Promise<{ authorization_url: string }>, unknown[]>();
 
 jest.mock("../../components/useOperatorContext", () => ({
   useOperatorContext: () => mockUseOperatorContext(),
@@ -48,6 +49,7 @@ jest.mock("../../lib/api/client", () => {
     fetchMigrationWorkspaceSummary: (...args: unknown[]) => mockFetchMigrationWorkspaceSummary(...args),
     updateMigrationAnalyticsConfig: (...args: unknown[]) => mockUpdateMigrationAnalyticsConfig(...args),
     upsertMigrationWorkspace: (...args: unknown[]) => mockUpsertMigrationWorkspace(...args),
+    startGoogleBusinessProfileConnect: (...args: unknown[]) => mockStartGoogleBusinessProfileConnect(...args),
   };
 });
 
@@ -66,6 +68,8 @@ function buildDisconnectedConnection(
     reconnect_required: false,
     required_scopes_satisfied: false,
     token_status: "reconnect_required",
+    ga4_scope_granted: false,
+    required_ga4_scope: "https://www.googleapis.com/auth/analytics.readonly",
     ...overrides,
   };
 }
@@ -94,6 +98,9 @@ function buildSiteAnalyticsSummary(
       ga4_health_reason: "not_configured",
       ga4_health_message: "Add a GA4 property ID for this site.",
       ga4_health_source: "unavailable",
+      ga4_scope_granted: null,
+      ga4_required_scope: "https://www.googleapis.com/auth/analytics.readonly",
+      ga4_auth_mode: "unknown",
     },
     message: "Google Analytics property is not configured for this site.",
     data_source: null,
@@ -134,6 +141,9 @@ describe("business profile callback notice UX", () => {
     });
     mockUpdateMigrationAnalyticsConfig.mockResolvedValue({});
     mockUpsertMigrationWorkspace.mockResolvedValue({});
+    mockStartGoogleBusinessProfileConnect.mockResolvedValue({
+      authorization_url: "https://accounts.google.com/o/oauth2/v2/auth?scope=scope",
+    });
   });
 
   it("renders success callback notice when gbp_connect=success", async () => {
@@ -302,6 +312,9 @@ describe("business profile callback notice UX", () => {
           ga4_health_reason: null,
           ga4_health_message: "GA4 is available for recommendation context.",
           ga4_health_source: "site_property",
+          ga4_scope_granted: null,
+          ga4_required_scope: "https://www.googleapis.com/auth/analytics.readonly",
+          ga4_auth_mode: "service_account",
         },
       }),
     );
@@ -315,5 +328,112 @@ describe("business profile callback notice UX", () => {
     expect(screen.getByText("GA4 property health")).toBeInTheDocument();
     expect(screen.getByText("Reachable")).toBeInTheDocument();
     expect(screen.getByText("GA4 is available for recommendation context.")).toBeInTheDocument();
+  });
+
+  it("shows reconnect-with-ga4-access guidance when GA4 scope is missing", async () => {
+    mockUseOperatorContext.mockReturnValue({
+      loading: false,
+      error: null,
+      token: "token-1",
+      businessId: "biz-1",
+      sites: [
+        {
+          id: "site-1",
+          display_name: "Main Site",
+          normalized_domain: "example.com",
+          business_id: "biz-1",
+          ga4_property_id: "123456789",
+        },
+      ],
+      selectedSiteId: "site-1",
+      setSelectedSiteId: jest.fn(),
+      refreshSites: jest.fn(),
+    });
+    mockFetchSiteAnalyticsSummary.mockResolvedValue(
+      buildSiteAnalyticsSummary({
+        available: false,
+        status: "unavailable",
+        ga4_status: "error",
+        ga4_error_reason: "missing_oauth_scope",
+        ga4_health: {
+          ga4_configured: true,
+          ga4_property_id_present: true,
+          ga4_property_verified: false,
+          ga4_reachable: false,
+          ga4_data_available: false,
+          ga4_last_checked_at: "2026-05-01T12:00:00Z",
+          ga4_health_status: "missing_oauth_scope",
+          ga4_health_reason: "missing_oauth_scope",
+          ga4_health_message: "GA4 authorization is missing. Reconnect Google with Analytics read-only access.",
+          ga4_health_source: "site_property",
+          ga4_scope_granted: false,
+          ga4_required_scope: "https://www.googleapis.com/auth/analytics.readonly",
+          ga4_auth_mode: "user_oauth",
+        },
+      }),
+    );
+
+    render(<BusinessProfilePage />);
+
+    expect(await screen.findByText("GA4 authorization missing")).toBeInTheDocument();
+    const reconnectButton = await screen.findByRole("button", { name: "Reconnect Google with GA4 access" });
+    mockStartGoogleBusinessProfileConnect.mockRejectedValueOnce(new Error("connect start failed"));
+    fireEvent.click(reconnectButton);
+
+    await waitFor(() =>
+      expect(mockStartGoogleBusinessProfileConnect).toHaveBeenCalledWith("token-1", { includeGa4Access: true }),
+    );
+  });
+
+  it("shows permission guidance for service-account GA4 access issues", async () => {
+    mockUseOperatorContext.mockReturnValue({
+      loading: false,
+      error: null,
+      token: "token-1",
+      businessId: "biz-1",
+      sites: [
+        {
+          id: "site-1",
+          display_name: "Main Site",
+          normalized_domain: "example.com",
+          business_id: "biz-1",
+          ga4_property_id: "123456789",
+        },
+      ],
+      selectedSiteId: "site-1",
+      setSelectedSiteId: jest.fn(),
+      refreshSites: jest.fn(),
+    });
+    mockFetchSiteAnalyticsSummary.mockResolvedValue(
+      buildSiteAnalyticsSummary({
+        available: false,
+        status: "unavailable",
+        ga4_status: "error",
+        ga4_error_reason: "permission_denied",
+        ga4_health: {
+          ga4_configured: true,
+          ga4_property_id_present: true,
+          ga4_property_verified: false,
+          ga4_reachable: false,
+          ga4_data_available: false,
+          ga4_last_checked_at: "2026-05-01T12:00:00Z",
+          ga4_health_status: "permission_denied",
+          ga4_health_reason: "permission_denied",
+          ga4_health_message:
+            "MBSRN cannot read this GA4 property. Verify the configured service account has Viewer access to the property.",
+          ga4_health_source: "site_property",
+          ga4_scope_granted: null,
+          ga4_required_scope: "https://www.googleapis.com/auth/analytics.readonly",
+          ga4_auth_mode: "service_account",
+        },
+      }),
+    );
+
+    render(<BusinessProfilePage />);
+
+    expect(await screen.findByText("Permission issue")).toBeInTheDocument();
+    expect(
+      screen.getByText("Next: Grant the configured service account Viewer access to this GA4 property."),
+    ).toBeInTheDocument();
   });
 });

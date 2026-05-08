@@ -194,11 +194,16 @@ export default function BusinessProfilePage() {
   const selectedSiteGa4PropertyId = selectedSite?.ga4_property_id || null;
   const ga4HealthStatus = ga4HealthSummary?.ga4_health?.ga4_health_status
     || inferGa4HealthStatus(ga4HealthSummary);
+  const ga4AuthMode = ga4HealthSummary?.ga4_health?.ga4_auth_mode || "unknown";
   const ga4HealthLabel = formatGa4HealthStatusLabel(ga4HealthStatus);
   const ga4HealthMessage = ga4HealthSummary?.ga4_health?.ga4_health_message
     || ga4DiagnosticReasonMessage(ga4HealthSummary?.ga4_error_reason)
     || "GA4 health is unavailable for this site.";
-  const ga4HealthNextAction = ga4HealthNextActionMessage(ga4HealthStatus);
+  const ga4HealthNextAction = ga4HealthNextActionMessage(ga4HealthStatus, ga4AuthMode);
+  const ga4AuthModeMessage = formatGa4AuthModeMessage(ga4AuthMode);
+  const ga4ScopeReconnectRecommended =
+    ga4HealthStatus === "missing_oauth_scope"
+    || (ga4AuthMode === "user_oauth" && connection?.ga4_scope_granted === false);
 
   useEffect(() => {
     setGa4PropertyIdInput(selectedSite?.ga4_property_id?.trim() || "");
@@ -299,14 +304,14 @@ export default function BusinessProfilePage() {
     };
   }, [context.businessId, context.token, selectedSite]);
 
-  async function handleConnect() {
+  async function handleConnect(options?: { includeGa4Access?: boolean }) {
     if (!context.token || !context.businessId) {
       return;
     }
     setActionLoading(true);
     setError(null);
     try {
-      const start = await startGoogleBusinessProfileConnect(context.token);
+      const start = await startGoogleBusinessProfileConnect(context.token, options);
       window.location.assign(start.authorization_url);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to start Google Profile connection.");
@@ -619,6 +624,7 @@ export default function BusinessProfilePage() {
               </div>
               {ga4HealthLoading ? <p className="hint muted">Checking GA4 property health...</p> : null}
               <p className="hint muted">{ga4HealthMessage}</p>
+              <p className="hint muted">{ga4AuthModeMessage}</p>
               {ga4HealthNextAction ? <p className="hint muted">{ga4HealthNextAction}</p> : null}
               {ga4HealthError ? <p className="hint error">{ga4HealthError}</p> : null}
             </div>
@@ -636,6 +642,16 @@ export default function BusinessProfilePage() {
               >
                 {ga4SaveLoading ? "Saving..." : "Save GA4 Property"}
               </button>
+              {ga4ScopeReconnectRecommended ? (
+                <button
+                  className="button"
+                  type="button"
+                  onClick={() => void handleConnect({ includeGa4Access: true })}
+                  disabled={actionLoading}
+                >
+                  Reconnect Google with GA4 access
+                </button>
+              ) : null}
             </div>
           </div>
         ) : (
@@ -907,6 +923,7 @@ function inferGa4HealthStatus(
   | "not_configured"
   | "reachable"
   | "unavailable"
+  | "missing_oauth_scope"
   | "permission_denied"
   | "invalid_property"
   | "no_data"
@@ -924,6 +941,9 @@ function inferGa4HealthStatus(
   }
   if (status === "not_configured") {
     return "not_configured";
+  }
+  if (reason === "missing_oauth_scope") {
+    return "missing_oauth_scope";
   }
   if (reason === "access_denied") {
     return "permission_denied";
@@ -943,6 +963,7 @@ function formatGa4HealthStatusLabel(
     | "not_configured"
     | "reachable"
     | "unavailable"
+    | "missing_oauth_scope"
     | "permission_denied"
     | "invalid_property"
     | "no_data"
@@ -959,6 +980,9 @@ function formatGa4HealthStatusLabel(
   }
   if (status === "no_data") {
     return "No recent data";
+  }
+  if (status === "missing_oauth_scope") {
+    return "GA4 authorization missing";
   }
   if (status === "permission_denied") {
     return "Permission issue";
@@ -978,6 +1002,7 @@ function ga4HealthBadgeClass(
     | "not_configured"
     | "reachable"
     | "unavailable"
+    | "missing_oauth_scope"
     | "permission_denied"
     | "invalid_property"
     | "no_data"
@@ -986,7 +1011,7 @@ function ga4HealthBadgeClass(
   if (status === "reachable") {
     return "badge-success";
   }
-  if (status === "configured" || status === "no_data") {
+  if (status === "configured" || status === "no_data" || status === "missing_oauth_scope") {
     return "badge-warn";
   }
   if (status === "not_configured" || status === "unknown") {
@@ -1004,8 +1029,11 @@ function ga4DiagnosticReasonMessage(
   if (reason === "not_configured") {
     return "Add a GA4 property ID for this site.";
   }
-  if (reason === "access_denied") {
+  if (reason === "access_denied" || reason === "permission_denied") {
     return "Verify the connected Google account can read this GA4 property.";
+  }
+  if (reason === "missing_oauth_scope") {
+    return "GA4 authorization is missing. Reconnect Google with Analytics read-only access.";
   }
   if (reason === "property_not_found") {
     return "The configured GA4 property was not found.";
@@ -1025,16 +1053,30 @@ function ga4HealthNextActionMessage(
     | "not_configured"
     | "reachable"
     | "unavailable"
+    | "missing_oauth_scope"
     | "permission_denied"
     | "invalid_property"
     | "no_data"
     | "unknown",
+  authMode: "user_oauth" | "service_account" | "adc" | "mock" | "unavailable" | "unknown",
 ): string | null {
   if (status === "not_configured") {
     return "Next: Add a GA4 property ID for this site.";
   }
+  if (status === "missing_oauth_scope") {
+    if (authMode === "user_oauth") {
+      return "Next: Reconnect Google with Analytics read-only access.";
+    }
+    return "Next: Verify runtime GA4 credentials include Analytics read-only scope.";
+  }
   if (status === "permission_denied") {
-    return "Next: Verify the connected Google account can read this GA4 property.";
+    if (authMode === "service_account") {
+      return "Next: Grant the configured service account Viewer access to this GA4 property.";
+    }
+    if (authMode === "adc") {
+      return "Next: Grant the runtime Google identity Viewer access to this GA4 property.";
+    }
+    return "Next: Grant the connected Google account or service account Viewer access to this GA4 property.";
   }
   if (status === "invalid_property") {
     return "Next: Save a valid numeric GA4 property ID for this site.";
@@ -1046,6 +1088,27 @@ function ga4HealthNextActionMessage(
     return "Next: Retry after a short delay and verify workspace GA4 credentials.";
   }
   return null;
+}
+
+function formatGa4AuthModeMessage(
+  authMode: "user_oauth" | "service_account" | "adc" | "mock" | "unavailable" | "unknown",
+): string {
+  if (authMode === "user_oauth") {
+    return "GA4 auth mode: Connected Google account OAuth token.";
+  }
+  if (authMode === "service_account") {
+    return "GA4 auth mode: Service account credentials.";
+  }
+  if (authMode === "adc") {
+    return "GA4 auth mode: Application Default Credentials.";
+  }
+  if (authMode === "mock") {
+    return "GA4 auth mode: Mock provider (test/runtime fallback).";
+  }
+  if (authMode === "unavailable") {
+    return "GA4 auth mode: Unavailable.";
+  }
+  return "GA4 auth mode: Unknown.";
 }
 
 function normalizeVerificationError(

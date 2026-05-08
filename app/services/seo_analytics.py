@@ -7,10 +7,16 @@ from typing import Literal
 from urllib.parse import urlparse
 
 from app.integrations.ga4_analytics_provider import (
+    DisabledGA4AnalyticsProvider,
     GA4AnalyticsProvider,
     GA4AnalyticsProviderConfigurationError,
+    GA4EngagementTrendMetrics,
     GA4AnalyticsProviderError,
+    GoogleAnalyticsDataAPIClient,
+    MockGA4AnalyticsProvider,
+    GA4OperatorInsightsResult,
     GA4SitePeriodMetrics,
+    GA4TopLandingPageMetrics,
 )
 from app.integrations.search_console_analytics_provider import (
     DisabledSearchConsoleAnalyticsProvider,
@@ -22,8 +28,12 @@ from app.integrations.search_console_analytics_provider import (
 from app.schemas.seo_analytics import (
     SEOGA4AccessibleAccountRead,
     SEOGA4AccessibleAccountsRead,
+    SEOGA4EngagementTrendInsightRead,
     SEOGA4HealthRead,
+    SEOGA4InsightsRead,
     SEOGA4SiteOnboardingStatusRead,
+    SEOGA4TopLandingPageInsightRead,
+    SEOGA4TrafficTrendInsightRead,
     SEOAnalyticsMetricWindowRead,
     SEOAnalyticsSiteMetricsSummaryRead,
     SEOAnalyticsSiteSummaryRead,
@@ -39,9 +49,11 @@ logger = logging.getLogger(__name__)
 
 _GA4_DATA_FRESHNESS_THRESHOLD_HOURS = 48
 _SEARCH_CONSOLE_DATA_FRESHNESS_THRESHOLD_HOURS = 72
+_GA4_REQUIRED_SCOPE = "https://www.googleapis.com/auth/analytics.readonly"
 _GA4_EXPECTED_UNAVAILABLE_REASONS = frozenset(
     {
         "not_configured",
+        "missing_oauth_scope",
         "permission_denied",
         "invalid_property_format",
         "property_not_found",
@@ -53,6 +65,8 @@ _GA4_EXPECTED_UNAVAILABLE_REASONS = frozenset(
 class SEOAnalyticsServiceSettings:
     period_days: int = 7
     top_pages_limit: int = 5
+    ga4_insights_period_days: int = 7
+    ga4_insights_top_landing_pages_limit: int = 5
     search_console_period_days: int = 7
     search_console_top_pages_limit: int = 5
     search_console_top_queries_limit: int = 3
@@ -115,6 +129,11 @@ class SEOAnalyticsService:
     ) -> SEOAnalyticsSiteSummaryRead:
         normalized_site_ga4_property_id = _clean_identifier(ga4_property_id)
         site_ga4_property_configured = bool(normalized_site_ga4_property_id)
+        ga4_auth_mode = _derive_ga4_auth_mode(self.provider)
+        insights_period_days = max(1, min(int(self.settings.ga4_insights_period_days), 30))
+        insights_top_landing_limit = max(1, min(int(self.settings.ga4_insights_top_landing_pages_limit), 5))
+        insights_date_range_label = _build_ga4_insights_date_range_label(period_days=insights_period_days)
+        ga4_insights_source = "site_property" if site_ga4_property_configured else "unavailable"
 
         if enforce_site_ga4_property and not site_ga4_property_configured:
             return SEOAnalyticsSiteSummaryRead(
@@ -130,6 +149,14 @@ class SEOAnalyticsService:
                     ga4_error_reason="not_configured",
                     ga4_last_checked_at=None,
                     ga4_last_data_timestamp=None,
+                    ga4_auth_mode=ga4_auth_mode,
+                ),
+                ga4_insights=_build_ga4_insights_unavailable(
+                    status="not_configured",
+                    source="unavailable",
+                    date_range_label=insights_date_range_label,
+                    checked_at=None,
+                    message="Add a GA4 property ID for this site before using analytics insights.",
                 ),
                 message="Google Analytics property is not configured for this site.",
                 data_source=None,
@@ -151,6 +178,14 @@ class SEOAnalyticsService:
                     ga4_error_reason="invalid_property_format",
                     ga4_last_checked_at=None,
                     ga4_last_data_timestamp=None,
+                    ga4_auth_mode=ga4_auth_mode,
+                ),
+                ga4_insights=_build_ga4_insights_unavailable(
+                    status="invalid_property",
+                    source=ga4_insights_source,
+                    date_range_label=insights_date_range_label,
+                    checked_at=None,
+                    message="GA4 property ID is invalid for this site. Update the property ID to load insights.",
                 ),
                 message="Google Analytics property ID format is invalid for this site.",
                 data_source=None,
@@ -173,6 +208,14 @@ class SEOAnalyticsService:
                     ga4_error_reason=None if site_ga4_property_configured else "not_configured",
                     ga4_last_checked_at=None,
                     ga4_last_data_timestamp=None,
+                    ga4_auth_mode=ga4_auth_mode,
+                ),
+                ga4_insights=_build_ga4_insights_unavailable(
+                    status="unavailable",
+                    source=ga4_insights_source,
+                    date_range_label=insights_date_range_label,
+                    checked_at=None,
+                    message="GA4 insights are unavailable because site domain is not configured.",
                 ),
                 message="Analytics unavailable because site domain is not configured.",
                 data_source=None,
@@ -198,6 +241,14 @@ class SEOAnalyticsService:
                     ga4_error_reason="not_configured",
                     ga4_last_checked_at=None,
                     ga4_last_data_timestamp=None,
+                    ga4_auth_mode=ga4_auth_mode,
+                ),
+                ga4_insights=_build_ga4_insights_unavailable(
+                    status="not_configured",
+                    source=ga4_insights_source,
+                    date_range_label=insights_date_range_label,
+                    checked_at=None,
+                    message="GA4 insights are not configured for this workspace.",
                 ),
                 message="Google Analytics is not configured for this workspace.",
                 data_source=None,
@@ -229,6 +280,14 @@ class SEOAnalyticsService:
                     ga4_error_reason=diagnostic_reason,
                     ga4_last_checked_at=failed_checked_at,
                     ga4_last_data_timestamp=None,
+                    ga4_auth_mode=ga4_auth_mode,
+                ),
+                ga4_insights=_build_ga4_insights_unavailable(
+                    status=_ga4_insights_status_for_reason(diagnostic_reason),
+                    source=ga4_insights_source,
+                    date_range_label=insights_date_range_label,
+                    checked_at=failed_checked_at,
+                    message=_ga4_insights_message_for_status(_ga4_insights_status_for_reason(diagnostic_reason)),
                 ),
                 message="Google Analytics is not configured for this workspace.",
                 data_source=None,
@@ -261,6 +320,14 @@ class SEOAnalyticsService:
                     ga4_error_reason=diagnostic_reason,
                     ga4_last_checked_at=failed_checked_at,
                     ga4_last_data_timestamp=None,
+                    ga4_auth_mode=ga4_auth_mode,
+                ),
+                ga4_insights=_build_ga4_insights_unavailable(
+                    status=_ga4_insights_status_for_reason(diagnostic_reason),
+                    source=ga4_insights_source,
+                    date_range_label=insights_date_range_label,
+                    checked_at=failed_checked_at,
+                    message=_ga4_insights_message_for_status(_ga4_insights_status_for_reason(diagnostic_reason)),
                 ),
                 message="Google Analytics data is temporarily unavailable.",
                 data_source=None,
@@ -303,6 +370,57 @@ class SEOAnalyticsService:
             stale_after_hours=_GA4_DATA_FRESHNESS_THRESHOLD_HOURS,
             now=fetch_completed_at,
         )
+        ga4_insights: SEOGA4InsightsRead
+        if not has_metric_data:
+            ga4_insights = _build_ga4_insights_unavailable(
+                status="no_data",
+                source=ga4_insights_source,
+                date_range_label=insights_date_range_label,
+                checked_at=fetch_completed_at,
+                message="GA4 is reachable, but no recent traffic was returned for this period.",
+            )
+        else:
+            fetch_operator_insights = getattr(self.provider, "fetch_operator_insights", None)
+            if callable(fetch_operator_insights):
+                try:
+                    operator_insights_result = fetch_operator_insights(
+                        site_domain=normalized_domain,
+                        period_days=insights_period_days,
+                        top_landing_pages_limit=insights_top_landing_limit,
+                        ga4_property_id=normalized_site_ga4_property_id,
+                    )
+                    ga4_insights = _build_ga4_insights_available(
+                        metrics_summary=metrics_summary,
+                        top_pages_summary=top_pages_summary,
+                        operator_insights_result=operator_insights_result,
+                        date_range_label=insights_date_range_label,
+                        checked_at=fetch_completed_at,
+                    )
+                except GA4AnalyticsProviderConfigurationError as exc:
+                    diagnostic_reason = _classify_ga4_configuration_error_reason(exc)
+                    ga4_insights = _build_ga4_insights_unavailable(
+                        status=_ga4_insights_status_for_reason(diagnostic_reason),
+                        source=ga4_insights_source,
+                        date_range_label=insights_date_range_label,
+                        checked_at=fetch_completed_at,
+                        message=_ga4_insights_message_for_status(_ga4_insights_status_for_reason(diagnostic_reason)),
+                    )
+                except GA4AnalyticsProviderError as exc:
+                    diagnostic_reason = _classify_ga4_runtime_error_reason(exc)
+                    ga4_insights = _build_ga4_insights_unavailable(
+                        status=_ga4_insights_status_for_reason(diagnostic_reason),
+                        source=ga4_insights_source,
+                        date_range_label=insights_date_range_label,
+                        checked_at=fetch_completed_at,
+                        message=_ga4_insights_message_for_status(_ga4_insights_status_for_reason(diagnostic_reason)),
+                    )
+            else:
+                ga4_insights = _build_ga4_insights_from_site_metrics(
+                    metrics_summary=metrics_summary,
+                    top_pages_summary=top_pages_summary,
+                    date_range_label=insights_date_range_label,
+                    checked_at=fetch_completed_at,
+                )
 
         return SEOAnalyticsSiteSummaryRead(
             business_id=business_id,
@@ -320,7 +438,9 @@ class SEOAnalyticsService:
                 ga4_error_reason=None if has_metric_data else "no_data",
                 ga4_last_checked_at=fetch_completed_at,
                 ga4_last_data_timestamp=last_data_timestamp,
+                ga4_auth_mode=ga4_auth_mode,
             ),
+            ga4_insights=ga4_insights,
             message=None,
             data_source=result.data_source,
             site_metrics_summary=metrics_summary,
@@ -1189,6 +1309,8 @@ def _classify_ga4_configuration_error_reason(error: Exception) -> str:
         return "unknown_error"
     if "not configured" in message or "property id is required" in message or "credentials are required" in message:
         return "not_configured"
+    if _is_ga4_missing_scope_message(message):
+        return "missing_oauth_scope"
     if _is_ga4_permission_denied_message(message):
         return "permission_denied"
     if "invalid" in message and "property" in message:
@@ -1204,6 +1326,8 @@ def _classify_ga4_runtime_error_reason(error: Exception) -> str:
     message = str(error or "").strip().lower()
     if not message:
         return "unknown_error"
+    if _is_ga4_missing_scope_message(message):
+        return "missing_oauth_scope"
     if _is_ga4_permission_denied_message(message):
         return "permission_denied"
     if "invalid argument" in message or "invalid property" in message or "malformed" in message:
@@ -1224,8 +1348,6 @@ def _is_ga4_permission_denied_message(message: str) -> bool:
         "permission denied",
         "insufficient permissions",
         "insufficient permission",
-        "insufficient authentication scopes",
-        "insufficient scope",
         "does not have sufficient permissions",
         "doesn't have sufficient permissions",
         "access denied",
@@ -1236,9 +1358,32 @@ def _is_ga4_permission_denied_message(message: str) -> bool:
     return "403" in normalized and ("http error" in normalized or "status code" in normalized or "code" in normalized)
 
 
+def _is_ga4_missing_scope_message(message: str) -> bool:
+    normalized = str(message or "").strip().lower()
+    if not normalized:
+        return False
+    scope_markers = (
+        "insufficient authentication scope",
+        "insufficient authentication scopes",
+        "insufficient scope",
+        "request had insufficient authentication scopes",
+        "request had insufficient authentication scope",
+        "analytics.readonly",
+    )
+    if not any(marker in normalized for marker in scope_markers):
+        return False
+    return (
+        "scope" in normalized
+        or "authentication" in normalized
+        or "oauth" in normalized
+    )
+
+
 def _ga4_health_status_for_reason(reason_code: str) -> str:
     normalized = str(reason_code or "").strip().lower()
-    if normalized == "permission_denied":
+    if normalized == "missing_oauth_scope":
+        return "missing_oauth_scope"
+    if normalized in {"permission_denied", "access_denied"}:
         return "permission_denied"
     if normalized == "not_configured":
         return "not_configured"
@@ -1247,9 +1392,405 @@ def _ga4_health_status_for_reason(reason_code: str) -> str:
     return "unavailable"
 
 
+def _ga4_insights_status_for_reason(
+    reason_code: str | None,
+) -> Literal[
+    "available",
+    "not_configured",
+    "missing_oauth_scope",
+    "permission_denied",
+    "invalid_property",
+    "no_data",
+    "unavailable",
+    "unknown",
+]:
+    normalized = str(reason_code or "").strip().lower()
+    if normalized == "not_configured":
+        return "not_configured"
+    if normalized == "missing_oauth_scope":
+        return "missing_oauth_scope"
+    if normalized in {"permission_denied", "access_denied"}:
+        return "permission_denied"
+    if normalized in {"invalid_property_format", "property_not_found"}:
+        return "invalid_property"
+    if normalized == "no_data":
+        return "no_data"
+    if normalized == "unknown_error":
+        return "unavailable"
+    return "unavailable"
+
+
+def _ga4_insights_message_for_status(
+    status: Literal[
+        "available",
+        "not_configured",
+        "missing_oauth_scope",
+        "permission_denied",
+        "invalid_property",
+        "no_data",
+        "unavailable",
+        "unknown",
+    ],
+) -> str:
+    if status == "not_configured":
+        return "Add a GA4 property ID for this site before using analytics insights."
+    if status == "missing_oauth_scope":
+        return "Reconnect Google with GA4 read-only access before using analytics insights."
+    if status == "permission_denied":
+        return "Verify GA4 property access before using analytics insights."
+    if status == "invalid_property":
+        return "Update the GA4 property ID for this site before using analytics insights."
+    if status == "no_data":
+        return "GA4 is reachable, but no recent traffic was returned for this period."
+    if status == "unavailable":
+        return "GA4 insights are temporarily unavailable. Retry after a short delay."
+    if status == "unknown":
+        return "GA4 insights are unavailable in the current runtime."
+    return "GA4 insights are available for this site."
+
+
+def _build_ga4_insights_date_range_label(*, period_days: int) -> str:
+    bounded_period_days = max(1, min(int(period_days), 30))
+    return f"Last {bounded_period_days} days vs previous {bounded_period_days} days"
+
+
+def _build_ga4_insights_unavailable(
+    *,
+    status: Literal[
+        "available",
+        "not_configured",
+        "missing_oauth_scope",
+        "permission_denied",
+        "invalid_property",
+        "no_data",
+        "unavailable",
+        "unknown",
+    ],
+    source: Literal["site_property", "unavailable"],
+    date_range_label: str | None,
+    checked_at: datetime | None,
+    message: str,
+) -> SEOGA4InsightsRead:
+    return SEOGA4InsightsRead(
+        status=status,
+        source=source,
+        date_range_label=date_range_label,
+        checked_at=checked_at,
+        top_landing_pages=[],
+        traffic_trend=None,
+        engagement_trend=None,
+        message=message,
+    )
+
+
+def _build_ga4_insights_from_site_metrics(
+    *,
+    metrics_summary: SEOAnalyticsSiteMetricsSummaryRead,
+    top_pages_summary: list[SEOAnalyticsTopPageRead],
+    date_range_label: str,
+    checked_at: datetime,
+) -> SEOGA4InsightsRead:
+    traffic_trend = _build_ga4_insights_traffic_trend(metrics_summary=metrics_summary)
+    top_landing_pages = [
+        _build_ga4_top_landing_page_from_site_summary(page=page)
+        for page in top_pages_summary[:5]
+    ]
+    engagement_trend = SEOGA4EngagementTrendInsightRead(
+        current_engagement_rate=None,
+        previous_engagement_rate=None,
+        engagement_rate_delta_percent=None,
+        current_average_engagement_time_seconds=None,
+        previous_average_engagement_time_seconds=None,
+        trend_label="unknown",
+        operator_hint="Engagement trend is unavailable in this runtime. Use page-level observations for now.",
+    )
+    return SEOGA4InsightsRead(
+        status="available" if top_landing_pages or traffic_trend.current_sessions else "unknown",
+        source="site_property",
+        date_range_label=date_range_label,
+        checked_at=checked_at,
+        top_landing_pages=top_landing_pages,
+        traffic_trend=traffic_trend,
+        engagement_trend=engagement_trend,
+        message="GA4 insights are available for this site.",
+    )
+
+
+def _build_ga4_insights_available(
+    *,
+    metrics_summary: SEOAnalyticsSiteMetricsSummaryRead,
+    top_pages_summary: list[SEOAnalyticsTopPageRead],
+    operator_insights_result: GA4OperatorInsightsResult,
+    date_range_label: str,
+    checked_at: datetime,
+) -> SEOGA4InsightsRead:
+    session_delta_by_path = {
+        str(page.page_path or "").strip(): page.sessions_delta_percent
+        for page in top_pages_summary
+    }
+    top_landing_pages = [
+        _build_ga4_top_landing_page_from_operator_metrics(
+            metrics=item,
+            session_delta_percent=session_delta_by_path.get(str(item.page_path or "").strip()),
+        )
+        for item in operator_insights_result.top_landing_pages[:5]
+    ]
+    traffic_trend = _build_ga4_insights_traffic_trend(metrics_summary=metrics_summary)
+    engagement_trend = _build_ga4_insights_engagement_trend(metrics=operator_insights_result.engagement_trend)
+
+    has_data = bool(top_landing_pages) or any(
+        value not in {None, 0}
+        for value in [
+            traffic_trend.current_sessions,
+            traffic_trend.current_active_users,
+            engagement_trend.current_engagement_rate,
+            engagement_trend.current_average_engagement_time_seconds,
+        ]
+    )
+    status: Literal[
+        "available",
+        "not_configured",
+        "permission_denied",
+        "invalid_property",
+        "no_data",
+        "unavailable",
+        "unknown",
+    ] = "available" if has_data else "no_data"
+    message = (
+        "GA4 insights are available for this site."
+        if status == "available"
+        else "GA4 is reachable, but no recent traffic was returned for this period."
+    )
+    return SEOGA4InsightsRead(
+        status=status,
+        source="site_property",
+        date_range_label=date_range_label,
+        checked_at=checked_at,
+        top_landing_pages=top_landing_pages,
+        traffic_trend=traffic_trend,
+        engagement_trend=engagement_trend,
+        message=message,
+    )
+
+
+def _build_ga4_top_landing_page_from_site_summary(
+    *,
+    page: SEOAnalyticsTopPageRead,
+) -> SEOGA4TopLandingPageInsightRead:
+    trend_label = _derive_trend_label_from_delta(page.sessions_delta_percent)
+    return SEOGA4TopLandingPageInsightRead(
+        path=str(page.page_path or "").strip() or "/",
+        title=None,
+        sessions=max(0, int(page.sessions)),
+        active_users=None,
+        views=max(0, int(page.pageviews)),
+        engagement_rate=None,
+        average_engagement_time_seconds=None,
+        trend_label=trend_label,
+        operator_hint=_build_ga4_top_landing_operator_hint(
+            trend_label=trend_label,
+            sessions=max(0, int(page.sessions)),
+            engagement_rate=None,
+        ),
+    )
+
+
+def _build_ga4_top_landing_page_from_operator_metrics(
+    *,
+    metrics: GA4TopLandingPageMetrics,
+    session_delta_percent: float | None,
+) -> SEOGA4TopLandingPageInsightRead:
+    trend_label = _derive_trend_label_from_delta(session_delta_percent)
+    engagement_rate = _sanitize_ratio(metrics.engagement_rate)
+    average_time = _sanitize_non_negative_float(metrics.average_engagement_time_seconds)
+    return SEOGA4TopLandingPageInsightRead(
+        path=str(metrics.page_path or "").strip() or "/",
+        title=str(metrics.page_title or "").strip()[:180] or None,
+        sessions=max(0, int(metrics.sessions)),
+        active_users=max(0, int(metrics.active_users)),
+        views=max(0, int(metrics.views)),
+        engagement_rate=engagement_rate,
+        average_engagement_time_seconds=average_time,
+        trend_label=trend_label,
+        operator_hint=_build_ga4_top_landing_operator_hint(
+            trend_label=trend_label,
+            sessions=max(0, int(metrics.sessions)),
+            engagement_rate=engagement_rate,
+        ),
+    )
+
+
+def _build_ga4_insights_traffic_trend(
+    *,
+    metrics_summary: SEOAnalyticsSiteMetricsSummaryRead,
+) -> SEOGA4TrafficTrendInsightRead:
+    sessions_delta_percent = metrics_summary.sessions.delta_percent
+    active_users_delta_percent = metrics_summary.users.delta_percent
+    trend_label = _derive_combined_trend_label(
+        primary_delta=sessions_delta_percent,
+        secondary_delta=active_users_delta_percent,
+    )
+    if trend_label == "declining":
+        operator_hint = (
+            "Traffic declined versus the prior period. Check freshness, search visibility, and internal links."
+        )
+    elif trend_label == "improving":
+        operator_hint = "Traffic improved versus the prior period. Preserve winning pages while refining weaker pages."
+    elif trend_label == "steady":
+        operator_hint = "Traffic is steady. Focus updates on top landing pages with weaker engagement."
+    else:
+        operator_hint = "Traffic trend is unavailable for this period."
+    return SEOGA4TrafficTrendInsightRead(
+        current_sessions=max(0, int(metrics_summary.sessions.current)),
+        previous_sessions=max(0, int(metrics_summary.sessions.previous)),
+        sessions_delta_percent=sessions_delta_percent,
+        current_active_users=max(0, int(metrics_summary.users.current)),
+        previous_active_users=max(0, int(metrics_summary.users.previous)),
+        active_users_delta_percent=active_users_delta_percent,
+        trend_label=trend_label,
+        operator_hint=operator_hint,
+    )
+
+
+def _build_ga4_insights_engagement_trend(
+    *,
+    metrics: GA4EngagementTrendMetrics,
+) -> SEOGA4EngagementTrendInsightRead:
+    current_engagement_rate = _sanitize_ratio(metrics.current_engagement_rate)
+    previous_engagement_rate = _sanitize_ratio(metrics.previous_engagement_rate)
+    current_avg_time = _sanitize_non_negative_float(metrics.current_average_engagement_time_seconds)
+    previous_avg_time = _sanitize_non_negative_float(metrics.previous_average_engagement_time_seconds)
+    engagement_rate_delta_percent = _calculate_delta_percent(
+        current=current_engagement_rate,
+        previous=previous_engagement_rate,
+    )
+    avg_time_delta_percent = _calculate_delta_percent(
+        current=current_avg_time,
+        previous=previous_avg_time,
+    )
+    trend_label = _derive_combined_trend_label(
+        primary_delta=engagement_rate_delta_percent,
+        secondary_delta=avg_time_delta_percent,
+    )
+    if trend_label == "declining":
+        operator_hint = "Engagement declined versus the prior period. Review CTA clarity and above-the-fold content."
+    elif trend_label == "improving":
+        operator_hint = "Engagement improved versus the prior period. Keep these content patterns in future updates."
+    elif trend_label == "steady":
+        operator_hint = "Engagement is steady. Prioritize high-traffic pages with weaker conversion cues."
+    else:
+        operator_hint = "Engagement trend is unavailable for this period."
+    if current_engagement_rate is not None and current_engagement_rate >= 0.6 and trend_label != "declining":
+        operator_hint = "Engagement looks healthy. Preserve this page intent during future migration or content changes."
+    return SEOGA4EngagementTrendInsightRead(
+        current_engagement_rate=current_engagement_rate,
+        previous_engagement_rate=previous_engagement_rate,
+        engagement_rate_delta_percent=engagement_rate_delta_percent,
+        current_average_engagement_time_seconds=current_avg_time,
+        previous_average_engagement_time_seconds=previous_avg_time,
+        trend_label=trend_label,
+        operator_hint=operator_hint,
+    )
+
+
+def _build_ga4_top_landing_operator_hint(
+    *,
+    trend_label: Literal["improving", "declining", "steady", "unknown"],
+    sessions: int | None,
+    engagement_rate: float | None,
+) -> str:
+    normalized_sessions = max(0, int(sessions or 0))
+    if normalized_sessions >= 100 and engagement_rate is not None and engagement_rate < 0.45:
+        return "High-traffic page with weaker engagement. Review CTA clarity and above-the-fold content."
+    if trend_label == "declining":
+        return "Traffic declined versus the prior period. Check freshness, search visibility, and internal links."
+    if engagement_rate is not None and engagement_rate >= 0.6:
+        return "Engagement looks healthy. Preserve this page during future migration or content changes."
+    if trend_label == "improving":
+        return "Page traffic is improving. Preserve what works and iterate carefully."
+    if trend_label == "steady":
+        return "Traffic is steady. Review internal links and CTA clarity for incremental gains."
+    return "Review this page for clear intent, CTA strength, and content freshness."
+
+
+def _derive_combined_trend_label(
+    *,
+    primary_delta: float | None,
+    secondary_delta: float | None,
+) -> Literal["improving", "declining", "steady", "unknown"]:
+    if primary_delta is None and secondary_delta is None:
+        return "unknown"
+    primary_label = _derive_trend_label_from_delta(primary_delta)
+    secondary_label = _derive_trend_label_from_delta(secondary_delta)
+    if "declining" in {primary_label, secondary_label} and "improving" not in {primary_label, secondary_label}:
+        return "declining"
+    if "improving" in {primary_label, secondary_label} and "declining" not in {primary_label, secondary_label}:
+        return "improving"
+    if primary_label == "unknown" and secondary_label == "unknown":
+        return "unknown"
+    return "steady"
+
+
+def _derive_trend_label_from_delta(
+    delta_percent: float | None,
+) -> Literal["improving", "declining", "steady", "unknown"]:
+    if delta_percent is None:
+        return "unknown"
+    if delta_percent >= 5:
+        return "improving"
+    if delta_percent <= -5:
+        return "declining"
+    return "steady"
+
+
+def _calculate_delta_percent(*, current: float | None, previous: float | None) -> float | None:
+    if current is None or previous is None:
+        return None
+    if previous <= 0:
+        if current > 0:
+            return None
+        return 0.0
+    return round(((current - previous) / previous) * 100, 2)
+
+
+def _sanitize_ratio(value: float | None) -> float | None:
+    if value is None:
+        return None
+    numeric = float(value)
+    if not numeric >= 0:
+        return None
+    return round(min(max(numeric, 0.0), 1.0), 4)
+
+
+def _sanitize_non_negative_float(value: float | None) -> float | None:
+    if value is None:
+        return None
+    numeric = float(value)
+    if not numeric >= 0:
+        return None
+    return round(numeric, 2)
+
+
+def _derive_ga4_auth_mode(
+    provider: GA4AnalyticsProvider,
+) -> Literal["user_oauth", "service_account", "adc", "mock", "unavailable", "unknown"]:
+    if isinstance(provider, DisabledGA4AnalyticsProvider):
+        return "unavailable"
+    if isinstance(provider, MockGA4AnalyticsProvider):
+        return "mock"
+    if isinstance(provider, GoogleAnalyticsDataAPIClient):
+        credentials_json = str(provider.credentials_json or "").strip()
+        if credentials_json:
+            return "service_account"
+        return "adc"
+    return "unknown"
+
+
 def _ga4_reason_log_detail(*, reason_code: str, error: Exception) -> str:
     normalized = str(reason_code or "").strip().lower()
-    if normalized == "permission_denied":
+    if normalized == "missing_oauth_scope":
+        return "ga4_missing_oauth_scope"
+    if normalized in {"permission_denied", "access_denied"}:
         return "ga4_property_permission_denied"
     if normalized == "not_configured":
         return "ga4_not_configured"
@@ -1320,6 +1861,7 @@ def _build_ga4_health(
     ga4_error_reason: str | None,
     ga4_last_checked_at: datetime | None,
     ga4_last_data_timestamp: datetime | None,
+    ga4_auth_mode: Literal["user_oauth", "service_account", "adc", "mock", "unavailable", "unknown"],
 ) -> SEOGA4HealthRead:
     property_id_present = bool(site_ga4_property_id)
     health_status: Literal[
@@ -1327,6 +1869,7 @@ def _build_ga4_health(
         "not_configured",
         "reachable",
         "unavailable",
+        "missing_oauth_scope",
         "permission_denied",
         "invalid_property",
         "no_data",
@@ -1337,6 +1880,7 @@ def _build_ga4_health(
     property_verified: bool | None = None
     reachable: bool | None = None
     data_available: bool | None = None
+    ga4_scope_granted: bool | None = None
 
     normalized_status = str(ga4_status or "").strip().lower()
     normalized_reason = str(ga4_error_reason or "").strip().lower()
@@ -1354,6 +1898,8 @@ def _build_ga4_health(
     elif normalized_status == "connected":
         property_verified = True
         reachable = True
+        if ga4_auth_mode == "user_oauth":
+            ga4_scope_granted = True
         if normalized_reason == "no_data":
             health_status = "no_data"
             data_available = False
@@ -1363,16 +1909,38 @@ def _build_ga4_health(
             data_available = True
             health_message = "GA4 is available for recommendation context."
             health_reason = None
+    elif normalized_reason == "missing_oauth_scope":
+        health_status = "missing_oauth_scope"
+        health_reason = "missing_oauth_scope"
+        property_verified = False
+        reachable = False
+        data_available = False
+        ga4_scope_granted = False if ga4_auth_mode == "user_oauth" else None
+        if ga4_auth_mode == "user_oauth":
+            health_message = "GA4 authorization is missing. Reconnect Google with Analytics read-only access."
+        else:
+            health_message = "GA4 runtime credentials are missing Analytics read-only scope."
     elif normalized_reason in {"permission_denied", "access_denied"}:
         health_status = "permission_denied"
         health_reason = "permission_denied"
         property_verified = False
         reachable = False
         data_available = False
-        health_message = (
-            "MBSRN cannot read this GA4 property. Verify the connected Google account or service account has "
-            "Viewer access to the property."
-        )
+        if ga4_auth_mode == "service_account":
+            health_message = (
+                "MBSRN cannot read this GA4 property. Verify the configured service account has Viewer access "
+                "to the property."
+            )
+        elif ga4_auth_mode == "adc":
+            health_message = (
+                "MBSRN cannot read this GA4 property. Verify the runtime Google identity has Viewer access "
+                "to the property."
+            )
+        else:
+            health_message = (
+                "MBSRN cannot read this GA4 property. Verify the connected Google account or service account has "
+                "Viewer access to the property."
+            )
     elif normalized_reason in {"invalid_property_format", "property_not_found"}:
         health_status = "invalid_property"
         property_verified = False
@@ -1399,6 +1967,9 @@ def _build_ga4_health(
         ga4_health_reason=health_reason,
         ga4_health_message=health_message,
         ga4_health_source=source,
+        ga4_scope_granted=ga4_scope_granted,
+        ga4_required_scope=_GA4_REQUIRED_SCOPE,
+        ga4_auth_mode=ga4_auth_mode,
     )
 
 

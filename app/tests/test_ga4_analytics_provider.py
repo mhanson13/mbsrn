@@ -106,6 +106,130 @@ def test_google_ga4_client_handles_empty_and_partial_report_payloads(monkeypatch
     assert result.top_pages[0].current_sessions == 0
 
 
+def test_google_ga4_client_fetch_operator_insights_uses_site_scoped_property_and_parses_reports(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = GoogleAnalyticsDataAPIClient(property_id="999999999")
+    captured_calls: list[tuple[str, str, dict[str, object] | None]] = []
+
+    def _request_json(*, url: str, method: str, body: dict[str, object] | None) -> dict[str, object]:
+        captured_calls.append((url, method, body))
+        assert body is not None
+        dimensions = [str((dimension or {}).get("name") or "") for dimension in (body.get("dimensions") or [])]
+        metrics = [str((metric or {}).get("name") or "") for metric in (body.get("metrics") or [])]
+        if dimensions == ["pagePath", "pageTitle"]:
+            return {
+                "rows": [
+                    {
+                        "dimensionValues": [{"value": "/"}, {"value": "Home"}],
+                        "metricValues": [
+                            {"value": "210"},
+                            {"value": "170"},
+                            {"value": "320"},
+                            {"value": "0.67"},
+                            {"value": "84.5"},
+                        ],
+                    },
+                    {
+                        "dimensionValues": [{"value": "/services/drains"}, {"value": "Drain Service"}],
+                        "metricValues": [
+                            {"value": "95"},
+                            {"value": "73"},
+                            {"value": "120"},
+                            {"value": "0.44"},
+                            {"value": "61.2"},
+                        ],
+                    },
+                    {
+                        "dimensionValues": [{"value": ""}, {"value": "missing path should be skipped"}],
+                        "metricValues": [{"value": "15"}],
+                    },
+                ],
+            }
+        if metrics == ["engagementRate", "averageSessionDuration"]:
+            date_ranges = body.get("dateRanges") or []
+            start_date = str(((date_ranges[0] or {}).get("startDate") if date_ranges else "") or "")
+            if start_date == "6daysAgo":
+                return {"rows": [{"metricValues": [{"value": "0.58"}, {"value": "78.3"}]}]}
+            return {"rows": [{"metricValues": [{"value": "0.53"}, {"value": "71.8"}]}]}
+        return {}
+
+    monkeypatch.setattr(client, "_request_json", _request_json)
+
+    result = client.fetch_operator_insights(
+        site_domain="example.com",
+        period_days=7,
+        top_landing_pages_limit=5,
+        ga4_property_id="2000000002",
+    )
+
+    assert len(result.top_landing_pages) == 2
+    first_page = result.top_landing_pages[0]
+    assert first_page.page_path == "/"
+    assert first_page.page_title == "Home"
+    assert first_page.sessions == 210
+    assert first_page.active_users == 170
+    assert first_page.views == 320
+    assert first_page.engagement_rate == pytest.approx(0.67)
+    assert first_page.average_engagement_time_seconds == pytest.approx(84.5)
+    assert result.engagement_trend.current_engagement_rate == pytest.approx(0.58)
+    assert result.engagement_trend.previous_engagement_rate == pytest.approx(0.53)
+    assert result.engagement_trend.current_average_engagement_time_seconds == pytest.approx(78.3)
+    assert result.engagement_trend.previous_average_engagement_time_seconds == pytest.approx(71.8)
+    assert result.data_source == "ga4"
+    assert captured_calls
+    assert all("/properties/2000000002:runReport" in url for url, _, _ in captured_calls)
+    assert all("/properties/999999999:runReport" not in url for url, _, _ in captured_calls)
+
+
+def test_google_ga4_client_fetch_operator_insights_handles_empty_and_partial_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = GoogleAnalyticsDataAPIClient(property_id="2000000002")
+    request_count = {"value": 0}
+
+    def _request_json(*, url: str, method: str, body: dict[str, object] | None) -> dict[str, object]:
+        del url, method, body
+        request_count["value"] += 1
+        if request_count["value"] == 1:
+            return {
+                "rows": [
+                    {
+                        "dimensionValues": [{"value": "/services"}],
+                        "metricValues": [{"value": "17"}],
+                    }
+                ]
+            }
+        if request_count["value"] == 2:
+            return {"rows": [{"metricValues": [{"value": ""}, {"value": "not-a-number"}]}]}
+        if request_count["value"] == 3:
+            return {}
+        return {}
+
+    monkeypatch.setattr(client, "_request_json", _request_json)
+
+    result = client.fetch_operator_insights(
+        site_domain="example.com",
+        period_days=7,
+        top_landing_pages_limit=3,
+        ga4_property_id="2000000002",
+    )
+
+    assert len(result.top_landing_pages) == 1
+    page = result.top_landing_pages[0]
+    assert page.page_path == "/services"
+    assert page.page_title is None
+    assert page.sessions == 17
+    assert page.active_users == 0
+    assert page.views == 0
+    assert page.engagement_rate is None
+    assert page.average_engagement_time_seconds is None
+    assert result.engagement_trend.current_engagement_rate is None
+    assert result.engagement_trend.previous_engagement_rate is None
+    assert result.engagement_trend.current_average_engagement_time_seconds is None
+    assert result.engagement_trend.previous_average_engagement_time_seconds is None
+
+
 def test_google_ga4_client_rejects_malformed_property_id() -> None:
     client = GoogleAnalyticsDataAPIClient(property_id="2000000002")
 
@@ -196,6 +320,41 @@ def test_google_ga4_client_permission_denied_variants_classify_to_permission_den
         client._request_json(url="https://example.invalid", method="POST", body={"foo": "bar"})
 
     assert _classify_ga4_runtime_error_reason(exc_info.value) == "permission_denied"
+    assert "fake-token" not in str(exc_info.value).lower()
+
+
+@pytest.mark.parametrize(
+    "provider_message",
+    [
+        "Request had insufficient authentication scopes.",
+        "insufficient authentication scopes",
+        "insufficient scope to read analytics.readonly",
+    ],
+)
+def test_google_ga4_client_scope_errors_classify_to_missing_oauth_scope(
+    monkeypatch: pytest.MonkeyPatch,
+    provider_message: str,
+) -> None:
+    client = GoogleAnalyticsDataAPIClient(property_id="2000000002")
+    monkeypatch.setattr(client, "_resolve_access_token", lambda: "fake-token")
+    error_payload = {"error": {"message": provider_message}}
+
+    def _raise_http_error(*args, **kwargs):  # noqa: ANN002, ANN003
+        del args, kwargs
+        raise HTTPError(
+            url="https://analyticsdata.googleapis.com/v1beta/properties/2000000002:runReport",
+            code=403,
+            msg="Forbidden",
+            hdrs=None,
+            fp=BytesIO(json.dumps(error_payload).encode("utf-8")),
+        )
+
+    monkeypatch.setattr(ga4_provider_module, "urlopen", _raise_http_error)
+
+    with pytest.raises(GA4AnalyticsProviderError) as exc_info:
+        client._request_json(url="https://example.invalid", method="POST", body={"foo": "bar"})
+
+    assert _classify_ga4_runtime_error_reason(exc_info.value) == "missing_oauth_scope"
     assert "fake-token" not in str(exc_info.value).lower()
 
 

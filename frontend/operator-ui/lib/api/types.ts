@@ -959,6 +959,7 @@ export interface SiteGA4Health {
     | "not_configured"
     | "reachable"
     | "unavailable"
+    | "missing_oauth_scope"
     | "permission_denied"
     | "invalid_property"
     | "no_data"
@@ -966,6 +967,61 @@ export interface SiteGA4Health {
   ga4_health_reason: string | null;
   ga4_health_message: string | null;
   ga4_health_source: "site_property" | "unavailable";
+  ga4_scope_granted: boolean | null;
+  ga4_required_scope: string;
+  ga4_auth_mode: "user_oauth" | "service_account" | "adc" | "mock" | "unavailable" | "unknown";
+}
+
+export interface SiteGA4TopLandingPageInsight {
+  path: string;
+  title: string | null;
+  sessions: number | null;
+  active_users: number | null;
+  views: number | null;
+  engagement_rate: number | null;
+  average_engagement_time_seconds: number | null;
+  trend_label: "improving" | "declining" | "steady" | "unknown";
+  operator_hint: string | null;
+}
+
+export interface SiteGA4TrafficTrendInsight {
+  current_sessions: number | null;
+  previous_sessions: number | null;
+  sessions_delta_percent: number | null;
+  current_active_users: number | null;
+  previous_active_users: number | null;
+  active_users_delta_percent: number | null;
+  trend_label: "improving" | "declining" | "steady" | "unknown";
+  operator_hint: string | null;
+}
+
+export interface SiteGA4EngagementTrendInsight {
+  current_engagement_rate: number | null;
+  previous_engagement_rate: number | null;
+  engagement_rate_delta_percent: number | null;
+  current_average_engagement_time_seconds: number | null;
+  previous_average_engagement_time_seconds: number | null;
+  trend_label: "improving" | "declining" | "steady" | "unknown";
+  operator_hint: string | null;
+}
+
+export interface SiteGA4Insights {
+  status:
+    | "available"
+    | "not_configured"
+    | "missing_oauth_scope"
+    | "permission_denied"
+    | "invalid_property"
+    | "no_data"
+    | "unavailable"
+    | "unknown";
+  source: "site_property" | "unavailable";
+  date_range_label: string | null;
+  checked_at: string | null;
+  top_landing_pages: SiteGA4TopLandingPageInsight[];
+  traffic_trend: SiteGA4TrafficTrendInsight | null;
+  engagement_trend: SiteGA4EngagementTrendInsight | null;
+  message: string | null;
 }
 
 export interface SiteAnalyticsSummaryResponse {
@@ -976,6 +1032,8 @@ export interface SiteAnalyticsSummaryResponse {
   ga4_status: "not_configured" | "configured" | "connected" | "error";
   ga4_error_reason:
     | "not_configured"
+    | "missing_oauth_scope"
+    | "permission_denied"
     | "access_denied"
     | "property_not_found"
     | "invalid_property_format"
@@ -986,6 +1044,7 @@ export interface SiteAnalyticsSummaryResponse {
   ga4_last_data_timestamp?: string | null;
   ga4_data_freshness_status?: "fresh" | "stale" | "unknown";
   ga4_health?: SiteGA4Health | null;
+  ga4_insights?: SiteGA4Insights | null;
   message: string | null;
   data_source: string | null;
   site_metrics_summary: SiteAnalyticsMetricsSummary | null;
@@ -2464,6 +2523,8 @@ export interface GoogleBusinessProfileConnectionStatusResponse {
   reconnect_required: boolean;
   required_scopes_satisfied: boolean;
   token_status: GoogleBusinessProfileTokenStatus;
+  ga4_scope_granted: boolean | null;
+  required_ga4_scope: string;
 }
 
 export interface GoogleBusinessProfileConnectStartResponse {
@@ -2471,6 +2532,9 @@ export interface GoogleBusinessProfileConnectStartResponse {
   state_expires_at: string;
   provider: string;
   required_scope: string;
+  required_scopes: string[];
+  ga4_scope_requested: boolean;
+  required_ga4_scope: string;
 }
 
 export interface GoogleBusinessProfileDisconnectResponse {

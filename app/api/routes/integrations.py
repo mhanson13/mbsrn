@@ -74,6 +74,7 @@ _verification_guidance_service = VerificationGuidanceService()
 
 @router.post("/connect/start", response_model=GoogleBusinessProfileConnectStartResponse)
 def start_google_business_profile_connect(
+    include_ga4_access: bool = False,
     tenant_context: TenantContext = Depends(get_tenant_context),
     principal: Principal = Depends(get_authenticated_principal),
     service: GoogleBusinessProfileConnectionService = Depends(get_google_business_profile_connection_service),
@@ -82,6 +83,7 @@ def start_google_business_profile_connect(
         result = service.start_connection(
             business_id=tenant_context.business_id,
             principal_id=principal.id,
+            include_ga4_scope=include_ga4_access,
         )
     except GoogleBusinessProfileConnectionNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
@@ -95,6 +97,9 @@ def start_google_business_profile_connect(
         state_expires_at=result.state_expires_at,
         provider=result.provider,
         required_scope=result.required_scope,
+        required_scopes=list(result.required_scopes),
+        ga4_scope_requested=result.ga4_scope_requested,
+        required_ga4_scope=result.required_ga4_scope,
     )
 
 
@@ -412,6 +417,8 @@ def _to_connection_response(
         reconnect_required=result.reconnect_required,
         required_scopes_satisfied=result.required_scopes_satisfied,
         token_status=result.token_status,
+        ga4_scope_granted=result.ga4_scope_granted,
+        required_ga4_scope=result.required_ga4_scope,
     )
 
 

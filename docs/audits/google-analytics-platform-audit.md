@@ -40,6 +40,34 @@ Phase 1 GA4 connection/property health visibility is now implemented as a compac
 - recommendation detail surfaces now explicitly show when GA4 measurement context is omitted/unavailable
 - GA4 health visibility is additive and does not change recommendation scoring, migration planning logic, or deploy behavior
 
+## 1.3) Phase 2 Status (2026-05-07)
+
+Phase 2 compact GA4 operator insights are now implemented as an additive, site-scoped read model:
+- site analytics summary responses include additive `ga4_insights` with bounded status/source/date-range/message fields
+- `ga4_insights` includes compact operator summaries for:
+  - top landing pages (bounded to top 5 in UI)
+  - traffic trend (current vs previous period sessions/active users + bounded hint)
+  - engagement trend (engagement-rate/time deltas + bounded hint)
+- insights use the selected site property (`site.ga4_property_id`) only; no global/default GA4 property fallback is used
+- site workspace renders compact cards (no charts, no dashboard drilldowns)
+- recommendation detail surfaces now include a compact GA4 insight availability line when measurement context is available
+- GA4 insight availability remains non-blocking for recommendations, audits, migration, and deploy workflows
+
+## 1.4) OAuth Scope Follow-Up (2026-05-07)
+
+Google reconnect + GA4 authorization behavior is now scope-aware:
+- GBP connect/reconnect remains least-privilege for Business Profile by default (`business.manage`).
+- A targeted reconnect path can now explicitly request GA4 read scope (`https://www.googleapis.com/auth/analytics.readonly`) without requesting Analytics write/edit scopes.
+- Connection status now exposes bounded GA4 scope awareness (`ga4_scope_granted`, `required_ga4_scope`) without exposing tokens.
+- GA4 health normalization now distinguishes:
+  - `missing_oauth_scope`
+  - `permission_denied`
+  - `invalid_property`
+  - `not_configured`
+  - `no_data`
+  - `unavailable`
+- Health payloads also expose bounded GA4 auth mode (`user_oauth`, `service_account`, `adc`, etc.) so operator guidance can clearly separate reconnect-vs-Viewer-access actions.
+
 ## 2) Current Implementation Inventory
 
 | File | Purpose | GA4 Role | Area | Risk | Notes |
@@ -196,7 +224,7 @@ Missing:
 ## 9) Frontend/UI Findings
 
 Current surfaces:
-- Site workspace: traffic trend + GA4 freshness/diagnostics + onboarding summary card.
+- Site workspace: compact GA4 insight cards (`Top landing pages`, `Traffic trend`, `Engagement trend`) plus GA4 onboarding/health summary.
 - Recommendations: page/site traffic context in expanded recommendation details.
 - Google Profile: per-site GA4 property input/save.
 - Migration workspace: bounded GA4-included boolean signal in draft context summary.
@@ -240,7 +268,7 @@ Real-call posture:
 | GA4-R1 | High | Recommendation GA4 context may use app-global property instead of site property | `get_site_summary` usage in recommendation routes omits site property enforcement; provider bound to settings property | Enforce per-site property in recommendation analytics path and add regression tests |
 | GA4-R2 | High | Shared-credential account discovery may leak broad account metadata across tenants | `/ga4-accessible-accounts` returns service-credential account summaries | Scope/filter account discovery or restrict endpoint visibility to admin + scoped mappings |
 | GA4-R3 | Medium | No dedicated GA4 provider tests | No `test_ga4_analytics_provider.py` equivalent to Search Console provider tests | Add provider-level unit tests for auth/timeout/error parsing/filter construction |
-| GA4-R4 | Medium | Operator value remains limited to directional traffic trend | No conversions/events/source-medium UI or prioritization usage | Add compact operator insight cards and recommendation prioritization hooks |
+| GA4-R4 | Medium | Operator value remains limited beyond compact GA4 summaries | Phase 2 added top landing/traffic/engagement cards, but no conversions/events/source-medium and no prioritization wiring yet | Add phase-3 prioritization hooks + phase-4/5 deeper GA4 outcome usage |
 | GA4-R5 | Medium | Docs drift on GA4 setup location | Recommendations doc references in-workspace connect control while setup moved to Google Profile | Align docs with current UX ownership model |
 | GA4-R6 | Medium | GA4 runtime env docs incomplete in `.env.example` | GA4 config keys exist in code but sample env omits them | Add non-secret GA4 env examples and safe comments |
 

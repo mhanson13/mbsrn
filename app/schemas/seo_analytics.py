@@ -56,6 +56,7 @@ class SEOGA4HealthRead(BaseModel):
         "not_configured",
         "reachable",
         "unavailable",
+        "missing_oauth_scope",
         "permission_denied",
         "invalid_property",
         "no_data",
@@ -64,6 +65,70 @@ class SEOGA4HealthRead(BaseModel):
     ga4_health_reason: str | None = None
     ga4_health_message: str | None = None
     ga4_health_source: Literal["site_property", "unavailable"] = "site_property"
+    ga4_scope_granted: bool | None = None
+    ga4_required_scope: str = "https://www.googleapis.com/auth/analytics.readonly"
+    ga4_auth_mode: Literal["user_oauth", "service_account", "adc", "mock", "unavailable", "unknown"] = "unknown"
+
+
+class SEOGA4TopLandingPageInsightRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    path: str
+    title: str | None = None
+    sessions: int | None = None
+    active_users: int | None = None
+    views: int | None = None
+    engagement_rate: float | None = None
+    average_engagement_time_seconds: float | None = None
+    trend_label: Literal["improving", "declining", "steady", "unknown"] = "unknown"
+    operator_hint: str | None = None
+
+
+class SEOGA4TrafficTrendInsightRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    current_sessions: int | None = None
+    previous_sessions: int | None = None
+    sessions_delta_percent: float | None = None
+    current_active_users: int | None = None
+    previous_active_users: int | None = None
+    active_users_delta_percent: float | None = None
+    trend_label: Literal["improving", "declining", "steady", "unknown"] = "unknown"
+    operator_hint: str | None = None
+
+
+class SEOGA4EngagementTrendInsightRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    current_engagement_rate: float | None = None
+    previous_engagement_rate: float | None = None
+    engagement_rate_delta_percent: float | None = None
+    current_average_engagement_time_seconds: float | None = None
+    previous_average_engagement_time_seconds: float | None = None
+    trend_label: Literal["improving", "declining", "steady", "unknown"] = "unknown"
+    operator_hint: str | None = None
+
+
+class SEOGA4InsightsRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    status: Literal[
+        "available",
+        "not_configured",
+        "missing_oauth_scope",
+        "permission_denied",
+        "invalid_property",
+        "no_data",
+        "unavailable",
+        "unknown",
+    ] = "unknown"
+    source: Literal["site_property", "unavailable"] = "unavailable"
+    date_range_label: str | None = None
+    checked_at: datetime | None = None
+    top_landing_pages: list[SEOGA4TopLandingPageInsightRead] = Field(default_factory=list)
+    traffic_trend: SEOGA4TrafficTrendInsightRead | None = None
+    engagement_trend: SEOGA4EngagementTrendInsightRead | None = None
+    message: str | None = None
 
 
 class SEOAnalyticsSiteSummaryRead(BaseModel):
@@ -77,6 +142,7 @@ class SEOAnalyticsSiteSummaryRead(BaseModel):
     ga4_error_reason: (
         Literal[
             "not_configured",
+            "missing_oauth_scope",
             "permission_denied",
             "access_denied",
             "property_not_found",
@@ -90,6 +156,7 @@ class SEOAnalyticsSiteSummaryRead(BaseModel):
     ga4_last_data_timestamp: datetime | None = None
     ga4_data_freshness_status: Literal["fresh", "stale", "unknown"] = "unknown"
     ga4_health: SEOGA4HealthRead = Field(default_factory=SEOGA4HealthRead)
+    ga4_insights: SEOGA4InsightsRead = Field(default_factory=SEOGA4InsightsRead)
     message: str | None = None
     data_source: str | None = None
     site_metrics_summary: SEOAnalyticsSiteMetricsSummaryRead | None = None
