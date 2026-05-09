@@ -1,14 +1,19 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo } from "react";
+import { Suspense, useEffect, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
 import { PageContainer } from "../../components/layout/PageContainer";
 import { SectionCard } from "../../components/layout/SectionCard";
 import { SectionHeader } from "../../components/layout/SectionHeader";
 
-function buildSitesSetupHref(searchParams: URLSearchParams | null): string {
+type SearchParamsLike = {
+  get(name: string): string | null;
+  toString(): string;
+} | null;
+
+function buildSitesSetupHref(searchParams: SearchParamsLike): string {
   const searchParamsString = searchParams?.toString() || "";
   const baseSitesHref = searchParamsString ? `/sites?${searchParamsString}` : "/sites";
   const siteId = (searchParams?.get("site_id") || "").trim();
@@ -19,15 +24,7 @@ function buildSitesSetupHref(searchParams: URLSearchParams | null): string {
   return `${baseSitesHref}#selected-site-setup`;
 }
 
-export default function BusinessProfilePage() {
-  const router = useRouter();
-  const searchParams = useSearchParams();
-  const sitesSetupHref = useMemo(() => buildSitesSetupHref(searchParams), [searchParams]);
-
-  useEffect(() => {
-    router.replace(sitesSetupHref);
-  }, [router, sitesSetupHref]);
-
+function CompatibilityNotice({ sitesSetupHref }: { sitesSetupHref: string }) {
   return (
     <PageContainer width="wide" density="compact">
       <SectionCard variant="support" className="role-surface-support" data-testid="business-profile-legacy-redirect">
@@ -43,5 +40,25 @@ export default function BusinessProfilePage() {
         </Link>
       </SectionCard>
     </PageContainer>
+  );
+}
+
+function BusinessProfileRedirectClient() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const sitesSetupHref = useMemo(() => buildSitesSetupHref(searchParams), [searchParams]);
+
+  useEffect(() => {
+    router.replace(sitesSetupHref);
+  }, [router, sitesSetupHref]);
+
+  return <CompatibilityNotice sitesSetupHref={sitesSetupHref} />;
+}
+
+export default function BusinessProfilePage() {
+  return (
+    <Suspense fallback={<CompatibilityNotice sitesSetupHref="/sites" />}>
+      <BusinessProfileRedirectClient />
+    </Suspense>
   );
 }

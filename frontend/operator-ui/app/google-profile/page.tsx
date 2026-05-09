@@ -1,23 +1,30 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect } from "react";
+import { Suspense, useEffect, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
 import { PageContainer } from "../../components/layout/PageContainer";
 import { SectionCard } from "../../components/layout/SectionCard";
 import { SectionHeader } from "../../components/layout/SectionHeader";
 
-export default function GoogleProfilePage() {
-  const router = useRouter();
-  const searchParams = useSearchParams();
+type SearchParamsLike = {
+  get(name: string): string | null;
+  toString(): string;
+} | null;
+
+function buildSitesSetupHref(searchParams: SearchParamsLike): string {
   const searchParamsString = searchParams?.toString() || "";
-  const sitesHref = searchParamsString ? `/sites?${searchParamsString}` : "/sites";
+  const baseSitesHref = searchParamsString ? `/sites?${searchParamsString}` : "/sites";
+  const siteId = (searchParams?.get("site_id") || "").trim();
 
-  useEffect(() => {
-    router.replace(sitesHref);
-  }, [router, sitesHref]);
+  if (!siteId) {
+    return baseSitesHref;
+  }
+  return `${baseSitesHref}#selected-site-setup`;
+}
 
+function CompatibilityNotice({ sitesHref }: { sitesHref: string }) {
   return (
     <PageContainer width="wide" density="compact">
       <SectionCard variant="support" className="role-surface-support" data-testid="google-profile-legacy-redirect">
@@ -35,5 +42,25 @@ export default function GoogleProfilePage() {
         </Link>
       </SectionCard>
     </PageContainer>
+  );
+}
+
+function GoogleProfileRedirectClient() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const sitesHref = useMemo(() => buildSitesSetupHref(searchParams), [searchParams]);
+
+  useEffect(() => {
+    router.replace(sitesHref);
+  }, [router, sitesHref]);
+
+  return <CompatibilityNotice sitesHref={sitesHref} />;
+}
+
+export default function GoogleProfilePage() {
+  return (
+    <Suspense fallback={<CompatibilityNotice sitesHref="/sites" />}>
+      <GoogleProfileRedirectClient />
+    </Suspense>
   );
 }

@@ -22,19 +22,23 @@ describe("google profile legacy compatibility route", () => {
     expect(screen.getByTestId("google-profile-legacy-redirect")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Google setup moved" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Open Sites setup" })).toHaveAttribute("href", "/sites");
+    expect(screen.queryByRole("button", { name: "Save GA4 Property" })).not.toBeInTheDocument();
+    expect(screen.queryByTestId("google-profile-ga4-health")).not.toBeInTheDocument();
 
     await waitFor(() => expect(mockReplace).toHaveBeenCalledWith("/sites"));
   });
 
-  it("preserves query params when redirecting to Sites setup", async () => {
+  it("preserves query params and appends selected-site setup hash when site_id is present", async () => {
     mockUseSearchParams.mockReturnValue(new URLSearchParams("site_id=site-1&gbp_connect=success"));
 
     render(<GoogleProfilePage />);
 
-    await waitFor(() => expect(mockReplace).toHaveBeenCalledWith("/sites?site_id=site-1&gbp_connect=success"));
+    await waitFor(() =>
+      expect(mockReplace).toHaveBeenCalledWith("/sites?site_id=site-1&gbp_connect=success#selected-site-setup"),
+    );
     expect(screen.getByRole("link", { name: "Open Sites setup" })).toHaveAttribute(
       "href",
-      "/sites?site_id=site-1&gbp_connect=success",
+      "/sites?site_id=site-1&gbp_connect=success#selected-site-setup",
     );
   });
 });
