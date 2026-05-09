@@ -101,6 +101,27 @@ _SCHEMA_READINESS_LOGGED_REVISION: str | None = None
 class _UvicornLifespanCancelledErrorFilter(logging.Filter):
     """Suppress expected lifespan cancellation tracebacks during shutdown."""
 
+    @staticmethod
+    def _normalized_path(value: str | None) -> str:
+        return (value or "").replace("\\", "/").strip().lower()
+
+    def _is_lifespan_traceback(self, exc_info: tuple[type[BaseException], BaseException, object] | None) -> bool:
+        if not exc_info or len(exc_info) < 3:
+            return False
+
+        traceback_obj = exc_info[2]
+        while traceback_obj is not None:
+            frame = traceback_obj.tb_frame
+            frame_path = self._normalized_path(getattr(frame.f_code, "co_filename", ""))
+            frame_name = str(getattr(frame.f_code, "co_name", "") or "").strip().lower()
+            if "/uvicorn/lifespan/" in frame_path:
+                return True
+            if frame_path.endswith("/starlette/routing.py") and frame_name == "lifespan":
+                return True
+            traceback_obj = traceback_obj.tb_next
+
+        return False
+
     def filter(self, record: logging.LogRecord) -> bool:
         exc_info = record.exc_info
         if not exc_info or len(exc_info) < 2:
@@ -115,7 +136,14 @@ class _UvicornLifespanCancelledErrorFilter(logging.Filter):
         except Exception:  # noqa: BLE001
             message = str(record.msg)
 
-        if "lifespan" not in message.lower():
+        message_lower = message.lower()
+        pathname_lower = self._normalized_path(getattr(record, "pathname", ""))
+        is_lifespan_record = (
+            "lifespan" in message_lower
+            or "/uvicorn/lifespan/" in pathname_lower
+            or self._is_lifespan_traceback(exc_info)
+        )
+        if not is_lifespan_record:
             return True
 
         logger.info(
@@ -132,6 +160,7 @@ def _install_uvicorn_lifespan_cancelled_error_filter() -> None:
     ):
         return
     uvicorn_error_logger.addFilter(_UvicornLifespanCancelledErrorFilter())
+    logger.info("api_lifespan_cancelled_error_filter_installed target_logger=uvicorn.error")
 
 
 def _service_name() -> str:

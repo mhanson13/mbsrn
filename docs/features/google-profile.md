@@ -22,6 +22,18 @@ Compatibility behavior:
 - compact GA4 property health and next-action guidance
 - site-wide migration analytics insertion rules (`enabled`, measurement ID, insertion mode)
 
+## OAuth Return vs Usable GBP Access
+- `gbp_connect=success` indicates OAuth returned successfully, not that Google Business Profile access is usable.
+- Final operator state is determined from loaded connection/location capability status.
+- Status precedence in Selected Site Setup:
+  1. connected and usable
+  2. connected but GBP access denied / missing permission
+  3. OAuth returned and verification still loading
+  4. not connected
+  5. unavailable/error
+- Example denied-state message:
+  - `Google returned successfully, but Google Business Profile access is denied for this account.`
+
 ## Boundaries
 - setup ownership is `Sites`; Site Workspace remains a command center
 - no top-level `Google Profile` nav item

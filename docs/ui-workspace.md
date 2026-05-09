@@ -58,6 +58,7 @@ Workflow ownership boundaries:
 - Prompt/provider debug details stay in dedicated workflow/diagnostics surfaces, not inline in the primary Site Workspace.
 - Google Profile / GA4 / analytics insertion setup now lives under `Sites` in the selected-site setup panel.
 - `/google-profile` and `/business-profile` remain compatibility routes that redirect operators to `Sites` setup.
+- OAuth return params (for example `gbp_connect=success`) are treated as callback provenance only; final GBP usability status is derived from loaded connection/location access state.
 
 Accessibility/DOM contract:
 - Site Workspace keeps unique tab/panel ids for launchpad content.

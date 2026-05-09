@@ -31,7 +31,12 @@ type SelectedSiteSetupIntegrationsPanelProps = {
   refreshSites: () => Promise<SEOSite[]>;
 };
 
-type ConnectionUiState = "connected" | "needs_reconnect" | "not_connected";
+type ConnectionUiState =
+  | "connected_usable"
+  | "connected_access_denied"
+  | "oauth_success_pending"
+  | "not_connected"
+  | "unavailable";
 type CallbackNotice = { className: string; message: string } | null;
 
 export function SelectedSiteSetupIntegrationsPanel({
@@ -45,7 +50,7 @@ export function SelectedSiteSetupIntegrationsPanel({
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [connection, setConnection] = useState<GoogleBusinessProfileConnectionStatusResponse | null>(null);
   const [locations, setLocations] = useState<GoogleBusinessProfileFlatLocation[]>([]);
-  const [callbackNotice, setCallbackNotice] = useState<CallbackNotice>(null);
+  const [locationAccessDenied, setLocationAccessDenied] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
 
   const [ga4PropertyIdInput, setGa4PropertyIdInput] = useState("");
@@ -72,12 +77,24 @@ export function SelectedSiteSetupIntegrationsPanel({
     }
     setLoadingConnection(true);
     setConnectionError(null);
+    setLocationAccessDenied(false);
     try {
       const connectionResponse = await fetchGoogleBusinessProfileConnection(token);
       setConnection(connectionResponse);
-      if (connectionResponse.connected && !connectionResponse.reconnect_required) {
-        const locationsResponse = await fetchGoogleBusinessProfileLocations(token);
-        setLocations(locationsResponse.locations);
+      const canLoadLocations = connectionResponse.connected
+        && !connectionResponse.reconnect_required
+        && connectionResponse.required_scopes_satisfied
+        && connectionResponse.token_status === "usable";
+      if (canLoadLocations) {
+        try {
+          const locationsResponse = await fetchGoogleBusinessProfileLocations(token);
+          setLocations(locationsResponse.locations);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Failed to load Google setup status.";
+          setLocations([]);
+          setConnectionError(message);
+          setLocationAccessDenied(isGbpAccessDeniedMessage(message));
+        }
       } else {
         setLocations([]);
       }
@@ -96,32 +113,6 @@ export function SelectedSiteSetupIntegrationsPanel({
     }
     void loadConnectionState();
   }, [businessId, loadConnectionState, token]);
-
-  useEffect(() => {
-    const status = normalizeLowerCaseString(searchParams?.get("gbp_connect"));
-    if (!status) {
-      setCallbackNotice(null);
-      return;
-    }
-    if (status === "success") {
-      setCallbackNotice({
-        className: "hint success",
-        message: "Google Profile connected successfully.",
-      });
-      return;
-    }
-    if (status === "error") {
-      const reconnectRequired = normalizeLowerCaseString(searchParams?.get("gbp_reconnect_required")) === "true";
-      setCallbackNotice({
-        className: "hint error",
-        message: reconnectRequired
-          ? "Google Profile connection requires reauthorization. Please reconnect."
-          : "Google Profile connection did not complete. Please try connecting again.",
-      });
-      return;
-    }
-    setCallbackNotice(null);
-  }, [searchParams]);
 
   useEffect(() => {
     setGa4PropertyIdInput(selectedSite?.ga4_property_id?.trim() || "");
@@ -223,15 +214,74 @@ export function SelectedSiteSetupIntegrationsPanel({
     };
   }, [businessId, selectedSite, token]);
 
+  const oauthConnectStatus = normalizeLowerCaseString(searchParams?.get("gbp_connect"));
+  const oauthConnectSucceeded = oauthConnectStatus === "success";
+  const oauthConnectFailed = oauthConnectStatus === "error";
+  const oauthReconnectRequired = normalizeLowerCaseString(searchParams?.get("gbp_reconnect_required")) === "true";
+  const tokenIndicatesAccessDenied =
+    connection?.connected === true
+    && (
+      connection.token_status === "insufficient_scope"
+      || connection.required_scopes_satisfied === false
+    );
+  const gbpAccessDenied = locationAccessDenied || tokenIndicatesAccessDenied;
+
   const connectionUiState = useMemo<ConnectionUiState>(() => {
-    if (!connection?.connected) {
-      return "not_connected";
+    if (oauthConnectSucceeded && loadingConnection) {
+      return "oauth_success_pending";
     }
-    if (connection.reconnect_required) {
-      return "needs_reconnect";
+    if (connection?.connected && !connection.reconnect_required && !gbpAccessDenied) {
+      return "connected_usable";
     }
-    return "connected";
-  }, [connection]);
+    if (connection?.connected && !connection.reconnect_required && gbpAccessDenied) {
+      return "connected_access_denied";
+    }
+    if (connectionError && !connection) {
+      return "unavailable";
+    }
+    return "not_connected";
+  }, [connection, connectionError, gbpAccessDenied, loadingConnection, oauthConnectSucceeded]);
+
+  const callbackNotice = useMemo<CallbackNotice>(() => {
+    if (oauthConnectSucceeded) {
+      if (connectionUiState === "connected_usable") {
+        return {
+          className: "hint success",
+          message: "Google returned successfully and Google Profile is connected.",
+        };
+      }
+      if (connectionUiState === "connected_access_denied") {
+        return {
+          className: "hint error",
+          message: "Google returned successfully, but Google Business Profile access is denied for this account.",
+        };
+      }
+      if (connectionUiState === "oauth_success_pending") {
+        return null;
+      }
+      if (connectionUiState === "unavailable") {
+        return {
+          className: "hint warning",
+          message: "Returned from Google, but connection status is temporarily unavailable. Refresh to verify.",
+        };
+      }
+      return {
+        className: "hint warning",
+        message: "Google returned successfully, but no usable Google Business Profile connection was detected.",
+      };
+    }
+    if (oauthConnectFailed) {
+      return {
+        className: "hint error",
+        message: oauthReconnectRequired
+          ? "Google Profile connection requires reauthorization. Please reconnect."
+          : "Google Profile connection did not complete. Please try connecting again.",
+      };
+    }
+    return null;
+  }, [connectionUiState, oauthConnectFailed, oauthConnectSucceeded, oauthReconnectRequired]);
+  const hasConnectedToken = connection?.connected === true;
+  const showConnectionErrorDetails = Boolean(connectionError) && connectionUiState !== "connected_access_denied";
 
   const normalizedGa4PropertyId = ga4PropertyIdInput.trim();
   const ga4PropertyFormatInvalid = normalizedGa4PropertyId.length > 0 && !/^\d{4,20}$/.test(normalizedGa4PropertyId);
@@ -367,17 +417,13 @@ export function SelectedSiteSetupIntegrationsPanel({
             <span className={`badge ${connectionBadgeClass(connectionUiState)}`}>{connectionUiLabel(connectionUiState)}</span>
           </div>
           <p className="hint muted">
-            {connectionUiState === "connected"
-              ? "Google account linked."
-              : connectionUiState === "needs_reconnect"
-                ? "Google connection needs reconnect."
-                : "No Google connection for this business yet."}
+            {connectionPrimaryMessage(connectionUiState, connection)}
           </p>
           <div className="row-wrap-tight">
             <button className="button button-primary" type="button" onClick={() => void handleConnect()} disabled={actionLoading}>
-              {connectionUiState === "connected" ? "Reconnect Google Profile" : "Connect Google Profile"}
+              {hasConnectedToken ? "Reconnect Google Profile" : "Connect Google Profile"}
             </button>
-            {connectionUiState === "connected" ? (
+            {hasConnectedToken ? (
               <button type="button" onClick={() => void handleDisconnect()} disabled={actionLoading}>
                 Disconnect
               </button>
@@ -386,11 +432,14 @@ export function SelectedSiteSetupIntegrationsPanel({
               {loadingConnection ? "Refreshing..." : "Refresh"}
             </button>
           </div>
-          {connectionUiState === "needs_reconnect" ? (
+          {connection?.reconnect_required ? (
             <p className="hint warning">This connection needs reauthorization before Google Profile data can be used.</p>
           ) : null}
+          {connectionUiState === "connected_access_denied" ? (
+            <p className="hint error">Google Business Profile access is denied for this Google account.</p>
+          ) : null}
           {callbackNotice ? <p className={callbackNotice.className}>{callbackNotice.message}</p> : null}
-          {connectionError ? <p className="hint error">{connectionError}</p> : null}
+          {showConnectionErrorDetails ? <p className="hint error">{connectionError}</p> : null}
         </div>
 
         <div className="panel panel-compact stack-tight" data-testid="sites-ga4-setup-panel">
@@ -517,7 +566,9 @@ export function SelectedSiteSetupIntegrationsPanel({
 
         <div className="panel panel-compact stack-tight" data-testid="sites-gbp-locations-panel">
           <strong>Google Business Profile Locations</strong>
-          {connectionUiState !== "connected" ? (
+          {connectionUiState === "connected_access_denied" ? (
+            <p className="hint error">Google Business Profile access is denied for this Google account.</p>
+          ) : connectionUiState !== "connected_usable" ? (
             <p className="hint muted">Connect Google Profile to load locations.</p>
           ) : locations.length === 0 ? (
             <p className="hint muted">No locations were returned for this Google Profile account.</p>
@@ -560,23 +611,54 @@ export function SelectedSiteSetupIntegrationsPanel({
 }
 
 function connectionUiLabel(state: ConnectionUiState): string {
-  if (state === "connected") {
+  if (state === "connected_usable") {
     return "Connected";
   }
-  if (state === "needs_reconnect") {
-    return "Needs reconnect";
+  if (state === "connected_access_denied") {
+    return "Access denied";
+  }
+  if (state === "oauth_success_pending") {
+    return "Checking";
+  }
+  if (state === "unavailable") {
+    return "Unavailable";
   }
   return "Not connected";
 }
 
 function connectionBadgeClass(state: ConnectionUiState): string {
-  if (state === "connected") {
+  if (state === "connected_usable") {
     return "badge-success";
   }
-  if (state === "needs_reconnect") {
+  if (state === "oauth_success_pending") {
     return "badge-warn";
   }
-  return "badge-muted";
+  if (state === "not_connected") {
+    return "badge-muted";
+  }
+  return "badge-error";
+}
+
+function connectionPrimaryMessage(
+  state: ConnectionUiState,
+  connection: GoogleBusinessProfileConnectionStatusResponse | null,
+): string {
+  if (state === "connected_usable") {
+    return "Google account linked.";
+  }
+  if (state === "connected_access_denied") {
+    return "Google account is linked, but Google Business Profile access is denied for this account.";
+  }
+  if (state === "oauth_success_pending") {
+    return "Returned from Google; checking connection status.";
+  }
+  if (state === "unavailable") {
+    return "Google connection status is temporarily unavailable.";
+  }
+  if (connection?.reconnect_required) {
+    return "Google connection needs reconnect.";
+  }
+  return "No Google connection for this business yet.";
 }
 
 function locationBadge(location: GoogleBusinessProfileFlatLocation): { label: string; className: string } {
@@ -600,6 +682,17 @@ function locationBadge(location: GoogleBusinessProfileFlatLocation): { label: st
 
 function normalizeLowerCaseString(value: unknown): string {
   return typeof value === "string" ? value.trim().toLowerCase() : "";
+}
+
+function isGbpAccessDeniedMessage(message: string): boolean {
+  const normalized = normalizeLowerCaseString(message);
+  return (
+    normalized.includes("google business profile access is denied")
+    || normalized.includes("permission denied")
+    || normalized.includes("access denied")
+    || normalized.includes("insufficient_scope")
+    || normalized.includes("insufficient scope")
+  );
 }
 
 function normalizeGa4AuthMode(

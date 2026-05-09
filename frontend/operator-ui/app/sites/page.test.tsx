@@ -21,6 +21,7 @@ type OperatorContextMockValue = {
 
 const mockUseOperatorContext = jest.fn<OperatorContextMockValue, []>();
 const mockUseAuth = jest.fn<{ principal: AuthPrincipal | null }, []>();
+const mockUseSearchParams = jest.fn<URLSearchParams, []>();
 const mockDeactivateSite = jest.fn<Promise<SEOSite>, unknown[]>();
 const mockActivateSite = jest.fn<Promise<SEOSite>, unknown[]>();
 const mockFetchGoogleBusinessProfileConnection = jest.fn<
@@ -39,6 +40,14 @@ const mockUpdateSite = jest.fn<Promise<SEOSite>, unknown[]>();
 jest.mock("../../components/useOperatorContext", () => ({
   useOperatorContext: () => mockUseOperatorContext(),
 }));
+
+jest.mock("next/navigation", () => {
+  const actual = jest.requireActual("next/navigation");
+  return {
+    ...actual,
+    useSearchParams: () => mockUseSearchParams(),
+  };
+});
 
 jest.mock("../../components/AuthProvider", () => ({
   useAuth: () => mockUseAuth(),
@@ -164,6 +173,7 @@ function setPrincipal(role: "admin" | "operator") {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockUseSearchParams.mockReturnValue(new URLSearchParams());
   mockUseOperatorContext.mockReturnValue(baseContext());
   setPrincipal("admin");
   mockFetchGoogleBusinessProfileConnection.mockResolvedValue(buildConnection());
@@ -302,5 +312,83 @@ describe("sites page inventory + setup boundaries", () => {
     await renderSitesPageAndWaitForSetupEffects();
     expect(screen.queryByRole("button", { name: "Deactivate Site" })).not.toBeInTheDocument();
     expect(screen.queryByText("Admin Action")).not.toBeInTheDocument();
+  });
+
+  it("treats gbp_connect=success as return hint only when final state is still not connected", async () => {
+    mockUseSearchParams.mockReturnValue(new URLSearchParams("gbp_connect=success"));
+    mockFetchGoogleBusinessProfileConnection.mockResolvedValueOnce(
+      buildConnection({
+        connected: false,
+        reconnect_required: true,
+        token_status: "reconnect_required",
+      }),
+    );
+
+    await renderSitesPageAndWaitForSetupEffects();
+
+    expect(screen.getByText("Not connected")).toBeInTheDocument();
+    expect(
+      screen.getByText("Google returned successfully, but no usable Google Business Profile connection was detected."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Google returned successfully and Google Profile is connected.")).not.toBeInTheDocument();
+  });
+
+  it("shows denied state when oauth succeeds but GBP access is denied", async () => {
+    mockUseSearchParams.mockReturnValue(new URLSearchParams("gbp_connect=success"));
+    mockFetchGoogleBusinessProfileConnection.mockResolvedValueOnce(
+      buildConnection({
+        connected: true,
+        reconnect_required: false,
+        required_scopes_satisfied: true,
+        token_status: "usable",
+      }),
+    );
+    mockFetchGoogleBusinessProfileLocations.mockRejectedValueOnce(
+      new Error("Google Business Profile access is denied for this Google account."),
+    );
+
+    await renderSitesPageAndWaitForSetupEffects();
+
+    expect(screen.getByText("Access denied")).toBeInTheDocument();
+    expect(
+      screen.getByText("Google returned successfully, but Google Business Profile access is denied for this account."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Google returned successfully and Google Profile is connected.")).not.toBeInTheDocument();
+  });
+
+  it("shows connected success only when connection is actually usable", async () => {
+    mockUseSearchParams.mockReturnValue(new URLSearchParams("gbp_connect=success"));
+    mockFetchGoogleBusinessProfileConnection.mockResolvedValueOnce(
+      buildConnection({
+        connected: true,
+        reconnect_required: false,
+        required_scopes_satisfied: true,
+        token_status: "usable",
+      }),
+    );
+
+    await renderSitesPageAndWaitForSetupEffects();
+
+    expect(screen.getByText("Connected")).toBeInTheDocument();
+    expect(screen.getByText("Google returned successfully and Google Profile is connected.")).toBeInTheDocument();
+  });
+
+  it("shows neutral checking message while oauth success state is still loading", async () => {
+    mockUseSearchParams.mockReturnValue(new URLSearchParams("gbp_connect=success"));
+    mockFetchSiteAnalyticsSummary.mockReturnValueOnce(new Promise(() => undefined));
+    mockFetchMigrationWorkspaceSummary.mockReturnValueOnce(new Promise(() => undefined));
+    let resolveConnection: ((value: GoogleBusinessProfileConnectionStatusResponse) => void) | null = null;
+    mockFetchGoogleBusinessProfileConnection.mockReturnValueOnce(
+      new Promise<GoogleBusinessProfileConnectionStatusResponse>((resolve) => {
+        resolveConnection = resolve;
+      }),
+    );
+
+    render(<SitesPage />);
+    expect(screen.getByText("Returned from Google; checking connection status.")).toBeInTheDocument();
+
+    expect(resolveConnection).not.toBeNull();
+    resolveConnection!(buildConnection());
+    await waitFor(() => expect(mockFetchGoogleBusinessProfileConnection).toHaveBeenCalledWith("token-1"));
   });
 });
