@@ -42,12 +42,27 @@ class GoogleBusinessProfileConnectionStatusResponse(BaseModel):
         "unavailable",
         "unknown",
     ] = "unknown"
+    gbp_required_scope: str | None = None
     gbp_required_scope_granted: bool | None = None
     gbp_accounts_count: int | None = None
     gbp_locations_count: int | None = None
     gbp_selected_location_present: bool | None = None
     gbp_status_reason: str | None = None
     gbp_next_action: str | None = None
+    gbp_provider_error_class: Literal[
+        "none",
+        "token_refresh_failed",
+        "missing_required_scope",
+        "provider_unauthorized",
+        "provider_permission_denied",
+        "provider_api_disabled_or_unavailable",
+        "provider_quota_or_access_not_granted",
+        "provider_not_found",
+        "provider_unavailable",
+        "provider_unknown",
+    ] = "none"
+    gbp_provider_http_status: int | None = None
+    gbp_diagnostic_hint: str | None = None
 
 
 class GoogleBusinessProfileDisconnectResponse(BaseModel):

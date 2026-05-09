@@ -38,8 +38,30 @@ Compatibility behavior:
   - `no_locations`
   - `oauth_connected` (linked but verification/reconnect still needed)
   - `usable`
+- Bounded provider diagnostic classes are surfaced for denied/unavailable states:
+  - `missing_required_scope`
+  - `provider_unauthorized`
+  - `provider_permission_denied`
+  - `provider_api_disabled_or_unavailable`
+  - `provider_quota_or_access_not_granted`
+  - `provider_not_found`
+  - `provider_unavailable`
+  - `provider_unknown`
+- Sites selected-site setup displays compact diagnostics:
+  - provider diagnostic class
+  - provider HTTP status (when available)
+  - required scope granted (`yes/no/unknown`)
+  - bounded next action + diagnostic hint
 - Example denied-state message:
   - `Google returned successfully, but Google Business Profile access is denied for this account.`
+
+## Admin Verification Checklist (No Secrets)
+When OAuth is linked but GBP remains denied/unavailable, verify:
+1. Google Cloud project that owns the OAuth client ID used by MBSRN.
+2. APIs & Services -> Enabled APIs includes Business Profile-related APIs used by MBSRN.
+3. OAuth consent screen -> Data Access includes Business Profile scope (`https://www.googleapis.com/auth/business.manage`).
+4. Business Profile / My Business API quotas and project access approvals.
+5. Connected Google identity in Sites setup matches the expected operator account.
 
 ## Boundaries
 - setup ownership is `Sites`; Site Workspace remains a command center

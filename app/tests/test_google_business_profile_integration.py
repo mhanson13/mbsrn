@@ -833,12 +833,16 @@ def test_google_business_profile_connection_status_contract_is_stable(
         "required_ga4_scope",
         "connected_google_identity",
         "gbp_connection_state",
+        "gbp_required_scope",
         "gbp_required_scope_granted",
         "gbp_accounts_count",
         "gbp_locations_count",
         "gbp_selected_location_present",
         "gbp_status_reason",
         "gbp_next_action",
+        "gbp_provider_error_class",
+        "gbp_provider_http_status",
+        "gbp_diagnostic_hint",
     }
     assert payload["provider"] == "google_business_profile"
     assert payload["connected"] is True
@@ -850,6 +854,8 @@ def test_google_business_profile_connection_status_contract_is_stable(
     assert payload["required_ga4_scope"] == "https://www.googleapis.com/auth/analytics.readonly"
     assert payload["connected_google_identity"] is None
     assert payload["gbp_connection_state"] == "oauth_connected"
+    assert payload["gbp_required_scope"] == "https://www.googleapis.com/auth/business.manage"
+    assert payload["gbp_provider_error_class"] == "none"
 
 
 def test_google_business_profile_connection_status_reports_ga4_scope_granted_when_present(

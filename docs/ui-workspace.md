@@ -60,6 +60,12 @@ Workflow ownership boundaries:
 - `/google-profile` and `/business-profile` remain compatibility routes that redirect operators to `Sites` setup.
 - OAuth return params (for example `gbp_connect=success`) are treated as callback provenance only; final GBP usability status is derived from loaded connection/location access state.
 - Selected-site GBP status is classified with bounded states (`usable`, `missing_scope`, `permission_denied`, `no_accounts`, `no_locations`, `oauth_connected`, `not_connected`, `unavailable`) and operator-safe next actions.
+- For denied/unavailable GBP states, selected-site setup exposes bounded provider diagnostics only:
+  - provider error class
+  - provider HTTP status (when available)
+  - required scope granted status
+  - bounded diagnostic hint / next action
+- OAuth callback success is never treated as final usable GBP state without backend confirmation.
 
 Accessibility/DOM contract:
 - Site Workspace keeps unique tab/panel ids for launchpad content.

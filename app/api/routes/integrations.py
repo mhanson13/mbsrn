@@ -429,12 +429,16 @@ def _to_connection_response(
         required_ga4_scope=result.required_ga4_scope,
         connected_google_identity=result.connected_google_identity,
         gbp_connection_state=diagnostics.gbp_connection_state,
+        gbp_required_scope=diagnostics.gbp_required_scope,
         gbp_required_scope_granted=diagnostics.gbp_required_scope_granted,
         gbp_accounts_count=diagnostics.gbp_accounts_count,
         gbp_locations_count=diagnostics.gbp_locations_count,
         gbp_selected_location_present=diagnostics.gbp_selected_location_present,
         gbp_status_reason=diagnostics.gbp_status_reason,
         gbp_next_action=diagnostics.gbp_next_action,
+        gbp_provider_error_class=diagnostics.gbp_provider_error_class,
+        gbp_provider_http_status=diagnostics.gbp_provider_http_status,
+        gbp_diagnostic_hint=diagnostics.gbp_diagnostic_hint,
     )
 
 
@@ -444,41 +448,57 @@ def _default_connection_diagnostics(
     if not result.connected:
         return GoogleBusinessProfileConnectionDiagnosticsResult(
             gbp_connection_state="not_connected",
+            gbp_required_scope=GoogleBusinessProfileConnectionService.BUSINESS_PROFILE_SCOPE,
             gbp_required_scope_granted=None,
             gbp_accounts_count=None,
             gbp_locations_count=None,
             gbp_selected_location_present=None,
             gbp_status_reason="not_connected",
             gbp_next_action="Connect Google Profile for this business before loading Business Profile locations.",
+            gbp_provider_error_class="none",
+            gbp_provider_http_status=None,
+            gbp_diagnostic_hint="Connect Google Profile, then refresh status.",
         )
     if not result.required_scopes_satisfied or result.token_status == "insufficient_scope":
         return GoogleBusinessProfileConnectionDiagnosticsResult(
             gbp_connection_state="missing_scope",
+            gbp_required_scope=GoogleBusinessProfileConnectionService.BUSINESS_PROFILE_SCOPE,
             gbp_required_scope_granted=False,
             gbp_accounts_count=None,
             gbp_locations_count=None,
             gbp_selected_location_present=None,
             gbp_status_reason="missing_scope",
             gbp_next_action="Reconnect Google Profile to grant the required Business Profile scope.",
+            gbp_provider_error_class="missing_required_scope",
+            gbp_provider_http_status=403,
+            gbp_diagnostic_hint="Reconnect with required scope and refresh status.",
         )
     if result.reconnect_required or result.token_status in {"reconnect_required", "refresh_required"}:
         return GoogleBusinessProfileConnectionDiagnosticsResult(
             gbp_connection_state="oauth_connected",
+            gbp_required_scope=GoogleBusinessProfileConnectionService.BUSINESS_PROFILE_SCOPE,
             gbp_required_scope_granted=result.required_scopes_satisfied,
             gbp_accounts_count=None,
             gbp_locations_count=None,
             gbp_selected_location_present=None,
             gbp_status_reason="oauth_connected_reconnect_required",
             gbp_next_action="Refresh or reconnect Google Profile before loading Business Profile accounts.",
+            gbp_provider_error_class="none",
+            gbp_provider_http_status=None,
+            gbp_diagnostic_hint="Reconnect or refresh token state before retrying account discovery.",
         )
     return GoogleBusinessProfileConnectionDiagnosticsResult(
         gbp_connection_state="oauth_connected",
+        gbp_required_scope=GoogleBusinessProfileConnectionService.BUSINESS_PROFILE_SCOPE,
         gbp_required_scope_granted=True,
         gbp_accounts_count=None,
         gbp_locations_count=None,
         gbp_selected_location_present=None,
         gbp_status_reason="oauth_connected",
         gbp_next_action="Use Refresh to verify Business Profile account and location access.",
+        gbp_provider_error_class="none",
+        gbp_provider_http_status=None,
+        gbp_diagnostic_hint="Use Refresh to load account and location visibility diagnostics.",
     )
 
 

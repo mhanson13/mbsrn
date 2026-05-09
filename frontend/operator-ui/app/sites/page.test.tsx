@@ -105,6 +105,7 @@ function buildConnection(
     token_status: "reconnect_required",
     ga4_scope_granted: false,
     required_ga4_scope: "https://www.googleapis.com/auth/analytics.readonly",
+    gbp_required_scope: "https://www.googleapis.com/auth/business.manage",
     gbp_connection_state: "not_connected",
     gbp_required_scope_granted: null,
     gbp_accounts_count: null,
@@ -112,6 +113,9 @@ function buildConnection(
     gbp_selected_location_present: null,
     gbp_status_reason: "not_connected",
     gbp_next_action: "Connect Google Profile for this business before loading Business Profile locations.",
+    gbp_provider_error_class: "none",
+    gbp_provider_http_status: null,
+    gbp_diagnostic_hint: "Connect Google Profile, then refresh status.",
     ...overrides,
   };
 }
@@ -352,6 +356,8 @@ describe("sites page inventory + setup boundaries", () => {
         token_status: "usable",
         gbp_connection_state: "permission_denied",
         gbp_status_reason: "permission_denied",
+        gbp_provider_error_class: "provider_permission_denied",
+        gbp_provider_http_status: 403,
       }),
     );
 
@@ -361,6 +367,60 @@ describe("sites page inventory + setup boundaries", () => {
     expect(
       screen.getByText("Google returned successfully, but Google Business Profile access is denied for this account."),
     ).toBeInTheDocument();
+    expect(screen.getByText("Provider diagnostic: provider_permission_denied")).toBeInTheDocument();
+    expect(screen.getByText("Provider HTTP status: 403")).toBeInTheDocument();
+    expect(screen.queryByText("Google returned successfully and Google Profile is connected.")).not.toBeInTheDocument();
+  });
+
+  it("shows API disabled/unavailable diagnostics when oauth succeeds but project API access is unavailable", async () => {
+    mockUseSearchParams.mockReturnValue(new URLSearchParams("gbp_connect=success"));
+    mockFetchGoogleBusinessProfileConnection.mockResolvedValueOnce(
+      buildConnection({
+        connected: true,
+        reconnect_required: false,
+        required_scopes_satisfied: true,
+        token_status: "usable",
+        gbp_connection_state: "unavailable",
+        gbp_status_reason: "provider_api_disabled_or_unavailable",
+        gbp_provider_error_class: "provider_api_disabled_or_unavailable",
+        gbp_provider_http_status: 403,
+      }),
+    );
+
+    await renderSitesPageAndWaitForSetupEffects();
+
+    expect(screen.getByText("API unavailable")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Google returned successfully, but Business Profile API access appears disabled or unavailable for this OAuth project.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Provider diagnostic: provider_api_disabled_or_unavailable")).toBeInTheDocument();
+    expect(screen.queryByText("Google returned successfully and Google Profile is connected.")).not.toBeInTheDocument();
+  });
+
+  it("shows quota/access diagnostics when oauth succeeds but project quota or access is not granted", async () => {
+    mockUseSearchParams.mockReturnValue(new URLSearchParams("gbp_connect=success"));
+    mockFetchGoogleBusinessProfileConnection.mockResolvedValueOnce(
+      buildConnection({
+        connected: true,
+        reconnect_required: false,
+        required_scopes_satisfied: true,
+        token_status: "usable",
+        gbp_connection_state: "unavailable",
+        gbp_status_reason: "provider_quota_or_access_not_granted",
+        gbp_provider_error_class: "provider_quota_or_access_not_granted",
+        gbp_provider_http_status: 403,
+      }),
+    );
+
+    await renderSitesPageAndWaitForSetupEffects();
+
+    expect(screen.getByText("Quota/access")).toBeInTheDocument();
+    expect(
+      screen.getByText("Google returned successfully, but Business Profile API quota or project access is not granted."),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Provider diagnostic: provider_quota_or_access_not_granted")).toBeInTheDocument();
     expect(screen.queryByText("Google returned successfully and Google Profile is connected.")).not.toBeInTheDocument();
   });
 
@@ -395,7 +455,7 @@ describe("sites page inventory + setup boundaries", () => {
     );
 
     render(<SitesPage />);
-    expect(screen.getByText("Returned from Google; checking connection status.")).toBeInTheDocument();
+    expect(screen.getByText("Returned from Google; checking Business Profile access.")).toBeInTheDocument();
 
     expect(resolveConnection).not.toBeNull();
     resolveConnection!(buildConnection());

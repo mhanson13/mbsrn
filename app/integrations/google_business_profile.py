@@ -15,10 +15,14 @@ class GoogleBusinessProfileAPIError(ValueError):
         *,
         status_code: int | None = None,
         error_status: str | None = None,
+        error_reason: str | None = None,
+        error_domain: str | None = None,
     ) -> None:
         super().__init__(message)
         self.status_code = status_code
         self.error_status = error_status
+        self.error_reason = error_reason
+        self.error_domain = error_domain
 
     @property
     def is_permission_denied(self) -> bool:
@@ -33,6 +37,8 @@ class _GoogleErrorDetail:
     message: str
     status_code: int | None
     error_status: str | None
+    error_reason: str | None
+    error_domain: str | None
 
 
 class GoogleBusinessProfileClient:
@@ -161,6 +167,8 @@ class GoogleBusinessProfileClient:
                 f"Google Business Profile request failed: {detail.message}",
                 status_code=detail.status_code,
                 error_status=detail.error_status,
+                error_reason=detail.error_reason,
+                error_domain=detail.error_domain,
             ) from exc
         except URLError as exc:
             raise GoogleBusinessProfileAPIError(f"Google Business Profile endpoint unavailable: {exc.reason}") from exc
@@ -191,21 +199,53 @@ def _extract_error_detail(exc: HTTPError) -> _GoogleErrorDetail:
     status_code = exc.code if isinstance(exc.code, int) else None
     message = str(exc.reason or "request failed")
     error_status: str | None = None
+    error_reason: str | None = None
+    error_domain: str | None = None
     try:
         if exc.fp is None:
-            return _GoogleErrorDetail(message=message, status_code=status_code, error_status=error_status)
+            return _GoogleErrorDetail(
+                message=message,
+                status_code=status_code,
+                error_status=error_status,
+                error_reason=error_reason,
+                error_domain=error_domain,
+            )
         body = exc.fp.read().decode("utf-8", errors="ignore")
     except Exception:  # noqa: BLE001
-        return _GoogleErrorDetail(message=message, status_code=status_code, error_status=error_status)
+        return _GoogleErrorDetail(
+            message=message,
+            status_code=status_code,
+            error_status=error_status,
+            error_reason=error_reason,
+            error_domain=error_domain,
+        )
 
     if not body.strip():
-        return _GoogleErrorDetail(message=message, status_code=status_code, error_status=error_status)
+        return _GoogleErrorDetail(
+            message=message,
+            status_code=status_code,
+            error_status=error_status,
+            error_reason=error_reason,
+            error_domain=error_domain,
+        )
     try:
         payload = json.loads(body)
     except json.JSONDecodeError:
-        return _GoogleErrorDetail(message=body.strip()[:256], status_code=status_code, error_status=error_status)
+        return _GoogleErrorDetail(
+            message=body.strip()[:256],
+            status_code=status_code,
+            error_status=error_status,
+            error_reason=error_reason,
+            error_domain=error_domain,
+        )
     if not isinstance(payload, dict):
-        return _GoogleErrorDetail(message=message, status_code=status_code, error_status=error_status)
+        return _GoogleErrorDetail(
+            message=message,
+            status_code=status_code,
+            error_status=error_status,
+            error_reason=error_reason,
+            error_domain=error_domain,
+        )
 
     error_payload = payload.get("error")
     if isinstance(error_payload, dict):
@@ -218,8 +258,62 @@ def _extract_error_detail(exc: HTTPError) -> _GoogleErrorDetail:
         parsed_status = str(error_payload.get("status") or "").strip()
         if parsed_status:
             error_status = parsed_status
+        parsed_reason, parsed_domain = _extract_error_reason_and_domain(error_payload)
+        if parsed_reason:
+            error_reason = parsed_reason
+        if parsed_domain:
+            error_domain = parsed_domain
     else:
         parsed_message = str(payload.get("error_description") or payload.get("message") or "").strip()
         if parsed_message:
             message = parsed_message
-    return _GoogleErrorDetail(message=message, status_code=status_code, error_status=error_status)
+    return _GoogleErrorDetail(
+        message=message,
+        status_code=status_code,
+        error_status=error_status,
+        error_reason=error_reason,
+        error_domain=error_domain,
+    )
+
+
+def _extract_error_reason_and_domain(error_payload: dict[str, Any]) -> tuple[str | None, str | None]:
+    reason: str | None = None
+    domain: str | None = None
+
+    details = error_payload.get("details")
+    if isinstance(details, list):
+        for detail in details:
+            if not isinstance(detail, dict):
+                continue
+            candidate_reason = str(detail.get("reason") or "").strip()
+            if candidate_reason and reason is None:
+                reason = candidate_reason
+            candidate_domain = str(detail.get("domain") or "").strip()
+            if candidate_domain and domain is None:
+                domain = candidate_domain
+            metadata = detail.get("metadata")
+            if isinstance(metadata, dict):
+                metadata_reason = str(metadata.get("reason") or "").strip()
+                if metadata_reason and reason is None:
+                    reason = metadata_reason
+                metadata_domain = str(metadata.get("consumer") or metadata.get("service") or "").strip()
+                if metadata_domain and domain is None:
+                    domain = metadata_domain
+            if reason and domain:
+                return reason, domain
+
+    legacy_errors = error_payload.get("errors")
+    if isinstance(legacy_errors, list):
+        for item in legacy_errors:
+            if not isinstance(item, dict):
+                continue
+            candidate_reason = str(item.get("reason") or "").strip()
+            if candidate_reason and reason is None:
+                reason = candidate_reason
+            candidate_domain = str(item.get("domain") or "").strip()
+            if candidate_domain and domain is None:
+                domain = candidate_domain
+            if reason and domain:
+                return reason, domain
+
+    return reason, domain

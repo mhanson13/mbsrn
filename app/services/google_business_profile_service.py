@@ -50,12 +50,18 @@ class GoogleBusinessProfileServiceError(ValueError):
         *,
         status_code: int,
         reconnect_required: bool = False,
-        error_code: VerificationErrorCode = "provider_error",
+        error_code: str = "provider_error",
+        provider_error_class: str = "none",
+        provider_http_status: int | None = None,
+        diagnostic_hint: str | None = None,
     ) -> None:
         super().__init__(message)
         self.status_code = status_code
         self.reconnect_required = reconnect_required
         self.error_code = error_code
+        self.provider_error_class = provider_error_class
+        self.provider_http_status = provider_http_status
+        self.diagnostic_hint = diagnostic_hint
 
 
 @dataclass(frozen=True)
@@ -126,16 +132,33 @@ GoogleBusinessProfileConnectionState = Literal[
     "unknown",
 ]
 
+GoogleBusinessProfileProviderErrorClass = Literal[
+    "none",
+    "token_refresh_failed",
+    "missing_required_scope",
+    "provider_unauthorized",
+    "provider_permission_denied",
+    "provider_api_disabled_or_unavailable",
+    "provider_quota_or_access_not_granted",
+    "provider_not_found",
+    "provider_unavailable",
+    "provider_unknown",
+]
+
 
 @dataclass(frozen=True)
 class GoogleBusinessProfileConnectionDiagnosticsResult:
     gbp_connection_state: GoogleBusinessProfileConnectionState
+    gbp_required_scope: str | None
     gbp_required_scope_granted: bool | None
     gbp_accounts_count: int | None
     gbp_locations_count: int | None
     gbp_selected_location_present: bool | None
     gbp_status_reason: str
     gbp_next_action: str
+    gbp_provider_error_class: GoogleBusinessProfileProviderErrorClass
+    gbp_provider_http_status: int | None
+    gbp_diagnostic_hint: str | None
 
 
 @dataclass(frozen=True)
@@ -284,12 +307,16 @@ class GoogleBusinessProfileService:
         if not connection.connected:
             result = GoogleBusinessProfileConnectionDiagnosticsResult(
                 gbp_connection_state="not_connected",
+                gbp_required_scope=self.connection_service.BUSINESS_PROFILE_SCOPE,
                 gbp_required_scope_granted=None,
                 gbp_accounts_count=None,
                 gbp_locations_count=None,
                 gbp_selected_location_present=None,
                 gbp_status_reason="not_connected",
                 gbp_next_action="Connect Google Profile for this business before loading Business Profile locations.",
+                gbp_provider_error_class="none",
+                gbp_provider_http_status=None,
+                gbp_diagnostic_hint="Connect Google Profile, then refresh status.",
             )
             self._log_connection_diagnostics(business_id=business_id, diagnostics=result)
             return result
@@ -297,25 +324,33 @@ class GoogleBusinessProfileService:
         if not connection.required_scopes_satisfied or connection.token_status == "insufficient_scope":
             result = GoogleBusinessProfileConnectionDiagnosticsResult(
                 gbp_connection_state="missing_scope",
+                gbp_required_scope=self.connection_service.BUSINESS_PROFILE_SCOPE,
                 gbp_required_scope_granted=False,
                 gbp_accounts_count=None,
                 gbp_locations_count=None,
                 gbp_selected_location_present=None,
                 gbp_status_reason="missing_scope",
                 gbp_next_action="Reconnect Google Profile to grant the required Business Profile scope.",
+                gbp_provider_error_class="missing_required_scope",
+                gbp_provider_http_status=403,
+                gbp_diagnostic_hint="Reconnect with the required Business Profile scope and retry.",
             )
             self._log_connection_diagnostics(business_id=business_id, diagnostics=result)
             return result
 
-        if connection.reconnect_required or connection.token_status in {"reconnect_required", "refresh_required"}:
+        if connection.reconnect_required or connection.token_status == "reconnect_required":
             result = GoogleBusinessProfileConnectionDiagnosticsResult(
                 gbp_connection_state="oauth_connected",
+                gbp_required_scope=self.connection_service.BUSINESS_PROFILE_SCOPE,
                 gbp_required_scope_granted=connection.required_scopes_satisfied,
                 gbp_accounts_count=None,
                 gbp_locations_count=None,
                 gbp_selected_location_present=None,
                 gbp_status_reason="oauth_connected_reconnect_required",
                 gbp_next_action="Refresh or reconnect Google Profile before loading Business Profile accounts.",
+                gbp_provider_error_class="none",
+                gbp_provider_http_status=None,
+                gbp_diagnostic_hint="Reconnect or refresh token state before retrying account discovery.",
             )
             self._log_connection_diagnostics(business_id=business_id, diagnostics=result)
             return result
@@ -335,12 +370,16 @@ class GoogleBusinessProfileService:
         if accounts_count == 0:
             result = GoogleBusinessProfileConnectionDiagnosticsResult(
                 gbp_connection_state="no_accounts",
+                gbp_required_scope=self.connection_service.BUSINESS_PROFILE_SCOPE,
                 gbp_required_scope_granted=True,
                 gbp_accounts_count=0,
                 gbp_locations_count=0,
                 gbp_selected_location_present=None,
                 gbp_status_reason="no_accounts",
                 gbp_next_action="Confirm the connected Google identity has access to at least one Business Profile account.",
+                gbp_provider_error_class="none",
+                gbp_provider_http_status=None,
+                gbp_diagnostic_hint="Check the connected Google identity and Business Profile account membership.",
             )
             self._log_connection_diagnostics(business_id=business_id, diagnostics=result)
             return result
@@ -370,24 +409,32 @@ class GoogleBusinessProfileService:
         if locations_count == 0:
             result = GoogleBusinessProfileConnectionDiagnosticsResult(
                 gbp_connection_state="no_locations",
+                gbp_required_scope=self.connection_service.BUSINESS_PROFILE_SCOPE,
                 gbp_required_scope_granted=True,
                 gbp_accounts_count=accounts_count,
                 gbp_locations_count=0,
                 gbp_selected_location_present=None,
                 gbp_status_reason="no_locations",
                 gbp_next_action="Confirm the connected Google account can access one or more Business Profile locations.",
+                gbp_provider_error_class="none",
+                gbp_provider_http_status=None,
+                gbp_diagnostic_hint="Check location visibility in Business Profile Manager for the connected identity.",
             )
             self._log_connection_diagnostics(business_id=business_id, diagnostics=result)
             return result
 
         result = GoogleBusinessProfileConnectionDiagnosticsResult(
             gbp_connection_state="usable",
+            gbp_required_scope=self.connection_service.BUSINESS_PROFILE_SCOPE,
             gbp_required_scope_granted=True,
             gbp_accounts_count=accounts_count,
             gbp_locations_count=locations_count,
             gbp_selected_location_present=None,
             gbp_status_reason="usable",
             gbp_next_action="Google Business Profile access is usable for this business.",
+            gbp_provider_error_class="none",
+            gbp_provider_http_status=None,
+            gbp_diagnostic_hint="Business Profile API is reachable for this connection.",
         )
         self._log_connection_diagnostics(business_id=business_id, diagnostics=result)
         return result
@@ -1284,16 +1331,35 @@ class GoogleBusinessProfileService:
         if exc.error_code == "insufficient_scope":
             return GoogleBusinessProfileConnectionDiagnosticsResult(
                 gbp_connection_state="missing_scope",
+                gbp_required_scope=self.connection_service.BUSINESS_PROFILE_SCOPE,
                 gbp_required_scope_granted=False,
                 gbp_accounts_count=accounts_count,
                 gbp_locations_count=None,
                 gbp_selected_location_present=None,
                 gbp_status_reason="missing_scope",
                 gbp_next_action="Reconnect Google Profile to grant the required Business Profile scope.",
+                gbp_provider_error_class="missing_required_scope",
+                gbp_provider_http_status=exc.provider_http_status or 403,
+                gbp_diagnostic_hint=exc.diagnostic_hint or "Reconnect with required scope and refresh status.",
             )
-        if exc.error_code == "permission_denied":
+        if exc.error_code == "missing_required_scope":
+            return GoogleBusinessProfileConnectionDiagnosticsResult(
+                gbp_connection_state="missing_scope",
+                gbp_required_scope=self.connection_service.BUSINESS_PROFILE_SCOPE,
+                gbp_required_scope_granted=False,
+                gbp_accounts_count=accounts_count,
+                gbp_locations_count=None,
+                gbp_selected_location_present=None,
+                gbp_status_reason="missing_scope",
+                gbp_next_action="Reconnect Google Profile to grant the required Business Profile scope.",
+                gbp_provider_error_class="missing_required_scope",
+                gbp_provider_http_status=exc.provider_http_status or 403,
+                gbp_diagnostic_hint=exc.diagnostic_hint or "Reconnect with required scope and refresh status.",
+            )
+        if exc.error_code in {"permission_denied", "provider_permission_denied"}:
             return GoogleBusinessProfileConnectionDiagnosticsResult(
                 gbp_connection_state="permission_denied",
+                gbp_required_scope=self.connection_service.BUSINESS_PROFILE_SCOPE,
                 gbp_required_scope_granted=True,
                 gbp_accounts_count=accounts_count,
                 gbp_locations_count=None,
@@ -1303,25 +1369,134 @@ class GoogleBusinessProfileService:
                     "Google account is linked, but Business Profile API access is denied. "
                     "Confirm this connected account has Business Profile access."
                 ),
+                gbp_provider_error_class="provider_permission_denied",
+                gbp_provider_http_status=exc.provider_http_status or 403,
+                gbp_diagnostic_hint=exc.diagnostic_hint or "Verify Business Profile access for the connected Google identity.",
             )
-        if exc.error_code == "reconnect_required":
+        if exc.error_code == "provider_unauthorized":
             return GoogleBusinessProfileConnectionDiagnosticsResult(
                 gbp_connection_state="oauth_connected",
+                gbp_required_scope=self.connection_service.BUSINESS_PROFILE_SCOPE,
+                gbp_required_scope_granted=None,
+                gbp_accounts_count=accounts_count,
+                gbp_locations_count=None,
+                gbp_selected_location_present=None,
+                gbp_status_reason="provider_unauthorized",
+                gbp_next_action="Google authorization is no longer valid. Reconnect Google Profile and refresh status.",
+                gbp_provider_error_class="provider_unauthorized",
+                gbp_provider_http_status=exc.provider_http_status or 401,
+                gbp_diagnostic_hint=exc.diagnostic_hint or "Reconnect Google Profile for this business and retry.",
+            )
+        if exc.error_code == "provider_api_disabled_or_unavailable":
+            return GoogleBusinessProfileConnectionDiagnosticsResult(
+                gbp_connection_state="unavailable",
+                gbp_required_scope=self.connection_service.BUSINESS_PROFILE_SCOPE,
+                gbp_required_scope_granted=None,
+                gbp_accounts_count=accounts_count,
+                gbp_locations_count=None,
+                gbp_selected_location_present=None,
+                gbp_status_reason="provider_api_disabled_or_unavailable",
+                gbp_next_action=(
+                    "Google account is linked, but Business Profile API access appears disabled or unavailable "
+                    "for this OAuth project."
+                ),
+                gbp_provider_error_class="provider_api_disabled_or_unavailable",
+                gbp_provider_http_status=exc.provider_http_status or 403,
+                gbp_diagnostic_hint=exc.diagnostic_hint
+                or "Check enabled APIs and project-level Business Profile API availability.",
+            )
+        if exc.error_code == "provider_quota_or_access_not_granted":
+            return GoogleBusinessProfileConnectionDiagnosticsResult(
+                gbp_connection_state="unavailable",
+                gbp_required_scope=self.connection_service.BUSINESS_PROFILE_SCOPE,
+                gbp_required_scope_granted=None,
+                gbp_accounts_count=accounts_count,
+                gbp_locations_count=None,
+                gbp_selected_location_present=None,
+                gbp_status_reason="provider_quota_or_access_not_granted",
+                gbp_next_action=(
+                    "Google account is linked, but Business Profile API quota or project access is not granted."
+                ),
+                gbp_provider_error_class="provider_quota_or_access_not_granted",
+                gbp_provider_http_status=exc.provider_http_status or 403,
+                gbp_diagnostic_hint=exc.diagnostic_hint
+                or "Check API quotas, project access, and Business Profile API approval status.",
+            )
+        if exc.error_code == "provider_not_found":
+            return GoogleBusinessProfileConnectionDiagnosticsResult(
+                gbp_connection_state="unavailable",
+                gbp_required_scope=self.connection_service.BUSINESS_PROFILE_SCOPE,
+                gbp_required_scope_granted=None,
+                gbp_accounts_count=accounts_count,
+                gbp_locations_count=None,
+                gbp_selected_location_present=None,
+                gbp_status_reason="provider_not_found",
+                gbp_next_action="Business Profile API returned not found for this request. Refresh and retry.",
+                gbp_provider_error_class="provider_not_found",
+                gbp_provider_http_status=exc.provider_http_status or 404,
+                gbp_diagnostic_hint=exc.diagnostic_hint or "Verify account/location resources returned by Google APIs.",
+            )
+        if exc.error_code == "token_refresh_failed":
+            return GoogleBusinessProfileConnectionDiagnosticsResult(
+                gbp_connection_state="oauth_connected",
+                gbp_required_scope=self.connection_service.BUSINESS_PROFILE_SCOPE,
+                gbp_required_scope_granted=None,
+                gbp_accounts_count=accounts_count,
+                gbp_locations_count=None,
+                gbp_selected_location_present=None,
+                gbp_status_reason="token_refresh_failed",
+                gbp_next_action="Google token refresh failed. Reconnect Google Profile and retry.",
+                gbp_provider_error_class="token_refresh_failed",
+                gbp_provider_http_status=exc.provider_http_status,
+                gbp_diagnostic_hint=exc.diagnostic_hint or "Reconnect Google Profile to issue a fresh token.",
+            )
+        if exc.error_code == "reconnect_required":
+            if exc.provider_error_class == "token_refresh_failed":
+                return GoogleBusinessProfileConnectionDiagnosticsResult(
+                    gbp_connection_state="oauth_connected",
+                    gbp_required_scope=self.connection_service.BUSINESS_PROFILE_SCOPE,
+                    gbp_required_scope_granted=None,
+                    gbp_accounts_count=accounts_count,
+                    gbp_locations_count=None,
+                    gbp_selected_location_present=None,
+                    gbp_status_reason="token_refresh_failed",
+                    gbp_next_action="Google token refresh failed. Reconnect Google Profile and retry.",
+                    gbp_provider_error_class="token_refresh_failed",
+                    gbp_provider_http_status=exc.provider_http_status or 401,
+                    gbp_diagnostic_hint=exc.diagnostic_hint or "Reconnect Google Profile to issue a fresh token.",
+                )
+            return GoogleBusinessProfileConnectionDiagnosticsResult(
+                gbp_connection_state="oauth_connected",
+                gbp_required_scope=self.connection_service.BUSINESS_PROFILE_SCOPE,
                 gbp_required_scope_granted=None,
                 gbp_accounts_count=accounts_count,
                 gbp_locations_count=None,
                 gbp_selected_location_present=None,
                 gbp_status_reason="oauth_connected_reconnect_required",
                 gbp_next_action="Reconnect Google Profile before loading Business Profile accounts.",
+                gbp_provider_error_class="none",
+                gbp_provider_http_status=exc.provider_http_status,
+                gbp_diagnostic_hint=exc.diagnostic_hint or "Reconnect and refresh before retrying account discovery.",
             )
         return GoogleBusinessProfileConnectionDiagnosticsResult(
             gbp_connection_state="unavailable",
+            gbp_required_scope=self.connection_service.BUSINESS_PROFILE_SCOPE,
             gbp_required_scope_granted=None,
             gbp_accounts_count=accounts_count,
             gbp_locations_count=None,
             gbp_selected_location_present=None,
             gbp_status_reason="provider_unavailable",
             gbp_next_action="Google Business Profile status is temporarily unavailable. Refresh and retry.",
+            gbp_provider_error_class=(
+                exc.provider_error_class
+                if exc.provider_error_class in {
+                    "provider_unavailable",
+                    "provider_unknown",
+                }
+                else "provider_unavailable"
+            ),
+            gbp_provider_http_status=exc.provider_http_status,
+            gbp_diagnostic_hint=exc.diagnostic_hint or "Retry shortly. If this persists, verify Google API availability.",
         )
 
     def _log_connection_diagnostics(
@@ -1331,15 +1506,135 @@ class GoogleBusinessProfileService:
         diagnostics: GoogleBusinessProfileConnectionDiagnosticsResult,
     ) -> None:
         logger.info(
-            "google_business_profile_status_checked business_id=%s status=%s reason=%s required_scope_granted=%s accounts_count=%s locations_count=%s selected_location_present=%s",
+            "google_business_profile_status_checked business_id=%s status=%s reason=%s provider_error_class=%s provider_http_status=%s required_scope=%s required_scope_granted=%s accounts_count=%s locations_count=%s selected_location_present=%s",
             business_id,
             diagnostics.gbp_connection_state,
             diagnostics.gbp_status_reason,
+            diagnostics.gbp_provider_error_class,
+            diagnostics.gbp_provider_http_status,
+            diagnostics.gbp_required_scope,
             diagnostics.gbp_required_scope_granted,
             diagnostics.gbp_accounts_count,
             diagnostics.gbp_locations_count,
             diagnostics.gbp_selected_location_present,
         )
+
+    def _classify_provider_api_error(
+        self,
+        exc: GoogleBusinessProfileAPIError,
+    ) -> tuple[GoogleBusinessProfileProviderErrorClass, int | None, str]:
+        status_code = exc.status_code if isinstance(exc.status_code, int) else None
+        normalized_status = (exc.error_status or "").strip().upper()
+        normalized_reason = (exc.error_reason or "").strip().lower()
+        message_lower = str(exc).lower()
+
+        if status_code == 401 or normalized_status == "UNAUTHENTICATED":
+            return (
+                "provider_unauthorized",
+                status_code or 401,
+                "Google authorization appears expired or invalid. Reconnect Google Profile.",
+            )
+
+        if status_code == 404 or normalized_status == "NOT_FOUND":
+            return (
+                "provider_not_found",
+                status_code or 404,
+                "Google Business Profile API returned not found. Refresh and retry.",
+            )
+
+        if status_code == 403:
+            missing_scope_markers = (
+                "insufficientauthenticationscopes",
+                "insufficient_scope",
+                "insufficient scope",
+                "insufficient authentication scopes",
+                "request had insufficient authentication scopes",
+            )
+            api_disabled_markers = (
+                "service_disabled",
+                "accessnotconfigured",
+                "api_not_enabled",
+                "api_disabled",
+                "servicenotenabled",
+                "api has not been used",
+                "has not been used in project",
+                "access not configured",
+                "is not enabled",
+                "service is disabled",
+            )
+            quota_or_access_markers = (
+                "quotaexceeded",
+                "ratelimitexceeded",
+                "dailylimitexceeded",
+                "resource_exhausted",
+                "billingdisabled",
+                "project_denied",
+                "access not granted",
+                "access has not been granted",
+                "not approved",
+                "quota",
+                "rate limit",
+            )
+
+            if self._text_contains_any(normalized_reason, missing_scope_markers) or self._text_contains_any(
+                message_lower,
+                missing_scope_markers,
+            ):
+                return (
+                    "missing_required_scope",
+                    403,
+                    "Reconnect Google Profile to grant the required Business Profile scope.",
+                )
+
+            if self._text_contains_any(normalized_reason, api_disabled_markers) or self._text_contains_any(
+                message_lower,
+                api_disabled_markers,
+            ):
+                return (
+                    "provider_api_disabled_or_unavailable",
+                    403,
+                    "Business Profile API appears disabled or unavailable for this OAuth project.",
+                )
+
+            if self._text_contains_any(normalized_reason, quota_or_access_markers) or self._text_contains_any(
+                message_lower,
+                quota_or_access_markers,
+            ):
+                return (
+                    "provider_quota_or_access_not_granted",
+                    403,
+                    "Business Profile API quota or project access is not granted.",
+                )
+
+            return (
+                "provider_permission_denied",
+                403,
+                "Connected identity does not have Business Profile API permission for this request.",
+            )
+
+        if status_code in {429, 500, 502, 503, 504}:
+            return (
+                "provider_unavailable",
+                status_code,
+                "Google Business Profile API is temporarily unavailable. Retry shortly.",
+            )
+
+        if exc.is_permission_denied:
+            return (
+                "provider_permission_denied",
+                status_code,
+                "Connected identity does not have Business Profile API permission for this request.",
+            )
+
+        return (
+            "provider_unknown",
+            status_code,
+            "Google Business Profile API request failed for an unknown reason. Refresh and retry.",
+        )
+
+    @staticmethod
+    def _text_contains_any(value: str, candidates: tuple[str, ...]) -> bool:
+        return any(candidate in value for candidate in candidates)
 
     def _call_google_api(
         self,
@@ -1358,6 +1653,9 @@ class GoogleBusinessProfileService:
                 status_code=409,
                 reconnect_required=True,
                 error_code="reconnect_required",
+                provider_error_class="none",
+                provider_http_status=None,
+                diagnostic_hint="Connect Google Profile for this business before loading status.",
             )
         if not token_result.required_scopes_satisfied or token_result.token_status == "insufficient_scope":
             raise GoogleBusinessProfileServiceError(
@@ -1365,13 +1663,28 @@ class GoogleBusinessProfileService:
                 status_code=403,
                 reconnect_required=True,
                 error_code="insufficient_scope",
+                provider_error_class="missing_required_scope",
+                provider_http_status=403,
+                diagnostic_hint="Reconnect Google Profile with the required Business Profile scope.",
             )
         if token_result.reconnect_required or token_result.token_status == "reconnect_required":
+            token_refresh_failed = (
+                token_result.connected
+                and token_result.required_scopes_satisfied
+                and token_result.refresh_token_present
+            )
             raise GoogleBusinessProfileServiceError(
                 "Google Business Profile connection requires reconnect.",
                 status_code=409,
                 reconnect_required=True,
                 error_code="reconnect_required",
+                provider_error_class="token_refresh_failed" if token_refresh_failed else "none",
+                provider_http_status=401 if token_refresh_failed else None,
+                diagnostic_hint=(
+                    "Google token refresh failed. Reconnect Google Profile to continue."
+                    if token_refresh_failed
+                    else "Reconnect Google Profile before retrying."
+                ),
             )
         access_token = (token_result.access_token or "").strip()
         if not access_token:
@@ -1380,22 +1693,79 @@ class GoogleBusinessProfileService:
                 status_code=409,
                 reconnect_required=True,
                 error_code="reconnect_required",
+                provider_error_class="none",
+                provider_http_status=None,
+                diagnostic_hint="Reconnect Google Profile before retrying.",
             )
         try:
             return callback(access_token)
         except GoogleBusinessProfileAPIError as exc:
             if passthrough_api_errors:
                 raise
-            if exc.is_permission_denied:
+            provider_error_class, provider_http_status, diagnostic_hint = self._classify_provider_api_error(exc)
+            if provider_error_class == "missing_required_scope":
+                raise GoogleBusinessProfileServiceError(
+                    "Google Business Profile scope is missing. Reconnect Google to grant required scopes.",
+                    status_code=403,
+                    reconnect_required=True,
+                    error_code="missing_required_scope",
+                    provider_error_class=provider_error_class,
+                    provider_http_status=provider_http_status,
+                    diagnostic_hint=diagnostic_hint,
+                ) from exc
+            if provider_error_class == "provider_unauthorized":
+                raise GoogleBusinessProfileServiceError(
+                    "Google Business Profile authorization is no longer valid.",
+                    status_code=401,
+                    reconnect_required=True,
+                    error_code="provider_unauthorized",
+                    provider_error_class=provider_error_class,
+                    provider_http_status=provider_http_status,
+                    diagnostic_hint=diagnostic_hint,
+                ) from exc
+            if provider_error_class == "provider_api_disabled_or_unavailable":
+                raise GoogleBusinessProfileServiceError(
+                    "Google Business Profile API appears disabled or unavailable for this OAuth project.",
+                    status_code=403,
+                    error_code="provider_api_disabled_or_unavailable",
+                    provider_error_class=provider_error_class,
+                    provider_http_status=provider_http_status,
+                    diagnostic_hint=diagnostic_hint,
+                ) from exc
+            if provider_error_class == "provider_quota_or_access_not_granted":
+                raise GoogleBusinessProfileServiceError(
+                    "Google Business Profile API quota or project access is not granted.",
+                    status_code=403,
+                    error_code="provider_quota_or_access_not_granted",
+                    provider_error_class=provider_error_class,
+                    provider_http_status=provider_http_status,
+                    diagnostic_hint=diagnostic_hint,
+                ) from exc
+            if provider_error_class == "provider_permission_denied":
                 raise GoogleBusinessProfileServiceError(
                     "Google Business Profile access is denied for this Google account.",
                     status_code=403,
-                    error_code="permission_denied",
+                    error_code="provider_permission_denied",
+                    provider_error_class=provider_error_class,
+                    provider_http_status=provider_http_status,
+                    diagnostic_hint=diagnostic_hint,
+                ) from exc
+            if provider_error_class == "provider_not_found":
+                raise GoogleBusinessProfileServiceError(
+                    "Google Business Profile resource was not found.",
+                    status_code=404,
+                    error_code="provider_not_found",
+                    provider_error_class=provider_error_class,
+                    provider_http_status=provider_http_status,
+                    diagnostic_hint=diagnostic_hint,
                 ) from exc
             raise GoogleBusinessProfileServiceError(
                 "Google Business Profile API request failed.",
                 status_code=502,
                 error_code="provider_error",
+                provider_error_class=provider_error_class,
+                provider_http_status=provider_http_status,
+                diagnostic_hint=diagnostic_hint,
             ) from exc
 
 

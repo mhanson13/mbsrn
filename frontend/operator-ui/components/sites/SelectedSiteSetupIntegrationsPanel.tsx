@@ -19,6 +19,7 @@ import {
 } from "../../lib/api/client";
 import type {
   GoogleBusinessProfileConnectionState,
+  GoogleBusinessProfileProviderErrorClass,
   GoogleBusinessProfileConnectionStatusResponse,
   GoogleBusinessProfileFlatLocation,
   SEOSite,
@@ -40,6 +41,8 @@ type ConnectionUiState =
   | "no_locations"
   | "location_not_mapped"
   | "oauth_connected"
+  | "provider_api_disabled"
+  | "provider_quota_or_access_not_granted"
   | "oauth_success_pending"
   | "not_connected"
   | "unavailable";
@@ -219,6 +222,7 @@ export function SelectedSiteSetupIntegrationsPanel({
   const oauthConnectFailed = oauthConnectStatus === "error";
   const oauthReconnectRequired = normalizeLowerCaseString(searchParams?.get("gbp_reconnect_required")) === "true";
   const backendState = normalizeConnectionState(connection?.gbp_connection_state);
+  const providerErrorClass = normalizeProviderErrorClass(connection?.gbp_provider_error_class);
 
   const connectionUiState = useMemo<ConnectionUiState>(() => {
     if (oauthConnectSucceeded && loadingConnection) {
@@ -246,6 +250,12 @@ export function SelectedSiteSetupIntegrationsPanel({
       return "oauth_connected";
     }
     if (backendState === "unavailable") {
+      if (providerErrorClass === "provider_api_disabled_or_unavailable") {
+        return "provider_api_disabled";
+      }
+      if (providerErrorClass === "provider_quota_or_access_not_granted") {
+        return "provider_quota_or_access_not_granted";
+      }
       return "unavailable";
     }
     if (backendState === "not_connected") {
@@ -255,7 +265,7 @@ export function SelectedSiteSetupIntegrationsPanel({
       return "unavailable";
     }
     return connection?.connected ? "oauth_connected" : "not_connected";
-  }, [backendState, connection, connectionError, loadingConnection, oauthConnectSucceeded]);
+  }, [backendState, connection, connectionError, loadingConnection, oauthConnectSucceeded, providerErrorClass]);
 
   const callbackNotice = useMemo<CallbackNotice>(() => {
     if (oauthConnectSucceeded) {
@@ -295,6 +305,19 @@ export function SelectedSiteSetupIntegrationsPanel({
           message: "Google returned successfully, but no Google Business Profile location is mapped to this site.",
         };
       }
+      if (connectionUiState === "provider_api_disabled") {
+        return {
+          className: "hint warning",
+          message:
+            "Google returned successfully, but Business Profile API access appears disabled or unavailable for this OAuth project.",
+        };
+      }
+      if (connectionUiState === "provider_quota_or_access_not_granted") {
+        return {
+          className: "hint warning",
+          message: "Google returned successfully, but Business Profile API quota or project access is not granted.",
+        };
+      }
       if (connectionUiState === "oauth_success_pending") {
         return null;
       }
@@ -322,6 +345,16 @@ export function SelectedSiteSetupIntegrationsPanel({
   const hasConnectedToken = connection?.connected === true;
   const showConnectionErrorDetails = Boolean(connectionError) && connectionUiState !== "connected_access_denied";
   const backendNextAction = normalizeDisplayText(connection?.gbp_next_action);
+  const backendDiagnosticHint = normalizeDisplayText(connection?.gbp_diagnostic_hint);
+  const showProviderDiagnostics = useMemo(
+    () =>
+      connectionUiState === "connected_access_denied"
+      || connectionUiState === "missing_scope"
+      || connectionUiState === "provider_api_disabled"
+      || connectionUiState === "provider_quota_or_access_not_granted"
+      || connectionUiState === "unavailable",
+    [connectionUiState],
+  );
 
   const normalizedGa4PropertyId = ga4PropertyIdInput.trim();
   const ga4PropertyFormatInvalid = normalizedGa4PropertyId.length > 0 && !/^\d{4,20}$/.test(normalizedGa4PropertyId);
@@ -494,8 +527,35 @@ export function SelectedSiteSetupIntegrationsPanel({
           {connectionUiState === "location_not_mapped" ? (
             <p className="hint warning">Google account is linked, but no Google Business Profile location is mapped to this site.</p>
           ) : null}
+          {connectionUiState === "provider_api_disabled" ? (
+            <p className="hint warning">
+              Google account is linked, but Business Profile API access appears disabled or unavailable for this OAuth project.
+            </p>
+          ) : null}
+          {connectionUiState === "provider_quota_or_access_not_granted" ? (
+            <p className="hint warning">
+              Google account is linked, but Business Profile API quota or project access is not granted.
+            </p>
+          ) : null}
           {callbackNotice ? <p className={callbackNotice.className}>{callbackNotice.message}</p> : null}
           {showConnectionErrorDetails ? <p className="hint error">{connectionError}</p> : null}
+          {showProviderDiagnostics ? (
+            <div className="stack-tight" data-testid="sites-gbp-provider-diagnostics">
+              <p className="hint muted">
+                Provider diagnostic: {formatProviderErrorClassLabel(providerErrorClass)}
+              </p>
+              <p className="hint muted">
+                Provider HTTP status: {formatProviderHttpStatus(connection?.gbp_provider_http_status)}
+              </p>
+              <p className="hint muted">
+                Required scope granted: {formatBooleanUnknown(connection?.gbp_required_scope_granted)}
+              </p>
+              {connection?.gbp_required_scope ? (
+                <p className="hint muted">Required scope: {connection.gbp_required_scope}</p>
+              ) : null}
+              {backendDiagnosticHint ? <p className="hint muted">{backendDiagnosticHint}</p> : null}
+            </div>
+          ) : null}
         </div>
 
         <div className="panel panel-compact stack-tight" data-testid="sites-ga4-setup-panel">
@@ -626,6 +686,12 @@ export function SelectedSiteSetupIntegrationsPanel({
             <p className="hint error">Google account is linked, but Business Profile API access was denied for this account.</p>
           ) : connectionUiState === "missing_scope" ? (
             <p className="hint warning">Reconnect Google Profile to grant the required Business Profile readonly scope.</p>
+          ) : connectionUiState === "provider_api_disabled" ? (
+            <p className="hint warning">
+              Google account is linked, but Business Profile API access appears disabled or unavailable for this OAuth project.
+            </p>
+          ) : connectionUiState === "provider_quota_or_access_not_granted" ? (
+            <p className="hint warning">Google account is linked, but Business Profile API quota or project access is not granted.</p>
           ) : connectionUiState === "no_accounts" ? (
             <p className="hint warning">Google account is linked, but no Business Profile accounts were returned.</p>
           ) : connectionUiState === "no_locations" ? (
@@ -696,6 +762,12 @@ function connectionUiLabel(state: ConnectionUiState): string {
   if (state === "oauth_connected") {
     return "OAuth linked";
   }
+  if (state === "provider_api_disabled") {
+    return "API unavailable";
+  }
+  if (state === "provider_quota_or_access_not_granted") {
+    return "Quota/access";
+  }
   if (state === "oauth_success_pending") {
     return "Checking";
   }
@@ -709,7 +781,16 @@ function connectionBadgeClass(state: ConnectionUiState): string {
   if (state === "connected_usable") {
     return "badge-success";
   }
-  if (state === "oauth_connected" || state === "oauth_success_pending" || state === "no_accounts" || state === "no_locations" || state === "location_not_mapped" || state === "missing_scope") {
+  if (
+    state === "oauth_connected"
+    || state === "oauth_success_pending"
+    || state === "no_accounts"
+    || state === "no_locations"
+    || state === "location_not_mapped"
+    || state === "missing_scope"
+    || state === "provider_api_disabled"
+    || state === "provider_quota_or_access_not_granted"
+  ) {
     return "badge-warn";
   }
   if (state === "not_connected") {
@@ -743,8 +824,14 @@ function connectionPrimaryMessage(
   if (state === "oauth_connected") {
     return "Google account is linked. Refresh to verify Business Profile account and location access.";
   }
+  if (state === "provider_api_disabled") {
+    return "Google account is linked, but Business Profile API access appears disabled or unavailable for this OAuth project.";
+  }
+  if (state === "provider_quota_or_access_not_granted") {
+    return "Google account is linked, but Business Profile API quota or project access is not granted.";
+  }
   if (state === "oauth_success_pending") {
-    return "Returned from Google; checking connection status.";
+    return "Returned from Google; checking Business Profile access.";
   }
   if (state === "unavailable") {
     return "Google connection status is temporarily unavailable.";
@@ -795,6 +882,70 @@ function normalizeConnectionState(value: unknown): GoogleBusinessProfileConnecti
     return normalized;
   }
   return "unknown";
+}
+
+function normalizeProviderErrorClass(value: unknown): GoogleBusinessProfileProviderErrorClass {
+  const normalized = normalizeLowerCaseString(value);
+  if (
+    normalized === "none"
+    || normalized === "token_refresh_failed"
+    || normalized === "missing_required_scope"
+    || normalized === "provider_unauthorized"
+    || normalized === "provider_permission_denied"
+    || normalized === "provider_api_disabled_or_unavailable"
+    || normalized === "provider_quota_or_access_not_granted"
+    || normalized === "provider_not_found"
+    || normalized === "provider_unavailable"
+    || normalized === "provider_unknown"
+  ) {
+    return normalized;
+  }
+  return "none";
+}
+
+function formatProviderErrorClassLabel(value: GoogleBusinessProfileProviderErrorClass): string {
+  if (value === "none") {
+    return "none";
+  }
+  if (value === "token_refresh_failed") {
+    return "token_refresh_failed";
+  }
+  if (value === "missing_required_scope") {
+    return "missing_required_scope";
+  }
+  if (value === "provider_unauthorized") {
+    return "provider_unauthorized";
+  }
+  if (value === "provider_permission_denied") {
+    return "provider_permission_denied";
+  }
+  if (value === "provider_api_disabled_or_unavailable") {
+    return "provider_api_disabled_or_unavailable";
+  }
+  if (value === "provider_quota_or_access_not_granted") {
+    return "provider_quota_or_access_not_granted";
+  }
+  if (value === "provider_not_found") {
+    return "provider_not_found";
+  }
+  if (value === "provider_unavailable") {
+    return "provider_unavailable";
+  }
+  return "provider_unknown";
+}
+
+function formatProviderHttpStatus(value: unknown): string {
+  return typeof value === "number" && Number.isFinite(value) ? String(value) : "Unknown";
+}
+
+function formatBooleanUnknown(value: unknown): string {
+  if (value === true) {
+    return "Yes";
+  }
+  if (value === false) {
+    return "No";
+  }
+  return "Unknown";
 }
 
 function isConnectionUsable(connection: GoogleBusinessProfileConnectionStatusResponse): boolean {
