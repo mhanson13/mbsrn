@@ -172,8 +172,7 @@ def _install_uvicorn_lifespan_cancelled_error_filter() -> None:
     for logger_name in ("uvicorn.error", "uvicorn"):
         target_logger = logging.getLogger(logger_name)
         if any(
-            isinstance(active_filter, _UvicornLifespanCancelledErrorFilter)
-            for active_filter in target_logger.filters
+            isinstance(active_filter, _UvicornLifespanCancelledErrorFilter) for active_filter in target_logger.filters
         ):
             continue
         target_logger.addFilter(_UvicornLifespanCancelledErrorFilter())

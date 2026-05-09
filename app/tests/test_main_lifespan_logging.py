@@ -35,9 +35,7 @@ def test_uvicorn_lifespan_cancelled_filter_suppresses_expected_shutdown_noise(
     try:
         uvicorn_error_logger.filters.clear()
         uvicorn_logger.filters.clear()
-        monkeypatch.setattr(
-            main_module.logger, "info", _capture_lifecycle_events(lifecycle_events)
-        )
+        monkeypatch.setattr(main_module.logger, "info", _capture_lifecycle_events(lifecycle_events))
         main_module._install_uvicorn_lifespan_cancelled_error_filter()
         installed_filter = next(
             active_filter
@@ -56,7 +54,10 @@ def test_uvicorn_lifespan_cancelled_filter_suppresses_expected_shutdown_noise(
         )
 
         assert installed_filter.filter(cancelled_record) is False
-        assert "Expected ASGI lifespan cancellation observed during shutdown; suppressing uvicorn error traceback noise." in lifecycle_events
+        assert (
+            "Expected ASGI lifespan cancellation observed during shutdown; suppressing uvicorn error traceback noise."
+            in lifecycle_events
+        )
     finally:
         _restore_logger_filters(uvicorn_error_logger, original_filters)
         _restore_logger_filters(uvicorn_logger, original_uvicorn_filters)
@@ -74,9 +75,7 @@ def test_uvicorn_lifespan_cancelled_filter_suppresses_production_like_traceback_
     try:
         uvicorn_error_logger.filters.clear()
         uvicorn_logger.filters.clear()
-        monkeypatch.setattr(
-            main_module.logger, "info", _capture_lifecycle_events(lifecycle_events)
-        )
+        monkeypatch.setattr(main_module.logger, "info", _capture_lifecycle_events(lifecycle_events))
         main_module._install_uvicorn_lifespan_cancelled_error_filter()
         installed_filter = next(
             active_filter
@@ -95,7 +94,10 @@ def test_uvicorn_lifespan_cancelled_filter_suppresses_production_like_traceback_
         )
 
         assert installed_filter.filter(cancelled_record) is False
-        assert "Expected ASGI lifespan cancellation observed during shutdown; suppressing uvicorn error traceback noise." in lifecycle_events
+        assert (
+            "Expected ASGI lifespan cancellation observed during shutdown; suppressing uvicorn error traceback noise."
+            in lifecycle_events
+        )
     finally:
         _restore_logger_filters(uvicorn_error_logger, original_filters)
         _restore_logger_filters(uvicorn_logger, original_uvicorn_filters)
@@ -113,9 +115,7 @@ def test_uvicorn_lifespan_cancelled_filter_suppresses_traceback_text_without_exc
     try:
         uvicorn_error_logger.filters.clear()
         uvicorn_logger.filters.clear()
-        monkeypatch.setattr(
-            main_module.logger, "info", _capture_lifecycle_events(lifecycle_events)
-        )
+        monkeypatch.setattr(main_module.logger, "info", _capture_lifecycle_events(lifecycle_events))
         main_module._install_uvicorn_lifespan_cancelled_error_filter()
         installed_filter = next(
             active_filter
@@ -130,8 +130,8 @@ def test_uvicorn_lifespan_cancelled_filter_suppresses_traceback_text_without_exc
             lineno=137,
             msg=(
                 "ERROR: Traceback (most recent call last):\n"
-                "  File \"/usr/local/lib/python3.11/site-packages/starlette/routing.py\", line 701, in lifespan\n"
-                "  File \"/usr/local/lib/python3.11/site-packages/uvicorn/lifespan/on.py\", line 137, in receive\n"
+                '  File "/usr/local/lib/python3.11/site-packages/starlette/routing.py", line 701, in lifespan\n'
+                '  File "/usr/local/lib/python3.11/site-packages/uvicorn/lifespan/on.py", line 137, in receive\n'
                 "asyncio.exceptions.CancelledError"
             ),
             args=(),
@@ -139,7 +139,10 @@ def test_uvicorn_lifespan_cancelled_filter_suppresses_traceback_text_without_exc
         )
 
         assert installed_filter.filter(cancelled_record) is False
-        assert "Expected ASGI lifespan cancellation observed during shutdown; suppressing uvicorn error traceback noise." in lifecycle_events
+        assert (
+            "Expected ASGI lifespan cancellation observed during shutdown; suppressing uvicorn error traceback noise."
+            in lifecycle_events
+        )
     finally:
         _restore_logger_filters(uvicorn_error_logger, original_filters)
         _restore_logger_filters(uvicorn_logger, original_uvicorn_filters)
@@ -212,9 +215,10 @@ def test_install_uvicorn_lifespan_cancelled_filter_is_idempotent() -> None:
         ]
         assert len(installed_error_logger) == 1
         assert len(installed_uvicorn_logger) == 1
-        assert lifecycle_events.count(
-            "api_lifespan_cancelled_error_filter_installed target_loggers=uvicorn.error,uvicorn"
-        ) == 1
+        assert (
+            lifecycle_events.count("api_lifespan_cancelled_error_filter_installed target_loggers=uvicorn.error,uvicorn")
+            == 1
+        )
     finally:
         main_module.logger.info = original_info
         _restore_logger_filters(uvicorn_error_logger, original_filters)
