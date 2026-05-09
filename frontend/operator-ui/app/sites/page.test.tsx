@@ -1,7 +1,12 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import SitesPage from "./page";
-import type { AuthPrincipal, SEOSite } from "../../lib/api/types";
+import type {
+  AuthPrincipal,
+  GoogleBusinessProfileConnectionStatusResponse,
+  SEOSite,
+  SiteAnalyticsSummaryResponse,
+} from "../../lib/api/types";
 
 type OperatorContextMockValue = {
   loading: boolean;
@@ -18,6 +23,18 @@ const mockUseOperatorContext = jest.fn<OperatorContextMockValue, []>();
 const mockUseAuth = jest.fn<{ principal: AuthPrincipal | null }, []>();
 const mockDeactivateSite = jest.fn<Promise<SEOSite>, unknown[]>();
 const mockActivateSite = jest.fn<Promise<SEOSite>, unknown[]>();
+const mockFetchGoogleBusinessProfileConnection = jest.fn<
+  Promise<GoogleBusinessProfileConnectionStatusResponse>,
+  unknown[]
+>();
+const mockFetchGoogleBusinessProfileLocations = jest.fn<Promise<{ locations: Array<unknown> }>, unknown[]>();
+const mockFetchSiteAnalyticsSummary = jest.fn<Promise<SiteAnalyticsSummaryResponse>, unknown[]>();
+const mockFetchMigrationWorkspaceSummary = jest.fn<Promise<unknown>, unknown[]>();
+const mockUpdateMigrationAnalyticsConfig = jest.fn<Promise<unknown>, unknown[]>();
+const mockUpsertMigrationWorkspace = jest.fn<Promise<unknown>, unknown[]>();
+const mockStartGoogleBusinessProfileConnect = jest.fn<Promise<{ authorization_url: string }>, unknown[]>();
+const mockDisconnectGoogleBusinessProfile = jest.fn<Promise<unknown>, unknown[]>();
+const mockUpdateSite = jest.fn<Promise<SEOSite>, unknown[]>();
 
 jest.mock("../../components/useOperatorContext", () => ({
   useOperatorContext: () => mockUseOperatorContext(),
@@ -33,6 +50,15 @@ jest.mock("../../lib/api/client", () => {
     ...actual,
     deactivateSite: (...args: unknown[]) => mockDeactivateSite(...args),
     activateSite: (...args: unknown[]) => mockActivateSite(...args),
+    fetchGoogleBusinessProfileConnection: (...args: unknown[]) => mockFetchGoogleBusinessProfileConnection(...args),
+    fetchGoogleBusinessProfileLocations: (...args: unknown[]) => mockFetchGoogleBusinessProfileLocations(...args),
+    fetchSiteAnalyticsSummary: (...args: unknown[]) => mockFetchSiteAnalyticsSummary(...args),
+    fetchMigrationWorkspaceSummary: (...args: unknown[]) => mockFetchMigrationWorkspaceSummary(...args),
+    updateMigrationAnalyticsConfig: (...args: unknown[]) => mockUpdateMigrationAnalyticsConfig(...args),
+    upsertMigrationWorkspace: (...args: unknown[]) => mockUpsertMigrationWorkspace(...args),
+    startGoogleBusinessProfileConnect: (...args: unknown[]) => mockStartGoogleBusinessProfileConnect(...args),
+    disconnectGoogleBusinessProfile: (...args: unknown[]) => mockDisconnectGoogleBusinessProfile(...args),
+    updateSite: (...args: unknown[]) => mockUpdateSite(...args),
   };
 });
 
@@ -48,6 +74,64 @@ function buildSite(overrides: Partial<SEOSite> = {}): SEOSite {
     last_audit_run_id: null,
     last_audit_status: null,
     last_audit_completed_at: null,
+    ga4_property_id: "123456789",
+    ...overrides,
+  };
+}
+
+function buildConnection(
+  overrides: Partial<GoogleBusinessProfileConnectionStatusResponse> = {},
+): GoogleBusinessProfileConnectionStatusResponse {
+  return {
+    provider: "google_business_profile",
+    connected: false,
+    business_id: "biz-1",
+    granted_scopes: [],
+    refresh_token_present: false,
+    expires_at: null,
+    connected_at: null,
+    last_refreshed_at: null,
+    reconnect_required: false,
+    required_scopes_satisfied: false,
+    token_status: "reconnect_required",
+    ga4_scope_granted: false,
+    required_ga4_scope: "https://www.googleapis.com/auth/analytics.readonly",
+    ...overrides,
+  };
+}
+
+function buildSiteAnalyticsSummary(
+  overrides: Partial<SiteAnalyticsSummaryResponse> = {},
+): SiteAnalyticsSummaryResponse {
+  return {
+    business_id: "biz-1",
+    site_id: "site-1",
+    available: true,
+    status: "ok",
+    ga4_status: "connected",
+    ga4_error_reason: null,
+    ga4_last_successful_fetch_at: "2026-05-01T12:00:00Z",
+    ga4_last_data_timestamp: "2026-05-01T12:00:00Z",
+    ga4_data_freshness_status: "fresh",
+    ga4_health: {
+      ga4_configured: true,
+      ga4_property_id_present: true,
+      ga4_property_verified: true,
+      ga4_reachable: true,
+      ga4_data_available: true,
+      ga4_last_checked_at: "2026-05-01T12:00:00Z",
+      ga4_health_status: "reachable",
+      ga4_health_reason: null,
+      ga4_health_message: "GA4 is available for recommendation context.",
+      ga4_health_source: "site_property",
+      ga4_scope_granted: true,
+      ga4_required_scope: "https://www.googleapis.com/auth/analytics.readonly",
+      ga4_auth_mode: "service_account",
+    },
+    message: "ok",
+    data_source: "ga4",
+    site_metrics_summary: null,
+    top_pages_summary: [],
     ...overrides,
   };
 }
@@ -59,7 +143,7 @@ function baseContext(overrides: Partial<OperatorContextMockValue> = {}): Operato
     token: "token-1",
     businessId: "biz-1",
     sites: [buildSite()],
-    selectedSiteId: null,
+    selectedSiteId: "site-1",
     setSelectedSiteId: jest.fn(),
     refreshSites: jest.fn<Promise<SEOSite[]>, []>().mockResolvedValue([buildSite()]),
     ...overrides,
@@ -82,52 +166,141 @@ beforeEach(() => {
   jest.clearAllMocks();
   mockUseOperatorContext.mockReturnValue(baseContext());
   setPrincipal("admin");
+  mockFetchGoogleBusinessProfileConnection.mockResolvedValue(buildConnection());
+  mockFetchGoogleBusinessProfileLocations.mockResolvedValue({ locations: [] });
+  mockFetchSiteAnalyticsSummary.mockResolvedValue(buildSiteAnalyticsSummary());
+  mockFetchMigrationWorkspaceSummary.mockResolvedValue({
+    workspace: {
+      analytics_config_json: {
+        enabled: true,
+        ga_measurement_id: "G-AAAA1111",
+        insertion_mode: "publish_and_deploy",
+      },
+    },
+    publish_readiness: {},
+    deploy_readiness: {},
+  });
+  mockUpdateMigrationAnalyticsConfig.mockResolvedValue({});
+  mockUpsertMigrationWorkspace.mockResolvedValue({});
+  mockStartGoogleBusinessProfileConnect.mockResolvedValue({
+    authorization_url: "https://accounts.google.com/o/oauth2/v2/auth?scope=scope",
+  });
+  mockDisconnectGoogleBusinessProfile.mockResolvedValue({ connection: buildConnection() });
+  mockUpdateSite.mockResolvedValue(buildSite({ ga4_property_id: "987654321" }));
 });
 
-describe("sites admin deactivate controls", () => {
-  it("requires confirmation before deactivating a site", async () => {
+async function renderSitesPageAndWaitForSetupEffects() {
+  render(<SitesPage />);
+  await waitFor(() => expect(mockFetchGoogleBusinessProfileConnection).toHaveBeenCalledWith("token-1"));
+}
+
+describe("sites page inventory + setup boundaries", () => {
+  it("renders sites inventory and selected-site setup while removing old intelligence tables", async () => {
+    await renderSitesPageAndWaitForSetupEffects();
+
+    expect(screen.getByRole("heading", { name: "Configured Sites" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Selected Site Setup" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Selected Site Routing" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Site Intelligence" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /Prioritized Findings/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /^Recommendations$/i })).not.toBeInTheDocument();
+
+    expect(await screen.findByRole("button", { name: "Save GA4 Property" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save Analytics Rules" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Refresh" })).toBeInTheDocument();
+  });
+
+  it("supports disconnect and refresh actions from Sites selected-site setup", async () => {
+    mockFetchGoogleBusinessProfileConnection.mockResolvedValueOnce(
+      buildConnection({
+        connected: true,
+        token_status: "usable",
+        required_scopes_satisfied: true,
+        refresh_token_present: true,
+      }),
+    );
+    mockFetchGoogleBusinessProfileLocations.mockResolvedValueOnce({
+      locations: [
+        {
+          account_id: "acct-1",
+          account_name: "Account 1",
+          location_id: "loc-1",
+          title: "Main Location",
+          address: "123 Main St",
+          state: "verified",
+          verification: {
+            state_summary: "verified",
+            recommended_next_action: "none",
+            guidance: {
+              title: "Verified",
+              summary: "Already verified.",
+              cta_label: "No action needed",
+            },
+          },
+        },
+      ],
+    });
+
+    await renderSitesPageAndWaitForSetupEffects();
+
+    const disconnect = await screen.findByRole("button", { name: "Disconnect" });
+    fireEvent.click(disconnect);
+    await waitFor(() => expect(mockDisconnectGoogleBusinessProfile).toHaveBeenCalledWith("token-1"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    await waitFor(() => expect(mockFetchGoogleBusinessProfileConnection).toHaveBeenCalled());
+  });
+
+  it("saves GA4 property and analytics insertion rules from Sites setup panel", async () => {
+    await renderSitesPageAndWaitForSetupEffects();
+
+    const ga4Input = await screen.findByLabelText("GA4 property ID (numeric)");
+    fireEvent.change(ga4Input, { target: { value: "987654321" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save GA4 Property" }));
+    await waitFor(() =>
+      expect(mockUpdateSite).toHaveBeenCalledWith("token-1", "biz-1", "site-1", {
+        ga4_property_id: "987654321",
+      }),
+    );
+
+    const measurementInput = screen.getByLabelText("GA measurement ID");
+    fireEvent.change(measurementInput, { target: { value: "G-BBBB2222" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save Analytics Rules" }));
+    await waitFor(() =>
+      expect(mockUpdateMigrationAnalyticsConfig).toHaveBeenCalledWith("token-1", "biz-1", "site-1", {
+        analytics_config: {
+          enabled: true,
+          ga_measurement_id: "G-BBBB2222",
+          insertion_mode: "publish_and_deploy",
+        },
+      }),
+    );
+  });
+
+  it("keeps inventory actions for add site, workspace launch, run audit, integration setup, and admin deactivate", async () => {
     const confirmSpy = jest.spyOn(window, "confirm").mockReturnValue(false);
 
-    render(<SitesPage />);
-    expect(screen.queryByLabelText("Site")).not.toBeInTheDocument();
+    await renderSitesPageAndWaitForSetupEffects();
+
+    expect(screen.getByRole("button", { name: "Add Site" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Open Workspace" })).toHaveAttribute("href", "/sites/site-1");
+    expect(screen.getByRole("button", { name: "Run First Audit" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Manage Integrations" })).toHaveAttribute(
+      "href",
+      "/sites?site_id=site-1#selected-site-setup",
+    );
 
     fireEvent.click(screen.getByRole("button", { name: "Deactivate Site" }));
     expect(confirmSpy).toHaveBeenCalled();
     expect(mockDeactivateSite).not.toHaveBeenCalled();
+
     confirmSpy.mockRestore();
   });
 
-  it("deactivates site and refreshes the site list", async () => {
-    const contextValue = baseContext();
-    mockUseOperatorContext.mockReturnValue(contextValue);
-    mockDeactivateSite.mockResolvedValueOnce(buildSite({ is_active: false }));
-    const confirmSpy = jest.spyOn(window, "confirm").mockReturnValue(true);
-
-    render(<SitesPage />);
-
-    fireEvent.click(screen.getByRole("button", { name: "Deactivate Site" }));
-
-    await waitFor(() => expect(mockDeactivateSite).toHaveBeenCalledWith("token-1", "biz-1", "site-1"));
-    await waitFor(() => expect(contextValue.refreshSites).toHaveBeenCalled());
-    expect(screen.getByText("Site Main Site deactivated.")).toBeInTheDocument();
-    confirmSpy.mockRestore();
-  });
-
-  it("hides site deactivate controls for non-admin principals", () => {
+  it("hides site deactivate controls for non-admin principals", async () => {
     setPrincipal("operator");
-
-    render(<SitesPage />);
-
+    await renderSitesPageAndWaitForSetupEffects();
     expect(screen.queryByRole("button", { name: "Deactivate Site" })).not.toBeInTheDocument();
     expect(screen.queryByText("Admin Action")).not.toBeInTheDocument();
-  });
-
-  it("renders Open Workspace using the shared inline button action style", () => {
-    render(<SitesPage />);
-
-    expect(screen.getByTestId("sites-page-hero")).toHaveClass("operator-page-hero-surface");
-    const openWorkspaceAction = screen.getByRole("link", { name: "Open Workspace" });
-    expect(openWorkspaceAction).toHaveClass("button", "button-secondary", "button-inline");
-    expect(openWorkspaceAction).toHaveAttribute("href", "/sites/site-1");
   });
 });

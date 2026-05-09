@@ -16,7 +16,6 @@ const links = [
   { href: "/competitors", label: "Competitors" },
   { href: "/recommendations", label: "Recommendations" },
   { href: "/automation", label: "Automation" },
-  { href: "/google-profile", label: "Google Profile" },
   { href: "/admin", label: "Admin", adminOnly: true },
   { href: "/user-mgmt", label: "User Mgmt", adminOnly: true },
 ];
@@ -50,13 +49,7 @@ function isAliasPath(pathname: string, basePath: string): boolean {
 }
 
 function isNavLinkActive(pathname: string, href: string): boolean {
-  if (isAliasPath(pathname, href)) {
-    return true;
-  }
-  if (href === "/google-profile" && isAliasPath(pathname, "/business-profile")) {
-    return true;
-  }
-  return false;
+  return isAliasPath(pathname, href);
 }
 
 function resolveShellRouteContext(pathname: string): ShellRouteContext {
@@ -125,10 +118,10 @@ function resolveShellRouteContext(pathname: string): ShellRouteContext {
   }
   if (pathname.startsWith("/google-profile") || pathname.startsWith("/business-profile")) {
     return {
-      label: "Google profile",
-      summary: "Maintain profile and location context so downstream recommendations stay grounded.",
-      quickHref: "/google-profile",
-      quickLabel: "Open Google Profile",
+      label: "Sites setup (legacy route)",
+      summary: "Google and GA4 setup now lives under Sites in the selected-site integrations panel.",
+      quickHref: "/sites",
+      quickLabel: "Open Sites setup",
       badgeClass: "badge-muted",
     };
   }

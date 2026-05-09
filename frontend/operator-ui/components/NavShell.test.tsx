@@ -86,6 +86,7 @@ describe("NavShell", () => {
     const userMgmtLink = screen.getByRole("link", { name: "User Mgmt" });
     expect(userMgmtLink).toBeInTheDocument();
     expect(userMgmtLink).toHaveAttribute("href", "/user-mgmt");
+    expect(screen.queryByRole("link", { name: "Google Profile" })).not.toBeInTheDocument();
     expect(screen.getByTestId("topnav-logo-link")).toHaveAttribute("href", "/dashboard");
     expect(screen.getByTestId("topnav-logo-image")).toHaveAttribute("src", expect.stringContaining("mbsrn-logo.jpg"));
     expect(screen.getByTestId("topnav-route-context")).toHaveTextContent("Current area: Dashboard");
@@ -208,7 +209,8 @@ describe("NavShell", () => {
       </NavShell>,
     );
     expect(document.querySelector(".operator-shell-main-inner-wide")).toBeTruthy();
-    expect(screen.getByRole("link", { name: "Google Profile" })).toHaveClass("is-active");
+    expect(screen.getByTestId("topnav-route-context")).toHaveTextContent("Current area: Sites setup (legacy route)");
+    expect(screen.getByTestId("topnav-route-context")).toHaveTextContent("Open Sites setup");
 
     mockUsePathname.mockReturnValue("/admin");
     rerender(

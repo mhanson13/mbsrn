@@ -46,7 +46,7 @@ The Site Workspace (`/sites/[site_id]`) is now a compact site-level launchpad, n
 Primary Site Workspace surfaces:
 - site hero / identity and "What matters now"
 - compact workspace snapshot and setup checklist
-- workflow launchers (Recommendations, Competitors, Migration, Google Profile)
+- workflow launchers (Recommendations, Competitors, Migration, Sites setup)
 - compact latest-activity summary
 
 Workflow ownership boundaries:
@@ -56,6 +56,8 @@ Workflow ownership boundaries:
 - Competitors page owns competitor generation/review workflow, run tables, and candidate/debug inspection.
 - Migration workflow remains on `/sites/[site_id]/migration`.
 - Prompt/provider debug details stay in dedicated workflow/diagnostics surfaces, not inline in the primary Site Workspace.
+- Google Profile / GA4 / analytics insertion setup now lives under `Sites` in the selected-site setup panel.
+- `/google-profile` and `/business-profile` remain compatibility routes that redirect operators to `Sites` setup.
 
 Accessibility/DOM contract:
 - Site Workspace keeps unique tab/panel ids for launchpad content.

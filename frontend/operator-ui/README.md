@@ -96,8 +96,9 @@ Migration workspace boundary:
 
 Google Profile naming and placement:
 - top-level navigation and page labels use `Google Profile`.
-- `/google-profile` is the primary route; `/business-profile` remains compatibility path.
-- GA4 property setup is owned by Google Profile and removed from the site workspace surface.
+- Google/Profile/GA4 setup is owned by `Sites` selected-site setup (`/sites?site_id=<id>#selected-site-setup`).
+- `/google-profile` and `/business-profile` are legacy compatibility routes that redirect to `Sites`.
+- GA4 property setup remains removed from the site workspace surface.
 
 ## Shared workspace/page composition primitives
 

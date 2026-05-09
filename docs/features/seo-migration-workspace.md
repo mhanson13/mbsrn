@@ -97,8 +97,8 @@ Site operator page information architecture update:
   - migration launch surface
 - embedded migration workflow content was removed from the main site workspace.
 - migration now opens in its own dedicated workflow route (`/sites/[site_id]/migration`).
-- GA4 setup was moved out of the site workspace and into Google Profile.
-- analytics insertion rules were also moved out of migration and into Google Profile because they are site-wide controls.
+- GA4 setup was moved out of the site workspace and into `Sites` selected-site setup (`Google & Analytics`).
+- analytics insertion rules were also moved out of migration and into `Sites` selected-site setup because they are site-wide controls.
 - this is presentation and information-hierarchy only; migration workflow semantics are unchanged.
 - site workspace hero actions use a shared route-level action cluster pattern:
   - secondary navigation actions (sites/audits)

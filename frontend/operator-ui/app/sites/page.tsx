@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useMemo, useState } from "react";
 
 import { useAuth } from "../../components/AuthProvider";
 import { FormContainer } from "../../components/layout/FormContainer";
@@ -14,6 +14,7 @@ import { SectionCard } from "../../components/layout/SectionCard";
 import { SectionHeader } from "../../components/layout/SectionHeader";
 import { SummaryStatCard } from "../../components/layout/SummaryStatCard";
 import { WorkspaceMessageStack } from "../../components/layout/WorkspaceMessageStack";
+import { SelectedSiteSetupIntegrationsPanel } from "../../components/sites/SelectedSiteSetupIntegrationsPanel";
 import { useOperatorContext } from "../../components/useOperatorContext";
 import {
   activateSite,
@@ -21,33 +22,13 @@ import {
   createAuditRun,
   createSite,
   deactivateSite,
-  fetchAuditRunFindings,
-  fetchAuditRunSummary,
-  fetchAuditRuns,
-  fetchRecommendations,
 } from "../../lib/api/client";
-import type {
-  Recommendation,
-  SEOAuditFinding,
-  SEOAuditRun,
-  SEOAuditRunSummary,
-  SEOSite,
-} from "../../lib/api/types";
+import type { SEOSite } from "../../lib/api/types";
 
 interface DerivedSiteStatus {
   label: string;
   badgeClass: string;
 }
-
-interface DerivedFindingRecommendation {
-  id: string;
-  severity: string;
-  title: string;
-  action: string;
-}
-
-const MAX_TOP_FINDINGS = 7;
-const MAX_TOP_RECOMMENDATIONS = 7;
 
 function deriveSiteStatus(site: SEOSite): DerivedSiteStatus {
   if (!site.is_active) {
@@ -56,7 +37,6 @@ function deriveSiteStatus(site: SEOSite): DerivedSiteStatus {
   if (!site.last_audit_run_id) {
     return { label: "not analyzed", badgeClass: "badge badge-muted" };
   }
-
   const status = (site.last_audit_status || "").trim().toLowerCase();
   if (status === "completed") {
     return { label: "analysis complete", badgeClass: "badge badge-success" };
@@ -65,41 +45,6 @@ function deriveSiteStatus(site: SEOSite): DerivedSiteStatus {
     return { label: "analysis failed", badgeClass: "badge badge-error" };
   }
   return { label: site.last_audit_status || "created", badgeClass: "badge badge-warn" };
-}
-
-function getAuditStatusBadge(status: string | null): string {
-  const normalized = (status || "").trim().toLowerCase();
-  if (normalized === "completed") {
-    return "badge badge-success";
-  }
-  if (normalized === "failed") {
-    return "badge badge-error";
-  }
-  if (!normalized) {
-    return "badge badge-muted";
-  }
-  return "badge badge-warn";
-}
-
-function severityRank(value: string): number {
-  const normalized = value.trim().toUpperCase();
-  if (normalized === "CRITICAL" || normalized === "ERROR") {
-    return 0;
-  }
-  if (normalized === "WARNING" || normalized === "WARN") {
-    return 1;
-  }
-  if (normalized === "INFO") {
-    return 2;
-  }
-  return 3;
-}
-
-function formatSignedDelta(value: number): string {
-  if (value > 0) {
-    return `+${value}`;
-  }
-  return `${value}`;
 }
 
 function parseBaseUrl(value: string): URL {
@@ -136,6 +81,10 @@ function safeSiteActionErrorMessage(error: unknown): string {
   return "Failed to update site activation state.";
 }
 
+function siteSetupHref(siteId: string): string {
+  return `/sites?site_id=${encodeURIComponent(siteId)}#selected-site-setup`;
+}
+
 export default function SitesPage() {
   const { principal } = useAuth();
   const context = useOperatorContext();
@@ -147,155 +96,31 @@ export default function SitesPage() {
   const [triggeringSiteId, setTriggeringSiteId] = useState<string | null>(null);
   const [triggerMessage, setTriggerMessage] = useState<string | null>(null);
   const [triggerError, setTriggerError] = useState<string | null>(null);
-  const [loadingIntelligence, setLoadingIntelligence] = useState(false);
-  const [intelligenceError, setIntelligenceError] = useState<string | null>(null);
-  const [latestRun, setLatestRun] = useState<SEOAuditRun | null>(null);
-  const [previousRun, setPreviousRun] = useState<SEOAuditRun | null>(null);
-  const [latestSummary, setLatestSummary] = useState<SEOAuditRunSummary | null>(null);
-  const [previousSummary, setPreviousSummary] = useState<SEOAuditRunSummary | null>(null);
-  const [topFindings, setTopFindings] = useState<SEOAuditFinding[]>([]);
-  const [recommendations, setRecommendations] = useState<Recommendation[]>([]);
   const [siteActionSiteId, setSiteActionSiteId] = useState<string | null>(null);
   const [siteActionError, setSiteActionError] = useState<string | null>(null);
   const [siteActionSuccess, setSiteActionSuccess] = useState<string | null>(null);
 
   const isAdmin = principal?.role === "admin";
-  const activeSiteCount = context.sites.filter((site) => site.is_active).length;
-  const completedAuditSiteCount = context.sites.filter(
-    (site) => (site.last_audit_status || "").trim().toLowerCase() === "completed",
-  ).length;
-  const needsAuditSiteCount = context.sites.filter((site) => !site.last_audit_run_id).length;
-
   const statuses = useMemo(() => {
     return context.sites.reduce<Record<string, DerivedSiteStatus>>((acc, site) => {
       acc[site.id] = deriveSiteStatus(site);
       return acc;
     }, {});
   }, [context.sites]);
+  const selectedSite = useMemo(
+    () =>
+      context.sites.find((site) => site.id === context.selectedSiteId)
+      || context.sites[0]
+      || null,
+    [context.selectedSiteId, context.sites],
+  );
 
-  const selectedSite = useMemo(() => {
-    if (!context.selectedSiteId) {
-      return null;
-    }
-    return context.sites.find((site) => site.id === context.selectedSiteId) || null;
-  }, [context.selectedSiteId, context.sites]);
-
-  const derivedRecommendations = useMemo<DerivedFindingRecommendation[]>(() => {
-    if (recommendations.length > 0) {
-      return [];
-    }
-    return topFindings.slice(0, MAX_TOP_RECOMMENDATIONS).map((item) => ({
-      id: item.id,
-      severity: item.severity,
-      title: item.title,
-      action: item.suggested_fix || "Review this finding and apply a targeted fix in content or templates.",
-    }));
-  }, [recommendations.length, topFindings]);
-
-  const healthDelta =
-    latestSummary && previousSummary
-      ? latestSummary.health_score - previousSummary.health_score
-      : null;
-  const issueDelta =
-    latestSummary && previousSummary
-      ? latestSummary.total_findings - previousSummary.total_findings
-      : null;
-
-  useEffect(() => {
-    if (!context.selectedSiteId || context.loading || context.error) {
-      setLatestRun(null);
-      setPreviousRun(null);
-      setLatestSummary(null);
-      setPreviousSummary(null);
-      setTopFindings([]);
-      setRecommendations([]);
-      setIntelligenceError(null);
-      setLoadingIntelligence(false);
-      return;
-    }
-
-    let cancelled = false;
-
-    async function loadIntelligence() {
-      setLoadingIntelligence(true);
-      setIntelligenceError(null);
-      try {
-        const runResponse = await fetchAuditRuns(context.token, context.businessId, context.selectedSiteId as string);
-        const latest = runResponse.items[0] || null;
-        const previous = runResponse.items[1] || null;
-
-        const [latestSummaryResponse, latestFindingsResponse, previousSummaryResponse, recommendationResponse] =
-          await Promise.all([
-            latest
-              ? fetchAuditRunSummary(context.token, context.businessId, latest.id)
-              : Promise.resolve<SEOAuditRunSummary | null>(null),
-            latest
-              ? fetchAuditRunFindings(context.token, context.businessId, latest.id)
-              : Promise.resolve({ items: [] as SEOAuditFinding[] }),
-            previous
-              ? fetchAuditRunSummary(context.token, context.businessId, previous.id)
-              : Promise.resolve<SEOAuditRunSummary | null>(null),
-            fetchRecommendations(context.token, context.businessId, context.selectedSiteId as string),
-          ]);
-
-        if (cancelled) {
-          return;
-        }
-
-        const orderedFindings = [...latestFindingsResponse.items]
-          .sort((a, b) => {
-            const severityDiff = severityRank(a.severity) - severityRank(b.severity);
-            if (severityDiff !== 0) {
-              return severityDiff;
-            }
-            return a.title.localeCompare(b.title);
-          })
-          .slice(0, MAX_TOP_FINDINGS);
-
-        const orderedRecommendations = [...recommendationResponse.items]
-          .sort((a, b) => {
-            if (a.priority_score !== b.priority_score) {
-              return b.priority_score - a.priority_score;
-            }
-            const severityDiff = severityRank(a.severity) - severityRank(b.severity);
-            if (severityDiff !== 0) {
-              return severityDiff;
-            }
-            return a.title.localeCompare(b.title);
-          })
-          .slice(0, MAX_TOP_RECOMMENDATIONS);
-
-        setLatestRun(latest);
-        setPreviousRun(previous);
-        setLatestSummary(latestSummaryResponse);
-        setPreviousSummary(previousSummaryResponse);
-        setTopFindings(orderedFindings);
-        setRecommendations(orderedRecommendations);
-      } catch (err) {
-        if (!cancelled) {
-          setIntelligenceError(
-            err instanceof Error ? err.message : "Failed to load SEO intelligence for the selected site.",
-          );
-        }
-      } finally {
-        if (!cancelled) {
-          setLoadingIntelligence(false);
-        }
-      }
-    }
-
-    void loadIntelligence();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    context.businessId,
-    context.error,
-    context.loading,
-    context.selectedSiteId,
-    context.token,
-  ]);
+  const activeSiteCount = context.sites.filter((site) => site.is_active).length;
+  const completedAuditSiteCount = context.sites.filter(
+    (site) => (site.last_audit_status || "").trim().toLowerCase() === "completed",
+  ).length;
+  const needsAuditSiteCount = context.sites.filter((site) => !site.last_audit_run_id).length;
+  const integrationConfiguredCount = context.sites.filter((site) => Boolean((site.ga4_property_id || "").trim())).length;
 
   const handleCreateSite = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -317,8 +142,8 @@ export default function SitesPage() {
       setDisplayName("");
       setBaseUrl("");
       setSubmitSuccess(`Created site ${created.display_name}.`);
-    } catch (err) {
-      setSubmitError(err instanceof Error ? err.message : "Failed to create site.");
+    } catch (error) {
+      setSubmitError(error instanceof Error ? error.message : "Failed to create site.");
     } finally {
       setSubmitLoading(false);
     }
@@ -329,15 +154,14 @@ export default function SitesPage() {
     setTriggerError(null);
     setTriggerMessage(null);
     setSubmitSuccess(null);
-
     try {
       const run = await createAuditRun(context.token, context.businessId, site.id, {
         max_depth: 2,
       });
       await context.refreshSites();
       setTriggerMessage(`Audit run ${run.id} finished with status ${run.status}.`);
-    } catch (err) {
-      setTriggerError(err instanceof Error ? err.message : "Failed to trigger site analysis.");
+    } catch (error) {
+      setTriggerError(error instanceof Error ? error.message : "Failed to trigger site analysis.");
     } finally {
       setTriggeringSiteId(null);
     }
@@ -366,8 +190,8 @@ export default function SitesPage() {
       setSiteActionSuccess(
         activating ? `Site ${site.display_name} reactivated.` : `Site ${site.display_name} deactivated.`,
       );
-    } catch (err) {
-      setSiteActionError(safeSiteActionErrorMessage(err));
+    } catch (error) {
+      setSiteActionError(safeSiteActionErrorMessage(error));
     } finally {
       setSiteActionSiteId(null);
     }
@@ -391,8 +215,8 @@ export default function SitesPage() {
   return (
     <PageContainer>
       <OperatorPageHero
-        title="SEO Sites"
-        subtitle="Manage tracked properties, trigger audits, and monitor site intelligence."
+        title="Sites"
+        subtitle="Manage site inventory, setup integrations, and route operators to the correct workflow surface."
         headingLevel={1}
         data-testid="sites-page-hero"
         summary={(
@@ -412,45 +236,47 @@ export default function SitesPage() {
               variant="elevated"
             />
             <SummaryStatCard
-              label="Audit-ready insight"
-              value={completedAuditSiteCount > 0 ? "Available" : "Missing"}
-              detail={`${completedAuditSiteCount} site${completedAuditSiteCount === 1 ? "" : "s"} with completed audits`}
+              label="Audit-ready"
+              value={completedAuditSiteCount}
+              detail={`${needsAuditSiteCount} site${needsAuditSiteCount === 1 ? "" : "s"} still need a first audit`}
               tone={completedAuditSiteCount > 0 ? "success" : "warning"}
               variant="elevated"
             />
             <SummaryStatCard
-              label="Needs first audit"
-              value={needsAuditSiteCount}
-              detail={needsAuditSiteCount > 0 ? "Run first audit from this page" : "All sites have at least one run"}
-              tone={needsAuditSiteCount > 0 ? "warning" : "neutral"}
+              label="Integrations configured"
+              value={integrationConfiguredCount}
+              detail={`${Math.max(0, context.sites.length - integrationConfiguredCount)} sites still need GA4 setup`}
+              tone={integrationConfiguredCount > 0 ? "success" : "warning"}
               variant="elevated"
             />
           </>
         )}
       >
-        <FormContainer onSubmit={(event) => void handleCreateSite(event)}>
-          <h2>Add Site</h2>
-          <label htmlFor="base-url">Base URL</label>
-          <input
-            id="base-url"
-            value={baseUrl}
-            onChange={(event) => setBaseUrl(event.target.value)}
-            placeholder="https://example.com"
-            required
-          />
-          <label htmlFor="display-name">Display Name (optional)</label>
-          <input
-            id="display-name"
-            value={displayName}
-            onChange={(event) => setDisplayName(event.target.value)}
-            placeholder="Example Site"
-          />
-          <div className="form-actions">
-            <button className="button button-primary" type="submit" disabled={submitLoading}>
-              {submitLoading ? "Adding site..." : "Add Site"}
-            </button>
-          </div>
-        </FormContainer>
+        <details className="panel panel-compact stack-tight" data-testid="sites-add-site-panel" open={context.sites.length === 0}>
+          <summary className="text-strong">Add Site</summary>
+          <FormContainer onSubmit={(event) => void handleCreateSite(event)}>
+            <label htmlFor="base-url">Base URL</label>
+            <input
+              id="base-url"
+              value={baseUrl}
+              onChange={(event) => setBaseUrl(event.target.value)}
+              placeholder="https://example.com"
+              required
+            />
+            <label htmlFor="display-name">Display Name (optional)</label>
+            <input
+              id="display-name"
+              value={displayName}
+              onChange={(event) => setDisplayName(event.target.value)}
+              placeholder="Example Site"
+            />
+            <div className="form-actions">
+              <button className="button button-primary" type="submit" disabled={submitLoading}>
+                {submitLoading ? "Adding site..." : "Add Site"}
+              </button>
+            </div>
+          </FormContainer>
+        </details>
 
         {submitSuccess || submitError || triggerMessage || triggerError || siteActionSuccess || siteActionError ? (
           <WorkspaceMessageStack data-testid="sites-page-message-stack">
@@ -466,256 +292,144 @@ export default function SitesPage() {
 
       <OperatorPageSectionStack>
         <SectionCard variant="summary" className="role-surface-support">
-        <SectionHeader
-          title="Configured Sites"
-          subtitle="Current site inventory with audit status and direct workspace actions."
-          headingLevel={2}
-          variant="support"
-        />
-        <div className="table-container">
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Display Name</th>
-                <th>Base URL</th>
-                <th>Domain</th>
-                <th>Status</th>
-                <th>Last Audit</th>
-                <th>Primary</th>
-                <th>Active</th>
-                <th>Workspace</th>
-                <th>Action</th>
-                {isAdmin ? <th>Admin Action</th> : null}
-              </tr>
-            </thead>
-            <tbody>
-              {context.sites.map((site) => (
-                <tr key={site.id}>
-                  <td className="table-cell-wrap">{site.display_name}</td>
-                  <td className="table-cell-wrap">{site.base_url}</td>
-                  <td className="table-cell-wrap">{site.normalized_domain}</td>
-                  <td>
-                    <span className={statuses[site.id]?.badgeClass || "badge badge-muted"}>
-                      {statuses[site.id]?.label || "unknown"}
-                    </span>
-                  </td>
-                  <td>{site.last_audit_completed_at || "none"}</td>
-                  <td>{site.is_primary ? "yes" : "no"}</td>
-                  <td>{site.is_active ? "yes" : "no"}</td>
-                  <td>
-                    <Link href={`/sites/${site.id}`} className="button button-secondary button-inline">
-                      Open Workspace
-                    </Link>
-                  </td>
-                  <td>
-                    <button
-                      type="button"
-                      className="button button-secondary button-inline"
-                      disabled={!!triggeringSiteId || !site.is_active}
-                      onClick={() => {
-                        void handleTriggerAudit(site);
-                      }}
-                    >
-                      {triggeringSiteId === site.id
-                        ? "Running..."
-                        : site.last_audit_run_id
-                          ? "Run Audit Again"
-                          : "Run First Audit"}
-                    </button>
-                  </td>
-                  {isAdmin ? (
-                    <td>
-                      <button
-                        type="button"
-                        className={
-                          site.is_active
-                            ? "button button-danger button-inline"
-                            : "button button-secondary button-inline"
-                        }
-                        disabled={!!siteActionSiteId}
-                        onClick={() => {
-                          void handleToggleSiteActive(site);
-                        }}
-                      >
-                        {siteActionSiteId === site.id
-                          ? site.is_active
-                            ? "Deactivating..."
-                            : "Reactivating..."
-                          : site.is_active
-                            ? "Deactivate Site"
-                            : "Reactivate Site"}
-                      </button>
-                    </td>
-                  ) : null}
-                </tr>
-              ))}
-              {context.sites.length === 0 ? (
-                <tr>
-                  <td colSpan={isAdmin ? 10 : 9}>No sites configured for this business.</td>
-                </tr>
-              ) : null}
-            </tbody>
-          </table>
-        </div>
-        </SectionCard>
-
-        <SectionCard variant="support" className="role-surface-support">
           <SectionHeader
-            title="Site Intelligence"
-            subtitle="Latest audit findings, recommendations, and trend deltas for the selected site."
+            title="Configured Sites"
+            subtitle="Inventory and setup actions. Use dedicated routes for full audit and recommendation execution."
             headingLevel={2}
             variant="support"
           />
-
-          {!selectedSite ? <p className="hint muted">No site selected.</p> : null}
-          {loadingIntelligence ? <p className="hint muted">Loading site intelligence...</p> : null}
-          {intelligenceError ? <p className="hint error">{intelligenceError}</p> : null}
-
-          {selectedSite && !loadingIntelligence && !intelligenceError ? (
-            <>
-              {!latestSummary ? (
-                <p className="hint warning">
-                  No audit summary yet for this site. Run the first audit to generate intelligence data.
-                </p>
-              ) : (
-                <>
-                  <div className="stack">
-                    <h3>Latest Audit Summary</h3>
-                    <p>
-                      Status:{" "}
-                      <span className={getAuditStatusBadge(latestSummary.status)}>{latestSummary.status}</span>
-                    </p>
-                    <p>
-                      Last audit timestamp:{" "}
-                      <code>{latestRun?.completed_at || latestRun?.started_at || "unknown"}</code>
-                    </p>
-                    <p>
-                      Health score (audit-derived): <strong>{latestSummary.health_score}</strong>
-                    </p>
-                    <p>
-                      Total findings: <strong>{latestSummary.total_findings}</strong> (critical{" "}
-                      {latestSummary.critical_findings}, warning {latestSummary.warning_findings}, info{" "}
-                      {latestSummary.info_findings})
-                    </p>
-                  </div>
-
-                  <div className="stack">
-                    <h3>Prioritized Findings (Top {MAX_TOP_FINDINGS})</h3>
-                    {topFindings.length === 0 ? (
-                      <p className="hint muted">No findings were recorded for the latest audit.</p>
-                    ) : (
-                      <div className="table-container">
-                        <table className="table">
-                          <thead>
-                            <tr>
-                              <th>Severity</th>
-                              <th>Category</th>
-                              <th>Issue</th>
-                              <th>Suggested Fix</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {topFindings.map((item) => (
-                              <tr key={item.id}>
-                                <td>{item.severity}</td>
-                                <td>{item.category}</td>
-                                <td>{item.title}</td>
-                                <td>{item.suggested_fix || "-"}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="stack">
-                    <h3>Recommendations</h3>
-                    {recommendations.length > 0 ? (
-                      <div className="table-container">
-                        <table className="table">
-                          <thead>
-                            <tr>
-                              <th>Priority</th>
-                              <th>Severity</th>
-                              <th>Recommendation</th>
-                              <th>Rationale</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {recommendations.map((item) => (
-                              <tr key={item.id}>
-                                <td>
-                                  {item.priority_score} ({item.priority_band})
-                                </td>
-                                <td>{item.severity}</td>
-                                <td>{item.title}</td>
-                                <td>{item.rationale}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    ) : derivedRecommendations.length > 0 ? (
-                      <>
-                        <p className="hint muted">
-                          No persisted recommendation items exist yet. Showing direct next steps derived from latest
-                          findings.
-                        </p>
-                        <div className="table-container">
-                          <table className="table">
-                            <thead>
-                              <tr>
-                                <th>Severity</th>
-                                <th>Recommendation</th>
-                                <th>Source Mapping</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {derivedRecommendations.map((item) => (
-                                <tr key={item.id}>
-                                  <td>{item.severity}</td>
-                                  <td>{item.title}</td>
-                                  <td>{item.action}</td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      </>
-                    ) : (
-                      <p className="hint muted">No recommendations or actionable findings are available yet.</p>
-                    )}
-                  </div>
-
-                  <div className="stack">
-                    <h3>Change Over Time</h3>
-                    {latestSummary && previousSummary ? (
-                      <>
-                        <p>
-                          Latest audit run: <code>{latestRun?.completed_at || latestRun?.started_at || "unknown"}</code>
-                        </p>
-                        <p>
-                          Previous audit run:{" "}
-                          <code>{previousRun?.completed_at || previousRun?.started_at || "unknown"}</code>
-                        </p>
-                        <p>
-                          Health score delta: <strong>{formatSignedDelta(healthDelta || 0)}</strong>
-                        </p>
-                        <p>
-                          Issue count delta: <strong>{formatSignedDelta(issueDelta || 0)}</strong> (negative means fewer
-                          findings)
-                        </p>
-                      </>
-                    ) : (
-                      <p className="hint muted">No historical comparison yet. Complete at least two audits.</p>
-                    )}
-                  </div>
-                </>
-              )}
-            </>
-          ) : null}
+          <div className="table-container">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Display Name</th>
+                  <th>Domain</th>
+                  <th>Status</th>
+                  <th>Last Audit</th>
+                  <th>Workspace</th>
+                  <th>Audit</th>
+                  <th>Integrations</th>
+                  {isAdmin ? <th>Admin Action</th> : null}
+                </tr>
+              </thead>
+              <tbody>
+                {context.sites.map((site) => (
+                  <tr key={site.id}>
+                    <td className="table-cell-wrap">{site.display_name}</td>
+                    <td className="table-cell-wrap">{site.normalized_domain}</td>
+                    <td>
+                      <span className={statuses[site.id]?.badgeClass || "badge badge-muted"}>
+                        {statuses[site.id]?.label || "unknown"}
+                      </span>
+                    </td>
+                    <td>{site.last_audit_completed_at || "none"}</td>
+                    <td>
+                      <Link href={`/sites/${site.id}`} className="button button-secondary button-inline">
+                        Open Workspace
+                      </Link>
+                    </td>
+                    <td>
+                      <button
+                        type="button"
+                        className="button button-secondary button-inline"
+                        disabled={!!triggeringSiteId || !site.is_active}
+                        onClick={() => {
+                          void handleTriggerAudit(site);
+                        }}
+                      >
+                        {triggeringSiteId === site.id
+                          ? "Running..."
+                          : site.last_audit_run_id
+                            ? "Run Audit Again"
+                            : "Run First Audit"}
+                      </button>
+                    </td>
+                    <td>
+                      <Link
+                        href={siteSetupHref(site.id)}
+                        className="button button-secondary button-inline"
+                        onClick={() => context.setSelectedSiteId(site.id)}
+                      >
+                        Manage Integrations
+                      </Link>
+                    </td>
+                    {isAdmin ? (
+                      <td>
+                        <button
+                          type="button"
+                          className={
+                            site.is_active
+                              ? "button button-danger button-inline"
+                              : "button button-secondary button-inline"
+                          }
+                          disabled={!!siteActionSiteId}
+                          onClick={() => {
+                            void handleToggleSiteActive(site);
+                          }}
+                        >
+                          {siteActionSiteId === site.id
+                            ? site.is_active
+                              ? "Deactivating..."
+                              : "Reactivating..."
+                            : site.is_active
+                              ? "Deactivate Site"
+                              : "Reactivate Site"}
+                        </button>
+                      </td>
+                    ) : null}
+                  </tr>
+                ))}
+                {context.sites.length === 0 ? (
+                  <tr>
+                    <td colSpan={isAdmin ? 8 : 7}>No sites configured for this business.</td>
+                  </tr>
+                ) : null}
+              </tbody>
+            </table>
+          </div>
         </SectionCard>
+
+        <SectionCard variant="support" className="role-surface-support" data-testid="sites-selected-site-routing-panel">
+          <SectionHeader
+            title="Selected Site Routing"
+            subtitle="Use compact status and route launchers here, then execute details on dedicated workflow pages."
+            headingLevel={2}
+            variant="support"
+          />
+          {selectedSite ? (
+            <div className="stack-tight" data-testid="sites-selected-site-summary">
+              <p className="hint muted">
+                Selected site: <strong>{selectedSite.display_name}</strong> ({selectedSite.normalized_domain})
+              </p>
+              <p className="hint">
+                Last audit status: <strong>{selectedSite.last_audit_status || "Not run yet"}</strong>
+              </p>
+              <div className="row-wrap-tight">
+                <Link href={`/sites/${selectedSite.id}`} className="button button-secondary button-inline">
+                  Open Site Workspace
+                </Link>
+                <Link href="/audits" className="button button-secondary button-inline">
+                  Audit Runs
+                </Link>
+                <Link href="/recommendations" className="button button-secondary button-inline">
+                  Recommendations
+                </Link>
+                <Link href={`/sites/${selectedSite.id}/migration`} className="button button-secondary button-inline">
+                  Migration
+                </Link>
+              </div>
+            </div>
+          ) : (
+            <p className="hint muted">Select or create a site to unlock setup and workflow routes.</p>
+          )}
+        </SectionCard>
+
+        <SelectedSiteSetupIntegrationsPanel
+          token={context.token}
+          businessId={context.businessId}
+          selectedSite={selectedSite}
+          refreshSites={context.refreshSites}
+        />
       </OperatorPageSectionStack>
     </PageContainer>
   );

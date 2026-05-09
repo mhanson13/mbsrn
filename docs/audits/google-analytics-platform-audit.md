@@ -36,7 +36,7 @@ Phase 0 hardening from this audit is now implemented:
 Phase 1 GA4 connection/property health visibility is now implemented as a compact, site-scoped status layer:
 - site analytics summary responses include additive `ga4_health` fields with bounded operator-safe status/message values
 - health is derived from the selected site property path only; no global/default GA4 property fallback is used
-- Google Profile and site workspace surfaces show compact per-site GA4 health state + next-step guidance
+- Sites selected-site setup and site workspace surfaces show compact per-site GA4 health state + next-step guidance
 - recommendation detail surfaces now explicitly show when GA4 measurement context is omitted/unavailable
 - GA4 health visibility is additive and does not change recommendation scoring, migration planning logic, or deploy behavior
 
@@ -108,15 +108,15 @@ Phase 3 additive recommendation-context wiring is now implemented with determini
 | `frontend/operator-ui/lib/api/types.ts` | TS contracts | GA4 summary/onboarding/account response shapes | Frontend | Medium | Strong typed contracts for GA4 statuses |
 | `frontend/operator-ui/app/sites/[site_id]/page.tsx` | Site workspace UI | GA4 trend card, diagnostics, onboarding summary | Frontend | Medium | Actionable but summary-level only |
 | `frontend/operator-ui/app/recommendations/page.tsx` | Recommendations UI | Displays GA4 measurement context lines | Frontend | Medium | Directional context in expanded details |
-| `frontend/operator-ui/app/business-profile/page.tsx` | Google Profile UI | Per-site GA4 property setup input/save | Frontend | Medium | Manual numeric property setup; no account picker |
-| `frontend/operator-ui/app/google-profile/page.tsx` | Route alias | Google Profile route wrapper | Frontend | Low | Wraps business-profile page |
+| `frontend/operator-ui/app/business-profile/page.tsx` | Legacy Google setup route | Compatibility surface for full GBP verification workflow | Frontend | Medium | Setup ownership shifted to Sites selected-site setup |
+| `frontend/operator-ui/app/google-profile/page.tsx` | Legacy compatibility route | Redirects to Sites selected-site setup | Frontend | Low | Preserves old bookmarks and callback links |
 | `frontend/operator-ui/components/MigrationWorkspacePanel.tsx` | Migration UI | Shows `ga4_signals_included` in draft input summary | Frontend | Low | Informational provenance only |
-| `frontend/operator-ui/app/sites/site-workspace-page.test.tsx` | Site workspace tests | GA4 summary/onboarding rendering and GA4 panel removal | Tests | Low | Confirms setup moved to Google Profile |
+| `frontend/operator-ui/app/sites/site-workspace-page.test.tsx` | Site workspace tests | GA4 summary/onboarding rendering and GA4 panel removal | Tests | Low | Confirms setup links route to Sites selected-site setup |
 | `frontend/operator-ui/app/recommendations/page.test.tsx` | Recommendation UI tests | GA4 measurement context rendering behavior | Tests | Low | No-match vs available coverage |
 | `frontend/operator-ui/app/business-profile/page.test.tsx` | Google Profile tests | GA4 property save UI behavior | Tests | Low | Mocks API responses |
 | `docs/architecture.md` | Architecture doc | GA4 layer design + diagnostics/freshness/onboarding | Docs | Medium | Mostly accurate; references phased model |
 | `docs/deployment-gke-cicd.md` | Deployment doc | GA4 runtime secret/env wiring | Docs | Medium | Documents `GA4_CREDENTIALS_JSON`, optional `GA4_PROPERTY_ID` |
-| `docs/features/google-profile.md` | Feature doc | States GA4 setup ownership moved to Google Profile | Docs | Low | Aligns with current UI |
+| `docs/features/google-profile.md` | Feature doc | Describes legacy/compatibility Google setup route behavior | Docs | Low | Setup ownership now under Sites selected-site setup |
 | `docs/features/seo-migration-workspace.md` | Feature doc | Migration GA4 signal + measurement insertion notes | Docs | Low | GA4 used as context/insertion, not analytics scoring |
 | `docs/features/recommendations.md` | Feature doc | Recommendation GA4 context description | Docs | Medium | Contains stale wording about in-workspace "Connect GA4" control |
 | `.env.example` | Env sample | Search Console env documented; GA4 env missing | Config Docs | Medium | GA4 runtime keys exist in code but not mirrored here |
@@ -130,7 +130,7 @@ Phase 3 additive recommendation-context wiring is now implemented with determini
 
 ### 3.2 Property discovery/storage/selection
 - Per-site GA4 metadata is persisted on `seo_sites` (`ga4_property_id`, onboarding fields).
-- Google Profile UI lets operator/admin save numeric GA4 property ID per selected site.
+- Sites selected-site setup lets operator/admin save numeric GA4 property ID per selected site.
 - Account discovery endpoint exists (`/analytics/ga4-accessible-accounts`) but is not consumed by frontend setup UX.
 
 ### 3.3 Query model
@@ -238,7 +238,7 @@ Missing:
 Current surfaces:
 - Site workspace: compact GA4 insight cards (`Top landing pages`, `Traffic trend`, `Engagement trend`) plus GA4 onboarding/health summary.
 - Recommendations: page/site traffic context in expanded recommendation details.
-- Google Profile: per-site GA4 property input/save.
+- Sites selected-site setup: per-site GA4 property input/save.
 - Migration workspace: bounded GA4-included boolean signal in draft context summary.
 
 UX quality:
@@ -254,7 +254,7 @@ Gaps:
 
 Role boundaries:
 - Backend enforces admin-only updates for GA4 site fields.
-- Google Profile page currently presents save controls but does not visibly role-gate the controls client-side (relies on backend 403 path).
+- Sites selected-site setup currently presents save controls but does not visibly role-gate them client-side (relies on backend 403 path).
 
 ## 10) Testing Findings
 
@@ -281,7 +281,7 @@ Real-call posture:
 | GA4-R2 | High | Shared-credential account discovery may leak broad account metadata across tenants | `/ga4-accessible-accounts` returns service-credential account summaries | Scope/filter account discovery or restrict endpoint visibility to admin + scoped mappings |
 | GA4-R3 | Medium | No dedicated GA4 provider tests | No `test_ga4_analytics_provider.py` equivalent to Search Console provider tests | Add provider-level unit tests for auth/timeout/error parsing/filter construction |
 | GA4-R4 | Medium | Operator value remains limited beyond compact GA4 summaries | Phase 2 added top landing/traffic/engagement cards, but no conversions/events/source-medium and no prioritization wiring yet | Add phase-3 prioritization hooks + phase-4/5 deeper GA4 outcome usage |
-| GA4-R5 | Medium | Docs drift on GA4 setup location | Recommendations doc references in-workspace connect control while setup moved to Google Profile | Align docs with current UX ownership model |
+| GA4-R5 | Medium | Docs drift on GA4 setup location | Recommendations doc references in-workspace connect control while setup moved to Sites selected-site setup | Align docs with current UX ownership model |
 | GA4-R6 | Medium | GA4 runtime env docs incomplete in `.env.example` | GA4 config keys exist in code but sample env omits them | Add non-secret GA4 env examples and safe comments |
 
 ## 12) Recommended Roadmap (Phased)
@@ -312,10 +312,10 @@ Real-call posture:
 
 ### Phase 1: Expose Current GA4 Connection/Property Health
 
-1. Surface account-discovery and property verification in Google Profile
+1. Surface account-discovery and property verification in Sites selected-site setup
 - Goal: Move from manual-only property entry to guided property confirmation.
 - Operator value: Lower setup friction and fewer property mismatch errors.
-- Likely files: `frontend/operator-ui/app/business-profile/page.tsx`, `frontend/operator-ui/lib/api/client.ts`, tests.
+- Likely files: `frontend/operator-ui/app/sites/page.tsx`, `frontend/operator-ui/app/business-profile/page.tsx`, `frontend/operator-ui/lib/api/client.ts`, tests.
 - Backend impact: Low to medium (may need scoped endpoint behavior).
 - Frontend impact: Medium.
 - Docs impact: Medium.

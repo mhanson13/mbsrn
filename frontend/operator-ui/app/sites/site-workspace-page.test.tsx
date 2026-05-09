@@ -240,13 +240,13 @@ describe("site workspace modernized structure", () => {
     expect(tabLaunch).toHaveAttribute("href", "/sites/site-1/migration");
   });
 
-  it("removes GA4 connect controls from the site workspace and points profile actions to Google Profile", async () => {
+  it("removes GA4 connect controls from the site workspace and routes profile actions to Sites setup", async () => {
     render(<SiteWorkspacePage />);
 
     expect(screen.queryByTestId("workspace-ga4-connect-panel")).not.toBeInTheDocument();
-    const profileLinks = await screen.findAllByRole("link", { name: "Open Google Profile" });
+    const profileLinks = await screen.findAllByRole("link", { name: "Open Site Setup" });
     expect(profileLinks.length).toBeGreaterThan(0);
-    profileLinks.forEach((link) => expect(link).toHaveAttribute("href", "/google-profile"));
+    profileLinks.forEach((link) => expect(link).toHaveAttribute("href", "/sites?site_id=site-1#selected-site-setup"));
   });
 
   it("keeps only compact workflow launchers on the site workspace and links to dedicated routes", async () => {

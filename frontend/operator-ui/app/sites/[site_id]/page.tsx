@@ -473,7 +473,7 @@ function deriveGoogleWorkspaceStatus(
     return {
       stateLabel: "Unavailable",
       detail: connectionError,
-      nextActionLabel: "Open Google Profile",
+      nextActionLabel: "Open Site Setup",
       tone: "danger",
       connected: false,
       reconnectRequired: true,
@@ -483,7 +483,7 @@ function deriveGoogleWorkspaceStatus(
     return {
       stateLabel: "Not connected",
       detail: "Connect Google Profile to unlock profile sync and workflow guidance.",
-      nextActionLabel: "Open Google Profile",
+      nextActionLabel: "Open Site Setup",
       tone: "warning",
       connected: false,
       reconnectRequired: false,
@@ -502,7 +502,7 @@ function deriveGoogleWorkspaceStatus(
     return {
       stateLabel: "Reconnect required",
       detail: "Google session needs reconnect before profile and analytics reads can continue.",
-      nextActionLabel: "Open Google Profile",
+      nextActionLabel: "Open Site Setup",
       tone: "warning",
       connected: true,
       reconnectRequired: true,
@@ -513,7 +513,7 @@ function deriveGoogleWorkspaceStatus(
     return {
       stateLabel: "Scope update needed",
       detail: "Connected account is missing one or more required read scopes.",
-      nextActionLabel: "Open Google Profile",
+      nextActionLabel: "Open Site Setup",
       tone: "warning",
       connected: true,
       reconnectRequired: true,
@@ -525,7 +525,7 @@ function deriveGoogleWorkspaceStatus(
     detail: connection.last_refreshed_at
       ? `Connected and refreshed ${formatRelativeTime(connection.last_refreshed_at)}.`
       : "Connected and ready.",
-    nextActionLabel: "Open Google Profile",
+    nextActionLabel: "Open Site Setup",
     tone: "success",
     connected: true,
     reconnectRequired: false,
@@ -701,6 +701,7 @@ type WorkspaceSnapshotProps = {
   searchVisibilityTrendDetail: string;
   searchVisibilityTrendTone: Tone;
   googleStatus: GoogleWorkspaceStatus;
+  siteSetupHref: string;
 };
 
 function WorkspaceSnapshot({
@@ -725,6 +726,7 @@ function WorkspaceSnapshot({
   searchVisibilityTrendDetail,
   searchVisibilityTrendTone,
   googleStatus,
+  siteSetupHref,
 }: WorkspaceSnapshotProps) {
   return (
     <SectionCard className="operator-shell-summary-panel" variant="summary">
@@ -803,7 +805,7 @@ function WorkspaceSnapshot({
         <SummaryStatCard
           label="Google Profile"
           value={googleStatus.stateLabel}
-          detail={<>{googleStatus.detail} <Link href="/google-profile">{googleStatus.nextActionLabel}</Link></>}
+          detail={<>{googleStatus.detail} <Link href={siteSetupHref}>{googleStatus.nextActionLabel}</Link></>}
           tone={googleStatus.tone}
           variant="elevated"
           data-testid="workspace-summary-gbp"
@@ -926,6 +928,7 @@ type WorkflowLaunchpadProps = {
   latestRecommendationRun: RecommendationRun | null;
   latestCompetitorRun: CompetitorProfileGenerationRun | null;
   competitorSummary: CompetitorProfileGenerationSummaryResponse | null;
+  siteSetupHref: string;
 };
 
 function WorkflowLaunchpad({
@@ -951,6 +954,7 @@ function WorkflowLaunchpad({
   latestRecommendationRun,
   latestCompetitorRun,
   competitorSummary,
+  siteSetupHref,
 }: WorkflowLaunchpadProps) {
   return (
     <SectionCard className="operator-shell-section operator-shell-secondary-zone workspace-content-tab-shell site-workspace-tab-shell">
@@ -1062,7 +1066,7 @@ function WorkflowLaunchpad({
             <strong>{googleStatus.stateLabel}</strong>
             <span className="hint">{googleStatus.detail}</span>
             <WorkspaceActionBar variant="secondary">
-              <Link href="/google-profile" className="button button-secondary button-inline">Open Google Profile</Link>
+              <Link href={siteSetupHref} className="button button-secondary button-inline">Open Site Setup</Link>
             </WorkspaceActionBar>
           </article>
         </div>
@@ -1316,6 +1320,7 @@ export default function SiteWorkspacePage() {
   }
 
   const recommendationQueueSummary = normalizeQueueSummary(recommendations);
+  const siteSetupHref = `/sites?site_id=${encodeURIComponent(selectedSite.id)}#selected-site-setup`;
   const latestAuditRun = auditRuns[0] || null;
   const latestCompletedAuditRun = auditRuns.find((run) => normalizeLowerCaseString(run.status) === "completed") || null;
   const latestRecommendationRun = recommendationRuns[0] || null;
@@ -1363,9 +1368,9 @@ export default function SiteWorkspacePage() {
       title: "Connect Google Profile",
       reason: "Google connection is required for profile and integration signals.",
       contextHint: googleStatus.detail,
-      actionLabel: "Open Google Profile",
+      actionLabel: "Open Site Setup",
       actionKind: "navigate",
-      actionHref: "/google-profile",
+      actionHref: siteSetupHref,
     }
     : recommendationQueueSummary.open > 0
       ? {
@@ -1571,8 +1576,8 @@ export default function SiteWorkspacePage() {
       "Google Profile connected",
       googleStatus.detail,
       googleStatus.connected && !googleStatus.reconnectRequired ? "done" : "blocked",
-      "Open Google Profile",
-      "/google-profile",
+      "Open Site Setup",
+      siteSetupHref,
     ),
     checklistItem(
       "audit_baseline",
@@ -1665,6 +1670,7 @@ export default function SiteWorkspacePage() {
           searchVisibilityTrendDetail={searchVisibilityTrendDetail}
           searchVisibilityTrendTone={searchVisibilityTrendTone}
           googleStatus={googleStatus}
+          siteSetupHref={siteSetupHref}
         />
 
         <WorkspaceSetupChecklist setupChecklistItems={setupChecklistItems} />
@@ -1693,6 +1699,7 @@ export default function SiteWorkspacePage() {
         latestRecommendationRun={latestRecommendationRun}
         latestCompetitorRun={latestCompetitorRun}
         competitorSummary={competitorSummary}
+        siteSetupHref={siteSetupHref}
       />
     </PageContainer>
   );

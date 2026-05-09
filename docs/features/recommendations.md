@@ -773,7 +773,7 @@ Key properties:
 
 ### GA4 Connect + Diagnostic Status
 
-Per-site GA4 setup is owned by **Google Profile** and recommendation surfaces consume that site-scoped property configuration.
+Per-site GA4 setup is owned by **Sites > Selected Site Setup (Google & Analytics)** and recommendation surfaces consume that site-scoped property configuration.
 
 Operator inputs:
 
