@@ -31,6 +31,13 @@ Compatibility behavior:
   3. OAuth returned and verification still loading
   4. not connected
   5. unavailable/error
+- Bounded GBP status classification now distinguishes:
+  - `missing_scope`
+  - `permission_denied`
+  - `no_accounts`
+  - `no_locations`
+  - `oauth_connected` (linked but verification/reconnect still needed)
+  - `usable`
 - Example denied-state message:
   - `Google returned successfully, but Google Business Profile access is denied for this account.`
 

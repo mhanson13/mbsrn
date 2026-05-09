@@ -50,6 +50,7 @@ from app.services.google_business_profile_connection import (
 )
 from app.services.google_business_profile_service import (
     GoogleBusinessProfileAccountResult,
+    GoogleBusinessProfileConnectionDiagnosticsResult,
     GoogleBusinessProfileVerificationActionResult,
     GoogleBusinessProfileVerificationMethodOptionResult,
     GoogleBusinessProfileVerificationOptionsResult,
@@ -177,14 +178,16 @@ def google_business_profile_connect_callback(
             ),
             status_code=status.HTTP_303_SEE_OTHER,
         )
-    return _to_connection_response(result)
+    return _to_connection_response(result, diagnostics=_default_connection_diagnostics(result))
 
 
 @router.get("/connection", response_model=GoogleBusinessProfileConnectionStatusResponse)
 def get_google_business_profile_connection(
+    include_status_details: bool = False,
     tenant_context: TenantContext = Depends(get_tenant_context),
     _: Principal = Depends(get_authenticated_principal),
     service: GoogleBusinessProfileConnectionService = Depends(get_google_business_profile_connection_service),
+    gbp_service: GoogleBusinessProfileService = Depends(get_google_business_profile_service),
 ) -> GoogleBusinessProfileConnectionStatusResponse:
     try:
         result = service.get_connection_status(business_id=tenant_context.business_id)
@@ -192,7 +195,10 @@ def get_google_business_profile_connection(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     except GoogleBusinessProfileConnectionConfigurationError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
-    return _to_connection_response(result)
+    diagnostics = _default_connection_diagnostics(result)
+    if include_status_details:
+        diagnostics = gbp_service.evaluate_connection_diagnostics(business_id=tenant_context.business_id)
+    return _to_connection_response(result, diagnostics=diagnostics)
 
 
 @router.post("/disconnect", response_model=GoogleBusinessProfileDisconnectResponse)
@@ -216,7 +222,7 @@ def disconnect_google_business_profile(
 
     return GoogleBusinessProfileDisconnectResponse(
         status="disconnected" if disconnected else "not_connected",
-        connection=_to_connection_response(current),
+        connection=_to_connection_response(current, diagnostics=_default_connection_diagnostics(current)),
     )
 
 
@@ -404,6 +410,8 @@ def get_google_business_profile_verification_observability_counters(
 
 def _to_connection_response(
     result: GoogleBusinessProfileConnectionStatusResult,
+    *,
+    diagnostics: GoogleBusinessProfileConnectionDiagnosticsResult,
 ) -> GoogleBusinessProfileConnectionStatusResponse:
     return GoogleBusinessProfileConnectionStatusResponse(
         provider=result.provider,
@@ -419,6 +427,58 @@ def _to_connection_response(
         token_status=result.token_status,
         ga4_scope_granted=result.ga4_scope_granted,
         required_ga4_scope=result.required_ga4_scope,
+        connected_google_identity=result.connected_google_identity,
+        gbp_connection_state=diagnostics.gbp_connection_state,
+        gbp_required_scope_granted=diagnostics.gbp_required_scope_granted,
+        gbp_accounts_count=diagnostics.gbp_accounts_count,
+        gbp_locations_count=diagnostics.gbp_locations_count,
+        gbp_selected_location_present=diagnostics.gbp_selected_location_present,
+        gbp_status_reason=diagnostics.gbp_status_reason,
+        gbp_next_action=diagnostics.gbp_next_action,
+    )
+
+
+def _default_connection_diagnostics(
+    result: GoogleBusinessProfileConnectionStatusResult,
+) -> GoogleBusinessProfileConnectionDiagnosticsResult:
+    if not result.connected:
+        return GoogleBusinessProfileConnectionDiagnosticsResult(
+            gbp_connection_state="not_connected",
+            gbp_required_scope_granted=None,
+            gbp_accounts_count=None,
+            gbp_locations_count=None,
+            gbp_selected_location_present=None,
+            gbp_status_reason="not_connected",
+            gbp_next_action="Connect Google Profile for this business before loading Business Profile locations.",
+        )
+    if not result.required_scopes_satisfied or result.token_status == "insufficient_scope":
+        return GoogleBusinessProfileConnectionDiagnosticsResult(
+            gbp_connection_state="missing_scope",
+            gbp_required_scope_granted=False,
+            gbp_accounts_count=None,
+            gbp_locations_count=None,
+            gbp_selected_location_present=None,
+            gbp_status_reason="missing_scope",
+            gbp_next_action="Reconnect Google Profile to grant the required Business Profile scope.",
+        )
+    if result.reconnect_required or result.token_status in {"reconnect_required", "refresh_required"}:
+        return GoogleBusinessProfileConnectionDiagnosticsResult(
+            gbp_connection_state="oauth_connected",
+            gbp_required_scope_granted=result.required_scopes_satisfied,
+            gbp_accounts_count=None,
+            gbp_locations_count=None,
+            gbp_selected_location_present=None,
+            gbp_status_reason="oauth_connected_reconnect_required",
+            gbp_next_action="Refresh or reconnect Google Profile before loading Business Profile accounts.",
+        )
+    return GoogleBusinessProfileConnectionDiagnosticsResult(
+        gbp_connection_state="oauth_connected",
+        gbp_required_scope_granted=True,
+        gbp_accounts_count=None,
+        gbp_locations_count=None,
+        gbp_selected_location_present=None,
+        gbp_status_reason="oauth_connected",
+        gbp_next_action="Use Refresh to verify Business Profile account and location access.",
     )
 
 

@@ -105,6 +105,13 @@ function buildConnection(
     token_status: "reconnect_required",
     ga4_scope_granted: false,
     required_ga4_scope: "https://www.googleapis.com/auth/analytics.readonly",
+    gbp_connection_state: "not_connected",
+    gbp_required_scope_granted: null,
+    gbp_accounts_count: null,
+    gbp_locations_count: null,
+    gbp_selected_location_present: null,
+    gbp_status_reason: "not_connected",
+    gbp_next_action: "Connect Google Profile for this business before loading Business Profile locations.",
     ...overrides,
   };
 }
@@ -201,7 +208,9 @@ beforeEach(() => {
 
 async function renderSitesPageAndWaitForSetupEffects() {
   render(<SitesPage />);
-  await waitFor(() => expect(mockFetchGoogleBusinessProfileConnection).toHaveBeenCalledWith("token-1"));
+  await waitFor(() =>
+    expect(mockFetchGoogleBusinessProfileConnection).toHaveBeenCalledWith("token-1", { includeStatusDetails: true })
+  );
 }
 
 describe("sites page inventory + setup boundaries", () => {
@@ -341,10 +350,9 @@ describe("sites page inventory + setup boundaries", () => {
         reconnect_required: false,
         required_scopes_satisfied: true,
         token_status: "usable",
+        gbp_connection_state: "permission_denied",
+        gbp_status_reason: "permission_denied",
       }),
-    );
-    mockFetchGoogleBusinessProfileLocations.mockRejectedValueOnce(
-      new Error("Google Business Profile access is denied for this Google account."),
     );
 
     await renderSitesPageAndWaitForSetupEffects();
@@ -364,6 +372,8 @@ describe("sites page inventory + setup boundaries", () => {
         reconnect_required: false,
         required_scopes_satisfied: true,
         token_status: "usable",
+        gbp_connection_state: "usable",
+        gbp_status_reason: "usable",
       }),
     );
 
@@ -389,6 +399,78 @@ describe("sites page inventory + setup boundaries", () => {
 
     expect(resolveConnection).not.toBeNull();
     resolveConnection!(buildConnection());
-    await waitFor(() => expect(mockFetchGoogleBusinessProfileConnection).toHaveBeenCalledWith("token-1"));
+    await waitFor(() =>
+      expect(mockFetchGoogleBusinessProfileConnection).toHaveBeenCalledWith("token-1", { includeStatusDetails: true })
+    );
+  });
+
+  it("shows missing-scope guidance from backend status without contradictory success text", async () => {
+    mockUseSearchParams.mockReturnValue(new URLSearchParams("gbp_connect=success"));
+    mockFetchGoogleBusinessProfileConnection.mockResolvedValueOnce(
+      buildConnection({
+        connected: true,
+        reconnect_required: true,
+        required_scopes_satisfied: false,
+        token_status: "insufficient_scope",
+        gbp_connection_state: "missing_scope",
+        gbp_status_reason: "missing_scope",
+      }),
+    );
+
+    await renderSitesPageAndWaitForSetupEffects();
+
+    expect(screen.getByText("Scope missing")).toBeInTheDocument();
+    expect(
+      screen.getAllByText("Reconnect Google Profile to grant the required Business Profile readonly scope.").length,
+    ).toBeGreaterThan(0);
+    expect(screen.queryByText("Google returned successfully and Google Profile is connected.")).not.toBeInTheDocument();
+  });
+
+  it("shows no-accounts state when oauth succeeded but provider returned no accounts", async () => {
+    mockUseSearchParams.mockReturnValue(new URLSearchParams("gbp_connect=success"));
+    mockFetchGoogleBusinessProfileConnection.mockResolvedValueOnce(
+      buildConnection({
+        connected: true,
+        reconnect_required: false,
+        required_scopes_satisfied: true,
+        token_status: "usable",
+        gbp_connection_state: "no_accounts",
+        gbp_accounts_count: 0,
+        gbp_locations_count: 0,
+        gbp_status_reason: "no_accounts",
+      }),
+    );
+
+    await renderSitesPageAndWaitForSetupEffects();
+
+    expect(screen.getByText("No accounts")).toBeInTheDocument();
+    expect(
+      screen.getAllByText("Google account is linked, but no Business Profile accounts were returned.").length,
+    ).toBeGreaterThan(0);
+    expect(screen.queryByText("Google returned successfully and Google Profile is connected.")).not.toBeInTheDocument();
+  });
+
+  it("shows no-locations state when oauth succeeded but provider returned no locations", async () => {
+    mockUseSearchParams.mockReturnValue(new URLSearchParams("gbp_connect=success"));
+    mockFetchGoogleBusinessProfileConnection.mockResolvedValueOnce(
+      buildConnection({
+        connected: true,
+        reconnect_required: false,
+        required_scopes_satisfied: true,
+        token_status: "usable",
+        gbp_connection_state: "no_locations",
+        gbp_accounts_count: 1,
+        gbp_locations_count: 0,
+        gbp_status_reason: "no_locations",
+      }),
+    );
+
+    await renderSitesPageAndWaitForSetupEffects();
+
+    expect(screen.getByText("No locations")).toBeInTheDocument();
+    expect(
+      screen.getAllByText("Google account is linked, but no Business Profile locations were returned.").length,
+    ).toBeGreaterThan(0);
+    expect(screen.queryByText("Google returned successfully and Google Profile is connected.")).not.toBeInTheDocument();
   });
 });

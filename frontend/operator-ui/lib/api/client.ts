@@ -1494,9 +1494,14 @@ export async function fetchSearchConsoleSiteSummary(
 
 export async function fetchGoogleBusinessProfileConnection(
   token: string,
+  options?: { includeStatusDetails?: boolean },
 ): Promise<GoogleBusinessProfileConnectionStatusResponse> {
+  const includeStatusDetails = options?.includeStatusDetails === true;
+  const endpoint = includeStatusDetails
+    ? "/api/integrations/google/business-profile/connection?include_status_details=true"
+    : "/api/integrations/google/business-profile/connection";
   return apiRequest<GoogleBusinessProfileConnectionStatusResponse>(
-    "/api/integrations/google/business-profile/connection",
+    endpoint,
     { token },
   );
 }

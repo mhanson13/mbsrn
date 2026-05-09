@@ -74,6 +74,7 @@ class GoogleBusinessProfileConnectionStatusResult:
     token_status: TokenUsabilityStatus
     ga4_scope_granted: bool | None
     required_ga4_scope: str
+    connected_google_identity: str | None
 
 
 @dataclass(frozen=True)
@@ -90,6 +91,7 @@ class GoogleBusinessProfileTokenUseResult:
     access_token: str | None
     ga4_scope_granted: bool | None
     required_ga4_scope: str
+    connected_google_identity: str | None
 
 
 @dataclass(frozen=True)
@@ -1031,6 +1033,7 @@ class GoogleBusinessProfileConnectionService:
             token_status=token_status,
             ga4_scope_granted=ga4_scope_granted,
             required_ga4_scope=self.GA4_ANALYTICS_READONLY_SCOPE,
+            connected_google_identity=_masked_google_identity(connection.external_account_email),
         )
 
     def _status_without_connection(
@@ -1053,6 +1056,7 @@ class GoogleBusinessProfileConnectionService:
             token_status=self.TOKEN_STATUS_RECONNECT_REQUIRED,
             ga4_scope_granted=None,
             required_ga4_scope=self.GA4_ANALYTICS_READONLY_SCOPE,
+            connected_google_identity=None,
         )
 
     def _status_with_override(
@@ -1078,6 +1082,7 @@ class GoogleBusinessProfileConnectionService:
             token_status=token_status,
             ga4_scope_granted=base.ga4_scope_granted,
             required_ga4_scope=base.required_ga4_scope,
+            connected_google_identity=base.connected_google_identity,
         )
 
     def _token_use_from_status(
@@ -1099,6 +1104,7 @@ class GoogleBusinessProfileConnectionService:
             access_token=access_token,
             ga4_scope_granted=status.ga4_scope_granted,
             required_ga4_scope=status.required_ga4_scope,
+            connected_google_identity=status.connected_google_identity,
         )
 
     def _access_token_needs_refresh(self, connection: ProviderConnection) -> bool:
@@ -1212,3 +1218,19 @@ def _generate_pkce_code_verifier() -> str:
 def _build_pkce_code_challenge(code_verifier: str) -> str:
     digest = hashlib.sha256(code_verifier.encode("utf-8")).digest()
     return base64.urlsafe_b64encode(digest).decode("utf-8").rstrip("=")
+
+
+def _masked_google_identity(email: str | None) -> str | None:
+    normalized = (email or "").strip()
+    if not normalized or "@" not in normalized:
+        return None
+    local, _, domain = normalized.partition("@")
+    local_part = local.strip()
+    domain_part = domain.strip()
+    if not local_part or not domain_part:
+        return None
+    masked_local = f"{local_part[0]}***"
+    domain_label, dot, domain_suffix = domain_part.partition(".")
+    masked_domain_label = f"{domain_label[:1]}***" if domain_label else "***"
+    masked_domain = f"{masked_domain_label}{dot}{domain_suffix}" if dot else masked_domain_label
+    return f"{masked_local}@{masked_domain}"

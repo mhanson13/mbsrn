@@ -234,7 +234,8 @@ Treat the following production log patterns as expected noise unless correlated 
   - should not be treated as an application startup failure by itself
   - non-cancellation lifespan failures and other startup/shutdown exceptions remain error-visible
   - startup marker for filter install:
-    - `api_lifespan_cancelled_error_filter_installed target_logger=uvicorn.error`
+    - `api_lifespan_cancelled_error_filter_installed target_loggers=uvicorn.error,uvicorn`
+  - suppression targets Uvicorn logging records for lifespan `CancelledError`, including traceback-text shaped records
   - suppression scope is logging-record based; if a runtime emits direct stderr tracebacks outside logging, those lines can still appear and should be interpreted as shutdown-noise unless correlated with readiness/startup failure.
 - Next.js (`mbsrn-ui`, `mbsrn-www`) malformed multipart parse:
   - `Error: Unexpected end of form`

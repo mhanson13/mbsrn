@@ -29,6 +29,25 @@ class GoogleBusinessProfileConnectionStatusResponse(BaseModel):
     token_status: Literal["usable", "refresh_required", "reconnect_required", "insufficient_scope"]
     ga4_scope_granted: bool | None = None
     required_ga4_scope: str = "https://www.googleapis.com/auth/analytics.readonly"
+    connected_google_identity: str | None = None
+    gbp_connection_state: Literal[
+        "not_connected",
+        "oauth_connected",
+        "usable",
+        "missing_scope",
+        "permission_denied",
+        "no_accounts",
+        "no_locations",
+        "location_not_mapped",
+        "unavailable",
+        "unknown",
+    ] = "unknown"
+    gbp_required_scope_granted: bool | None = None
+    gbp_accounts_count: int | None = None
+    gbp_locations_count: int | None = None
+    gbp_selected_location_present: bool | None = None
+    gbp_status_reason: str | None = None
+    gbp_next_action: str | None = None
 
 
 class GoogleBusinessProfileDisconnectResponse(BaseModel):

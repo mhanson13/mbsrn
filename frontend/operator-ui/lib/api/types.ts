@@ -2517,6 +2517,18 @@ export type GoogleBusinessProfileTokenStatus =
   | "reconnect_required"
   | "insufficient_scope";
 
+export type GoogleBusinessProfileConnectionState =
+  | "not_connected"
+  | "oauth_connected"
+  | "usable"
+  | "missing_scope"
+  | "permission_denied"
+  | "no_accounts"
+  | "no_locations"
+  | "location_not_mapped"
+  | "unavailable"
+  | "unknown";
+
 export interface GoogleBusinessProfileConnectionStatusResponse {
   provider: string;
   connected: boolean;
@@ -2531,6 +2543,14 @@ export interface GoogleBusinessProfileConnectionStatusResponse {
   token_status: GoogleBusinessProfileTokenStatus;
   ga4_scope_granted?: boolean | null;
   required_ga4_scope?: string | null;
+  connected_google_identity?: string | null;
+  gbp_connection_state?: GoogleBusinessProfileConnectionState;
+  gbp_required_scope_granted?: boolean | null;
+  gbp_accounts_count?: number | null;
+  gbp_locations_count?: number | null;
+  gbp_selected_location_present?: boolean | null;
+  gbp_status_reason?: string | null;
+  gbp_next_action?: string | null;
 }
 
 export interface GoogleBusinessProfileConnectStartResponse {

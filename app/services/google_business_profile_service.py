@@ -113,6 +113,31 @@ class GoogleBusinessProfileLocationsResult:
     locations: tuple[GoogleBusinessProfileFlatLocationResult, ...]
 
 
+GoogleBusinessProfileConnectionState = Literal[
+    "not_connected",
+    "oauth_connected",
+    "usable",
+    "missing_scope",
+    "permission_denied",
+    "no_accounts",
+    "no_locations",
+    "location_not_mapped",
+    "unavailable",
+    "unknown",
+]
+
+
+@dataclass(frozen=True)
+class GoogleBusinessProfileConnectionDiagnosticsResult:
+    gbp_connection_state: GoogleBusinessProfileConnectionState
+    gbp_required_scope_granted: bool | None
+    gbp_accounts_count: int | None
+    gbp_locations_count: int | None
+    gbp_selected_location_present: bool | None
+    gbp_status_reason: str
+    gbp_next_action: str
+
+
 @dataclass(frozen=True)
 class GoogleBusinessProfileVerificationMethodOptionResult:
     option_id: str
@@ -245,6 +270,127 @@ class GoogleBusinessProfileService:
                     )
                 )
         return GoogleBusinessProfileLocationsResult(locations=tuple(flattened))
+
+    def evaluate_connection_diagnostics(
+        self,
+        *,
+        business_id: str,
+    ) -> GoogleBusinessProfileConnectionDiagnosticsResult:
+        connection = self.connection_service.get_connection_status(
+            business_id=business_id,
+            required_scopes=(self.connection_service.BUSINESS_PROFILE_SCOPE,),
+        )
+
+        if not connection.connected:
+            result = GoogleBusinessProfileConnectionDiagnosticsResult(
+                gbp_connection_state="not_connected",
+                gbp_required_scope_granted=None,
+                gbp_accounts_count=None,
+                gbp_locations_count=None,
+                gbp_selected_location_present=None,
+                gbp_status_reason="not_connected",
+                gbp_next_action="Connect Google Profile for this business before loading Business Profile locations.",
+            )
+            self._log_connection_diagnostics(business_id=business_id, diagnostics=result)
+            return result
+
+        if not connection.required_scopes_satisfied or connection.token_status == "insufficient_scope":
+            result = GoogleBusinessProfileConnectionDiagnosticsResult(
+                gbp_connection_state="missing_scope",
+                gbp_required_scope_granted=False,
+                gbp_accounts_count=None,
+                gbp_locations_count=None,
+                gbp_selected_location_present=None,
+                gbp_status_reason="missing_scope",
+                gbp_next_action="Reconnect Google Profile to grant the required Business Profile scope.",
+            )
+            self._log_connection_diagnostics(business_id=business_id, diagnostics=result)
+            return result
+
+        if connection.reconnect_required or connection.token_status in {"reconnect_required", "refresh_required"}:
+            result = GoogleBusinessProfileConnectionDiagnosticsResult(
+                gbp_connection_state="oauth_connected",
+                gbp_required_scope_granted=connection.required_scopes_satisfied,
+                gbp_accounts_count=None,
+                gbp_locations_count=None,
+                gbp_selected_location_present=None,
+                gbp_status_reason="oauth_connected_reconnect_required",
+                gbp_next_action="Refresh or reconnect Google Profile before loading Business Profile accounts.",
+            )
+            self._log_connection_diagnostics(business_id=business_id, diagnostics=result)
+            return result
+
+        try:
+            accounts_payload = self._call_google_api(
+                business_id=business_id,
+                callback=lambda access_token: self.client.list_accounts(access_token=access_token),
+            )
+        except GoogleBusinessProfileServiceError as exc:
+            result = self._diagnostics_from_service_error(exc)
+            self._log_connection_diagnostics(business_id=business_id, diagnostics=result)
+            return result
+
+        raw_accounts = _extract_list(accounts_payload, "accounts")
+        accounts_count = len(raw_accounts)
+        if accounts_count == 0:
+            result = GoogleBusinessProfileConnectionDiagnosticsResult(
+                gbp_connection_state="no_accounts",
+                gbp_required_scope_granted=True,
+                gbp_accounts_count=0,
+                gbp_locations_count=0,
+                gbp_selected_location_present=None,
+                gbp_status_reason="no_accounts",
+                gbp_next_action="Confirm the connected Google identity has access to at least one Business Profile account.",
+            )
+            self._log_connection_diagnostics(business_id=business_id, diagnostics=result)
+            return result
+
+        locations_count = 0
+        try:
+            for raw_account in raw_accounts:
+                account_resource_name = _normalized_str(raw_account.get("name"))
+                if not account_resource_name:
+                    continue
+                locations_payload = self._call_google_api(
+                    business_id=business_id,
+                    callback=lambda access_token, account_resource_name=account_resource_name: self.client.list_locations(
+                        access_token=access_token,
+                        account_resource_name=account_resource_name,
+                    ),
+                )
+                locations_count += len(_extract_list(locations_payload, "locations"))
+        except GoogleBusinessProfileServiceError as exc:
+            result = self._diagnostics_from_service_error(
+                exc,
+                accounts_count=accounts_count,
+            )
+            self._log_connection_diagnostics(business_id=business_id, diagnostics=result)
+            return result
+
+        if locations_count == 0:
+            result = GoogleBusinessProfileConnectionDiagnosticsResult(
+                gbp_connection_state="no_locations",
+                gbp_required_scope_granted=True,
+                gbp_accounts_count=accounts_count,
+                gbp_locations_count=0,
+                gbp_selected_location_present=None,
+                gbp_status_reason="no_locations",
+                gbp_next_action="Confirm the connected Google account can access one or more Business Profile locations.",
+            )
+            self._log_connection_diagnostics(business_id=business_id, diagnostics=result)
+            return result
+
+        result = GoogleBusinessProfileConnectionDiagnosticsResult(
+            gbp_connection_state="usable",
+            gbp_required_scope_granted=True,
+            gbp_accounts_count=accounts_count,
+            gbp_locations_count=locations_count,
+            gbp_selected_location_present=None,
+            gbp_status_reason="usable",
+            gbp_next_action="Google Business Profile access is usable for this business.",
+        )
+        self._log_connection_diagnostics(business_id=business_id, diagnostics=result)
+        return result
 
     def get_location_verification(
         self,
@@ -1127,6 +1273,72 @@ class GoogleBusinessProfileService:
             mapped.message,
             status_code=mapped.status_code,
             error_code=mapped.error_code,
+        )
+
+    def _diagnostics_from_service_error(
+        self,
+        exc: GoogleBusinessProfileServiceError,
+        *,
+        accounts_count: int | None = None,
+    ) -> GoogleBusinessProfileConnectionDiagnosticsResult:
+        if exc.error_code == "insufficient_scope":
+            return GoogleBusinessProfileConnectionDiagnosticsResult(
+                gbp_connection_state="missing_scope",
+                gbp_required_scope_granted=False,
+                gbp_accounts_count=accounts_count,
+                gbp_locations_count=None,
+                gbp_selected_location_present=None,
+                gbp_status_reason="missing_scope",
+                gbp_next_action="Reconnect Google Profile to grant the required Business Profile scope.",
+            )
+        if exc.error_code == "permission_denied":
+            return GoogleBusinessProfileConnectionDiagnosticsResult(
+                gbp_connection_state="permission_denied",
+                gbp_required_scope_granted=True,
+                gbp_accounts_count=accounts_count,
+                gbp_locations_count=None,
+                gbp_selected_location_present=None,
+                gbp_status_reason="permission_denied",
+                gbp_next_action=(
+                    "Google account is linked, but Business Profile API access is denied. "
+                    "Confirm this connected account has Business Profile access."
+                ),
+            )
+        if exc.error_code == "reconnect_required":
+            return GoogleBusinessProfileConnectionDiagnosticsResult(
+                gbp_connection_state="oauth_connected",
+                gbp_required_scope_granted=None,
+                gbp_accounts_count=accounts_count,
+                gbp_locations_count=None,
+                gbp_selected_location_present=None,
+                gbp_status_reason="oauth_connected_reconnect_required",
+                gbp_next_action="Reconnect Google Profile before loading Business Profile accounts.",
+            )
+        return GoogleBusinessProfileConnectionDiagnosticsResult(
+            gbp_connection_state="unavailable",
+            gbp_required_scope_granted=None,
+            gbp_accounts_count=accounts_count,
+            gbp_locations_count=None,
+            gbp_selected_location_present=None,
+            gbp_status_reason="provider_unavailable",
+            gbp_next_action="Google Business Profile status is temporarily unavailable. Refresh and retry.",
+        )
+
+    def _log_connection_diagnostics(
+        self,
+        *,
+        business_id: str,
+        diagnostics: GoogleBusinessProfileConnectionDiagnosticsResult,
+    ) -> None:
+        logger.info(
+            "google_business_profile_status_checked business_id=%s status=%s reason=%s required_scope_granted=%s accounts_count=%s locations_count=%s selected_location_present=%s",
+            business_id,
+            diagnostics.gbp_connection_state,
+            diagnostics.gbp_status_reason,
+            diagnostics.gbp_required_scope_granted,
+            diagnostics.gbp_accounts_count,
+            diagnostics.gbp_locations_count,
+            diagnostics.gbp_selected_location_present,
         )
 
     def _call_google_api(

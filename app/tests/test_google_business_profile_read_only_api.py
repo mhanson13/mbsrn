@@ -392,6 +392,242 @@ def test_google_business_profile_locations_handles_account_without_locations(
     assert locations.json() == {"locations": []}
 
 
+def test_google_business_profile_connection_status_details_not_connected(
+    db_session,
+    seeded_business,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _seed_principal(db_session, business_id=seeded_business.id, principal_id="gbp-status-not-connected")
+    oauth_client = _StubGoogleOAuthClient()
+    gbp_client = _StubGoogleBusinessProfileClient()
+    client = _make_integrations_client(
+        db_session,
+        oauth_client=oauth_client,
+        gbp_client=gbp_client,
+        business_id=seeded_business.id,
+        principal_id="gbp-status-not-connected",
+    )
+
+    response = client.get("/api/integrations/google/business-profile/connection?include_status_details=true")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["connected"] is False
+    assert payload["gbp_connection_state"] == "not_connected"
+    assert payload["gbp_status_reason"] == "not_connected"
+    assert payload["gbp_accounts_count"] is None
+    assert payload["gbp_locations_count"] is None
+
+
+def test_google_business_profile_connection_status_details_missing_scope(
+    db_session,
+    seeded_business,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _seed_principal(db_session, business_id=seeded_business.id, principal_id="gbp-status-missing-scope")
+    _seed_provider_connection(
+        db_session,
+        business_id=seeded_business.id,
+        principal_id="gbp-status-missing-scope",
+        access_token="missing-scope-token",
+        refresh_token="missing-scope-refresh",
+        expires_in_seconds=3600,
+        scopes="openid email",
+    )
+    oauth_client = _StubGoogleOAuthClient()
+    gbp_client = _StubGoogleBusinessProfileClient()
+    client = _make_integrations_client(
+        db_session,
+        oauth_client=oauth_client,
+        gbp_client=gbp_client,
+        business_id=seeded_business.id,
+        principal_id="gbp-status-missing-scope",
+    )
+
+    response = client.get("/api/integrations/google/business-profile/connection?include_status_details=true")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["connected"] is True
+    assert payload["gbp_connection_state"] == "missing_scope"
+    assert payload["gbp_status_reason"] == "missing_scope"
+    assert payload["gbp_required_scope_granted"] is False
+
+
+def test_google_business_profile_connection_status_details_permission_denied(
+    db_session,
+    seeded_business,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _seed_principal(db_session, business_id=seeded_business.id, principal_id="gbp-status-denied")
+    _seed_provider_connection(
+        db_session,
+        business_id=seeded_business.id,
+        principal_id="gbp-status-denied",
+        access_token="status-denied-token",
+        refresh_token="status-denied-refresh",
+        expires_in_seconds=3600,
+    )
+    oauth_client = _StubGoogleOAuthClient()
+    gbp_client = _StubGoogleBusinessProfileClient()
+    gbp_client.accounts_error = GoogleBusinessProfileAPIError(
+        "permission denied",
+        status_code=403,
+        error_status="PERMISSION_DENIED",
+    )
+    client = _make_integrations_client(
+        db_session,
+        oauth_client=oauth_client,
+        gbp_client=gbp_client,
+        business_id=seeded_business.id,
+        principal_id="gbp-status-denied",
+    )
+
+    response = client.get("/api/integrations/google/business-profile/connection?include_status_details=true")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["gbp_connection_state"] == "permission_denied"
+    assert payload["gbp_status_reason"] == "permission_denied"
+
+
+def test_google_business_profile_connection_status_details_no_accounts(
+    db_session,
+    seeded_business,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _seed_principal(db_session, business_id=seeded_business.id, principal_id="gbp-status-no-accounts")
+    _seed_provider_connection(
+        db_session,
+        business_id=seeded_business.id,
+        principal_id="gbp-status-no-accounts",
+        access_token="status-no-accounts-token",
+        refresh_token="status-no-accounts-refresh",
+        expires_in_seconds=3600,
+    )
+    oauth_client = _StubGoogleOAuthClient()
+    gbp_client = _StubGoogleBusinessProfileClient()
+    gbp_client.accounts_payload = {"accounts": []}
+    client = _make_integrations_client(
+        db_session,
+        oauth_client=oauth_client,
+        gbp_client=gbp_client,
+        business_id=seeded_business.id,
+        principal_id="gbp-status-no-accounts",
+    )
+
+    response = client.get("/api/integrations/google/business-profile/connection?include_status_details=true")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["gbp_connection_state"] == "no_accounts"
+    assert payload["gbp_accounts_count"] == 0
+    assert payload["gbp_locations_count"] == 0
+
+
+def test_google_business_profile_connection_status_details_no_locations(
+    db_session,
+    seeded_business,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _seed_principal(db_session, business_id=seeded_business.id, principal_id="gbp-status-no-locations")
+    _seed_provider_connection(
+        db_session,
+        business_id=seeded_business.id,
+        principal_id="gbp-status-no-locations",
+        access_token="status-no-locations-token",
+        refresh_token="status-no-locations-refresh",
+        expires_in_seconds=3600,
+    )
+    oauth_client = _StubGoogleOAuthClient()
+    gbp_client = _StubGoogleBusinessProfileClient()
+    gbp_client.accounts_payload = {"accounts": [{"name": "accounts/solo", "accountName": "Solo"}]}
+    gbp_client.locations_by_account["accounts/solo"] = {"locations": []}
+    client = _make_integrations_client(
+        db_session,
+        oauth_client=oauth_client,
+        gbp_client=gbp_client,
+        business_id=seeded_business.id,
+        principal_id="gbp-status-no-locations",
+    )
+
+    response = client.get("/api/integrations/google/business-profile/connection?include_status_details=true")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["gbp_connection_state"] == "no_locations"
+    assert payload["gbp_accounts_count"] == 1
+    assert payload["gbp_locations_count"] == 0
+
+
+def test_google_business_profile_connection_status_details_usable(
+    db_session,
+    seeded_business,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _seed_principal(db_session, business_id=seeded_business.id, principal_id="gbp-status-usable")
+    _seed_provider_connection(
+        db_session,
+        business_id=seeded_business.id,
+        principal_id="gbp-status-usable",
+        access_token="status-usable-token",
+        refresh_token="status-usable-refresh",
+        expires_in_seconds=3600,
+    )
+    oauth_client = _StubGoogleOAuthClient()
+    gbp_client = _StubGoogleBusinessProfileClient()
+    gbp_client.accounts_payload = {"accounts": [{"name": "accounts/usable", "accountName": "Usable"}]}
+    gbp_client.locations_by_account["accounts/usable"] = {
+        "locations": [{"name": "locations/usable-1", "title": "Usable HQ"}]
+    }
+    client = _make_integrations_client(
+        db_session,
+        oauth_client=oauth_client,
+        gbp_client=gbp_client,
+        business_id=seeded_business.id,
+        principal_id="gbp-status-usable",
+    )
+
+    response = client.get("/api/integrations/google/business-profile/connection?include_status_details=true")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["gbp_connection_state"] == "usable"
+    assert payload["gbp_accounts_count"] == 1
+    assert payload["gbp_locations_count"] == 1
+
+
+def test_google_business_profile_connection_status_details_unavailable_is_bounded(
+    db_session,
+    seeded_business,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _seed_principal(db_session, business_id=seeded_business.id, principal_id="gbp-status-unavailable")
+    _seed_provider_connection(
+        db_session,
+        business_id=seeded_business.id,
+        principal_id="gbp-status-unavailable",
+        access_token="status-unavailable-token",
+        refresh_token="status-unavailable-refresh",
+        expires_in_seconds=3600,
+    )
+    oauth_client = _StubGoogleOAuthClient()
+    gbp_client = _StubGoogleBusinessProfileClient()
+    gbp_client.accounts_error = GoogleBusinessProfileAPIError(
+        "provider failure with verbose detail that should stay internal",
+        status_code=500,
+        error_status="INTERNAL",
+    )
+    client = _make_integrations_client(
+        db_session,
+        oauth_client=oauth_client,
+        gbp_client=gbp_client,
+        business_id=seeded_business.id,
+        principal_id="gbp-status-unavailable",
+    )
+
+    response = client.get("/api/integrations/google/business-profile/connection?include_status_details=true")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["gbp_connection_state"] == "unavailable"
+    assert payload["gbp_status_reason"] == "provider_unavailable"
+    assert "verbose detail" not in response.text.lower()
+
+
 def test_google_business_profile_accounts_permission_error_surfaces_403(
     db_session,
     seeded_business,

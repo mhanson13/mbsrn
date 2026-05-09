@@ -105,6 +105,17 @@ class _UvicornLifespanCancelledErrorFilter(logging.Filter):
     def _normalized_path(value: str | None) -> str:
         return (value or "").replace("\\", "/").strip().lower()
 
+    @classmethod
+    def _looks_like_lifespan_cancelled_traceback_text(cls, message: str) -> bool:
+        normalized = (message or "").strip().lower()
+        if not normalized:
+            return False
+        if "cancellederror" not in normalized:
+            return False
+        if "lifespan" in normalized:
+            return True
+        return "/uvicorn/lifespan/" in cls._normalized_path(normalized)
+
     def _is_lifespan_traceback(self, exc_info: tuple[type[BaseException], BaseException, object] | None) -> bool:
         if not exc_info or len(exc_info) < 3:
             return False
@@ -124,23 +135,27 @@ class _UvicornLifespanCancelledErrorFilter(logging.Filter):
 
     def filter(self, record: logging.LogRecord) -> bool:
         exc_info = record.exc_info
-        if not exc_info or len(exc_info) < 2:
-            return True
-
-        exc = exc_info[1]
-        if not isinstance(exc, asyncio.CancelledError):
-            return True
-
         try:
             message = record.getMessage()
         except Exception:  # noqa: BLE001
             message = str(record.msg)
 
         message_lower = message.lower()
+        is_cancelled = False
+        if exc_info and len(exc_info) >= 2:
+            exc = exc_info[1]
+            is_cancelled = isinstance(exc, asyncio.CancelledError)
+        elif self._looks_like_lifespan_cancelled_traceback_text(message):
+            is_cancelled = True
+
+        if not is_cancelled:
+            return True
+
         pathname_lower = self._normalized_path(getattr(record, "pathname", ""))
         is_lifespan_record = (
             "lifespan" in message_lower
             or "/uvicorn/lifespan/" in pathname_lower
+            or self._looks_like_lifespan_cancelled_traceback_text(message)
             or self._is_lifespan_traceback(exc_info)
         )
         if not is_lifespan_record:
@@ -153,14 +168,21 @@ class _UvicornLifespanCancelledErrorFilter(logging.Filter):
 
 
 def _install_uvicorn_lifespan_cancelled_error_filter() -> None:
-    uvicorn_error_logger = logging.getLogger("uvicorn.error")
-    if any(
-        isinstance(active_filter, _UvicornLifespanCancelledErrorFilter)
-        for active_filter in uvicorn_error_logger.filters
-    ):
-        return
-    uvicorn_error_logger.addFilter(_UvicornLifespanCancelledErrorFilter())
-    logger.info("api_lifespan_cancelled_error_filter_installed target_logger=uvicorn.error")
+    installed_targets: list[str] = []
+    for logger_name in ("uvicorn.error", "uvicorn"):
+        target_logger = logging.getLogger(logger_name)
+        if any(
+            isinstance(active_filter, _UvicornLifespanCancelledErrorFilter)
+            for active_filter in target_logger.filters
+        ):
+            continue
+        target_logger.addFilter(_UvicornLifespanCancelledErrorFilter())
+        installed_targets.append(logger_name)
+    if installed_targets:
+        logger.info(
+            "api_lifespan_cancelled_error_filter_installed target_loggers=%s",
+            ",".join(installed_targets),
+        )
 
 
 def _service_name() -> str:

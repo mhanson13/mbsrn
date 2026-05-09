@@ -18,6 +18,7 @@ import {
   upsertMigrationWorkspace,
 } from "../../lib/api/client";
 import type {
+  GoogleBusinessProfileConnectionState,
   GoogleBusinessProfileConnectionStatusResponse,
   GoogleBusinessProfileFlatLocation,
   SEOSite,
@@ -34,6 +35,11 @@ type SelectedSiteSetupIntegrationsPanelProps = {
 type ConnectionUiState =
   | "connected_usable"
   | "connected_access_denied"
+  | "missing_scope"
+  | "no_accounts"
+  | "no_locations"
+  | "location_not_mapped"
+  | "oauth_connected"
   | "oauth_success_pending"
   | "not_connected"
   | "unavailable";
@@ -50,7 +56,6 @@ export function SelectedSiteSetupIntegrationsPanel({
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [connection, setConnection] = useState<GoogleBusinessProfileConnectionStatusResponse | null>(null);
   const [locations, setLocations] = useState<GoogleBusinessProfileFlatLocation[]>([]);
-  const [locationAccessDenied, setLocationAccessDenied] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
 
   const [ga4PropertyIdInput, setGa4PropertyIdInput] = useState("");
@@ -77,14 +82,10 @@ export function SelectedSiteSetupIntegrationsPanel({
     }
     setLoadingConnection(true);
     setConnectionError(null);
-    setLocationAccessDenied(false);
     try {
-      const connectionResponse = await fetchGoogleBusinessProfileConnection(token);
+      const connectionResponse = await fetchGoogleBusinessProfileConnection(token, { includeStatusDetails: true });
       setConnection(connectionResponse);
-      const canLoadLocations = connectionResponse.connected
-        && !connectionResponse.reconnect_required
-        && connectionResponse.required_scopes_satisfied
-        && connectionResponse.token_status === "usable";
+      const canLoadLocations = isConnectionUsable(connectionResponse);
       if (canLoadLocations) {
         try {
           const locationsResponse = await fetchGoogleBusinessProfileLocations(token);
@@ -93,7 +94,6 @@ export function SelectedSiteSetupIntegrationsPanel({
           const message = error instanceof Error ? error.message : "Failed to load Google setup status.";
           setLocations([]);
           setConnectionError(message);
-          setLocationAccessDenied(isGbpAccessDeniedMessage(message));
         }
       } else {
         setLocations([]);
@@ -218,29 +218,44 @@ export function SelectedSiteSetupIntegrationsPanel({
   const oauthConnectSucceeded = oauthConnectStatus === "success";
   const oauthConnectFailed = oauthConnectStatus === "error";
   const oauthReconnectRequired = normalizeLowerCaseString(searchParams?.get("gbp_reconnect_required")) === "true";
-  const tokenIndicatesAccessDenied =
-    connection?.connected === true
-    && (
-      connection.token_status === "insufficient_scope"
-      || connection.required_scopes_satisfied === false
-    );
-  const gbpAccessDenied = locationAccessDenied || tokenIndicatesAccessDenied;
+  const backendState = normalizeConnectionState(connection?.gbp_connection_state);
 
   const connectionUiState = useMemo<ConnectionUiState>(() => {
     if (oauthConnectSucceeded && loadingConnection) {
       return "oauth_success_pending";
     }
-    if (connection?.connected && !connection.reconnect_required && !gbpAccessDenied) {
+    if (backendState === "usable") {
       return "connected_usable";
     }
-    if (connection?.connected && !connection.reconnect_required && gbpAccessDenied) {
+    if (backendState === "permission_denied") {
       return "connected_access_denied";
+    }
+    if (backendState === "missing_scope") {
+      return "missing_scope";
+    }
+    if (backendState === "no_accounts") {
+      return "no_accounts";
+    }
+    if (backendState === "no_locations") {
+      return "no_locations";
+    }
+    if (backendState === "location_not_mapped") {
+      return "location_not_mapped";
+    }
+    if (backendState === "oauth_connected") {
+      return "oauth_connected";
+    }
+    if (backendState === "unavailable") {
+      return "unavailable";
+    }
+    if (backendState === "not_connected") {
+      return "not_connected";
     }
     if (connectionError && !connection) {
       return "unavailable";
     }
-    return "not_connected";
-  }, [connection, connectionError, gbpAccessDenied, loadingConnection, oauthConnectSucceeded]);
+    return connection?.connected ? "oauth_connected" : "not_connected";
+  }, [backendState, connection, connectionError, loadingConnection, oauthConnectSucceeded]);
 
   const callbackNotice = useMemo<CallbackNotice>(() => {
     if (oauthConnectSucceeded) {
@@ -254,6 +269,30 @@ export function SelectedSiteSetupIntegrationsPanel({
         return {
           className: "hint error",
           message: "Google returned successfully, but Google Business Profile access is denied for this account.",
+        };
+      }
+      if (connectionUiState === "missing_scope") {
+        return {
+          className: "hint warning",
+          message: "Google returned successfully, but required Business Profile scope is still missing.",
+        };
+      }
+      if (connectionUiState === "no_accounts") {
+        return {
+          className: "hint warning",
+          message: "Google returned successfully, but no Google Business Profile accounts were returned.",
+        };
+      }
+      if (connectionUiState === "no_locations") {
+        return {
+          className: "hint warning",
+          message: "Google returned successfully, but no Google Business Profile locations were returned.",
+        };
+      }
+      if (connectionUiState === "location_not_mapped") {
+        return {
+          className: "hint warning",
+          message: "Google returned successfully, but no Google Business Profile location is mapped to this site.",
         };
       }
       if (connectionUiState === "oauth_success_pending") {
@@ -282,6 +321,7 @@ export function SelectedSiteSetupIntegrationsPanel({
   }, [connectionUiState, oauthConnectFailed, oauthConnectSucceeded, oauthReconnectRequired]);
   const hasConnectedToken = connection?.connected === true;
   const showConnectionErrorDetails = Boolean(connectionError) && connectionUiState !== "connected_access_denied";
+  const backendNextAction = normalizeDisplayText(connection?.gbp_next_action);
 
   const normalizedGa4PropertyId = ga4PropertyIdInput.trim();
   const ga4PropertyFormatInvalid = normalizedGa4PropertyId.length > 0 && !/^\d{4,20}$/.test(normalizedGa4PropertyId);
@@ -419,6 +459,10 @@ export function SelectedSiteSetupIntegrationsPanel({
           <p className="hint muted">
             {connectionPrimaryMessage(connectionUiState, connection)}
           </p>
+          {connection?.connected_google_identity ? (
+            <p className="hint muted">Connected identity: {connection.connected_google_identity}</p>
+          ) : null}
+          {backendNextAction ? <p className="hint muted">{backendNextAction}</p> : null}
           <div className="row-wrap-tight">
             <button className="button button-primary" type="button" onClick={() => void handleConnect()} disabled={actionLoading}>
               {hasConnectedToken ? "Reconnect Google Profile" : "Connect Google Profile"}
@@ -436,7 +480,19 @@ export function SelectedSiteSetupIntegrationsPanel({
             <p className="hint warning">This connection needs reauthorization before Google Profile data can be used.</p>
           ) : null}
           {connectionUiState === "connected_access_denied" ? (
-            <p className="hint error">Google Business Profile access is denied for this Google account.</p>
+            <p className="hint error">Google Business Profile API access was denied for this account.</p>
+          ) : null}
+          {connectionUiState === "missing_scope" ? (
+            <p className="hint warning">Reconnect Google Profile to grant the required Business Profile readonly scope.</p>
+          ) : null}
+          {connectionUiState === "no_accounts" ? (
+            <p className="hint warning">Google account is linked, but no Business Profile accounts were returned.</p>
+          ) : null}
+          {connectionUiState === "no_locations" ? (
+            <p className="hint warning">Google account is linked, but no Business Profile locations were returned.</p>
+          ) : null}
+          {connectionUiState === "location_not_mapped" ? (
+            <p className="hint warning">Google account is linked, but no Google Business Profile location is mapped to this site.</p>
           ) : null}
           {callbackNotice ? <p className={callbackNotice.className}>{callbackNotice.message}</p> : null}
           {showConnectionErrorDetails ? <p className="hint error">{connectionError}</p> : null}
@@ -567,7 +623,15 @@ export function SelectedSiteSetupIntegrationsPanel({
         <div className="panel panel-compact stack-tight" data-testid="sites-gbp-locations-panel">
           <strong>Google Business Profile Locations</strong>
           {connectionUiState === "connected_access_denied" ? (
-            <p className="hint error">Google Business Profile access is denied for this Google account.</p>
+            <p className="hint error">Google account is linked, but Business Profile API access was denied for this account.</p>
+          ) : connectionUiState === "missing_scope" ? (
+            <p className="hint warning">Reconnect Google Profile to grant the required Business Profile readonly scope.</p>
+          ) : connectionUiState === "no_accounts" ? (
+            <p className="hint warning">Google account is linked, but no Business Profile accounts were returned.</p>
+          ) : connectionUiState === "no_locations" ? (
+            <p className="hint warning">Google account is linked, but no Business Profile locations were returned.</p>
+          ) : connectionUiState === "location_not_mapped" ? (
+            <p className="hint warning">Google account is linked, but no Google Business Profile location is mapped to this site.</p>
           ) : connectionUiState !== "connected_usable" ? (
             <p className="hint muted">Connect Google Profile to load locations.</p>
           ) : locations.length === 0 ? (
@@ -617,6 +681,21 @@ function connectionUiLabel(state: ConnectionUiState): string {
   if (state === "connected_access_denied") {
     return "Access denied";
   }
+  if (state === "missing_scope") {
+    return "Scope missing";
+  }
+  if (state === "no_accounts") {
+    return "No accounts";
+  }
+  if (state === "no_locations") {
+    return "No locations";
+  }
+  if (state === "location_not_mapped") {
+    return "Location not mapped";
+  }
+  if (state === "oauth_connected") {
+    return "OAuth linked";
+  }
   if (state === "oauth_success_pending") {
     return "Checking";
   }
@@ -630,7 +709,7 @@ function connectionBadgeClass(state: ConnectionUiState): string {
   if (state === "connected_usable") {
     return "badge-success";
   }
-  if (state === "oauth_success_pending") {
+  if (state === "oauth_connected" || state === "oauth_success_pending" || state === "no_accounts" || state === "no_locations" || state === "location_not_mapped" || state === "missing_scope") {
     return "badge-warn";
   }
   if (state === "not_connected") {
@@ -647,7 +726,22 @@ function connectionPrimaryMessage(
     return "Google account linked.";
   }
   if (state === "connected_access_denied") {
-    return "Google account is linked, but Google Business Profile access is denied for this account.";
+    return "Google account is linked, but Business Profile API access was denied for this account.";
+  }
+  if (state === "missing_scope") {
+    return "Google account is linked, but required Business Profile scope is missing.";
+  }
+  if (state === "no_accounts") {
+    return "Google account is linked, but no Business Profile accounts were returned.";
+  }
+  if (state === "no_locations") {
+    return "Google account is linked, but no Business Profile locations were returned.";
+  }
+  if (state === "location_not_mapped") {
+    return "Google account is linked, but no Google Business Profile location is mapped to this site.";
+  }
+  if (state === "oauth_connected") {
+    return "Google account is linked. Refresh to verify Business Profile account and location access.";
   }
   if (state === "oauth_success_pending") {
     return "Returned from Google; checking connection status.";
@@ -684,15 +778,42 @@ function normalizeLowerCaseString(value: unknown): string {
   return typeof value === "string" ? value.trim().toLowerCase() : "";
 }
 
-function isGbpAccessDeniedMessage(message: string): boolean {
-  const normalized = normalizeLowerCaseString(message);
-  return (
-    normalized.includes("google business profile access is denied")
-    || normalized.includes("permission denied")
-    || normalized.includes("access denied")
-    || normalized.includes("insufficient_scope")
-    || normalized.includes("insufficient scope")
-  );
+function normalizeConnectionState(value: unknown): GoogleBusinessProfileConnectionState {
+  const normalized = normalizeLowerCaseString(value);
+  if (
+    normalized === "not_connected"
+    || normalized === "oauth_connected"
+    || normalized === "usable"
+    || normalized === "missing_scope"
+    || normalized === "permission_denied"
+    || normalized === "no_accounts"
+    || normalized === "no_locations"
+    || normalized === "location_not_mapped"
+    || normalized === "unavailable"
+    || normalized === "unknown"
+  ) {
+    return normalized;
+  }
+  return "unknown";
+}
+
+function isConnectionUsable(connection: GoogleBusinessProfileConnectionStatusResponse): boolean {
+  const normalizedState = normalizeConnectionState(connection.gbp_connection_state);
+  if (normalizedState === "usable") {
+    return true;
+  }
+  if (normalizedState !== "unknown") {
+    return false;
+  }
+  return connection.connected
+    && !connection.reconnect_required
+    && connection.required_scopes_satisfied
+    && connection.token_status === "usable";
+}
+
+function normalizeDisplayText(value: unknown): string | null {
+  const normalized = typeof value === "string" ? value.trim() : "";
+  return normalized ? normalized : null;
 }
 
 function normalizeGa4AuthMode(
