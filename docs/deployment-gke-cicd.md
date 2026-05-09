@@ -224,6 +224,31 @@ kubectl -n <namespace> describe backendconfig site-web-backend-config-<site>
 curl -Iv https://<preview-host>/
 ```
 
+### Runtime Error Noise Classification
+
+Treat the following production log patterns as expected noise unless correlated with user-visible failures:
+
+- API (`mbsrn-api`) lifespan shutdown cancellation:
+  - stack traces rooted at `uvicorn/lifespan/on.py` with `asyncio.exceptions.CancelledError`
+  - expected during pod termination/restart while ASGI lifespan receives cancellation
+  - should not be treated as an application startup failure by itself
+  - non-cancellation lifespan failures and other startup/shutdown exceptions remain error-visible
+- Next.js (`mbsrn-ui`, `mbsrn-www`) malformed multipart parse:
+  - `Error: Unexpected end of form`
+  - commonly caused by aborted/malformed multipart requests (for example, bot traffic or client disconnects)
+  - classify as request-noise unless tied to a specific failing route and reproducible user flow
+
+Operator UI/runtime diagnostics hardening:
+
+- Route/global error boundaries log bounded fields only:
+  - pathname when available
+  - digest when available (or `unavailable`)
+  - short message classification
+- Next middleware blocks unsupported non-API multipart mutating requests (`POST|PUT|PATCH`) with `400`:
+  - `/api` and `/api/*` multipart traffic is still allowed
+  - requests marked with `next-action` are allowed (server-action compatibility guard)
+- Never log request/form bodies, auth headers, cookies, tokens, or provider payloads.
+
 ## Required GitHub Secrets/Variables
 
 GitHub variable:

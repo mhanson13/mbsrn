@@ -3,28 +3,64 @@
 import { useEffect } from "react";
 import { usePathname } from "next/navigation";
 
-type RouteError = Error & { digest?: string | null };
+type RouteErrorClassification = "route_render_error" | "unexpected_end_of_form" | "missing_error_object";
+
+type NormalizedRouteError = {
+  digest: string | null;
+  message: string;
+  classification: RouteErrorClassification;
+};
+
+function normalizeRouteError(error: unknown): NormalizedRouteError {
+  if (!error || typeof error !== "object") {
+    return {
+      digest: null,
+      message: "Route render failure",
+      classification: "missing_error_object",
+    };
+  }
+
+  const candidate = error as { digest?: unknown; message?: unknown };
+  const digest = typeof candidate.digest === "string" && candidate.digest.trim().length > 0
+    ? candidate.digest.trim()
+    : null;
+  const message = typeof candidate.message === "string" && candidate.message.trim().length > 0
+    ? candidate.message.trim().slice(0, 160)
+    : "Route render failure";
+  const classification = message.toLowerCase().includes("unexpected end of form")
+    ? "unexpected_end_of_form"
+    : "route_render_error";
+
+  return { digest, message, classification };
+}
 
 export default function Error({
   error,
   reset,
 }: {
-  error: RouteError | null;
+  error: unknown;
   reset: () => void;
 }) {
   const pathname = usePathname();
-  const digest = typeof error?.digest === "string" ? error.digest : null;
-  const safeMessage = typeof error?.message === "string" && error.message.trim().length > 0
-    ? error.message.trim().slice(0, 160)
-    : "Route render failure";
+  const normalizedError = normalizeRouteError(error);
+  const safePathname = pathname || "unknown";
+  const safeDigest = normalizedError.digest || "unavailable";
+  const safeMessage = normalizedError.message;
+  const safeClassification = normalizedError.classification;
 
   useEffect(() => {
-    console.error("[operator-ui] route_render_error", {
-      pathname: pathname || "unknown",
-      digest: digest || "unavailable",
+    const logPayload = {
+      pathname: safePathname,
+      digest: safeDigest,
       message: safeMessage,
-    });
-  }, [pathname, digest, safeMessage]);
+      classification: safeClassification,
+    };
+    if (safeClassification === "unexpected_end_of_form") {
+      console.warn("[operator-ui] route_render_warning", logPayload);
+      return;
+    }
+    console.error("[operator-ui] route_render_error", logPayload);
+  }, [safeClassification, safeDigest, safeMessage, safePathname]);
 
   return (
     <main className="workspace-page-shell">

@@ -224,6 +224,8 @@ Open `https://www.mbsrn.com/` and verify:
 - TLS pending/invalid: check managed certificate status and DNS host mapping.
 - Route works but missing styles/assets: verify `frontend/www/public/*` assets are present in image.
 - repeated `sharp-missing-in-production` logs: verify `frontend/www/package.json` includes `sharp` in `dependencies`, rebuild image, and rerun `npm run validate:standalone-runtime`.
+- repeated `Unexpected end of form` logs: usually malformed or aborted multipart traffic; treat as request-noise unless tied to a reproducible user submission path.
+  - website middleware blocks unsupported non-API multipart mutating requests (`POST|PUT|PATCH`) and returns `400`; `/api` paths remain allowed.
 - OAuth branding rejected: verify exact URLs and authorized domain in Google Cloud console.
 
 Managed certificate status commands:

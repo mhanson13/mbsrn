@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -95,6 +96,39 @@ _LOCALHOST_DATABASE_TARGETS = {"localhost", "127.0.0.1", "::1"}
 _CLOUDSQL_PROXY_STARTUP_CONNECTIVITY_MAX_ATTEMPTS = 60
 _CLOUDSQL_PROXY_STARTUP_CONNECTIVITY_RETRY_DELAY_SECONDS = 1.0
 _SCHEMA_READINESS_LOGGED_REVISION: str | None = None
+
+
+class _UvicornLifespanCancelledErrorFilter(logging.Filter):
+    """Suppress expected lifespan cancellation tracebacks during shutdown."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        exc_info = record.exc_info
+        if not exc_info or len(exc_info) < 2:
+            return True
+
+        exc = exc_info[1]
+        if not isinstance(exc, asyncio.CancelledError):
+            return True
+
+        try:
+            message = record.getMessage()
+        except Exception:  # noqa: BLE001
+            message = str(record.msg)
+
+        if "lifespan" not in message.lower():
+            return True
+
+        logger.info(
+            "Expected ASGI lifespan cancellation observed during shutdown; suppressing uvicorn error traceback noise."
+        )
+        return False
+
+
+def _install_uvicorn_lifespan_cancelled_error_filter() -> None:
+    uvicorn_error_logger = logging.getLogger("uvicorn.error")
+    if any(isinstance(active_filter, _UvicornLifespanCancelledErrorFilter) for active_filter in uvicorn_error_logger.filters):
+        return
+    uvicorn_error_logger.addFilter(_UvicornLifespanCancelledErrorFilter())
 
 
 def _service_name() -> str:
@@ -352,6 +386,7 @@ def _configure_security_headers() -> None:
 
 _configure_cors()
 _configure_security_headers()
+_install_uvicorn_lifespan_cancelled_error_filter()
 
 
 @app.on_event("startup")
