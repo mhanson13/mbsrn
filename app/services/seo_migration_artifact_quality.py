@@ -119,12 +119,8 @@ def evaluate_migration_artifact_quality(artifact_bundle: dict[str, object]) -> d
             }
         )
 
-    required_media_missing = (
-        media_required_by_operator
-        and (
-            selected_usable_media_assets_count <= 0
-            or bool(media_placeholder_matches)
-        )
+    required_media_missing = media_required_by_operator and (
+        selected_usable_media_assets_count <= 0 or bool(media_placeholder_matches)
     )
     if required_media_missing:
         if selected_usable_media_assets_count <= 0:
@@ -133,11 +129,13 @@ def evaluate_migration_artifact_quality(artifact_bundle: dict[str, object]) -> d
                 "Draft uses placeholders."
             )
         else:
-            markers = ", ".join(sorted(set(media_placeholder_matches))) if media_placeholder_matches else "placeholder markers"
+            markers = (
+                ", ".join(sorted(set(media_placeholder_matches)))
+                if media_placeholder_matches
+                else "placeholder markers"
+            )
             description = (
-                "Real/existing media was requested, but placeholder markers remain in generated HTML: "
-                + markers
-                + "."
+                "Real/existing media was requested, but placeholder markers remain in generated HTML: " + markers + "."
             )
         issues.append(
             {

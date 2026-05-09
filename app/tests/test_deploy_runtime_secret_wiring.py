@@ -26,8 +26,8 @@ def test_deploy_prod_projects_git_credentials_into_control_plane_runtime_secret(
     assert "GIT_USERID: ${{ secrets.GIT_USERID }}" in workflow_yaml
     assert "GIT_EMAIL: ${{ secrets.GIT_EMAIL }}" in workflow_yaml
     assert "GIT_TOKEN: ${{ secrets.GIT_TOKEN }}" in workflow_yaml
-    assert "--from-literal=GIT_USERID=\"${GIT_USERID}\"" in workflow_yaml
-    assert "--from-literal=GIT_EMAIL=\"${GIT_EMAIL}\"" in workflow_yaml
-    assert "--from-literal=GIT_TOKEN=\"${GIT_TOKEN}\"" in workflow_yaml
+    assert '--from-literal=GIT_USERID="${GIT_USERID}"' in workflow_yaml
+    assert '--from-literal=GIT_EMAIL="${GIT_EMAIL}"' in workflow_yaml
+    assert '--from-literal=GIT_TOKEN="${GIT_TOKEN}"' in workflow_yaml
     assert "GCP_MANAGED_DEPLOY: ${{ vars.GCP_MANAGED_DEPLOY || '' }}" in workflow_yaml
-    assert "--from-literal=GCP_MANAGED_DEPLOY=\"${GCP_MANAGED_DEPLOY:-}\"" in workflow_yaml
+    assert '--from-literal=GCP_MANAGED_DEPLOY="${GCP_MANAGED_DEPLOY:-}"' in workflow_yaml

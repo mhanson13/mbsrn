@@ -166,8 +166,8 @@ class _StubMigrationGitHubPublisher(SEOMigrationGitHubPublisher):
         self.refresh_workflow_run_conclusion = refresh_workflow_run_conclusion
         self.refresh_workflow_output = dict(refresh_workflow_output or {})
         self.deploy_target_dispatch_service_reason_code = (
-            (deploy_target_dispatch_service_reason_code or "").strip().lower() or None
-        )
+            deploy_target_dispatch_service_reason_code or ""
+        ).strip().lower() or None
         self.fail_adoption = fail_adoption
         self.adoption_error_code = adoption_error_code
         self.adoption_error_message = adoption_error_message
@@ -2934,9 +2934,7 @@ def test_migration_media_routes_scope_assets_and_sanitize_payloads(db_session) -
     assert isinstance(applied_asset.get("metadata_suggestion_applied_at"), str)
     assert applied_asset.get("alt_text") != "Updated hero alt"
 
-    site_media_response = client.get(
-        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/media/assets"
-    )
+    site_media_response = client.get(f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/media/assets")
     assert site_media_response.status_code == 200
     site_media_payload = site_media_response.json()
     assert site_media_payload.get("operator_uploaded_count") == 1
@@ -2954,9 +2952,7 @@ def test_migration_media_routes_scope_assets_and_sanitize_payloads(db_session) -
     ):
         assert forbidden not in serialized_payload
 
-    other_media_response = client.get(
-        f"/api/businesses/{business_id}/seo/sites/{other_site_id}/migration/media/assets"
-    )
+    other_media_response = client.get(f"/api/businesses/{business_id}/seo/sites/{other_site_id}/migration/media/assets")
     assert other_media_response.status_code == 200
     other_payload = other_media_response.json()
     assert other_payload.get("operator_uploaded_count") == 0
@@ -3201,11 +3197,7 @@ def test_migration_media_batch_suggest_metadata_returns_partial_success_for_impo
     results = payload.get("results") or []
     assert isinstance(results, list)
     assert len(results) == 2
-    results_by_asset = {
-        str(item.get("asset_id") or ""): item
-        for item in results
-        if isinstance(item, dict)
-    }
+    results_by_asset = {str(item.get("asset_id") or ""): item for item in results if isinstance(item, dict)}
     uploaded_result = results_by_asset.get(uploaded_asset_id) or {}
     remote_result = results_by_asset.get("srcimg-remote-only") or {}
     assert uploaded_result.get("suggestion_status") == "completed"
@@ -3426,7 +3418,7 @@ def test_migration_media_import_endpoint_imports_discovered_assets_and_enables_s
         f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/media/assets/srcimg-import-me/suggest-metadata",
     )
     assert suggest_response.status_code == 200
-    suggestion = (suggest_response.json().get("metadata_suggestion") or {})
+    suggestion = suggest_response.json().get("metadata_suggestion") or {}
     assert suggestion.get("reason_code") == "image_metadata_suggested"
     assert suggestion.get("suggestion_status") == "completed"
 

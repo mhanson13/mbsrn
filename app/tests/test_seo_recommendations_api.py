@@ -851,7 +851,9 @@ def test_recommendation_measurement_context_uses_site_ga4_property_id(db_session
     assert set(analytics_provider.fetch_window_metrics_property_ids) == {"2000000002"}
 
 
-def test_recommendation_measurement_context_missing_site_property_skips_ga4_provider(db_session, seeded_business) -> None:
+def test_recommendation_measurement_context_missing_site_property_skips_ga4_provider(
+    db_session, seeded_business
+) -> None:
     analytics_provider = _DeterministicRecommendationAnalyticsProvider()
     analytics_service = SEOAnalyticsService(
         provider=analytics_provider,
@@ -925,7 +927,9 @@ def test_recommendation_measurement_context_is_scoped_per_site_property(db_sessi
 
     start_site_metric_calls = len(analytics_provider.fetch_site_metrics_property_ids)
     start_window_calls = len(analytics_provider.fetch_window_metrics_property_ids)
-    list_a = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_a}/recommendation-runs/{run_a_id}/recommendations")
+    list_a = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_a}/recommendation-runs/{run_a_id}/recommendations"
+    )
     assert list_a.status_code == 200
     site_a_metric_ids = analytics_provider.fetch_site_metrics_property_ids[start_site_metric_calls:]
     site_a_window_ids = analytics_provider.fetch_window_metrics_property_ids[start_window_calls:]
@@ -936,7 +940,9 @@ def test_recommendation_measurement_context_is_scoped_per_site_property(db_sessi
 
     start_site_metric_calls = len(analytics_provider.fetch_site_metrics_property_ids)
     start_window_calls = len(analytics_provider.fetch_window_metrics_property_ids)
-    list_b = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_b}/recommendation-runs/{run_b_id}/recommendations")
+    list_b = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_b}/recommendation-runs/{run_b_id}/recommendations"
+    )
     assert list_b.status_code == 200
     site_b_metric_ids = analytics_provider.fetch_site_metrics_property_ids[start_site_metric_calls:]
     site_b_window_ids = analytics_provider.fetch_window_metrics_property_ids[start_window_calls:]

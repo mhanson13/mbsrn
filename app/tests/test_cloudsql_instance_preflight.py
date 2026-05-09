@@ -105,10 +105,7 @@ def test_classify_cloudsql_instance_preflight_sanitizes_stderr_summary() -> None
     classification = classify_cloudsql_instance_inspection(
         describe_exit_code=1,
         instance_state="",
-        stderr_text=(
-            "ERROR token=/home/runner/work/_temp/creds.json "
-            "for project:region:instance permission denied"
-        ),
+        stderr_text=("ERROR token=/home/runner/work/_temp/creds.json " "for project:region:instance permission denied"),
     )
 
     assert classification.reason_code == "cloudsql_instance_inspection_failed"

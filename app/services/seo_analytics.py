@@ -1372,11 +1372,7 @@ def _is_ga4_missing_scope_message(message: str) -> bool:
     )
     if not any(marker in normalized for marker in scope_markers):
         return False
-    return (
-        "scope" in normalized
-        or "authentication" in normalized
-        or "oauth" in normalized
-    )
+    return "scope" in normalized or "authentication" in normalized or "oauth" in normalized
 
 
 def _ga4_health_status_for_reason(reason_code: str) -> str:
@@ -1491,10 +1487,7 @@ def _build_ga4_insights_from_site_metrics(
     checked_at: datetime,
 ) -> SEOGA4InsightsRead:
     traffic_trend = _build_ga4_insights_traffic_trend(metrics_summary=metrics_summary)
-    top_landing_pages = [
-        _build_ga4_top_landing_page_from_site_summary(page=page)
-        for page in top_pages_summary[:5]
-    ]
+    top_landing_pages = [_build_ga4_top_landing_page_from_site_summary(page=page) for page in top_pages_summary[:5]]
     engagement_trend = SEOGA4EngagementTrendInsightRead(
         current_engagement_rate=None,
         previous_engagement_rate=None,
@@ -1525,8 +1518,7 @@ def _build_ga4_insights_available(
     checked_at: datetime,
 ) -> SEOGA4InsightsRead:
     session_delta_by_path = {
-        str(page.page_path or "").strip(): page.sessions_delta_percent
-        for page in top_pages_summary
+        str(page.page_path or "").strip(): page.sessions_delta_percent for page in top_pages_summary
     }
     top_landing_pages = [
         _build_ga4_top_landing_page_from_operator_metrics(
@@ -1555,7 +1547,9 @@ def _build_ga4_insights_available(
         "no_data",
         "unavailable",
         "unknown",
-    ] = "available" if has_data else "no_data"
+    ] = (
+        "available" if has_data else "no_data"
+    )
     message = (
         "GA4 insights are available for this site."
         if status == "available"
@@ -1681,7 +1675,9 @@ def _build_ga4_insights_engagement_trend(
     else:
         operator_hint = "Engagement trend is unavailable for this period."
     if current_engagement_rate is not None and current_engagement_rate >= 0.6 and trend_label != "declining":
-        operator_hint = "Engagement looks healthy. Preserve this page intent during future migration or content changes."
+        operator_hint = (
+            "Engagement looks healthy. Preserve this page intent during future migration or content changes."
+        )
     return SEOGA4EngagementTrendInsightRead(
         current_engagement_rate=current_engagement_rate,
         previous_engagement_rate=previous_engagement_rate,

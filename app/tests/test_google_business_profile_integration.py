@@ -854,10 +854,7 @@ def test_google_business_profile_connection_status_reports_ga4_scope_granted_whe
         token_type="Bearer",
         expires_in=3600,
         refresh_token="status-refresh-token",
-        scope=(
-            "https://www.googleapis.com/auth/business.manage "
-            "https://www.googleapis.com/auth/analytics.readonly"
-        ),
+        scope=("https://www.googleapis.com/auth/business.manage " "https://www.googleapis.com/auth/analytics.readonly"),
         id_token_subject=None,
         id_token_email=None,
     )

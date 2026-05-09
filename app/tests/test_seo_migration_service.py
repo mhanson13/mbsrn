@@ -395,9 +395,7 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         self.static_ip_ensure_error_message = static_ip_ensure_error_message
         self.static_ip_ensure_error_stage = static_ip_ensure_error_stage
         self.static_ip_ensure_error_diagnostics = (
-            dict(static_ip_ensure_error_diagnostics)
-            if isinstance(static_ip_ensure_error_diagnostics, dict)
-            else None
+            dict(static_ip_ensure_error_diagnostics) if isinstance(static_ip_ensure_error_diagnostics, dict) else None
         )
         self.ensure_static_ip_name = ensure_static_ip_name
         self.ensure_static_ip_address = ensure_static_ip_address
@@ -438,20 +436,14 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         self.ensure_managed_site_static_ip_calls: list[
             tuple[str, str, str | None, dict[str, object] | None, str | None, bool]
         ] = []
-        self.ensure_managed_site_dns_calls: list[
-            tuple[str, str, str, str, str | None, int, bool]
-        ] = []
+        self.ensure_managed_site_dns_calls: list[tuple[str, str, str, str, str | None, int, bool]] = []
         self.deploy_call_order: list[str] = []
         self.refresh_calls: list[tuple[SEOMigrationGitHubDeployTarget, int, str | None]] = []
         self.current_live_probe_calls: list[str] = []
         self.lookup_calls: list[tuple[SEOMigrationGitHubDeployTarget, str | None]] = []
         self.secret_upsert_calls: list[tuple[str, str, str, str]] = []
-        self.publish_preflight_calls: list[
-            tuple[str, str, str, bool, str | None, str | None, str | None]
-        ] = []
-        self.adopt_repository_calls: list[
-            tuple[str, str, str, str, str, str | None, str | None]
-        ] = []
+        self.publish_preflight_calls: list[tuple[str, str, str, bool, str | None, str | None, str | None]] = []
+        self.adopt_repository_calls: list[tuple[str, str, str, str, str, str | None, str | None]] = []
         self.workflow_provision_calls: list[
             tuple[
                 str,
@@ -572,19 +564,13 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         )
         repo_exists = bool(repo_status.exists)
         target_ref_exists = (
-            bool(self.preflight_target_ref_exists)
-            if self.preflight_target_ref_exists is not None
-            else repo_exists
+            bool(self.preflight_target_ref_exists) if self.preflight_target_ref_exists is not None else repo_exists
         )
         can_read_contents = (
-            bool(self.preflight_can_read_contents)
-            if self.preflight_can_read_contents is not None
-            else repo_exists
+            bool(self.preflight_can_read_contents) if self.preflight_can_read_contents is not None else repo_exists
         )
         can_write_contents = (
-            bool(self.preflight_can_write_contents)
-            if self.preflight_can_write_contents is not None
-            else repo_exists
+            bool(self.preflight_can_write_contents) if self.preflight_can_write_contents is not None else repo_exists
         )
         can_write_workflows = (
             bool(self.preflight_can_write_workflows)
@@ -592,9 +578,7 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
             else can_write_contents
         )
         repo_initialized = (
-            bool(self.preflight_repo_initialized)
-            if self.preflight_repo_initialized is not None
-            else target_ref_exists
+            bool(self.preflight_repo_initialized) if self.preflight_repo_initialized is not None else target_ref_exists
         )
         would_bootstrap_branch = (
             bool(self.preflight_would_bootstrap_branch)
@@ -734,9 +718,7 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         managed_image_pull_secret_config: dict[str, object] | None = None,
     ) -> SEOMigrationGitHubDeployResult:
         self.deploy_managed_gke_configs.append(dict(managed_gke_config or {}) or None)
-        self.deploy_managed_image_pull_secret_configs.append(
-            dict(managed_image_pull_secret_config or {}) or None
-        )
+        self.deploy_managed_image_pull_secret_configs.append(dict(managed_image_pull_secret_config or {}) or None)
         self.deploy_calls.append((target, dry_run))
         self.deploy_call_order.append("dispatch_deploy")
         if self.fail_deploy:
@@ -1240,7 +1222,7 @@ def _build_service(
     *,
     github_publisher: SEOMigrationGitHubPublisher | None = None,
     env_default_model_name: str | None = None,
-    deploy_secret_gcp_key: str | None = "{\"type\":\"service_account\"}",
+    deploy_secret_gcp_key: str | None = '{"type":"service_account"}',
     deploy_secret_git_userid: str | None = None,
     deploy_secret_git_email: str | None = None,
     deploy_secret_git_token: str | None = None,
@@ -1665,9 +1647,7 @@ def test_gbp_contract_guard_script_check_succeeds() -> None:
         check=False,
     )
     assert result.returncode == 0, (
-        "GBP verification contract guard --check failed.\n"
-        f"stdout:\n{result.stdout}\n"
-        f"stderr:\n{result.stderr}"
+        "GBP verification contract guard --check failed.\n" f"stdout:\n{result.stdout}\n" f"stderr:\n{result.stderr}"
     )
 
 
@@ -2028,7 +2008,9 @@ def test_workspace_media_metadata_suggestion_normalizes_provider_failure_reason_
     assert suggestion.get("reason_code") == provider_reason_code
 
 
-def test_workspace_media_metadata_suggestion_returns_image_not_imported_for_remote_discovered_assets(db_session) -> None:
+def test_workspace_media_metadata_suggestion_returns_image_not_imported_for_remote_discovered_assets(
+    db_session,
+) -> None:
     service = _build_service(db_session, _StaticMigrationProvider(_build_publishable_output()))
     business_id, site_id = _seed_business_and_site(db_session)
     _seed_workspace(service, business_id=business_id, site_id=site_id)
@@ -2095,11 +2077,7 @@ def test_workspace_media_metadata_batch_suggestions_support_force_refresh(
     def _mock_suggestion_request(**kwargs) -> dict[str, object]:  # noqa: ANN003
         request_call_count["count"] += 1
         asset_metadata = kwargs.get("asset_metadata")
-        asset_id = (
-            str(asset_metadata.get("asset_id") or "").strip()
-            if isinstance(asset_metadata, dict)
-            else "unknown"
-        )
+        asset_id = str(asset_metadata.get("asset_id") or "").strip() if isinstance(asset_metadata, dict) else "unknown"
         return {
             "suggested_category": "project_gallery",
             "suggested_alt_text": f"AI alt for {asset_id}",
@@ -2205,11 +2183,7 @@ def test_workspace_media_metadata_batch_suggestion_returns_partial_success_for_r
     assert batch_result.get("skipped_count") == 1
     results = batch_result.get("results")
     assert isinstance(results, list)
-    results_by_asset = {
-        str(item.get("asset_id") or ""): item
-        for item in results
-        if isinstance(item, dict)
-    }
+    results_by_asset = {str(item.get("asset_id") or ""): item for item in results if isinstance(item, dict)}
     assert (results_by_asset.get(uploaded_asset_id) or {}).get("suggestion_status") == "completed"
     assert (results_by_asset.get("srcimg-remote-only") or {}).get("suggestion_status") == "not_available"
     assert (results_by_asset.get("srcimg-remote-only") or {}).get("reason_code") == "media_asset_not_imported"
@@ -2887,6 +2861,7 @@ def test_generate_draft_artifacts_flags_media_context_trimming_when_selected_ass
     assert selected_assets_count < 35
     assert media_context.get("context_trimmed") is True
 
+
 def test_draft_generation_readiness_ready_with_all_core_and_reused_context_signals(db_session) -> None:
     service = _build_service(db_session, _StaticMigrationProvider(_build_publishable_output()))
     business_id, site_id = _seed_business_and_site(db_session)
@@ -3186,9 +3161,7 @@ def test_draft_generation_readiness_warns_when_operator_requires_media_but_no_us
 
     workspace = service.get_workspace(business_id=business_id, site_id=site_id)
     workspace.operator_requirements_json = {
-        "business_objectives": [
-            "Use real project photos and bring over existing images into the new Project Gallery."
-        ],
+        "business_objectives": ["Use real project photos and bring over existing images into the new Project Gallery."],
     }
     workspace.imported_source_snapshot_json = {
         "title": "Legacy",
@@ -4812,9 +4785,7 @@ def test_deploy_ensures_managed_site_static_ip_before_dispatch_and_records_metad
         ensure_static_ip_address="34.160.224.212",
         ensure_static_ip_credential_source="service_account_json",
         ensure_static_ip_principal_email="mbsrn-api@mbsrn-prod.iam.gserviceaccount.com",
-        ensure_static_ip_impersonated_service_account_email=(
-            "mbsrn-managed-deploy@mbsrn-prod.iam.gserviceaccount.com"
-        ),
+        ensure_static_ip_impersonated_service_account_email=("mbsrn-managed-deploy@mbsrn-prod.iam.gserviceaccount.com"),
     )
     service = _build_service(
         db_session,
@@ -4855,10 +4826,7 @@ def test_deploy_ensures_managed_site_static_ip_before_dispatch_and_records_metad
     assert deploy_result.result.get("static_ip_ensure_result") == "created"
     assert deploy_result.result.get("static_ip_project_id")
     assert deploy_result.result.get("static_ip_gcp_credential_source") == "service_account_json"
-    assert (
-        deploy_result.result.get("static_ip_gcp_principal_email")
-        == "mbsrn-api@mbsrn-prod.iam.gserviceaccount.com"
-    )
+    assert deploy_result.result.get("static_ip_gcp_principal_email") == "mbsrn-api@mbsrn-prod.iam.gserviceaccount.com"
     assert (
         deploy_result.result.get("static_ip_gcp_impersonated_service_account_email")
         == "mbsrn-managed-deploy@mbsrn-prod.iam.gserviceaccount.com"
@@ -5103,9 +5071,7 @@ def test_deploy_blocks_dispatch_when_managed_deploy_impersonation_permission_den
     )
 
 
-def test_deploy_ensures_managed_site_dns_after_static_ip_and_before_dispatch(
-    db_session, caplog, monkeypatch
-) -> None:
+def test_deploy_ensures_managed_site_dns_after_static_ip_and_before_dispatch(db_session, caplog, monkeypatch) -> None:
     publisher = _RecordingGitHubPublisher(
         ensure_static_ip_created=True,
         ensure_static_ip_result="created",
@@ -5120,9 +5086,7 @@ def test_deploy_ensures_managed_site_dns_after_static_ip_and_before_dispatch(
         ensure_dns_ttl=300,
         ensure_dns_credential_source="service_account_json",
         ensure_dns_principal_email="mbsrn-api@mbsrn-prod.iam.gserviceaccount.com",
-        ensure_dns_impersonated_service_account_email=(
-            "mbsrn-managed-deploy@mbsrn-prod.iam.gserviceaccount.com"
-        ),
+        ensure_dns_impersonated_service_account_email=("mbsrn-managed-deploy@mbsrn-prod.iam.gserviceaccount.com"),
     )
     service = _build_service(
         db_session,
@@ -5206,8 +5170,7 @@ def test_deploy_ensures_managed_site_dns_after_static_ip_and_before_dispatch(
         record.__dict__.get("json_fields")
         for record in caplog.records
         if isinstance(record.__dict__.get("json_fields"), dict)
-        and record.__dict__["json_fields"].get("event")
-        == "seo_migration_managed_deploy_prerequisite_chain"
+        and record.__dict__["json_fields"].get("event") == "seo_migration_managed_deploy_prerequisite_chain"
     ]
     assert prerequisite_logs
     stages = [str(log.get("stage")) for log in prerequisite_logs]
@@ -5218,9 +5181,7 @@ def test_deploy_ensures_managed_site_dns_after_static_ip_and_before_dispatch(
     assert "dns_propagation_succeeded" in stages
 
 
-def test_deploy_refreshes_static_ip_address_in_same_request_before_dns_ensure(
-    db_session, monkeypatch
-) -> None:
+def test_deploy_refreshes_static_ip_address_in_same_request_before_dns_ensure(db_session, monkeypatch) -> None:
     publisher = _RecordingGitHubPublisher(
         ensure_static_ip_addresses=(None, "34.160.224.212"),
         ensure_static_ip_created=True,
@@ -5263,9 +5224,7 @@ def test_deploy_refreshes_static_ip_address_in_same_request_before_dns_ensure(
     assert deploy_result.result.get("dns_propagation_result") == "observed_expected_ip"
 
 
-def test_deploy_blocks_before_dns_ensure_when_static_ip_address_missing_after_refresh(
-    db_session, caplog
-) -> None:
+def test_deploy_blocks_before_dns_ensure_when_static_ip_address_missing_after_refresh(db_session, caplog) -> None:
     publisher = _RecordingGitHubPublisher(
         ensure_static_ip_address=None,
         ensure_static_ip_addresses=(None, None),
@@ -5304,13 +5263,10 @@ def test_deploy_blocks_before_dns_ensure_when_static_ip_address_missing_after_re
         record.__dict__.get("json_fields")
         for record in caplog.records
         if isinstance(record.__dict__.get("json_fields"), dict)
-        and record.__dict__["json_fields"].get("event")
-        == "seo_migration_managed_deploy_prerequisite_chain"
+        and record.__dict__["json_fields"].get("event") == "seo_migration_managed_deploy_prerequisite_chain"
     ]
     assert prerequisite_logs
-    missing_logs = [
-        log for log in prerequisite_logs if log.get("stage") == "static_ip_address_missing"
-    ]
+    missing_logs = [log for log in prerequisite_logs if log.get("stage") == "static_ip_address_missing"]
     assert missing_logs
     assert missing_logs[-1].get("reason_code") == "managed_site_static_ip_address_missing"
     assert missing_logs[-1].get("static_ip_address_present") is False
@@ -5359,9 +5315,7 @@ def test_deploy_ensures_managed_site_dns_updates_old_ips_before_dispatch(db_sess
     assert deploy_result.result.get("dns_propagation_result") == "observed_expected_ip"
 
 
-def test_deploy_waits_for_dns_propagation_then_dispatches_when_match_observed(
-    db_session, monkeypatch, caplog
-) -> None:
+def test_deploy_waits_for_dns_propagation_then_dispatches_when_match_observed(db_session, monkeypatch, caplog) -> None:
     publisher = _RecordingGitHubPublisher(
         ensure_static_ip_created=False,
         ensure_static_ip_result="exists",
@@ -5417,9 +5371,7 @@ def test_deploy_waits_for_dns_propagation_then_dispatches_when_match_observed(
     assert propagation_logs[-1].get("observed_dns_ips") == ["34.149.170.250"]
 
 
-def test_deploy_blocks_dispatch_when_dns_propagation_times_out_before_dispatch(
-    db_session, monkeypatch, caplog
-) -> None:
+def test_deploy_blocks_dispatch_when_dns_propagation_times_out_before_dispatch(db_session, monkeypatch, caplog) -> None:
     publisher = _RecordingGitHubPublisher(
         ensure_static_ip_created=False,
         ensure_static_ip_result="exists",
@@ -7005,9 +6957,10 @@ def test_refresh_deploy_status_managed_site_static_ip_missing_sets_actionable_hi
         principal_id="principal-1",
     )
     assert refresh_result.result.get("workflow_run_failure_reason_code") == "managed_site_static_ip_missing"
-    assert "expected per-site global static ip" in str(
-        refresh_result.result.get("workflow_run_failure_hint") or ""
-    ).lower()
+    assert (
+        "expected per-site global static ip"
+        in str(refresh_result.result.get("workflow_run_failure_hint") or "").lower()
+    )
 
 
 def test_refresh_deploy_status_expected_static_ip_not_bound_flags_ingress_conflict(db_session) -> None:
@@ -7038,9 +6991,10 @@ def test_refresh_deploy_status_expected_static_ip_not_bound_flags_ingress_confli
     )
     assert refresh_result.result.get("workflow_run_failure_reason_code") == "expected_static_ip_not_bound_to_ingress"
     assert refresh_result.result.get("ingress_conflict_detected") is True
-    assert "expected per-site static ip annotation binding" in str(
-        refresh_result.result.get("workflow_run_failure_hint") or ""
-    ).lower()
+    assert (
+        "expected per-site static ip annotation binding"
+        in str(refresh_result.result.get("workflow_run_failure_hint") or "").lower()
+    )
 
 
 def test_static_ip_reason_code_hint_mappings_cover_missing_and_not_bound() -> None:
@@ -7050,347 +7004,479 @@ def test_static_ip_reason_code_hint_mappings_cover_missing_and_not_bound() -> No
         )
         or ""
     )
-    assert "missing the expected per-site static ip annotation binding" in str(
-        seo_migration_module._derive_managed_gke_dispatch_readiness_message(
-            dispatch_service_reason_code="expected_static_ip_not_bound_to_ingress"
-        )
-        or ""
-    ).lower()
-    assert "create/reserve the deterministic site static ip" in str(
-        seo_migration_module._derive_deploy_failure_remediation_hint(
-            failure_reason=None,
-            failure_stage=None,
-            workflow_exists=None,
-            dispatch_service_reason_code="managed_site_static_ip_missing",
-        )
-        or ""
-    ).lower()
-    assert "missing the expected per-site static ip annotation binding" in str(
-        seo_migration_module._derive_deploy_failure_remediation_hint(
-            failure_reason=None,
-            failure_stage=None,
-            workflow_exists=None,
-            dispatch_service_reason_code="expected_static_ip_not_bound_to_ingress",
-        )
-        or ""
-    ).lower()
+    assert (
+        "missing the expected per-site static ip annotation binding"
+        in str(
+            seo_migration_module._derive_managed_gke_dispatch_readiness_message(
+                dispatch_service_reason_code="expected_static_ip_not_bound_to_ingress"
+            )
+            or ""
+        ).lower()
+    )
+    assert (
+        "create/reserve the deterministic site static ip"
+        in str(
+            seo_migration_module._derive_deploy_failure_remediation_hint(
+                failure_reason=None,
+                failure_stage=None,
+                workflow_exists=None,
+                dispatch_service_reason_code="managed_site_static_ip_missing",
+            )
+            or ""
+        ).lower()
+    )
+    assert (
+        "missing the expected per-site static ip annotation binding"
+        in str(
+            seo_migration_module._derive_deploy_failure_remediation_hint(
+                failure_reason=None,
+                failure_stage=None,
+                workflow_exists=None,
+                dispatch_service_reason_code="expected_static_ip_not_bound_to_ingress",
+            )
+            or ""
+        ).lower()
+    )
 
 
 def test_managed_certificate_domain_drift_reason_code_hint_mappings() -> None:
-    assert "safe delete/recreate repair was attempted" in str(
-        seo_migration_module._derive_managed_gke_dispatch_readiness_message(
-            dispatch_service_reason_code="managed_certificate_domain_drift_repaired"
-        )
-        or ""
-    ).lower()
-    assert "did not converge" in str(
-        seo_migration_module._derive_managed_gke_dispatch_readiness_message(
-            dispatch_service_reason_code="managed_certificate_domain_drift_repair_failed"
-        )
-        or ""
-    ).lower()
-    assert "automatic safe repair was attempted" in str(
-        seo_migration_module._derive_deploy_failure_remediation_hint(
-            failure_reason=None,
-            failure_stage=None,
-            workflow_exists=None,
-            dispatch_service_reason_code="managed_certificate_domain_drift_repaired",
-        )
-        or ""
-    ).lower()
-    assert "persisted after safe repair attempt" in str(
-        seo_migration_module._derive_deploy_failure_remediation_hint(
-            failure_reason=None,
-            failure_stage=None,
-            workflow_exists=None,
-            dispatch_service_reason_code="managed_certificate_domain_drift_repair_failed",
-        )
-        or ""
-    ).lower()
-    assert "safe delete/recreate repair was attempted" in str(
-        seo_migration_module._derive_workflow_run_failure_hint(
-            failure_reason="managed_certificate_domain_drift_repaired",
-            post_dispatch_state=None,
-        )
-        or ""
-    ).lower()
-    assert "persisted after safe repair attempt" in str(
-        seo_migration_module._derive_workflow_run_failure_hint(
-            failure_reason="managed_certificate_domain_drift_repair_failed",
-            post_dispatch_state=None,
-        )
-        or ""
-    ).lower()
+    assert (
+        "safe delete/recreate repair was attempted"
+        in str(
+            seo_migration_module._derive_managed_gke_dispatch_readiness_message(
+                dispatch_service_reason_code="managed_certificate_domain_drift_repaired"
+            )
+            or ""
+        ).lower()
+    )
+    assert (
+        "did not converge"
+        in str(
+            seo_migration_module._derive_managed_gke_dispatch_readiness_message(
+                dispatch_service_reason_code="managed_certificate_domain_drift_repair_failed"
+            )
+            or ""
+        ).lower()
+    )
+    assert (
+        "automatic safe repair was attempted"
+        in str(
+            seo_migration_module._derive_deploy_failure_remediation_hint(
+                failure_reason=None,
+                failure_stage=None,
+                workflow_exists=None,
+                dispatch_service_reason_code="managed_certificate_domain_drift_repaired",
+            )
+            or ""
+        ).lower()
+    )
+    assert (
+        "persisted after safe repair attempt"
+        in str(
+            seo_migration_module._derive_deploy_failure_remediation_hint(
+                failure_reason=None,
+                failure_stage=None,
+                workflow_exists=None,
+                dispatch_service_reason_code="managed_certificate_domain_drift_repair_failed",
+            )
+            or ""
+        ).lower()
+    )
+    assert (
+        "safe delete/recreate repair was attempted"
+        in str(
+            seo_migration_module._derive_workflow_run_failure_hint(
+                failure_reason="managed_certificate_domain_drift_repaired",
+                post_dispatch_state=None,
+            )
+            or ""
+        ).lower()
+    )
+    assert (
+        "persisted after safe repair attempt"
+        in str(
+            seo_migration_module._derive_workflow_run_failure_hint(
+                failure_reason="managed_certificate_domain_drift_repair_failed",
+                post_dispatch_state=None,
+            )
+            or ""
+        ).lower()
+    )
 
 
 def test_static_ip_pre_dispatch_reason_code_hint_mappings_cover_config_and_provisioning_failures() -> None:
-    assert "configuration is incomplete" in str(
-        seo_migration_module._derive_managed_gke_dispatch_readiness_message(
-            dispatch_service_reason_code="managed_site_static_ip_config_missing"
-        )
-        or ""
-    ).lower()
-    assert "provisioning failed in control plane" in str(
-        seo_migration_module._derive_managed_gke_dispatch_readiness_message(
-            dispatch_service_reason_code="managed_site_static_ip_provisioning_failed"
-        )
-        or ""
-    ).lower()
-    assert "did not return an address value" in str(
-        seo_migration_module._derive_managed_gke_dispatch_readiness_message(
-            dispatch_service_reason_code="managed_site_static_ip_address_missing"
-        )
-        or ""
-    ).lower()
-    assert "config is missing" in str(
-        seo_migration_module._derive_deploy_failure_remediation_hint(
-            failure_reason=None,
-            failure_stage=None,
-            workflow_exists=None,
-            dispatch_service_reason_code="managed_site_static_ip_config_missing",
-        )
-        or ""
-    ).lower()
-    assert "provisioning failed before workflow dispatch" in str(
-        seo_migration_module._derive_deploy_failure_remediation_hint(
-            failure_reason=None,
-            failure_stage=None,
-            workflow_exists=None,
-            dispatch_service_reason_code="managed_site_static_ip_provisioning_failed",
-        )
-        or ""
-    ).lower()
-    assert "did not return an address" in str(
-        seo_migration_module._derive_deploy_failure_remediation_hint(
-            failure_reason=None,
-            failure_stage=None,
-            workflow_exists=None,
-            dispatch_service_reason_code="managed_site_static_ip_address_missing",
-        )
-        or ""
-    ).lower()
-    assert "not authorized" in str(
-        seo_migration_module._derive_managed_gke_dispatch_readiness_message(
-            dispatch_service_reason_code="managed_site_static_ip_permission_denied"
-        )
-        or ""
-    ).lower()
-    assert "compute engine api" in str(
-        seo_migration_module._derive_managed_gke_dispatch_readiness_message(
-            dispatch_service_reason_code="managed_site_static_ip_api_disabled"
-        )
-        or ""
-    ).lower()
-    assert "quota" in str(
-        seo_migration_module._derive_managed_gke_dispatch_readiness_message(
-            dispatch_service_reason_code="managed_site_static_ip_quota_exceeded"
-        )
-        or ""
-    ).lower()
-    assert "project configuration is invalid" in str(
-        seo_migration_module._derive_managed_gke_dispatch_readiness_message(
-            dispatch_service_reason_code="managed_site_static_ip_project_not_found"
-        )
-        or ""
-    ).lower()
-    assert "name conflict" in str(
-        seo_migration_module._derive_managed_gke_dispatch_readiness_message(
-            dispatch_service_reason_code="managed_site_static_ip_conflict"
-        )
-        or ""
-    ).lower()
-    assert "not authorized" in str(
-        seo_migration_module._derive_deploy_failure_remediation_hint(
-            failure_reason=None,
-            failure_stage=None,
-            workflow_exists=None,
-            dispatch_service_reason_code="managed_site_static_ip_permission_denied",
-        )
-        or ""
-    ).lower()
-    assert "enable the api" in str(
-        seo_migration_module._derive_deploy_failure_remediation_hint(
-            failure_reason=None,
-            failure_stage=None,
-            workflow_exists=None,
-            dispatch_service_reason_code="managed_site_static_ip_api_disabled",
-        )
-        or ""
-    ).lower()
-    assert "quota" in str(
-        seo_migration_module._derive_deploy_failure_remediation_hint(
-            failure_reason=None,
-            failure_stage=None,
-            workflow_exists=None,
-            dispatch_service_reason_code="managed_site_static_ip_quota_exceeded",
-        )
-        or ""
-    ).lower()
-    assert "project id is invalid" in str(
-        seo_migration_module._derive_deploy_failure_remediation_hint(
-            failure_reason=None,
-            failure_stage=None,
-            workflow_exists=None,
-            dispatch_service_reason_code="managed_site_static_ip_project_not_found",
-        )
-        or ""
-    ).lower()
-    assert "conflicts with an existing unmanaged resource" in str(
-        seo_migration_module._derive_deploy_failure_remediation_hint(
-            failure_reason=None,
-            failure_stage=None,
-            workflow_exists=None,
-            dispatch_service_reason_code="managed_site_static_ip_conflict",
-        )
-        or ""
-    ).lower()
-    assert "did not return an address value" in str(
-        seo_migration_module._derive_workflow_run_failure_hint(
-            failure_reason="managed_site_static_ip_address_missing",
-            post_dispatch_state=None,
-        )
-        or ""
-    ).lower()
+    assert (
+        "configuration is incomplete"
+        in str(
+            seo_migration_module._derive_managed_gke_dispatch_readiness_message(
+                dispatch_service_reason_code="managed_site_static_ip_config_missing"
+            )
+            or ""
+        ).lower()
+    )
+    assert (
+        "provisioning failed in control plane"
+        in str(
+            seo_migration_module._derive_managed_gke_dispatch_readiness_message(
+                dispatch_service_reason_code="managed_site_static_ip_provisioning_failed"
+            )
+            or ""
+        ).lower()
+    )
+    assert (
+        "did not return an address value"
+        in str(
+            seo_migration_module._derive_managed_gke_dispatch_readiness_message(
+                dispatch_service_reason_code="managed_site_static_ip_address_missing"
+            )
+            or ""
+        ).lower()
+    )
+    assert (
+        "config is missing"
+        in str(
+            seo_migration_module._derive_deploy_failure_remediation_hint(
+                failure_reason=None,
+                failure_stage=None,
+                workflow_exists=None,
+                dispatch_service_reason_code="managed_site_static_ip_config_missing",
+            )
+            or ""
+        ).lower()
+    )
+    assert (
+        "provisioning failed before workflow dispatch"
+        in str(
+            seo_migration_module._derive_deploy_failure_remediation_hint(
+                failure_reason=None,
+                failure_stage=None,
+                workflow_exists=None,
+                dispatch_service_reason_code="managed_site_static_ip_provisioning_failed",
+            )
+            or ""
+        ).lower()
+    )
+    assert (
+        "did not return an address"
+        in str(
+            seo_migration_module._derive_deploy_failure_remediation_hint(
+                failure_reason=None,
+                failure_stage=None,
+                workflow_exists=None,
+                dispatch_service_reason_code="managed_site_static_ip_address_missing",
+            )
+            or ""
+        ).lower()
+    )
+    assert (
+        "not authorized"
+        in str(
+            seo_migration_module._derive_managed_gke_dispatch_readiness_message(
+                dispatch_service_reason_code="managed_site_static_ip_permission_denied"
+            )
+            or ""
+        ).lower()
+    )
+    assert (
+        "compute engine api"
+        in str(
+            seo_migration_module._derive_managed_gke_dispatch_readiness_message(
+                dispatch_service_reason_code="managed_site_static_ip_api_disabled"
+            )
+            or ""
+        ).lower()
+    )
+    assert (
+        "quota"
+        in str(
+            seo_migration_module._derive_managed_gke_dispatch_readiness_message(
+                dispatch_service_reason_code="managed_site_static_ip_quota_exceeded"
+            )
+            or ""
+        ).lower()
+    )
+    assert (
+        "project configuration is invalid"
+        in str(
+            seo_migration_module._derive_managed_gke_dispatch_readiness_message(
+                dispatch_service_reason_code="managed_site_static_ip_project_not_found"
+            )
+            or ""
+        ).lower()
+    )
+    assert (
+        "name conflict"
+        in str(
+            seo_migration_module._derive_managed_gke_dispatch_readiness_message(
+                dispatch_service_reason_code="managed_site_static_ip_conflict"
+            )
+            or ""
+        ).lower()
+    )
+    assert (
+        "not authorized"
+        in str(
+            seo_migration_module._derive_deploy_failure_remediation_hint(
+                failure_reason=None,
+                failure_stage=None,
+                workflow_exists=None,
+                dispatch_service_reason_code="managed_site_static_ip_permission_denied",
+            )
+            or ""
+        ).lower()
+    )
+    assert (
+        "enable the api"
+        in str(
+            seo_migration_module._derive_deploy_failure_remediation_hint(
+                failure_reason=None,
+                failure_stage=None,
+                workflow_exists=None,
+                dispatch_service_reason_code="managed_site_static_ip_api_disabled",
+            )
+            or ""
+        ).lower()
+    )
+    assert (
+        "quota"
+        in str(
+            seo_migration_module._derive_deploy_failure_remediation_hint(
+                failure_reason=None,
+                failure_stage=None,
+                workflow_exists=None,
+                dispatch_service_reason_code="managed_site_static_ip_quota_exceeded",
+            )
+            or ""
+        ).lower()
+    )
+    assert (
+        "project id is invalid"
+        in str(
+            seo_migration_module._derive_deploy_failure_remediation_hint(
+                failure_reason=None,
+                failure_stage=None,
+                workflow_exists=None,
+                dispatch_service_reason_code="managed_site_static_ip_project_not_found",
+            )
+            or ""
+        ).lower()
+    )
+    assert (
+        "conflicts with an existing unmanaged resource"
+        in str(
+            seo_migration_module._derive_deploy_failure_remediation_hint(
+                failure_reason=None,
+                failure_stage=None,
+                workflow_exists=None,
+                dispatch_service_reason_code="managed_site_static_ip_conflict",
+            )
+            or ""
+        ).lower()
+    )
+    assert (
+        "did not return an address value"
+        in str(
+            seo_migration_module._derive_workflow_run_failure_hint(
+                failure_reason="managed_site_static_ip_address_missing",
+                post_dispatch_state=None,
+            )
+            or ""
+        ).lower()
+    )
 
 
 def test_managed_deploy_impersonation_reason_code_hint_mappings() -> None:
-    assert "gcp_managed_deploy" in str(
-        seo_migration_module._derive_managed_gke_dispatch_readiness_message(
-            dispatch_service_reason_code="managed_deploy_impersonation_config_invalid"
-        )
-        or ""
-    ).lower()
-    assert "tokencreator" in str(
-        seo_migration_module._derive_managed_gke_dispatch_readiness_message(
-            dispatch_service_reason_code="managed_deploy_impersonation_permission_denied"
-        )
-        or ""
-    ).lower()
-    assert "gcp_managed_deploy is invalid" in str(
-        seo_migration_module._derive_deploy_failure_remediation_hint(
-            failure_reason=None,
-            failure_stage=None,
-            workflow_exists=None,
-            dispatch_service_reason_code="managed_deploy_impersonation_config_invalid",
-        )
-        or ""
-    ).lower()
-    assert "tokencreator" in str(
-        seo_migration_module._derive_deploy_failure_remediation_hint(
-            failure_reason=None,
-            failure_stage=None,
-            workflow_exists=None,
-            dispatch_service_reason_code="managed_deploy_impersonation_permission_denied",
-        )
-        or ""
-    ).lower()
-    assert "gcp_managed_deploy is invalid" in str(
-        seo_migration_module._derive_workflow_run_failure_hint(
-            failure_reason="managed_deploy_impersonation_config_invalid",
-            post_dispatch_state=None,
-        )
-        or ""
-    ).lower()
-    assert "tokencreator" in str(
-        seo_migration_module._derive_workflow_run_failure_hint(
-            failure_reason="managed_deploy_impersonation_permission_denied",
-            post_dispatch_state=None,
-        )
-        or ""
-    ).lower()
+    assert (
+        "gcp_managed_deploy"
+        in str(
+            seo_migration_module._derive_managed_gke_dispatch_readiness_message(
+                dispatch_service_reason_code="managed_deploy_impersonation_config_invalid"
+            )
+            or ""
+        ).lower()
+    )
+    assert (
+        "tokencreator"
+        in str(
+            seo_migration_module._derive_managed_gke_dispatch_readiness_message(
+                dispatch_service_reason_code="managed_deploy_impersonation_permission_denied"
+            )
+            or ""
+        ).lower()
+    )
+    assert (
+        "gcp_managed_deploy is invalid"
+        in str(
+            seo_migration_module._derive_deploy_failure_remediation_hint(
+                failure_reason=None,
+                failure_stage=None,
+                workflow_exists=None,
+                dispatch_service_reason_code="managed_deploy_impersonation_config_invalid",
+            )
+            or ""
+        ).lower()
+    )
+    assert (
+        "tokencreator"
+        in str(
+            seo_migration_module._derive_deploy_failure_remediation_hint(
+                failure_reason=None,
+                failure_stage=None,
+                workflow_exists=None,
+                dispatch_service_reason_code="managed_deploy_impersonation_permission_denied",
+            )
+            or ""
+        ).lower()
+    )
+    assert (
+        "gcp_managed_deploy is invalid"
+        in str(
+            seo_migration_module._derive_workflow_run_failure_hint(
+                failure_reason="managed_deploy_impersonation_config_invalid",
+                post_dispatch_state=None,
+            )
+            or ""
+        ).lower()
+    )
+    assert (
+        "tokencreator"
+        in str(
+            seo_migration_module._derive_workflow_run_failure_hint(
+                failure_reason="managed_deploy_impersonation_permission_denied",
+                post_dispatch_state=None,
+            )
+            or ""
+        ).lower()
+    )
 
 
 def test_dns_pre_dispatch_reason_code_hint_mappings_cover_config_conflict_permission_and_conflict_retry() -> None:
-    assert "dns provisioning configuration is incomplete" in str(
-        seo_migration_module._derive_managed_gke_dispatch_readiness_message(
-            dispatch_service_reason_code="managed_site_dns_config_missing"
-        )
-        or ""
-    ).lower()
-    assert "dns a-record provisioning failed in control plane" in str(
-        seo_migration_module._derive_managed_gke_dispatch_readiness_message(
-            dispatch_service_reason_code="managed_site_dns_provisioning_failed"
-        )
-        or ""
-    ).lower()
-    assert "conflicting dns record type" in str(
-        seo_migration_module._derive_managed_gke_dispatch_readiness_message(
-            dispatch_service_reason_code="managed_site_dns_conflicting_record"
-        )
-        or ""
-    ).lower()
-    assert "not authorized" in str(
-        seo_migration_module._derive_managed_gke_dispatch_readiness_message(
-            dispatch_service_reason_code="managed_site_dns_permission_denied"
-        )
-        or ""
-    ).lower()
-    assert "transaction conflict" in str(
-        seo_migration_module._derive_managed_gke_dispatch_readiness_message(
-            dispatch_service_reason_code="managed_site_dns_transaction_conflict"
-        )
-        or ""
-    ).lower()
-    assert "propagation is still pending" in str(
-        seo_migration_module._derive_managed_gke_dispatch_readiness_message(
-            dispatch_service_reason_code="managed_site_dns_propagation_pending"
-        )
-        or ""
-    ).lower()
-    assert "config is missing" in str(
-        seo_migration_module._derive_deploy_failure_remediation_hint(
-            failure_reason=None,
-            failure_stage=None,
-            workflow_exists=None,
-            dispatch_service_reason_code="managed_site_dns_config_missing",
-        )
-        or ""
-    ).lower()
-    assert "dns a-record provisioning failed" in str(
-        seo_migration_module._derive_deploy_failure_remediation_hint(
-            failure_reason=None,
-            failure_stage=None,
-            workflow_exists=None,
-            dispatch_service_reason_code="managed_site_dns_provisioning_failed",
-        )
-        or ""
-    ).lower()
-    assert "conflicting non-a dns record" in str(
-        seo_migration_module._derive_deploy_failure_remediation_hint(
-            failure_reason=None,
-            failure_stage=None,
-            workflow_exists=None,
-            dispatch_service_reason_code="managed_site_dns_conflicting_record",
-        )
-        or ""
-    ).lower()
-    assert "cloud dns permissions" in str(
-        seo_migration_module._derive_deploy_failure_remediation_hint(
-            failure_reason=None,
-            failure_stage=None,
-            workflow_exists=None,
-            dispatch_service_reason_code="managed_site_dns_permission_denied",
-        )
-        or ""
-    ).lower()
-    assert "concurrent transaction conflict" in str(
-        seo_migration_module._derive_deploy_failure_remediation_hint(
-            failure_reason=None,
-            failure_stage=None,
-            workflow_exists=None,
-            dispatch_service_reason_code="managed_site_dns_transaction_conflict",
-        )
-        or ""
-    ).lower()
-    assert "resolver propagation has not reached" in str(
-        seo_migration_module._derive_deploy_failure_remediation_hint(
-            failure_reason=None,
-            failure_stage=None,
-            workflow_exists=None,
-            dispatch_service_reason_code="managed_site_dns_propagation_pending",
-        )
-        or ""
-    ).lower()
+    assert (
+        "dns provisioning configuration is incomplete"
+        in str(
+            seo_migration_module._derive_managed_gke_dispatch_readiness_message(
+                dispatch_service_reason_code="managed_site_dns_config_missing"
+            )
+            or ""
+        ).lower()
+    )
+    assert (
+        "dns a-record provisioning failed in control plane"
+        in str(
+            seo_migration_module._derive_managed_gke_dispatch_readiness_message(
+                dispatch_service_reason_code="managed_site_dns_provisioning_failed"
+            )
+            or ""
+        ).lower()
+    )
+    assert (
+        "conflicting dns record type"
+        in str(
+            seo_migration_module._derive_managed_gke_dispatch_readiness_message(
+                dispatch_service_reason_code="managed_site_dns_conflicting_record"
+            )
+            or ""
+        ).lower()
+    )
+    assert (
+        "not authorized"
+        in str(
+            seo_migration_module._derive_managed_gke_dispatch_readiness_message(
+                dispatch_service_reason_code="managed_site_dns_permission_denied"
+            )
+            or ""
+        ).lower()
+    )
+    assert (
+        "transaction conflict"
+        in str(
+            seo_migration_module._derive_managed_gke_dispatch_readiness_message(
+                dispatch_service_reason_code="managed_site_dns_transaction_conflict"
+            )
+            or ""
+        ).lower()
+    )
+    assert (
+        "propagation is still pending"
+        in str(
+            seo_migration_module._derive_managed_gke_dispatch_readiness_message(
+                dispatch_service_reason_code="managed_site_dns_propagation_pending"
+            )
+            or ""
+        ).lower()
+    )
+    assert (
+        "config is missing"
+        in str(
+            seo_migration_module._derive_deploy_failure_remediation_hint(
+                failure_reason=None,
+                failure_stage=None,
+                workflow_exists=None,
+                dispatch_service_reason_code="managed_site_dns_config_missing",
+            )
+            or ""
+        ).lower()
+    )
+    assert (
+        "dns a-record provisioning failed"
+        in str(
+            seo_migration_module._derive_deploy_failure_remediation_hint(
+                failure_reason=None,
+                failure_stage=None,
+                workflow_exists=None,
+                dispatch_service_reason_code="managed_site_dns_provisioning_failed",
+            )
+            or ""
+        ).lower()
+    )
+    assert (
+        "conflicting non-a dns record"
+        in str(
+            seo_migration_module._derive_deploy_failure_remediation_hint(
+                failure_reason=None,
+                failure_stage=None,
+                workflow_exists=None,
+                dispatch_service_reason_code="managed_site_dns_conflicting_record",
+            )
+            or ""
+        ).lower()
+    )
+    assert (
+        "cloud dns permissions"
+        in str(
+            seo_migration_module._derive_deploy_failure_remediation_hint(
+                failure_reason=None,
+                failure_stage=None,
+                workflow_exists=None,
+                dispatch_service_reason_code="managed_site_dns_permission_denied",
+            )
+            or ""
+        ).lower()
+    )
+    assert (
+        "concurrent transaction conflict"
+        in str(
+            seo_migration_module._derive_deploy_failure_remediation_hint(
+                failure_reason=None,
+                failure_stage=None,
+                workflow_exists=None,
+                dispatch_service_reason_code="managed_site_dns_transaction_conflict",
+            )
+            or ""
+        ).lower()
+    )
+    assert (
+        "resolver propagation has not reached"
+        in str(
+            seo_migration_module._derive_deploy_failure_remediation_hint(
+                failure_reason=None,
+                failure_stage=None,
+                workflow_exists=None,
+                dispatch_service_reason_code="managed_site_dns_propagation_pending",
+            )
+            or ""
+        ).lower()
+    )
 
 
 def test_refresh_deploy_status_stale_pre_shared_cert_binding_blocks_success(db_session) -> None:
@@ -7560,6 +7646,7 @@ def test_deploy_completed_success_requires_https_live_url_for_https_ready(db_ses
     assert deploy_result.result.get("resolved_live_url") == "http://tnmfire.site.mbsrn.com"
     assert deploy_result.result.get("post_dispatch_state") == "workflow_run_succeeded_without_live_url"
     assert deploy_result.result.get("deploy_https_ready") is False
+
 
 def test_refresh_deploy_status_records_run_failure_classification(db_session) -> None:
     publisher = _RecordingGitHubPublisher(
@@ -8677,13 +8764,14 @@ def test_adopt_publish_repository_surfaces_adoption_failure(db_session) -> None:
             principal_id="principal-1",
         )
 
+
 def test_publish_propagates_deploy_secret_for_approved_managed_target(db_session) -> None:
     publisher = _RecordingGitHubPublisher(existing_workflow=True)
     service = _build_service(
         db_session,
         _StaticMigrationProvider(_build_publishable_output()),
         github_publisher=publisher,
-        deploy_secret_gcp_key="{\"type\":\"service_account\",\"project_id\":\"acme\"}",
+        deploy_secret_gcp_key='{"type":"service_account","project_id":"acme"}',
     )
     business_id, site_id = _seed_business_and_site(db_session)
     _seed_workspace(service, business_id=business_id, site_id=site_id)
@@ -8732,7 +8820,7 @@ def test_publish_skips_deploy_secret_propagation_for_unapproved_target_owner(db_
         db_session,
         _StaticMigrationProvider(_build_publishable_output()),
         github_publisher=publisher,
-        deploy_secret_gcp_key="{\"type\":\"service_account\",\"project_id\":\"acme\"}",
+        deploy_secret_gcp_key='{"type":"service_account","project_id":"acme"}',
     )
     business_id, site_id = _seed_business_and_site(db_session)
     _seed_workspace(service, business_id=business_id, site_id=site_id)
@@ -8790,7 +8878,7 @@ def test_publish_surfaces_deploy_secret_propagation_failure_without_blocking_pub
         db_session,
         _StaticMigrationProvider(_build_publishable_output()),
         github_publisher=publisher,
-        deploy_secret_gcp_key="{\"type\":\"service_account\",\"project_id\":\"acme\"}",
+        deploy_secret_gcp_key='{"type":"service_account","project_id":"acme"}',
     )
     business_id, site_id = _seed_business_and_site(db_session)
     _seed_workspace(service, business_id=business_id, site_id=site_id)
@@ -9480,8 +9568,7 @@ def test_deploy_stale_pending_blocker_is_reconciled_and_still_active_blocks_dupl
         record.__dict__.get("json_fields")
         for record in caplog.records
         if isinstance(record.__dict__.get("json_fields"), dict)
-        and record.__dict__["json_fields"].get("event")
-        == "seo_migration_deploy_duplicate_blocker_reconciliation"
+        and record.__dict__["json_fields"].get("event") == "seo_migration_deploy_duplicate_blocker_reconciliation"
     ]
     assert reconciliation_payloads
     assert reconciliation_payloads[-1].get("blocking_deploy_trace_id") == stale_trace_id
@@ -9594,8 +9681,7 @@ def test_deploy_retry_allowed_when_duplicate_blocker_reconciles_to_terminal(db_s
         record.__dict__.get("json_fields")
         for record in caplog.records
         if isinstance(record.__dict__.get("json_fields"), dict)
-        and record.__dict__["json_fields"].get("event")
-        == "seo_migration_deploy_duplicate_blocker_reconciliation"
+        and record.__dict__["json_fields"].get("event") == "seo_migration_deploy_duplicate_blocker_reconciliation"
         and record.__dict__["json_fields"].get("blocking_deploy_trace_id") == stale_trace_id
     ]
     assert reconciliation_payloads
@@ -9676,7 +9762,9 @@ def test_duplicate_blocker_reconciliation_failure_returns_deploy_error(db_sessio
     service.seo_migration_repository.save_workspace(workspace)
     db_session.commit()
 
-    with pytest.raises(SEOMigrationValidationError, match="Unable to reconcile previous deploy blocker with GitHub") as exc:
+    with pytest.raises(
+        SEOMigrationValidationError, match="Unable to reconcile previous deploy blocker with GitHub"
+    ) as exc:
         service.deploy_artifact_version(
             business_id=business_id,
             site_id=site_id,
@@ -9828,8 +9916,7 @@ def test_stale_duplicate_blocker_refresh_failure_requires_manual_refresh(db_sess
         record.__dict__.get("json_fields")
         for record in caplog.records
         if isinstance(record.__dict__.get("json_fields"), dict)
-        and record.__dict__["json_fields"].get("event")
-        == "seo_migration_deploy_duplicate_blocker_reconciliation"
+        and record.__dict__["json_fields"].get("event") == "seo_migration_deploy_duplicate_blocker_reconciliation"
     ]
     assert reconciliation_payloads
     assert reconciliation_payloads[-1].get("reconciliation_result") == "stale_requires_manual_refresh"
@@ -10898,8 +10985,13 @@ def test_deploy_prefers_site_specific_workflow_when_publish_history_is_stale(db_
         and record.__dict__["json_fields"].get("event") == "seo_migration_workflow_candidate_alignment"
     ]
     assert alignment_payloads
-    assert alignment_payloads[-1].get("publish_resolved_workflow_path") == ".github/workflows/deploy-tnmfire-www-prod.yml"
-    assert alignment_payloads[-1].get("readiness_resolved_workflow_path") == ".github/workflows/deploy-tnmfire-www-prod.yml"
+    assert (
+        alignment_payloads[-1].get("publish_resolved_workflow_path") == ".github/workflows/deploy-tnmfire-www-prod.yml"
+    )
+    assert (
+        alignment_payloads[-1].get("readiness_resolved_workflow_path")
+        == ".github/workflows/deploy-tnmfire-www-prod.yml"
+    )
     assert alignment_payloads[-1].get("publish_resolved_ref") == "main"
     assert alignment_payloads[-1].get("readiness_resolved_ref") == "main"
     assert alignment_payloads[-1].get("workflow_candidate_alignment_exact") is True
@@ -12564,8 +12656,7 @@ def test_deploy_logs_distinguish_trigger_support_from_dispatch_service_availabil
         and payload.get("target", {}).get("dispatch_service_reason_code") == "runtime_unavailable"
         and payload.get("target", {}).get("dispatch_result_stage") == "workflow_dispatch"
         and payload.get("target", {}).get("post_conformance_stage") == "workflow_dispatch_failed"
-        and payload.get("target", {}).get("post_conformance_reason_text")
-        == "GitHub workflow dispatch rejected by API."
+        and payload.get("target", {}).get("post_conformance_reason_text") == "GitHub workflow dispatch rejected by API."
         and payload.get("target", {}).get("failure_reason_code") == "workflow_dispatch_not_supported"
         and isinstance(payload.get("target", {}).get("deploy_trace_id"), str)
         and payload.get("target", {}).get("deploy_trace_id")

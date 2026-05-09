@@ -278,20 +278,14 @@ class GitHubNamespaceNetworkPolicyDefaults(BaseModel):
         normalized = _normalize_optional_text(value, max_length=80) or _DEFAULT_NETWORK_POLICY_MODE
         normalized = normalized.lower()
         if normalized not in _ALLOWED_NETWORK_POLICY_MODES:
-            raise ValueError(
-                "is invalid. Supported values: " + ", ".join(sorted(_ALLOWED_NETWORK_POLICY_MODES)) + "."
-            )
+            raise ValueError("is invalid. Supported values: " + ", ".join(sorted(_ALLOWED_NETWORK_POLICY_MODES)) + ".")
         return normalized
 
 
 class GitHubNamespaceIsolationDefaults(BaseModel):
-    resource_quota: GitHubNamespaceResourceQuotaDefaults = Field(
-        default_factory=GitHubNamespaceResourceQuotaDefaults
-    )
+    resource_quota: GitHubNamespaceResourceQuotaDefaults = Field(default_factory=GitHubNamespaceResourceQuotaDefaults)
     limit_range: GitHubNamespaceLimitRangeDefaults = Field(default_factory=GitHubNamespaceLimitRangeDefaults)
-    network_policy: GitHubNamespaceNetworkPolicyDefaults = Field(
-        default_factory=GitHubNamespaceNetworkPolicyDefaults
-    )
+    network_policy: GitHubNamespaceNetworkPolicyDefaults = Field(default_factory=GitHubNamespaceNetworkPolicyDefaults)
 
     model_config = ConfigDict(extra="forbid")
 

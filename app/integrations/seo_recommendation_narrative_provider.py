@@ -460,14 +460,8 @@ class OpenAISEORecommendationNarrativeProvider:
                         if exc.normalized_failure.reason == "request_too_large"
                         else (
                             "trimmed_provider_submission"
-                            if (
-                                isinstance(exc.trimming_pass_count, int)
-                                and exc.trimming_pass_count > 0
-                            )
-                            or (
-                                isinstance(exc.trimmed_bytes, int)
-                                and exc.trimmed_bytes > 0
-                            )
+                            if (isinstance(exc.trimming_pass_count, int) and exc.trimming_pass_count > 0)
+                            or (isinstance(exc.trimmed_bytes, int) and exc.trimmed_bytes > 0)
                             else "provider_submission"
                         )
                     )
@@ -1068,16 +1062,10 @@ class OpenAISEORecommendationNarrativeProvider:
             normalized_failure_source=_clean_optional_value(normalized_failure_source),
             normalized_retryable=(bool(normalized_retryable) if isinstance(normalized_retryable, bool) else None),
             attempt_count=(max(1, int(attempt_count)) if isinstance(attempt_count, int) else None),
-            original_input_size=(
-                max(0, int(original_input_size)) if isinstance(original_input_size, int) else None
-            ),
-            final_input_size=(
-                max(0, int(final_input_size)) if isinstance(final_input_size, int) else None
-            ),
+            original_input_size=(max(0, int(original_input_size)) if isinstance(original_input_size, int) else None),
+            final_input_size=(max(0, int(final_input_size)) if isinstance(final_input_size, int) else None),
             trimmed_bytes=(max(0, int(trimmed_bytes)) if isinstance(trimmed_bytes, int) else None),
-            trimming_pass_count=(
-                max(0, int(trimming_pass_count)) if isinstance(trimming_pass_count, int) else None
-            ),
+            trimming_pass_count=(max(0, int(trimming_pass_count)) if isinstance(trimming_pass_count, int) else None),
             difficulty_score=(max(0, min(100, int(difficulty_score))) if isinstance(difficulty_score, int) else None),
             budget_outcome=_clean_optional_value(budget_outcome),
             retry_suppressed=(bool(retry_suppressed) if isinstance(retry_suppressed, bool) else None),

@@ -19,7 +19,9 @@ def test_uvicorn_lifespan_cancelled_filter_suppresses_expected_shutdown_noise(
 
     try:
         uvicorn_error_logger.filters.clear()
-        monkeypatch.setattr(main_module.logger, "info", lambda message, *args, **kwargs: lifecycle_events.append(str(message)))
+        monkeypatch.setattr(
+            main_module.logger, "info", lambda message, *args, **kwargs: lifecycle_events.append(str(message))
+        )
         main_module._install_uvicorn_lifespan_cancelled_error_filter()
         installed_filter = next(
             active_filter

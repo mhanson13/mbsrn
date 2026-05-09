@@ -1106,22 +1106,16 @@ def _build_recommendation_ga4_priority_context_by_id(
 
     traffic_trend = ga4_insights.traffic_trend
     engagement_trend = ga4_insights.engagement_trend
-    traffic_declining = (
-        traffic_trend is not None
-        and _ga4_trend_is_declining(
-            trend_label=getattr(traffic_trend, "trend_label", None),
-            primary_delta_percent=getattr(traffic_trend, "sessions_delta_percent", None),
-            secondary_delta_percent=getattr(traffic_trend, "active_users_delta_percent", None),
-            threshold_percent=_GA4_PRIORITY_TRAFFIC_DECLINE_THRESHOLD_PERCENT,
-        )
+    traffic_declining = traffic_trend is not None and _ga4_trend_is_declining(
+        trend_label=getattr(traffic_trend, "trend_label", None),
+        primary_delta_percent=getattr(traffic_trend, "sessions_delta_percent", None),
+        secondary_delta_percent=getattr(traffic_trend, "active_users_delta_percent", None),
+        threshold_percent=_GA4_PRIORITY_TRAFFIC_DECLINE_THRESHOLD_PERCENT,
     )
-    engagement_declining = (
-        engagement_trend is not None
-        and _ga4_trend_is_declining(
-            trend_label=getattr(engagement_trend, "trend_label", None),
-            primary_delta_percent=getattr(engagement_trend, "engagement_rate_delta_percent", None),
-            threshold_percent=_GA4_PRIORITY_ENGAGEMENT_DECLINE_THRESHOLD_PERCENT,
-        )
+    engagement_declining = engagement_trend is not None and _ga4_trend_is_declining(
+        trend_label=getattr(engagement_trend, "trend_label", None),
+        primary_delta_percent=getattr(engagement_trend, "engagement_rate_delta_percent", None),
+        threshold_percent=_GA4_PRIORITY_ENGAGEMENT_DECLINE_THRESHOLD_PERCENT,
     )
 
     context_by_recommendation_id: dict[str, dict[str, object]] = {}
@@ -1129,9 +1123,7 @@ def _build_recommendation_ga4_priority_context_by_id(
         candidate_paths = _collect_recommendation_path_candidates(recommendation)
         matched_path = next((path for path in candidate_paths if path in landing_page_by_path), None)
         if matched_path is not None:
-            supporting_summary = _build_ga4_priority_metric_summary_for_landing_page(
-                landing_page_by_path[matched_path]
-            )
+            supporting_summary = _build_ga4_priority_metric_summary_for_landing_page(landing_page_by_path[matched_path])
             context_by_recommendation_id[recommendation.id] = {
                 "ga4_priority_context_available": True,
                 "ga4_priority_signal": "top_landing_page",
@@ -5431,9 +5423,7 @@ def _derive_competitor_ai_diagnostics_summary(
     )
 
     prompt_total_chars = latest_attempt_payload.get("prompt_total_chars")
-    prompt_chars_value = (
-        max(0, int(prompt_total_chars)) if isinstance(prompt_total_chars, (int, float)) else None
-    )
+    prompt_chars_value = max(0, int(prompt_total_chars)) if isinstance(prompt_total_chars, (int, float)) else None
     prompt_size_risk = _clean_optional(latest_attempt_payload.get("prompt_size_risk"))
     difficulty_score: int | None = None
     if prompt_size_risk == "high":
@@ -5445,14 +5435,10 @@ def _derive_competitor_ai_diagnostics_summary(
 
     normalized_failure_reason_value = normalized_failure_reason or ""
     retry_suppressed = (
-        normalized_failure_reason_value == "request_too_large_or_complex"
-        if normalized_failure_reason_value
-        else None
+        normalized_failure_reason_value == "request_too_large_or_complex" if normalized_failure_reason_value else None
     )
     budget_outcome = (
-        "retry_suppressed"
-        if retry_suppressed is True
-        else ("provider_submission" if provider_attempts else None)
+        "retry_suppressed" if retry_suppressed is True else ("provider_submission" if provider_attempts else None)
     )
     degraded_state = _clean_optional(getattr(outcome_summary, "status_level", None)) if outcome_summary else None
 

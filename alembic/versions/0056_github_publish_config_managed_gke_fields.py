@@ -36,4 +36,3 @@ def downgrade() -> None:
     op.drop_column("github_publish_config", "managed_gke_project_id")
     op.drop_column("github_publish_config", "managed_gke_cluster_location")
     op.drop_column("github_publish_config", "managed_gke_cluster_name")
-

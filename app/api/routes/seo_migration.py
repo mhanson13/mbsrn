@@ -77,9 +77,7 @@ def _to_artifact_read(artifact) -> SEOMigrationArtifactVersionRead:  # noqa: ANN
 def _validation_error_detail(exc: SEOMigrationValidationError) -> str | dict[str, object]:
     detail = exc.to_error_detail()
     if isinstance(detail, dict):
-        reason_code = _normalize_draft_generation_reason_code(
-            detail.get("reason_code") or detail.get("error_code")
-        )
+        reason_code = _normalize_draft_generation_reason_code(detail.get("reason_code") or detail.get("error_code"))
         if reason_code is not None:
             detail["reason_code"] = reason_code
             if not detail.get("error_code"):
@@ -236,7 +234,11 @@ def _draft_generation_operator_action(*, reason_code: str, retryable: bool) -> t
             "Retry shortly. If Google integration state remains unavailable, reconnect Google and retry.",
             "google_search_console_analytics",
         )
-    if normalized_reason in {"source_site_ingest_required", "operator_requirements_required", "enriched_content_required"}:
+    if normalized_reason in {
+        "source_site_ingest_required",
+        "operator_requirements_required",
+        "enriched_content_required",
+    }:
         return ("Update workspace inputs to resolve draft readiness blockers, then retry generation.", None)
     if normalized_reason in {
         "provider_config_missing",
@@ -431,7 +433,9 @@ async def upload_seo_migration_media_asset(
     except SEOMigrationNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     except SEOMigrationValidationError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=_validation_error_detail(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=_validation_error_detail(exc)
+        ) from exc
     return SEOMigrationMediaAssetRead.model_validate(media_asset)
 
 
@@ -465,11 +469,15 @@ def update_seo_migration_media_asset(
     except SEOMigrationNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     except SEOMigrationValidationError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=_validation_error_detail(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=_validation_error_detail(exc)
+        ) from exc
     return SEOMigrationMediaAssetRead.model_validate(media_asset)
 
 
-@router.post("/sites/{site_id}/migration/media/assets/{asset_id}/suggest-metadata", response_model=SEOMigrationMediaAssetRead)
+@router.post(
+    "/sites/{site_id}/migration/media/assets/{asset_id}/suggest-metadata", response_model=SEOMigrationMediaAssetRead
+)
 def suggest_seo_migration_media_asset_metadata(
     business_id: str,
     site_id: str,
@@ -493,11 +501,15 @@ def suggest_seo_migration_media_asset_metadata(
     except SEOMigrationNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     except SEOMigrationValidationError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=_validation_error_detail(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=_validation_error_detail(exc)
+        ) from exc
     return SEOMigrationMediaAssetRead.model_validate(media_asset)
 
 
-@router.post("/sites/{site_id}/migration/media/assets/suggest-metadata", response_model=SEOMigrationMediaSuggestionBatchRead)
+@router.post(
+    "/sites/{site_id}/migration/media/assets/suggest-metadata", response_model=SEOMigrationMediaSuggestionBatchRead
+)
 def suggest_seo_migration_media_assets_metadata_batch(
     business_id: str,
     site_id: str,
@@ -520,7 +532,9 @@ def suggest_seo_migration_media_assets_metadata_batch(
     except SEOMigrationNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     except SEOMigrationValidationError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=_validation_error_detail(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=_validation_error_detail(exc)
+        ) from exc
     return SEOMigrationMediaSuggestionBatchRead.model_validate(batch_result)
 
 
@@ -551,7 +565,9 @@ def import_seo_migration_discovered_media_assets(
     except SEOMigrationNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     except SEOMigrationValidationError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=_validation_error_detail(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=_validation_error_detail(exc)
+        ) from exc
     return SEOMigrationDiscoveredMediaImportRead.model_validate(import_result)
 
 
@@ -606,7 +622,9 @@ def suggest_seo_migration_requirements_field(
     except SEOMigrationNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     except SEOMigrationValidationError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=_validation_error_detail(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=_validation_error_detail(exc)
+        ) from exc
     return SEOMigrationRequirementsSuggestionRead.model_validate(suggestion_payload)
 
 
@@ -796,7 +814,9 @@ def get_seo_migration_draft_readiness(
     except SEOMigrationNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     except SEOMigrationValidationError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=_validation_error_detail(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=_validation_error_detail(exc)
+        ) from exc
     return SEOMigrationDraftReadinessRead.model_validate(readiness)
 
 
@@ -985,7 +1005,9 @@ def publish_seo_migration_artifact_version(
     )
 
 
-@router.post("/sites/{site_id}/migration/publish/adopt-repository", response_model=SEOMigrationRepositoryAdoptActionRead)
+@router.post(
+    "/sites/{site_id}/migration/publish/adopt-repository", response_model=SEOMigrationRepositoryAdoptActionRead
+)
 def adopt_seo_migration_publish_repository(
     business_id: str,
     site_id: str,
@@ -1005,7 +1027,9 @@ def adopt_seo_migration_publish_repository(
     except SEOMigrationNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     except SEOMigrationValidationError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=_validation_error_detail(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=_validation_error_detail(exc)
+        ) from exc
     return SEOMigrationRepositoryAdoptActionRead(
         workspace=_to_workspace_read(action_result.workspace),
         readiness=action_result.readiness,

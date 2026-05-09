@@ -148,9 +148,7 @@ class GitHubPublishConfigService:
         github_repository_auto_create_enabled = bool(payload.github_repository_auto_create_enabled)
         existing = self.repository.get_singleton()
         payload_fields_set = getattr(payload, "model_fields_set", set()) or set()
-        github_repository_auto_create_enabled_provided = (
-            "github_repository_auto_create_enabled" in payload_fields_set
-        )
+        github_repository_auto_create_enabled_provided = "github_repository_auto_create_enabled" in payload_fields_set
         if not github_repository_auto_create_enabled_provided and existing is not None:
             github_repository_auto_create_enabled = bool(
                 getattr(existing, "github_repository_auto_create_enabled", False)
@@ -160,15 +158,9 @@ class GitHubPublishConfigService:
         managed_project_id_provided = "managed_gke_project_id" in payload_fields_set
         managed_gcp_deploy_key_value_provided = "managed_gcp_deploy_key_value" in payload_fields_set
         managed_gcp_deploy_key_clear_requested = bool(payload.managed_gcp_deploy_key_clear)
-        managed_gke_cluster_name = (
-            str(payload.managed_gke_cluster_name or "").strip().lower() or None
-        )
-        managed_gke_cluster_location = (
-            str(payload.managed_gke_cluster_location or "").strip().lower() or None
-        )
-        managed_gke_project_id = (
-            str(payload.managed_gke_project_id or "").strip().lower() or None
-        )
+        managed_gke_cluster_name = str(payload.managed_gke_cluster_name or "").strip().lower() or None
+        managed_gke_cluster_location = str(payload.managed_gke_cluster_location or "").strip().lower() or None
+        managed_gke_project_id = str(payload.managed_gke_project_id or "").strip().lower() or None
         if not managed_cluster_name_provided and existing is not None:
             managed_gke_cluster_name = (
                 str(getattr(existing, "managed_gke_cluster_name", "") or "").strip().lower() or None
@@ -178,25 +170,21 @@ class GitHubPublishConfigService:
                 str(getattr(existing, "managed_gke_cluster_location", "") or "").strip().lower() or None
             )
         if not managed_project_id_provided and existing is not None:
-            managed_gke_project_id = (
-                str(getattr(existing, "managed_gke_project_id", "") or "").strip().lower() or None
-            )
+            managed_gke_project_id = str(getattr(existing, "managed_gke_project_id", "") or "").strip().lower() or None
         managed_gcp_deploy_key_value = payload.managed_gcp_deploy_key_value
         if managed_gcp_deploy_key_clear_requested and managed_gcp_deploy_key_value:
             raise GitHubPublishConfigValidationError(
                 "Managed deploy key cannot be set and cleared in the same request."
             )
         if managed_gcp_deploy_key_value_provided and managed_gcp_deploy_key_value is None:
-            raise GitHubPublishConfigValidationError(
-                "Managed deploy key value is empty. Provide a value or use clear."
-            )
+            raise GitHubPublishConfigValidationError("Managed deploy key value is empty. Provide a value or use clear.")
         raw_namespace_defaults = payload.namespace_isolation_defaults
         if raw_namespace_defaults is None and existing is not None:
             raw_namespace_defaults = existing.namespace_isolation_defaults_json
         try:
-            namespace_isolation_defaults = normalize_namespace_isolation_defaults(
-                raw_namespace_defaults
-            ).model_dump(mode="json")
+            namespace_isolation_defaults = normalize_namespace_isolation_defaults(raw_namespace_defaults).model_dump(
+                mode="json"
+            )
         except ValidationError as exc:
             first_error = exc.errors()[0] if exc.errors() else {}
             location = ".".join(str(item) for item in first_error.get("loc", ()))
@@ -205,9 +193,7 @@ class GitHubPublishConfigService:
                 raise GitHubPublishConfigValidationError(
                     f"Namespace isolation defaults are invalid at '{location}': {detail}"
                 ) from exc
-            raise GitHubPublishConfigValidationError(
-                f"Namespace isolation defaults are invalid: {detail}"
-            ) from exc
+            raise GitHubPublishConfigValidationError(f"Namespace isolation defaults are invalid: {detail}") from exc
 
         if enabled and not owner:
             raise GitHubPublishConfigValidationError("GitHub owner is required when GitHub publishing is enabled.")
@@ -272,15 +258,9 @@ class GitHubPublishConfigService:
                 if existing is not None
                 else False
             ),
-            "managed_gke_cluster_name": (
-                existing.managed_gke_cluster_name if existing is not None else None
-            ),
-            "managed_gke_cluster_location": (
-                existing.managed_gke_cluster_location if existing is not None else None
-            ),
-            "managed_gke_project_id": (
-                existing.managed_gke_project_id if existing is not None else None
-            ),
+            "managed_gke_cluster_name": (existing.managed_gke_cluster_name if existing is not None else None),
+            "managed_gke_cluster_location": (existing.managed_gke_cluster_location if existing is not None else None),
+            "managed_gke_project_id": (existing.managed_gke_project_id if existing is not None else None),
             "managed_gcp_deploy_key_configured": self._managed_secret_configured(existing),
             "namespace_isolation_defaults": (
                 normalize_namespace_isolation_defaults(

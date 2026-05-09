@@ -31,4 +31,3 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_column("github_publish_config", "github_repository_auto_create_enabled")
-

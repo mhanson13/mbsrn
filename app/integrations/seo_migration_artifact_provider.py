@@ -1500,14 +1500,8 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
                             if exc.normalized_failure.reason == "request_too_large"
                             else (
                                 "trimmed_provider_submission"
-                                if (
-                                    isinstance(exc.trimming_pass_count, int)
-                                    and exc.trimming_pass_count > 0
-                                )
-                                or (
-                                    isinstance(exc.trimmed_bytes, int)
-                                    and exc.trimmed_bytes > 0
-                                )
+                                if (isinstance(exc.trimming_pass_count, int) and exc.trimming_pass_count > 0)
+                                or (isinstance(exc.trimmed_bytes, int) and exc.trimmed_bytes > 0)
                                 else "provider_submission"
                             )
                         )
@@ -1533,14 +1527,8 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
                         if exc.normalized_failure.reason == "request_too_large"
                         else (
                             "trimmed_provider_submission"
-                            if (
-                                isinstance(exc.trimming_pass_count, int)
-                                and exc.trimming_pass_count > 0
-                            )
-                            or (
-                                isinstance(exc.trimmed_bytes, int)
-                                and exc.trimmed_bytes > 0
-                            )
+                            if (isinstance(exc.trimming_pass_count, int) and exc.trimming_pass_count > 0)
+                            or (isinstance(exc.trimmed_bytes, int) and exc.trimmed_bytes > 0)
                             else "provider_submission"
                         )
                     )
@@ -2404,16 +2392,10 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
             normalized_failure_source=_clean_optional_value(normalized_failure_source),
             normalized_retryable=(bool(normalized_retryable) if isinstance(normalized_retryable, bool) else None),
             attempt_count=(max(1, int(attempt_count)) if isinstance(attempt_count, int) else None),
-            original_input_size=(
-                max(0, int(original_input_size)) if isinstance(original_input_size, int) else None
-            ),
-            final_input_size=(
-                max(0, int(final_input_size)) if isinstance(final_input_size, int) else None
-            ),
+            original_input_size=(max(0, int(original_input_size)) if isinstance(original_input_size, int) else None),
+            final_input_size=(max(0, int(final_input_size)) if isinstance(final_input_size, int) else None),
             trimmed_bytes=(max(0, int(trimmed_bytes)) if isinstance(trimmed_bytes, int) else None),
-            trimming_pass_count=(
-                max(0, int(trimming_pass_count)) if isinstance(trimming_pass_count, int) else None
-            ),
+            trimming_pass_count=(max(0, int(trimming_pass_count)) if isinstance(trimming_pass_count, int) else None),
             difficulty_score=(max(0, min(100, int(difficulty_score))) if isinstance(difficulty_score, int) else None),
             budget_outcome=_clean_optional_value(budget_outcome),
             retry_suppressed=(bool(retry_suppressed) if isinstance(retry_suppressed, bool) else None),
@@ -2871,24 +2853,16 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
                 "original_input_size": self._coerce_optional_non_negative_int(budget_result.get("initial_size_bytes")),
                 "final_input_size": self._coerce_optional_non_negative_int(budget_result.get("final_size_bytes")),
                 "trimmed_bytes": self._coerce_optional_non_negative_int(budget_result.get("trimmed_bytes")),
-                "trimming_pass_count": self._coerce_optional_non_negative_int(
-                    budget_result.get("trimming_pass_count")
-                ),
+                "trimming_pass_count": self._coerce_optional_non_negative_int(budget_result.get("trimming_pass_count")),
                 "section_count": self._coerce_optional_non_negative_int(budget_result.get("section_count")),
                 "dropped_optional_blocks": [
-                    str(item)
-                    for item in budget_result.get("dropped_optional_blocks", [])
-                    if isinstance(item, str)
+                    str(item) for item in budget_result.get("dropped_optional_blocks", []) if isinstance(item, str)
                 ],
                 "dropped_duplicate_blocks": [
-                    str(item)
-                    for item in budget_result.get("dropped_duplicate_blocks", [])
-                    if isinstance(item, str)
+                    str(item) for item in budget_result.get("dropped_duplicate_blocks", []) if isinstance(item, str)
                 ],
                 "overflow": (
-                    bool(budget_result.get("overflow"))
-                    if isinstance(budget_result.get("overflow"), bool)
-                    else None
+                    bool(budget_result.get("overflow")) if isinstance(budget_result.get("overflow"), bool) else None
                 ),
             },
         )

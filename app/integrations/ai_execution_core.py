@@ -616,9 +616,7 @@ def build_ai_diagnostics_summary(
         final_input_size=final_input_size_value,
     )
     input_size_bucket = _bucket_input_size(
-        final_input_size_value
-        if isinstance(final_input_size_value, int)
-        else original_input_size_value
+        final_input_size_value if isinstance(final_input_size_value, int) else original_input_size_value
     )
     difficulty_bucket = _bucket_difficulty(difficulty_score_value)
 

@@ -152,18 +152,21 @@ def _repo_management_marker_content(
     business_id: str = "business-1",
     site_id: str = "site-1",
 ) -> str:
-    return json.dumps(
-        {
-            "version": 1,
-            "managed_by": "mbsrn",
-            "created_by": "mbsrn",
-            "business_id": business_id,
-            "site_id": site_id,
-        },
-        ensure_ascii=True,
-        sort_keys=True,
-        indent=2,
-    ) + "\n"
+    return (
+        json.dumps(
+            {
+                "version": 1,
+                "managed_by": "mbsrn",
+                "created_by": "mbsrn",
+                "business_id": business_id,
+                "site_id": site_id,
+            },
+            ensure_ascii=True,
+            sort_keys=True,
+            indent=2,
+        )
+        + "\n"
+    )
 
 
 def _repo_management_marker_response(
@@ -747,16 +750,16 @@ def test_run_publish_preflight_repo_exists_with_workflow_write_gap(monkeypatch) 
                     }
                 ),
             ),
-                _http_error(
-                    "https://api.github.com/repos/mhanson13/tnmfire/actions/workflows?per_page=1",
-                    status_code=403,
-                    message="Forbidden",
-                ),
-                _FakeHTTPResponse(status=200, body=json.dumps({"name": "main"})),
-                _repo_management_marker_response(),
-            ],
-            calls,
-        )
+            _http_error(
+                "https://api.github.com/repos/mhanson13/tnmfire/actions/workflows?per_page=1",
+                status_code=403,
+                message="Forbidden",
+            ),
+            _FakeHTTPResponse(status=200, body=json.dumps({"name": "main"})),
+            _repo_management_marker_response(),
+        ],
+        calls,
+    )
 
     result = publisher.run_publish_preflight(
         repo_owner="mhanson13",
@@ -805,24 +808,24 @@ def test_run_publish_preflight_repo_exists_with_missing_ref_reports_bootstrap_ac
                 status_code=404,
                 message="Not Found",
             ),
-                _http_error(
-                    "https://api.github.com/repos/mhanson13/tnmfire/git/ref/heads/main",
-                    status_code=404,
-                    message="Not Found",
-                ),
-                _http_error(
-                    "https://api.github.com/repos/mhanson13/tnmfire/contents/mbsrn.key?ref=release",
-                    status_code=404,
-                    message="Not Found",
-                ),
-                _http_error(
-                    "https://api.github.com/repos/mhanson13/tnmfire/contents/mbsrn.key?ref=main",
-                    status_code=404,
-                    message="Not Found",
-                ),
-            ],
-            calls,
-        )
+            _http_error(
+                "https://api.github.com/repos/mhanson13/tnmfire/git/ref/heads/main",
+                status_code=404,
+                message="Not Found",
+            ),
+            _http_error(
+                "https://api.github.com/repos/mhanson13/tnmfire/contents/mbsrn.key?ref=release",
+                status_code=404,
+                message="Not Found",
+            ),
+            _http_error(
+                "https://api.github.com/repos/mhanson13/tnmfire/contents/mbsrn.key?ref=main",
+                status_code=404,
+                message="Not Found",
+            ),
+        ],
+        calls,
+    )
 
     result = publisher.run_publish_preflight(
         repo_owner="mhanson13",
@@ -1007,7 +1010,9 @@ def test_run_publish_preflight_existing_repo_with_management_marker_mismatch_is_
     assert result.repo_management_marker_site_id == "different-site"
 
 
-def test_run_publish_preflight_existing_managed_repo_missing_baseline_files_reports_reconcile_action(monkeypatch) -> None:
+def test_run_publish_preflight_existing_managed_repo_missing_baseline_files_reports_reconcile_action(
+    monkeypatch,
+) -> None:
     publisher = GitHubSEOMigrationPublisher(token="test-token")
     calls: list[tuple[str, str]] = []
     _install_urlopen_stub(
@@ -1403,7 +1408,9 @@ def test_publish_files_reconciles_missing_repo_baseline_files_for_managed_repo(m
     )
 
     baseline_put_calls = [
-        call for call in calls if call[0] == "PUT" and "/contents/" in call[1] and not call[1].endswith("/contents/index.html")
+        call
+        for call in calls
+        if call[0] == "PUT" and "/contents/" in call[1] and not call[1].endswith("/contents/index.html")
     ]
     assert len(baseline_put_calls) == 3
     assert any(call[1].endswith("/contents/README.md") for call in baseline_put_calls)
@@ -1471,7 +1478,9 @@ def test_publish_files_reconciles_only_missing_baseline_files_without_overwritin
     )
 
     baseline_put_calls = [
-        call for call in calls if call[0] == "PUT" and "/contents/" in call[1] and not call[1].endswith("/contents/index.html")
+        call
+        for call in calls
+        if call[0] == "PUT" and "/contents/" in call[1] and not call[1].endswith("/contents/index.html")
     ]
     assert baseline_put_calls == [
         ("PUT", "https://api.github.com/repos/mhanson13/tnmfire/contents/.gitignore"),
@@ -1612,7 +1621,7 @@ def test_classify_rollout_blockers_prioritizes_image_pull_not_found_without_cras
     hints = _classify_rollout_blocker_hints_from_describe_outputs(
         deployment_describe_output="",
         pods_describe_output=(
-            "Warning  Failed     kubelet  Failed to pull image \"ghcr.io/mhanson13/site-web:latest\": not found\n"
+            'Warning  Failed     kubelet  Failed to pull image "ghcr.io/mhanson13/site-web:latest": not found\n'
             "Warning  Failed     kubelet  Error: ErrImagePull\n"
             "Warning  Failed     kubelet  Back-off pulling image\n"
             "State: Waiting\nReason: ImagePullBackOff\n"
@@ -1629,7 +1638,7 @@ def test_classify_rollout_blockers_prioritizes_private_registry_auth_without_cra
     hints = _classify_rollout_blocker_hints_from_describe_outputs(
         deployment_describe_output="",
         pods_describe_output=(
-            "Warning  Failed  kubelet  Failed to pull image \"ghcr.io/mhanson13/site-web:latest\": failed to fetch anonymous token: 403 Forbidden\n"
+            'Warning  Failed  kubelet  Failed to pull image "ghcr.io/mhanson13/site-web:latest": failed to fetch anonymous token: 403 Forbidden\n'
             "Warning  Failed  kubelet  pull access denied\n"
         ),
         private_image_auth_required=True,
@@ -1647,7 +1656,7 @@ def test_classify_rollout_blockers_reports_missing_pull_secret() -> None:
         deployment_describe_output="",
         pods_describe_output=(
             "Warning  Failed  kubelet  FailedToRetrieveImagePullSecret\n"
-            "Warning  Failed  kubelet  secret \"ghcr-pull-secret\" not found for image pull\n"
+            'Warning  Failed  kubelet  secret "ghcr-pull-secret" not found for image pull\n'
         ),
         private_image_auth_required=True,
     )
@@ -1660,7 +1669,7 @@ def test_classify_rollout_blockers_reports_public_image_pull_failed_in_public_mo
     hints = _classify_rollout_blocker_hints_from_describe_outputs(
         deployment_describe_output="",
         pods_describe_output=(
-            "Warning  Failed  kubelet  Failed to pull image \"ghcr.io/mhanson13/site-web:latest\": failed to fetch anonymous token: 403 Forbidden\n"
+            'Warning  Failed  kubelet  Failed to pull image "ghcr.io/mhanson13/site-web:latest": failed to fetch anonymous token: 403 Forbidden\n'
             "Warning  Failed  kubelet  pull access denied\n"
         ),
     )
@@ -1704,7 +1713,7 @@ def test_classify_rollout_blockers_suppresses_crash_probe_when_current_blocker_i
     hints = _classify_rollout_blocker_hints_from_describe_outputs(
         deployment_describe_output="",
         pods_describe_output=(
-            "Warning  Failed   kubelet  Failed to pull image \"ghcr.io/mhanson13/site-web:latest\": manifest unknown\n"
+            'Warning  Failed   kubelet  Failed to pull image "ghcr.io/mhanson13/site-web:latest": manifest unknown\n'
             "State: Waiting\nReason: ImagePullBackOff\n"
             "Container ID:   containerd://oldpod\n"
             "Started:        true\n"
@@ -1782,10 +1791,7 @@ def test_upsert_actions_secret_creates_secret_when_missing(monkeypatch) -> None:
     encrypted_value = str(captured_put_payload.get("encrypted_value") or "")
     assert encrypted_value
     assert '{"type":"service_account"}' not in encrypted_value
-    assert any(
-        method == "GET" and url.endswith("/actions/secrets/public-key")
-        for method, url in calls
-    )
+    assert any(method == "GET" and url.endswith("/actions/secrets/public-key") for method, url in calls)
 
 
 def test_upsert_actions_secret_updates_existing_secret(monkeypatch) -> None:
@@ -1815,14 +1821,8 @@ def test_upsert_actions_secret_updates_existing_secret(monkeypatch) -> None:
     )
 
     assert result.action == "updated"
-    assert any(
-        method == "GET" and url.endswith("/actions/secrets/GCP_DEPLOY_KEY")
-        for method, url in calls
-    )
-    assert any(
-        method == "PUT" and url.endswith("/actions/secrets/GCP_DEPLOY_KEY")
-        for method, url in calls
-    )
+    assert any(method == "GET" and url.endswith("/actions/secrets/GCP_DEPLOY_KEY") for method, url in calls)
+    assert any(method == "PUT" and url.endswith("/actions/secrets/GCP_DEPLOY_KEY") for method, url in calls)
 
 
 def test_publish_files_classifies_contents_write_forbidden(monkeypatch) -> None:
@@ -2030,8 +2030,7 @@ def test_dispatch_deploy_uses_workflow_file_path_identifier_when_provided(monkey
     assert result.workflow_id == ".github/workflows/deploy-tnmfire-www-prod.yml"
     assert any(call[1].endswith("/actions/workflows/deploy-tnmfire-www-prod.yml/dispatches") for call in calls)
     assert any(
-        "/actions/workflows/deploy-tnmfire-www-prod.yml/runs?event=workflow_dispatch&branch=main&per_page=10"
-        in call[1]
+        "/actions/workflows/deploy-tnmfire-www-prod.yml/runs?event=workflow_dispatch&branch=main&per_page=10" in call[1]
         for call in calls
     )
     assert any(
@@ -2637,7 +2636,7 @@ def test_check_deploy_target_readiness_reports_aligned_namespace_for_managed_tem
             "      K8S_NAMESPACE: tnmfire\n"
             "    steps:\n"
             "      - uses: google-github-actions/auth@v2\n"
-            "      - run: kubectl apply -n \"$K8S_NAMESPACE\" -f k8s/deployment.yaml\n"
+            '      - run: kubectl apply -n "$K8S_NAMESPACE" -f k8s/deployment.yaml\n'
         )
     )
     namespace_manifest = _encode_workflow_yaml(
@@ -2710,16 +2709,18 @@ def test_check_deploy_target_readiness_reports_aligned_namespace_for_managed_tem
             ),
             _FakeHTTPResponse(
                 status=200,
-                body=json.dumps({"sha": "sha-managedcertificate", "encoding": "base64", "content": namespaced_manifest}),
+                body=json.dumps(
+                    {"sha": "sha-managedcertificate", "encoding": "base64", "content": namespaced_manifest}
+                ),
             ),
-                _FakeHTTPResponse(
-                    status=200,
-                    body=json.dumps({"sha": "sha-frontendconfig", "encoding": "base64", "content": namespaced_manifest}),
-                ),
-                _FakeHTTPResponse(
-                    status=200,
-                    body=json.dumps({"sha": "sha-backendconfig", "encoding": "base64", "content": namespaced_manifest}),
-                ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-frontendconfig", "encoding": "base64", "content": namespaced_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-backendconfig", "encoding": "base64", "content": namespaced_manifest}),
+            ),
             *_gke_environment_config_present_responses(),
         ],
         calls,
@@ -2756,7 +2757,7 @@ def test_check_deploy_target_readiness_reports_misaligned_namespace_for_managed_
             "      K8S_NAMESPACE: tnmfire\n"
             "    steps:\n"
             "      - uses: google-github-actions/auth@v2\n"
-            "      - run: kubectl apply -n \"$K8S_NAMESPACE\" -f k8s/deployment.yaml\n"
+            '      - run: kubectl apply -n "$K8S_NAMESPACE" -f k8s/deployment.yaml\n'
         )
     )
     namespace_manifest_wrong = _encode_workflow_yaml(
@@ -2809,16 +2810,22 @@ def test_check_deploy_target_readiness_reports_misaligned_namespace_for_managed_
             ),
             _FakeHTTPResponse(
                 status=200,
-                body=json.dumps({"sha": "sha-managedcertificate", "encoding": "base64", "content": namespaced_manifest_wrong}),
+                body=json.dumps(
+                    {"sha": "sha-managedcertificate", "encoding": "base64", "content": namespaced_manifest_wrong}
+                ),
             ),
-                _FakeHTTPResponse(
-                    status=200,
-                    body=json.dumps({"sha": "sha-frontendconfig", "encoding": "base64", "content": namespaced_manifest_wrong}),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps(
+                    {"sha": "sha-frontendconfig", "encoding": "base64", "content": namespaced_manifest_wrong}
                 ),
-                _FakeHTTPResponse(
-                    status=200,
-                    body=json.dumps({"sha": "sha-backendconfig", "encoding": "base64", "content": namespaced_manifest_wrong}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps(
+                    {"sha": "sha-backendconfig", "encoding": "base64", "content": namespaced_manifest_wrong}
                 ),
+            ),
             *_gke_environment_config_present_responses(),
         ],
         calls,
@@ -2854,7 +2861,7 @@ def test_check_deploy_target_readiness_flags_missing_cluster_name_configuration(
             "    steps:\n"
             "      - uses: google-github-actions/auth@v2\n"
             "      - uses: google-github-actions/get-gke-credentials@v2\n"
-            "      - run: kubectl apply -n \"$K8S_NAMESPACE\" -f k8s/deployment.yaml\n"
+            '      - run: kubectl apply -n "$K8S_NAMESPACE" -f k8s/deployment.yaml\n'
         )
     )
     namespace_manifest = _encode_workflow_yaml(
@@ -2927,16 +2934,18 @@ def test_check_deploy_target_readiness_flags_missing_cluster_name_configuration(
             ),
             _FakeHTTPResponse(
                 status=200,
-                body=json.dumps({"sha": "sha-managedcertificate", "encoding": "base64", "content": namespaced_manifest}),
+                body=json.dumps(
+                    {"sha": "sha-managedcertificate", "encoding": "base64", "content": namespaced_manifest}
+                ),
             ),
-                _FakeHTTPResponse(
-                    status=200,
-                    body=json.dumps({"sha": "sha-frontendconfig", "encoding": "base64", "content": namespaced_manifest}),
-                ),
-                _FakeHTTPResponse(
-                    status=200,
-                    body=json.dumps({"sha": "sha-backendconfig", "encoding": "base64", "content": namespaced_manifest}),
-                ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-frontendconfig", "encoding": "base64", "content": namespaced_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-backendconfig", "encoding": "base64", "content": namespaced_manifest}),
+            ),
             _http_error(
                 "https://api.github.com/repos/mhanson13/tnmfire/actions/variables/KUBERNETES_CLUSTER_NAME",
                 status_code=404,
@@ -2982,7 +2991,7 @@ def test_check_deploy_target_readiness_flags_missing_image_pull_secret_credentia
             "    steps:\n"
             "      - uses: google-github-actions/auth@v2\n"
             "      - uses: google-github-actions/get-gke-credentials@v2\n"
-            "      - run: kubectl apply -n \"$K8S_NAMESPACE\" -f k8s/deployment.yaml\n"
+            '      - run: kubectl apply -n "$K8S_NAMESPACE" -f k8s/deployment.yaml\n'
         )
     )
     namespace_manifest = _encode_workflow_yaml(
@@ -3050,7 +3059,9 @@ def test_check_deploy_target_readiness_flags_missing_image_pull_secret_credentia
             ),
             _FakeHTTPResponse(
                 status=200,
-                body=json.dumps({"sha": "sha-managedcertificate", "encoding": "base64", "content": namespaced_manifest}),
+                body=json.dumps(
+                    {"sha": "sha-managedcertificate", "encoding": "base64", "content": namespaced_manifest}
+                ),
             ),
             _FakeHTTPResponse(
                 status=200,
@@ -3115,7 +3126,7 @@ def test_check_deploy_target_readiness_flags_image_pull_secret_not_referenced(mo
             "    steps:\n"
             "      - uses: google-github-actions/auth@v2\n"
             "      - uses: google-github-actions/get-gke-credentials@v2\n"
-            "      - run: kubectl apply -n \"$K8S_NAMESPACE\" -f k8s/deployment.yaml\n"
+            '      - run: kubectl apply -n "$K8S_NAMESPACE" -f k8s/deployment.yaml\n'
         )
     )
     namespace_manifest = _encode_workflow_yaml(
@@ -3184,7 +3195,9 @@ def test_check_deploy_target_readiness_flags_image_pull_secret_not_referenced(mo
             ),
             _FakeHTTPResponse(
                 status=200,
-                body=json.dumps({"sha": "sha-managedcertificate", "encoding": "base64", "content": namespaced_manifest}),
+                body=json.dumps(
+                    {"sha": "sha-managedcertificate", "encoding": "base64", "content": namespaced_manifest}
+                ),
             ),
             _FakeHTTPResponse(
                 status=200,
@@ -3320,7 +3333,7 @@ def test_check_deploy_target_readiness_uses_admin_managed_gke_config_first(
             "    steps:\n"
             "      - uses: google-github-actions/auth@v2\n"
             "      - uses: google-github-actions/get-gke-credentials@v2\n"
-            "      - run: kubectl apply -n \"$K8S_NAMESPACE\" -f k8s/deployment.yaml\n"
+            '      - run: kubectl apply -n "$K8S_NAMESPACE" -f k8s/deployment.yaml\n'
         )
     )
     namespace_manifest = _encode_workflow_yaml(
@@ -3388,16 +3401,18 @@ def test_check_deploy_target_readiness_uses_admin_managed_gke_config_first(
             ),
             _FakeHTTPResponse(
                 status=200,
-                body=json.dumps({"sha": "sha-managedcertificate", "encoding": "base64", "content": namespaced_manifest}),
+                body=json.dumps(
+                    {"sha": "sha-managedcertificate", "encoding": "base64", "content": namespaced_manifest}
+                ),
             ),
-                _FakeHTTPResponse(
-                    status=200,
-                    body=json.dumps({"sha": "sha-frontendconfig", "encoding": "base64", "content": namespaced_manifest}),
-                ),
-                _FakeHTTPResponse(
-                    status=200,
-                    body=json.dumps({"sha": "sha-backendconfig", "encoding": "base64", "content": namespaced_manifest}),
-                ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-frontendconfig", "encoding": "base64", "content": namespaced_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-backendconfig", "encoding": "base64", "content": namespaced_manifest}),
+            ),
             _http_error(
                 f"https://api.github.com/repos/mhanson13/tnmfire/actions/variables/{variable_name}",
                 status_code=404,
@@ -3453,7 +3468,7 @@ def test_check_deploy_target_readiness_resolves_managed_gke_config_from_admin_wi
             "    steps:\n"
             "      - uses: google-github-actions/auth@v2\n"
             "      - uses: google-github-actions/get-gke-credentials@v2\n"
-            "      - run: kubectl apply -n \"$K8S_NAMESPACE\" -f k8s/deployment.yaml\n"
+            '      - run: kubectl apply -n "$K8S_NAMESPACE" -f k8s/deployment.yaml\n'
         )
     )
     namespace_manifest = _encode_workflow_yaml(
@@ -3521,12 +3536,14 @@ def test_check_deploy_target_readiness_resolves_managed_gke_config_from_admin_wi
             ),
             _FakeHTTPResponse(
                 status=200,
-                body=json.dumps({"sha": "sha-managedcertificate", "encoding": "base64", "content": namespaced_manifest}),
-            ),
-                _FakeHTTPResponse(
-                    status=200,
-                    body=json.dumps({"sha": "sha-frontendconfig", "encoding": "base64", "content": namespaced_manifest}),
+                body=json.dumps(
+                    {"sha": "sha-managedcertificate", "encoding": "base64", "content": namespaced_manifest}
                 ),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-frontendconfig", "encoding": "base64", "content": namespaced_manifest}),
+            ),
             _FakeHTTPResponse(
                 status=200,
                 body=json.dumps({"sha": "sha-backendconfig", "encoding": "base64", "content": namespaced_manifest}),
@@ -3585,7 +3602,7 @@ def test_check_deploy_target_readiness_resolves_managed_gke_config_from_repo_fal
             "    steps:\n"
             "      - uses: google-github-actions/auth@v2\n"
             "      - uses: google-github-actions/get-gke-credentials@v2\n"
-            "      - run: kubectl apply -n \"$K8S_NAMESPACE\" -f k8s/deployment.yaml\n"
+            '      - run: kubectl apply -n "$K8S_NAMESPACE" -f k8s/deployment.yaml\n'
         )
     )
     namespace_manifest = _encode_workflow_yaml(
@@ -3653,16 +3670,18 @@ def test_check_deploy_target_readiness_resolves_managed_gke_config_from_repo_fal
             ),
             _FakeHTTPResponse(
                 status=200,
-                body=json.dumps({"sha": "sha-managedcertificate", "encoding": "base64", "content": namespaced_manifest}),
+                body=json.dumps(
+                    {"sha": "sha-managedcertificate", "encoding": "base64", "content": namespaced_manifest}
+                ),
             ),
-                _FakeHTTPResponse(
-                    status=200,
-                    body=json.dumps({"sha": "sha-frontendconfig", "encoding": "base64", "content": namespaced_manifest}),
-                ),
-                _FakeHTTPResponse(
-                    status=200,
-                    body=json.dumps({"sha": "sha-backendconfig", "encoding": "base64", "content": namespaced_manifest}),
-                ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-frontendconfig", "encoding": "base64", "content": namespaced_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-backendconfig", "encoding": "base64", "content": namespaced_manifest}),
+            ),
             _FakeHTTPResponse(status=200, body=json.dumps({"name": "KUBERNETES_CLUSTER_NAME"})),
             _FakeHTTPResponse(status=200, body=json.dumps({"name": "KUBERNETES_CLUSTER_LOCATION"})),
             _FakeHTTPResponse(status=200, body=json.dumps({"name": "GCP_PROJECT_ID"})),
@@ -3714,7 +3733,7 @@ def test_check_deploy_target_readiness_treats_whitespace_admin_values_as_missing
             "    steps:\n"
             "      - uses: google-github-actions/auth@v2\n"
             "      - uses: google-github-actions/get-gke-credentials@v2\n"
-            "      - run: kubectl apply -n \"$K8S_NAMESPACE\" -f k8s/deployment.yaml\n"
+            '      - run: kubectl apply -n "$K8S_NAMESPACE" -f k8s/deployment.yaml\n'
         )
     )
     namespace_manifest = _encode_workflow_yaml(
@@ -3782,12 +3801,14 @@ def test_check_deploy_target_readiness_treats_whitespace_admin_values_as_missing
             ),
             _FakeHTTPResponse(
                 status=200,
-                body=json.dumps({"sha": "sha-managedcertificate", "encoding": "base64", "content": namespaced_manifest}),
-            ),
-                _FakeHTTPResponse(
-                    status=200,
-                    body=json.dumps({"sha": "sha-frontendconfig", "encoding": "base64", "content": namespaced_manifest}),
+                body=json.dumps(
+                    {"sha": "sha-managedcertificate", "encoding": "base64", "content": namespaced_manifest}
                 ),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-frontendconfig", "encoding": "base64", "content": namespaced_manifest}),
+            ),
             _FakeHTTPResponse(
                 status=200,
                 body=json.dumps({"sha": "sha-backendconfig", "encoding": "base64", "content": namespaced_manifest}),
@@ -3858,7 +3879,7 @@ def test_dispatch_deploy_uses_admin_managed_gke_config_for_readiness_and_dispatc
             "    steps:\n"
             "      - uses: google-github-actions/auth@v2\n"
             "      - uses: google-github-actions/get-gke-credentials@v2\n"
-            "      - run: kubectl apply -n \"$K8S_NAMESPACE\" -f k8s/deployment.yaml\n"
+            '      - run: kubectl apply -n "$K8S_NAMESPACE" -f k8s/deployment.yaml\n'
         )
     )
     namespace_manifest = _encode_workflow_yaml(
@@ -3911,12 +3932,14 @@ def test_dispatch_deploy_uses_admin_managed_gke_config_for_readiness_and_dispatc
             ),
             _FakeHTTPResponse(
                 status=200,
-                body=json.dumps({"sha": "sha-managedcertificate", "encoding": "base64", "content": namespaced_manifest}),
-            ),
-                _FakeHTTPResponse(
-                    status=200,
-                    body=json.dumps({"sha": "sha-frontendconfig", "encoding": "base64", "content": namespaced_manifest}),
+                body=json.dumps(
+                    {"sha": "sha-managedcertificate", "encoding": "base64", "content": namespaced_manifest}
                 ),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-frontendconfig", "encoding": "base64", "content": namespaced_manifest}),
+            ),
             _FakeHTTPResponse(
                 status=200,
                 body=json.dumps({"sha": "sha-backendconfig", "encoding": "base64", "content": namespaced_manifest}),
@@ -3958,8 +3981,7 @@ def test_dispatch_deploy_uses_admin_managed_gke_config_for_readiness_and_dispatc
     readiness_logs = [
         record
         for record in caplog.records
-        if isinstance(record.msg, str)
-        and '"event": "seo_migration_dispatch_managed_gke_config_presence"' in record.msg
+        if isinstance(record.msg, str) and '"event": "seo_migration_dispatch_managed_gke_config_presence"' in record.msg
     ]
     assert readiness_logs
     assert '"effective_cluster_name_present": true' in readiness_logs[-1].msg
@@ -3983,7 +4005,7 @@ def test_dispatch_deploy_blocks_when_gke_config_missing_in_admin_and_repo_fallba
             "    steps:\n"
             "      - uses: google-github-actions/auth@v2\n"
             "      - uses: google-github-actions/get-gke-credentials@v2\n"
-            "      - run: kubectl apply -n \"$K8S_NAMESPACE\" -f k8s/deployment.yaml\n"
+            '      - run: kubectl apply -n "$K8S_NAMESPACE" -f k8s/deployment.yaml\n'
         )
     )
     namespace_manifest = _encode_workflow_yaml(
@@ -4036,16 +4058,18 @@ def test_dispatch_deploy_blocks_when_gke_config_missing_in_admin_and_repo_fallba
             ),
             _FakeHTTPResponse(
                 status=200,
-                body=json.dumps({"sha": "sha-managedcertificate", "encoding": "base64", "content": namespaced_manifest}),
+                body=json.dumps(
+                    {"sha": "sha-managedcertificate", "encoding": "base64", "content": namespaced_manifest}
+                ),
             ),
-                _FakeHTTPResponse(
-                    status=200,
-                    body=json.dumps({"sha": "sha-frontendconfig", "encoding": "base64", "content": namespaced_manifest}),
-                ),
-                _FakeHTTPResponse(
-                    status=200,
-                    body=json.dumps({"sha": "sha-backendconfig", "encoding": "base64", "content": namespaced_manifest}),
-                ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-frontendconfig", "encoding": "base64", "content": namespaced_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-backendconfig", "encoding": "base64", "content": namespaced_manifest}),
+            ),
             _http_error(
                 "https://api.github.com/repos/mhanson13/tnmfire/actions/variables/KUBERNETES_CLUSTER_NAME",
                 status_code=404,
@@ -4095,7 +4119,7 @@ def test_dispatch_deploy_uses_repo_fallback_when_admin_managed_gke_config_missin
             "    steps:\n"
             "      - uses: google-github-actions/auth@v2\n"
             "      - uses: google-github-actions/get-gke-credentials@v2\n"
-            "      - run: kubectl apply -n \"$K8S_NAMESPACE\" -f k8s/deployment.yaml\n"
+            '      - run: kubectl apply -n "$K8S_NAMESPACE" -f k8s/deployment.yaml\n'
         )
     )
     namespace_manifest = _encode_workflow_yaml(
@@ -4148,16 +4172,18 @@ def test_dispatch_deploy_uses_repo_fallback_when_admin_managed_gke_config_missin
             ),
             _FakeHTTPResponse(
                 status=200,
-                body=json.dumps({"sha": "sha-managedcertificate", "encoding": "base64", "content": namespaced_manifest}),
+                body=json.dumps(
+                    {"sha": "sha-managedcertificate", "encoding": "base64", "content": namespaced_manifest}
+                ),
             ),
-                _FakeHTTPResponse(
-                    status=200,
-                    body=json.dumps({"sha": "sha-frontendconfig", "encoding": "base64", "content": namespaced_manifest}),
-                ),
-                _FakeHTTPResponse(
-                    status=200,
-                    body=json.dumps({"sha": "sha-backendconfig", "encoding": "base64", "content": namespaced_manifest}),
-                ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-frontendconfig", "encoding": "base64", "content": namespaced_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-backendconfig", "encoding": "base64", "content": namespaced_manifest}),
+            ),
             _FakeHTTPResponse(status=200, body=json.dumps({"name": "KUBERNETES_CLUSTER_NAME"})),
             _FakeHTTPResponse(status=200, body=json.dumps({"name": "KUBERNETES_CLUSTER_LOCATION"})),
             _FakeHTTPResponse(status=200, body=json.dumps({"name": "GCP_PROJECT_ID"})),
@@ -4317,7 +4343,7 @@ def test_ensure_managed_site_static_ip_creates_missing_address_before_dispatch(m
         repo_name="tnmfire",
         site_id="site-1",
         managed_gke_config={"project_id": "mbsrn-prod"},
-        gcp_deploy_key="{\"type\":\"service_account\"}",
+        gcp_deploy_key='{"type":"service_account"}',
         dry_run=False,
     )
 
@@ -4447,7 +4473,7 @@ def test_ensure_managed_site_static_ip_handles_already_exists_race(monkeypatch) 
         repo_name="tnmfire",
         site_id="site-1",
         managed_gke_config={"project_id": "mbsrn-prod"},
-        gcp_deploy_key="{\"type\":\"service_account\"}",
+        gcp_deploy_key='{"type":"service_account"}',
         dry_run=False,
     )
 
@@ -4537,7 +4563,7 @@ def test_ensure_managed_site_static_ip_requires_project_config(monkeypatch) -> N
             repo_name="tnmfire",
             site_id="site-1",
             managed_gke_config={},
-            gcp_deploy_key="{\"type\":\"service_account\"}",
+            gcp_deploy_key='{"type":"service_account"}',
             dry_run=False,
         )
 
@@ -4641,9 +4667,7 @@ def test_ensure_managed_site_static_ip_uses_managed_deploy_impersonation_when_co
     )
     assert result.gcp_credential_source == "managed_deploy_impersonation"
     assert result.gcp_principal_email == "mbsrn-api@mbsrn-prod.iam.gserviceaccount.com"
-    assert result.gcp_impersonated_service_account_email == (
-        "mbsrn-managed-deploy@mbsrn-prod.iam.gserviceaccount.com"
-    )
+    assert result.gcp_impersonated_service_account_email == ("mbsrn-managed-deploy@mbsrn-prod.iam.gserviceaccount.com")
     assert calls == [
         (
             "GET",
@@ -4811,7 +4835,7 @@ def test_ensure_managed_site_static_ip_permission_failure_during_describe_is_cla
             repo_name="tnmfire",
             site_id="site-1",
             managed_gke_config={"project_id": "mbsrn-prod"},
-            gcp_deploy_key="{\"type\":\"service_account\"}",
+            gcp_deploy_key='{"type":"service_account"}',
             dry_run=False,
         )
 
@@ -4897,7 +4921,7 @@ def test_ensure_managed_site_static_ip_failure_reason_codes_are_classified(
             repo_name="tnmfire",
             site_id="site-1",
             managed_gke_config={"project_id": "mbsrn-prod"},
-            gcp_deploy_key="{\"type\":\"service_account\"}",
+            gcp_deploy_key='{"type":"service_account"}',
             dry_run=False,
         )
 
@@ -4953,7 +4977,7 @@ def test_ensure_managed_site_static_ip_conflict_when_race_cannot_be_reconciled(m
             repo_name="tnmfire",
             site_id="site-1",
             managed_gke_config={"project_id": "mbsrn-prod"},
-            gcp_deploy_key="{\"type\":\"service_account\"}",
+            gcp_deploy_key='{"type":"service_account"}',
             dry_run=False,
         )
 
@@ -5010,7 +5034,7 @@ def test_ensure_managed_site_static_ip_error_summary_redacts_secret_like_markers
             repo_name="tnmfire",
             site_id="site-1",
             managed_gke_config={"project_id": "mbsrn-prod"},
-            gcp_deploy_key="{\"type\":\"service_account\"}",
+            gcp_deploy_key='{"type":"service_account"}',
             dry_run=False,
         )
 
@@ -5071,9 +5095,7 @@ def test_ensure_managed_site_dns_uses_managed_deploy_impersonation_when_configur
     )
     assert result.gcp_credential_source == "managed_deploy_impersonation"
     assert result.gcp_principal_email == "mbsrn-api@mbsrn-prod.iam.gserviceaccount.com"
-    assert result.gcp_impersonated_service_account_email == (
-        "mbsrn-managed-deploy@mbsrn-prod.iam.gserviceaccount.com"
-    )
+    assert result.gcp_impersonated_service_account_email == ("mbsrn-managed-deploy@mbsrn-prod.iam.gserviceaccount.com")
     assert calls == [
         (
             "GET",
@@ -5181,7 +5203,7 @@ def test_ensure_managed_site_dns_reuses_existing_correct_record(monkeypatch) -> 
         expected_ip_address="34.160.224.212",
         dns_managed_zone="sites",
         dns_project_id="mbsrn-prod",
-        gcp_deploy_key="{\"type\":\"service_account\"}",
+        gcp_deploy_key='{"type":"service_account"}',
         ttl=300,
         dry_run=False,
     )
@@ -5233,7 +5255,7 @@ def test_ensure_managed_site_dns_updates_old_and_multiple_ips(monkeypatch) -> No
         expected_ip_address="34.160.224.212",
         dns_managed_zone="sites",
         dns_project_id="mbsrn-prod",
-        gcp_deploy_key="{\"type\":\"service_account\"}",
+        gcp_deploy_key='{"type":"service_account"}',
         ttl=300,
         dry_run=False,
     )
@@ -5287,7 +5309,7 @@ def test_ensure_managed_site_dns_conflicting_cname_blocks_before_dispatch(monkey
             expected_ip_address="34.160.224.212",
             dns_managed_zone="sites",
             dns_project_id="mbsrn-prod",
-            gcp_deploy_key="{\"type\":\"service_account\"}",
+            gcp_deploy_key='{"type":"service_account"}',
             ttl=300,
             dry_run=False,
         )
@@ -5361,7 +5383,7 @@ def test_ensure_managed_site_dns_requires_config(monkeypatch) -> None:
             expected_ip_address="34.160.224.212",
             dns_managed_zone="",
             dns_project_id="mbsrn-prod",
-            gcp_deploy_key="{\"type\":\"service_account\"}",
+            gcp_deploy_key='{"type":"service_account"}',
             ttl=300,
             dry_run=False,
         )
@@ -5427,7 +5449,7 @@ def test_ensure_managed_site_dns_transaction_conflict_retries_and_accepts_alread
         expected_ip_address="34.160.224.212",
         dns_managed_zone="sites",
         dns_project_id="mbsrn-prod",
-        gcp_deploy_key="{\"type\":\"service_account\"}",
+        gcp_deploy_key='{"type":"service_account"}',
         ttl=300,
         dry_run=False,
     )
@@ -6102,16 +6124,16 @@ def test_resolve_workflow_run_failure_details_backfills_blank_probe_summary_from
         if "/actions/runs/123/jobs" in path:
             return {
                 "jobs": [
-                        {
-                            "id": 456,
-                            "name": "deploy",
-                            "conclusion": "failure",
-                            "steps": [
-                                {"name": "Unknown deploy failure step", "conclusion": "failure"},
-                            ],
-                        }
-                    ]
-                }
+                    {
+                        "id": 456,
+                        "name": "deploy",
+                        "conclusion": "failure",
+                        "steps": [
+                            {"name": "Unknown deploy failure step", "conclusion": "failure"},
+                        ],
+                    }
+                ]
+            }
         raise AssertionError(f"Unexpected JSON path: {path}")
 
     def _fake_request_text(*, method, path, expected_statuses=(200,), **kwargs):  # type: ignore[no-untyped-def]
@@ -6291,7 +6313,7 @@ def test_ensure_deploy_workflow_blocks_invalid_rendered_yaml_before_workflow_wri
 
     def _render_invalid_workflow(**kwargs) -> str:
         del kwargs
-        return "name: broken-workflow\non:\n  workflow_dispatch:\njobs:\n  deploy:\n    steps:\n      - name: broken\n        run: |\n          echo \"oops\"\n    outputs: ["
+        return 'name: broken-workflow\non:\n  workflow_dispatch:\njobs:\n  deploy:\n    steps:\n      - name: broken\n        run: |\n          echo "oops"\n    outputs: ['
 
     monkeypatch.setattr(
         "app.integrations.seo_migration_github_publisher._render_managed_deploy_workflow_yaml",
@@ -6313,8 +6335,7 @@ def test_ensure_deploy_workflow_blocks_invalid_rendered_yaml_before_workflow_wri
     assert exc_info.value.code == "managed_workflow_template_invalid"
     assert exc_info.value.stage == "workflow_provisioning"
     assert not any(
-        method == "PUT" and "/contents/.github/workflows/deploy-tnmfire-www-prod.yml" in url
-        for method, url in calls
+        method == "PUT" and "/contents/.github/workflows/deploy-tnmfire-www-prod.yml" in url for method, url in calls
     )
     validation_logs = [
         record.msg
@@ -6365,8 +6386,7 @@ def test_ensure_deploy_workflow_blocks_missing_required_outputs_before_workflow_
     assert exc_info.value.stage == "workflow_provisioning"
     assert "deploy_outputs_missing:deploy_https_ready" in str(exc_info.value.provider_message or "")
     assert not any(
-        method == "PUT" and "/contents/.github/workflows/deploy-tnmfire-www-prod.yml" in url
-        for method, url in calls
+        method == "PUT" and "/contents/.github/workflows/deploy-tnmfire-www-prod.yml" in url for method, url in calls
     )
 
 
@@ -6413,7 +6433,10 @@ def test_ensure_deploy_workflow_existing_empty_repo_requires_manual_initializati
 
     assert exc_info.value.code == "github_repo_requires_manual_initialization"
     assert not any(method == "POST" and url.endswith("/git/blobs") for method, url in calls)
-    assert not any(method == "POST" and url.endswith("/contents/.github/workflows/deploy-tnmfire-www-prod.yml") for method, url in calls)
+    assert not any(
+        method == "POST" and url.endswith("/contents/.github/workflows/deploy-tnmfire-www-prod.yml")
+        for method, url in calls
+    )
 
 
 def test_ensure_deploy_workflow_reconciles_baseline_for_newly_created_repo_before_workflow_provisioning(
@@ -7183,17 +7206,9 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
             and request.data
         ):
             captured_deployment_put_payload.update(json.loads(request.data.decode("utf-8")))
-        if (
-            request.get_method() == "PUT"
-            and request.full_url.endswith("/contents/k8s/service.yaml")
-            and request.data
-        ):
+        if request.get_method() == "PUT" and request.full_url.endswith("/contents/k8s/service.yaml") and request.data:
             captured_service_put_payload.update(json.loads(request.data.decode("utf-8")))
-        if (
-            request.get_method() == "PUT"
-            and request.full_url.endswith("/contents/k8s/ingress.yaml")
-            and request.data
-        ):
+        if request.get_method() == "PUT" and request.full_url.endswith("/contents/k8s/ingress.yaml") and request.data:
             captured_ingress_put_payload.update(json.loads(request.data.decode("utf-8")))
         if (
             request.get_method() == "PUT"
@@ -7259,7 +7274,7 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "MBSRN_BACKEND_CONFIG_NAME: site-web-backend-config-tnmfire" in workflow_yaml
     assert "SITE_WEB_IMAGE_REPOSITORY: ghcr.io/mhanson13/tnmfire-site-web" in workflow_yaml
     assert "ghcr.io/mbsrn/site-web" not in workflow_yaml
-    assert "PRIVATE_IMAGE_AUTH_REQUIRED: \"true\"" in workflow_yaml
+    assert 'PRIVATE_IMAGE_AUTH_REQUIRED: "true"' in workflow_yaml
     assert (
         "SITE_WEB_IMAGE_TAG: ${{ vars.MBSRN_SITE_WEB_IMAGE_TAG || vars.SITE_WEB_IMAGE_TAG || secrets.MBSRN_SITE_WEB_IMAGE_TAG || secrets.SITE_WEB_IMAGE_TAG || '' }}"
         in workflow_yaml
@@ -7268,16 +7283,16 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "Get GKE credentials" in workflow_yaml
     assert "Verify expected per-site static IP exists" in workflow_yaml
     assert (
-        "gcloud compute addresses describe \"$MBSRN_PREVIEW_STATIC_IP_NAME\" --global --project \"$GKE_PROJECT_ID\""
+        'gcloud compute addresses describe "$MBSRN_PREVIEW_STATIC_IP_NAME" --global --project "$GKE_PROJECT_ID"'
         in workflow_yaml
     )
     assert "deploy_runtime_reason_code=managed_site_static_ip_missing" in workflow_yaml
     assert "Ensure namespace exists" in workflow_yaml
     assert "Verify GHCR image pull secret" in workflow_yaml
-    assert "kubectl get secret ghcr-pull-secret --namespace \"$K8S_NAMESPACE\"" in workflow_yaml
+    assert 'kubectl get secret ghcr-pull-secret --namespace "$K8S_NAMESPACE"' in workflow_yaml
     assert "Reset stale site-web deployment" in workflow_yaml
     assert "Resetting deployment to eliminate stale image references." in workflow_yaml
-    assert "kubectl delete deployment site-web --namespace \"$K8S_NAMESPACE\" --ignore-not-found" in workflow_yaml
+    assert 'kubectl delete deployment site-web --namespace "$K8S_NAMESPACE" --ignore-not-found' in workflow_yaml
     assert "GIT_USERID: ${{ secrets.GIT_USERID }}" not in workflow_yaml
     assert "GIT_EMAIL: ${{ secrets.GIT_EMAIL }}" not in workflow_yaml
     assert "GIT_TOKEN: ${{ secrets.GIT_TOKEN }}" not in workflow_yaml
@@ -7289,13 +7304,16 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "Apply managed manifests" in workflow_yaml
     assert "kubectl apply -f k8s/deployment.yaml" in workflow_yaml
     assert "Resolve managed site runtime image" in workflow_yaml
-    assert "selected_mode=\"immutable_sha\"" in workflow_yaml
-    assert "selected_image=\"${SITE_WEB_IMAGE_REPOSITORY}:${GITHUB_SHA}\"" in workflow_yaml
-    assert "selected_mode=\"fallback_latest\"" in workflow_yaml
-    assert "selected_mode=\"immutable_sha\"" in workflow_yaml
-    assert "kubectl set image deployment/site-web site-web=\"${selected_image}\"" in workflow_yaml
+    assert 'selected_mode="immutable_sha"' in workflow_yaml
+    assert 'selected_image="${SITE_WEB_IMAGE_REPOSITORY}:${GITHUB_SHA}"' in workflow_yaml
+    assert 'selected_mode="fallback_latest"' in workflow_yaml
+    assert 'selected_mode="immutable_sha"' in workflow_yaml
+    assert 'kubectl set image deployment/site-web site-web="${selected_image}"' in workflow_yaml
     assert "Managed site runtime image selected: ${selected_image} (mode=${selected_mode})" in workflow_yaml
-    assert "Configured SITE_WEB_IMAGE_TAG '$normalized_tag' is not a SHA-like tag; falling back to latest." in workflow_yaml
+    assert (
+        "Configured SITE_WEB_IMAGE_TAG '$normalized_tag' is not a SHA-like tag; falling back to latest."
+        in workflow_yaml
+    )
     assert "Verify rollout" in workflow_yaml
     assert "Verify service and ingress" in workflow_yaml
     assert "project_id: ${{ env.GKE_PROJECT_ID }}" in workflow_yaml
@@ -7351,17 +7369,17 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "kubectl apply -f k8s/" in workflow_yaml
     assert "kubectl rollout status deployment/site-web" in workflow_yaml
     assert "site-web rollout timed out in namespace $K8S_NAMESPACE; collecting bounded diagnostics." in workflow_yaml
-    assert "kubectl get rs --namespace \"$K8S_NAMESPACE\" -o wide || true" in workflow_yaml
+    assert 'kubectl get rs --namespace "$K8S_NAMESPACE" -o wide || true' in workflow_yaml
     assert (
-        "kubectl describe deployment site-web --namespace \"$K8S_NAMESPACE\" > \"$deployment_describe_output\" 2>&1 || true"
+        'kubectl describe deployment site-web --namespace "$K8S_NAMESPACE" > "$deployment_describe_output" 2>&1 || true'
         in workflow_yaml
     )
-    assert "kubectl describe pods --namespace \"$K8S_NAMESPACE\" -l app.kubernetes.io/name=site-web" in workflow_yaml
+    assert 'kubectl describe pods --namespace "$K8S_NAMESPACE" -l app.kubernetes.io/name=site-web' in workflow_yaml
     assert "image_pull_detected=false" in workflow_yaml
     assert "image_pull_secret_missing_detected=false" in workflow_yaml
     assert "private_image_pull_forbidden_detected=false" in workflow_yaml
     assert "public_image_pull_failed_detected=false" in workflow_yaml
-    assert "private_image_auth_required=\"${PRIVATE_IMAGE_AUTH_REQUIRED:-false}\"" in workflow_yaml
+    assert 'private_image_auth_required="${PRIVATE_IMAGE_AUTH_REQUIRED:-false}"' in workflow_yaml
     assert "Likely rollout blocker: image pull backoff." in workflow_yaml
     assert "Likely rollout blocker: image pull secret missing." in workflow_yaml
     assert "Likely rollout blocker: private image pull forbidden." in workflow_yaml
@@ -7390,11 +7408,11 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "probe_direct_evidence=false" in workflow_yaml
     assert "Suppress crash/probe hints when current describe evidence shows image-pull blockers." in workflow_yaml
     assert (
-        "if [ \"$image_pull_detected\" = false ] && [ \"$container_started_evidence\" = true ] && [ \"$crash_direct_evidence\" = true ]; then"
+        'if [ "$image_pull_detected" = false ] && [ "$container_started_evidence" = true ] && [ "$crash_direct_evidence" = true ]; then'
         in workflow_yaml
     )
     assert (
-        "if [ \"$image_pull_detected\" = false ] && [ \"$container_started_evidence\" = true ] && [ \"$probe_direct_evidence\" = true ]; then"
+        'if [ "$image_pull_detected" = false ] && [ "$container_started_evidence" = true ] && [ "$probe_direct_evidence" = true ]; then'
         in workflow_yaml
     )
     assert "terminated with exit code|Last State:[[:space:]]+Terminated|Reason:[[:space:]]+Error" in workflow_yaml
@@ -7406,23 +7424,32 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "Resolve live URL from ingress status" in workflow_yaml
     assert "max_attempts=40" in workflow_yaml
     assert "sleep_seconds=15" in workflow_yaml
-    assert "Waiting up to ${wait_seconds}s for ingress external address assignment in namespace $K8S_NAMESPACE." in workflow_yaml
-    assert "kubectl get ingress site-web --namespace \"$K8S_NAMESPACE\"" in workflow_yaml
-    assert "kubectl get service site-web --namespace \"$K8S_NAMESPACE\" -o yaml" in workflow_yaml
-    assert "kubectl get endpoints site-web --namespace \"$K8S_NAMESPACE\" -o yaml" in workflow_yaml
     assert (
-        "kubectl get endpointslice --namespace \"$K8S_NAMESPACE\" -l kubernetes.io/service-name=site-web -o yaml || true"
+        "Waiting up to ${wait_seconds}s for ingress external address assignment in namespace $K8S_NAMESPACE."
         in workflow_yaml
     )
-    assert "kubectl describe service site-web --namespace \"$K8S_NAMESPACE\" || true" in workflow_yaml
-    assert "kubectl describe ingress site-web --namespace \"$K8S_NAMESPACE\" || true" in workflow_yaml
-    assert "kubectl describe managedcertificate \"$MBSRN_PREVIEW_CERTIFICATE_NAME\" --namespace \"$K8S_NAMESPACE\" || true" in workflow_yaml
-    assert "kubectl describe backendconfig \"$MBSRN_BACKEND_CONFIG_NAME\" --namespace \"$K8S_NAMESPACE\" || true" in workflow_yaml
+    assert 'kubectl get ingress site-web --namespace "$K8S_NAMESPACE"' in workflow_yaml
+    assert 'kubectl get service site-web --namespace "$K8S_NAMESPACE" -o yaml' in workflow_yaml
+    assert 'kubectl get endpoints site-web --namespace "$K8S_NAMESPACE" -o yaml' in workflow_yaml
+    assert (
+        'kubectl get endpointslice --namespace "$K8S_NAMESPACE" -l kubernetes.io/service-name=site-web -o yaml || true'
+        in workflow_yaml
+    )
+    assert 'kubectl describe service site-web --namespace "$K8S_NAMESPACE" || true' in workflow_yaml
+    assert 'kubectl describe ingress site-web --namespace "$K8S_NAMESPACE" || true' in workflow_yaml
+    assert (
+        'kubectl describe managedcertificate "$MBSRN_PREVIEW_CERTIFICATE_NAME" --namespace "$K8S_NAMESPACE" || true'
+        in workflow_yaml
+    )
+    assert (
+        'kubectl describe backendconfig "$MBSRN_BACKEND_CONFIG_NAME" --namespace "$K8S_NAMESPACE" || true'
+        in workflow_yaml
+    )
     assert "probe_max_attempts=20" in workflow_yaml
     assert "probe_sleep_seconds=15" in workflow_yaml
-    assert "while [ \"$probe_attempt\" -le \"$probe_max_attempts\" ]; do" in workflow_yaml
-    assert "if [ \"$probe_attempt\" -lt \"$probe_max_attempts\" ]; then" in workflow_yaml
-    assert "sleep \"$probe_sleep_seconds\"" in workflow_yaml
+    assert 'while [ "$probe_attempt" -le "$probe_max_attempts" ]; do' in workflow_yaml
+    assert 'if [ "$probe_attempt" -lt "$probe_max_attempts" ]; then' in workflow_yaml
+    assert 'sleep "$probe_sleep_seconds"' in workflow_yaml
     verify_service_step_yaml = workflow_yaml.split("      - name: Verify service and ingress", 1)[1].split(
         "      - name: Resolve live URL from ingress status",
         1,
@@ -7433,11 +7460,14 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "deploy_runtime_reason_code=network_policy_may_block_service_probe" in verify_service_step_yaml
     assert "deploy_runtime_reason_code=in_cluster_service_curl_failed_after_retries" in verify_service_step_yaml
     assert "deploy_runtime_reason_code=in_cluster_service_curl_failed" in verify_service_step_yaml
-    assert "kubectl get networkpolicy --namespace \"$K8S_NAMESPACE\" -o yaml || true" in verify_service_step_yaml
-    assert "kubectl describe networkpolicy --namespace \"$K8S_NAMESPACE\" || true" in verify_service_step_yaml
-    assert "kubectl get pod \"$latest_site_web_pod\" --namespace \"$K8S_NAMESPACE\" --show-labels || true" in verify_service_step_yaml
+    assert 'kubectl get networkpolicy --namespace "$K8S_NAMESPACE" -o yaml || true' in verify_service_step_yaml
+    assert 'kubectl describe networkpolicy --namespace "$K8S_NAMESPACE" || true' in verify_service_step_yaml
     assert (
-        "kubectl get service site-web --namespace \"$K8S_NAMESPACE\" -o jsonpath='selector={.spec.selector}"
+        'kubectl get pod "$latest_site_web_pod" --namespace "$K8S_NAMESPACE" --show-labels || true'
+        in verify_service_step_yaml
+    )
+    assert (
+        'kubectl get service site-web --namespace "$K8S_NAMESPACE" -o jsonpath=\'selector={.spec.selector}'
         in verify_service_step_yaml
     )
     assert (
@@ -7449,12 +7479,18 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
         "Pre-shared cert annotation is controller metadata and does not block deploy by itself; relying on managed-certificate annotation/domain/TLS checks."
         in workflow_yaml
     )
-    assert "if [ \"$pre_shared_count\" -eq 1 ] && [ \"$pre_shared_first\" = \"$expected_cert_name\" ]; then" not in verify_service_step_yaml
+    assert (
+        'if [ "$pre_shared_count" -eq 1 ] && [ "$pre_shared_first" = "$expected_cert_name" ]; then'
+        not in verify_service_step_yaml
+    )
     assert "deploy_runtime_reason_code=ingress_neg_convergence_pending" in workflow_yaml
-    assert "kubectl delete pod \"$probe_pod\" --namespace \"$K8S_NAMESPACE\" --ignore-not-found || true" in workflow_yaml
-    assert "if ! kubectl run \"$probe_pod\"" not in workflow_yaml
-    assert "ingress_spec_host=\"$(kubectl get ingress site-web --namespace \"$K8S_NAMESPACE\" -o jsonpath='{.spec.rules[0].host}' 2>/dev/null || true)\"" in workflow_yaml
-    assert "preview_host=\"$MBSRN_PREVIEW_HOSTNAME\"" in workflow_yaml
+    assert 'kubectl delete pod "$probe_pod" --namespace "$K8S_NAMESPACE" --ignore-not-found || true' in workflow_yaml
+    assert 'if ! kubectl run "$probe_pod"' not in workflow_yaml
+    assert (
+        'ingress_spec_host="$(kubectl get ingress site-web --namespace "$K8S_NAMESPACE" -o jsonpath=\'{.spec.rules[0].host}\' 2>/dev/null || true)"'
+        in workflow_yaml
+    )
+    assert 'preview_host="$MBSRN_PREVIEW_HOSTNAME"' in workflow_yaml
     assert "host_reachable=false" in workflow_yaml
     assert "tls_mismatch_detected=false" in workflow_yaml
     assert "backend_502_detected=false" in workflow_yaml
@@ -7462,10 +7498,10 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "http_fallback_attempted=false" in workflow_yaml
     assert "ensure_https_probe_error_summary() {" in workflow_yaml
     assert "ensure_https_probe_error_summary" in workflow_yaml
-    assert "fallback_reason=\"dns_not_ready\"" in workflow_yaml
-    assert "fallback_reason=\"cert_not_ready\"" in workflow_yaml
-    assert "fallback_reason=\"host_resolution_pending\"" in workflow_yaml
-    assert "if [ -z \"$preview_host\" ] && [ -n \"$ingress_spec_host\" ]; then" in workflow_yaml
+    assert 'fallback_reason="dns_not_ready"' in workflow_yaml
+    assert 'fallback_reason="cert_not_ready"' in workflow_yaml
+    assert 'fallback_reason="host_resolution_pending"' in workflow_yaml
+    assert 'if [ -z "$preview_host" ] && [ -n "$ingress_spec_host" ]; then' in workflow_yaml
     assert "Expected preview hostname responded over HTTPS" in workflow_yaml
     assert "Expected preview hostname responded over HTTP" in workflow_yaml
     assert "deploy_runtime_reason_code=reachable_but_tls_certificate_mismatch" in workflow_yaml
@@ -7474,45 +7510,64 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "deploy_runtime_reason_code=https_probe_not_attempted" in workflow_yaml
     assert "deploy_runtime_reason_code=https_probe_failed_after_control_plane_ready" in workflow_yaml
     assert "deploy_runtime_reason_code=ingress_address_pending_but_hostname_reachable" in workflow_yaml
-    assert "if [ \"$tls_mismatch_detected\" = true ]; then" in workflow_yaml
-    assert "if [ \"$backend_502_detected\" = true ]; then" in workflow_yaml
-    assert "kubectl describe managedcertificate \"$MBSRN_PREVIEW_CERTIFICATE_NAME\" --namespace \"$K8S_NAMESPACE\" || true" in workflow_yaml
-    assert "kubectl describe backendconfig \"$MBSRN_BACKEND_CONFIG_NAME\" --namespace \"$K8S_NAMESPACE\" || true" in workflow_yaml
+    assert 'if [ "$tls_mismatch_detected" = true ]; then' in workflow_yaml
+    assert 'if [ "$backend_502_detected" = true ]; then' in workflow_yaml
+    assert (
+        'kubectl describe managedcertificate "$MBSRN_PREVIEW_CERTIFICATE_NAME" --namespace "$K8S_NAMESPACE" || true'
+        in workflow_yaml
+    )
+    assert (
+        'kubectl describe backendconfig "$MBSRN_BACKEND_CONFIG_NAME" --namespace "$K8S_NAMESPACE" || true'
+        in workflow_yaml
+    )
     assert "Ingress created but external address is not assigned yet for namespace $K8S_NAMESPACE." in workflow_yaml
     assert "Likely rollout blocker: ingress/load balancer provisioning still in progress." in workflow_yaml
     assert "This may take several minutes on GKE." in workflow_yaml
     assert "deploy_runtime_reason_code=ingress_address_pending" in workflow_yaml
-    assert "kubectl describe ingress site-web --namespace \"$K8S_NAMESPACE\" || true" in workflow_yaml
-    assert "kubectl get service site-web --namespace \"$K8S_NAMESPACE\" -o wide || true" in workflow_yaml
-    assert "kubectl get endpoints site-web --namespace \"$K8S_NAMESPACE\" -o wide || true" in workflow_yaml
-    assert "kubectl get endpointslice --namespace \"$K8S_NAMESPACE\" -l kubernetes.io/service-name=site-web -o wide || true" in workflow_yaml
-    assert "kubectl get managedcertificate \"$MBSRN_PREVIEW_CERTIFICATE_NAME\" --namespace \"$K8S_NAMESPACE\" || true" in workflow_yaml
-    assert "kubectl get frontendconfig \"$MBSRN_FRONTEND_CONFIG_NAME\" --namespace \"$K8S_NAMESPACE\" || true" in workflow_yaml
-    assert "kubectl get backendconfig \"$MBSRN_BACKEND_CONFIG_NAME\" --namespace \"$K8S_NAMESPACE\" || true" in workflow_yaml
+    assert 'kubectl describe ingress site-web --namespace "$K8S_NAMESPACE" || true' in workflow_yaml
+    assert 'kubectl get service site-web --namespace "$K8S_NAMESPACE" -o wide || true' in workflow_yaml
+    assert 'kubectl get endpoints site-web --namespace "$K8S_NAMESPACE" -o wide || true' in workflow_yaml
+    assert (
+        'kubectl get endpointslice --namespace "$K8S_NAMESPACE" -l kubernetes.io/service-name=site-web -o wide || true'
+        in workflow_yaml
+    )
+    assert (
+        'kubectl get managedcertificate "$MBSRN_PREVIEW_CERTIFICATE_NAME" --namespace "$K8S_NAMESPACE" || true'
+        in workflow_yaml
+    )
+    assert (
+        'kubectl get frontendconfig "$MBSRN_FRONTEND_CONFIG_NAME" --namespace "$K8S_NAMESPACE" || true' in workflow_yaml
+    )
+    assert (
+        'kubectl get backendconfig "$MBSRN_BACKEND_CONFIG_NAME" --namespace "$K8S_NAMESPACE" || true' in workflow_yaml
+    )
     assert "exit 1" in workflow_yaml
-    assert "echo \"resolved_live_url=$live_url\"" in workflow_yaml
-    assert "echo \"live_url=$live_url\"" in workflow_yaml
-    assert "echo \"deployed_url=$live_url\"" in workflow_yaml
-    assert "echo \"dns_record_matches_ingress=$dns_record_matches_ingress\"" in workflow_yaml
-    assert "echo \"dns_expected_ip=$dns_expected_ip\"" in workflow_yaml
-    assert "echo \"dns_observed_ip=$dns_observed_ip\"" in workflow_yaml
-    assert "echo \"expected_static_ip_address=$expected_static_ip_address\"" in workflow_yaml
-    assert "echo \"static_ip_status=$static_ip_status\"" in workflow_yaml
-    assert "echo \"static_ip_users=$static_ip_users\"" in workflow_yaml
-    assert "echo \"tls_certificate_status=$tls_certificate_status\"" in workflow_yaml
-    assert "echo \"tls_domain_status=$tls_domain_status\"" in workflow_yaml
-    assert "echo \"ingress_status_ip=$ingress_status_ip\"" in workflow_yaml
-    assert "echo \"ingress_status_ip_matches_static_ip=$ingress_status_ip_matches_static_ip\"" in workflow_yaml
-    assert "echo \"static_ip_bound_to_expected_forwarding_rule=$static_ip_bound_to_expected_forwarding_rule\"" in workflow_yaml
-    assert "echo \"ingress_ip=$ingress_ip\"" in workflow_yaml
-    assert "echo \"ingress_conflict_detected=$ingress_conflict_detected\"" in workflow_yaml
-    assert "echo \"cert_identity_valid=$cert_identity_valid\"" in workflow_yaml
-    assert "echo \"host_reachable=$host_reachable\"" in workflow_yaml
-    assert "echo \"host_reachability_scheme=$host_reachability_scheme\"" in workflow_yaml
-    assert "echo \"https_probe_error_summary=$https_probe_error_summary\"" in workflow_yaml
-    assert "echo \"deploy_https_ready=$deploy_https_ready\"" in workflow_yaml
+    assert 'echo "resolved_live_url=$live_url"' in workflow_yaml
+    assert 'echo "live_url=$live_url"' in workflow_yaml
+    assert 'echo "deployed_url=$live_url"' in workflow_yaml
+    assert 'echo "dns_record_matches_ingress=$dns_record_matches_ingress"' in workflow_yaml
+    assert 'echo "dns_expected_ip=$dns_expected_ip"' in workflow_yaml
+    assert 'echo "dns_observed_ip=$dns_observed_ip"' in workflow_yaml
+    assert 'echo "expected_static_ip_address=$expected_static_ip_address"' in workflow_yaml
+    assert 'echo "static_ip_status=$static_ip_status"' in workflow_yaml
+    assert 'echo "static_ip_users=$static_ip_users"' in workflow_yaml
+    assert 'echo "tls_certificate_status=$tls_certificate_status"' in workflow_yaml
+    assert 'echo "tls_domain_status=$tls_domain_status"' in workflow_yaml
+    assert 'echo "ingress_status_ip=$ingress_status_ip"' in workflow_yaml
+    assert 'echo "ingress_status_ip_matches_static_ip=$ingress_status_ip_matches_static_ip"' in workflow_yaml
+    assert (
+        'echo "static_ip_bound_to_expected_forwarding_rule=$static_ip_bound_to_expected_forwarding_rule"'
+        in workflow_yaml
+    )
+    assert 'echo "ingress_ip=$ingress_ip"' in workflow_yaml
+    assert 'echo "ingress_conflict_detected=$ingress_conflict_detected"' in workflow_yaml
+    assert 'echo "cert_identity_valid=$cert_identity_valid"' in workflow_yaml
+    assert 'echo "host_reachable=$host_reachable"' in workflow_yaml
+    assert 'echo "host_reachability_scheme=$host_reachability_scheme"' in workflow_yaml
+    assert 'echo "https_probe_error_summary=$https_probe_error_summary"' in workflow_yaml
+    assert 'echo "deploy_https_ready=$deploy_https_ready"' in workflow_yaml
     assert "--format='json(name,address,status,users)'" in workflow_yaml
-    assert "dns_expected_ip=\"$expected_static_ip_address\"" in workflow_yaml
+    assert 'dns_expected_ip="$expected_static_ip_address"' in workflow_yaml
     assert "deploy_runtime_reason_code=ingress_status_ip_stale_or_mismatched" in workflow_yaml
     assert "deploy_runtime_reason_code=dns_record_mismatch" in workflow_yaml
     assert "deploy_runtime_reason_code=dns_points_to_old_ingress_ip" in workflow_yaml
@@ -7523,20 +7578,22 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "deploy_runtime_reason_code=expected_static_ip_not_bound_to_ingress" in workflow_yaml
     assert "deploy_runtime_reason_code=shared_static_ip_not_allowed_for_per_site_ingress" in workflow_yaml
     assert (
-        "kubectl delete managedcertificate \"$MBSRN_PREVIEW_CERTIFICATE_NAME\" --namespace \"$K8S_NAMESPACE\" --ignore-not-found=true"
+        'kubectl delete managedcertificate "$MBSRN_PREVIEW_CERTIFICATE_NAME" --namespace "$K8S_NAMESPACE" --ignore-not-found=true'
         in workflow_yaml
     )
-    assert "kubectl apply -f k8s/managedcertificate.yaml --namespace \"$K8S_NAMESPACE\"" in workflow_yaml
-    assert "kubectl apply -f k8s/ingress.yaml --namespace \"$K8S_NAMESPACE\" >/dev/null 2>&1 || true" in workflow_yaml
-    assert "echo \"observed_managed_certificate_domains=$observed_managed_certificate_domains\"" in workflow_yaml
-    assert "echo \"observed_managed_certificate_status=$observed_managed_certificate_status\"" in workflow_yaml
-    assert "echo \"observed_managed_certificate_domain_status=$observed_managed_certificate_domain_status\"" in workflow_yaml
+    assert 'kubectl apply -f k8s/managedcertificate.yaml --namespace "$K8S_NAMESPACE"' in workflow_yaml
+    assert 'kubectl apply -f k8s/ingress.yaml --namespace "$K8S_NAMESPACE" >/dev/null 2>&1 || true' in workflow_yaml
+    assert 'echo "observed_managed_certificate_domains=$observed_managed_certificate_domains"' in workflow_yaml
+    assert 'echo "observed_managed_certificate_status=$observed_managed_certificate_status"' in workflow_yaml
     assert (
-        "echo \"Site runtime image: ${{ steps.resolve_site_runtime_image.outputs.site_runtime_image_reference }}\""
+        'echo "observed_managed_certificate_domain_status=$observed_managed_certificate_domain_status"' in workflow_yaml
+    )
+    assert (
+        'echo "Site runtime image: ${{ steps.resolve_site_runtime_image.outputs.site_runtime_image_reference }}"'
         in workflow_yaml
     )
     assert (
-        "echo \"Site runtime image selection mode: ${{ steps.resolve_site_runtime_image.outputs.site_runtime_image_selection_mode }}\""
+        'echo "Site runtime image selection mode: ${{ steps.resolve_site_runtime_image.outputs.site_runtime_image_selection_mode }}"'
         in workflow_yaml
     )
     assert "resources:" in deployment_yaml
@@ -7547,9 +7604,9 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "containerPort: 8080" in deployment_yaml
     assert "env:" in deployment_yaml
     assert "name: HOSTNAME" in deployment_yaml
-    assert "value: \"0.0.0.0\"" in deployment_yaml
+    assert 'value: "0.0.0.0"' in deployment_yaml
     assert "name: PORT" in deployment_yaml
-    assert "value: \"8080\"" in deployment_yaml
+    assert 'value: "8080"' in deployment_yaml
     assert "readinessProbe:" in deployment_yaml
     assert "path: /" in deployment_yaml
     assert "port: 8080" in deployment_yaml
@@ -7562,7 +7619,7 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "memory: 512Mi" in deployment_yaml
     assert "targetPort: 8080" in service_yaml
     assert "cloud.google.com/neg: '{\"ingress\": true}'" in service_yaml
-    assert "cloud.google.com/backend-config: '{\"default\": \"site-web-backend-config-tnmfire\"}'" in service_yaml
+    assert 'cloud.google.com/backend-config: \'{"default": "site-web-backend-config-tnmfire"}\'' in service_yaml
     assert "kubernetes.io/ingress.class: gce" in ingress_yaml
     assert "kubernetes.io/ingress.global-static-ip-name: site-web-preview-ip-tnmfire" in ingress_yaml
     assert "ingress.gcp.kubernetes.io/pre-shared-cert" not in ingress_yaml
@@ -7637,9 +7694,9 @@ def test_rendered_managed_templates_enable_pull_secret_only_for_private_image_au
     )
     deployment_yaml = manifests["k8s/deployment.yaml"]
 
-    assert "PRIVATE_IMAGE_AUTH_REQUIRED: \"true\"" in workflow_yaml
+    assert 'PRIVATE_IMAGE_AUTH_REQUIRED: "true"' in workflow_yaml
     assert "Verify GHCR image pull secret" in workflow_yaml
-    assert "kubectl get secret ghcr-pull-secret --namespace \"$K8S_NAMESPACE\"" in workflow_yaml
+    assert 'kubectl get secret ghcr-pull-secret --namespace "$K8S_NAMESPACE"' in workflow_yaml
     assert "imagePullSecrets:" in deployment_yaml
     assert "name: ghcr-pull-secret" in deployment_yaml
 
@@ -7661,10 +7718,7 @@ def test_render_managed_gke_manifests_network_policy_allows_site_web_probe_witho
     network_policy_yaml = manifests["k8s/networkpolicy.yaml"]
     parsed_docs = [doc for doc in yaml.safe_load_all(network_policy_yaml) if isinstance(doc, dict)]
     assert len(parsed_docs) == 2
-    policies_by_name = {
-        str((doc.get("metadata") or {}).get("name") or ""): doc
-        for doc in parsed_docs
-    }
+    policies_by_name = {str((doc.get("metadata") or {}).get("name") or ""): doc for doc in parsed_docs}
 
     default_deny_policy = policies_by_name.get("site-default-deny-ingress")
     assert isinstance(default_deny_policy, dict)
@@ -7729,16 +7783,16 @@ def test_rendered_managed_workflow_yaml_parses_embedded_certificate_evaluation_s
     assert "resolve_live_url_state_https_probe_error_summary" in run_script
     assert "set_https_probe_error_summary() {" in run_script
     assert "ensure_https_probe_error_summary() {" in run_script
-    assert "fallback_reason=\"dns_not_ready\"" in run_script
-    assert "fallback_reason=\"cert_not_ready\"" in run_script
-    assert "fallback_reason=\"host_resolution_pending\"" in run_script
+    assert 'fallback_reason="dns_not_ready"' in run_script
+    assert 'fallback_reason="cert_not_ready"' in run_script
+    assert 'fallback_reason="host_resolution_pending"' in run_script
     assert "ensure_https_probe_error_summary" in run_script
     assert "http_fallback_attempted=$http_fallback_attempted" in run_script
     assert "collect_resolve_live_url_evidence() {" in run_script
     assert "collect_resolve_live_url_evidence" in run_script
     assert "STATIC_IP_METADATA_JSON=\"$static_ip_metadata_json\" python - <<'PY'" in run_script
-    assert "MANAGED_CERTIFICATE_JSON=\"$managed_certificate_json\" EXPECTED_PREVIEW_HOST" in run_script
-    assert "MANAGED_CERTIFICATE_JSON=\"$managed_certificate_payload\" EXPECTED_PREVIEW_HOST" in run_script
+    assert 'MANAGED_CERTIFICATE_JSON="$managed_certificate_json" EXPECTED_PREVIEW_HOST' in run_script
+    assert 'MANAGED_CERTIFICATE_JSON="$managed_certificate_payload" EXPECTED_PREVIEW_HOST' in run_script
     assert "sys.stdin.read().strip()" not in run_script
     assert "Ingress external address observed after HTTPS success verification." in run_script
     assert (
@@ -7767,7 +7821,10 @@ def test_rendered_managed_workflow_yaml_parses_embedded_certificate_evaluation_s
     assert '&& [ "$dns_record_matches_ingress" = "true" ]' in run_script
     assert '&& [ "$managed_cert_annotation_first" = "$expected_cert_name" ]; then' in run_script
     assert 'echo "observed_managed_certificate_domains=$observed_managed_certificate_domains"' in run_script
-    assert 'if [ -z "$ingress_status_ip" ] && [ -z "$expected_static_ip_address" ] && [ "$host_reachable" != "true" ]; then' in run_script
+    assert (
+        'if [ -z "$ingress_status_ip" ] && [ -z "$expected_static_ip_address" ] && [ "$host_reachable" != "true" ]; then'
+        in run_script
+    )
     assert 'dns_expected_ip="$expected_static_ip_address"' in run_script
     evidence_collect_index = run_script.index("collect_resolve_live_url_evidence")
     tls_failure_index = run_script.index('if [ "$tls_mismatch_detected" = true ]; then')
@@ -7783,7 +7840,10 @@ def test_rendered_managed_workflow_yaml_parses_embedded_certificate_evaluation_s
     annotation_mismatch_index = run_script.index("deploy_runtime_reason_code=ingress_certificate_annotation_mismatch")
     drift_repair_index = run_script.index("deploy_runtime_reason_code=managed_certificate_domain_drift_repaired")
     assert annotation_mismatch_index < drift_repair_index
-    assert "Neither ingress status IP nor reserved static IP address is available for DNS/TLS validation yet." in run_script
+    assert (
+        "Neither ingress status IP nor reserved static IP address is available for DNS/TLS validation yet."
+        in run_script
+    )
 
     try:
         syntax_check = subprocess.run(
@@ -7822,7 +7882,7 @@ def test_render_managed_gke_manifests_for_sc_mechanical_is_site_scoped() -> None
     assert "name: site-web-preview-cert-sc-mechanical" in managed_certificate_yaml
     assert "- sc-mechanical.site.mbsrn.com" in managed_certificate_yaml
     assert "mbsrn.io/preview-hostname: sc-mechanical.site.mbsrn.com" in managed_certificate_yaml
-    assert "cloud.google.com/backend-config: '{\"default\": \"site-web-backend-config-sc-mechanical\"}'" in service_yaml
+    assert 'cloud.google.com/backend-config: \'{"default": "site-web-backend-config-sc-mechanical"}\'' in service_yaml
     assert "name: site-web-frontend-config-sc-mechanical" in frontend_config_yaml
     assert "name: site-web-backend-config-sc-mechanical" in backend_config_yaml
     assert "tnmfire.site.mbsrn.com" not in ingress_yaml
@@ -7934,8 +7994,8 @@ def test_managed_site_runtime_image_identity_is_repo_scoped_across_sites() -> No
     assert "SITE_WEB_IMAGE_REPOSITORY: ghcr.io/mhanson13/scmechanical-site-web" in sc_workflow
     assert "MBSRN_PREVIEW_HOSTNAME: tnmfire.site.mbsrn.com" in tnmfire_workflow
     assert "MBSRN_PREVIEW_HOSTNAME: scmechanical.site.mbsrn.com" in sc_workflow
-    assert "dig +short \"$preview_host\" A" in tnmfire_workflow
-    assert "dig +short \"$preview_host\" A" in sc_workflow
+    assert 'dig +short "$preview_host" A' in tnmfire_workflow
+    assert 'dig +short "$preview_host" A' in sc_workflow
     assert "image: ghcr.io/mhanson13/tnmfire-site-web:latest" in tnmfire_manifests["k8s/deployment.yaml"]
     assert "image: ghcr.io/mhanson13/scmechanical-site-web:latest" in sc_manifests["k8s/deployment.yaml"]
     assert "ghcr.io/mhanson13/site-web:latest" not in tnmfire_workflow
@@ -7983,8 +8043,13 @@ def test_ensure_deploy_workflow_renders_admin_managed_gke_values_before_repo_fal
     assert "GKE_CLUSTER_NAME: 'mbsrn-cluster'" in workflow_yaml
     assert "GKE_CLUSTER_LOCATION: 'us-central1'" in workflow_yaml
     assert "GKE_PROJECT_ID: 'mbsrn-prod'" in workflow_yaml
-    assert "GKE_CLUSTER_NAME: ${{ vars.KUBERNETES_CLUSTER_NAME || secrets.KUBERNETES_CLUSTER_NAME }}" not in workflow_yaml
-    assert "GKE_CLUSTER_LOCATION: ${{ vars.KUBERNETES_CLUSTER_LOCATION || secrets.KUBERNETES_CLUSTER_LOCATION }}" not in workflow_yaml
+    assert (
+        "GKE_CLUSTER_NAME: ${{ vars.KUBERNETES_CLUSTER_NAME || secrets.KUBERNETES_CLUSTER_NAME }}" not in workflow_yaml
+    )
+    assert (
+        "GKE_CLUSTER_LOCATION: ${{ vars.KUBERNETES_CLUSTER_LOCATION || secrets.KUBERNETES_CLUSTER_LOCATION }}"
+        not in workflow_yaml
+    )
     assert "GKE_PROJECT_ID: ${{ vars.GCP_PROJECT_ID || secrets.GCP_PROJECT_ID }}" not in workflow_yaml
 
 
@@ -8215,7 +8280,7 @@ def test_publish_upgrade_and_readiness_validate_same_workflow_path_and_ref(monke
             "  deploy:\n"
             "    runs-on: ubuntu-latest\n"
             "    steps:\n"
-              "      - name: Placeholder deploy\n"
+            "      - name: Placeholder deploy\n"
             '        run: echo "Deploy step not yet implemented"\n'
         )
     )
@@ -8276,14 +8341,13 @@ def test_publish_upgrade_and_readiness_validate_same_workflow_path_and_ref(monke
         for method, url in calls
     )
     assert any(
-        method == "GET"
-        and url.endswith("/actions/workflows/deploy-tnmfire-www-prod.yml")
-        for method, url in calls
+        method == "GET" and url.endswith("/actions/workflows/deploy-tnmfire-www-prod.yml") for method, url in calls
     )
     upsert_decision_logs = [
         record
         for record in caplog.records
-        if isinstance(record.msg, str) and '"event": "seo_migration_publish_workflow_file_upsert_decision"' in record.msg
+        if isinstance(record.msg, str)
+        and '"event": "seo_migration_publish_workflow_file_upsert_decision"' in record.msg
     ]
     assert upsert_decision_logs
     assert '"managed_workflow_outcome": "managed_workflow_upgraded"' in upsert_decision_logs[-1].msg
@@ -8530,7 +8594,7 @@ def test_check_deploy_target_readiness_flags_missing_expected_resource_quota_man
             "      K8S_NAMESPACE: tnmfire\n"
             "    steps:\n"
             "      - uses: google-github-actions/auth@v2\n"
-            "      - run: kubectl apply -n \"$K8S_NAMESPACE\" -f k8s/deployment.yaml\n"
+            '      - run: kubectl apply -n "$K8S_NAMESPACE" -f k8s/deployment.yaml\n'
         )
     )
     namespaced_manifest = _encode_workflow_yaml(
@@ -8556,13 +8620,36 @@ def test_check_deploy_target_readiness_flags_missing_expected_resource_quota_man
                 status=200,
                 body=json.dumps({"state": "active", "path": ".github/workflows/deploy-tnmfire-www-prod.yml"}),
             ),
-            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-namespace", "encoding": "base64", "content": namespaced_manifest})),
-            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-deployment", "encoding": "base64", "content": namespaced_manifest})),
-            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-service", "encoding": "base64", "content": namespaced_manifest})),
-            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-ingress", "encoding": "base64", "content": namespaced_manifest})),
-            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-managedcertificate", "encoding": "base64", "content": namespaced_manifest})),
-            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-frontendconfig", "encoding": "base64", "content": namespaced_manifest})),
-            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-backendconfig", "encoding": "base64", "content": namespaced_manifest})),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-namespace", "encoding": "base64", "content": namespaced_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-deployment", "encoding": "base64", "content": namespaced_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-service", "encoding": "base64", "content": namespaced_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-ingress", "encoding": "base64", "content": namespaced_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps(
+                    {"sha": "sha-managedcertificate", "encoding": "base64", "content": namespaced_manifest}
+                ),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-frontendconfig", "encoding": "base64", "content": namespaced_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-backendconfig", "encoding": "base64", "content": namespaced_manifest}),
+            ),
             _http_error(
                 "https://api.github.com/repos/mhanson13/tnmfire/contents/k8s/resourcequota.yaml?ref=main",
                 status_code=404,
@@ -8610,7 +8697,7 @@ def test_check_deploy_target_readiness_flags_certificate_domain_mismatch(monkeyp
             "      K8S_NAMESPACE: tnmfire\n"
             "    steps:\n"
             "      - uses: google-github-actions/auth@v2\n"
-            "      - run: kubectl apply -n \"$K8S_NAMESPACE\" -f k8s/deployment.yaml\n"
+            '      - run: kubectl apply -n "$K8S_NAMESPACE" -f k8s/deployment.yaml\n'
         )
     )
     namespaced_manifest = _encode_workflow_yaml(
@@ -8664,13 +8751,36 @@ def test_check_deploy_target_readiness_flags_certificate_domain_mismatch(monkeyp
                 status=200,
                 body=json.dumps({"state": "active", "path": ".github/workflows/deploy-tnmfire-www-prod.yml"}),
             ),
-            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-namespace", "encoding": "base64", "content": namespaced_manifest})),
-            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-deployment", "encoding": "base64", "content": namespaced_manifest})),
-            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-service", "encoding": "base64", "content": namespaced_manifest})),
-            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-ingress", "encoding": "base64", "content": ingress_manifest_mismatched})),
-            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-managedcertificate", "encoding": "base64", "content": certificate_manifest_mismatched})),
-            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-frontendconfig", "encoding": "base64", "content": namespaced_manifest})),
-            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-backendconfig", "encoding": "base64", "content": namespaced_manifest})),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-namespace", "encoding": "base64", "content": namespaced_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-deployment", "encoding": "base64", "content": namespaced_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-service", "encoding": "base64", "content": namespaced_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-ingress", "encoding": "base64", "content": ingress_manifest_mismatched}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps(
+                    {"sha": "sha-managedcertificate", "encoding": "base64", "content": certificate_manifest_mismatched}
+                ),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-frontendconfig", "encoding": "base64", "content": namespaced_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-backendconfig", "encoding": "base64", "content": namespaced_manifest}),
+            ),
             *_gke_environment_config_present_responses(),
         ],
         calls,
@@ -8706,7 +8816,7 @@ def test_check_deploy_target_readiness_flags_stale_managed_certificate_present(m
             "      K8S_NAMESPACE: tnmfire\n"
             "    steps:\n"
             "      - uses: google-github-actions/auth@v2\n"
-            "      - run: kubectl apply -n \"$K8S_NAMESPACE\" -f k8s/deployment.yaml\n"
+            '      - run: kubectl apply -n "$K8S_NAMESPACE" -f k8s/deployment.yaml\n'
         )
     )
     namespaced_manifest = _encode_workflow_yaml(
@@ -8760,13 +8870,36 @@ def test_check_deploy_target_readiness_flags_stale_managed_certificate_present(m
                 status=200,
                 body=json.dumps({"state": "active", "path": ".github/workflows/deploy-tnmfire-www-prod.yml"}),
             ),
-            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-namespace", "encoding": "base64", "content": namespaced_manifest})),
-            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-deployment", "encoding": "base64", "content": namespaced_manifest})),
-            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-service", "encoding": "base64", "content": namespaced_manifest})),
-            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-ingress", "encoding": "base64", "content": ingress_manifest_with_stale})),
-            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-managedcertificate", "encoding": "base64", "content": certificate_manifest_expected})),
-            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-frontendconfig", "encoding": "base64", "content": namespaced_manifest})),
-            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-backendconfig", "encoding": "base64", "content": namespaced_manifest})),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-namespace", "encoding": "base64", "content": namespaced_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-deployment", "encoding": "base64", "content": namespaced_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-service", "encoding": "base64", "content": namespaced_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-ingress", "encoding": "base64", "content": ingress_manifest_with_stale}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps(
+                    {"sha": "sha-managedcertificate", "encoding": "base64", "content": certificate_manifest_expected}
+                ),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-frontendconfig", "encoding": "base64", "content": namespaced_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-backendconfig", "encoding": "base64", "content": namespaced_manifest}),
+            ),
             *_gke_environment_config_present_responses(),
         ],
         calls,
@@ -8805,7 +8938,7 @@ def test_check_deploy_target_readiness_flags_ingress_certificate_mismatch(monkey
             "      K8S_NAMESPACE: tnmfire\n"
             "    steps:\n"
             "      - uses: google-github-actions/auth@v2\n"
-            "      - run: kubectl apply -n \"$K8S_NAMESPACE\" -f k8s/deployment.yaml\n"
+            '      - run: kubectl apply -n "$K8S_NAMESPACE" -f k8s/deployment.yaml\n'
         )
     )
     namespaced_manifest = _encode_workflow_yaml(
@@ -8859,13 +8992,38 @@ def test_check_deploy_target_readiness_flags_ingress_certificate_mismatch(monkey
                 status=200,
                 body=json.dumps({"state": "active", "path": ".github/workflows/deploy-tnmfire-www-prod.yml"}),
             ),
-            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-namespace", "encoding": "base64", "content": namespaced_manifest})),
-            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-deployment", "encoding": "base64", "content": namespaced_manifest})),
-            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-service", "encoding": "base64", "content": namespaced_manifest})),
-            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-ingress", "encoding": "base64", "content": ingress_manifest_mismatched_annotation})),
-            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-managedcertificate", "encoding": "base64", "content": certificate_manifest_expected})),
-            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-frontendconfig", "encoding": "base64", "content": namespaced_manifest})),
-            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-backendconfig", "encoding": "base64", "content": namespaced_manifest})),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-namespace", "encoding": "base64", "content": namespaced_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-deployment", "encoding": "base64", "content": namespaced_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-service", "encoding": "base64", "content": namespaced_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps(
+                    {"sha": "sha-ingress", "encoding": "base64", "content": ingress_manifest_mismatched_annotation}
+                ),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps(
+                    {"sha": "sha-managedcertificate", "encoding": "base64", "content": certificate_manifest_expected}
+                ),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-frontendconfig", "encoding": "base64", "content": namespaced_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-backendconfig", "encoding": "base64", "content": namespaced_manifest}),
+            ),
             *_gke_environment_config_present_responses(),
         ],
         calls,
@@ -8901,7 +9059,7 @@ def test_check_deploy_target_readiness_flags_shared_static_ip_conflict(monkeypat
             "      K8S_NAMESPACE: tnmfire\n"
             "    steps:\n"
             "      - uses: google-github-actions/auth@v2\n"
-            "      - run: kubectl apply -n \"$K8S_NAMESPACE\" -f k8s/deployment.yaml\n"
+            '      - run: kubectl apply -n "$K8S_NAMESPACE" -f k8s/deployment.yaml\n'
         )
     )
     namespaced_manifest = _encode_workflow_yaml(
@@ -8956,13 +9114,38 @@ def test_check_deploy_target_readiness_flags_shared_static_ip_conflict(monkeypat
                 status=200,
                 body=json.dumps({"state": "active", "path": ".github/workflows/deploy-tnmfire-www-prod.yml"}),
             ),
-            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-namespace", "encoding": "base64", "content": namespaced_manifest})),
-            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-deployment", "encoding": "base64", "content": namespaced_manifest})),
-            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-service", "encoding": "base64", "content": namespaced_manifest})),
-            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-ingress", "encoding": "base64", "content": ingress_manifest_with_shared_ip})),
-            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-managedcertificate", "encoding": "base64", "content": certificate_manifest_expected})),
-            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-frontendconfig", "encoding": "base64", "content": namespaced_manifest})),
-            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-backendconfig", "encoding": "base64", "content": namespaced_manifest})),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-namespace", "encoding": "base64", "content": namespaced_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-deployment", "encoding": "base64", "content": namespaced_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-service", "encoding": "base64", "content": namespaced_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps(
+                    {"sha": "sha-ingress", "encoding": "base64", "content": ingress_manifest_with_shared_ip}
+                ),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps(
+                    {"sha": "sha-managedcertificate", "encoding": "base64", "content": certificate_manifest_expected}
+                ),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-frontendconfig", "encoding": "base64", "content": namespaced_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-backendconfig", "encoding": "base64", "content": namespaced_manifest}),
+            ),
             *_gke_environment_config_present_responses(),
         ],
         calls,
@@ -8998,7 +9181,7 @@ def test_check_deploy_target_readiness_allows_expected_per_site_static_ip_name(m
             "      K8S_NAMESPACE: tnmfire\n"
             "    steps:\n"
             "      - uses: google-github-actions/auth@v2\n"
-            "      - run: kubectl apply -n \"$K8S_NAMESPACE\" -f k8s/deployment.yaml\n"
+            '      - run: kubectl apply -n "$K8S_NAMESPACE" -f k8s/deployment.yaml\n'
         )
     )
     namespace_manifest = _encode_workflow_yaml(
@@ -9077,13 +9260,38 @@ def test_check_deploy_target_readiness_allows_expected_per_site_static_ip_name(m
                 status=200,
                 body=json.dumps({"state": "active", "path": ".github/workflows/deploy-tnmfire-www-prod.yml"}),
             ),
-            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-namespace", "encoding": "base64", "content": namespace_manifest})),
-            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-deployment", "encoding": "base64", "content": deployment_manifest})),
-            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-service", "encoding": "base64", "content": namespaced_manifest})),
-            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-ingress", "encoding": "base64", "content": ingress_manifest_with_expected_static_ip})),
-            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-managedcertificate", "encoding": "base64", "content": certificate_manifest_expected})),
-            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-frontendconfig", "encoding": "base64", "content": namespaced_manifest})),
-            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-backendconfig", "encoding": "base64", "content": namespaced_manifest})),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-namespace", "encoding": "base64", "content": namespace_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-deployment", "encoding": "base64", "content": deployment_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-service", "encoding": "base64", "content": namespaced_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps(
+                    {"sha": "sha-ingress", "encoding": "base64", "content": ingress_manifest_with_expected_static_ip}
+                ),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps(
+                    {"sha": "sha-managedcertificate", "encoding": "base64", "content": certificate_manifest_expected}
+                ),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-frontendconfig", "encoding": "base64", "content": namespaced_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-backendconfig", "encoding": "base64", "content": namespaced_manifest}),
+            ),
             *_gke_environment_config_present_responses(),
         ],
         calls,
@@ -9119,12 +9327,10 @@ def test_check_deploy_target_readiness_allows_single_pre_shared_controller_metad
         "      K8S_NAMESPACE: tnmfire\n"
         "    steps:\n"
         "      - uses: google-github-actions/auth@v2\n"
-        "      - run: kubectl apply -n \"$K8S_NAMESPACE\" -f k8s/deployment.yaml\n"
+        '      - run: kubectl apply -n "$K8S_NAMESPACE" -f k8s/deployment.yaml\n'
     )
     workflow_signature = _compute_managed_workflow_signature(workflow_yaml=unsigned_workflow)
-    managed_workflow = _encode_workflow_yaml(
-        f"# mbsrn-workflow-signature: {workflow_signature}\n{unsigned_workflow}"
-    )
+    managed_workflow = _encode_workflow_yaml(f"# mbsrn-workflow-signature: {workflow_signature}\n{unsigned_workflow}")
     namespace_manifest = _encode_workflow_yaml(
         (
             "# mbsrn-managed-manifest:site_repo_template_v1\n"
@@ -9197,17 +9403,42 @@ def test_check_deploy_target_readiness_allows_single_pre_shared_controller_metad
                 status=200,
                 body=json.dumps({"sha": "wfsha", "encoding": "base64", "content": managed_workflow}),
             ),
-                _FakeHTTPResponse(
-                    status=200,
-                    body=json.dumps({"state": "active", "path": ".github/workflows/deploy-tnmfire-www-prod.yml"}),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"state": "active", "path": ".github/workflows/deploy-tnmfire-www-prod.yml"}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-namespace", "encoding": "base64", "content": namespace_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-deployment", "encoding": "base64", "content": deployment_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-service", "encoding": "base64", "content": namespaced_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps(
+                    {"sha": "sha-ingress", "encoding": "base64", "content": ingress_manifest_with_pre_shared}
                 ),
-                _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-namespace", "encoding": "base64", "content": namespace_manifest})),
-                _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-deployment", "encoding": "base64", "content": deployment_manifest})),
-                _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-service", "encoding": "base64", "content": namespaced_manifest})),
-                _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-ingress", "encoding": "base64", "content": ingress_manifest_with_pre_shared})),
-                _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-managedcertificate", "encoding": "base64", "content": certificate_manifest_expected})),
-            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-frontendconfig", "encoding": "base64", "content": namespaced_manifest})),
-            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-backendconfig", "encoding": "base64", "content": namespaced_manifest})),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps(
+                    {"sha": "sha-managedcertificate", "encoding": "base64", "content": certificate_manifest_expected}
+                ),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-frontendconfig", "encoding": "base64", "content": namespaced_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-backendconfig", "encoding": "base64", "content": namespaced_manifest}),
+            ),
             *_gke_environment_config_present_responses(),
         ],
         calls,
@@ -9244,7 +9475,7 @@ def test_check_deploy_target_readiness_allows_expected_pre_shared_certificate_me
             "      K8S_NAMESPACE: tnmfire\n"
             "    steps:\n"
             "      - uses: google-github-actions/auth@v2\n"
-            "      - run: kubectl apply -n \"$K8S_NAMESPACE\" -f k8s/deployment.yaml\n"
+            '      - run: kubectl apply -n "$K8S_NAMESPACE" -f k8s/deployment.yaml\n'
         )
     )
     namespace_manifest = _encode_workflow_yaml(
@@ -9336,11 +9567,30 @@ def test_check_deploy_target_readiness_allows_expected_pre_shared_certificate_me
                 status=200,
                 body=json.dumps({"sha": "sha-deployment", "encoding": "base64", "content": deployment_manifest}),
             ),
-            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-service", "encoding": "base64", "content": namespaced_manifest})),
-            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-ingress", "encoding": "base64", "content": ingress_manifest_with_expected_pre_shared})),
-            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-managedcertificate", "encoding": "base64", "content": certificate_manifest_expected})),
-            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-frontendconfig", "encoding": "base64", "content": namespaced_manifest})),
-            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-backendconfig", "encoding": "base64", "content": namespaced_manifest})),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-service", "encoding": "base64", "content": namespaced_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps(
+                    {"sha": "sha-ingress", "encoding": "base64", "content": ingress_manifest_with_expected_pre_shared}
+                ),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps(
+                    {"sha": "sha-managedcertificate", "encoding": "base64", "content": certificate_manifest_expected}
+                ),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-frontendconfig", "encoding": "base64", "content": namespaced_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-backendconfig", "encoding": "base64", "content": namespaced_manifest}),
+            ),
             *_gke_environment_config_present_responses(),
         ],
         calls,
@@ -9380,7 +9630,7 @@ def test_check_deploy_target_readiness_marks_stale_pre_shared_binding_only_with_
             "      K8S_NAMESPACE: tnmfire\n"
             "    steps:\n"
             "      - uses: google-github-actions/auth@v2\n"
-            "      - run: kubectl apply -n \"$K8S_NAMESPACE\" -f k8s/deployment.yaml\n"
+            '      - run: kubectl apply -n "$K8S_NAMESPACE" -f k8s/deployment.yaml\n'
         )
     )
     namespaced_manifest = _encode_workflow_yaml(
@@ -9435,19 +9685,38 @@ def test_check_deploy_target_readiness_marks_stale_pre_shared_binding_only_with_
                 status=200,
                 body=json.dumps({"state": "active", "path": ".github/workflows/deploy-tnmfire-www-prod.yml"}),
             ),
-            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-namespace", "encoding": "base64", "content": namespaced_manifest})),
-            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-deployment", "encoding": "base64", "content": namespaced_manifest})),
-            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-service", "encoding": "base64", "content": namespaced_manifest})),
             _FakeHTTPResponse(
                 status=200,
-                body=json.dumps({"sha": "sha-ingress", "encoding": "base64", "content": ingress_manifest_with_cross_site_pre_shared}),
+                body=json.dumps({"sha": "sha-namespace", "encoding": "base64", "content": namespaced_manifest}),
             ),
             _FakeHTTPResponse(
                 status=200,
-                body=json.dumps({"sha": "sha-managedcertificate", "encoding": "base64", "content": certificate_manifest_expected}),
+                body=json.dumps({"sha": "sha-deployment", "encoding": "base64", "content": namespaced_manifest}),
             ),
-            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-frontendconfig", "encoding": "base64", "content": namespaced_manifest})),
-            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-backendconfig", "encoding": "base64", "content": namespaced_manifest})),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-service", "encoding": "base64", "content": namespaced_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps(
+                    {"sha": "sha-ingress", "encoding": "base64", "content": ingress_manifest_with_cross_site_pre_shared}
+                ),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps(
+                    {"sha": "sha-managedcertificate", "encoding": "base64", "content": certificate_manifest_expected}
+                ),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-frontendconfig", "encoding": "base64", "content": namespaced_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-backendconfig", "encoding": "base64", "content": namespaced_manifest}),
+            ),
             *_gke_environment_config_present_responses(),
         ],
         calls,
@@ -9483,7 +9752,7 @@ def test_check_deploy_target_readiness_flags_deployed_content_identity_mismatch(
             "      K8S_NAMESPACE: tnmfire\n"
             "    steps:\n"
             "      - uses: google-github-actions/auth@v2\n"
-            "      - run: kubectl apply -n \"$K8S_NAMESPACE\" -f k8s/deployment.yaml\n"
+            '      - run: kubectl apply -n "$K8S_NAMESPACE" -f k8s/deployment.yaml\n'
         )
     )
     deployment_manifest_wrong_image = _encode_workflow_yaml(
@@ -9553,13 +9822,37 @@ def test_check_deploy_target_readiness_flags_deployed_content_identity_mismatch(
                 status=200,
                 body=json.dumps({"state": "active", "path": ".github/workflows/deploy-tnmfire-www-prod.yml"}),
             ),
-            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-namespace", "encoding": "base64", "content": namespaced_manifest})),
-            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-deployment", "encoding": "base64", "content": deployment_manifest_wrong_image})),
-            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-service", "encoding": "base64", "content": namespaced_manifest})),
-            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-ingress", "encoding": "base64", "content": ingress_manifest})),
-            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-managedcertificate", "encoding": "base64", "content": certificate_manifest})),
-            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-frontendconfig", "encoding": "base64", "content": namespaced_manifest})),
-            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-backendconfig", "encoding": "base64", "content": namespaced_manifest})),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-namespace", "encoding": "base64", "content": namespaced_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps(
+                    {"sha": "sha-deployment", "encoding": "base64", "content": deployment_manifest_wrong_image}
+                ),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-service", "encoding": "base64", "content": namespaced_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200, body=json.dumps({"sha": "sha-ingress", "encoding": "base64", "content": ingress_manifest})
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps(
+                    {"sha": "sha-managedcertificate", "encoding": "base64", "content": certificate_manifest}
+                ),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-frontendconfig", "encoding": "base64", "content": namespaced_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-backendconfig", "encoding": "base64", "content": namespaced_manifest}),
+            ),
             *_gke_environment_config_present_responses(),
         ],
         calls,
@@ -9578,9 +9871,8 @@ def test_check_deploy_target_readiness_flags_deployed_content_identity_mismatch(
     assert details.get("site_runtime_image_repository_expected") == "ghcr.io/mhanson13/tnmfire-site-web"
     assert details.get("site_runtime_image_repository_observed") == "ghcr.io/mhanson13/scmechanical-site-web"
     assert details.get("site_runtime_image_tag_observed") == "latest"
-    assert (
-        details.get("site_runtime_image_repository_expected")
-        != details.get("site_runtime_image_repository_observed")
+    assert details.get("site_runtime_image_repository_expected") != details.get(
+        "site_runtime_image_repository_observed"
     )
 
 
@@ -9624,7 +9916,7 @@ def test_check_deploy_target_readiness_flags_legacy_generic_runtime_images(
             f"    env:\n      K8S_NAMESPACE: {namespace}\n"
             "    steps:\n"
             "      - uses: google-github-actions/auth@v2\n"
-            "      - run: kubectl apply -n \"$K8S_NAMESPACE\" -f k8s/deployment.yaml\n"
+            '      - run: kubectl apply -n "$K8S_NAMESPACE" -f k8s/deployment.yaml\n'
         )
     )
     deployment_manifest_legacy_image = _encode_workflow_yaml(
@@ -9694,13 +9986,37 @@ def test_check_deploy_target_readiness_flags_legacy_generic_runtime_images(
                 status=200,
                 body=json.dumps({"state": "active", "path": f".github/workflows/{workflow_id}"}),
             ),
-            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-namespace", "encoding": "base64", "content": namespaced_manifest})),
-            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-deployment", "encoding": "base64", "content": deployment_manifest_legacy_image})),
-            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-service", "encoding": "base64", "content": namespaced_manifest})),
-            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-ingress", "encoding": "base64", "content": ingress_manifest})),
-            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-managedcertificate", "encoding": "base64", "content": certificate_manifest})),
-            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-frontendconfig", "encoding": "base64", "content": namespaced_manifest})),
-            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "sha-backendconfig", "encoding": "base64", "content": namespaced_manifest})),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-namespace", "encoding": "base64", "content": namespaced_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps(
+                    {"sha": "sha-deployment", "encoding": "base64", "content": deployment_manifest_legacy_image}
+                ),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-service", "encoding": "base64", "content": namespaced_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200, body=json.dumps({"sha": "sha-ingress", "encoding": "base64", "content": ingress_manifest})
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps(
+                    {"sha": "sha-managedcertificate", "encoding": "base64", "content": certificate_manifest}
+                ),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-frontendconfig", "encoding": "base64", "content": namespaced_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-backendconfig", "encoding": "base64", "content": namespaced_manifest}),
+            ),
             *_gke_environment_config_present_responses(),
         ],
         calls,

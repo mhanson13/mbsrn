@@ -27,8 +27,7 @@ def test_classify_cloudsql_proxy_failure_ephemeral_cert_failure() -> None:
 def test_classify_cloudsql_proxy_failure_connection_closed() -> None:
     classification = classify_cloudsql_proxy_failure(
         proxy_log_text=(
-            "cloud-sql-proxy accepted connection from 127.0.0.1\n"
-            "postgresql server: connection closed unexpectedly"
+            "cloud-sql-proxy accepted connection from 127.0.0.1\n" "postgresql server: connection closed unexpectedly"
         ),
         app_log_text="DATABASE_URL=postgresql://...@localhost:5432/mbsrn connection closed unexpectedly",
     )

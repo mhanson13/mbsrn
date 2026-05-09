@@ -159,11 +159,7 @@ def test_ingest_discovers_images_from_img_srcset_and_meta(monkeypatch: pytest.Mo
     assert isinstance(discovered, list)
     assert len(discovered) >= 5
 
-    normalized_urls = {
-        str(item.get("normalized_url"))
-        for item in discovered
-        if isinstance(item, dict)
-    }
+    normalized_urls = {str(item.get("normalized_url")) for item in discovered if isinstance(item, dict)}
     assert "https://tnmfire.example/images/logo.png" in normalized_urls
     assert "https://tnmfire.example/images/gallery-1.jpg" in normalized_urls
     assert "https://tnmfire.example/images/gallery-2.jpg" in normalized_urls
@@ -210,11 +206,7 @@ def test_ingest_classifies_low_value_and_non_image_discovered_candidates(monkeyp
     discovered = result.snapshot.get("discovered_images")
     assert isinstance(discovered, list)
 
-    by_url = {
-        str(item.get("normalized_url")): item
-        for item in discovered
-        if isinstance(item, dict)
-    }
+    by_url = {str(item.get("normalized_url")): item for item in discovered if isinstance(item, dict)}
     placeholder = by_url["https://tnmfire.example/images/transparent_placeholder.png"]
     tracking = by_url["https://tnmfire.example/assets/tracking-pixel.gif"]
     useful = by_url["https://tnmfire.example/project-gallery/before-after.jpg"]

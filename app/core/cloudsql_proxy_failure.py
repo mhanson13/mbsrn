@@ -58,9 +58,7 @@ def classify_cloudsql_proxy_failure(
     if has_proxy_marker and has_connection_failure:
         return CloudSQLProxyFailureClassification(
             reason_code="cloudsql_proxy_connection_failed",
-            message=(
-                "Migration container could not keep a localhost database connection through cloud-sql-proxy."
-            ),
+            message=("Migration container could not keep a localhost database connection through cloud-sql-proxy."),
             retryable=False,
         )
 
