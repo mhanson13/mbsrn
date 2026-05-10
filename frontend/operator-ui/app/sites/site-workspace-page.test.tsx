@@ -332,10 +332,16 @@ describe("site workspace modernized structure", () => {
     const topLandingCard = screen.getByTestId("workspace-summary-ga4-top-landing-pages");
     const trafficCard = screen.getByTestId("workspace-summary-traffic");
     const engagementCard = screen.getByTestId("workspace-summary-ga4-engagement-trend");
+    const acquisitionChannelCard = screen.getByTestId("workspace-summary-ga4-acquisition-channel");
+    const acquisitionSourceCard = screen.getByTestId("workspace-summary-ga4-acquisition-source");
+    const acquisitionMixCard = screen.getByTestId("workspace-summary-ga4-acquisition-mix");
     expect(ga4SummaryCard).toHaveTextContent("Reachable");
     expect(topLandingCard).toHaveTextContent("0 pages");
     expect(trafficCard).toHaveTextContent("Available");
     expect(engagementCard).toHaveTextContent("Available");
+    expect(acquisitionChannelCard).toBeInTheDocument();
+    expect(acquisitionSourceCard).toBeInTheDocument();
+    expect(acquisitionMixCard).toBeInTheDocument();
   });
 
   it("renders compact GA4 insight cards in the workspace snapshot when insights are available", async () => {
@@ -436,6 +442,60 @@ describe("site workspace modernized structure", () => {
           },
           message: "GA4 insights are available for this site.",
         },
+        ga4_acquisition_insights: {
+          status: "available",
+          source: "site_scoped_ga4",
+          lookback_days: 28,
+          top_channels: [
+            {
+              channel_group: "Organic Search",
+              sessions: 280,
+              users: 230,
+              engagement_rate: 0.58,
+            },
+            {
+              channel_group: "Direct",
+              sessions: 120,
+              users: 101,
+              engagement_rate: 0.49,
+            },
+          ],
+          top_sources: [
+            {
+              source: "google",
+              medium: "organic",
+              sessions: 250,
+              users: 210,
+            },
+            {
+              source: "yelp.com",
+              medium: "referral",
+              sessions: 42,
+              users: 35,
+            },
+          ],
+          organic_search_summary: {
+            sessions: 280,
+            share_percent: 57.4,
+            trend_direction: "improving",
+          },
+          referral_summary: {
+            sessions: 42,
+            top_referrers: ["yelp.com", "angi.com"],
+          },
+          direct_summary: {
+            sessions: 120,
+            share_percent: 24.6,
+          },
+          paid_summary: {
+            detected: true,
+            sessions: 21,
+          },
+          operator_hints: [
+            "Organic search is the largest traffic channel; protect SEO changes on high-traffic landing pages.",
+          ],
+          message: "GA4 acquisition insights are available for this site.",
+        },
       }),
     );
 
@@ -447,6 +507,9 @@ describe("site workspace modernized structure", () => {
     expect(topLandingCard).toHaveTextContent("Top landing pages");
     const trafficCard = screen.getByTestId("workspace-summary-traffic");
     const engagementCard = screen.getByTestId("workspace-summary-ga4-engagement-trend");
+    const acquisitionChannelCard = screen.getByTestId("workspace-summary-ga4-acquisition-channel");
+    const acquisitionSourceCard = screen.getByTestId("workspace-summary-ga4-acquisition-source");
+    const acquisitionMixCard = screen.getByTestId("workspace-summary-ga4-acquisition-mix");
     await waitFor(() => {
       expect(topLandingCard).toHaveTextContent("5 pages");
       expect(topLandingCard).toHaveTextContent("/ (220 sessions)");
@@ -456,6 +519,13 @@ describe("site workspace modernized structure", () => {
       expect(engagementCard).toHaveTextContent("Engagement trend");
       expect(engagementCard).toHaveTextContent("+9.6% engagement");
       expect(engagementCard).toHaveTextContent("Engagement 57%");
+      expect(acquisitionChannelCard).toHaveTextContent("Acquisition top channel");
+      expect(acquisitionChannelCard).toHaveTextContent("Organic Search");
+      expect(acquisitionSourceCard).toHaveTextContent("Acquisition top source");
+      expect(acquisitionSourceCard).toHaveTextContent("google / organic");
+      expect(acquisitionMixCard).toHaveTextContent("Acquisition mix");
+      expect(acquisitionMixCard).toHaveTextContent("Organic 57.4%");
+      expect(acquisitionMixCard).toHaveTextContent("Paid detected");
     });
   });
 
@@ -488,6 +558,19 @@ describe("site workspace modernized structure", () => {
           engagement_trend: { current_engagement_rate: 0.42 } as unknown as SiteGA4Insights["engagement_trend"],
           message: null,
         },
+        ga4_acquisition_insights: {
+          status: "available",
+          source: "site_scoped_ga4",
+          lookback_days: 7,
+          top_channels: null,
+          top_sources: null,
+          organic_search_summary: { sessions: 30 },
+          referral_summary: { sessions: 0, top_referrers: null },
+          direct_summary: null,
+          paid_summary: { detected: false },
+          operator_hints: null,
+          message: null,
+        },
       }),
     );
 
@@ -496,12 +579,20 @@ describe("site workspace modernized structure", () => {
     const topLandingCard = await screen.findByTestId("workspace-summary-ga4-top-landing-pages");
     const trafficCard = screen.getByTestId("workspace-summary-traffic");
     const engagementCard = screen.getByTestId("workspace-summary-ga4-engagement-trend");
+    const acquisitionChannelCard = screen.getByTestId("workspace-summary-ga4-acquisition-channel");
+    const acquisitionSourceCard = screen.getByTestId("workspace-summary-ga4-acquisition-source");
+    const acquisitionMixCard = screen.getByTestId("workspace-summary-ga4-acquisition-mix");
     expect(topLandingCard).toBeInTheDocument();
     expect(trafficCard).toBeInTheDocument();
     expect(engagementCard).toBeInTheDocument();
+    expect(acquisitionChannelCard).toBeInTheDocument();
+    expect(acquisitionSourceCard).toBeInTheDocument();
+    expect(acquisitionMixCard).toBeInTheDocument();
     expect(topLandingCard).not.toHaveTextContent("undefined");
     expect(trafficCard).not.toHaveTextContent("NaN");
     expect(engagementCard).not.toHaveTextContent("NaN");
+    expect(acquisitionChannelCard).not.toHaveTextContent("undefined");
+    expect(acquisitionMixCard).not.toHaveTextContent("NaN");
   });
 
   it.each([
@@ -4278,6 +4369,48 @@ function buildSiteAnalyticsSummary(
         operator_hint: "Engagement improved versus the prior period. Keep these content patterns in future updates.",
       },
       message: "GA4 insights are available for this site.",
+    },
+    ga4_acquisition_insights: {
+      status: "available",
+      source: "site_scoped_ga4",
+      lookback_days: 7,
+      top_channels: [
+        {
+          channel_group: "Organic Search",
+          sessions: 180,
+          users: 150,
+          engagement_rate: 0.58,
+        },
+      ],
+      top_sources: [
+        {
+          source: "google",
+          medium: "organic",
+          sessions: 172,
+          users: 145,
+        },
+      ],
+      organic_search_summary: {
+        sessions: 180,
+        share_percent: 58.1,
+        trend_direction: "improving",
+      },
+      referral_summary: {
+        sessions: 24,
+        top_referrers: ["yelp.com"],
+      },
+      direct_summary: {
+        sessions: 102,
+        share_percent: 32.9,
+      },
+      paid_summary: {
+        detected: false,
+        sessions: 0,
+      },
+      operator_hints: [
+        "Organic search is the largest traffic channel; protect SEO changes on high-traffic landing pages.",
+      ],
+      message: "GA4 acquisition insights are available for this site.",
     },
     message: null,
     data_source: "ga4_mock",

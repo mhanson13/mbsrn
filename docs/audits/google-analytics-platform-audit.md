@@ -80,6 +80,21 @@ Phase 3 additive recommendation-context wiring is now implemented with determini
 - GA4 remains optional/non-blocking; unavailable states fail closed to bounded context-source reasons
 - recommendation scoring and ordering are unchanged
 
+## 1.6) Phase 4 Status (2026-05-10)
+
+Phase 4 compact acquisition/source context is now implemented as an additive, site-scoped GA4 layer:
+- site analytics summary responses include additive `ga4_acquisition_insights`
+- bounded acquisition summaries now include:
+  - top channels
+  - top source/medium pairs
+  - organic/direct/referral/paid compact summaries
+  - deterministic operator hints (non-AI, capped)
+- acquisition reads use `site.ga4_property_id` only; no global/default GA4 property fallback is used
+- missing/unavailable GA4 remains non-blocking and maps to bounded statuses (`not_configured`, `missing_oauth_scope`, `permission_denied`, `invalid_property`, `no_data`, `unavailable`, `unknown`)
+- site workspace shows compact acquisition context cards only (no charts, no dashboard drilldown)
+- recommendation scoring and ordering remain unchanged in this phase
+- GBP diagnostics/remediation remain a separate track and are currently blocked by external Google allowlist/quota approval
+
 ## 2) Current Implementation Inventory
 
 | File | Purpose | GA4 Role | Area | Risk | Notes |
@@ -190,7 +205,7 @@ Phase 3 additive recommendation-context wiring is now implemented with determini
 | Which pages get traffic but do not convert? | Not supported | No conversion/event modeling in GA4 usage |
 | Which pages have declining engagement? | Partially | Sessions/pageviews deltas available; no engagement-rate/session quality metrics |
 | Which landing pages are underperforming? | Partially | Top pages fetched backend, not surfaced as operator-first card/table |
-| Which traffic sources produce useful visitors? | Minimal | Only organic sessions aggregate; no source/medium/channel breakdown in UI |
+| Which traffic sources produce useful visitors? | Partial | Compact channel/source summaries are now surfaced; no conversion/event quality scoring yet |
 | Which recommendations should be prioritized by behavior? | Weak | GA4 context is explanatory, not priority/severity input |
 | Which pages should be migrated first? | Weak | Migration does not use page-level GA4 weights for page-map priority |
 | Which generated pages need stronger CTAs? | Weak | No conversion/goal signals applied to draft guidance |

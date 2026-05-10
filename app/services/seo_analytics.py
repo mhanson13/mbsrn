@@ -28,9 +28,16 @@ from app.integrations.search_console_analytics_provider import (
 from app.schemas.seo_analytics import (
     SEOGA4AccessibleAccountRead,
     SEOGA4AccessibleAccountsRead,
+    SEOGA4AcquisitionChannelInsightRead,
+    SEOGA4AcquisitionInsightsRead,
+    SEOGA4AcquisitionSourceInsightRead,
+    SEOGA4DirectSummaryRead,
     SEOGA4EngagementTrendInsightRead,
     SEOGA4HealthRead,
     SEOGA4InsightsRead,
+    SEOGA4OrganicSearchSummaryRead,
+    SEOGA4PaidSummaryRead,
+    SEOGA4ReferralSummaryRead,
     SEOGA4SiteOnboardingStatusRead,
     SEOGA4TopLandingPageInsightRead,
     SEOGA4TrafficTrendInsightRead,
@@ -67,6 +74,9 @@ class SEOAnalyticsServiceSettings:
     top_pages_limit: int = 5
     ga4_insights_period_days: int = 7
     ga4_insights_top_landing_pages_limit: int = 5
+    ga4_acquisition_top_channels_limit: int = 5
+    ga4_acquisition_top_sources_limit: int = 5
+    ga4_acquisition_top_referrers_limit: int = 5
     search_console_period_days: int = 7
     search_console_top_pages_limit: int = 5
     search_console_top_queries_limit: int = 3
@@ -132,8 +142,12 @@ class SEOAnalyticsService:
         ga4_auth_mode = _derive_ga4_auth_mode(self.provider)
         insights_period_days = max(1, min(int(self.settings.ga4_insights_period_days), 30))
         insights_top_landing_limit = max(1, min(int(self.settings.ga4_insights_top_landing_pages_limit), 5))
+        acquisition_top_channels_limit = max(1, min(int(self.settings.ga4_acquisition_top_channels_limit), 5))
+        acquisition_top_sources_limit = max(1, min(int(self.settings.ga4_acquisition_top_sources_limit), 5))
+        acquisition_top_referrers_limit = max(1, min(int(self.settings.ga4_acquisition_top_referrers_limit), 5))
         insights_date_range_label = _build_ga4_insights_date_range_label(period_days=insights_period_days)
         ga4_insights_source = "site_property" if site_ga4_property_configured else "unavailable"
+        ga4_acquisition_source = "site_scoped_ga4" if site_ga4_property_configured else "unavailable"
 
         if enforce_site_ga4_property and not site_ga4_property_configured:
             return SEOAnalyticsSiteSummaryRead(
@@ -157,6 +171,12 @@ class SEOAnalyticsService:
                     date_range_label=insights_date_range_label,
                     checked_at=None,
                     message="Add a GA4 property ID for this site before using analytics insights.",
+                ),
+                ga4_acquisition_insights=_build_ga4_acquisition_insights_unavailable(
+                    status="not_configured",
+                    source="unavailable",
+                    lookback_days=insights_period_days,
+                    message="Add a GA4 property ID for this site before using acquisition insights.",
                 ),
                 message="Google Analytics property is not configured for this site.",
                 data_source=None,
@@ -187,6 +207,12 @@ class SEOAnalyticsService:
                     checked_at=None,
                     message="GA4 property ID is invalid for this site. Update the property ID to load insights.",
                 ),
+                ga4_acquisition_insights=_build_ga4_acquisition_insights_unavailable(
+                    status="invalid_property",
+                    source=ga4_acquisition_source,
+                    lookback_days=insights_period_days,
+                    message="Update the GA4 property ID for this site before loading acquisition insights.",
+                ),
                 message="Google Analytics property ID format is invalid for this site.",
                 data_source=None,
                 site_metrics_summary=None,
@@ -216,6 +242,12 @@ class SEOAnalyticsService:
                     date_range_label=insights_date_range_label,
                     checked_at=None,
                     message="GA4 insights are unavailable because site domain is not configured.",
+                ),
+                ga4_acquisition_insights=_build_ga4_acquisition_insights_unavailable(
+                    status="unavailable",
+                    source=ga4_acquisition_source,
+                    lookback_days=insights_period_days,
+                    message="GA4 acquisition insights are unavailable because site domain is not configured.",
                 ),
                 message="Analytics unavailable because site domain is not configured.",
                 data_source=None,
@@ -249,6 +281,12 @@ class SEOAnalyticsService:
                     date_range_label=insights_date_range_label,
                     checked_at=None,
                     message="GA4 insights are not configured for this workspace.",
+                ),
+                ga4_acquisition_insights=_build_ga4_acquisition_insights_unavailable(
+                    status="not_configured",
+                    source=ga4_acquisition_source,
+                    lookback_days=insights_period_days,
+                    message="GA4 acquisition insights are not configured for this workspace.",
                 ),
                 message="Google Analytics is not configured for this workspace.",
                 data_source=None,
@@ -289,6 +327,14 @@ class SEOAnalyticsService:
                     checked_at=failed_checked_at,
                     message=_ga4_insights_message_for_status(_ga4_insights_status_for_reason(diagnostic_reason)),
                 ),
+                ga4_acquisition_insights=_build_ga4_acquisition_insights_unavailable(
+                    status=_ga4_insights_status_for_reason(diagnostic_reason),
+                    source=ga4_acquisition_source,
+                    lookback_days=insights_period_days,
+                    message=_ga4_acquisition_insights_message_for_status(
+                        _ga4_insights_status_for_reason(diagnostic_reason)
+                    ),
+                ),
                 message="Google Analytics is not configured for this workspace.",
                 data_source=None,
                 site_metrics_summary=None,
@@ -328,6 +374,14 @@ class SEOAnalyticsService:
                     date_range_label=insights_date_range_label,
                     checked_at=failed_checked_at,
                     message=_ga4_insights_message_for_status(_ga4_insights_status_for_reason(diagnostic_reason)),
+                ),
+                ga4_acquisition_insights=_build_ga4_acquisition_insights_unavailable(
+                    status=_ga4_insights_status_for_reason(diagnostic_reason),
+                    source=ga4_acquisition_source,
+                    lookback_days=insights_period_days,
+                    message=_ga4_acquisition_insights_message_for_status(
+                        _ga4_insights_status_for_reason(diagnostic_reason)
+                    ),
                 ),
                 message="Google Analytics data is temporarily unavailable.",
                 data_source=None,
@@ -371,6 +425,7 @@ class SEOAnalyticsService:
             now=fetch_completed_at,
         )
         ga4_insights: SEOGA4InsightsRead
+        ga4_acquisition_insights: SEOGA4AcquisitionInsightsRead
         if not has_metric_data:
             ga4_insights = _build_ga4_insights_unavailable(
                 status="no_data",
@@ -378,6 +433,12 @@ class SEOAnalyticsService:
                 date_range_label=insights_date_range_label,
                 checked_at=fetch_completed_at,
                 message="GA4 is reachable, but no recent traffic was returned for this period.",
+            )
+            ga4_acquisition_insights = _build_ga4_acquisition_insights_unavailable(
+                status="no_data",
+                source=ga4_acquisition_source,
+                lookback_days=insights_period_days,
+                message="GA4 is reachable, but no recent acquisition data was returned for this period.",
             )
         else:
             fetch_operator_insights = getattr(self.provider, "fetch_operator_insights", None)
@@ -396,6 +457,20 @@ class SEOAnalyticsService:
                         date_range_label=insights_date_range_label,
                         checked_at=fetch_completed_at,
                     )
+                    ga4_acquisition_insights = _build_ga4_acquisition_insights_available(
+                        metrics_summary=metrics_summary,
+                        operator_insights_result=operator_insights_result,
+                        lookback_days=max(
+                            1,
+                            min(
+                                int(operator_insights_result.acquisition_period_days or insights_period_days),
+                                30,
+                            ),
+                        ),
+                        top_channels_limit=acquisition_top_channels_limit,
+                        top_sources_limit=acquisition_top_sources_limit,
+                        top_referrers_limit=acquisition_top_referrers_limit,
+                    )
                 except GA4AnalyticsProviderConfigurationError as exc:
                     diagnostic_reason = _classify_ga4_configuration_error_reason(exc)
                     ga4_insights = _build_ga4_insights_unavailable(
@@ -404,6 +479,14 @@ class SEOAnalyticsService:
                         date_range_label=insights_date_range_label,
                         checked_at=fetch_completed_at,
                         message=_ga4_insights_message_for_status(_ga4_insights_status_for_reason(diagnostic_reason)),
+                    )
+                    ga4_acquisition_insights = _build_ga4_acquisition_insights_unavailable(
+                        status=_ga4_insights_status_for_reason(diagnostic_reason),
+                        source=ga4_acquisition_source,
+                        lookback_days=insights_period_days,
+                        message=_ga4_acquisition_insights_message_for_status(
+                            _ga4_insights_status_for_reason(diagnostic_reason)
+                        ),
                     )
                 except GA4AnalyticsProviderError as exc:
                     diagnostic_reason = _classify_ga4_runtime_error_reason(exc)
@@ -414,12 +497,24 @@ class SEOAnalyticsService:
                         checked_at=fetch_completed_at,
                         message=_ga4_insights_message_for_status(_ga4_insights_status_for_reason(diagnostic_reason)),
                     )
+                    ga4_acquisition_insights = _build_ga4_acquisition_insights_unavailable(
+                        status=_ga4_insights_status_for_reason(diagnostic_reason),
+                        source=ga4_acquisition_source,
+                        lookback_days=insights_period_days,
+                        message=_ga4_acquisition_insights_message_for_status(
+                            _ga4_insights_status_for_reason(diagnostic_reason)
+                        ),
+                    )
             else:
                 ga4_insights = _build_ga4_insights_from_site_metrics(
                     metrics_summary=metrics_summary,
                     top_pages_summary=top_pages_summary,
                     date_range_label=insights_date_range_label,
                     checked_at=fetch_completed_at,
+                )
+                ga4_acquisition_insights = _build_ga4_acquisition_insights_from_site_metrics(
+                    metrics_summary=metrics_summary,
+                    lookback_days=insights_period_days,
                 )
 
         return SEOAnalyticsSiteSummaryRead(
@@ -441,6 +536,7 @@ class SEOAnalyticsService:
                 ga4_auth_mode=ga4_auth_mode,
             ),
             ga4_insights=ga4_insights,
+            ga4_acquisition_insights=ga4_acquisition_insights,
             message=None,
             data_source=result.data_source,
             site_metrics_summary=metrics_summary,
@@ -1479,6 +1575,225 @@ def _build_ga4_insights_unavailable(
     )
 
 
+def _ga4_acquisition_insights_message_for_status(
+    status: Literal[
+        "available",
+        "not_configured",
+        "missing_oauth_scope",
+        "permission_denied",
+        "invalid_property",
+        "no_data",
+        "unavailable",
+        "unknown",
+    ],
+) -> str:
+    if status == "not_configured":
+        return "Add a GA4 property ID for this site before using acquisition insights."
+    if status == "missing_oauth_scope":
+        return "Reconnect Google with GA4 read-only access before loading acquisition insights."
+    if status == "permission_denied":
+        return "Verify GA4 property access before using acquisition insights."
+    if status == "invalid_property":
+        return "Update the GA4 property ID for this site before loading acquisition insights."
+    if status == "no_data":
+        return "GA4 is reachable, but no recent acquisition data was returned for this period."
+    if status == "unavailable":
+        return "GA4 acquisition insights are temporarily unavailable. Retry after a short delay."
+    if status == "unknown":
+        return "GA4 acquisition insights are unavailable in the current runtime."
+    return "GA4 acquisition insights are available for this site."
+
+
+def _build_ga4_acquisition_insights_unavailable(
+    *,
+    status: Literal[
+        "available",
+        "not_configured",
+        "missing_oauth_scope",
+        "permission_denied",
+        "invalid_property",
+        "no_data",
+        "unavailable",
+        "unknown",
+    ],
+    source: Literal["site_scoped_ga4", "unavailable"],
+    lookback_days: int,
+    message: str,
+) -> SEOGA4AcquisitionInsightsRead:
+    return SEOGA4AcquisitionInsightsRead(
+        status=status,
+        source=source,
+        lookback_days=max(1, min(int(lookback_days), 30)),
+        top_channels=[],
+        top_sources=[],
+        organic_search_summary=None,
+        referral_summary=None,
+        direct_summary=None,
+        paid_summary=None,
+        operator_hints=[],
+        message=message,
+    )
+
+
+def _build_ga4_acquisition_insights_from_site_metrics(
+    *,
+    metrics_summary: SEOAnalyticsSiteMetricsSummaryRead,
+    lookback_days: int,
+) -> SEOGA4AcquisitionInsightsRead:
+    total_sessions = max(0, int(metrics_summary.sessions.current))
+    organic_sessions = max(0, int(metrics_summary.organic_search_sessions.current))
+    direct_sessions = max(0, total_sessions - organic_sessions)
+    top_channels: list[SEOGA4AcquisitionChannelInsightRead] = []
+    if organic_sessions > 0:
+        top_channels.append(
+            SEOGA4AcquisitionChannelInsightRead(
+                channel_group="Organic Search",
+                sessions=organic_sessions,
+                users=None,
+                engagement_rate=None,
+            )
+        )
+    if direct_sessions > 0:
+        top_channels.append(
+            SEOGA4AcquisitionChannelInsightRead(
+                channel_group="Direct",
+                sessions=direct_sessions,
+                users=None,
+                engagement_rate=None,
+            )
+        )
+    status: Literal[
+        "available",
+        "not_configured",
+        "missing_oauth_scope",
+        "permission_denied",
+        "invalid_property",
+        "no_data",
+        "unavailable",
+        "unknown",
+    ] = "available" if total_sessions > 0 else "no_data"
+    return SEOGA4AcquisitionInsightsRead(
+        status=status,
+        source="site_scoped_ga4",
+        lookback_days=max(1, min(int(lookback_days), 30)),
+        top_channels=top_channels,
+        top_sources=[],
+        organic_search_summary=SEOGA4OrganicSearchSummaryRead(
+            sessions=organic_sessions,
+            share_percent=_calculate_share_percent(part=organic_sessions, total=total_sessions),
+            trend_direction=_derive_trend_label_from_delta(metrics_summary.organic_search_sessions.delta_percent),
+        ),
+        referral_summary=SEOGA4ReferralSummaryRead(sessions=0, top_referrers=[]),
+        direct_summary=SEOGA4DirectSummaryRead(
+            sessions=direct_sessions,
+            share_percent=_calculate_share_percent(part=direct_sessions, total=total_sessions),
+        ),
+        paid_summary=SEOGA4PaidSummaryRead(detected=False, sessions=0),
+        operator_hints=_build_ga4_acquisition_operator_hints(
+            organic_sessions=organic_sessions,
+            direct_sessions=direct_sessions,
+            referral_sessions=0,
+            paid_sessions=0,
+        ),
+        message=_ga4_acquisition_insights_message_for_status(status),
+    )
+
+
+def _build_ga4_acquisition_insights_available(
+    *,
+    metrics_summary: SEOAnalyticsSiteMetricsSummaryRead,
+    operator_insights_result: GA4OperatorInsightsResult,
+    lookback_days: int,
+    top_channels_limit: int,
+    top_sources_limit: int,
+    top_referrers_limit: int,
+) -> SEOGA4AcquisitionInsightsRead:
+    bounded_top_channels_limit = max(1, min(int(top_channels_limit), 5))
+    bounded_top_sources_limit = max(1, min(int(top_sources_limit), 5))
+    bounded_top_referrers_limit = max(1, min(int(top_referrers_limit), 5))
+    top_channels = [
+        SEOGA4AcquisitionChannelInsightRead(
+            channel_group=_normalize_ga4_channel_group(item.channel_group),
+            sessions=max(0, int(item.sessions)),
+            users=max(0, int(item.users)) if item.users is not None else None,
+            engagement_rate=_sanitize_ratio(item.engagement_rate),
+        )
+        for item in operator_insights_result.acquisition_channels[:bounded_top_channels_limit]
+    ]
+    top_sources = [
+        SEOGA4AcquisitionSourceInsightRead(
+            source=_normalize_ga4_source(item.source),
+            medium=_normalize_ga4_medium(item.medium),
+            sessions=max(0, int(item.sessions)),
+            users=max(0, int(item.users)) if item.users is not None else None,
+        )
+        for item in operator_insights_result.acquisition_sources[:bounded_top_sources_limit]
+    ]
+    total_sessions = max(0, int(metrics_summary.sessions.current))
+    if total_sessions == 0:
+        total_sessions = max(0, sum(int(item.sessions or 0) for item in top_channels))
+
+    organic_sessions = _sum_channel_sessions(top_channels=top_channels, matcher=_is_organic_channel_group)
+    referral_sessions = _sum_channel_sessions(top_channels=top_channels, matcher=_is_referral_channel_group)
+    direct_sessions = _sum_channel_sessions(top_channels=top_channels, matcher=_is_direct_channel_group)
+    paid_sessions = _sum_channel_sessions(top_channels=top_channels, matcher=_is_paid_channel_group)
+    if paid_sessions <= 0:
+        paid_sessions = _sum_source_sessions(top_sources=top_sources, matcher=_is_paid_source_medium)
+    top_referrers = _derive_top_referrers(top_sources=top_sources, limit=bounded_top_referrers_limit)
+
+    has_data = (
+        bool(top_channels)
+        or bool(top_sources)
+        or total_sessions > 0
+        or organic_sessions > 0
+        or referral_sessions > 0
+        or direct_sessions > 0
+        or paid_sessions > 0
+    )
+    status: Literal[
+        "available",
+        "not_configured",
+        "missing_oauth_scope",
+        "permission_denied",
+        "invalid_property",
+        "no_data",
+        "unavailable",
+        "unknown",
+    ] = "available" if has_data else "no_data"
+
+    return SEOGA4AcquisitionInsightsRead(
+        status=status,
+        source="site_scoped_ga4",
+        lookback_days=max(1, min(int(lookback_days), 30)),
+        top_channels=top_channels,
+        top_sources=top_sources,
+        organic_search_summary=SEOGA4OrganicSearchSummaryRead(
+            sessions=organic_sessions,
+            share_percent=_calculate_share_percent(part=organic_sessions, total=total_sessions),
+            trend_direction=_derive_trend_label_from_delta(metrics_summary.organic_search_sessions.delta_percent),
+        ),
+        referral_summary=SEOGA4ReferralSummaryRead(
+            sessions=referral_sessions,
+            top_referrers=top_referrers,
+        ),
+        direct_summary=SEOGA4DirectSummaryRead(
+            sessions=direct_sessions,
+            share_percent=_calculate_share_percent(part=direct_sessions, total=total_sessions),
+        ),
+        paid_summary=SEOGA4PaidSummaryRead(
+            detected=paid_sessions > 0,
+            sessions=paid_sessions,
+        ),
+        operator_hints=_build_ga4_acquisition_operator_hints(
+            organic_sessions=organic_sessions,
+            direct_sessions=direct_sessions,
+            referral_sessions=referral_sessions,
+            paid_sessions=paid_sessions,
+        ),
+        message=_ga4_acquisition_insights_message_for_status(status),
+    )
+
+
 def _build_ga4_insights_from_site_metrics(
     *,
     metrics_summary: SEOAnalyticsSiteMetricsSummaryRead,
@@ -1707,6 +2022,154 @@ def _build_ga4_top_landing_operator_hint(
     if trend_label == "steady":
         return "Traffic is steady. Review internal links and CTA clarity for incremental gains."
     return "Review this page for clear intent, CTA strength, and content freshness."
+
+
+def _calculate_share_percent(*, part: int | None, total: int | None) -> float | None:
+    normalized_part = max(0, int(part or 0))
+    normalized_total = max(0, int(total or 0))
+    if normalized_total <= 0:
+        return None
+    return round((normalized_part / normalized_total) * 100, 2)
+
+
+def _normalize_ga4_channel_group(value: str | None) -> str:
+    normalized = str(value or "").strip()
+    return normalized[:120] if normalized else "Unassigned"
+
+
+def _normalize_ga4_source(value: str | None) -> str:
+    normalized = str(value or "").strip()
+    if not normalized:
+        return "(direct)"
+    return normalized[:120]
+
+
+def _normalize_ga4_medium(value: str | None) -> str | None:
+    normalized = str(value or "").strip()
+    if not normalized:
+        return "(none)"
+    return normalized[:120]
+
+
+def _is_organic_channel_group(channel_group: str | None) -> bool:
+    normalized = str(channel_group or "").strip().lower()
+    return normalized == "organic search"
+
+
+def _is_referral_channel_group(channel_group: str | None) -> bool:
+    normalized = str(channel_group or "").strip().lower()
+    return "referral" in normalized
+
+
+def _is_direct_channel_group(channel_group: str | None) -> bool:
+    normalized = str(channel_group or "").strip().lower()
+    return normalized == "direct"
+
+
+def _is_paid_channel_group(channel_group: str | None) -> bool:
+    normalized = str(channel_group or "").strip().lower()
+    if not normalized:
+        return False
+    paid_markers = (
+        "paid",
+        "cross-network",
+        "display",
+        "paid search",
+        "paid social",
+        "paid video",
+    )
+    return any(marker in normalized for marker in paid_markers)
+
+
+def _is_paid_source_medium(source: str | None, medium: str | None) -> bool:
+    normalized_source = str(source or "").strip().lower()
+    normalized_medium = str(medium or "").strip().lower()
+    paid_medium_markers = ("cpc", "ppc", "paid", "display", "affiliate", "cpm")
+    if any(marker in normalized_medium for marker in paid_medium_markers):
+        return True
+    if "ad" in normalized_source and normalized_medium not in {"(none)", "(not set)", ""}:
+        return True
+    return False
+
+
+def _sum_channel_sessions(
+    *,
+    top_channels: list[SEOGA4AcquisitionChannelInsightRead],
+    matcher,
+) -> int:
+    total = 0
+    for item in top_channels:
+        if not matcher(item.channel_group):
+            continue
+        total += max(0, int(item.sessions or 0))
+    return total
+
+
+def _sum_source_sessions(
+    *,
+    top_sources: list[SEOGA4AcquisitionSourceInsightRead],
+    matcher,
+) -> int:
+    total = 0
+    for item in top_sources:
+        if not matcher(item.source, item.medium):
+            continue
+        total += max(0, int(item.sessions or 0))
+    return total
+
+
+def _derive_top_referrers(
+    *,
+    top_sources: list[SEOGA4AcquisitionSourceInsightRead],
+    limit: int,
+) -> list[str]:
+    bounded_limit = max(1, min(int(limit), 5))
+    referrers: list[str] = []
+    seen: set[str] = set()
+    for item in top_sources:
+        medium = str(item.medium or "").strip().lower()
+        source = str(item.source or "").strip()
+        if "referral" not in medium:
+            continue
+        normalized_source = source.lower()
+        if not source or normalized_source in {"(direct)", "(not set)", "(none)"}:
+            continue
+        if normalized_source in seen:
+            continue
+        seen.add(normalized_source)
+        referrers.append(source[:120])
+        if len(referrers) >= bounded_limit:
+            break
+    return referrers
+
+
+def _build_ga4_acquisition_operator_hints(
+    *,
+    organic_sessions: int,
+    direct_sessions: int,
+    referral_sessions: int,
+    paid_sessions: int,
+) -> list[str]:
+    hints: list[str] = []
+    channel_totals = {
+        "organic": max(0, int(organic_sessions)),
+        "direct": max(0, int(direct_sessions)),
+        "referral": max(0, int(referral_sessions)),
+    }
+    dominant_channel = max(channel_totals, key=channel_totals.get) if any(channel_totals.values()) else None
+    if dominant_channel == "organic":
+        hints.append(
+            "Organic search is the largest traffic channel; protect SEO changes on high-traffic landing pages."
+        )
+    elif dominant_channel == "direct":
+        hints.append("Direct traffic is the largest source; brand/search discovery may need more context.")
+    if referral_sessions > 0:
+        hints.append("Referral traffic is present; review top referrers before changing linked landing pages.")
+    if paid_sessions > 0:
+        hints.append("Paid traffic is detected; coordinate SEO page changes with campaign landing pages.")
+    if not hints:
+        hints.append("Acquisition mix is limited for this period. Prioritize stable, high-intent landing pages.")
+    return hints[:4]
 
 
 def _derive_combined_trend_label(

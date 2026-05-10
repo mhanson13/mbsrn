@@ -445,6 +445,16 @@ def test_site_analytics_summary_returns_metrics_with_mock_provider(db_session, s
         "steady",
         "unknown",
     }
+    assert payload["ga4_acquisition_insights"]["status"] == "available"
+    assert payload["ga4_acquisition_insights"]["source"] == "site_scoped_ga4"
+    assert payload["ga4_acquisition_insights"]["lookback_days"] == 7
+    assert len(payload["ga4_acquisition_insights"]["top_channels"]) <= 5
+    assert len(payload["ga4_acquisition_insights"]["top_sources"]) <= 5
+    assert payload["ga4_acquisition_insights"]["top_channels"]
+    assert payload["ga4_acquisition_insights"]["top_sources"]
+    assert payload["ga4_acquisition_insights"]["organic_search_summary"]["sessions"] >= 0
+    assert isinstance(payload["ga4_acquisition_insights"]["paid_summary"]["detected"], bool)
+    assert payload["ga4_acquisition_insights"]["operator_hints"]
     assert len(payload["top_pages_summary"]) == 3
     first_top_page = payload["top_pages_summary"][0]
     assert "page_path" in first_top_page
@@ -495,6 +505,10 @@ def test_site_analytics_summary_degrades_cleanly_when_not_configured(db_session,
     assert payload["ga4_insights"]["top_landing_pages"] == []
     assert payload["ga4_insights"]["traffic_trend"] is None
     assert payload["ga4_insights"]["engagement_trend"] is None
+    assert payload["ga4_acquisition_insights"]["status"] == "not_configured"
+    assert payload["ga4_acquisition_insights"]["source"] == "site_scoped_ga4"
+    assert payload["ga4_acquisition_insights"]["top_channels"] == []
+    assert payload["ga4_acquisition_insights"]["top_sources"] == []
     assert payload["site_metrics_summary"] is None
     assert payload["top_pages_summary"] == []
 
@@ -525,6 +539,11 @@ def test_site_analytics_summary_reports_site_level_not_configured_when_property_
     assert payload["ga4_insights"]["status"] == "not_configured"
     assert payload["ga4_insights"]["source"] == "unavailable"
     assert payload["ga4_insights"]["message"] == "Add a GA4 property ID for this site before using analytics insights."
+    assert payload["ga4_acquisition_insights"]["status"] == "not_configured"
+    assert payload["ga4_acquisition_insights"]["source"] == "unavailable"
+    assert payload["ga4_acquisition_insights"]["message"] == (
+        "Add a GA4 property ID for this site before using acquisition insights."
+    )
     assert payload["message"] == "Google Analytics property is not configured for this site."
 
 
@@ -604,6 +623,7 @@ def test_site_analytics_summary_reports_invalid_property_format_reason(db_sessio
     assert payload["ga4_error_reason"] == "invalid_property_format"
     assert payload["ga4_health"]["ga4_health_status"] == "invalid_property"
     assert payload["ga4_insights"]["status"] == "invalid_property"
+    assert payload["ga4_acquisition_insights"]["status"] == "invalid_property"
 
 
 @pytest.mark.parametrize(
@@ -651,6 +671,8 @@ def test_site_analytics_summary_reports_permission_denied_reason(
     )
     assert payload["ga4_insights"]["status"] == "permission_denied"
     assert payload["ga4_insights"]["message"] == "Verify GA4 property access before using analytics insights."
+    assert payload["ga4_acquisition_insights"]["status"] == "permission_denied"
+    assert payload["ga4_acquisition_insights"]["message"] == "Verify GA4 property access before using acquisition insights."
 
 
 @pytest.mark.parametrize(
@@ -691,6 +713,7 @@ def test_site_analytics_summary_reports_missing_oauth_scope_reason(
     assert payload["ga4_health"]["ga4_health_status"] == "missing_oauth_scope"
     assert payload["ga4_health"]["ga4_health_reason"] == "missing_oauth_scope"
     assert payload["ga4_insights"]["status"] == "missing_oauth_scope"
+    assert payload["ga4_acquisition_insights"]["status"] == "missing_oauth_scope"
 
 
 def test_site_analytics_summary_logs_permission_denied_with_sanitized_reason(
@@ -791,6 +814,7 @@ def test_site_analytics_summary_reports_property_not_found_reason(db_session, se
     assert payload["ga4_error_reason"] == "property_not_found"
     assert payload["ga4_health"]["ga4_health_status"] == "invalid_property"
     assert payload["ga4_insights"]["status"] == "invalid_property"
+    assert payload["ga4_acquisition_insights"]["status"] == "invalid_property"
 
 
 def test_site_analytics_summary_maps_runtime_timeouts_to_unavailable_ga4_insights(
@@ -820,6 +844,10 @@ def test_site_analytics_summary_maps_runtime_timeouts_to_unavailable_ga4_insight
     assert payload["ga4_health"]["ga4_health_status"] == "unavailable"
     assert payload["ga4_insights"]["status"] == "unavailable"
     assert payload["ga4_insights"]["message"] == "GA4 insights are temporarily unavailable. Retry after a short delay."
+    assert payload["ga4_acquisition_insights"]["status"] == "unavailable"
+    assert payload["ga4_acquisition_insights"]["message"] == (
+        "GA4 acquisition insights are temporarily unavailable. Retry after a short delay."
+    )
 
 
 def test_site_analytics_summary_reports_connected_with_no_data_reason(db_session, seeded_business) -> None:
@@ -855,6 +883,9 @@ def test_site_analytics_summary_reports_connected_with_no_data_reason(db_session
     assert payload["ga4_insights"]["top_landing_pages"] == []
     assert payload["ga4_insights"]["traffic_trend"] is None
     assert payload["ga4_insights"]["engagement_trend"] is None
+    assert payload["ga4_acquisition_insights"]["status"] == "no_data"
+    assert payload["ga4_acquisition_insights"]["top_channels"] == []
+    assert payload["ga4_acquisition_insights"]["top_sources"] == []
 
 
 def test_site_analytics_summary_enforces_tenant_scope(db_session, seeded_business) -> None:

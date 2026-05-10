@@ -131,6 +131,78 @@ class SEOGA4InsightsRead(BaseModel):
     message: str | None = None
 
 
+class SEOGA4AcquisitionChannelInsightRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    channel_group: str
+    sessions: int | None = None
+    users: int | None = None
+    engagement_rate: float | None = None
+
+
+class SEOGA4AcquisitionSourceInsightRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    source: str
+    medium: str | None = None
+    sessions: int | None = None
+    users: int | None = None
+
+
+class SEOGA4OrganicSearchSummaryRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    sessions: int | None = None
+    share_percent: float | None = None
+    trend_direction: Literal["improving", "declining", "steady", "unknown"] | None = None
+
+
+class SEOGA4ReferralSummaryRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    sessions: int | None = None
+    top_referrers: list[str] = Field(default_factory=list)
+
+
+class SEOGA4DirectSummaryRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    sessions: int | None = None
+    share_percent: float | None = None
+
+
+class SEOGA4PaidSummaryRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    detected: bool = False
+    sessions: int | None = None
+
+
+class SEOGA4AcquisitionInsightsRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    status: Literal[
+        "available",
+        "not_configured",
+        "missing_oauth_scope",
+        "permission_denied",
+        "invalid_property",
+        "no_data",
+        "unavailable",
+        "unknown",
+    ] = "unknown"
+    source: Literal["site_scoped_ga4", "unavailable"] = "unavailable"
+    lookback_days: int | None = None
+    top_channels: list[SEOGA4AcquisitionChannelInsightRead] = Field(default_factory=list)
+    top_sources: list[SEOGA4AcquisitionSourceInsightRead] = Field(default_factory=list)
+    organic_search_summary: SEOGA4OrganicSearchSummaryRead | None = None
+    referral_summary: SEOGA4ReferralSummaryRead | None = None
+    direct_summary: SEOGA4DirectSummaryRead | None = None
+    paid_summary: SEOGA4PaidSummaryRead | None = None
+    operator_hints: list[str] = Field(default_factory=list)
+    message: str | None = None
+
+
 class SEOAnalyticsSiteSummaryRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -157,6 +229,7 @@ class SEOAnalyticsSiteSummaryRead(BaseModel):
     ga4_data_freshness_status: Literal["fresh", "stale", "unknown"] = "unknown"
     ga4_health: SEOGA4HealthRead = Field(default_factory=SEOGA4HealthRead)
     ga4_insights: SEOGA4InsightsRead = Field(default_factory=SEOGA4InsightsRead)
+    ga4_acquisition_insights: SEOGA4AcquisitionInsightsRead = Field(default_factory=SEOGA4AcquisitionInsightsRead)
     message: str | None = None
     data_source: str | None = None
     site_metrics_summary: SEOAnalyticsSiteMetricsSummaryRead | None = None

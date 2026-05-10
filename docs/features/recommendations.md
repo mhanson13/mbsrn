@@ -861,6 +861,21 @@ Behavior boundaries:
 - compact hint appears only when `ga4_priority_context_available=true`
 - unavailable/missing GA4 states stay non-blocking and map to bounded `ga4_context_source` reasons
 
+### GA4 Compact Acquisition Context (Phase 4)
+
+Phase 4 adds additive, deterministic acquisition/source context to the site analytics summary and Site Workspace snapshot:
+- `ga4_acquisition_insights` (site-scoped, optional)
+- bounded channel/source summaries (`top_channels`, `top_sources`)
+- compact organic/direct/referral/paid summaries
+- deterministic operator hints (non-AI, capped)
+
+Behavior boundaries:
+- uses `site.ga4_property_id` only (no global/default GA4 fallback)
+- GA4 remains optional and non-blocking for recommendations
+- no recommendation scoring/prioritization/order changes
+- no conversion/event/source-medium dashboard expansion in this phase
+- recommendation pages do not render noisy per-item acquisition unavailable messaging in this phase
+
 ### GA4 Last Data Seen + Freshness
 
 Workspace GA4 cards now include explicit freshness indicators:

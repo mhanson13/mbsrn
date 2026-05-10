@@ -43,6 +43,7 @@ import type {
   SEOAuditRun,
   SearchConsoleSiteSummaryResponse,
   SEOSite,
+  SiteGA4AcquisitionInsights,
   SiteAnalyticsSummaryResponse,
   SiteGA4Insights,
   WorkspaceSectionFreshness,
@@ -164,6 +165,15 @@ function formatGa4DurationSeconds(value: number | null | undefined): string {
     return "Not available";
   }
   return `${Math.max(0, Math.round(value))}s`;
+}
+
+function formatPercentValue(value: number | null | undefined): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return "Not available";
+  }
+  const rounded = Math.round(value * 10) / 10;
+  const formatted = Number.isInteger(rounded) ? rounded.toFixed(0) : rounded.toFixed(1);
+  return `${formatted}%`;
 }
 
 function normalizeWorkspaceStatusLabel(value: string | null | undefined): string {
@@ -694,6 +704,15 @@ type WorkspaceSnapshotProps = {
   ga4EngagementTrendValue: string;
   ga4EngagementTrendDetail: string;
   ga4EngagementTrendTone: Tone;
+  ga4AcquisitionTopChannelValue: string;
+  ga4AcquisitionTopChannelDetail: string;
+  ga4AcquisitionTopChannelTone: Tone;
+  ga4AcquisitionTopSourceValue: string;
+  ga4AcquisitionTopSourceDetail: string;
+  ga4AcquisitionTopSourceTone: Tone;
+  ga4AcquisitionMixValue: string;
+  ga4AcquisitionMixDetail: string;
+  ga4AcquisitionMixTone: Tone;
   ga4OnboardingValue: string;
   ga4OnboardingDetail: string;
   ga4OnboardingTone: Tone;
@@ -719,6 +738,15 @@ function WorkspaceSnapshot({
   ga4EngagementTrendValue,
   ga4EngagementTrendDetail,
   ga4EngagementTrendTone,
+  ga4AcquisitionTopChannelValue,
+  ga4AcquisitionTopChannelDetail,
+  ga4AcquisitionTopChannelTone,
+  ga4AcquisitionTopSourceValue,
+  ga4AcquisitionTopSourceDetail,
+  ga4AcquisitionTopSourceTone,
+  ga4AcquisitionMixValue,
+  ga4AcquisitionMixDetail,
+  ga4AcquisitionMixTone,
   ga4OnboardingValue,
   ga4OnboardingDetail,
   ga4OnboardingTone,
@@ -785,6 +813,30 @@ function WorkspaceSnapshot({
           tone={ga4EngagementTrendTone}
           variant="elevated"
           data-testid="workspace-summary-ga4-engagement-trend"
+        />
+        <SummaryStatCard
+          label="Acquisition top channel"
+          value={ga4AcquisitionTopChannelValue}
+          detail={ga4AcquisitionTopChannelDetail}
+          tone={ga4AcquisitionTopChannelTone}
+          variant="elevated"
+          data-testid="workspace-summary-ga4-acquisition-channel"
+        />
+        <SummaryStatCard
+          label="Acquisition top source"
+          value={ga4AcquisitionTopSourceValue}
+          detail={ga4AcquisitionTopSourceDetail}
+          tone={ga4AcquisitionTopSourceTone}
+          variant="elevated"
+          data-testid="workspace-summary-ga4-acquisition-source"
+        />
+        <SummaryStatCard
+          label="Acquisition mix"
+          value={ga4AcquisitionMixValue}
+          detail={ga4AcquisitionMixDetail}
+          tone={ga4AcquisitionMixTone}
+          variant="elevated"
+          data-testid="workspace-summary-ga4-acquisition-mix"
         />
         <SummaryStatCard
           label="GA4 onboarding"
@@ -1533,6 +1585,117 @@ export default function SiteWorkspacePage() {
     ? ga4InsightsToneForTrend(ga4EngagementTrend?.trend_label)
     : ga4InsightsToneForStatus(ga4InsightsStatus);
 
+  const ga4AcquisitionInsights = siteAnalyticsSummary?.ga4_acquisition_insights
+    && typeof siteAnalyticsSummary.ga4_acquisition_insights === "object"
+    ? siteAnalyticsSummary.ga4_acquisition_insights as SiteGA4AcquisitionInsights
+    : null;
+  const ga4AcquisitionStatus = normalizeGa4InsightsStatusValue(ga4AcquisitionInsights?.status) || "unknown";
+  const ga4AcquisitionStatusLabel = formatGa4InsightsStatusLabel(ga4AcquisitionStatus);
+  const ga4AcquisitionLookbackDays = Math.max(
+    1,
+    Math.min(30, Number(normalizeNumericValue(ga4AcquisitionInsights?.lookback_days) || 7)),
+  );
+  const ga4AcquisitionLookbackLabel = `Last ${ga4AcquisitionLookbackDays} day${ga4AcquisitionLookbackDays === 1 ? "" : "s"}`;
+  const ga4AcquisitionBaseMessage = normalizeOptionalString(ga4AcquisitionInsights?.message)
+    || "GA4 acquisition insights are unavailable for this site.";
+  const ga4AcquisitionUnavailableDetail = `${ga4AcquisitionBaseMessage} ${ga4AcquisitionLookbackLabel}`.trim();
+
+  const ga4AcquisitionTopChannels = Array.isArray(ga4AcquisitionInsights?.top_channels)
+    ? ga4AcquisitionInsights.top_channels
+      .filter((channel) => Boolean(channel) && typeof channel === "object")
+      .map((channel) => ({
+        channel_group: normalizeOptionalString(channel.channel_group) || "Unassigned",
+        sessions: normalizeNumericValue(channel.sessions),
+        users: normalizeNumericValue(channel.users),
+        engagement_rate: normalizeNumericValue(channel.engagement_rate),
+      }))
+      .slice(0, 5)
+    : [];
+  const ga4AcquisitionTopSources = Array.isArray(ga4AcquisitionInsights?.top_sources)
+    ? ga4AcquisitionInsights.top_sources
+      .filter((source) => Boolean(source) && typeof source === "object")
+      .map((source) => ({
+        source: normalizeOptionalString(source.source) || "(direct)",
+        medium: normalizeOptionalString(source.medium) || "(none)",
+        sessions: normalizeNumericValue(source.sessions),
+        users: normalizeNumericValue(source.users),
+      }))
+      .slice(0, 5)
+    : [];
+  const ga4AcquisitionOperatorHints = Array.isArray(ga4AcquisitionInsights?.operator_hints)
+    ? ga4AcquisitionInsights.operator_hints
+      .map((hint) => normalizeOptionalString(hint))
+      .filter((hint): hint is string => Boolean(hint))
+      .slice(0, 4)
+    : [];
+  const ga4OrganicSummary = ga4AcquisitionInsights?.organic_search_summary
+    && typeof ga4AcquisitionInsights.organic_search_summary === "object"
+    ? {
+      sessions: normalizeNumericValue(ga4AcquisitionInsights.organic_search_summary.sessions),
+      share_percent: normalizeNumericValue(ga4AcquisitionInsights.organic_search_summary.share_percent),
+      trend_direction: normalizeGa4TrendLabel(ga4AcquisitionInsights.organic_search_summary.trend_direction),
+    }
+    : null;
+  const ga4DirectSummary = ga4AcquisitionInsights?.direct_summary
+    && typeof ga4AcquisitionInsights.direct_summary === "object"
+    ? {
+      sessions: normalizeNumericValue(ga4AcquisitionInsights.direct_summary.sessions),
+      share_percent: normalizeNumericValue(ga4AcquisitionInsights.direct_summary.share_percent),
+    }
+    : null;
+  const ga4ReferralSummary = ga4AcquisitionInsights?.referral_summary
+    && typeof ga4AcquisitionInsights.referral_summary === "object"
+    ? {
+      sessions: normalizeNumericValue(ga4AcquisitionInsights.referral_summary.sessions),
+      top_referrers: Array.isArray(ga4AcquisitionInsights.referral_summary.top_referrers)
+        ? ga4AcquisitionInsights.referral_summary.top_referrers
+          .map((referrer) => normalizeOptionalString(referrer))
+          .filter((referrer): referrer is string => Boolean(referrer))
+          .slice(0, 5)
+        : [],
+    }
+    : null;
+  const ga4PaidSummary = ga4AcquisitionInsights?.paid_summary
+    && typeof ga4AcquisitionInsights.paid_summary === "object"
+    ? {
+      detected: Boolean(ga4AcquisitionInsights.paid_summary.detected),
+      sessions: normalizeNumericValue(ga4AcquisitionInsights.paid_summary.sessions),
+    }
+    : null;
+
+  const topChannel = ga4AcquisitionTopChannels[0] || null;
+  const ga4AcquisitionTopChannelValue = ga4AcquisitionStatus === "available" && topChannel
+    ? `${topChannel.channel_group}`
+    : ga4AcquisitionStatusLabel;
+  const ga4AcquisitionTopChannelDetail = ga4AcquisitionStatus === "available" && topChannel
+    ? `${Math.max(0, Number(topChannel.sessions) || 0).toLocaleString()} sessions${topChannel.users !== null && topChannel.users !== undefined ? ` · ${Math.max(0, Number(topChannel.users) || 0).toLocaleString()} users` : ""}${topChannel.engagement_rate !== null && topChannel.engagement_rate !== undefined ? ` · ${formatGa4PercentValue(topChannel.engagement_rate)} engagement` : ""}.`
+    : ga4AcquisitionUnavailableDetail;
+  const ga4AcquisitionTopChannelTone = ga4AcquisitionStatus === "available"
+    ? "success"
+    : ga4InsightsToneForStatus(ga4AcquisitionStatus);
+
+  const topSource = ga4AcquisitionTopSources[0] || null;
+  const ga4AcquisitionTopSourceValue = ga4AcquisitionStatus === "available" && topSource
+    ? `${topSource.source} / ${topSource.medium}`
+    : ga4AcquisitionStatusLabel;
+  const ga4AcquisitionTopSourceDetail = ga4AcquisitionStatus === "available" && topSource
+    ? `${Math.max(0, Number(topSource.sessions) || 0).toLocaleString()} sessions${topSource.users !== null && topSource.users !== undefined ? ` · ${Math.max(0, Number(topSource.users) || 0).toLocaleString()} users` : ""}.`
+    : ga4AcquisitionUnavailableDetail;
+  const ga4AcquisitionTopSourceTone = ga4AcquisitionStatus === "available"
+    ? "neutral"
+    : ga4InsightsToneForStatus(ga4AcquisitionStatus);
+
+  const ga4AcquisitionHint = ga4AcquisitionOperatorHints[0] || ga4AcquisitionLookbackLabel;
+  const ga4AcquisitionMixValue = ga4AcquisitionStatus === "available"
+    ? `Organic ${formatPercentValue(ga4OrganicSummary?.share_percent)}`
+    : ga4AcquisitionStatusLabel;
+  const ga4AcquisitionMixDetail = ga4AcquisitionStatus === "available"
+    ? `Direct ${formatPercentValue(ga4DirectSummary?.share_percent)} · Referral ${Math.max(0, Number(ga4ReferralSummary?.sessions) || 0).toLocaleString()} sessions${ga4ReferralSummary?.top_referrers?.length ? ` (${ga4ReferralSummary.top_referrers.join(", ")})` : ""} · ${ga4PaidSummary?.detected ? `Paid detected${typeof ga4PaidSummary.sessions === "number" ? ` (${Math.max(0, Number(ga4PaidSummary.sessions) || 0).toLocaleString()} sessions)` : ""}` : "No paid traffic detected"}. ${ga4AcquisitionHint}`
+    : ga4AcquisitionUnavailableDetail;
+  const ga4AcquisitionMixTone = ga4AcquisitionStatus === "available"
+    ? ga4InsightsToneForTrend(ga4OrganicSummary?.trend_direction)
+    : ga4InsightsToneForStatus(ga4AcquisitionStatus);
+
   const ga4OnboardingStatusCode = ga4OnboardingStatus?.ga4_onboarding_status || "unavailable";
   const ga4OnboardingValue = ga4OnboardingStatusCode === "stream_configured" || ga4OnboardingStatusCode === "property_configured"
     ? "Property configured"
@@ -1663,6 +1826,15 @@ export default function SiteWorkspacePage() {
           ga4EngagementTrendValue={ga4EngagementTrendValue}
           ga4EngagementTrendDetail={ga4EngagementTrendDetail}
           ga4EngagementTrendTone={ga4EngagementTrendTone}
+          ga4AcquisitionTopChannelValue={ga4AcquisitionTopChannelValue}
+          ga4AcquisitionTopChannelDetail={ga4AcquisitionTopChannelDetail}
+          ga4AcquisitionTopChannelTone={ga4AcquisitionTopChannelTone}
+          ga4AcquisitionTopSourceValue={ga4AcquisitionTopSourceValue}
+          ga4AcquisitionTopSourceDetail={ga4AcquisitionTopSourceDetail}
+          ga4AcquisitionTopSourceTone={ga4AcquisitionTopSourceTone}
+          ga4AcquisitionMixValue={ga4AcquisitionMixValue}
+          ga4AcquisitionMixDetail={ga4AcquisitionMixDetail}
+          ga4AcquisitionMixTone={ga4AcquisitionMixTone}
           ga4OnboardingValue={ga4OnboardingValue}
           ga4OnboardingDetail={ga4OnboardingDetail}
           ga4OnboardingTone={ga4OnboardingTone}

@@ -77,7 +77,7 @@ Accessibility/DOM contract:
 - Site Workspace keeps unique tab/panel ids for launchpad content.
 - duplicate recommendation panel ids are not rendered concurrently.
 
-## Site Workspace GA4 Health + Insights (Phase 2)
+## Site Workspace GA4 Health + Insights (Phases 2-4)
 
 The site workspace now exposes compact, site-scoped GA4 health plus insight summaries (still no dashboard sprawl).
 
@@ -92,10 +92,19 @@ Behavior:
   - `Top landing pages` (bounded to top 5 shown)
   - `Traffic trend` (sessions/active users directional summary)
   - `Engagement trend` (engagement-rate/time directional summary)
+  - `Acquisition top channel`
+  - `Acquisition top source`
+  - `Acquisition mix` (organic/direct/referral/paid compact summary)
 - Insight cards are summary-only:
   - no charts
-  - no conversion/event/source-medium dashboards
+  - no dashboard drilldowns
+  - no conversion/event dashboards
   - no scoring/prioritization changes from these cards in this phase
+- Acquisition context remains additive and site-scoped:
+  - derived from `ga4_acquisition_insights`
+  - GA4 remains optional and non-blocking
+  - missing/unavailable states degrade to bounded labels/messages without breaking workspace render
+- GBP diagnostics and remediation are separate from GA4 insight cards and currently depend on external Google allowlist/quota approval for blocked projects.
 
 Operator-safe status labels:
 - `Not configured`

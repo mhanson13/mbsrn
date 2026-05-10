@@ -152,6 +152,32 @@ def test_google_ga4_client_fetch_operator_insights_uses_site_scoped_property_and
             if start_date == "6daysAgo":
                 return {"rows": [{"metricValues": [{"value": "0.58"}, {"value": "78.3"}]}]}
             return {"rows": [{"metricValues": [{"value": "0.53"}, {"value": "71.8"}]}]}
+        if dimensions == ["sessionDefaultChannelGroup"]:
+            return {
+                "rows": [
+                    {
+                        "dimensionValues": [{"value": "Organic Search"}],
+                        "metricValues": [{"value": "210"}, {"value": "170"}, {"value": "0.66"}],
+                    },
+                    {
+                        "dimensionValues": [{"value": "Direct"}],
+                        "metricValues": [{"value": "95"}, {"value": "82"}, {"value": "0.52"}],
+                    },
+                ]
+            }
+        if dimensions == ["sessionSource", "sessionMedium"]:
+            return {
+                "rows": [
+                    {
+                        "dimensionValues": [{"value": "google"}, {"value": "organic"}],
+                        "metricValues": [{"value": "180"}, {"value": "150"}],
+                    },
+                    {
+                        "dimensionValues": [{"value": "yelp.com"}, {"value": "referral"}],
+                        "metricValues": [{"value": "24"}, {"value": "22"}],
+                    },
+                ]
+            }
         return {}
 
     monkeypatch.setattr(client, "_request_json", _request_json)
@@ -176,6 +202,17 @@ def test_google_ga4_client_fetch_operator_insights_uses_site_scoped_property_and
     assert result.engagement_trend.previous_engagement_rate == pytest.approx(0.53)
     assert result.engagement_trend.current_average_engagement_time_seconds == pytest.approx(78.3)
     assert result.engagement_trend.previous_average_engagement_time_seconds == pytest.approx(71.8)
+    assert len(result.acquisition_channels) == 2
+    assert result.acquisition_channels[0].channel_group == "Organic Search"
+    assert result.acquisition_channels[0].sessions == 210
+    assert result.acquisition_channels[0].users == 170
+    assert result.acquisition_channels[0].engagement_rate == pytest.approx(0.66)
+    assert len(result.acquisition_sources) == 2
+    assert result.acquisition_sources[0].source == "google"
+    assert result.acquisition_sources[0].medium == "organic"
+    assert result.acquisition_sources[0].sessions == 180
+    assert result.acquisition_sources[0].users == 150
+    assert result.acquisition_period_days == 7
     assert result.data_source == "ga4"
     assert captured_calls
     assert all("/properties/2000000002:runReport" in url for url, _, _ in captured_calls)
@@ -203,6 +240,21 @@ def test_google_ga4_client_fetch_operator_insights_handles_empty_and_partial_row
         if request_count["value"] == 2:
             return {"rows": [{"metricValues": [{"value": ""}, {"value": "not-a-number"}]}]}
         if request_count["value"] == 3:
+            return {"rows": [{"metricValues": [{"value": ""}, {"value": "not-a-number"}]}]}
+        if request_count["value"] == 4:
+            return {
+                "rows": [
+                    {
+                        "dimensionValues": [{"value": "Organic Search"}],
+                        "metricValues": [{"value": "17"}],
+                    },
+                    {
+                        "dimensionValues": [],
+                        "metricValues": [{"value": "8"}],
+                    },
+                ]
+            }
+        if request_count["value"] == 5:
             return {}
         return {}
 
@@ -228,6 +280,12 @@ def test_google_ga4_client_fetch_operator_insights_handles_empty_and_partial_row
     assert result.engagement_trend.previous_engagement_rate is None
     assert result.engagement_trend.current_average_engagement_time_seconds is None
     assert result.engagement_trend.previous_average_engagement_time_seconds is None
+    assert len(result.acquisition_channels) == 1
+    assert result.acquisition_channels[0].channel_group == "Organic Search"
+    assert result.acquisition_channels[0].sessions == 17
+    assert result.acquisition_channels[0].users == 0
+    assert result.acquisition_channels[0].engagement_rate is None
+    assert result.acquisition_sources == ()
 
 
 def test_google_ga4_client_rejects_malformed_property_id() -> None:

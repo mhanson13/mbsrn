@@ -59,6 +59,22 @@ class GA4TopLandingPageMetrics:
 
 
 @dataclass(frozen=True)
+class GA4AcquisitionChannelMetrics:
+    channel_group: str
+    sessions: int
+    users: int | None
+    engagement_rate: float | None
+
+
+@dataclass(frozen=True)
+class GA4AcquisitionSourceMetrics:
+    source: str
+    medium: str | None
+    sessions: int
+    users: int | None
+
+
+@dataclass(frozen=True)
 class GA4EngagementTrendMetrics:
     current_engagement_rate: float | None
     previous_engagement_rate: float | None
@@ -71,6 +87,9 @@ class GA4OperatorInsightsResult:
     top_landing_pages: tuple[GA4TopLandingPageMetrics, ...]
     engagement_trend: GA4EngagementTrendMetrics
     data_source: str
+    acquisition_channels: tuple[GA4AcquisitionChannelMetrics, ...] = ()
+    acquisition_sources: tuple[GA4AcquisitionSourceMetrics, ...] = ()
+    acquisition_period_days: int | None = None
 
 
 @dataclass(frozen=True)
@@ -266,7 +285,7 @@ class MockGA4AnalyticsProvider:
         top_landing_pages_limit: int,
         ga4_property_id: str | None = None,
     ) -> GA4OperatorInsightsResult:
-        del period_days, ga4_property_id
+        del ga4_property_id
         normalized_domain = _normalize_domain(site_domain)
         seed = sum(ord(character) for character in normalized_domain) % 57
         bounded_limit = max(1, min(int(top_landing_pages_limit), 10))
@@ -288,10 +307,53 @@ class MockGA4AnalyticsProvider:
             current_average_engagement_time_seconds=float(max(20, 86 + (seed % 15))),
             previous_average_engagement_time_seconds=float(max(20, 79 + (seed % 12))),
         )
+        mock_channels = (
+            GA4AcquisitionChannelMetrics(
+                channel_group="Organic Search",
+                sessions=max(1, 140 + seed),
+                users=max(1, 122 + seed),
+                engagement_rate=round(max(0.12, min(0.9, 0.58 + ((seed % 7) * 0.01))), 4),
+            ),
+            GA4AcquisitionChannelMetrics(
+                channel_group="Direct",
+                sessions=max(1, 80 + (seed // 2)),
+                users=max(1, 68 + (seed // 2)),
+                engagement_rate=round(max(0.12, min(0.9, 0.51 + ((seed % 5) * 0.01))), 4),
+            ),
+            GA4AcquisitionChannelMetrics(
+                channel_group="Referral",
+                sessions=max(1, 36 + (seed // 3)),
+                users=max(1, 30 + (seed // 3)),
+                engagement_rate=round(max(0.12, min(0.9, 0.47 + ((seed % 4) * 0.01))), 4),
+            ),
+        )
+        mock_sources = (
+            GA4AcquisitionSourceMetrics(
+                source="google",
+                medium="organic",
+                sessions=max(1, 120 + seed),
+                users=max(1, 104 + seed),
+            ),
+            GA4AcquisitionSourceMetrics(
+                source="(direct)",
+                medium="(none)",
+                sessions=max(1, 80 + (seed // 2)),
+                users=max(1, 68 + (seed // 2)),
+            ),
+            GA4AcquisitionSourceMetrics(
+                source="yelp.com",
+                medium="referral",
+                sessions=max(1, 22 + (seed // 4)),
+                users=max(1, 18 + (seed // 4)),
+            ),
+        )
         return GA4OperatorInsightsResult(
             top_landing_pages=top_landing_pages,
             engagement_trend=engagement_trend,
             data_source="ga4_mock",
+            acquisition_channels=mock_channels[:bounded_limit],
+            acquisition_sources=mock_sources[:bounded_limit],
+            acquisition_period_days=max(1, min(int(period_days), 30)),
         )
 
 
@@ -482,6 +544,20 @@ class GoogleAnalyticsDataAPIClient:
             end_date=f"{previous_end_offset}daysAgo",
             ga4_property_id=scoped_property_id,
         )
+        acquisition_channels = self._fetch_operator_acquisition_channels(
+            site_domain=normalized_domain,
+            start_date=f"{current_start_offset}daysAgo",
+            end_date="today",
+            limit=bounded_top_landing_limit,
+            ga4_property_id=scoped_property_id,
+        )
+        acquisition_sources = self._fetch_operator_acquisition_sources(
+            site_domain=normalized_domain,
+            start_date=f"{current_start_offset}daysAgo",
+            end_date="today",
+            limit=bounded_top_landing_limit,
+            ga4_property_id=scoped_property_id,
+        )
         return GA4OperatorInsightsResult(
             top_landing_pages=tuple(top_landing_pages),
             engagement_trend=GA4EngagementTrendMetrics(
@@ -491,6 +567,9 @@ class GoogleAnalyticsDataAPIClient:
                 previous_average_engagement_time_seconds=previous_avg_duration,
             ),
             data_source="ga4",
+            acquisition_channels=tuple(acquisition_channels),
+            acquisition_sources=tuple(acquisition_sources),
+            acquisition_period_days=bounded_period_days,
         )
 
     def _fetch_period_metrics(
@@ -677,6 +756,98 @@ class GoogleAnalyticsDataAPIClient:
             _metric_float_value(row, index=0),
             _metric_float_value(row, index=1),
         )
+
+    def _fetch_operator_acquisition_channels(
+        self,
+        *,
+        site_domain: str,
+        start_date: str,
+        end_date: str,
+        limit: int,
+        ga4_property_id: str,
+    ) -> list[GA4AcquisitionChannelMetrics]:
+        payload: dict[str, Any] = {
+            "dateRanges": [{"startDate": start_date, "endDate": end_date}],
+            "dimensions": [{"name": "sessionDefaultChannelGroup"}],
+            "metrics": [{"name": "sessions"}, {"name": "totalUsers"}, {"name": "engagementRate"}],
+            "dimensionFilter": self._build_site_filter(site_domain),
+            "orderBys": [{"metric": {"metricName": "sessions"}, "desc": True}],
+            "limit": str(max(1, min(int(limit), 10))),
+        }
+        response_payload = self._request_report(
+            body=payload,
+            ga4_property_id=ga4_property_id,
+        )
+        rows = response_payload.get("rows")
+        if not isinstance(rows, list):
+            return []
+        channels: list[GA4AcquisitionChannelMetrics] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            dimensions = row.get("dimensionValues")
+            if not isinstance(dimensions, list) or not dimensions:
+                continue
+            raw_channel = _dimension_value(dimensions, index=0)
+            channel_group = raw_channel[:120] if raw_channel else "Unassigned"
+            channels.append(
+                GA4AcquisitionChannelMetrics(
+                    channel_group=channel_group,
+                    sessions=_metric_value(row, index=0),
+                    users=_metric_value(row, index=1),
+                    engagement_rate=_metric_float_value(row, index=2),
+                )
+            )
+            if len(channels) >= max(1, min(int(limit), 10)):
+                break
+        return channels
+
+    def _fetch_operator_acquisition_sources(
+        self,
+        *,
+        site_domain: str,
+        start_date: str,
+        end_date: str,
+        limit: int,
+        ga4_property_id: str,
+    ) -> list[GA4AcquisitionSourceMetrics]:
+        payload: dict[str, Any] = {
+            "dateRanges": [{"startDate": start_date, "endDate": end_date}],
+            "dimensions": [{"name": "sessionSource"}, {"name": "sessionMedium"}],
+            "metrics": [{"name": "sessions"}, {"name": "totalUsers"}],
+            "dimensionFilter": self._build_site_filter(site_domain),
+            "orderBys": [{"metric": {"metricName": "sessions"}, "desc": True}],
+            "limit": str(max(1, min(int(limit), 10))),
+        }
+        response_payload = self._request_report(
+            body=payload,
+            ga4_property_id=ga4_property_id,
+        )
+        rows = response_payload.get("rows")
+        if not isinstance(rows, list):
+            return []
+        sources: list[GA4AcquisitionSourceMetrics] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            dimensions = row.get("dimensionValues")
+            if not isinstance(dimensions, list) or not dimensions:
+                continue
+            source_raw = _dimension_value(dimensions, index=0)
+            medium_raw = _dimension_value(dimensions, index=1)
+            source = (source_raw or "(direct)")[:120]
+            medium = (medium_raw or "(none)")[:120]
+            sources.append(
+                GA4AcquisitionSourceMetrics(
+                    source=source,
+                    medium=medium,
+                    sessions=_metric_value(row, index=0),
+                    users=_metric_value(row, index=1),
+                )
+            )
+            if len(sources) >= max(1, min(int(limit), 10)):
+                break
+        return sources
 
     def _build_site_filter(self, site_domain: str) -> dict[str, Any]:
         host_values = [site_domain]

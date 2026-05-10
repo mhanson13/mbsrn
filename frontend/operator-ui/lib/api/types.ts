@@ -1030,6 +1030,63 @@ export interface SiteGA4Insights {
   message?: string | null;
 }
 
+export interface SiteGA4AcquisitionChannelInsight {
+  channel_group: string;
+  sessions?: number | null;
+  users?: number | null;
+  engagement_rate?: number | null;
+}
+
+export interface SiteGA4AcquisitionSourceInsight {
+  source: string;
+  medium?: string | null;
+  sessions?: number | null;
+  users?: number | null;
+}
+
+export interface SiteGA4OrganicSearchSummary {
+  sessions?: number | null;
+  share_percent?: number | null;
+  trend_direction?: "improving" | "declining" | "steady" | "unknown" | null;
+}
+
+export interface SiteGA4ReferralSummary {
+  sessions?: number | null;
+  top_referrers?: string[] | null;
+}
+
+export interface SiteGA4DirectSummary {
+  sessions?: number | null;
+  share_percent?: number | null;
+}
+
+export interface SiteGA4PaidSummary {
+  detected?: boolean | null;
+  sessions?: number | null;
+}
+
+export interface SiteGA4AcquisitionInsights {
+  status:
+    | "available"
+    | "not_configured"
+    | "missing_oauth_scope"
+    | "permission_denied"
+    | "invalid_property"
+    | "no_data"
+    | "unavailable"
+    | "unknown";
+  source?: "site_scoped_ga4" | "unavailable" | null;
+  lookback_days?: number | null;
+  top_channels?: SiteGA4AcquisitionChannelInsight[] | null;
+  top_sources?: SiteGA4AcquisitionSourceInsight[] | null;
+  organic_search_summary?: SiteGA4OrganicSearchSummary | null;
+  referral_summary?: SiteGA4ReferralSummary | null;
+  direct_summary?: SiteGA4DirectSummary | null;
+  paid_summary?: SiteGA4PaidSummary | null;
+  operator_hints?: string[] | null;
+  message?: string | null;
+}
+
 export interface SiteAnalyticsSummaryResponse {
   business_id: string;
   site_id: string;
@@ -1051,6 +1108,7 @@ export interface SiteAnalyticsSummaryResponse {
   ga4_data_freshness_status?: "fresh" | "stale" | "unknown";
   ga4_health?: SiteGA4Health | null;
   ga4_insights?: SiteGA4Insights | null;
+  ga4_acquisition_insights?: SiteGA4AcquisitionInsights | null;
   message: string | null;
   data_source: string | null;
   site_metrics_summary: SiteAnalyticsMetricsSummary | null;
