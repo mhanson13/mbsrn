@@ -70,6 +70,12 @@ export interface AuthExchangeResponse {
   principal: AuthPrincipal;
 }
 
+export interface GoogleAuthStartResponse {
+  state: string;
+  expires_at: string;
+  flow: string;
+}
+
 export interface BusinessSettings {
   id: string;
   name: string;

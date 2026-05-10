@@ -131,6 +131,7 @@ from app.services.summary import LeadSummaryService
 from app.services.timeline import LeadTimelineService
 from app.services.action_automation_binding_service import ActionAutomationBindingService
 from app.services.action_automation_execution_service import ActionAutomationExecutionService
+from app.services.google_login_state import GoogleLoginStateService
 
 logger = logging.getLogger(__name__)
 
@@ -889,6 +890,24 @@ def get_session_token_service() -> AppSessionTokenService | None:
         algorithm=settings.app_session_algorithm,
         access_ttl_seconds=settings.app_session_ttl_seconds,
         refresh_ttl_seconds=settings.app_session_refresh_ttl_seconds,
+        state_store=get_session_state_store(),
+    )
+
+
+def get_google_login_state_service() -> GoogleLoginStateService:
+    settings = get_settings()
+    secret = (settings.app_session_secret or "").strip()
+    if not secret:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Google authentication is not configured.",
+        )
+    return GoogleLoginStateService(
+        secret=secret,
+        issuer=settings.app_session_issuer,
+        audience=settings.app_session_audience,
+        algorithm=settings.app_session_algorithm,
+        ttl_seconds=300,
         state_store=get_session_state_store(),
     )
 

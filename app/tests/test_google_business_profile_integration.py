@@ -248,6 +248,15 @@ def _make_auth_client(db_session, *, verifier: _StubGoogleVerifier) -> TestClien
     return TestClient(app)
 
 
+def _issue_login_state(client: TestClient) -> str:
+    response = client.post("/api/auth/google/start")
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    state = payload.get("state")
+    assert isinstance(state, str) and state.strip()
+    return state
+
+
 def _start_connect(client: TestClient) -> dict[str, object]:
     response = client.post("/api/integrations/google/business-profile/connect/start")
     assert response.status_code == 200, response.text
@@ -1657,7 +1666,10 @@ def test_google_oidc_exchange_still_works_after_gbp_integration_wiring(
     )
     client = _make_auth_client(db_session, verifier=verifier)
 
-    exchange = client.post("/api/auth/google/exchange", json={"id_token": "valid-google-id-token"})
+    exchange = client.post(
+        "/api/auth/google/exchange",
+        json={"id_token": "valid-google-id-token", "state": _issue_login_state(client)},
+    )
     assert exchange.status_code == 200
     payload = exchange.json()
     assert payload["token_type"] == "bearer"

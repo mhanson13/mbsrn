@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 
 import { GoogleSignIn } from "../components/GoogleSignIn";
 import { useAuth } from "../components/AuthProvider";
-import { exchangeGoogleIdToken } from "../lib/api/client";
+import { exchangeGoogleIdToken, startGoogleAuth } from "../lib/api/client";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -13,23 +13,55 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [redirecting, setRedirecting] = useState(false);
+  const [oauthState, setOauthState] = useState<string | null>(null);
+  const [oauthStateReady, setOauthStateReady] = useState(false);
+
+  const initializeGoogleLogin = useCallback(async () => {
+    setOauthStateReady(false);
+    try {
+      const challenge = await startGoogleAuth();
+      setOauthState(challenge.state);
+    } catch {
+      setOauthState(null);
+      setError("Sign-in initialization failed. Retry in a moment.");
+    } finally {
+      setOauthStateReady(true);
+    }
+  }, []);
 
   const handleExchange = useCallback(
     async (tokenValue: string) => {
+      const currentState = oauthState;
+      if (!currentState) {
+        setError("Sign-in session is unavailable. Retry in a moment.");
+        return;
+      }
       setLoading(true);
       setError(null);
+      let exchangeSucceeded = false;
       try {
-        const result = await exchangeGoogleIdToken(tokenValue);
+        const result = await exchangeGoogleIdToken(tokenValue, currentState);
+        exchangeSucceeded = true;
         setSession(result.access_token, result.principal, result.refresh_token);
         router.push("/dashboard");
       } catch (err) {
         setError(err instanceof Error ? err.message : "Authentication failed.");
       } finally {
         setLoading(false);
+        if (!exchangeSucceeded) {
+          await initializeGoogleLogin();
+        }
       }
     },
-    [router, setSession],
+    [oauthState, router, setSession, initializeGoogleLogin],
   );
+
+  useEffect(() => {
+    if (principal) {
+      return;
+    }
+    void initializeGoogleLogin();
+  }, [initializeGoogleLogin, principal]);
 
   useEffect(() => {
     if (principal) {
@@ -65,12 +97,16 @@ export default function LoginPage() {
 
         <div className="auth-section">
           <p className="auth-section-title">Preferred sign-in</p>
-          <GoogleSignIn
-            clientId={process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID || ""}
-            onCredential={(credential) => {
-              void handleExchange(credential);
-            }}
-          />
+          {oauthStateReady && oauthState ? (
+            <GoogleSignIn
+              clientId={process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID || ""}
+              onCredential={(credential) => {
+                void handleExchange(credential);
+              }}
+            />
+          ) : (
+            <p className="auth-subtitle">Preparing secure sign-in...</p>
+          )}
           {loading ? <p className="auth-subtitle">Signing in...</p> : null}
         </div>
 

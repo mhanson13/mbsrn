@@ -68,6 +68,9 @@ Workflow ownership boundaries:
 - GBP API HTTP `429` is classified as rate-limit/quota diagnostics (for example `provider_rate_limited` or `provider_quota_or_access_not_granted`), with guidance to check quota/access in the OAuth client project for:
   - `My Business Account Management API`
   - `My Business Business Information API`
+  - if quota is blank/unavailable, request Business Profile API access/allowlist approval first
+  - after approval, request quota increase:
+    - `https://support.google.com/business/contact/api_default`
 - OAuth callback success is never treated as final usable GBP state without backend confirmation.
 
 Accessibility/DOM contract:

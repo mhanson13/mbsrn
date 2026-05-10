@@ -25,14 +25,16 @@ This app uses Next.js `output: "standalone"`.
 
 Authentication flow:
 
-1. UI collects Google ID token (Google Identity Services button or manual token input).
-2. UI exchanges token with backend `POST /api/auth/google/exchange`.
-3. Backend returns app access/refresh tokens bound to internal principal/business.
-4. UI stores:
+1. UI requests a one-time login state challenge from backend `POST /api/auth/google/start`.
+2. UI collects Google ID token (Google Identity Services button).
+3. UI exchanges token with backend `POST /api/auth/google/exchange` and includes the issued `state`.
+4. Backend validates state (required, single-use, expiry-bound, flow-bound) before issuing app tokens.
+5. Backend returns app access/refresh tokens bound to internal principal/business.
+6. UI stores:
    - access token in `sessionStorage`
    - refresh token in memory only for the active browser session
-5. UI uses bearer access token for business-scoped API calls.
-6. Sign out calls `POST /api/auth/logout` and clears local session state.
+7. UI uses bearer access token for business-scoped API calls.
+8. Sign out calls `POST /api/auth/logout` and clears local session state.
 
 ## Admin GitHub publish target configuration
 

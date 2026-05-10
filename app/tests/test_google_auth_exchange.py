@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import pytest
+import jwt
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -68,6 +69,15 @@ def _make_client(db_session, *, verifier: _StubGoogleVerifier) -> TestClient:
     app.dependency_overrides[get_db] = override_get_db
     app.dependency_overrides[get_google_oidc_verifier] = lambda: verifier
     return TestClient(app)
+
+
+def _issue_login_state(client: TestClient) -> str:
+    response = client.post("/api/auth/google/start")
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    state = payload.get("state")
+    assert isinstance(state, str) and state.strip()
+    return state
 
 
 def _seed_principal_identity(
@@ -164,7 +174,7 @@ def test_google_exchange_issues_session_token_and_preserves_tenant_scope(
 
     exchange = client.post(
         "/api/auth/google/exchange",
-        json={"id_token": "valid-google-id-token"},
+        json={"id_token": "valid-google-id-token", "state": _issue_login_state(client)},
     )
     assert exchange.status_code == 200
     payload = exchange.json()
@@ -221,6 +231,181 @@ def test_google_exchange_issues_session_token_and_preserves_tenant_scope(
     assert replay_events[-1].details_json.get("action") == "auth_refresh"
 
 
+def test_google_auth_start_issues_login_state(
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _set_auth_env(monkeypatch)
+    verifier = _StubGoogleVerifier({})
+    client = _make_client(db_session, verifier=verifier)
+
+    response = client.post("/api/auth/google/start")
+    assert response.status_code == 200
+    payload = response.json()
+    assert isinstance(payload.get("state"), str)
+    assert payload["state"]
+    assert payload["flow"] == "google_login_exchange"
+    assert payload["expires_at"]
+
+
+def test_google_exchange_rejects_missing_login_state(
+    db_session,
+    seeded_business,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _set_auth_env(monkeypatch)
+    _seed_principal_identity(
+        db_session,
+        business_id=seeded_business.id,
+        principal_id="google-admin",
+        provider_subject="google-sub-a",
+    )
+    verifier = _StubGoogleVerifier(
+        {
+            "valid-google-id-token": GoogleIdentityClaims(
+                provider="google",
+                subject="google-sub-a",
+                email="updated-user@example.com",
+                email_verified=True,
+                issuer="https://accounts.google.com",
+                audience="google-client-id",
+                display_name="Google Admin",
+            )
+        }
+    )
+    client = _make_client(db_session, verifier=verifier)
+
+    response = client.post("/api/auth/google/exchange", json={"id_token": "valid-google-id-token"})
+    assert response.status_code == 422
+
+
+def test_google_exchange_rejects_mismatched_login_state(
+    db_session,
+    seeded_business,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _set_auth_env(monkeypatch)
+    _seed_principal_identity(
+        db_session,
+        business_id=seeded_business.id,
+        principal_id="google-admin",
+        provider_subject="google-sub-a",
+    )
+    verifier = _StubGoogleVerifier(
+        {
+            "valid-google-id-token": GoogleIdentityClaims(
+                provider="google",
+                subject="google-sub-a",
+                email="updated-user@example.com",
+                email_verified=True,
+                issuer="https://accounts.google.com",
+                audience="google-client-id",
+                display_name="Google Admin",
+            )
+        }
+    )
+    client = _make_client(db_session, verifier=verifier)
+
+    response = client.post(
+        "/api/auth/google/exchange",
+        json={"id_token": "valid-google-id-token", "state": "invalid-state"},
+    )
+    assert response.status_code == 401
+    assert response.json()["detail"]["error_code"] == "oauth_state_invalid"
+
+
+def test_google_exchange_rejects_replayed_login_state(
+    db_session,
+    seeded_business,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _set_auth_env(monkeypatch)
+    _seed_principal_identity(
+        db_session,
+        business_id=seeded_business.id,
+        principal_id="google-admin",
+        provider_subject="google-sub-a",
+    )
+    verifier = _StubGoogleVerifier(
+        {
+            "valid-google-id-token": GoogleIdentityClaims(
+                provider="google",
+                subject="google-sub-a",
+                email="updated-user@example.com",
+                email_verified=True,
+                issuer="https://accounts.google.com",
+                audience="google-client-id",
+                display_name="Google Admin",
+            )
+        }
+    )
+    client = _make_client(db_session, verifier=verifier)
+    state = _issue_login_state(client)
+
+    first = client.post(
+        "/api/auth/google/exchange",
+        json={"id_token": "valid-google-id-token", "state": state},
+    )
+    assert first.status_code == 200
+
+    replay = client.post(
+        "/api/auth/google/exchange",
+        json={"id_token": "valid-google-id-token", "state": state},
+    )
+    assert replay.status_code == 401
+    assert replay.json()["detail"]["error_code"] == "oauth_state_replayed"
+
+
+def test_google_exchange_rejects_expired_login_state(
+    db_session,
+    seeded_business,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _set_auth_env(monkeypatch)
+    _seed_principal_identity(
+        db_session,
+        business_id=seeded_business.id,
+        principal_id="google-admin",
+        provider_subject="google-sub-a",
+    )
+    verifier = _StubGoogleVerifier(
+        {
+            "valid-google-id-token": GoogleIdentityClaims(
+                provider="google",
+                subject="google-sub-a",
+                email="updated-user@example.com",
+                email_verified=True,
+                issuer="https://accounts.google.com",
+                audience="google-client-id",
+                display_name="Google Admin",
+            )
+        }
+    )
+    client = _make_client(db_session, verifier=verifier)
+
+    expired_state = jwt.encode(
+        {
+            "iss": "mbsrn-operator",
+            "aud": "mbsrn-api",
+            "typ": "google_login_state",
+            "flow": "google_login_exchange",
+            "jti": "google_login_state:expired",
+            "iat": int((datetime.now(timezone.utc) - timedelta(minutes=10)).timestamp()),
+            "nbf": int((datetime.now(timezone.utc) - timedelta(minutes=10)).timestamp()),
+            "exp": int((datetime.now(timezone.utc) - timedelta(minutes=5)).timestamp()),
+        },
+        "app-session-secret",
+        algorithm="HS256",
+    )
+
+    response = client.post(
+        "/api/auth/google/exchange",
+        json={"id_token": "valid-google-id-token", "state": expired_state},
+    )
+    assert response.status_code == 401
+    assert response.json()["detail"]["error_code"] == "oauth_state_invalid"
+
+
 def test_google_exchange_initializes_first_tenant_on_empty_system(
     db_session,
     monkeypatch: pytest.MonkeyPatch,
@@ -241,7 +426,10 @@ def test_google_exchange_initializes_first_tenant_on_empty_system(
     )
     client = _make_client(db_session, verifier=verifier)
 
-    exchange = client.post("/api/auth/google/exchange", json={"id_token": "bootstrap-id-token"})
+    exchange = client.post(
+        "/api/auth/google/exchange",
+        json={"id_token": "bootstrap-id-token", "state": _issue_login_state(client)},
+    )
     assert exchange.status_code == 200
 
     payload = exchange.json()
@@ -297,15 +485,24 @@ def test_google_exchange_bootstrap_is_single_use_and_does_not_reinitialize(
     )
     client = _make_client(db_session, verifier=verifier)
 
-    first = client.post("/api/auth/google/exchange", json={"id_token": "bootstrap-id-token"})
+    first = client.post(
+        "/api/auth/google/exchange",
+        json={"id_token": "bootstrap-id-token", "state": _issue_login_state(client)},
+    )
     assert first.status_code == 200
     first_business_id = first.json()["principal"]["business_id"]
 
-    same_identity = client.post("/api/auth/google/exchange", json={"id_token": "bootstrap-id-token"})
+    same_identity = client.post(
+        "/api/auth/google/exchange",
+        json={"id_token": "bootstrap-id-token", "state": _issue_login_state(client)},
+    )
     assert same_identity.status_code == 200
     assert same_identity.json()["principal"]["business_id"] == first_business_id
 
-    second_user = client.post("/api/auth/google/exchange", json={"id_token": "second-user-token"})
+    second_user = client.post(
+        "/api/auth/google/exchange",
+        json={"id_token": "second-user-token", "state": _issue_login_state(client)},
+    )
     assert second_user.status_code == 403
 
     assert db_session.query(Business).count() == 1
@@ -334,7 +531,10 @@ def test_google_exchange_does_not_bootstrap_when_system_is_not_empty(
     )
     client = _make_client(db_session, verifier=verifier)
 
-    response = client.post("/api/auth/google/exchange", json={"id_token": "bootstrap-id-token"})
+    response = client.post(
+        "/api/auth/google/exchange",
+        json={"id_token": "bootstrap-id-token", "state": _issue_login_state(client)},
+    )
     assert response.status_code == 403
     assert db_session.query(Business).count() == 1
     assert db_session.get(Business, seeded_business.id) is not None
@@ -362,7 +562,10 @@ def test_google_exchange_rejects_unmapped_identity(
         }
     )
     client = _make_client(db_session, verifier=verifier)
-    response = client.post("/api/auth/google/exchange", json={"id_token": "id-token-unmapped"})
+    response = client.post(
+        "/api/auth/google/exchange",
+        json={"id_token": "id-token-unmapped", "state": _issue_login_state(client)},
+    )
     assert response.status_code == 403
 
 
@@ -393,7 +596,10 @@ def test_google_exchange_rejects_inactive_identity_mapping(
         }
     )
     client = _make_client(db_session, verifier=verifier)
-    response = client.post("/api/auth/google/exchange", json={"id_token": "id-token-inactive"})
+    response = client.post(
+        "/api/auth/google/exchange",
+        json={"id_token": "id-token-inactive", "state": _issue_login_state(client)},
+    )
     assert response.status_code == 403
 
 
@@ -423,7 +629,10 @@ def test_refresh_rejects_when_identity_is_deactivated_after_exchange(
         }
     )
     client = _make_client(db_session, verifier=verifier)
-    exchange = client.post("/api/auth/google/exchange", json={"id_token": "id-token-refresh"})
+    exchange = client.post(
+        "/api/auth/google/exchange",
+        json={"id_token": "id-token-refresh", "state": _issue_login_state(client)},
+    )
     assert exchange.status_code == 200
     refresh_token = exchange.json()["refresh_token"]
 
@@ -461,7 +670,10 @@ def test_access_token_rejected_after_principal_deactivation(
         }
     )
     client = _make_client(db_session, verifier=verifier)
-    exchange = client.post("/api/auth/google/exchange", json={"id_token": "id-token-deactivate"})
+    exchange = client.post(
+        "/api/auth/google/exchange",
+        json={"id_token": "id-token-deactivate", "state": _issue_login_state(client)},
+    )
     assert exchange.status_code == 200
     access_token = exchange.json()["access_token"]
 
@@ -501,7 +713,10 @@ def test_logout_revokes_current_access_and_refresh_tokens(
         }
     )
     client = _make_client(db_session, verifier=verifier)
-    exchange = client.post("/api/auth/google/exchange", json={"id_token": "id-token-logout"})
+    exchange = client.post(
+        "/api/auth/google/exchange",
+        json={"id_token": "id-token-logout", "state": _issue_login_state(client)},
+    )
     assert exchange.status_code == 200
     access_token = exchange.json()["access_token"]
     refresh_token = exchange.json()["refresh_token"]

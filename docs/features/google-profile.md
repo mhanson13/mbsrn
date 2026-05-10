@@ -24,6 +24,7 @@ Compatibility behavior:
 
 ## OAuth Return vs Usable GBP Access
 - `gbp_connect=success` indicates OAuth returned successfully, not that Google Business Profile access is usable.
+- Connect/reconnect callbacks are only trusted after server-side OAuth `state` validation (single-use + expiry-bound) to prevent callback CSRF/replay.
 - Final operator state is determined from loaded connection/location capability status.
 - Status precedence in Selected Site Setup:
   1. connected and usable
@@ -51,6 +52,9 @@ Compatibility behavior:
 - HTTP `429` from GBP APIs is treated as rate-limit/quota/resource-exhaustion diagnostics, not generic transient outage:
   - `provider_rate_limited` for `RESOURCE_EXHAUSTED` / `rateLimitExceeded` / too-many-requests style responses
   - `provider_quota_or_access_not_granted` when 429 details indicate quota or project access is not granted
+  - for `provider_quota_or_access_not_granted`, operator guidance now explicitly follows Google’s two-step process:
+    1. request Business Profile API access/allowlist approval first when quota is blank/unavailable
+    2. request quota increase after approval
 - Sites selected-site setup displays compact diagnostics:
   - provider diagnostic class
   - provider HTTP status (when available)
@@ -68,7 +72,12 @@ When OAuth is linked but GBP remains denied/unavailable, verify:
    - `My Business Account Management API`
    - `My Business Business Information API`
    and confirm project access/approval is granted where required.
-5. Connected Google identity in Sites setup matches the expected operator account.
+5. If quota values are blank/unavailable, submit Business Profile API access/allowlist request first.
+6. Track Google case IDs in internal/operator runbooks only (do not store case IDs in product UI text).
+7. After access/allowlist approval, submit quota increase request:
+   - `https://support.google.com/business/contact/api_default`
+8. Return to `/sites` selected-site setup and use `Refresh` to re-check GBP diagnostics/status.
+9. Connected Google identity in Sites setup matches the expected operator account.
 
 ## Boundaries
 - setup ownership is `Sites`; Site Workspace remains a command center

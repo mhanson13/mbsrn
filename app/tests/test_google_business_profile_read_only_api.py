@@ -754,6 +754,8 @@ def test_google_business_profile_connection_status_details_quota_or_access_from_
     assert payload["gbp_status_reason"] == "provider_quota_or_access_not_granted"
     assert payload["gbp_provider_error_class"] == "provider_quota_or_access_not_granted"
     assert payload["gbp_provider_http_status"] == 429
+    assert "allowlist" in (payload.get("gbp_diagnostic_hint") or "").lower()
+    assert "quota increase" in (payload.get("gbp_diagnostic_hint") or "").lower()
 
 
 def test_google_business_profile_connection_status_details_provider_unauthorized(
@@ -870,6 +872,8 @@ def test_google_business_profile_connection_status_details_provider_quota_or_acc
     assert payload["gbp_status_reason"] == "provider_quota_or_access_not_granted"
     assert payload["gbp_provider_error_class"] == "provider_quota_or_access_not_granted"
     assert payload["gbp_provider_http_status"] == 403
+    assert "allowlist" in (payload.get("gbp_diagnostic_hint") or "").lower()
+    assert "quota increase" in (payload.get("gbp_diagnostic_hint") or "").lower()
 
 
 def test_google_business_profile_connection_status_details_missing_required_scope_from_provider_403(

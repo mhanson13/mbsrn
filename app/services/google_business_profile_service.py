@@ -1444,8 +1444,10 @@ class GoogleBusinessProfileService:
                 gbp_provider_http_status=exc.provider_http_status or 403,
                 gbp_diagnostic_hint=exc.diagnostic_hint
                 or (
-                    "Check API quota/access for the Google Cloud project that owns the OAuth client, "
-                    "especially My Business Account Management and Business Information APIs."
+                    "Check API quota/access for the Google Cloud project that owns the OAuth client "
+                    "(My Business Account Management and Business Information APIs). If quota is blank/"
+                    "unavailable, request Business Profile API access/allowlist first. After approval, "
+                    "request a quota increase."
                 ),
             )
         if exc.error_code == "provider_not_found":
@@ -1630,7 +1632,12 @@ class GoogleBusinessProfileService:
                 return (
                     "provider_quota_or_access_not_granted",
                     403,
-                    "Business Profile API quota or project access is not granted.",
+                    (
+                        "Business Profile API quota or project access is not granted. Check API quota/access "
+                        "for the Google Cloud project that owns the OAuth client (My Business Account Management "
+                        "and Business Information APIs). If quota is blank/unavailable, request Business Profile "
+                        "API access/allowlist first. After approval, request a quota increase."
+                    ),
                 )
 
             return (
@@ -1674,8 +1681,9 @@ class GoogleBusinessProfileService:
                     429,
                     (
                         "Business Profile API returned 429. Check API quota/access for the Google Cloud project "
-                        "that owns the OAuth client, especially My Business Account Management and Business "
-                        "Information APIs."
+                        "that owns the OAuth client (My Business Account Management and Business Information APIs). "
+                        "If quota is blank/unavailable, request Business Profile API access/allowlist first. "
+                        "After approval, request a quota increase."
                     ),
                 )
             if (

@@ -7,14 +7,35 @@ from app.models.principal import PrincipalRole
 
 class GoogleAuthExchangeRequest(BaseModel):
     id_token: str = Field(min_length=1)
+    state: str = Field(min_length=1)
 
     @field_validator("id_token", mode="before")
     @classmethod
     def normalize_id_token(cls, value: str) -> str:
+        if value is None:
+            raise ValueError("id_token is required.")
         normalized = str(value).strip()
         if not normalized:
             raise ValueError("id_token is required.")
         return normalized
+
+    @field_validator("state", mode="before")
+    @classmethod
+    def normalize_state(cls, value: str) -> str:
+        if value is None:
+            raise ValueError("state is required.")
+        normalized = str(value).strip()
+        if not normalized:
+            raise ValueError("state is required.")
+        if len(normalized) > 4096:
+            raise ValueError("state is invalid.")
+        return normalized
+
+
+class GoogleAuthStartResponse(BaseModel):
+    state: str
+    expires_at: str
+    flow: str
 
 
 class AuthPrincipalRead(BaseModel):

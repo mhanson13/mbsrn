@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 
 from app.api.deps import (
     TenantContext,
     get_auth_identity_service,
     get_authenticated_principal,
+    get_google_login_state_service,
     get_tenant_context,
 )
 from app.schemas.auth import (
@@ -16,12 +17,14 @@ from app.schemas.auth import (
     AuthRefreshRequest,
     AuthRefreshResponse,
     GoogleAuthExchangeRequest,
+    GoogleAuthStartResponse,
 )
 from app.services.auth_identity import (
     AuthIdentityNotFoundError,
     AuthIdentityService,
     AuthIdentityValidationError,
 )
+from app.services.google_login_state import GoogleLoginStateService, GoogleLoginStateValidationError
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -35,11 +38,46 @@ def _parse_bearer_token(authorization: str | None) -> str:
     return token.strip()
 
 
+def _user_agent_fingerprint(request: Request) -> str | None:
+    raw = (request.headers.get("User-Agent") or "").strip().lower()
+    if not raw:
+        return None
+    return raw[:256]
+
+
+@router.post("/google/start", response_model=GoogleAuthStartResponse)
+def start_google_login(
+    request: Request,
+    login_state_service: GoogleLoginStateService = Depends(get_google_login_state_service),
+) -> GoogleAuthStartResponse:
+    challenge = login_state_service.issue_state(
+        user_agent_fingerprint=_user_agent_fingerprint(request),
+    )
+    return GoogleAuthStartResponse(
+        state=challenge.state,
+        expires_at=challenge.expires_at.isoformat(),
+        flow=GoogleLoginStateService.FLOW_INTENT,
+    )
+
+
 @router.post("/google/exchange", response_model=AuthExchangeResponse)
 def exchange_google_id_token(
     payload: GoogleAuthExchangeRequest,
+    request: Request,
     auth_identity_service: AuthIdentityService = Depends(get_auth_identity_service),
+    login_state_service: GoogleLoginStateService = Depends(get_google_login_state_service),
 ) -> AuthExchangeResponse:
+    try:
+        login_state_service.validate_and_consume(
+            state=payload.state,
+            user_agent_fingerprint=_user_agent_fingerprint(request),
+        )
+    except GoogleLoginStateValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"message": str(exc), "error_code": exc.error_code},
+        ) from exc
+
     try:
         result = auth_identity_service.exchange_google_id_token(id_token=payload.id_token)
     except AuthIdentityNotFoundError as exc:

@@ -1,6 +1,7 @@
 import { apiBaseUrl } from "../config";
 import type {
   AuthExchangeResponse,
+  GoogleAuthStartResponse,
   BusinessSettings,
   BusinessSettingsUpdateRequest,
   GitHubPublishConfig,
@@ -167,10 +168,19 @@ async function apiRequest<T>(
   return (await response.json()) as T;
 }
 
-export async function exchangeGoogleIdToken(idToken: string): Promise<AuthExchangeResponse> {
+export async function startGoogleAuth(): Promise<GoogleAuthStartResponse> {
+  return apiRequest<GoogleAuthStartResponse>("/api/auth/google/start", {
+    method: "POST",
+  });
+}
+
+export async function exchangeGoogleIdToken(
+  idToken: string,
+  state: string,
+): Promise<AuthExchangeResponse> {
   return apiRequest<AuthExchangeResponse>("/api/auth/google/exchange", {
     method: "POST",
-    body: JSON.stringify({ id_token: idToken }),
+    body: JSON.stringify({ id_token: idToken, state }),
   });
 }
 

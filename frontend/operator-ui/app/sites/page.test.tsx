@@ -437,7 +437,7 @@ describe("sites page inventory + setup boundaries", () => {
         gbp_provider_error_class: "provider_rate_limited",
         gbp_provider_http_status: 429,
         gbp_diagnostic_hint:
-          "Business Profile API returned 429. Check API quota/access for the Google Cloud project that owns the OAuth client, especially My Business Account Management and Business Information APIs.",
+          "Business Profile API returned 429. Check API quota/access for the Google Cloud project that owns the OAuth client (My Business Account Management and Business Information APIs). If quota is blank/unavailable, request Business Profile API access/allowlist first. After approval, request a quota increase.",
       }),
     );
 
@@ -453,7 +453,7 @@ describe("sites page inventory + setup boundaries", () => {
     expect(screen.getByText("Provider HTTP status: 429")).toBeInTheDocument();
     expect(
       screen.getByText(
-        "Business Profile API returned 429. Check API quota/access for the Google Cloud project that owns the OAuth client, especially My Business Account Management and Business Information APIs.",
+        "Business Profile API returned 429. Check API quota/access for the Google Cloud project that owns the OAuth client (My Business Account Management and Business Information APIs). If quota is blank/unavailable, request Business Profile API access/allowlist first. After approval, request a quota increase.",
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText(/temporarily unavailable\. Retry shortly/i)).not.toBeInTheDocument();
