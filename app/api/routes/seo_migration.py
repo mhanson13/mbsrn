@@ -1,12 +1,21 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
 from app.api.deps import (
     TenantContext,
+    get_seo_analytics_service,
     get_seo_migration_service,
+    get_seo_site_service,
     get_tenant_context,
     resolve_tenant_business_id,
+)
+from app.schemas.seo_recommendation import (
+    SEORecommendationGA4OutcomeDeltaRead,
+    SEORecommendationGA4OutcomeSnapshotRead,
+    SEORecommendationGA4OutcomeWindowRead,
 )
 from app.schemas.seo_migration import (
     SEOMigrationAnalyticsConfigUpdateRequest,
@@ -45,11 +54,13 @@ from app.schemas.seo_migration import (
     SEOMigrationWorkspaceRead,
     SEOMigrationWorkspaceSummaryRead,
 )
+from app.services.seo_analytics import SEOAnalyticsService
 from app.services.seo_migration import (
     SEOMigrationNotFoundError,
     SEOMigrationService,
     SEOMigrationValidationError,
 )
+from app.services.seo_sites import SEOSiteNotFoundError, SEOSiteService
 
 
 router = APIRouter(prefix="/api/businesses/{business_id}/seo", tags=["seo"])
@@ -64,6 +75,278 @@ _DRAFT_REASON_CODE_GOOGLE_RECONNECT_REQUIRED = "google_reconnect_required"
 _DRAFT_REASON_CODE_GOOGLE_INTEGRATION_UNAVAILABLE = "google_integration_unavailable"
 _DRAFT_REASON_CODE_CONTEXT_UNAVAILABLE = "draft_generation_context_unavailable"
 _DRAFT_REASON_CODE_DEFAULT = "draft_generation_failed"
+_GA4_OUTCOME_SESSIONS_DIRECTION_THRESHOLD_PERCENT = 5.0
+_GA4_OUTCOME_ORGANIC_DIRECTION_THRESHOLD_PERCENT = 5.0
+_GA4_OUTCOME_ENGAGEMENT_DIRECTION_THRESHOLD_POINTS = 0.02
+
+
+def _normalize_ga4_outcome_anchor_timestamp(value: datetime) -> datetime:
+    if value.tzinfo is None or value.tzinfo.utcoffset(value) is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _derive_migration_ga4_outcome_anchor(workspace) -> tuple[str, datetime] | None:  # noqa: ANN001
+    if isinstance(getattr(workspace, "last_deployed_at", None), datetime):
+        return ("migration_deployed", _normalize_ga4_outcome_anchor_timestamp(workspace.last_deployed_at))
+    if isinstance(getattr(workspace, "last_published_at", None), datetime):
+        return ("migration_published", _normalize_ga4_outcome_anchor_timestamp(workspace.last_published_at))
+    return None
+
+
+def _derive_ga4_outcome_unavailable_status(*, site_analytics_summary: object, ga4_property_id: str | None) -> str | None:
+    if not str(ga4_property_id or "").strip():
+        return "not_configured"
+
+    ga4_reason = str(getattr(site_analytics_summary, "ga4_error_reason", "") or "").strip().lower()
+    if ga4_reason == "not_configured":
+        return "not_configured"
+    if ga4_reason == "missing_oauth_scope":
+        return "missing_scope"
+    if ga4_reason in {"permission_denied", "access_denied"}:
+        return "permission_denied"
+    if ga4_reason == "no_data":
+        return "insufficient_data"
+    if ga4_reason in {"unknown_error", "invalid_property_format", "property_not_found"}:
+        return "unavailable"
+
+    ga4_health = getattr(site_analytics_summary, "ga4_health", None)
+    ga4_health_status = str(getattr(ga4_health, "ga4_health_status", "") or "").strip().lower()
+    if ga4_health_status == "not_configured":
+        return "not_configured"
+    if ga4_health_status == "missing_oauth_scope":
+        return "missing_scope"
+    if ga4_health_status == "permission_denied":
+        return "permission_denied"
+    if ga4_health_status == "no_data":
+        return "insufficient_data"
+    if ga4_health_status in {"invalid_property", "unavailable", "unknown"}:
+        return "unavailable"
+
+    summary_status = str(getattr(site_analytics_summary, "status", "") or "").strip().lower()
+    if summary_status == "not_configured":
+        return "not_configured"
+    if summary_status == "unavailable":
+        return "unavailable"
+    return None
+
+
+def _calculate_ga4_outcome_delta_percent(current: int, previous: int) -> float | None:
+    normalized_current = max(0, int(current))
+    normalized_previous = max(0, int(previous))
+    if normalized_previous <= 0:
+        if normalized_current <= 0:
+            return 0.0
+        return None
+    return round(((normalized_current - normalized_previous) / normalized_previous) * 100, 2)
+
+
+def _derive_ga4_outcome_direction(
+    *,
+    sessions_delta_percent: float | None,
+    engagement_rate_delta_points: float | None,
+    organic_sessions_delta_percent: float | None,
+) -> str:
+    directional_signals = 0
+    improving_signals = 0
+    declining_signals = 0
+
+    if sessions_delta_percent is not None:
+        directional_signals += 1
+        if sessions_delta_percent >= _GA4_OUTCOME_SESSIONS_DIRECTION_THRESHOLD_PERCENT:
+            improving_signals += 1
+        elif sessions_delta_percent <= -_GA4_OUTCOME_SESSIONS_DIRECTION_THRESHOLD_PERCENT:
+            declining_signals += 1
+
+    if organic_sessions_delta_percent is not None:
+        directional_signals += 1
+        if organic_sessions_delta_percent >= _GA4_OUTCOME_ORGANIC_DIRECTION_THRESHOLD_PERCENT:
+            improving_signals += 1
+        elif organic_sessions_delta_percent <= -_GA4_OUTCOME_ORGANIC_DIRECTION_THRESHOLD_PERCENT:
+            declining_signals += 1
+
+    if engagement_rate_delta_points is not None:
+        directional_signals += 1
+        if engagement_rate_delta_points >= _GA4_OUTCOME_ENGAGEMENT_DIRECTION_THRESHOLD_POINTS:
+            improving_signals += 1
+        elif engagement_rate_delta_points <= -_GA4_OUTCOME_ENGAGEMENT_DIRECTION_THRESHOLD_POINTS:
+            declining_signals += 1
+
+    if directional_signals <= 0:
+        return "insufficient_data"
+    if improving_signals > 0 and declining_signals > 0:
+        return "mixed"
+    if improving_signals > 0 and declining_signals <= 0:
+        return "improved"
+    if declining_signals > 0 and improving_signals <= 0:
+        return "declined"
+    return "no_clear_change"
+
+
+def _migration_outcome_anchor_label(anchor_type: str | None) -> str:
+    normalized = str(anchor_type or "").strip().lower()
+    if normalized == "migration_deployed":
+        return "deploy"
+    if normalized == "migration_published":
+        return "publish"
+    return "migration"
+
+
+def _build_migration_ga4_outcome_operator_hint(
+    *,
+    status: str,
+    anchor_type: str | None,
+    outcome_direction: str | None = None,
+) -> str:
+    anchor_label = _migration_outcome_anchor_label(anchor_type)
+    if status == "not_configured":
+        return "GA4 outcome snapshot unavailable: add a GA4 property ID for this site."
+    if status == "missing_scope":
+        return "GA4 outcome snapshot unavailable: reconnect Google with Analytics readonly access."
+    if status == "permission_denied":
+        return "GA4 outcome snapshot unavailable: verify GA4 property Viewer access for the connected identity."
+    if status == "pending_after_window":
+        return f"Not enough time has passed to compare after-{anchor_label} traffic yet."
+    if status == "insufficient_data":
+        return "Not enough GA4 data is available to compare before and after this migration event."
+    if status == "unavailable":
+        return "GA4 outcome snapshot is temporarily unavailable for this site."
+    if status != "available":
+        return "GA4 outcome snapshot is unavailable for this migration event."
+
+    if outcome_direction == "improved":
+        return (
+            f"Observed after {anchor_label}: traffic is higher in the post-event window. "
+            "Keep monitoring future refresh cycles."
+        )
+    if outcome_direction == "declined":
+        return (
+            f"Observed after {anchor_label}: traffic is lower in the post-event window. "
+            "Review related changes and monitor another refresh cycle."
+        )
+    if outcome_direction == "mixed":
+        return f"Observed after {anchor_label}: metrics moved in different directions. Continue monitoring."
+    if outcome_direction == "no_clear_change":
+        return f"Observed after {anchor_label}: no clear movement is visible yet."
+    return "Not enough GA4 data is available to compare before and after this migration event."
+
+
+def _build_migration_ga4_outcome_snapshot(
+    *,
+    seo_analytics_service: SEOAnalyticsService,
+    site_analytics_summary: object,
+    site_domain: str | None,
+    ga4_property_id: str | None,
+    anchor: tuple[str, datetime] | None,
+) -> SEORecommendationGA4OutcomeSnapshotRead | None:
+    if anchor is None:
+        return None
+    anchor_type, anchor_timestamp = anchor
+
+    unavailable_status = _derive_ga4_outcome_unavailable_status(
+        site_analytics_summary=site_analytics_summary,
+        ga4_property_id=ga4_property_id,
+    )
+    if unavailable_status is not None:
+        return SEORecommendationGA4OutcomeSnapshotRead(
+            status=unavailable_status,
+            source="site_scoped_ga4",
+            anchor_type=anchor_type,
+            anchor_timestamp=anchor_timestamp,
+            outcome_direction="insufficient_data" if unavailable_status == "insufficient_data" else None,
+            operator_hint=_build_migration_ga4_outcome_operator_hint(
+                status=unavailable_status,
+                anchor_type=anchor_type,
+            ),
+        )
+
+    min_after_days = max(1, min(int(seo_analytics_service.settings.ga4_outcome_min_after_days), 30))
+    if datetime.now(timezone.utc) < (anchor_timestamp + timedelta(days=min_after_days)):
+        return SEORecommendationGA4OutcomeSnapshotRead(
+            status="pending_after_window",
+            source="site_scoped_ga4",
+            anchor_type=anchor_type,
+            anchor_timestamp=anchor_timestamp,
+            operator_hint=_build_migration_ga4_outcome_operator_hint(
+                status="pending_after_window",
+                anchor_type=anchor_type,
+            ),
+        )
+
+    comparison = seo_analytics_service.build_recommendation_outcome_comparison(
+        site_domain=site_domain,
+        anchor_timestamp=anchor_timestamp,
+        page_path=None,
+        ga4_property_id=ga4_property_id,
+    )
+    if comparison is None:
+        return SEORecommendationGA4OutcomeSnapshotRead(
+            status="insufficient_data",
+            source="site_scoped_ga4",
+            anchor_type=anchor_type,
+            anchor_timestamp=anchor_timestamp,
+            outcome_direction="insufficient_data",
+            operator_hint=_build_migration_ga4_outcome_operator_hint(
+                status="insufficient_data",
+                anchor_type=anchor_type,
+            ),
+        )
+
+    before_window = SEORecommendationGA4OutcomeWindowRead(
+        start_date=comparison.before_window.start_date,
+        end_date=comparison.before_window.end_date,
+        sessions=max(0, int(comparison.before_window.sessions)),
+        users=max(0, int(comparison.before_window.users)),
+        engagement_rate=comparison.before_window.engagement_rate,
+        organic_sessions=comparison.before_window.organic_search_sessions,
+    )
+    after_window = SEORecommendationGA4OutcomeWindowRead(
+        start_date=comparison.after_window.start_date,
+        end_date=comparison.after_window.end_date,
+        sessions=max(0, int(comparison.after_window.sessions)),
+        users=max(0, int(comparison.after_window.users)),
+        engagement_rate=comparison.after_window.engagement_rate,
+        organic_sessions=comparison.after_window.organic_search_sessions,
+    )
+    sessions_delta = int(after_window.sessions) - int(before_window.sessions)
+    sessions_delta_percent = _calculate_ga4_outcome_delta_percent(
+        current=after_window.sessions,
+        previous=before_window.sessions,
+    )
+    engagement_rate_delta_points = None
+    if before_window.engagement_rate is not None and after_window.engagement_rate is not None:
+        engagement_rate_delta_points = round(after_window.engagement_rate - before_window.engagement_rate, 4)
+    organic_sessions_delta_percent = None
+    if before_window.organic_sessions is not None and after_window.organic_sessions is not None:
+        organic_sessions_delta_percent = _calculate_ga4_outcome_delta_percent(
+            current=after_window.organic_sessions,
+            previous=before_window.organic_sessions,
+        )
+    outcome_direction = _derive_ga4_outcome_direction(
+        sessions_delta_percent=sessions_delta_percent,
+        engagement_rate_delta_points=engagement_rate_delta_points,
+        organic_sessions_delta_percent=organic_sessions_delta_percent,
+    )
+    return SEORecommendationGA4OutcomeSnapshotRead(
+        status="available",
+        source="site_scoped_ga4",
+        anchor_type=anchor_type,
+        anchor_timestamp=anchor_timestamp,
+        before_window=before_window,
+        after_window=after_window,
+        delta=SEORecommendationGA4OutcomeDeltaRead(
+            sessions_delta=sessions_delta,
+            sessions_delta_percent=sessions_delta_percent,
+            engagement_rate_delta_points=engagement_rate_delta_points,
+            organic_sessions_delta_percent=organic_sessions_delta_percent,
+        ),
+        outcome_direction=outcome_direction,
+        operator_hint=_build_migration_ga4_outcome_operator_hint(
+            status="available",
+            anchor_type=anchor_type,
+            outcome_direction=outcome_direction,
+        ),
+    )
 
 
 def _to_workspace_read(workspace) -> SEOMigrationWorkspaceRead:  # noqa: ANN001
@@ -738,6 +1021,8 @@ def get_seo_migration_workspace_summary(
     site_id: str,
     tenant_context: TenantContext = Depends(get_tenant_context),
     migration_service: SEOMigrationService = Depends(get_seo_migration_service),
+    seo_site_service: SEOSiteService = Depends(get_seo_site_service),
+    seo_analytics_service: SEOAnalyticsService = Depends(get_seo_analytics_service),
 ) -> SEOMigrationWorkspaceSummaryRead:
     scoped_business_id = resolve_tenant_business_id(
         tenant_context=tenant_context,
@@ -750,6 +1035,25 @@ def get_seo_migration_workspace_summary(
         )
     except SEOMigrationNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    try:
+        site = seo_site_service.get_site(business_id=scoped_business_id, site_id=site_id)
+    except SEOSiteNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    site_domain = (site.normalized_domain or site.base_url or "").strip() or None
+    site_analytics_summary = seo_analytics_service.get_site_summary(
+        business_id=scoped_business_id,
+        site_id=site_id,
+        site_domain=site_domain,
+        ga4_property_id=site.ga4_property_id,
+        enforce_site_ga4_property=True,
+    )
+    ga4_outcome_snapshot = _build_migration_ga4_outcome_snapshot(
+        seo_analytics_service=seo_analytics_service,
+        site_analytics_summary=site_analytics_summary,
+        site_domain=site_domain,
+        ga4_property_id=site.ga4_property_id,
+        anchor=_derive_migration_ga4_outcome_anchor(summary.workspace),
+    )
     source_snapshot = (
         SEOMigrationSourceSnapshotRead.model_validate(summary.source_snapshot) if summary.source_snapshot else None
     )
@@ -763,6 +1067,7 @@ def get_seo_migration_workspace_summary(
         deploy_readiness=summary.deploy_readiness,
         publish_history=summary.publish_history,
         deploy_history=summary.deploy_history,
+        ga4_outcome_snapshot=ga4_outcome_snapshot,
         draft_only_notice=_DRAFT_ONLY_NOTICE,
     )
 

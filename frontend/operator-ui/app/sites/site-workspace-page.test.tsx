@@ -684,6 +684,87 @@ describe("site migration workflow route", () => {
     confirmSpy.mockRestore();
   });
 
+  it("renders a compact GA4 outcome snapshot for deploy events when available", async () => {
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(
+      buildMigrationWorkspaceSummary({
+        ga4_outcome_snapshot: {
+          status: "available",
+          source: "site_scoped_ga4",
+          anchor_type: "migration_deployed",
+          anchor_timestamp: "2026-03-01T00:00:00Z",
+          before_window: {
+            start_date: "2026-02-15",
+            end_date: "2026-02-28",
+            sessions: 100,
+            users: 82,
+            engagement_rate: 0.42,
+            organic_sessions: 61,
+          },
+          after_window: {
+            start_date: "2026-03-01",
+            end_date: "2026-03-14",
+            sessions: 131,
+            users: 101,
+            engagement_rate: 0.48,
+            organic_sessions: 79,
+          },
+          delta: {
+            sessions_delta: 31,
+            sessions_delta_percent: 31.0,
+            engagement_rate_delta_points: 0.06,
+            organic_sessions_delta_percent: 29.5,
+          },
+          outcome_direction: "improved",
+          operator_hint: "Observed after deploy: traffic is higher in the post-event window.",
+        },
+      }),
+    );
+
+    render(<SiteMigrationWorkflowPage />);
+
+    const outcomeCard = await screen.findByTestId("migration-ga4-outcome-snapshot");
+    expect(outcomeCard).toHaveTextContent("GA4 outcome snapshot");
+    expect(outcomeCard).toHaveTextContent("Observed after deploy");
+    expect(outcomeCard).toHaveTextContent("Status: Available");
+    expect(outcomeCard).toHaveTextContent("Before sessions: 100 | After sessions: 131");
+    expect(outcomeCard).toHaveTextContent("Observed direction: improved");
+    expect(outcomeCard).toHaveTextContent("Observed after deploy: traffic is higher in the post-event window.");
+  });
+
+  it("renders pending-after-window GA4 migration outcome safely", async () => {
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(
+      buildMigrationWorkspaceSummary({
+        ga4_outcome_snapshot: {
+          status: "pending_after_window",
+          source: "site_scoped_ga4",
+          anchor_type: "migration_published",
+          anchor_timestamp: "2026-03-20T00:00:00Z",
+          operator_hint: "Not enough time has passed to compare after-publish traffic yet.",
+        },
+      }),
+    );
+
+    render(<SiteMigrationWorkflowPage />);
+
+    const outcomeCard = await screen.findByTestId("migration-ga4-outcome-snapshot");
+    expect(outcomeCard).toHaveTextContent("Observed after publish");
+    expect(outcomeCard).toHaveTextContent("Status: Pending");
+    expect(outcomeCard).toHaveTextContent("Not enough time has passed to compare after-publish traffic yet.");
+  });
+
+  it("keeps GA4 migration outcome snapshot hidden when no anchor snapshot is available", async () => {
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(
+      buildMigrationWorkspaceSummary({
+        ga4_outcome_snapshot: null,
+      }),
+    );
+
+    render(<SiteMigrationWorkflowPage />);
+
+    await screen.findByTestId("migration-publish-deploy-section");
+    expect(screen.queryByTestId("migration-ga4-outcome-snapshot")).not.toBeInTheDocument();
+  });
+
   it("switches selected publish diagnostics context and falls back to latest summary when details are missing", async () => {
     const user = userEvent.setup();
     const publishHistoryWithDetails = {

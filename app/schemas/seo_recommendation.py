@@ -61,6 +61,7 @@ SEORecommendationGA4OutcomeAnchorType = Literal[
     "recommendation_completed",
     "recommendation_accepted",
     "migration_published",
+    "migration_deployed",
     "unknown",
 ]
 SEORecommendationGA4OutcomeDirection = Literal[
@@ -3208,7 +3209,13 @@ class SEORecommendationGA4OutcomeSnapshotRead(BaseModel):
         value: Any,
     ) -> SEORecommendationGA4OutcomeAnchorType:
         normalized = str(value or "").strip().lower()
-        if normalized not in {"recommendation_completed", "recommendation_accepted", "migration_published", "unknown"}:
+        if normalized not in {
+            "recommendation_completed",
+            "recommendation_accepted",
+            "migration_published",
+            "migration_deployed",
+            "unknown",
+        }:
             return "unknown"
         return normalized  # type: ignore[return-value]
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date, timedelta
 import json
 import os
 from types import SimpleNamespace
@@ -14,6 +15,7 @@ from app.core.time import utc_now
 from app.core.config import get_settings
 from app.api.deps import (
     TenantContext,
+    get_seo_analytics_service,
     get_db,
     get_seo_migration_service,
     get_seo_migration_artifact_provider,
@@ -65,6 +67,7 @@ from app.models.seo_recommendation import SEORecommendation
 from app.models.seo_recommendation_run import SEORecommendationRun
 from app.models.seo_migration_workspace import SEOMigrationWorkspace
 from app.models.seo_site import SEOSite
+from app.schemas.seo_analytics import SEOAnalyticsSiteSummaryRead
 from app.services import seo_migration as seo_migration_module
 from app.services.seo_migration import SEOMigrationValidationError
 from app.services.seo_migration_ingest import (
@@ -666,6 +669,85 @@ class _IncompatibleMigrationArtifactProvider(SEOMigrationArtifactGenerationProvi
         del migration_context
         self.generate_call_count += 1
         raise RuntimeError("provider call should be blocked by compatibility preflight")
+
+
+class _StubSEOAnalyticsServiceForOutcome:
+    def __init__(
+        self,
+        *,
+        site_summary: SEOAnalyticsSiteSummaryRead,
+        comparison: object | None = None,
+        min_after_days: int = 7,
+    ) -> None:
+        self.site_summary = site_summary
+        self.comparison = comparison
+        self.settings = SimpleNamespace(ga4_outcome_min_after_days=min_after_days)
+        self.site_summary_calls: list[dict[str, object]] = []
+        self.comparison_calls: list[dict[str, object]] = []
+
+    def get_site_summary(
+        self,
+        *,
+        business_id: str,
+        site_id: str,
+        site_domain: str | None,
+        ga4_property_id: str | None = None,
+        enforce_site_ga4_property: bool = False,
+    ) -> SEOAnalyticsSiteSummaryRead:
+        self.site_summary_calls.append(
+            {
+                "business_id": business_id,
+                "site_id": site_id,
+                "site_domain": site_domain,
+                "ga4_property_id": ga4_property_id,
+                "enforce_site_ga4_property": enforce_site_ga4_property,
+            }
+        )
+        return self.site_summary
+
+    def build_recommendation_outcome_comparison(
+        self,
+        *,
+        site_domain: str | None,
+        anchor_timestamp,
+        page_path: str | None,
+        ga4_property_id: str | None,
+        before_window_days: int | None = None,
+        after_window_days: int | None = None,
+    ):
+        self.comparison_calls.append(
+            {
+                "site_domain": site_domain,
+                "anchor_timestamp": anchor_timestamp,
+                "page_path": page_path,
+                "ga4_property_id": ga4_property_id,
+                "before_window_days": before_window_days,
+                "after_window_days": after_window_days,
+            }
+        )
+        return self.comparison
+
+
+def _build_outcome_comparison_stub() -> object:
+    return SimpleNamespace(
+        before_window=SimpleNamespace(
+            start_date=date(2026, 3, 1),
+            end_date=date(2026, 3, 14),
+            sessions=100,
+            users=82,
+            engagement_rate=0.42,
+            organic_search_sessions=61,
+        ),
+        after_window=SimpleNamespace(
+            start_date=date(2026, 3, 15),
+            end_date=date(2026, 3, 28),
+            sessions=131,
+            users=101,
+            engagement_rate=0.48,
+            organic_search_sessions=79,
+        ),
+        comparison_scope="site",
+    )
 
 
 class _AlwaysExpiredSessionTokenService:
@@ -2006,6 +2088,139 @@ def test_migration_summary_contract_includes_readiness_and_history_shapes(db_ses
     assert "last_deploy_status" in migration_diagnostics
     assert isinstance(payload.get("publish_history"), list)
     assert isinstance(payload.get("deploy_history"), list)
+
+
+def test_migration_summary_prefers_deploy_anchor_for_ga4_outcome_snapshot(db_session) -> None:
+    business_id = "0f0f0f0f-0000-4000-8000-000000000001"
+    site_id = "0f0f0f0f-0000-4000-8000-000000000002"
+    _seed_business_and_site(db_session, business_id=business_id, site_id=site_id)
+    client = _make_client(db_session, business_id=business_id)
+
+    workspace_response = client.put(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/workspace",
+        json={"workspace": {}},
+    )
+    assert workspace_response.status_code == 200
+
+    site = db_session.query(SEOSite).filter(SEOSite.id == site_id).one()
+    site.ga4_property_id = "123456789"
+    workspace = db_session.query(SEOMigrationWorkspace).filter(SEOMigrationWorkspace.site_id == site_id).one()
+    workspace.last_published_at = utc_now() - timedelta(days=40)
+    workspace.last_deployed_at = utc_now() - timedelta(days=20)
+    db_session.add(site)
+    db_session.add(workspace)
+    db_session.commit()
+
+    analytics_stub = _StubSEOAnalyticsServiceForOutcome(
+        site_summary=SEOAnalyticsSiteSummaryRead(
+            business_id=business_id,
+            site_id=site_id,
+            available=True,
+            status="available",
+            ga4_status="connected",
+            ga4_error_reason=None,
+            ga4_health={"ga4_health_status": "reachable"},
+        ),
+        comparison=_build_outcome_comparison_stub(),
+        min_after_days=7,
+    )
+    client.app.dependency_overrides[get_seo_analytics_service] = lambda: analytics_stub
+
+    summary_response = client.get(f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/summary")
+    assert summary_response.status_code == 200
+    snapshot = summary_response.json().get("ga4_outcome_snapshot") or {}
+    assert snapshot.get("status") == "available"
+    assert snapshot.get("anchor_type") == "migration_deployed"
+    assert snapshot.get("outcome_direction") in {"improved", "declined", "mixed", "no_clear_change", "insufficient_data"}
+    assert "Observed after deploy" in str(snapshot.get("operator_hint") or "")
+    assert analytics_stub.comparison_calls
+    assert analytics_stub.comparison_calls[0].get("page_path") is None
+    assert analytics_stub.comparison_calls[0].get("ga4_property_id") == "123456789"
+
+
+def test_migration_summary_uses_publish_anchor_when_deploy_timestamp_missing(db_session) -> None:
+    business_id = "0f0f0f0f-0000-4000-8000-000000000011"
+    site_id = "0f0f0f0f-0000-4000-8000-000000000012"
+    _seed_business_and_site(db_session, business_id=business_id, site_id=site_id)
+    client = _make_client(db_session, business_id=business_id)
+
+    workspace_response = client.put(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/workspace",
+        json={"workspace": {}},
+    )
+    assert workspace_response.status_code == 200
+
+    site = db_session.query(SEOSite).filter(SEOSite.id == site_id).one()
+    site.ga4_property_id = "123456789"
+    workspace = db_session.query(SEOMigrationWorkspace).filter(SEOMigrationWorkspace.site_id == site_id).one()
+    workspace.last_published_at = utc_now() - timedelta(days=2)
+    workspace.last_deployed_at = None
+    db_session.add(site)
+    db_session.add(workspace)
+    db_session.commit()
+
+    analytics_stub = _StubSEOAnalyticsServiceForOutcome(
+        site_summary=SEOAnalyticsSiteSummaryRead(
+            business_id=business_id,
+            site_id=site_id,
+            available=True,
+            status="available",
+            ga4_status="connected",
+            ga4_error_reason=None,
+            ga4_health={"ga4_health_status": "reachable"},
+        ),
+        comparison=_build_outcome_comparison_stub(),
+        min_after_days=7,
+    )
+    client.app.dependency_overrides[get_seo_analytics_service] = lambda: analytics_stub
+
+    summary_response = client.get(f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/summary")
+    assert summary_response.status_code == 200
+    snapshot = summary_response.json().get("ga4_outcome_snapshot") or {}
+    assert snapshot.get("status") == "pending_after_window"
+    assert snapshot.get("anchor_type") == "migration_published"
+    assert "after-publish traffic" in str(snapshot.get("operator_hint") or "")
+    assert not analytics_stub.comparison_calls
+
+
+def test_migration_summary_returns_not_configured_when_site_ga4_property_missing(db_session) -> None:
+    business_id = "0f0f0f0f-0000-4000-8000-000000000021"
+    site_id = "0f0f0f0f-0000-4000-8000-000000000022"
+    _seed_business_and_site(db_session, business_id=business_id, site_id=site_id)
+    client = _make_client(db_session, business_id=business_id)
+
+    workspace_response = client.put(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/workspace",
+        json={"workspace": {}},
+    )
+    assert workspace_response.status_code == 200
+
+    workspace = db_session.query(SEOMigrationWorkspace).filter(SEOMigrationWorkspace.site_id == site_id).one()
+    workspace.last_deployed_at = utc_now() - timedelta(days=14)
+    db_session.add(workspace)
+    db_session.commit()
+
+    analytics_stub = _StubSEOAnalyticsServiceForOutcome(
+        site_summary=SEOAnalyticsSiteSummaryRead(
+            business_id=business_id,
+            site_id=site_id,
+            available=False,
+            status="not_configured",
+            ga4_status="not_configured",
+            ga4_error_reason="not_configured",
+        ),
+        comparison=_build_outcome_comparison_stub(),
+        min_after_days=7,
+    )
+    client.app.dependency_overrides[get_seo_analytics_service] = lambda: analytics_stub
+
+    summary_response = client.get(f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/summary")
+    assert summary_response.status_code == 200
+    snapshot = summary_response.json().get("ga4_outcome_snapshot") or {}
+    assert snapshot.get("status") == "not_configured"
+    assert snapshot.get("anchor_type") == "migration_deployed"
+    assert "add a ga4 property id" in str(snapshot.get("operator_hint") or "").lower()
+    assert not analytics_stub.comparison_calls
 
 
 def test_generate_draft_is_blocked_when_readiness_has_blockers(db_session) -> None:

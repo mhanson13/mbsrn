@@ -882,6 +882,7 @@ export interface MigrationWorkspaceSummary {
   deploy_readiness: Record<string, unknown>;
   publish_history: Array<Record<string, unknown>>;
   deploy_history: Array<Record<string, unknown>>;
+  ga4_outcome_snapshot?: RecommendationGA4OutcomeSnapshot | null;
   draft_only_notice: string;
 }
 
@@ -2252,7 +2253,12 @@ export interface RecommendationGA4OutcomeSnapshot {
     | "pending_after_window"
     | "available";
   source?: string;
-  anchor_type?: "recommendation_completed" | "recommendation_accepted" | "migration_published" | "unknown";
+  anchor_type?:
+    | "recommendation_completed"
+    | "recommendation_accepted"
+    | "migration_published"
+    | "migration_deployed"
+    | "unknown";
   anchor_timestamp?: string | null;
   before_window?: RecommendationGA4OutcomeWindow | null;
   after_window?: RecommendationGA4OutcomeWindow | null;

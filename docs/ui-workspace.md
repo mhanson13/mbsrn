@@ -157,6 +157,11 @@ The dedicated migration route (`/sites/[site_id]/migration`) keeps primary opera
   - publish surface: summary/readiness on left, GitHub target config + publish actions on right
   - deploy surface: target/readiness on left, deploy availability + deploy actions on right
   - concise readiness state + one action/blocker line
+  - optional GA4 outcome snapshot (Phase 5B) appears as compact observational context only:
+    - `Observed after deploy` when a successful deploy timestamp exists
+    - `Observed after publish` when publish exists and deploy does not
+    - deterministic before/after metrics and bounded statuses (`pending_after_window`, `insufficient_data`, etc.)
+    - no attribution claims and no scoring/order changes
   - deploy evidence state can show `Confirmed Live` when current live HTTPS probe evidence is healthy
   - `Refresh Deploy Status` is scoped to the route site id; when selected artifact history is missing it can still refresh current-live evidence from the latest deploy record for that site
 - F. Advanced Diagnostics & History:

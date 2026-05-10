@@ -5,6 +5,8 @@ import re
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.schemas.seo_recommendation import SEORecommendationGA4OutcomeSnapshotRead
+
 
 _GA_MEASUREMENT_ID_PATTERN = re.compile(r"^G-[A-Z0-9]{4,32}$")
 
@@ -675,6 +677,7 @@ class SEOMigrationWorkspaceSummaryRead(BaseModel):
     deploy_readiness: dict[str, object] = Field(default_factory=dict)
     publish_history: list[dict[str, object]] = Field(default_factory=list)
     deploy_history: list[dict[str, object]] = Field(default_factory=list)
+    ga4_outcome_snapshot: SEORecommendationGA4OutcomeSnapshotRead | None = None
     draft_only_notice: str
 
 

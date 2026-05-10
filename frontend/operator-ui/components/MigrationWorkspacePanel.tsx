@@ -1177,6 +1177,92 @@ function asNonNegativeInt(value: unknown): number | null {
   return Math.max(0, Math.round(value));
 }
 
+function asNumberOrNull(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return null;
+  }
+  return value;
+}
+
+function formatMetricCount(value: number | null): string {
+  if (value === null) {
+    return "Not available";
+  }
+  return `${Math.max(0, Math.round(value))}`;
+}
+
+function formatEngagementRatePercent(value: number | null): string {
+  if (value === null) {
+    return "Not available";
+  }
+  return `${Math.round(value * 1000) / 10}%`;
+}
+
+function formatPercentDelta(value: number | null): string {
+  if (value === null) {
+    return "Not available";
+  }
+  const rounded = Math.round(value * 10) / 10;
+  return `${rounded > 0 ? "+" : ""}${rounded}%`;
+}
+
+function formatPointsDelta(value: number | null): string {
+  if (value === null) {
+    return "Not available";
+  }
+  const asPercentPoints = Math.round(value * 1000) / 10;
+  return `${asPercentPoints > 0 ? "+" : ""}${asPercentPoints} pts`;
+}
+
+function normalizeGa4OutcomeSnapshotStatus(value: string | null): string {
+  const normalized = (value || "").trim().toLowerCase();
+  if (
+    normalized === "available"
+    || normalized === "pending_after_window"
+    || normalized === "insufficient_data"
+    || normalized === "not_configured"
+    || normalized === "missing_scope"
+    || normalized === "permission_denied"
+    || normalized === "unavailable"
+  ) {
+    return normalized;
+  }
+  return "unavailable";
+}
+
+function toGa4OutcomeStatusLabel(value: string): string {
+  if (value === "available") {
+    return "Available";
+  }
+  if (value === "pending_after_window") {
+    return "Pending";
+  }
+  if (value === "insufficient_data") {
+    return "Insufficient data";
+  }
+  if (value === "not_configured") {
+    return "Not configured";
+  }
+  if (value === "missing_scope") {
+    return "Missing authorization";
+  }
+  if (value === "permission_denied") {
+    return "Permission issue";
+  }
+  return "Unavailable";
+}
+
+function toGa4OutcomeAnchorSubtitle(value: string | null): string {
+  const normalized = (value || "").trim().toLowerCase();
+  if (normalized === "migration_deployed") {
+    return "Observed after deploy";
+  }
+  if (normalized === "migration_published") {
+    return "Observed after publish";
+  }
+  return "Observed after migration event";
+}
+
 function mediaCandidateQuality(asset: Record<string, unknown>): "useful" | "low_value" | "rejected" {
   const normalized = (asStringOrNull(asset.candidate_quality) || "useful").trim().toLowerCase();
   if (normalized === "low_value") {
@@ -3532,6 +3618,36 @@ export function MigrationWorkspacePanel({
   });
   const deployPrimaryBlockerMessage = toDeployBlockerMessage(deployBlockerCodes);
   const contextSummary = asRecord(summary?.context_summary);
+  const ga4OutcomeSnapshotRecord = asRecord(summary?.ga4_outcome_snapshot);
+  const ga4OutcomeSnapshotPresent = summary?.ga4_outcome_snapshot != null && Object.keys(ga4OutcomeSnapshotRecord).length > 0;
+  const ga4OutcomeSnapshotStatus = normalizeGa4OutcomeSnapshotStatus(asStringOrNull(ga4OutcomeSnapshotRecord.status));
+  const ga4OutcomeSnapshotAnchorType = asStringOrNull(ga4OutcomeSnapshotRecord.anchor_type);
+  const ga4OutcomeSnapshotSubtitle = toGa4OutcomeAnchorSubtitle(ga4OutcomeSnapshotAnchorType);
+  const ga4OutcomeSnapshotOperatorHint = asStringOrNull(ga4OutcomeSnapshotRecord.operator_hint);
+  const ga4OutcomeSnapshotBeforeWindow = asRecord(ga4OutcomeSnapshotRecord.before_window);
+  const ga4OutcomeSnapshotAfterWindow = asRecord(ga4OutcomeSnapshotRecord.after_window);
+  const ga4OutcomeSnapshotDelta = asRecord(ga4OutcomeSnapshotRecord.delta);
+  const ga4OutcomeSnapshotOutcomeDirection = asStringOrNull(ga4OutcomeSnapshotRecord.outcome_direction);
+  const ga4OutcomeSnapshotBeforeSessions = asNumberOrNull(ga4OutcomeSnapshotBeforeWindow.sessions);
+  const ga4OutcomeSnapshotAfterSessions = asNumberOrNull(ga4OutcomeSnapshotAfterWindow.sessions);
+  const ga4OutcomeSnapshotBeforeUsers = asNumberOrNull(ga4OutcomeSnapshotBeforeWindow.users);
+  const ga4OutcomeSnapshotAfterUsers = asNumberOrNull(ga4OutcomeSnapshotAfterWindow.users);
+  const ga4OutcomeSnapshotBeforeEngagementRate = asNumberOrNull(ga4OutcomeSnapshotBeforeWindow.engagement_rate);
+  const ga4OutcomeSnapshotAfterEngagementRate = asNumberOrNull(ga4OutcomeSnapshotAfterWindow.engagement_rate);
+  const ga4OutcomeSnapshotSessionsDeltaPercent = asNumberOrNull(ga4OutcomeSnapshotDelta.sessions_delta_percent);
+  const ga4OutcomeSnapshotEngagementDeltaPoints = asNumberOrNull(ga4OutcomeSnapshotDelta.engagement_rate_delta_points);
+  const ga4OutcomeSnapshotOrganicDeltaPercent = asNumberOrNull(ga4OutcomeSnapshotDelta.organic_sessions_delta_percent);
+  const hasGa4OutcomeSnapshot =
+    ga4OutcomeSnapshotPresent
+    && (
+      ga4OutcomeSnapshotStatus === "available"
+      || ga4OutcomeSnapshotStatus === "pending_after_window"
+      || ga4OutcomeSnapshotStatus === "insufficient_data"
+      || ga4OutcomeSnapshotStatus === "not_configured"
+      || ga4OutcomeSnapshotStatus === "missing_scope"
+      || ga4OutcomeSnapshotStatus === "permission_denied"
+      || ga4OutcomeSnapshotStatus === "unavailable"
+    );
   const draftInputSummary = asRecord(contextSummary.draft_input_summary);
   const recommendationCategories = asStringList(draftInputSummary.recommendation_categories_included);
   const topRecommendationTitles = asStringList(draftInputSummary.top_recommendation_titles);
@@ -7857,6 +7973,61 @@ export function MigrationWorkspacePanel({
                   </>
                 ) : null}
               </div>
+
+              {hasGa4OutcomeSnapshot ? (
+                <div className="panel panel-compact stack" data-testid="migration-ga4-outcome-snapshot">
+                  <strong>GA4 outcome snapshot</strong>
+                  <span className="hint muted">{ga4OutcomeSnapshotSubtitle}</span>
+                  <span
+                    className={
+                      ga4OutcomeSnapshotStatus === "available"
+                        ? "hint success"
+                        : ga4OutcomeSnapshotStatus === "pending_after_window"
+                          ? "hint"
+                          : "hint warning"
+                    }
+                  >
+                    Status: {toGa4OutcomeStatusLabel(ga4OutcomeSnapshotStatus)}
+                  </span>
+                  {ga4OutcomeSnapshotStatus === "available" ? (
+                    <>
+                      <span className="hint">
+                        Before sessions: {formatMetricCount(ga4OutcomeSnapshotBeforeSessions)} | After sessions:{" "}
+                        {formatMetricCount(ga4OutcomeSnapshotAfterSessions)}
+                      </span>
+                      <span className="hint">
+                        Before users: {formatMetricCount(ga4OutcomeSnapshotBeforeUsers)} | After users:{" "}
+                        {formatMetricCount(ga4OutcomeSnapshotAfterUsers)}
+                      </span>
+                      <span className="hint">
+                        Before engagement: {formatEngagementRatePercent(ga4OutcomeSnapshotBeforeEngagementRate)} | After engagement:{" "}
+                        {formatEngagementRatePercent(ga4OutcomeSnapshotAfterEngagementRate)}
+                      </span>
+                      <span className="hint">
+                        Sessions delta: {formatPercentDelta(ga4OutcomeSnapshotSessionsDeltaPercent)} | Engagement delta:{" "}
+                        {formatPointsDelta(ga4OutcomeSnapshotEngagementDeltaPoints)} | Organic delta:{" "}
+                        {formatPercentDelta(ga4OutcomeSnapshotOrganicDeltaPercent)}
+                      </span>
+                    </>
+                  ) : null}
+                  {ga4OutcomeSnapshotOutcomeDirection ? (
+                    <span className="hint">
+                      Observed direction: {formatReasonCodeLabel(ga4OutcomeSnapshotOutcomeDirection)}
+                    </span>
+                  ) : null}
+                  {ga4OutcomeSnapshotOperatorHint ? (
+                    <span
+                      className={
+                        ga4OutcomeSnapshotStatus === "available" || ga4OutcomeSnapshotStatus === "pending_after_window"
+                          ? "hint"
+                          : "hint warning"
+                      }
+                    >
+                      {ga4OutcomeSnapshotOperatorHint}
+                    </span>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
 
             <div className="migration-publish-deploy-column stack" data-testid="migration-deploy-layout-right">

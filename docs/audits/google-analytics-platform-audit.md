@@ -109,6 +109,23 @@ Phase 5A introduces lightweight, additive GA4 outcome snapshots for recommendati
 - recommendation scoring, priority, severity, and ordering remain unchanged
 - site-scoped GA4 property enforcement remains mandatory with no global/default fallback
 
+## 1.8) Phase 5B Status (2026-05-10)
+
+Phase 5B adds lightweight, additive GA4 outcome snapshots for migration follow-up:
+- migration workspace summary payloads can include additive `ga4_outcome_snapshot` when a successful migration publish/deploy anchor timestamp exists
+- anchor precedence is deterministic and non-invasive:
+  - prefer `migration_deployed` when a successful deploy timestamp exists
+  - fallback to `migration_published` when deploy is not available
+- the same deterministic before/after windows are used (14 days before and 14 days after the anchor)
+- status remains bounded and non-blocking (`available`, `pending_after_window`, `insufficient_data`, `not_configured`, `missing_scope`, `permission_denied`, `unavailable`)
+- operator wording remains explicitly observational:
+  - "Observed after deploy"
+  - "Observed after publish"
+  - "Not enough time has passed"
+- this is observational context only, not attribution or causation
+- migration publish/deploy execution behavior is unchanged
+- recommendation scoring/order behavior remains unchanged
+
 ## 2) Current Implementation Inventory
 
 | File | Purpose | GA4 Role | Area | Risk | Notes |

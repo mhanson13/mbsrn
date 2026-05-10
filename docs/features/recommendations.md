@@ -905,6 +905,7 @@ Boundary:
 - no recommendation scoring/priority/order changes
 - GA4 remains optional and non-blocking
 - site-scoped GA4 property enforcement remains required (no global/default fallback)
+- Phase 5B migration publish/deploy outcome snapshots reuse the same observational model but live in migration workflow surfaces; recommendation scoring/order remains unchanged.
 
 ### GA4 Last Data Seen + Freshness
 

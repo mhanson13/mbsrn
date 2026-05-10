@@ -1874,6 +1874,31 @@ Rules:
 - repeated publish/deploy actions do not duplicate analytics insertion in generated output payloads
 - insertion is restricted to allowed static artifact files and controlled modes only
 
+## GA4 Outcome Snapshot (Phase 5B)
+
+Migration workspace summary now supports an additive, optional `ga4_outcome_snapshot` for post-publish/deploy observational context.
+
+Behavior:
+- anchor selection uses existing successful workspace timestamps only:
+  1. `migration_deployed` from `last_deployed_at` (preferred)
+  2. `migration_published` from `last_published_at` when deploy timestamp is absent
+- deterministic before/after windows:
+  - 14 days before anchor
+  - 14 days after anchor (bounded by available data)
+- if fewer than 7 days have elapsed since anchor:
+  - status is `pending_after_window`
+  - operator hint indicates more time is needed
+- GA4 remains optional and non-blocking:
+  - statuses remain bounded (`available`, `pending_after_window`, `insufficient_data`, `not_configured`, `missing_scope`, `permission_denied`, `unavailable`)
+  - migration publish/deploy execution behavior is unchanged
+
+Operator wording is intentionally non-causal:
+- `Observed after deploy`
+- `Observed after publish`
+- `No clear movement yet`
+
+The snapshot is observational context only and does not claim attribution/causation.
+
 ## Failure Categories and Operator Next Steps
 Migration publish/deploy paths normalize failures into stable categories:
 - `config_missing`
