@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 
 import { useAuth } from "./AuthProvider";
 import { fetchSites } from "../lib/api/client";
+import { normalizeError } from "../lib/errors";
 import type { SEOSite } from "../lib/api/types";
 
 const STORAGE_SELECTED_SITE_PREFIX = "mbsrn.operator.selected_site_id";
@@ -110,14 +111,15 @@ export function useOperatorContext(): OperatorContextResult {
         writeStoredSelectedSiteId(businessId, resolvedSelectedSiteId, { broadcast: false });
         return authorizedSites;
       } catch (err) {
-        const message = err instanceof Error ? err.message : "Failed to load SEO sites.";
+        const normalizedError = normalizeError(err, "Failed to load SEO sites.");
+        const message = normalizedError.message;
         if (message.includes("Unauthorized") || message.includes("HTTP 401")) {
           clearSession();
           router.push("/");
           return [];
         }
         setError(message);
-        throw err;
+        throw normalizedError;
       } finally {
         setLoading(false);
       }

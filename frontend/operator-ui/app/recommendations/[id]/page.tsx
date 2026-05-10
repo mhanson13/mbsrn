@@ -24,6 +24,7 @@ import {
   fetchRecommendation,
   updateRecommendationStatus,
 } from "../../../lib/api/client";
+import { normalizeError } from "../../../lib/errors";
 import type { Recommendation } from "../../../lib/api/types";
 
 const RECOMMENDATION_PAGE_SIZE_OPTIONS = [25, 50, 100] as const;
@@ -396,7 +397,7 @@ export default function RecommendationDetailPage() {
             if (err instanceof ApiRequestError && err.status === 404) {
               continue;
             }
-            throw err;
+            throw normalizeError(err, "Failed to load recommendation details.");
           }
         }
 

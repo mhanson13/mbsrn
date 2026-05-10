@@ -36,6 +36,7 @@ import {
   deriveActionControls,
   deriveActionStatePresentation,
 } from "../../../../lib/transforms/actionExecution";
+import { normalizeError } from "../../../../lib/errors";
 import type {
   ActionControl,
   ActionDecision,
@@ -1367,7 +1368,7 @@ export default function RecommendationRunDetailPage() {
             if (isNotFoundError(innerError)) {
               continue;
             }
-            throw innerError;
+            throw normalizeError(innerError, "Failed to load recommendation run report.");
           }
         }
 

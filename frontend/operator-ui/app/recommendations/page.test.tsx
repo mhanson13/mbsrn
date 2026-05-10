@@ -213,6 +213,17 @@ describe("recommendations queue optimistic workflows", () => {
     ).toBeInTheDocument();
   });
 
+  it("handles null recommendation loader rejections without crashing", async () => {
+    mockFetchRecommendations.mockRejectedValueOnce(null);
+
+    render(<RecommendationsPage />);
+
+    expect(
+      await screen.findByText("Unable to load recommendations right now. Please try again."),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("recommendations-page-message-stack")).toBeInTheDocument();
+  });
+
   it("updates selected visible rows immediately, rolls back failures, and re-selects failed rows", async () => {
     navigationState.searchParams = new URLSearchParams("sort=newest&page=1&page_size=25");
     const recOne = createRecommendation("rec-1", "open", "high", "Recommendation One");

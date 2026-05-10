@@ -34,6 +34,7 @@ import {
   updateRecommendationStatus,
 } from "../../lib/api/client";
 import { runBoundedBulkActionQueue, type BulkActionQueueProgress } from "../../lib/bulkActionQueue";
+import { normalizeError } from "../../lib/errors";
 import { deriveRecommendationOperatorActionState } from "../../lib/operatorActionState";
 import {
   applyActionDecisionLocally,
@@ -2947,7 +2948,10 @@ function RecommendationsPageContent() {
             setAutomationRunPendingByActionId({});
             setAutomationRunErrorByActionId({});
           } else {
-            throw recommendationsResult.reason;
+            throw normalizeError(
+              recommendationsResult.reason,
+              "Failed to load recommendations for the selected site.",
+            );
           }
 
           if (automationRunsResult.status === "fulfilled") {

@@ -1,4 +1,5 @@
 import { apiBaseUrl } from "../config";
+import { normalizeError } from "../errors";
 import type {
   AuthExchangeResponse,
   GoogleAuthStartResponse,
@@ -126,6 +127,32 @@ export class ApiRequestError extends Error {
   }
 }
 
+function safeSerializeForError(payload: unknown): string {
+  if (typeof payload === "string") {
+    return payload;
+  }
+  try {
+    return JSON.stringify(payload);
+  } catch {
+    return "";
+  }
+}
+
+function normalizeParsedErrorMessage(message: unknown, fallbackMessage: string): string {
+  if (typeof message !== "string") {
+    return fallbackMessage;
+  }
+  const normalized = message.trim();
+  if (!normalized) {
+    return fallbackMessage;
+  }
+  const lowered = normalized.toLowerCase();
+  if (lowered === "null" || lowered === "undefined") {
+    return fallbackMessage;
+  }
+  return normalized;
+}
+
 async function apiRequest<T>(
   path: string,
   options: RequestInit & { token?: string } = {},
@@ -142,11 +169,16 @@ async function apiRequest<T>(
     };
   }
 
-  const response = await fetch(`${apiBaseUrl()}${path}`, {
-    ...rest,
-    headers: mergedHeaders,
-    cache: "no-store",
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${apiBaseUrl()}${path}`, {
+      ...rest,
+      headers: mergedHeaders,
+      cache: "no-store",
+    });
+  } catch (error) {
+    throw normalizeError(error, `Network request failed for ${path}.`);
+  }
 
   if (!response.ok) {
     let message = `HTTP ${response.status}`;
@@ -159,13 +191,20 @@ async function apiRequest<T>(
     } catch {
       // ignore parse failures
     }
-    throw new ApiRequestError(message, { status: response.status, detail: detailObject });
+    throw new ApiRequestError(normalizeParsedErrorMessage(message, `HTTP ${response.status}`), {
+      status: response.status,
+      detail: detailObject,
+    });
   }
 
   if (response.status === 204) {
     return undefined as T;
   }
-  return (await response.json()) as T;
+  try {
+    return (await response.json()) as T;
+  } catch (error) {
+    throw normalizeError(error, `Invalid API response for ${path}.`);
+  }
 }
 
 export async function startGoogleAuth(): Promise<GoogleAuthStartResponse> {
@@ -386,15 +425,21 @@ export async function uploadMigrationMediaAsset(
   if (params.pageAssignment) {
     query.set("page_assignment", params.pageAssignment);
   }
-  const response = await fetch(`${apiBaseUrl()}/api/businesses/${businessId}/seo/sites/${siteId}/migration/media/upload?${query.toString()}`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": params.file.type || "application/octet-stream",
-    },
-    body: params.file,
-    cache: "no-store",
-  });
+  const requestPath = `/api/businesses/${businessId}/seo/sites/${siteId}/migration/media/upload?${query.toString()}`;
+  let response: Response;
+  try {
+    response = await fetch(`${apiBaseUrl()}${requestPath}`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": params.file.type || "application/octet-stream",
+      },
+      body: params.file,
+      cache: "no-store",
+    });
+  } catch (error) {
+    throw normalizeError(error, `Network request failed for ${requestPath}.`);
+  }
   if (!response.ok) {
     let message = `HTTP ${response.status}`;
     let detailObject: Record<string, unknown> | null = null;
@@ -405,9 +450,16 @@ export async function uploadMigrationMediaAsset(
     } catch {
       // ignore parse failures
     }
-    throw new ApiRequestError(message, { status: response.status, detail: detailObject });
+    throw new ApiRequestError(normalizeParsedErrorMessage(message, `HTTP ${response.status}`), {
+      status: response.status,
+      detail: detailObject,
+    });
   }
-  return (await response.json()) as MigrationMediaAsset;
+  try {
+    return (await response.json()) as MigrationMediaAsset;
+  } catch (error) {
+    throw normalizeError(error, `Invalid API response for ${requestPath}.`);
+  }
 }
 
 export async function updateMigrationMediaAsset(
@@ -1642,23 +1694,27 @@ function parseErrorDetail(payload: unknown): {
   message: string;
   detail: Record<string, unknown> | null;
 } {
+  const fallbackMessage = "Request failed.";
   if (!payload || typeof payload !== "object") {
-    return { message: JSON.stringify(payload), detail: null };
+    return { message: normalizeParsedErrorMessage(safeSerializeForError(payload), fallbackMessage), detail: null };
   }
   const asRecord = payload as Record<string, unknown>;
   const detail = asRecord.detail;
   if (typeof detail === "string") {
-    return { message: detail, detail: null };
+    return { message: normalizeParsedErrorMessage(detail, fallbackMessage), detail: null };
   }
   if (detail && typeof detail === "object") {
     const detailRecord = detail as Record<string, unknown>;
     const message = detailRecord.message;
     if (typeof message === "string" && message.trim()) {
-      return { message, detail: detailRecord };
+      return { message: normalizeParsedErrorMessage(message, fallbackMessage), detail: detailRecord };
     }
-    return { message: JSON.stringify(detailRecord), detail: detailRecord };
+    return {
+      message: normalizeParsedErrorMessage(safeSerializeForError(detailRecord), fallbackMessage),
+      detail: detailRecord,
+    };
   }
-  return { message: JSON.stringify(asRecord), detail: null };
+  return { message: normalizeParsedErrorMessage(safeSerializeForError(asRecord), fallbackMessage), detail: null };
 }
 
 export function asVerificationErrorDetail(

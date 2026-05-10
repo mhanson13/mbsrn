@@ -49,5 +49,24 @@ describe("app global error boundary", () => {
     errorSpy.mockRestore();
     warnSpy.mockRestore();
   });
-});
 
+  it("renders fallback safely with undefined or non-Error payloads", () => {
+    const errorSpy = jest.spyOn(console, "error").mockImplementation(() => undefined);
+    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    render(<AppGlobalError error={undefined} reset={() => undefined} />);
+    expect(screen.getByTestId("app-global-error-fallback")).toBeInTheDocument();
+
+    render(<AppGlobalError error={{ code: "bad_state" }} reset={() => undefined} />);
+    expect(errorSpy).toHaveBeenCalledWith(
+      "[operator-ui] global_render_error",
+      expect.objectContaining({
+        digest: "unavailable",
+      }),
+    );
+    expect(warnSpy).not.toHaveBeenCalled();
+
+    errorSpy.mockRestore();
+    warnSpy.mockRestore();
+  });
+});

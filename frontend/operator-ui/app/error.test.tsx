@@ -38,6 +38,26 @@ describe("app route error boundary", () => {
     warnSpy.mockRestore();
   });
 
+  it("renders fallback safely when error payload is undefined", () => {
+    const errorSpy = jest.spyOn(console, "error").mockImplementation(() => undefined);
+    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    render(<RouteErrorBoundary error={undefined} reset={() => undefined} />);
+
+    expect(screen.getByTestId("app-route-error-fallback")).toBeInTheDocument();
+    expect(errorSpy).toHaveBeenCalledWith(
+      "[operator-ui] route_render_error",
+      expect.objectContaining({
+        classification: "missing_error_object",
+        digest: "unavailable",
+      }),
+    );
+    expect(warnSpy).not.toHaveBeenCalled();
+
+    errorSpy.mockRestore();
+    warnSpy.mockRestore();
+  });
+
   it("logs malformed multipart parse failures as warnings", () => {
     const errorSpy = jest.spyOn(console, "error").mockImplementation(() => undefined);
     const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => undefined);
@@ -87,4 +107,3 @@ describe("app route error boundary", () => {
     warnSpy.mockRestore();
   });
 });
-

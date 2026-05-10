@@ -24,6 +24,7 @@ import {
   fetchRecommendationNarrative,
   fetchRecommendationRunReport,
 } from "../../../../../../lib/api/client";
+import { normalizeError } from "../../../../../../lib/errors";
 import type {
   Recommendation,
   RecommendationNarrative,
@@ -366,7 +367,7 @@ export default function RecommendationNarrativeDetailPage() {
             if (isNotFoundError(innerError)) {
               continue;
             }
-            throw innerError;
+            throw normalizeError(innerError, "Failed to load recommendation run report.");
           }
 
           let narrativeResult: RecommendationNarrative;
@@ -381,7 +382,7 @@ export default function RecommendationNarrativeDetailPage() {
             if (isNotFoundError(innerError)) {
               continue;
             }
-            throw innerError;
+            throw normalizeError(innerError, "Failed to load recommendation narrative.");
           }
 
           if (narrativeResult.recommendation_run_id !== recommendationRunId) {
