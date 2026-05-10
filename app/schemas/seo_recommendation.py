@@ -48,6 +48,28 @@ SEORecommendationEffectivenessDirection = Literal["up", "down", "flat", "unknown
 SEORecommendationEffectivenessTrend = Literal["improving", "flat", "declining", "insufficient_data"]
 SEORecommendationEffectivenessConfidence = Literal["high", "moderate", "low"]
 SEORecommendationGA4PrioritySignal = Literal["top_landing_page", "traffic_decline", "engagement_decline"]
+SEORecommendationGA4OutcomeStatus = Literal[
+    "unavailable",
+    "not_configured",
+    "missing_scope",
+    "permission_denied",
+    "insufficient_data",
+    "pending_after_window",
+    "available",
+]
+SEORecommendationGA4OutcomeAnchorType = Literal[
+    "recommendation_completed",
+    "recommendation_accepted",
+    "migration_published",
+    "unknown",
+]
+SEORecommendationGA4OutcomeDirection = Literal[
+    "improved",
+    "declined",
+    "mixed",
+    "no_clear_change",
+    "insufficient_data",
+]
 SEORecommendationPriorityLevel = Literal["high", "medium", "low"]
 SEORecommendationEffortHint = Literal["quick_win", "moderate", "larger_change"]
 SEORecommendationCompetitorEvidenceTrustTier = Literal[
@@ -191,6 +213,8 @@ _RECOMMENDATION_EFFECTIVENESS_SUMMARY_MAX_CHARS = 220
 _RECOMMENDATION_GA4_PRIORITY_HINT_MAX_CHARS = 220
 _RECOMMENDATION_GA4_SUPPORTING_METRIC_SUMMARY_MAX_CHARS = 180
 _RECOMMENDATION_GA4_CONTEXT_SOURCE_MAX_CHARS = 80
+_RECOMMENDATION_GA4_OUTCOME_OPERATOR_HINT_MAX_CHARS = 220
+_RECOMMENDATION_GA4_OUTCOME_SOURCE_MAX_CHARS = 80
 _RECOMMENDATION_EVIDENCE_TRACE_MAX_CHARS = 80
 _RECOMMENDATION_EVIDENCE_TRACE_MAX_ITEMS = 5
 _RECOMMENDATION_TARGET_PAGE_HINT_MAX_CHARS = 120
@@ -3125,6 +3149,92 @@ class SEORecommendationMeasurementContextRead(BaseModel):
         return _compact_text(value, max_length=_RECOMMENDATION_MEASUREMENT_PATH_MAX_CHARS)
 
 
+class SEORecommendationGA4OutcomeWindowRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    start_date: date
+    end_date: date
+    sessions: int = 0
+    users: int = 0
+    engagement_rate: float | None = None
+    organic_sessions: int | None = None
+
+
+class SEORecommendationGA4OutcomeDeltaRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    sessions_delta: int = 0
+    sessions_delta_percent: float | None = None
+    engagement_rate_delta_points: float | None = None
+    organic_sessions_delta_percent: float | None = None
+
+
+class SEORecommendationGA4OutcomeSnapshotRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: SEORecommendationGA4OutcomeStatus = "unavailable"
+    source: str = Field(default="site_scoped_ga4", max_length=_RECOMMENDATION_GA4_OUTCOME_SOURCE_MAX_CHARS)
+    anchor_type: SEORecommendationGA4OutcomeAnchorType = "unknown"
+    anchor_timestamp: datetime | None = None
+    before_window: SEORecommendationGA4OutcomeWindowRead | None = None
+    after_window: SEORecommendationGA4OutcomeWindowRead | None = None
+    delta: SEORecommendationGA4OutcomeDeltaRead | None = None
+    outcome_direction: SEORecommendationGA4OutcomeDirection | None = None
+    operator_hint: str | None = Field(default=None, max_length=_RECOMMENDATION_GA4_OUTCOME_OPERATOR_HINT_MAX_CHARS)
+
+    @field_validator("status", mode="before")
+    @classmethod
+    def normalize_outcome_status(
+        cls,
+        value: Any,
+    ) -> SEORecommendationGA4OutcomeStatus:
+        normalized = str(value or "").strip().lower()
+        if normalized not in {
+            "unavailable",
+            "not_configured",
+            "missing_scope",
+            "permission_denied",
+            "insufficient_data",
+            "pending_after_window",
+            "available",
+        }:
+            return "unavailable"
+        return normalized  # type: ignore[return-value]
+
+    @field_validator("anchor_type", mode="before")
+    @classmethod
+    def normalize_anchor_type(
+        cls,
+        value: Any,
+    ) -> SEORecommendationGA4OutcomeAnchorType:
+        normalized = str(value or "").strip().lower()
+        if normalized not in {"recommendation_completed", "recommendation_accepted", "migration_published", "unknown"}:
+            return "unknown"
+        return normalized  # type: ignore[return-value]
+
+    @field_validator("outcome_direction", mode="before")
+    @classmethod
+    def normalize_outcome_direction(
+        cls,
+        value: Any,
+    ) -> SEORecommendationGA4OutcomeDirection | None:
+        normalized = str(value or "").strip().lower()
+        if normalized in {"improved", "declined", "mixed", "no_clear_change", "insufficient_data"}:
+            return normalized  # type: ignore[return-value]
+        return None
+
+    @field_validator("source", mode="before")
+    @classmethod
+    def normalize_outcome_source(cls, value: Any) -> str:
+        normalized = _compact_text(value, max_length=_RECOMMENDATION_GA4_OUTCOME_SOURCE_MAX_CHARS)
+        return normalized or "site_scoped_ga4"
+
+    @field_validator("operator_hint", mode="before")
+    @classmethod
+    def normalize_operator_hint(cls, value: Any) -> str | None:
+        return _compact_text(value, max_length=_RECOMMENDATION_GA4_OUTCOME_OPERATOR_HINT_MAX_CHARS)
+
+
 class SEORecommendationSearchConsoleWindowSummaryRead(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -3326,6 +3436,7 @@ class SEORecommendationRead(BaseModel):
         max_length=_RECOMMENDATION_GA4_SUPPORTING_METRIC_SUMMARY_MAX_CHARS,
     )
     ga4_context_source: str | None = Field(default=None, max_length=_RECOMMENDATION_GA4_CONTEXT_SOURCE_MAX_CHARS)
+    ga4_outcome_snapshot: SEORecommendationGA4OutcomeSnapshotRead | None = None
     execution_type: SEORecommendationExecutionType = "mixed"
     execution_scope: str | None = Field(
         default=None,
@@ -3573,6 +3684,20 @@ class SEORecommendationRead(BaseModel):
     @classmethod
     def normalize_ga4_priority_hint(cls, value: Any) -> str | None:
         return _compact_text(value, max_length=_RECOMMENDATION_GA4_PRIORITY_HINT_MAX_CHARS)
+
+    @field_validator("ga4_outcome_snapshot", mode="before")
+    @classmethod
+    def normalize_ga4_outcome_snapshot(cls, value: Any) -> SEORecommendationGA4OutcomeSnapshotRead | None:
+        if value is None:
+            return None
+        if isinstance(value, SEORecommendationGA4OutcomeSnapshotRead):
+            return value
+        if not isinstance(value, dict):
+            return None
+        try:
+            return SEORecommendationGA4OutcomeSnapshotRead.model_validate(value)
+        except Exception:  # noqa: BLE001
+            return None
 
     @field_validator("ga4_supporting_page_path", mode="before")
     @classmethod

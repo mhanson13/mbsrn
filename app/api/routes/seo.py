@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Response, status
 import logging
 import re
@@ -125,6 +125,9 @@ from app.schemas.seo_recommendation import (
     SEORecommendationSearchConsoleTopQueryRead,
     SEORecommendationSearchConsoleWindowSummaryRead,
     SEORecommendationEffectivenessContextRead,
+    SEORecommendationGA4OutcomeDeltaRead,
+    SEORecommendationGA4OutcomeSnapshotRead,
+    SEORecommendationGA4OutcomeWindowRead,
     SEORecommendationThemeGroupRead,
     SEOWorkspaceSectionFreshnessRead,
     SEORecommendationWorkspaceTrustSummaryRead,
@@ -352,6 +355,9 @@ _WORKSPACE_RECOMMENDATION_TARGET_ALLOWED_CONTEXTS = {
 }
 _GA4_PRIORITY_TRAFFIC_DECLINE_THRESHOLD_PERCENT = -5.0
 _GA4_PRIORITY_ENGAGEMENT_DECLINE_THRESHOLD_PERCENT = -5.0
+_GA4_OUTCOME_SESSIONS_DIRECTION_THRESHOLD_PERCENT = 5.0
+_GA4_OUTCOME_ORGANIC_DIRECTION_THRESHOLD_PERCENT = 5.0
+_GA4_OUTCOME_ENGAGEMENT_DIRECTION_THRESHOLD_POINTS = 0.02
 _GA4_PRIORITY_CONTENT_HINT_KEYWORDS = (
     "content",
     "copy",
@@ -1170,6 +1176,274 @@ def _build_recommendation_ga4_priority_context_by_id(
     return context_by_recommendation_id
 
 
+def _normalize_ga4_outcome_anchor_timestamp(value: datetime) -> datetime:
+    if value.tzinfo is None or value.tzinfo.utcoffset(value) is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _derive_recommendation_ga4_outcome_anchor(
+    recommendation: SEORecommendationRead,
+) -> tuple[str, datetime] | None:
+    if recommendation.resolved_at is not None:
+        return ("recommendation_completed", _normalize_ga4_outcome_anchor_timestamp(recommendation.resolved_at))
+    if recommendation.status == "accepted" and recommendation.updated_at is not None:
+        return ("recommendation_accepted", _normalize_ga4_outcome_anchor_timestamp(recommendation.updated_at))
+    return None
+
+
+def _derive_ga4_outcome_unavailable_status(
+    *,
+    site_analytics_summary: SEOAnalyticsSiteSummaryRead,
+    ga4_property_id: str | None,
+) -> str | None:
+    if not str(ga4_property_id or "").strip():
+        return "not_configured"
+
+    ga4_reason = str(site_analytics_summary.ga4_error_reason or "").strip().lower()
+    if ga4_reason == "not_configured":
+        return "not_configured"
+    if ga4_reason == "missing_oauth_scope":
+        return "missing_scope"
+    if ga4_reason in {"permission_denied", "access_denied"}:
+        return "permission_denied"
+    if ga4_reason == "no_data":
+        return "insufficient_data"
+    if ga4_reason in {"unknown_error", "invalid_property_format", "property_not_found"}:
+        return "unavailable"
+
+    ga4_health = site_analytics_summary.ga4_health
+    ga4_health_status = str(getattr(ga4_health, "ga4_health_status", "") or "").strip().lower()
+    if ga4_health_status == "not_configured":
+        return "not_configured"
+    if ga4_health_status == "missing_oauth_scope":
+        return "missing_scope"
+    if ga4_health_status == "permission_denied":
+        return "permission_denied"
+    if ga4_health_status == "no_data":
+        return "insufficient_data"
+    if ga4_health_status in {"invalid_property", "unavailable", "unknown"}:
+        return "unavailable"
+
+    summary_status = str(site_analytics_summary.status or "").strip().lower()
+    if summary_status == "not_configured":
+        return "not_configured"
+    if summary_status == "unavailable":
+        return "unavailable"
+
+    return None
+
+
+def _calculate_ga4_outcome_delta_percent(current: int, previous: int) -> float | None:
+    normalized_current = max(0, int(current))
+    normalized_previous = max(0, int(previous))
+    if normalized_previous <= 0:
+        if normalized_current <= 0:
+            return 0.0
+        return None
+    return round(((normalized_current - normalized_previous) / normalized_previous) * 100, 2)
+
+
+def _derive_ga4_outcome_direction(
+    *,
+    sessions_delta_percent: float | None,
+    engagement_rate_delta_points: float | None,
+    organic_sessions_delta_percent: float | None,
+) -> str:
+    directional_signals = 0
+    improving_signals = 0
+    declining_signals = 0
+
+    if sessions_delta_percent is not None:
+        directional_signals += 1
+        if sessions_delta_percent >= _GA4_OUTCOME_SESSIONS_DIRECTION_THRESHOLD_PERCENT:
+            improving_signals += 1
+        elif sessions_delta_percent <= -_GA4_OUTCOME_SESSIONS_DIRECTION_THRESHOLD_PERCENT:
+            declining_signals += 1
+
+    if organic_sessions_delta_percent is not None:
+        directional_signals += 1
+        if organic_sessions_delta_percent >= _GA4_OUTCOME_ORGANIC_DIRECTION_THRESHOLD_PERCENT:
+            improving_signals += 1
+        elif organic_sessions_delta_percent <= -_GA4_OUTCOME_ORGANIC_DIRECTION_THRESHOLD_PERCENT:
+            declining_signals += 1
+
+    if engagement_rate_delta_points is not None:
+        directional_signals += 1
+        if engagement_rate_delta_points >= _GA4_OUTCOME_ENGAGEMENT_DIRECTION_THRESHOLD_POINTS:
+            improving_signals += 1
+        elif engagement_rate_delta_points <= -_GA4_OUTCOME_ENGAGEMENT_DIRECTION_THRESHOLD_POINTS:
+            declining_signals += 1
+
+    if directional_signals <= 0:
+        return "insufficient_data"
+    if improving_signals > 0 and declining_signals > 0:
+        return "mixed"
+    if improving_signals > 0 and declining_signals <= 0:
+        return "improved"
+    if declining_signals > 0 and improving_signals <= 0:
+        return "declined"
+    return "no_clear_change"
+
+
+def _build_ga4_outcome_operator_hint(
+    *,
+    status: str,
+    outcome_direction: str | None = None,
+) -> str:
+    if status == "not_configured":
+        return "GA4 outcome snapshot unavailable: add a GA4 property ID for this site."
+    if status == "missing_scope":
+        return "GA4 outcome snapshot unavailable: reconnect Google with Analytics readonly access."
+    if status == "permission_denied":
+        return "GA4 outcome snapshot unavailable: verify GA4 property Viewer access for the connected identity."
+    if status == "pending_after_window":
+        return "Not enough time has passed to compare after-action traffic yet."
+    if status == "insufficient_data":
+        return "Not enough GA4 data is available to compare before and after this action."
+    if status == "unavailable":
+        return "GA4 outcome snapshot is temporarily unavailable for this site."
+    if status != "available":
+        return "GA4 outcome snapshot is unavailable for this recommendation."
+
+    if outcome_direction == "improved":
+        return (
+            "Observed after completion: traffic is higher in the post-action window. "
+            "Keep monitoring future refresh cycles."
+        )
+    if outcome_direction == "declined":
+        return (
+            "Observed after completion: traffic is lower in the post-action window. "
+            "Review related changes and monitor another refresh cycle."
+        )
+    if outcome_direction == "mixed":
+        return "Observed after completion: metrics moved in different directions. Continue monitoring."
+    if outcome_direction == "no_clear_change":
+        return "Observed after completion: no clear movement is visible yet."
+    return "Not enough GA4 data is available to compare before and after this action."
+
+
+def _build_recommendation_ga4_outcome_snapshot_by_id(
+    *,
+    recommendations: list[SEORecommendationRead],
+    site_analytics_summary: SEOAnalyticsSiteSummaryRead,
+    seo_analytics_service: SEOAnalyticsService,
+    site_domain: str | None,
+    ga4_property_id: str | None,
+) -> dict[str, SEORecommendationGA4OutcomeSnapshotRead]:
+    if not recommendations:
+        return {}
+
+    snapshots_by_recommendation_id: dict[str, SEORecommendationGA4OutcomeSnapshotRead] = {}
+    unavailable_status = _derive_ga4_outcome_unavailable_status(
+        site_analytics_summary=site_analytics_summary,
+        ga4_property_id=ga4_property_id,
+    )
+    min_after_days = max(1, min(int(seo_analytics_service.settings.ga4_outcome_min_after_days), 30))
+    now_utc = datetime.now(timezone.utc)
+
+    for recommendation in recommendations:
+        anchor = _derive_recommendation_ga4_outcome_anchor(recommendation)
+        if anchor is None:
+            continue
+        anchor_type, anchor_timestamp = anchor
+
+        if unavailable_status is not None:
+            snapshots_by_recommendation_id[recommendation.id] = SEORecommendationGA4OutcomeSnapshotRead(
+                status=unavailable_status,
+                source="site_scoped_ga4",
+                anchor_type=anchor_type,
+                anchor_timestamp=anchor_timestamp,
+                outcome_direction="insufficient_data" if unavailable_status == "insufficient_data" else None,
+                operator_hint=_build_ga4_outcome_operator_hint(status=unavailable_status),
+            )
+            continue
+
+        if now_utc < (anchor_timestamp + timedelta(days=min_after_days)):
+            snapshots_by_recommendation_id[recommendation.id] = SEORecommendationGA4OutcomeSnapshotRead(
+                status="pending_after_window",
+                source="site_scoped_ga4",
+                anchor_type=anchor_type,
+                anchor_timestamp=anchor_timestamp,
+                operator_hint=_build_ga4_outcome_operator_hint(status="pending_after_window"),
+            )
+            continue
+
+        candidate_paths = _collect_recommendation_path_candidates(recommendation)
+        comparison = seo_analytics_service.build_recommendation_outcome_comparison(
+            site_domain=site_domain,
+            anchor_timestamp=anchor_timestamp,
+            page_path=candidate_paths[0] if candidate_paths else None,
+            ga4_property_id=ga4_property_id,
+        )
+        if comparison is None:
+            snapshots_by_recommendation_id[recommendation.id] = SEORecommendationGA4OutcomeSnapshotRead(
+                status="insufficient_data",
+                source="site_scoped_ga4",
+                anchor_type=anchor_type,
+                anchor_timestamp=anchor_timestamp,
+                outcome_direction="insufficient_data",
+                operator_hint=_build_ga4_outcome_operator_hint(status="insufficient_data"),
+            )
+            continue
+
+        before_window = SEORecommendationGA4OutcomeWindowRead(
+            start_date=comparison.before_window.start_date,
+            end_date=comparison.before_window.end_date,
+            sessions=max(0, int(comparison.before_window.sessions)),
+            users=max(0, int(comparison.before_window.users)),
+            engagement_rate=comparison.before_window.engagement_rate,
+            organic_sessions=comparison.before_window.organic_search_sessions,
+        )
+        after_window = SEORecommendationGA4OutcomeWindowRead(
+            start_date=comparison.after_window.start_date,
+            end_date=comparison.after_window.end_date,
+            sessions=max(0, int(comparison.after_window.sessions)),
+            users=max(0, int(comparison.after_window.users)),
+            engagement_rate=comparison.after_window.engagement_rate,
+            organic_sessions=comparison.after_window.organic_search_sessions,
+        )
+        sessions_delta = int(after_window.sessions) - int(before_window.sessions)
+        sessions_delta_percent = _calculate_ga4_outcome_delta_percent(
+            current=after_window.sessions,
+            previous=before_window.sessions,
+        )
+        engagement_rate_delta_points = None
+        if before_window.engagement_rate is not None and after_window.engagement_rate is not None:
+            engagement_rate_delta_points = round(after_window.engagement_rate - before_window.engagement_rate, 4)
+        organic_sessions_delta_percent = None
+        if before_window.organic_sessions is not None and after_window.organic_sessions is not None:
+            organic_sessions_delta_percent = _calculate_ga4_outcome_delta_percent(
+                current=after_window.organic_sessions,
+                previous=before_window.organic_sessions,
+            )
+        outcome_direction = _derive_ga4_outcome_direction(
+            sessions_delta_percent=sessions_delta_percent,
+            engagement_rate_delta_points=engagement_rate_delta_points,
+            organic_sessions_delta_percent=organic_sessions_delta_percent,
+        )
+        snapshots_by_recommendation_id[recommendation.id] = SEORecommendationGA4OutcomeSnapshotRead(
+            status="available",
+            source="site_scoped_ga4",
+            anchor_type=anchor_type,
+            anchor_timestamp=anchor_timestamp,
+            before_window=before_window,
+            after_window=after_window,
+            delta=SEORecommendationGA4OutcomeDeltaRead(
+                sessions_delta=sessions_delta,
+                sessions_delta_percent=sessions_delta_percent,
+                engagement_rate_delta_points=engagement_rate_delta_points,
+                organic_sessions_delta_percent=organic_sessions_delta_percent,
+            ),
+            outcome_direction=outcome_direction,
+            operator_hint=_build_ga4_outcome_operator_hint(
+                status="available",
+                outcome_direction=outcome_direction,
+            ),
+        )
+    return snapshots_by_recommendation_id
+
+
 def _build_recommendation_search_console_context_by_id(
     *,
     recommendations: list[SEORecommendationRead],
@@ -1346,6 +1620,13 @@ def _attach_measurement_context_to_recommendations(
         recommendations=recommendations,
         site_analytics_summary=site_analytics_summary,
     )
+    ga4_outcome_snapshot_by_recommendation_id = _build_recommendation_ga4_outcome_snapshot_by_id(
+        recommendations=recommendations,
+        site_analytics_summary=site_analytics_summary,
+        seo_analytics_service=seo_analytics_service,
+        site_domain=site_domain,
+        ga4_property_id=ga4_property_id,
+    )
     return [
         recommendation.model_copy(
             update={
@@ -1358,6 +1639,7 @@ def _attach_measurement_context_to_recommendations(
                     search_context=search_console_context_by_recommendation_id.get(recommendation.id),
                 ),
                 **ga4_priority_context_by_recommendation_id.get(recommendation.id, {}),
+                "ga4_outcome_snapshot": ga4_outcome_snapshot_by_recommendation_id.get(recommendation.id),
             }
         )
         for recommendation in recommendations

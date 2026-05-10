@@ -876,6 +876,36 @@ Behavior boundaries:
 - no conversion/event/source-medium dashboard expansion in this phase
 - recommendation pages do not render noisy per-item acquisition unavailable messaging in this phase
 
+### GA4 Outcome Snapshot (Phase 5A)
+
+Phase 5A adds a compact, additive `ga4_outcome_snapshot` on recommendation detail payloads for completed/accepted actions when an anchor timestamp exists.
+
+What it provides:
+- bounded before/after GA4 window summaries
+- deterministic delta fields (sessions and engagement where available)
+- bounded status values:
+  - `available`
+  - `pending_after_window`
+  - `insufficient_data`
+  - `not_configured`
+  - `missing_scope`
+  - `permission_denied`
+  - `unavailable`
+- deterministic operator-safe hints with explicit non-causal language
+
+Window rules:
+- before window: 14 days before anchor
+- after window: up to 14 days after anchor (bounded to available data)
+- if fewer than 7 days have elapsed since anchor:
+  - status is `pending_after_window`
+  - hint explains that more time is needed
+
+Boundary:
+- observational context only; no attribution claims
+- no recommendation scoring/priority/order changes
+- GA4 remains optional and non-blocking
+- site-scoped GA4 property enforcement remains required (no global/default fallback)
+
 ### GA4 Last Data Seen + Freshness
 
 Workspace GA4 cards now include explicit freshness indicators:

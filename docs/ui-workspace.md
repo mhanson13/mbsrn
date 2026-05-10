@@ -88,6 +88,11 @@ Behavior:
 - Null/partial GA4 health or insight payloads degrade to bounded fallback labels/messages (`Unknown`, `Not available`, `GA4 unavailable`) instead of breaking workspace rendering.
 - Recommendation detail surfaces now show explicit GA4-context omission/unavailable messaging instead of silent absence.
 - Recommendation detail surfaces also show compact additive GA4 priority hints when available (for example top landing-page match, traffic decline, engagement decline), without changing recommendation scoring/order.
+- Recommendation detail surfaces now also support compact additive GA4 outcome snapshots for accepted/completed actions:
+  - observational wording only (`Observed after action`)
+  - bounded before/after windows and directional status (`improved`, `declined`, `mixed`, `no_clear_change`, `insufficient_data`)
+  - `pending_after_window` when not enough post-action time has elapsed
+  - no attribution/causation claims and no scoring/order changes
 - Workspace Snapshot now includes compact GA4 insight cards:
   - `Top landing pages` (bounded to top 5 shown)
   - `Traffic trend` (sessions/active users directional summary)

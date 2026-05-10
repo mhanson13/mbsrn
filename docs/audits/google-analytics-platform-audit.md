@@ -95,6 +95,20 @@ Phase 4 compact acquisition/source context is now implemented as an additive, si
 - recommendation scoring and ordering remain unchanged in this phase
 - GBP diagnostics/remediation remain a separate track and are currently blocked by external Google allowlist/quota approval
 
+## 1.7) Phase 5A Status (2026-05-10)
+
+Phase 5A introduces lightweight, additive GA4 outcome snapshots for recommendation follow-up:
+- recommendation payloads can include additive `ga4_outcome_snapshot` when an action anchor exists (for example accepted/completed recommendation timestamps)
+- snapshots use deterministic before/after windows (default 14 days before and 14 days after the anchor)
+- status remains bounded and non-blocking (`available`, `pending_after_window`, `insufficient_data`, `not_configured`, `missing_scope`, `permission_denied`, `unavailable`)
+- operator wording is explicitly observational:
+  - "Observed after completion"
+  - "Traffic changed after completion"
+  - "No clear movement yet"
+- snapshots are not attribution and do not claim causation
+- recommendation scoring, priority, severity, and ordering remain unchanged
+- site-scoped GA4 property enforcement remains mandatory with no global/default fallback
+
 ## 2) Current Implementation Inventory
 
 | File | Purpose | GA4 Role | Area | Risk | Notes |

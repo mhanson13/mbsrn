@@ -29,6 +29,7 @@ class GA4SitePeriodMetrics:
     sessions: int
     pageviews: int
     organic_search_sessions: int
+    engagement_rate: float | None = None
 
 
 @dataclass(frozen=True)
@@ -275,6 +276,7 @@ class MockGA4AnalyticsProvider:
             sessions=sessions,
             pageviews=pageviews,
             organic_search_sessions=organic_sessions,
+            engagement_rate=round(max(0.12, min(0.9, 0.52 + ((seed % 6) * 0.01))), 4),
         )
 
     def fetch_operator_insights(
@@ -586,7 +588,12 @@ class GoogleAnalyticsDataAPIClient:
         period_filter = self._combine_dimension_filters(site_filter, page_filter)
         base_payload: dict[str, Any] = {
             "dateRanges": [{"startDate": start_date, "endDate": end_date}],
-            "metrics": [{"name": "totalUsers"}, {"name": "sessions"}, {"name": "screenPageViews"}],
+            "metrics": [
+                {"name": "totalUsers"},
+                {"name": "sessions"},
+                {"name": "screenPageViews"},
+                {"name": "engagementRate"},
+            ],
             "dimensionFilter": period_filter,
         }
         metrics_response = self._request_report(
@@ -597,6 +604,7 @@ class GoogleAnalyticsDataAPIClient:
         users = _metric_value(row, index=0)
         sessions = _metric_value(row, index=1)
         pageviews = _metric_value(row, index=2)
+        engagement_rate = _metric_float_value(row, index=3)
 
         organic_filter_expressions: list[dict[str, Any]] = [site_filter]
         if page_filter is not None:
@@ -630,6 +638,7 @@ class GoogleAnalyticsDataAPIClient:
             sessions=sessions,
             pageviews=pageviews,
             organic_search_sessions=organic_sessions,
+            engagement_rate=engagement_rate,
         )
 
     def _fetch_top_pages(

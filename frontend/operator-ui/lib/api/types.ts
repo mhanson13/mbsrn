@@ -2226,6 +2226,41 @@ export interface RecommendationEffectivenessContext {
   summary?: string | null;
 }
 
+export interface RecommendationGA4OutcomeWindow {
+  start_date: string;
+  end_date: string;
+  sessions: number;
+  users: number;
+  engagement_rate?: number | null;
+  organic_sessions?: number | null;
+}
+
+export interface RecommendationGA4OutcomeDelta {
+  sessions_delta: number;
+  sessions_delta_percent: number | null;
+  engagement_rate_delta_points?: number | null;
+  organic_sessions_delta_percent?: number | null;
+}
+
+export interface RecommendationGA4OutcomeSnapshot {
+  status:
+    | "unavailable"
+    | "not_configured"
+    | "missing_scope"
+    | "permission_denied"
+    | "insufficient_data"
+    | "pending_after_window"
+    | "available";
+  source?: string;
+  anchor_type?: "recommendation_completed" | "recommendation_accepted" | "migration_published" | "unknown";
+  anchor_timestamp?: string | null;
+  before_window?: RecommendationGA4OutcomeWindow | null;
+  after_window?: RecommendationGA4OutcomeWindow | null;
+  delta?: RecommendationGA4OutcomeDelta | null;
+  outcome_direction?: "improved" | "declined" | "mixed" | "no_clear_change" | "insufficient_data" | null;
+  operator_hint?: string | null;
+}
+
 export interface ActionLineageDraft {
   id: string;
   source_action_id: string;
@@ -2352,6 +2387,7 @@ export interface Recommendation {
   ga4_supporting_page_path?: string | null;
   ga4_supporting_metric_summary?: string | null;
   ga4_context_source?: string | null;
+  ga4_outcome_snapshot?: RecommendationGA4OutcomeSnapshot | null;
   action_lineage?: ActionLineageResponse | null;
   decision_reason: string | null;
   created_at: string;

@@ -77,6 +77,9 @@ class SEOAnalyticsServiceSettings:
     ga4_acquisition_top_channels_limit: int = 5
     ga4_acquisition_top_sources_limit: int = 5
     ga4_acquisition_top_referrers_limit: int = 5
+    ga4_outcome_before_window_days: int = 14
+    ga4_outcome_after_window_days: int = 14
+    ga4_outcome_min_after_days: int = 7
     search_console_period_days: int = 7
     search_console_top_pages_limit: int = 5
     search_console_top_queries_limit: int = 3
@@ -89,6 +92,8 @@ class SEOAnalyticsWindowSummary:
     users: int
     sessions: int
     pageviews: int
+    organic_search_sessions: int | None = None
+    engagement_rate: float | None = None
 
 
 @dataclass(frozen=True)
@@ -1020,6 +1025,114 @@ class SEOAnalyticsService:
             )
         return None
 
+    def build_recommendation_outcome_comparison(
+        self,
+        *,
+        site_domain: str | None,
+        anchor_timestamp: datetime,
+        page_path: str | None,
+        ga4_property_id: str | None,
+        before_window_days: int | None = None,
+        after_window_days: int | None = None,
+    ) -> SEOAnalyticsBeforeAfterComparison | None:
+        normalized_domain = _normalize_site_domain(site_domain)
+        normalized_property_id = _clean_identifier(ga4_property_id)
+        if (
+            not normalized_domain
+            or not normalized_property_id
+            or not _is_valid_ga4_property_id(normalized_property_id)
+            or not self.provider.is_configured()
+        ):
+            return None
+
+        bounded_before_days = max(
+            1,
+            min(
+                int(
+                    before_window_days
+                    if before_window_days is not None
+                    else self.settings.ga4_outcome_before_window_days
+                ),
+                30,
+            ),
+        )
+        bounded_after_days = max(
+            1,
+            min(
+                int(
+                    after_window_days
+                    if after_window_days is not None
+                    else self.settings.ga4_outcome_after_window_days
+                ),
+                30,
+            ),
+        )
+        anchor_date = anchor_timestamp.date()
+        today = date.today()
+
+        before_end = anchor_date - timedelta(days=1)
+        before_start = before_end - timedelta(days=bounded_before_days - 1)
+        if before_end < before_start:
+            return None
+
+        desired_after_end = anchor_date + timedelta(days=bounded_after_days - 1)
+        after_start = anchor_date
+        after_end = desired_after_end if desired_after_end <= today else today
+        if after_end < after_start:
+            return None
+
+        normalized_page_path = _normalize_page_path(page_path) if page_path else None
+        page_before = (
+            self._fetch_window_summary(
+                site_domain=normalized_domain,
+                start_date=before_start,
+                end_date=before_end,
+                page_path=normalized_page_path,
+                ga4_property_id=normalized_property_id,
+            )
+            if normalized_page_path
+            else None
+        )
+        page_after = (
+            self._fetch_window_summary(
+                site_domain=normalized_domain,
+                start_date=after_start,
+                end_date=after_end,
+                page_path=normalized_page_path,
+                ga4_property_id=normalized_property_id,
+            )
+            if normalized_page_path
+            else None
+        )
+        if page_before is not None and page_after is not None:
+            return SEOAnalyticsBeforeAfterComparison(
+                before_window=page_before,
+                after_window=page_after,
+                comparison_scope="page",
+            )
+
+        site_before = self._fetch_window_summary(
+            site_domain=normalized_domain,
+            start_date=before_start,
+            end_date=before_end,
+            page_path=None,
+            ga4_property_id=normalized_property_id,
+        )
+        site_after = self._fetch_window_summary(
+            site_domain=normalized_domain,
+            start_date=after_start,
+            end_date=after_end,
+            page_path=None,
+            ga4_property_id=normalized_property_id,
+        )
+        if site_before is not None and site_after is not None:
+            return SEOAnalyticsBeforeAfterComparison(
+                before_window=site_before,
+                after_window=site_after,
+                comparison_scope="site",
+            )
+        return None
+
     def match_recommendation_to_top_page(
         self,
         *,
@@ -1345,6 +1458,8 @@ def _to_window_summary(
         users=max(0, int(metrics.users)),
         sessions=max(0, int(metrics.sessions)),
         pageviews=max(0, int(metrics.pageviews)),
+        organic_search_sessions=max(0, int(metrics.organic_search_sessions)),
+        engagement_rate=_sanitize_ratio(metrics.engagement_rate),
     )
 
 

@@ -897,6 +897,107 @@ describe("recommendations queue optimistic workflows", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("renders compact GA4 outcome snapshot details for completed recommendation actions", async () => {
+    const recommendation = {
+      ...createRecommendation("rec-ga4-outcome-1", "accepted", "high", "Observe post-action traffic changes"),
+      ga4_outcome_snapshot: {
+        status: "available",
+        source: "site_scoped_ga4",
+        anchor_type: "recommendation_accepted",
+        anchor_timestamp: "2026-04-01T00:00:00Z",
+        before_window: {
+          start_date: "2026-03-18",
+          end_date: "2026-03-31",
+          sessions: 130,
+          users: 100,
+          engagement_rate: 0.47,
+          organic_sessions: 78,
+        },
+        after_window: {
+          start_date: "2026-04-01",
+          end_date: "2026-04-14",
+          sessions: 160,
+          users: 120,
+          engagement_rate: 0.52,
+          organic_sessions: 96,
+        },
+        delta: {
+          sessions_delta: 30,
+          sessions_delta_percent: 23.1,
+          engagement_rate_delta_points: 0.05,
+          organic_sessions_delta_percent: 23.1,
+        },
+        outcome_direction: "improved",
+        operator_hint: "Observed after completion: traffic is higher in the post-action window. Keep monitoring future refresh cycles.",
+      },
+    } satisfies Recommendation;
+    mockFetchRecommendations.mockResolvedValueOnce(
+      createListResponse([recommendation], {
+        total: 1,
+        open: 0,
+        accepted: 1,
+        dismissed: 0,
+        high_priority: 1,
+      }),
+    );
+
+    const user = userEvent.setup();
+    render(<RecommendationsPage />);
+
+    const row = await screen.findByTestId("recommendation-decisiveness-rec-ga4-outcome-1");
+    await user.click(within(row).getByRole("button", { name: "View details" }));
+
+    const outcomeLine = screen.getByTestId("recommendation-expanded-ga4-outcome-snapshot-rec-ga4-outcome-1");
+    expect(outcomeLine).toHaveTextContent("GA4 outcome snapshot (observed after action):");
+    expect(outcomeLine).toHaveTextContent("Sessions 130 -> 160 (+23.1%");
+    expect(outcomeLine).toHaveTextContent("Engagement 47% -> 52%");
+    expect(outcomeLine).toHaveTextContent("Observed after completion");
+    expect(outcomeLine).not.toHaveTextContent("caused");
+  });
+
+  it("renders safe GA4 outcome snapshot pending state and ignores malformed payloads", async () => {
+    const pendingRecommendation = {
+      ...createRecommendation("rec-ga4-outcome-2", "accepted", "medium", "Pending GA4 outcome window"),
+      ga4_outcome_snapshot: {
+        status: "pending_after_window",
+        source: "site_scoped_ga4",
+        anchor_type: "recommendation_accepted",
+        operator_hint: "Not enough time has passed to compare after-action traffic yet.",
+      },
+    } satisfies Recommendation;
+    const malformedRecommendation = {
+      ...createRecommendation("rec-ga4-outcome-3", "accepted", "medium", "Malformed GA4 outcome payload"),
+      ga4_outcome_snapshot: {
+        status: "unexpected_status",
+        before_window: "invalid",
+      } as unknown as Recommendation["ga4_outcome_snapshot"],
+    } satisfies Recommendation;
+    mockFetchRecommendations.mockResolvedValueOnce(
+      createListResponse([pendingRecommendation, malformedRecommendation], {
+        total: 2,
+        open: 0,
+        accepted: 2,
+        dismissed: 0,
+        high_priority: 0,
+      }),
+    );
+
+    const user = userEvent.setup();
+    render(<RecommendationsPage />);
+
+    const pendingRow = await screen.findByTestId("recommendation-decisiveness-rec-ga4-outcome-2");
+    await user.click(within(pendingRow).getByRole("button", { name: "View details" }));
+    expect(screen.getByTestId("recommendation-expanded-ga4-outcome-snapshot-rec-ga4-outcome-2")).toHaveTextContent(
+      "Not enough time has passed to compare after-action traffic yet.",
+    );
+
+    const malformedRow = screen.getByTestId("recommendation-decisiveness-rec-ga4-outcome-3");
+    await user.click(within(malformedRow).getByRole("button", { name: "View details" }));
+    expect(
+      screen.queryByTestId("recommendation-expanded-ga4-outcome-snapshot-rec-ga4-outcome-3"),
+    ).not.toBeInTheDocument();
+  });
+
   it("renders safely when recommendation GA4 measurement context is null or partial", async () => {
     const malformedRecommendation = {
       ...createRecommendation("rec-ga4-null-1", "open", "medium", "Malformed GA4 context"),

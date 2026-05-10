@@ -167,12 +167,14 @@ class _DeterministicRecommendationAnalyticsProvider:
                     sessions=160,
                     pageviews=220,
                     organic_search_sessions=96,
+                    engagement_rate=0.52,
                 )
             return GA4SitePeriodMetrics(
                 users=100,
                 sessions=130,
                 pageviews=190,
                 organic_search_sessions=78,
+                engagement_rate=0.47,
             )
         if is_after_window:
             return GA4SitePeriodMetrics(
@@ -180,12 +182,14 @@ class _DeterministicRecommendationAnalyticsProvider:
                 sessions=440,
                 pageviews=710,
                 organic_search_sessions=260,
+                engagement_rate=0.56,
             )
         return GA4SitePeriodMetrics(
             users=280,
             sessions=390,
             pageviews=620,
             organic_search_sessions=220,
+            engagement_rate=0.5,
         )
 
     def _record_property_id(self, ga4_property_id: str | None, *, target: str) -> None:
@@ -1274,6 +1278,199 @@ def test_recommendation_ga4_priority_context_is_additive_and_preserves_order(db_
 
     assert [item["id"] for item in with_ga4_items] == [item["id"] for item in without_ga4_items]
     assert [item["priority_score"] for item in with_ga4_items] == [item["priority_score"] for item in without_ga4_items]
+
+
+def test_recommendation_ga4_outcome_snapshot_pending_after_window(db_session, seeded_business) -> None:
+    analytics_provider = _DeterministicRecommendationAnalyticsProvider(expected_property_id="2000000002")
+    analytics_service = SEOAnalyticsService(
+        provider=analytics_provider,
+        search_console_provider=_DeterministicRecommendationSearchConsoleProvider(),
+    )
+    client = _make_client(db_session, business_id=seeded_business.id, analytics_service=analytics_service)
+    site_id = _create_site(
+        client,
+        seeded_business.id,
+        domain="ga4-outcome-pending.example",
+        ga4_property_id="2000000002",
+        search_console_property_url="sc-domain:ga4-outcome-pending.example",
+        search_console_enabled=True,
+    )
+    audit_run_id = _seed_completed_audit_run(db_session, business_id=seeded_business.id, site_id=site_id)
+    run_response = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs",
+        json={"audit_run_id": audit_run_id},
+    )
+    assert run_response.status_code == 201
+    run_id = run_response.json()["id"]
+
+    anchor_timestamp = utc_now() - timedelta(days=3)
+    db_session.add(
+        SEORecommendation(
+            id=str(uuid4()),
+            business_id=seeded_business.id,
+            site_id=site_id,
+            recommendation_run_id=run_id,
+            audit_run_id=audit_run_id,
+            comparison_run_id=None,
+            rule_key="ga4_outcome_pending",
+            category="SEO",
+            severity="WARNING",
+            title="Pending outcome snapshot recommendation",
+            rationale="Requires post-action observation window before GA4 comparisons are meaningful.",
+            priority_score=77,
+            priority_band="high",
+            effort_bucket="MEDIUM",
+            status="accepted",
+            created_at=anchor_timestamp - timedelta(days=1),
+            updated_at=anchor_timestamp,
+        )
+    )
+    db_session.commit()
+
+    list_recommendations = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs/{run_id}/recommendations"
+    )
+    assert list_recommendations.status_code == 200
+    payload = list_recommendations.json()
+    by_rule_key = {item["rule_key"]: item for item in payload["items"]}
+    snapshot = (by_rule_key["ga4_outcome_pending"].get("ga4_outcome_snapshot") or {})
+    assert snapshot.get("status") == "pending_after_window"
+    assert snapshot.get("anchor_type") == "recommendation_accepted"
+    assert snapshot.get("before_window") is None
+    assert snapshot.get("after_window") is None
+    assert snapshot.get("delta") is None
+    assert "not enough time has passed" in str(snapshot.get("operator_hint", "")).lower()
+    assert "caused" not in str(snapshot.get("operator_hint", "")).lower()
+
+
+def test_recommendation_ga4_outcome_snapshot_available_for_completed_action(db_session, seeded_business) -> None:
+    analytics_provider = _DeterministicRecommendationAnalyticsProvider(expected_property_id="2000000002")
+    analytics_service = SEOAnalyticsService(
+        provider=analytics_provider,
+        search_console_provider=_DeterministicRecommendationSearchConsoleProvider(),
+    )
+    client = _make_client(db_session, business_id=seeded_business.id, analytics_service=analytics_service)
+    site_id = _create_site(
+        client,
+        seeded_business.id,
+        domain="ga4-outcome-available.example",
+        ga4_property_id="2000000002",
+        search_console_property_url="sc-domain:ga4-outcome-available.example",
+        search_console_enabled=True,
+    )
+    audit_run_id = _seed_completed_audit_run(db_session, business_id=seeded_business.id, site_id=site_id)
+    run_response = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs",
+        json={"audit_run_id": audit_run_id},
+    )
+    assert run_response.status_code == 201
+    run_id = run_response.json()["id"]
+
+    anchor_timestamp = utc_now() - timedelta(days=8)
+    db_session.add(
+        SEORecommendation(
+            id=str(uuid4()),
+            business_id=seeded_business.id,
+            site_id=site_id,
+            recommendation_run_id=run_id,
+            audit_run_id=audit_run_id,
+            comparison_run_id=None,
+            rule_key="ga4_outcome_available",
+            category="CONTENT",
+            severity="WARNING",
+            title="Available outcome snapshot recommendation",
+            rationale="Has enough post-action days to compare pre/post traffic context.",
+            priority_score=81,
+            priority_band="high",
+            effort_bucket="MEDIUM",
+            status="accepted",
+            created_at=anchor_timestamp - timedelta(days=2),
+            updated_at=anchor_timestamp,
+        )
+    )
+    db_session.commit()
+
+    list_recommendations = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs/{run_id}/recommendations"
+    )
+    assert list_recommendations.status_code == 200
+    payload = list_recommendations.json()
+    by_rule_key = {item["rule_key"]: item for item in payload["items"]}
+    snapshot = (by_rule_key["ga4_outcome_available"].get("ga4_outcome_snapshot") or {})
+    assert snapshot.get("status") == "available"
+    assert snapshot.get("source") == "site_scoped_ga4"
+    assert snapshot.get("anchor_type") == "recommendation_accepted"
+    assert snapshot.get("before_window") is not None
+    assert snapshot.get("after_window") is not None
+    assert snapshot.get("delta") is not None
+    assert isinstance((snapshot.get("delta") or {}).get("sessions_delta"), int)
+    assert snapshot.get("outcome_direction") in {"improved", "declined", "mixed", "no_clear_change", "insufficient_data"}
+    assert "observed after completion" in str(snapshot.get("operator_hint", "")).lower()
+    assert "caused" not in str(snapshot.get("operator_hint", "")).lower()
+
+
+def test_recommendation_ga4_outcome_snapshot_not_configured_when_site_property_missing(
+    db_session,
+    seeded_business,
+) -> None:
+    analytics_provider = _DeterministicRecommendationAnalyticsProvider()
+    analytics_service = SEOAnalyticsService(
+        provider=analytics_provider,
+        search_console_provider=_DeterministicRecommendationSearchConsoleProvider(),
+    )
+    client = _make_client(db_session, business_id=seeded_business.id, analytics_service=analytics_service)
+    site_id = _create_site(
+        client,
+        seeded_business.id,
+        domain="ga4-outcome-not-configured.example",
+        ga4_property_id=None,
+        search_console_property_url="sc-domain:ga4-outcome-not-configured.example",
+        search_console_enabled=True,
+    )
+    audit_run_id = _seed_completed_audit_run(db_session, business_id=seeded_business.id, site_id=site_id)
+    run_response = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs",
+        json={"audit_run_id": audit_run_id},
+    )
+    assert run_response.status_code == 201
+    run_id = run_response.json()["id"]
+
+    anchor_timestamp = utc_now() - timedelta(days=10)
+    db_session.add(
+        SEORecommendation(
+            id=str(uuid4()),
+            business_id=seeded_business.id,
+            site_id=site_id,
+            recommendation_run_id=run_id,
+            audit_run_id=audit_run_id,
+            comparison_run_id=None,
+            rule_key="ga4_outcome_not_configured",
+            category="SEO",
+            severity="WARNING",
+            title="Outcome snapshot not configured recommendation",
+            rationale="No site GA4 property is configured.",
+            priority_score=71,
+            priority_band="medium",
+            effort_bucket="MEDIUM",
+            status="accepted",
+            created_at=anchor_timestamp - timedelta(days=3),
+            updated_at=anchor_timestamp,
+        )
+    )
+    db_session.commit()
+
+    list_recommendations = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs/{run_id}/recommendations"
+    )
+    assert list_recommendations.status_code == 200
+    payload = list_recommendations.json()
+    by_rule_key = {item["rule_key"]: item for item in payload["items"]}
+    snapshot = (by_rule_key["ga4_outcome_not_configured"].get("ga4_outcome_snapshot") or {})
+    assert snapshot.get("status") == "not_configured"
+    assert snapshot.get("source") == "site_scoped_ga4"
+    assert "add a ga4 property id" in str(snapshot.get("operator_hint", "")).lower()
+    assert analytics_provider.fetch_site_metrics_property_ids == []
+    assert analytics_provider.fetch_window_metrics_property_ids == []
 
 
 def test_recommendation_run_requires_lineage_and_completed_inputs(db_session, seeded_business) -> None:

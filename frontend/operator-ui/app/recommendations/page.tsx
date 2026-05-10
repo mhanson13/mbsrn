@@ -149,6 +149,31 @@ type RecommendationGa4PriorityContextView = {
   supportingMetricSummary: string | null;
 };
 
+type RecommendationGa4OutcomeSnapshotView = {
+  status:
+    | "unavailable"
+    | "not_configured"
+    | "missing_scope"
+    | "permission_denied"
+    | "insufficient_data"
+    | "pending_after_window"
+    | "available";
+  outcomeDirection: "improved" | "declined" | "mixed" | "no_clear_change" | "insufficient_data" | null;
+  beforeWindow: {
+    sessions: number;
+    engagementRate: number | null;
+  } | null;
+  afterWindow: {
+    sessions: number;
+    engagementRate: number | null;
+  } | null;
+  delta: {
+    sessionsDeltaPercent: number | null;
+    engagementRateDeltaPoints: number | null;
+  } | null;
+  operatorHint: string | null;
+};
+
 type RecommendationSearchConsoleContextView = {
   searchConsoleStatus: "available" | "no_match" | "unavailable" | "not_configured";
   matchedPagePath: string | null;
@@ -1064,6 +1089,145 @@ function buildRecommendationGa4PriorityLine(
     return ga4PriorityContext.hint;
   }
   return `${ga4PriorityContext.hint} ${detailParts.join(" · ")}`;
+}
+
+function normalizeRecommendationGa4OutcomeSnapshot(
+  item: Recommendation,
+): RecommendationGa4OutcomeSnapshotView | null {
+  const raw = item.ga4_outcome_snapshot;
+  if (!raw || typeof raw !== "object") {
+    return null;
+  }
+  const status = normalizeLowerCaseString(raw.status);
+  if (
+    status !== "unavailable"
+    && status !== "not_configured"
+    && status !== "missing_scope"
+    && status !== "permission_denied"
+    && status !== "insufficient_data"
+    && status !== "pending_after_window"
+    && status !== "available"
+  ) {
+    return null;
+  }
+
+  const normalizeWindow = (value: unknown) => {
+    if (!value || typeof value !== "object") {
+      return null;
+    }
+    return {
+      sessions: Math.max(0, Number((value as { sessions?: number }).sessions) || 0),
+      engagementRate: typeof (value as { engagement_rate?: number | null }).engagement_rate === "number"
+        && Number.isFinite((value as { engagement_rate?: number | null }).engagement_rate)
+        ? Number((value as { engagement_rate?: number }).engagement_rate)
+        : null,
+    };
+  };
+
+  const normalizeDelta = (value: unknown) => {
+    if (!value || typeof value !== "object") {
+      return null;
+    }
+    const sessionsDeltaPercent = (value as { sessions_delta_percent?: number | null }).sessions_delta_percent;
+    const engagementRateDeltaPoints =
+      (value as { engagement_rate_delta_points?: number | null }).engagement_rate_delta_points;
+    return {
+      sessionsDeltaPercent: typeof sessionsDeltaPercent === "number" && Number.isFinite(sessionsDeltaPercent)
+        ? sessionsDeltaPercent
+        : null,
+      engagementRateDeltaPoints:
+        typeof engagementRateDeltaPoints === "number" && Number.isFinite(engagementRateDeltaPoints)
+          ? engagementRateDeltaPoints
+          : null,
+    };
+  };
+
+  const outcomeDirection = normalizeLowerCaseString(raw.outcome_direction);
+  const normalizedDirection =
+    outcomeDirection === "improved"
+    || outcomeDirection === "declined"
+    || outcomeDirection === "mixed"
+    || outcomeDirection === "no_clear_change"
+    || outcomeDirection === "insufficient_data"
+      ? outcomeDirection
+      : null;
+  const operatorHint = typeof raw.operator_hint === "string" ? raw.operator_hint.trim() : "";
+  return {
+    status,
+    outcomeDirection: normalizedDirection,
+    beforeWindow: normalizeWindow(raw.before_window ?? null),
+    afterWindow: normalizeWindow(raw.after_window ?? null),
+    delta: normalizeDelta(raw.delta ?? null),
+    operatorHint: operatorHint || null,
+  };
+}
+
+function formatEngagementRatePercent(value: number | null): string {
+  if (value === null || !Number.isFinite(value)) {
+    return "not available";
+  }
+  return `${Math.round(value * 1000) / 10}%`;
+}
+
+function formatSignedPoints(value: number | null): string {
+  if (value === null || !Number.isFinite(value)) {
+    return "not available";
+  }
+  const rounded = Math.round(value * 1000) / 1000;
+  const prefix = rounded > 0 ? "+" : "";
+  return `${prefix}${rounded} pts`;
+}
+
+function formatOutcomeDirection(
+  direction: RecommendationGa4OutcomeSnapshotView["outcomeDirection"],
+): string {
+  if (direction === "improved") {
+    return "Improved";
+  }
+  if (direction === "declined") {
+    return "Declined";
+  }
+  if (direction === "mixed") {
+    return "Mixed";
+  }
+  if (direction === "no_clear_change") {
+    return "No clear change";
+  }
+  return "Insufficient data";
+}
+
+function buildRecommendationGa4OutcomeLine(
+  snapshot: RecommendationGa4OutcomeSnapshotView | null,
+): string | null {
+  if (!snapshot) {
+    return null;
+  }
+  if (snapshot.status === "available") {
+    const beforeSessions = snapshot.beforeWindow?.sessions ?? null;
+    const afterSessions = snapshot.afterWindow?.sessions ?? null;
+    const beforeEngagement = snapshot.beforeWindow?.engagementRate ?? null;
+    const afterEngagement = snapshot.afterWindow?.engagementRate ?? null;
+    const parts: string[] = [];
+    if (beforeSessions !== null && afterSessions !== null) {
+      parts.push(
+        `Sessions ${beforeSessions.toLocaleString()} -> ${afterSessions.toLocaleString()} (${formatSignedPercent(snapshot.delta?.sessionsDeltaPercent ?? null)})`,
+      );
+    }
+    if (beforeEngagement !== null && afterEngagement !== null) {
+      parts.push(
+        `Engagement ${formatEngagementRatePercent(beforeEngagement)} -> ${formatEngagementRatePercent(afterEngagement)} (${formatSignedPoints(snapshot.delta?.engagementRateDeltaPoints ?? null)})`,
+      );
+    }
+    parts.push(`Direction: ${formatOutcomeDirection(snapshot.outcomeDirection)}`);
+    if (snapshot.operatorHint) {
+      parts.push(snapshot.operatorHint);
+    }
+    return parts.join(" · ");
+  }
+  if (snapshot.operatorHint) {
+    return snapshot.operatorHint;
+  }
+  return "GA4 outcome snapshot is unavailable for this recommendation.";
 }
 
 function normalizeRecommendationSearchConsoleContext(
@@ -3186,6 +3350,8 @@ function RecommendationsPageContent() {
                 const recommendationGa4HealthLine = buildRecommendationGa4HealthLine(recommendationMeasurementContext);
                 const recommendationGa4PriorityContext = normalizeRecommendationGa4PriorityContext(item);
                 const recommendationGa4PriorityLine = buildRecommendationGa4PriorityLine(recommendationGa4PriorityContext);
+                const recommendationGa4OutcomeSnapshot = normalizeRecommendationGa4OutcomeSnapshot(item);
+                const recommendationGa4OutcomeLine = buildRecommendationGa4OutcomeLine(recommendationGa4OutcomeSnapshot);
                 const recommendationSearchConsoleContext = normalizeRecommendationSearchConsoleContext(item);
                 const recommendationSearchVisibilityLine = buildRecommendationSearchVisibilityLine(
                   recommendationSearchConsoleContext,
@@ -3364,6 +3530,12 @@ function RecommendationsPageContent() {
                           <p className="hint muted" data-testid={`recommendation-ga4-priority-context-${item.id}`}>
                             <span className="text-strong">Analytics context (GA4):</span>{" "}
                             {recommendationGa4PriorityLine}
+                          </p>
+                        ) : null}
+                        {recommendationGa4OutcomeLine ? (
+                          <p className="hint muted" data-testid={`recommendation-ga4-outcome-snapshot-${item.id}`}>
+                            <span className="text-strong">GA4 outcome snapshot (observed after action):</span>{" "}
+                            {recommendationGa4OutcomeLine}
                           </p>
                         ) : null}
                         {recommendationSearchVisibilityLine ? (
@@ -3611,6 +3783,8 @@ function RecommendationsPageContent() {
                 const recommendationGa4HealthLine = buildRecommendationGa4HealthLine(recommendationMeasurementContext);
                 const recommendationGa4PriorityContext = normalizeRecommendationGa4PriorityContext(item);
                 const recommendationGa4PriorityLine = buildRecommendationGa4PriorityLine(recommendationGa4PriorityContext);
+                const recommendationGa4OutcomeSnapshot = normalizeRecommendationGa4OutcomeSnapshot(item);
+                const recommendationGa4OutcomeLine = buildRecommendationGa4OutcomeLine(recommendationGa4OutcomeSnapshot);
                 const recommendationSearchConsoleContext = normalizeRecommendationSearchConsoleContext(item);
                 const recommendationSearchVisibilityLine = buildRecommendationSearchVisibilityLine(
                   recommendationSearchConsoleContext,
@@ -3889,6 +4063,12 @@ function RecommendationsPageContent() {
                               <p className="hint muted" data-testid={`recommendation-expanded-ga4-priority-context-${item.id}`}>
                                 <span className="text-strong">Analytics context (GA4):</span>{" "}
                                 {recommendationGa4PriorityLine}
+                              </p>
+                            ) : null}
+                            {recommendationGa4OutcomeLine ? (
+                              <p className="hint muted" data-testid={`recommendation-expanded-ga4-outcome-snapshot-${item.id}`}>
+                                <span className="text-strong">GA4 outcome snapshot (observed after action):</span>{" "}
+                                {recommendationGa4OutcomeLine}
                               </p>
                             ) : null}
                             {recommendationSearchVisibilityLine ? (

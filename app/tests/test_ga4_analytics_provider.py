@@ -36,8 +36,8 @@ def test_google_ga4_client_uses_site_scoped_property_for_reports(monkeypatch: py
             }
         if metrics == ["sessions"]:
             return {"rows": [{"metricValues": [{"value": "62"}]}]}
-        if metrics == ["totalUsers", "sessions", "screenPageViews"]:
-            return {"rows": [{"metricValues": [{"value": "100"}, {"value": "140"}, {"value": "220"}]}]}
+        if metrics == ["totalUsers", "sessions", "screenPageViews", "engagementRate"]:
+            return {"rows": [{"metricValues": [{"value": "100"}, {"value": "140"}, {"value": "220"}, {"value": "0.64"}]}]}
         return {}
 
     monkeypatch.setattr(client, "_request_json", _request_json)
@@ -53,6 +53,7 @@ def test_google_ga4_client_uses_site_scoped_property_for_reports(monkeypatch: py
     assert result.current_period.sessions == 140
     assert result.current_period.pageviews == 220
     assert result.current_period.organic_search_sessions == 62
+    assert result.current_period.engagement_rate == pytest.approx(0.64)
     assert result.top_pages
     assert result.data_source == "ga4"
     assert captured_calls
@@ -100,6 +101,7 @@ def test_google_ga4_client_handles_empty_and_partial_report_payloads(monkeypatch
     assert result.current_period.sessions == 0
     assert result.current_period.pageviews == 0
     assert result.current_period.organic_search_sessions == 0
+    assert result.current_period.engagement_rate is None
     assert result.previous_period.users == 0
     assert result.top_pages
     assert result.top_pages[0].current_pageviews == 17
