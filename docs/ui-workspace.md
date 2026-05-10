@@ -65,6 +65,9 @@ Workflow ownership boundaries:
   - provider HTTP status (when available)
   - required scope granted status
   - bounded diagnostic hint / next action
+- GBP API HTTP `429` is classified as rate-limit/quota diagnostics (for example `provider_rate_limited` or `provider_quota_or_access_not_granted`), with guidance to check quota/access in the OAuth client project for:
+  - `My Business Account Management API`
+  - `My Business Business Information API`
 - OAuth callback success is never treated as final usable GBP state without backend confirmation.
 
 Accessibility/DOM contract:

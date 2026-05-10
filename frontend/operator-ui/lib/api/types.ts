@@ -2536,6 +2536,7 @@ export type GoogleBusinessProfileProviderErrorClass =
   | "provider_unauthorized"
   | "provider_permission_denied"
   | "provider_api_disabled_or_unavailable"
+  | "provider_rate_limited"
   | "provider_quota_or_access_not_granted"
   | "provider_not_found"
   | "provider_unavailable"

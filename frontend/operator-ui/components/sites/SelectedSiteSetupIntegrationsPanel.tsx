@@ -42,6 +42,7 @@ type ConnectionUiState =
   | "location_not_mapped"
   | "oauth_connected"
   | "provider_api_disabled"
+  | "provider_rate_limited"
   | "provider_quota_or_access_not_granted"
   | "oauth_success_pending"
   | "not_connected"
@@ -253,6 +254,9 @@ export function SelectedSiteSetupIntegrationsPanel({
       if (providerErrorClass === "provider_api_disabled_or_unavailable") {
         return "provider_api_disabled";
       }
+      if (providerErrorClass === "provider_rate_limited") {
+        return "provider_rate_limited";
+      }
       if (providerErrorClass === "provider_quota_or_access_not_granted") {
         return "provider_quota_or_access_not_granted";
       }
@@ -312,6 +316,13 @@ export function SelectedSiteSetupIntegrationsPanel({
             "Google returned successfully, but Business Profile API access appears disabled or unavailable for this OAuth project.",
         };
       }
+      if (connectionUiState === "provider_rate_limited") {
+        return {
+          className: "hint warning",
+          message:
+            "Google returned successfully, but Business Profile API returned 429 (rate limit/resource exhaustion). Check Google Cloud API quota/access for this OAuth project.",
+        };
+      }
       if (connectionUiState === "provider_quota_or_access_not_granted") {
         return {
           className: "hint warning",
@@ -351,6 +362,7 @@ export function SelectedSiteSetupIntegrationsPanel({
       connectionUiState === "connected_access_denied"
       || connectionUiState === "missing_scope"
       || connectionUiState === "provider_api_disabled"
+      || connectionUiState === "provider_rate_limited"
       || connectionUiState === "provider_quota_or_access_not_granted"
       || connectionUiState === "unavailable",
     [connectionUiState],
@@ -532,6 +544,12 @@ export function SelectedSiteSetupIntegrationsPanel({
               Google account is linked, but Business Profile API access appears disabled or unavailable for this OAuth project.
             </p>
           ) : null}
+          {connectionUiState === "provider_rate_limited" ? (
+            <p className="hint warning">
+              Google account is linked, but Business Profile API returned 429 (rate limit/resource exhaustion). Check
+              API quota/access for the Google Cloud project that owns the OAuth client.
+            </p>
+          ) : null}
           {connectionUiState === "provider_quota_or_access_not_granted" ? (
             <p className="hint warning">
               Google account is linked, but Business Profile API quota or project access is not granted.
@@ -690,6 +708,11 @@ export function SelectedSiteSetupIntegrationsPanel({
             <p className="hint warning">
               Google account is linked, but Business Profile API access appears disabled or unavailable for this OAuth project.
             </p>
+          ) : connectionUiState === "provider_rate_limited" ? (
+            <p className="hint warning">
+              Google account is linked, but Business Profile API returned 429 (rate limit/resource exhaustion). Check
+              API quota/access for the Google Cloud project that owns the OAuth client.
+            </p>
           ) : connectionUiState === "provider_quota_or_access_not_granted" ? (
             <p className="hint warning">Google account is linked, but Business Profile API quota or project access is not granted.</p>
           ) : connectionUiState === "no_accounts" ? (
@@ -765,6 +788,9 @@ function connectionUiLabel(state: ConnectionUiState): string {
   if (state === "provider_api_disabled") {
     return "API unavailable";
   }
+  if (state === "provider_rate_limited") {
+    return "Rate limited";
+  }
   if (state === "provider_quota_or_access_not_granted") {
     return "Quota/access";
   }
@@ -789,6 +815,7 @@ function connectionBadgeClass(state: ConnectionUiState): string {
     || state === "location_not_mapped"
     || state === "missing_scope"
     || state === "provider_api_disabled"
+    || state === "provider_rate_limited"
     || state === "provider_quota_or_access_not_granted"
   ) {
     return "badge-warn";
@@ -826,6 +853,9 @@ function connectionPrimaryMessage(
   }
   if (state === "provider_api_disabled") {
     return "Google account is linked, but Business Profile API access appears disabled or unavailable for this OAuth project.";
+  }
+  if (state === "provider_rate_limited") {
+    return "Google account is linked, but Business Profile API returned 429 (rate limit/resource exhaustion).";
   }
   if (state === "provider_quota_or_access_not_granted") {
     return "Google account is linked, but Business Profile API quota or project access is not granted.";
@@ -893,6 +923,7 @@ function normalizeProviderErrorClass(value: unknown): GoogleBusinessProfileProvi
     || normalized === "provider_unauthorized"
     || normalized === "provider_permission_denied"
     || normalized === "provider_api_disabled_or_unavailable"
+    || normalized === "provider_rate_limited"
     || normalized === "provider_quota_or_access_not_granted"
     || normalized === "provider_not_found"
     || normalized === "provider_unavailable"
@@ -921,6 +952,9 @@ function formatProviderErrorClassLabel(value: GoogleBusinessProfileProviderError
   }
   if (value === "provider_api_disabled_or_unavailable") {
     return "provider_api_disabled_or_unavailable";
+  }
+  if (value === "provider_rate_limited") {
+    return "provider_rate_limited";
   }
   if (value === "provider_quota_or_access_not_granted") {
     return "provider_quota_or_access_not_granted";

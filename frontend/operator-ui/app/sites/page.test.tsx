@@ -424,6 +424,42 @@ describe("sites page inventory + setup boundaries", () => {
     expect(screen.queryByText("Google returned successfully and Google Profile is connected.")).not.toBeInTheDocument();
   });
 
+  it("shows 429 rate-limit diagnostics with quota/access guidance instead of retry-only unavailable text", async () => {
+    mockUseSearchParams.mockReturnValue(new URLSearchParams("gbp_connect=success"));
+    mockFetchGoogleBusinessProfileConnection.mockResolvedValueOnce(
+      buildConnection({
+        connected: true,
+        reconnect_required: false,
+        required_scopes_satisfied: true,
+        token_status: "usable",
+        gbp_connection_state: "unavailable",
+        gbp_status_reason: "provider_rate_limited",
+        gbp_provider_error_class: "provider_rate_limited",
+        gbp_provider_http_status: 429,
+        gbp_diagnostic_hint:
+          "Business Profile API returned 429. Check API quota/access for the Google Cloud project that owns the OAuth client, especially My Business Account Management and Business Information APIs.",
+      }),
+    );
+
+    await renderSitesPageAndWaitForSetupEffects();
+
+    expect(screen.getByText("Rate limited")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Google returned successfully, but Business Profile API returned 429 (rate limit/resource exhaustion). Check Google Cloud API quota/access for this OAuth project.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Provider diagnostic: provider_rate_limited")).toBeInTheDocument();
+    expect(screen.getByText("Provider HTTP status: 429")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Business Profile API returned 429. Check API quota/access for the Google Cloud project that owns the OAuth client, especially My Business Account Management and Business Information APIs.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/temporarily unavailable\. Retry shortly/i)).not.toBeInTheDocument();
+    expect(screen.queryByText("Google returned successfully and Google Profile is connected.")).not.toBeInTheDocument();
+  });
+
   it("shows connected success only when connection is actually usable", async () => {
     mockUseSearchParams.mockReturnValue(new URLSearchParams("gbp_connect=success"));
     mockFetchGoogleBusinessProfileConnection.mockResolvedValueOnce(

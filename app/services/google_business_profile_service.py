@@ -139,6 +139,7 @@ GoogleBusinessProfileProviderErrorClass = Literal[
     "provider_unauthorized",
     "provider_permission_denied",
     "provider_api_disabled_or_unavailable",
+    "provider_rate_limited",
     "provider_quota_or_access_not_granted",
     "provider_not_found",
     "provider_unavailable",
@@ -1405,6 +1406,28 @@ class GoogleBusinessProfileService:
                 gbp_diagnostic_hint=exc.diagnostic_hint
                 or "Check enabled APIs and project-level Business Profile API availability.",
             )
+        if exc.error_code == "provider_rate_limited":
+            return GoogleBusinessProfileConnectionDiagnosticsResult(
+                gbp_connection_state="unavailable",
+                gbp_required_scope=self.connection_service.BUSINESS_PROFILE_SCOPE,
+                gbp_required_scope_granted=None,
+                gbp_accounts_count=accounts_count,
+                gbp_locations_count=None,
+                gbp_selected_location_present=None,
+                gbp_status_reason="provider_rate_limited",
+                gbp_next_action=(
+                    "Business Profile API returned 429. Check API quota/access for the Google Cloud project "
+                    "that owns the OAuth client."
+                ),
+                gbp_provider_error_class="provider_rate_limited",
+                gbp_provider_http_status=exc.provider_http_status or 429,
+                gbp_diagnostic_hint=exc.diagnostic_hint
+                or (
+                    "Business Profile API returned 429. Check API quota/access for the Google Cloud project "
+                    "that owns the OAuth client, especially My Business Account Management and Business "
+                    "Information APIs."
+                ),
+            )
         if exc.error_code == "provider_quota_or_access_not_granted":
             return GoogleBusinessProfileConnectionDiagnosticsResult(
                 gbp_connection_state="unavailable",
@@ -1420,7 +1443,10 @@ class GoogleBusinessProfileService:
                 gbp_provider_error_class="provider_quota_or_access_not_granted",
                 gbp_provider_http_status=exc.provider_http_status or 403,
                 gbp_diagnostic_hint=exc.diagnostic_hint
-                or "Check API quotas, project access, and Business Profile API approval status.",
+                or (
+                    "Check API quota/access for the Google Cloud project that owns the OAuth client, "
+                    "especially My Business Account Management and Business Information APIs."
+                ),
             )
         if exc.error_code == "provider_not_found":
             return GoogleBusinessProfileConnectionDiagnosticsResult(
@@ -1490,6 +1516,7 @@ class GoogleBusinessProfileService:
             gbp_provider_error_class=(
                 exc.provider_error_class
                 if exc.provider_error_class in {
+                    "provider_rate_limited",
                     "provider_unavailable",
                     "provider_unknown",
                 }
@@ -1612,7 +1639,70 @@ class GoogleBusinessProfileService:
                 "Connected identity does not have Business Profile API permission for this request.",
             )
 
-        if status_code in {429, 500, 502, 503, 504}:
+        if status_code == 429:
+            rate_limited_markers = (
+                "ratelimitexceeded",
+                "userratelimitexceeded",
+                "resource_exhausted",
+                "too many requests",
+                "too_many_requests",
+                "rate limit",
+                "rate_limit",
+            )
+            quota_or_access_markers = (
+                "quotaexceeded",
+                "dailylimitexceeded",
+                "billingdisabled",
+                "project_denied",
+                "quota unavailable",
+                "quota is 0",
+                "quota has been exhausted",
+                "access not granted",
+                "access has not been granted",
+                "not approved",
+                "api access not configured",
+                "api access is not configured",
+                "quota",
+            )
+
+            if self._text_contains_any(normalized_reason, quota_or_access_markers) or self._text_contains_any(
+                message_lower,
+                quota_or_access_markers,
+            ):
+                return (
+                    "provider_quota_or_access_not_granted",
+                    429,
+                    (
+                        "Business Profile API returned 429. Check API quota/access for the Google Cloud project "
+                        "that owns the OAuth client, especially My Business Account Management and Business "
+                        "Information APIs."
+                    ),
+                )
+            if (
+                normalized_status == "RESOURCE_EXHAUSTED"
+                or self._text_contains_any(normalized_reason, rate_limited_markers)
+                or self._text_contains_any(message_lower, rate_limited_markers)
+            ):
+                return (
+                    "provider_rate_limited",
+                    429,
+                    (
+                        "Business Profile API returned 429. Check API quota/access for the Google Cloud project "
+                        "that owns the OAuth client, especially My Business Account Management and Business "
+                        "Information APIs."
+                    ),
+                )
+            return (
+                "provider_rate_limited",
+                429,
+                (
+                    "Business Profile API returned 429. Check API quota/access for the Google Cloud project "
+                    "that owns the OAuth client, especially My Business Account Management and Business "
+                    "Information APIs."
+                ),
+            )
+
+        if status_code in {500, 502, 503, 504}:
             return (
                 "provider_unavailable",
                 status_code,
@@ -1732,10 +1822,19 @@ class GoogleBusinessProfileService:
                     provider_http_status=provider_http_status,
                     diagnostic_hint=diagnostic_hint,
                 ) from exc
+            if provider_error_class == "provider_rate_limited":
+                raise GoogleBusinessProfileServiceError(
+                    "Google Business Profile API returned 429 rate limit/resource exhaustion.",
+                    status_code=429,
+                    error_code="provider_rate_limited",
+                    provider_error_class=provider_error_class,
+                    provider_http_status=provider_http_status,
+                    diagnostic_hint=diagnostic_hint,
+                ) from exc
             if provider_error_class == "provider_quota_or_access_not_granted":
                 raise GoogleBusinessProfileServiceError(
                     "Google Business Profile API quota or project access is not granted.",
-                    status_code=403,
+                    status_code=429 if provider_http_status == 429 else 403,
                     error_code="provider_quota_or_access_not_granted",
                     provider_error_class=provider_error_class,
                     provider_http_status=provider_http_status,

@@ -638,6 +638,124 @@ def test_google_business_profile_connection_status_details_unavailable_is_bounde
     assert "verbose detail" not in response.text.lower()
 
 
+def test_google_business_profile_connection_status_details_rate_limited_from_resource_exhausted(
+    db_session,
+    seeded_business,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _seed_principal(db_session, business_id=seeded_business.id, principal_id="gbp-status-rate-limited")
+    _seed_provider_connection(
+        db_session,
+        business_id=seeded_business.id,
+        principal_id="gbp-status-rate-limited",
+        access_token="status-rate-limited-token",
+        refresh_token="status-rate-limited-refresh",
+        expires_in_seconds=3600,
+    )
+    oauth_client = _StubGoogleOAuthClient()
+    gbp_client = _StubGoogleBusinessProfileClient()
+    gbp_client.accounts_error = GoogleBusinessProfileAPIError(
+        "resource exhausted verbose detail should remain internal",
+        status_code=429,
+        error_status="RESOURCE_EXHAUSTED",
+    )
+    client = _make_integrations_client(
+        db_session,
+        oauth_client=oauth_client,
+        gbp_client=gbp_client,
+        business_id=seeded_business.id,
+        principal_id="gbp-status-rate-limited",
+    )
+
+    response = client.get("/api/integrations/google/business-profile/connection?include_status_details=true")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["gbp_connection_state"] == "unavailable"
+    assert payload["gbp_status_reason"] == "provider_rate_limited"
+    assert payload["gbp_provider_error_class"] == "provider_rate_limited"
+    assert payload["gbp_provider_http_status"] == 429
+    assert "429" in (payload.get("gbp_diagnostic_hint") or "")
+    assert "verbose detail" not in response.text.lower()
+
+
+def test_google_business_profile_connection_status_details_rate_limited_from_rate_limit_reason(
+    db_session,
+    seeded_business,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _seed_principal(db_session, business_id=seeded_business.id, principal_id="gbp-status-rate-limit-reason")
+    _seed_provider_connection(
+        db_session,
+        business_id=seeded_business.id,
+        principal_id="gbp-status-rate-limit-reason",
+        access_token="status-rate-limit-reason-token",
+        refresh_token="status-rate-limit-reason-refresh",
+        expires_in_seconds=3600,
+    )
+    oauth_client = _StubGoogleOAuthClient()
+    gbp_client = _StubGoogleBusinessProfileClient()
+    gbp_client.accounts_error = GoogleBusinessProfileAPIError(
+        "Too many requests",
+        status_code=429,
+        error_status="RESOURCE_EXHAUSTED",
+        error_reason="rateLimitExceeded",
+    )
+    client = _make_integrations_client(
+        db_session,
+        oauth_client=oauth_client,
+        gbp_client=gbp_client,
+        business_id=seeded_business.id,
+        principal_id="gbp-status-rate-limit-reason",
+    )
+
+    response = client.get("/api/integrations/google/business-profile/connection?include_status_details=true")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["gbp_connection_state"] == "unavailable"
+    assert payload["gbp_status_reason"] == "provider_rate_limited"
+    assert payload["gbp_provider_error_class"] == "provider_rate_limited"
+    assert payload["gbp_provider_http_status"] == 429
+
+
+def test_google_business_profile_connection_status_details_quota_or_access_from_429(
+    db_session,
+    seeded_business,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _seed_principal(db_session, business_id=seeded_business.id, principal_id="gbp-status-quota-429")
+    _seed_provider_connection(
+        db_session,
+        business_id=seeded_business.id,
+        principal_id="gbp-status-quota-429",
+        access_token="status-quota-429-token",
+        refresh_token="status-quota-429-refresh",
+        expires_in_seconds=3600,
+    )
+    oauth_client = _StubGoogleOAuthClient()
+    gbp_client = _StubGoogleBusinessProfileClient()
+    gbp_client.accounts_error = GoogleBusinessProfileAPIError(
+        "The request exceeded quota limits for this API.",
+        status_code=429,
+        error_status="RESOURCE_EXHAUSTED",
+        error_reason="quotaExceeded",
+    )
+    client = _make_integrations_client(
+        db_session,
+        oauth_client=oauth_client,
+        gbp_client=gbp_client,
+        business_id=seeded_business.id,
+        principal_id="gbp-status-quota-429",
+    )
+
+    response = client.get("/api/integrations/google/business-profile/connection?include_status_details=true")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["gbp_connection_state"] == "unavailable"
+    assert payload["gbp_status_reason"] == "provider_quota_or_access_not_granted"
+    assert payload["gbp_provider_error_class"] == "provider_quota_or_access_not_granted"
+    assert payload["gbp_provider_http_status"] == 429
+
+
 def test_google_business_profile_connection_status_details_provider_unauthorized(
     db_session,
     seeded_business,

@@ -43,10 +43,14 @@ Compatibility behavior:
   - `provider_unauthorized`
   - `provider_permission_denied`
   - `provider_api_disabled_or_unavailable`
+  - `provider_rate_limited`
   - `provider_quota_or_access_not_granted`
   - `provider_not_found`
   - `provider_unavailable`
   - `provider_unknown`
+- HTTP `429` from GBP APIs is treated as rate-limit/quota/resource-exhaustion diagnostics, not generic transient outage:
+  - `provider_rate_limited` for `RESOURCE_EXHAUSTED` / `rateLimitExceeded` / too-many-requests style responses
+  - `provider_quota_or_access_not_granted` when 429 details indicate quota or project access is not granted
 - Sites selected-site setup displays compact diagnostics:
   - provider diagnostic class
   - provider HTTP status (when available)
@@ -60,7 +64,10 @@ When OAuth is linked but GBP remains denied/unavailable, verify:
 1. Google Cloud project that owns the OAuth client ID used by MBSRN.
 2. APIs & Services -> Enabled APIs includes Business Profile-related APIs used by MBSRN.
 3. OAuth consent screen -> Data Access includes Business Profile scope (`https://www.googleapis.com/auth/business.manage`).
-4. Business Profile / My Business API quotas and project access approvals.
+4. API quota/access in the OAuth client project:
+   - `My Business Account Management API`
+   - `My Business Business Information API`
+   and confirm project access/approval is granted where required.
 5. Connected Google identity in Sites setup matches the expected operator account.
 
 ## Boundaries
