@@ -2,6 +2,8 @@
 
 import { useEffect } from "react";
 import { usePathname } from "next/navigation";
+import { deriveErrorClassName, sanitizeDiagnosticMessage, sanitizePathname } from "../lib/runtimeDiagnostics";
+import { getPublicAppVersion } from "../lib/runtimeMetadata";
 
 type RouteErrorClassification = "route_render_error" | "unexpected_end_of_form" | "missing_error_object";
 
@@ -24,9 +26,7 @@ function normalizeRouteError(error: unknown): NormalizedRouteError {
   const digest = typeof candidate.digest === "string" && candidate.digest.trim().length > 0
     ? candidate.digest.trim()
     : null;
-  const message = typeof candidate.message === "string" && candidate.message.trim().length > 0
-    ? candidate.message.trim().slice(0, 160)
-    : "Route render failure";
+  const message = sanitizeDiagnosticMessage(candidate.message, "Route render failure");
   const classification = message.toLowerCase().includes("unexpected end of form")
     ? "unexpected_end_of_form"
     : "route_render_error";
@@ -42,11 +42,13 @@ export default function Error({
   reset: () => void;
 }) {
   const pathname = usePathname();
+  const appVersion = getPublicAppVersion();
   const normalizedError = normalizeRouteError(error);
-  const safePathname = pathname || "unknown";
+  const safePathname = sanitizePathname(pathname);
   const safeDigest = normalizedError.digest || "unavailable";
   const safeMessage = normalizedError.message;
   const safeClassification = normalizedError.classification;
+  const safeErrorClass = deriveErrorClassName(error);
 
   useEffect(() => {
     const logPayload = {
@@ -54,13 +56,15 @@ export default function Error({
       digest: safeDigest,
       message: safeMessage,
       classification: safeClassification,
+      error_class: safeErrorClass,
+      app_version: appVersion,
     };
     if (safeClassification === "unexpected_end_of_form") {
       console.warn("[operator-ui] route_render_warning", logPayload);
       return;
     }
     console.error("[operator-ui] route_render_error", logPayload);
-  }, [safeClassification, safeDigest, safeMessage, safePathname]);
+  }, [appVersion, safeClassification, safeDigest, safeErrorClass, safeMessage, safePathname]);
 
   return (
     <main className="workspace-page-shell">

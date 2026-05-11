@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect } from "react";
+import { deriveErrorClassName, sanitizeDiagnosticMessage, sanitizePathname } from "../lib/runtimeDiagnostics";
+import { getPublicAppVersion } from "../lib/runtimeMetadata";
 
 type GlobalErrorClassification = "global_render_error" | "unexpected_end_of_form" | "missing_error_object";
 
@@ -21,9 +23,7 @@ function normalizeGlobalError(error: unknown): {
   const digest = typeof candidate.digest === "string" && candidate.digest.trim().length > 0
     ? candidate.digest.trim()
     : null;
-  const message = typeof candidate.message === "string" && candidate.message.trim().length > 0
-    ? candidate.message.trim().slice(0, 160)
-    : "Global render failure";
+  const message = sanitizeDiagnosticMessage(candidate.message, "Global render failure");
   const classification = message.toLowerCase().includes("unexpected end of form")
     ? "unexpected_end_of_form"
     : "global_render_error";
@@ -37,23 +37,29 @@ export default function GlobalError({
   error: unknown;
   reset: () => void;
 }) {
+  const appVersion = getPublicAppVersion();
   const normalizedError = normalizeGlobalError(error);
+  const safePathname = sanitizePathname(typeof window === "undefined" ? null : window.location.pathname);
   const safeDigest = normalizedError.digest || "unavailable";
   const safeMessage = normalizedError.message;
   const safeClassification = normalizedError.classification;
+  const safeErrorClass = deriveErrorClassName(error);
 
   useEffect(() => {
     const payload = {
+      pathname: safePathname,
       digest: safeDigest,
       message: safeMessage,
       classification: safeClassification,
+      error_class: safeErrorClass,
+      app_version: appVersion,
     };
     if (safeClassification === "unexpected_end_of_form") {
       console.warn("[operator-ui] global_render_warning", payload);
       return;
     }
     console.error("[operator-ui] global_render_error", payload);
-  }, [safeClassification, safeDigest, safeMessage]);
+  }, [appVersion, safeClassification, safeDigest, safeErrorClass, safeMessage, safePathname]);
 
   return (
     <html lang="en">
@@ -77,4 +83,3 @@ export default function GlobalError({
     </html>
   );
 }
-

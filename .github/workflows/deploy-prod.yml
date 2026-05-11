@@ -38,6 +38,7 @@ env:
   API_IMAGE_NAME: ${{ vars.API_IMAGE_NAME }}
   NEXT_PUBLIC_GOOGLE_CLIENT_ID: ${{ vars.NEXT_PUBLIC_GOOGLE_CLIENT_ID }}
   NEXT_PUBLIC_API_BASE_URL: ${{ vars.NEXT_PUBLIC_API_BASE_URL }}
+  NEXT_PUBLIC_APP_VERSION: ${{ github.sha }}
   GOOGLE_OIDC_CLIENT_ID: ${{ vars.GOOGLE_OIDC_CLIENT_ID }}
   GOOGLE_OAUTH_CLIENT_ID: ${{ vars.GOOGLE_OAUTH_CLIENT_ID }}
   GOOGLE_BUSINESS_PROFILE_REDIRECT_URI: ${{ vars.GOOGLE_BUSINESS_PROFILE_REDIRECT_URI }}
@@ -278,6 +279,7 @@ jobs:
             --file frontend/operator-ui/Dockerfile \
             --build-arg NEXT_PUBLIC_GOOGLE_CLIENT_ID="${NEXT_PUBLIC_GOOGLE_CLIENT_ID}" \
             --build-arg NEXT_PUBLIC_API_BASE_URL="${UI_API_BASE_URL}" \
+            --build-arg NEXT_PUBLIC_APP_VERSION="${NEXT_PUBLIC_APP_VERSION}" \
             --tag "${UI_IMAGE}" \
             frontend/operator-ui
 

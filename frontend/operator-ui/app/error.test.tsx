@@ -3,6 +3,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import RouteErrorBoundary from "./error";
 
 const mockUsePathname = jest.fn(() => "/sites/site-1");
+const ORIGINAL_PUBLIC_APP_VERSION = process.env.NEXT_PUBLIC_APP_VERSION;
 
 jest.mock("next/navigation", () => ({
   usePathname: () => mockUsePathname(),
@@ -11,7 +12,16 @@ jest.mock("next/navigation", () => ({
 describe("app route error boundary", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    process.env.NEXT_PUBLIC_APP_VERSION = "sha-test-build-1";
     mockUsePathname.mockReturnValue("/sites/site-1");
+  });
+
+  afterAll(() => {
+    if (ORIGINAL_PUBLIC_APP_VERSION === undefined) {
+      delete process.env.NEXT_PUBLIC_APP_VERSION;
+      return;
+    }
+    process.env.NEXT_PUBLIC_APP_VERSION = ORIGINAL_PUBLIC_APP_VERSION;
   });
 
   it("renders fallback safely and logs when error object is missing", () => {
@@ -30,6 +40,8 @@ describe("app route error boundary", () => {
         pathname: "/sites/site-1",
         digest: "unavailable",
         classification: "missing_error_object",
+        error_class: "UnknownError",
+        app_version: "sha-test-build-1",
       }),
     );
     expect(warnSpy).not.toHaveBeenCalled();
@@ -50,6 +62,7 @@ describe("app route error boundary", () => {
       expect.objectContaining({
         classification: "missing_error_object",
         digest: "unavailable",
+        app_version: "sha-test-build-1",
       }),
     );
     expect(warnSpy).not.toHaveBeenCalled();
@@ -74,6 +87,7 @@ describe("app route error boundary", () => {
       expect.objectContaining({
         classification: "unexpected_end_of_form",
         digest: "unavailable",
+        app_version: "sha-test-build-1",
       }),
     );
     expect(errorSpy).not.toHaveBeenCalled();
@@ -99,11 +113,57 @@ describe("app route error boundary", () => {
         classification: "route_render_error",
         digest: "abc123",
         message: "Boom route",
+        app_version: "sha-test-build-1",
       }),
     );
     expect(warnSpy).not.toHaveBeenCalled();
 
     errorSpy.mockRestore();
     warnSpy.mockRestore();
+  });
+
+  it("sanitizes query/hash from route diagnostics", () => {
+    const errorSpy = jest.spyOn(console, "error").mockImplementation(() => undefined);
+    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+    mockUsePathname.mockReturnValue("/google-profile?code=abc123&state=xyz#redirect");
+
+    render(
+      <RouteErrorBoundary
+        error={{ message: "Callback failed", digest: null }}
+        reset={() => undefined}
+      />,
+    );
+
+    expect(errorSpy).toHaveBeenCalledWith(
+      "[operator-ui] route_render_error",
+      expect.objectContaining({
+        pathname: "/google-profile",
+        app_version: "sha-test-build-1",
+      }),
+    );
+    expect(warnSpy).not.toHaveBeenCalled();
+
+    errorSpy.mockRestore();
+    warnSpy.mockRestore();
+  });
+
+  it("redacts token-like query params from diagnostic message payload", () => {
+    const errorSpy = jest.spyOn(console, "error").mockImplementation(() => undefined);
+
+    render(
+      <RouteErrorBoundary
+        error={{ message: "OAuth callback failed at /google-profile?code=abc123&state=xyz987", digest: null }}
+        reset={() => undefined}
+      />,
+    );
+
+    expect(errorSpy).toHaveBeenCalledWith(
+      "[operator-ui] route_render_error",
+      expect.objectContaining({
+        message: "OAuth callback failed at /google-profile?code=[redacted]&state=[redacted]",
+      }),
+    );
+
+    errorSpy.mockRestore();
   });
 });

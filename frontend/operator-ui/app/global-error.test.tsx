@@ -3,6 +3,21 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import AppGlobalError from "./global-error";
 
 describe("app global error boundary", () => {
+  const originalPublicAppVersion = process.env.NEXT_PUBLIC_APP_VERSION;
+
+  beforeEach(() => {
+    process.env.NEXT_PUBLIC_APP_VERSION = "sha-test-build-1";
+    window.history.replaceState({}, "", "/sites/site-1?state=abc123#callback");
+  });
+
+  afterAll(() => {
+    if (originalPublicAppVersion === undefined) {
+      delete process.env.NEXT_PUBLIC_APP_VERSION;
+      return;
+    }
+    process.env.NEXT_PUBLIC_APP_VERSION = originalPublicAppVersion;
+  });
+
   it("renders fallback and retries safely with null error payload", () => {
     const errorSpy = jest.spyOn(console, "error").mockImplementation(() => undefined);
     const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => undefined);
@@ -18,6 +33,8 @@ describe("app global error boundary", () => {
       expect.objectContaining({
         classification: "missing_error_object",
         digest: "unavailable",
+        pathname: "/sites/site-1",
+        app_version: "sha-test-build-1",
       }),
     );
     expect(warnSpy).not.toHaveBeenCalled();
@@ -42,6 +59,8 @@ describe("app global error boundary", () => {
       expect.objectContaining({
         classification: "unexpected_end_of_form",
         digest: "3200581505",
+        pathname: "/sites/site-1",
+        app_version: "sha-test-build-1",
       }),
     );
     expect(errorSpy).not.toHaveBeenCalled();
@@ -62,11 +81,33 @@ describe("app global error boundary", () => {
       "[operator-ui] global_render_error",
       expect.objectContaining({
         digest: "unavailable",
+        pathname: "/sites/site-1",
+        app_version: "sha-test-build-1",
       }),
     );
     expect(warnSpy).not.toHaveBeenCalled();
 
     errorSpy.mockRestore();
     warnSpy.mockRestore();
+  });
+
+  it("redacts token-like query params from global diagnostic message", () => {
+    const errorSpy = jest.spyOn(console, "error").mockImplementation(() => undefined);
+
+    render(
+      <AppGlobalError
+        error={{ message: "Callback failed /?code=abc123&state=xyz987", digest: null }}
+        reset={() => undefined}
+      />,
+    );
+
+    expect(errorSpy).toHaveBeenCalledWith(
+      "[operator-ui] global_render_error",
+      expect.objectContaining({
+        message: "Callback failed /?code=[redacted]&state=[redacted]",
+      }),
+    );
+
+    errorSpy.mockRestore();
   });
 });
