@@ -62,6 +62,10 @@ Workflows use Google Cloud Buildpacks:
 - `gcloud builds submit --pack image=...`
 - deploy workflow passes explicit source staging dir:
   - `--gcs-source-staging-dir="${BUILD_SOURCE_DIR}"`
+- API buildpack runtime is pinned via repository-root `runtime.txt`:
+  - `python-3.13.0`
+  - this avoids Buildpack auto-select drift (for example Python 3.14) that can break native
+    dependencies such as `pydantic-core` / `PyO3` compatibility windows.
 
 This produces OCI-compatible images suitable for containerd on GKE.
 
