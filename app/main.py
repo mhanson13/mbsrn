@@ -95,6 +95,7 @@ DATABASE_TARGET_PORT_LABEL = str(DATABASE_TARGET_PORT) if DATABASE_TARGET_PORT i
 _LOCALHOST_DATABASE_TARGETS = {"localhost", "127.0.0.1", "::1"}
 _CLOUDSQL_PROXY_STARTUP_CONNECTIVITY_MAX_ATTEMPTS = 60
 _CLOUDSQL_PROXY_STARTUP_CONNECTIVITY_RETRY_DELAY_SECONDS = 1.0
+_SCHEMA_READINESS_MAX_ATTEMPTS = 2
 _SCHEMA_READINESS_LOGGED_REVISION: str | None = None
 
 
@@ -218,6 +219,37 @@ def _is_cloudsql_proxy_mode() -> bool:
     return settings.app_env == "production" and settings.db_connection_mode == "cloudsql_proxy"
 
 
+def _is_db_connection_closed_error(exc: BaseException) -> bool:
+    message = str(exc).strip().lower()
+    if not message:
+        return False
+    connection_closed_fragments = (
+        "server closed the connection unexpectedly",
+        "connection not open",
+        "connection is closed",
+        "connection already closed",
+        "terminating connection due to administrator command",
+        "terminating connection",
+    )
+    return any(fragment in message for fragment in connection_closed_fragments)
+
+
+def _classify_schema_readiness_error(exc: BaseException) -> str:
+    if _is_db_connection_closed_error(exc):
+        return "db_readiness_connection_closed"
+    return "alembic_version_unavailable"
+
+
+def _dispose_engine_pool_after_readiness_error() -> None:
+    dispose_method = getattr(engine, "dispose", None)
+    if not callable(dispose_method):
+        return
+    try:
+        dispose_method()
+    except Exception as dispose_exc:  # noqa: BLE001
+        logger.debug("Schema readiness pool dispose failed: %s", dispose_exc)
+
+
 def _ensure_database_connectivity() -> None:
     if settings.app_env == "production" and _is_localhost_database_target() and not _is_cloudsql_proxy_mode():
         logger.error(
@@ -334,16 +366,48 @@ def _check_schema_readiness() -> tuple[bool, dict[str, object]]:
             "reason": "expected_revision_unresolved",
         }
 
-    try:
-        with engine.connect() as connection:
-            rows = connection.execute(text("SELECT version_num FROM alembic_version")).all()
-    except SQLAlchemyError as exc:
-        logger.warning(
-            "Schema readiness query failed host=%s port=%s error=%s",
-            DATABASE_TARGET_HOST,
-            DATABASE_TARGET_PORT_LABEL,
-            exc,
-        )
+    rows = None
+    for attempt in range(1, _SCHEMA_READINESS_MAX_ATTEMPTS + 1):
+        try:
+            with engine.connect() as connection:
+                rows = connection.execute(text("SELECT version_num FROM alembic_version")).all()
+            if attempt > 1:
+                logger.info(
+                    "Schema readiness query recovered after transient failure host=%s port=%s attempt=%s max_attempts=%s",
+                    DATABASE_TARGET_HOST,
+                    DATABASE_TARGET_PORT_LABEL,
+                    attempt,
+                    _SCHEMA_READINESS_MAX_ATTEMPTS,
+                )
+            break
+        except SQLAlchemyError as exc:
+            reason_code = _classify_schema_readiness_error(exc)
+            is_retryable = reason_code == "db_readiness_connection_closed" and attempt < _SCHEMA_READINESS_MAX_ATTEMPTS
+            logger.warning(
+                "Schema readiness query failed host=%s port=%s reason=%s retryable=%s attempt=%s max_attempts=%s "
+                "error_class=%s",
+                DATABASE_TARGET_HOST,
+                DATABASE_TARGET_PORT_LABEL,
+                reason_code,
+                is_retryable,
+                attempt,
+                _SCHEMA_READINESS_MAX_ATTEMPTS,
+                exc.__class__.__name__,
+            )
+            if reason_code == "db_readiness_connection_closed":
+                _dispose_engine_pool_after_readiness_error()
+            if is_retryable:
+                continue
+            return False, {
+                "status": "not_ready",
+                "service": _service_name(),
+                "reason": reason_code,
+                "expected_revision": EXPECTED_ALEMBIC_HEAD,
+                "database_host": DATABASE_TARGET_HOST,
+                "database_port": DATABASE_TARGET_PORT_LABEL,
+            }
+
+    if rows is None:
         return False, {
             "status": "not_ready",
             "service": _service_name(),

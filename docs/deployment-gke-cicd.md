@@ -352,6 +352,11 @@ Database URL safety contract:
   - `Startup database connectivity check using cloudsql proxy retry budget ...` (only for proxy-backed localhost mode)
   - `Startup database connectivity check succeeded ... proxy_retry_path_entered=<bool> recovered_after_retry=<bool>`
   - `Schema readiness passed expected=... current=...`
+- Direct Cloud SQL transient restart/update behavior:
+  - during Cloud SQL UPDATE/maintenance windows (especially ZONAL instances), short connection closures can occur while the instance restarts
+  - `/healthz` readiness still returns `503` while schema query is unavailable, but readiness classification includes bounded reason `db_readiness_connection_closed` when the connection is closed unexpectedly
+  - readiness performs one bounded re-check after a transient connection-closed failure and disposes the SQLAlchemy pool before retry
+  - this does not change direct-mode semantics (`DB_CONNECTION_MODE=direct` remains cloud-native/private-IP without Cloud SQL Proxy dependency)
 
 ### Production DATABASE_URL Source Of Truth (`deploy-prod.yml` path)
 - Production-authoritative deploy path (`.github/workflows/deploy-prod.yml` + `k8s/*`) sources

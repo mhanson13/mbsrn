@@ -37,16 +37,21 @@ class _ConnectionContext:
 
 
 class _FakeEngine:
-    def __init__(self, *, fail_attempts: int = 0, rows=None):
+    def __init__(self, *, fail_attempts: int = 0, rows=None, failure_exception: Exception | None = None):
         self.fail_attempts = fail_attempts
         self.rows = rows
+        self.failure_exception = failure_exception
         self.connect_calls = 0
+        self.dispose_calls = 0
 
     def connect(self):
         self.connect_calls += 1
         if self.connect_calls <= self.fail_attempts:
-            raise OperationalError("SELECT 1", {}, Exception("connection refused"))
+            raise OperationalError("SELECT 1", {}, self.failure_exception or Exception("connection refused"))
         return _ConnectionContext(rows=self.rows)
+
+    def dispose(self):
+        self.dispose_calls += 1
 
 
 @pytest.fixture(autouse=True)
@@ -76,6 +81,49 @@ def test_schema_readiness_accepts_revision_0039(
     assert ready is True
     assert payload["schema_revision"] == "0039_competitor_domain_verification_status"
     assert "Schema readiness passed expected=0039_competitor_domain_verification_status" in caplog.text
+
+
+def test_schema_readiness_classifies_connection_closed_and_disposes_pool(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    fake_engine = _FakeEngine(
+        fail_attempts=5,
+        failure_exception=Exception("server closed the connection unexpectedly"),
+    )
+    monkeypatch.setattr(main_module, "engine", fake_engine)
+    monkeypatch.setattr(main_module, "EXPECTED_ALEMBIC_HEAD", "0039_competitor_domain_verification_status")
+    monkeypatch.setattr(main_module, "_SCHEMA_READINESS_MAX_ATTEMPTS", 1)
+    caplog.set_level(logging.INFO)
+
+    ready, payload = main_module._check_schema_readiness()
+
+    assert ready is False
+    assert payload["reason"] == "db_readiness_connection_closed"
+    assert fake_engine.dispose_calls == 1
+    assert "reason=db_readiness_connection_closed" in caplog.text
+    assert "postgresql+psycopg://" not in caplog.text
+
+
+def test_schema_readiness_retries_once_for_transient_connection_closed(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    fake_engine = _FakeEngine(
+        fail_attempts=1,
+        rows=[("0039_competitor_domain_verification_status",)],
+        failure_exception=Exception("server closed the connection unexpectedly"),
+    )
+    monkeypatch.setattr(main_module, "engine", fake_engine)
+    monkeypatch.setattr(main_module, "EXPECTED_ALEMBIC_HEAD", "0039_competitor_domain_verification_status")
+    monkeypatch.setattr(main_module, "_SCHEMA_READINESS_MAX_ATTEMPTS", 2)
+    caplog.set_level(logging.INFO)
+
+    ready, payload = main_module._check_schema_readiness()
+
+    assert ready is True
+    assert payload["schema_revision"] == "0039_competitor_domain_verification_status"
+    assert fake_engine.connect_calls == 2
+    assert fake_engine.dispose_calls == 1
+    assert "Schema readiness query recovered after transient failure" in caplog.text
 
 
 def test_startup_connectivity_retries_for_cloudsql_proxy_localhost(
