@@ -268,6 +268,7 @@ jobs:
           echo "API_IMAGE=${API_IMAGE}" >> "${GITHUB_ENV}"
           echo "Using API image for migration and deploy: ${API_IMAGE}"
 
+          # Google Cloud Buildpacks use repo-root .python-version to select Python runtime.
           gcloud builds submit \
             --project "${GCP_PROJECT_ID}" \
             --gcs-source-staging-dir "gs://mbsrn-build-source/source" \

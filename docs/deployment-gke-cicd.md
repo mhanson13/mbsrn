@@ -62,8 +62,10 @@ Workflows use Google Cloud Buildpacks:
 - `gcloud builds submit --pack image=...`
 - deploy workflow passes explicit source staging dir:
   - `--gcs-source-staging-dir="${BUILD_SOURCE_DIR}"`
-- API buildpack runtime is pinned via repository-root `runtime.txt`:
-  - `python-3.13.0`
+- API buildpack runtime is pinned via repository-root `.python-version`:
+  - `3.13`
+  - Google Cloud Buildpacks in this deployment path do not use `runtime.txt` for Python
+    version selection; do not rely on `runtime.txt` as the API buildpack control file.
   - this avoids Buildpack auto-select drift (for example Python 3.14) that can break native
     dependencies such as `pydantic-core` / `PyO3` compatibility windows.
 
