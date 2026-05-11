@@ -11,6 +11,17 @@ import { SummaryStatCard } from "../../components/layout/SummaryStatCard";
 import { WorkspaceMetadataGrid, WorkspaceMetadataItem } from "../../components/layout/WorkspaceMetadataGrid";
 import { useOperatorContext } from "../../components/useOperatorContext";
 import {
+  AdminDiagnosticsLogsSection,
+  AdminOverviewSection,
+  AdminSectionNav,
+  AiPromptGovernanceSection,
+  AuditCrawlSettingsSection,
+  CompetitorGenerationSettingsSection,
+  ManagedNamespacePolicySection,
+  PublishDeploymentConfigSection,
+  SiteRegistryManagementSection,
+} from "./components/AdminSections";
+import {
   activatePrincipalIdentity,
   activatePrincipal,
   ApiRequestError,
@@ -137,12 +148,6 @@ interface AdminPageProps {
   mode?: AdminPageMode;
 }
 
-interface AdminGroupCardProps {
-  id: string;
-  title: string;
-  description: string;
-}
-
 interface SiteManagementDraft {
   name: string;
   url: string;
@@ -170,14 +175,6 @@ interface GitHubPublishConfigValidationResult {
   basePathWarning: string | null;
   namespaceIsolationErrors: string[];
   blockingError: string | null;
-}
-
-function AdminGroupCard({ id, title, description }: AdminGroupCardProps) {
-  return (
-    <SectionCard id={id} variant="support" className="role-surface-support">
-      <SectionHeader title={title} subtitle={description} headingLevel={2} variant="support" />
-    </SectionCard>
-  );
 }
 
 function parseBoundedInteger(input: string, bounds: { min: number; max: number }): number | null {
@@ -2101,32 +2098,11 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
   return (
     <PageContainer width="wide" density="compact">
       <div className={mode === "admin" ? "stack" : "role-dashboard-landing"}>
-        <SectionCard
-          id="admin-group-overview"
-          variant="primary"
-          className={[
-            "role-dashboard-hero",
-            mode === "admin" ? "admin-layout-shell-flat" : "",
-          ]
-            .filter(Boolean)
-            .join(" ")}
+        <AdminOverviewSection
+          mode={mode}
+          businessId={context.businessId}
+          principalRole={principal?.role ?? null}
         >
-          <SectionHeader
-            title={mode === "userMgmt" ? "User Mgmt" : "Admin Overview"}
-            subtitle={
-              mode === "userMgmt"
-                ? "Create users, link identities, and manage principal access for this business."
-                : "Manage platform settings, diagnostics, and site controls for this business."
-            }
-            headingLevel={1}
-            variant="hero"
-            meta={(
-              <>
-                <span className="hint muted">Business: <code>{context.businessId}</code></span>
-                {principal ? <span className="hint muted">Role: {principal.role}</span> : null}
-              </>
-            )}
-          />
           <div className="workspace-summary-strip role-summary-strip">
             {showUserManagement ? (
               <>
@@ -2219,35 +2195,10 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
               <p className="hint muted">
                 Admin configures governance and platform defaults. Workflow execution remains on dedicated operational routes.
               </p>
-              <nav className="link-row" aria-label="Admin section navigation">
-                <a href="#admin-group-overview" className="hint muted">
-                  Overview
-                </a>
-                <a href="#admin-group-audit-crawl" className="hint muted">
-                  Audit & Crawl
-                </a>
-                <a href="#admin-group-competitor-generation" className="hint muted">
-                  Competitor Generation
-                </a>
-                <a href="#admin-group-ai-governance" className="hint muted">
-                  AI Governance
-                </a>
-                <a href="#admin-group-publish-deploy" className="hint muted">
-                  Publish & Deploy
-                </a>
-                <a href="#admin-group-namespace-policy" className="hint muted">
-                  Namespace Policy
-                </a>
-                <a href="#admin-group-site-registry" className="hint muted">
-                  Site Registry
-                </a>
-                <a href="#admin-group-diagnostics-logs" className="hint muted">
-                  Diagnostics
-                </a>
-              </nav>
+              <AdminSectionNav />
             </>
           ) : null}
-        </SectionCard>
+        </AdminOverviewSection>
 
           {showUserManagement ? (
             <>
@@ -2401,68 +2352,55 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
           ) : null}
 
         {showAdminSettings ? (
-          <AdminGroupCard
-            id="admin-group-audit-crawl"
-            title="Audit & Crawl Settings"
-            description="Audit and crawl controls tune deterministic discovery depth and evidence collection behavior."
-          />
+          <AuditCrawlSettingsSection>
+            <SectionCard variant="summary" className="role-surface-support">
+              <SectionHeader
+                title="SEO Crawl Settings"
+                subtitle="Configure crawl page limits used by SEO audits and automation for this business."
+                headingLevel={2}
+                variant="support"
+              />
+              <FormContainer onSubmit={(event) => void handleUpdateCrawlPageLimit(event)} noValidate>
+                {settingsHealth.crawl.status === "invalid" ? (
+                  <p className="hint warning">
+                    Settings health: {settingsHealth.crawl.message}
+                  </p>
+                ) : null}
+                <label htmlFor="seo-audit-crawl-max-pages">Crawl Page Limit</label>
+                <input
+                  id="seo-audit-crawl-max-pages"
+                  type="number"
+                  min={CRAWL_PAGE_LIMIT_MIN}
+                  max={CRAWL_PAGE_LIMIT_MAX}
+                  step={1}
+                  value={crawlPageLimitInput}
+                  onChange={(event) => setCrawlPageLimitInput(event.target.value)}
+                  disabled={businessSettingsLoading || crawlPageLimitSubmitting}
+                  required
+                />
+                <p className="hint muted">
+                  {`Allowed range: ${CRAWL_PAGE_LIMIT_MIN}-${CRAWL_PAGE_LIMIT_MAX}. Current value: `}
+                  <code>{businessSettings ? String(businessSettings.seo_audit_crawl_max_pages) : String(DEFAULT_CRAWL_PAGE_LIMIT)}</code>.
+                </p>
+                <div className="form-actions">
+                  <button
+                    className="button button-primary"
+                    type="submit"
+                    disabled={businessSettingsLoading || crawlPageLimitSubmitting}
+                  >
+                    {crawlPageLimitSubmitting ? "Saving..." : "Save Crawl Limit"}
+                  </button>
+                </div>
+                {businessSettingsLoading ? <p className="hint muted">Loading business settings...</p> : null}
+                {crawlPageLimitMessage ? <p className="hint">{crawlPageLimitMessage}</p> : null}
+                {crawlPageLimitError ? <p className="hint error">{crawlPageLimitError}</p> : null}
+              </FormContainer>
+            </SectionCard>
+          </AuditCrawlSettingsSection>
         ) : null}
 
         {showAdminSettings ? (
-          <SectionCard variant="summary" className="role-surface-support">
-          <SectionHeader
-            title="SEO Crawl Settings"
-            subtitle="Configure crawl page limits used by SEO audits and automation for this business."
-            headingLevel={2}
-            variant="support"
-          />
-          <FormContainer onSubmit={(event) => void handleUpdateCrawlPageLimit(event)} noValidate>
-          {settingsHealth.crawl.status === "invalid" ? (
-            <p className="hint warning">
-              Settings health: {settingsHealth.crawl.message}
-            </p>
-          ) : null}
-          <label htmlFor="seo-audit-crawl-max-pages">Crawl Page Limit</label>
-          <input
-            id="seo-audit-crawl-max-pages"
-            type="number"
-            min={CRAWL_PAGE_LIMIT_MIN}
-            max={CRAWL_PAGE_LIMIT_MAX}
-            step={1}
-            value={crawlPageLimitInput}
-            onChange={(event) => setCrawlPageLimitInput(event.target.value)}
-            disabled={businessSettingsLoading || crawlPageLimitSubmitting}
-            required
-          />
-          <p className="hint muted">
-            {`Allowed range: ${CRAWL_PAGE_LIMIT_MIN}-${CRAWL_PAGE_LIMIT_MAX}. Current value: `}
-            <code>{businessSettings ? String(businessSettings.seo_audit_crawl_max_pages) : String(DEFAULT_CRAWL_PAGE_LIMIT)}</code>.
-          </p>
-          <div className="form-actions">
-            <button
-              className="button button-primary"
-              type="submit"
-              disabled={businessSettingsLoading || crawlPageLimitSubmitting}
-            >
-              {crawlPageLimitSubmitting ? "Saving..." : "Save Crawl Limit"}
-            </button>
-          </div>
-            {businessSettingsLoading ? <p className="hint muted">Loading business settings...</p> : null}
-            {crawlPageLimitMessage ? <p className="hint">{crawlPageLimitMessage}</p> : null}
-            {crawlPageLimitError ? <p className="hint error">{crawlPageLimitError}</p> : null}
-          </FormContainer>
-          </SectionCard>
-        ) : null}
-
-        {showAdminSettings ? (
-          <AdminGroupCard
-            id="admin-group-competitor-generation"
-            title="Competitor Generation Settings"
-            description="Competitor generation controls tune deterministic candidate quality and timeout behavior."
-          />
-        ) : null}
-
-        {showAdminSettings ? (
+        <CompetitorGenerationSettingsSection>
         <SectionCard variant="summary" className="role-surface-support">
           <SectionHeader
             title="AI Competitor Candidate Quality"
@@ -2570,9 +2508,6 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
             {candidateQualityError ? <p className="hint error">{candidateQualityError}</p> : null}
           </FormContainer>
         </SectionCard>
-        ) : null}
-
-        {showAdminSettings ? (
         <SectionCard variant="summary" className="role-surface-support">
           <SectionHeader
             title="AI Competitor Generation Timeouts"
@@ -2635,17 +2570,11 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
             {competitorTimeoutError ? <p className="hint error">{competitorTimeoutError}</p> : null}
           </FormContainer>
         </SectionCard>
+        </CompetitorGenerationSettingsSection>
         ) : null}
 
         {showAdminSettings ? (
-          <AdminGroupCard
-            id="admin-group-ai-governance"
-            title="AI Provider & Prompt Governance"
-            description="AI prompt and model changes affect generated recommendations, competitors, and migration drafts."
-          />
-        ) : null}
-
-        {showAdminSettings ? (
+        <AiPromptGovernanceSection>
         <SectionCard variant="summary" className="role-surface-support">
           <SectionHeader
             title="AI Prompt Overrides"
@@ -2760,17 +2689,11 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
             {promptOverrideError ? <p className="hint error">{promptOverrideError}</p> : null}
           </FormContainer>
         </SectionCard>
+        </AiPromptGovernanceSection>
         ) : null}
 
         {showAdminSettings ? (
-          <AdminGroupCard
-            id="admin-group-publish-deploy"
-            title="Publish & Deployment Configuration"
-            description="Deployment configuration controls publish/deploy target behavior and managed runtime credentials."
-          />
-        ) : null}
-
-        {showAdminSettings ? (
+        <PublishDeploymentConfigSection>
         <SectionCard variant="summary" className="role-surface-support">
           <SectionHeader
             title="GitHub Publish Configuration"
@@ -2951,12 +2874,7 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
               </WorkspaceMetadataGrid>
             </div>
 
-            <div id="admin-group-namespace-policy" className="panel panel-compact stack-tight">
-              <strong>Managed Namespace Policy</strong>
-              <p className="hint muted">
-                Namespace policy controls managed site Kubernetes defaults for new managed site namespaces.
-              </p>
-            </div>
+            <ManagedNamespacePolicySection />
 
             <div className="panel panel-compact stack-tight">
               <strong>Namespace ResourceQuota defaults</strong>
@@ -3327,6 +3245,7 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
             {githubPublishConfigError ? <p className="hint error">{githubPublishConfigError}</p> : null}
           </FormContainer>
         </SectionCard>
+        </PublishDeploymentConfigSection>
         ) : null}
 
         <div className="message-stack">
@@ -3357,12 +3276,7 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
 
       {showAdminSettings ? (
         <>
-      <AdminGroupCard
-        id="admin-group-site-registry"
-        title="Site Registry Management"
-        description="Site Registry changes affect active site records and destructive deletion controls."
-      />
-
+      <SiteRegistryManagementSection>
       <SectionCard variant="summary" className="role-surface-support">
         <SectionHeader
           title="Site Management"
@@ -3479,13 +3393,8 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
           </table>
         </div>
       </SectionCard>
-
-      <AdminGroupCard
-        id="admin-group-diagnostics-logs"
-        title="Diagnostics & Logs"
-        description="Diagnostics is read-only log investigation for runtime troubleshooting."
-      />
-
+      </SiteRegistryManagementSection>
+      <AdminDiagnosticsLogsSection>
       <SectionCard variant="support" className="role-surface-support">
         <SectionHeader
           title="GCP Logs Query"
@@ -3629,6 +3538,7 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
           </table>
         </div>
       </SectionCard>
+      </AdminDiagnosticsLogsSection>
       </>
       ) : null}
 
