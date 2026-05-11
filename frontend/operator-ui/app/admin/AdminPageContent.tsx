@@ -2408,86 +2408,95 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
             headingLevel={2}
             variant="support"
           />
-          <FormContainer onSubmit={(event) => void handleUpdateCompetitorCandidateQuality(event)} noValidate>
+          <FormContainer className="form-container-full-width" onSubmit={(event) => void handleUpdateCompetitorCandidateQuality(event)} noValidate>
           {settingsHealth.competitorQuality.status === "invalid" ? (
             <p className="hint warning">
               Settings health: {settingsHealth.competitorQuality.message}
             </p>
           ) : null}
+          <div className="admin-grid-two">
+            <div className="stack-tight">
+              <label htmlFor="competitor-candidate-min-relevance-score">Minimum Relevance Score</label>
+              <input
+                id="competitor-candidate-min-relevance-score"
+                type="number"
+                min={COMPETITOR_MIN_RELEVANCE_SCORE_MIN}
+                max={COMPETITOR_MIN_RELEVANCE_SCORE_MAX}
+                step={1}
+                value={candidateMinRelevanceScoreInput}
+                onChange={(event) => setCandidateMinRelevanceScoreInput(event.target.value)}
+                disabled={businessSettingsLoading || candidateQualitySubmitting}
+                required
+              />
+              <p className="hint muted">
+                Controls how closely a competitor must match your business to be included. Higher values mean stricter,
+                more relevant matches.
+              </p>
+              <p className="hint muted">
+                Raise this if competitors feel unrelated. Lower it if you are getting too few results.
+              </p>
+            </div>
 
-          <label htmlFor="competitor-candidate-min-relevance-score">Minimum Relevance Score</label>
-          <input
-            id="competitor-candidate-min-relevance-score"
-            type="number"
-            min={COMPETITOR_MIN_RELEVANCE_SCORE_MIN}
-            max={COMPETITOR_MIN_RELEVANCE_SCORE_MAX}
-            step={1}
-            value={candidateMinRelevanceScoreInput}
-            onChange={(event) => setCandidateMinRelevanceScoreInput(event.target.value)}
-            disabled={businessSettingsLoading || candidateQualitySubmitting}
-            required
-          />
-          <p className="hint muted">
-            Controls how closely a competitor must match your business to be included. Higher values mean stricter,
-            more relevant matches.
-          </p>
-          <p className="hint muted">
-            Raise this if competitors feel unrelated. Lower it if you are getting too few results.
-          </p>
+            <div className="stack-tight">
+              <label htmlFor="competitor-candidate-big-box-penalty">Big-Box Mismatch Penalty</label>
+              <input
+                id="competitor-candidate-big-box-penalty"
+                type="number"
+                min={COMPETITOR_BIG_BOX_PENALTY_MIN}
+                max={COMPETITOR_BIG_BOX_PENALTY_MAX}
+                step={1}
+                value={candidateBigBoxPenaltyInput}
+                onChange={(event) => setCandidateBigBoxPenaltyInput(event.target.value)}
+                disabled={businessSettingsLoading || candidateQualitySubmitting}
+                required
+              />
+              <p className="hint muted">
+                Reduces the chance that large national or big-box companies appear as competitors. Increase this to
+                focus more on businesses like yours.
+              </p>
+              <p className="hint muted">Raise this if large companies dominate your results.</p>
+            </div>
 
-          <label htmlFor="competitor-candidate-big-box-penalty">Big-Box Mismatch Penalty</label>
-          <input
-            id="competitor-candidate-big-box-penalty"
-            type="number"
-            min={COMPETITOR_BIG_BOX_PENALTY_MIN}
-            max={COMPETITOR_BIG_BOX_PENALTY_MAX}
-            step={1}
-            value={candidateBigBoxPenaltyInput}
-            onChange={(event) => setCandidateBigBoxPenaltyInput(event.target.value)}
-            disabled={businessSettingsLoading || candidateQualitySubmitting}
-            required
-          />
-          <p className="hint muted">
-            Reduces the chance that large national or big-box companies appear as competitors. Increase this to focus
-            more on businesses like yours.
-          </p>
-          <p className="hint muted">Raise this if large companies dominate your results.</p>
+            <div className="stack-tight">
+              <label htmlFor="competitor-candidate-directory-penalty">Directory/Aggregator Penalty</label>
+              <input
+                id="competitor-candidate-directory-penalty"
+                type="number"
+                min={COMPETITOR_DIRECTORY_PENALTY_MIN}
+                max={COMPETITOR_DIRECTORY_PENALTY_MAX}
+                step={1}
+                value={candidateDirectoryPenaltyInput}
+                onChange={(event) => setCandidateDirectoryPenaltyInput(event.target.value)}
+                disabled={businessSettingsLoading || candidateQualitySubmitting}
+                required
+              />
+              <p className="hint muted">
+                Reduces listings from directories or lead sites (like Yelp, Angi, etc.). Increase this to prioritize
+                real business websites instead.
+              </p>
+              <p className="hint muted">Raise this if you see too many directory or listing sites.</p>
+            </div>
 
-          <label htmlFor="competitor-candidate-directory-penalty">Directory/Aggregator Penalty</label>
-          <input
-            id="competitor-candidate-directory-penalty"
-            type="number"
-            min={COMPETITOR_DIRECTORY_PENALTY_MIN}
-            max={COMPETITOR_DIRECTORY_PENALTY_MAX}
-            step={1}
-            value={candidateDirectoryPenaltyInput}
-            onChange={(event) => setCandidateDirectoryPenaltyInput(event.target.value)}
-            disabled={businessSettingsLoading || candidateQualitySubmitting}
-            required
-          />
-          <p className="hint muted">
-            Reduces listings from directories or lead sites (like Yelp, Angi, etc.). Increase this to prioritize real
-            business websites instead.
-          </p>
-          <p className="hint muted">Raise this if you see too many directory or listing sites.</p>
-
-          <label htmlFor="competitor-candidate-local-alignment-bonus">Local Alignment Bonus</label>
-          <input
-            id="competitor-candidate-local-alignment-bonus"
-            type="number"
-            min={COMPETITOR_LOCAL_ALIGNMENT_BONUS_MIN}
-            max={COMPETITOR_LOCAL_ALIGNMENT_BONUS_MAX}
-            step={1}
-            value={candidateLocalAlignmentBonusInput}
-            onChange={(event) => setCandidateLocalAlignmentBonusInput(event.target.value)}
-            disabled={businessSettingsLoading || candidateQualitySubmitting}
-            required
-          />
-          <p className="hint muted">
-            Boosts competitors that are located in or serve your area. Increase this to focus more on nearby
-            businesses.
-          </p>
-          <p className="hint muted">Raise this if competitors are not local enough.</p>
+            <div className="stack-tight">
+              <label htmlFor="competitor-candidate-local-alignment-bonus">Local Alignment Bonus</label>
+              <input
+                id="competitor-candidate-local-alignment-bonus"
+                type="number"
+                min={COMPETITOR_LOCAL_ALIGNMENT_BONUS_MIN}
+                max={COMPETITOR_LOCAL_ALIGNMENT_BONUS_MAX}
+                step={1}
+                value={candidateLocalAlignmentBonusInput}
+                onChange={(event) => setCandidateLocalAlignmentBonusInput(event.target.value)}
+                disabled={businessSettingsLoading || candidateQualitySubmitting}
+                required
+              />
+              <p className="hint muted">
+                Boosts competitors that are located in or serve your area. Increase this to focus more on nearby
+                businesses.
+              </p>
+              <p className="hint muted">Raise this if competitors are not local enough.</p>
+            </div>
+          </div>
 
           <p className="hint muted">
             Minimum relevance score: {COMPETITOR_MIN_RELEVANCE_SCORE_MIN}-{COMPETITOR_MIN_RELEVANCE_SCORE_MAX}, big-box
@@ -2515,44 +2524,50 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
             headingLevel={2}
             variant="support"
           />
-          <FormContainer onSubmit={(event) => void handleUpdateCompetitorTimeoutSettings(event)} noValidate>
+          <FormContainer className="form-container-full-width" onSubmit={(event) => void handleUpdateCompetitorTimeoutSettings(event)} noValidate>
           {settingsHealth.competitorTimeouts.status === "invalid" ? (
             <p className="hint warning">
               Settings health: {settingsHealth.competitorTimeouts.message}
             </p>
           ) : null}
 
-          <label htmlFor="competitor-primary-timeout-seconds">Competitor Primary Timeout Seconds</label>
-          <input
-            id="competitor-primary-timeout-seconds"
-            type="number"
-            min={COMPETITOR_TIMEOUT_SECONDS_MIN}
-            max={COMPETITOR_TIMEOUT_SECONDS_MAX}
-            step={1}
-            value={competitorPrimaryTimeoutInput}
-            onChange={(event) => setCompetitorPrimaryTimeoutInput(event.target.value)}
-            disabled={businessSettingsLoading || competitorTimeoutSubmitting}
-            placeholder={String(DEFAULT_COMPETITOR_TIMEOUT_SECONDS)}
-          />
-          <p className="hint muted">
-            First full search-backed attempt timeout. Leave blank to use the deployment default.
-          </p>
+          <div className="admin-grid-two">
+            <div className="stack-tight">
+              <label htmlFor="competitor-primary-timeout-seconds">Competitor Primary Timeout Seconds</label>
+              <input
+                id="competitor-primary-timeout-seconds"
+                type="number"
+                min={COMPETITOR_TIMEOUT_SECONDS_MIN}
+                max={COMPETITOR_TIMEOUT_SECONDS_MAX}
+                step={1}
+                value={competitorPrimaryTimeoutInput}
+                onChange={(event) => setCompetitorPrimaryTimeoutInput(event.target.value)}
+                disabled={businessSettingsLoading || competitorTimeoutSubmitting}
+                placeholder={String(DEFAULT_COMPETITOR_TIMEOUT_SECONDS)}
+              />
+              <p className="hint muted">
+                First full search-backed attempt timeout. Leave blank to use the deployment default.
+              </p>
+            </div>
 
-          <label htmlFor="competitor-degraded-timeout-seconds">Competitor Degraded Retry Timeout Seconds</label>
-          <input
-            id="competitor-degraded-timeout-seconds"
-            type="number"
-            min={COMPETITOR_TIMEOUT_SECONDS_MIN}
-            max={COMPETITOR_TIMEOUT_SECONDS_MAX}
-            step={1}
-            value={competitorDegradedTimeoutInput}
-            onChange={(event) => setCompetitorDegradedTimeoutInput(event.target.value)}
-            disabled={businessSettingsLoading || competitorTimeoutSubmitting}
-            placeholder={String(DEFAULT_COMPETITOR_TIMEOUT_SECONDS)}
-          />
-          <p className="hint muted">
-            Reduced-context degraded retry timeout. Leave blank to use the deployment default.
-          </p>
+            <div className="stack-tight">
+              <label htmlFor="competitor-degraded-timeout-seconds">Competitor Degraded Retry Timeout Seconds</label>
+              <input
+                id="competitor-degraded-timeout-seconds"
+                type="number"
+                min={COMPETITOR_TIMEOUT_SECONDS_MIN}
+                max={COMPETITOR_TIMEOUT_SECONDS_MAX}
+                step={1}
+                value={competitorDegradedTimeoutInput}
+                onChange={(event) => setCompetitorDegradedTimeoutInput(event.target.value)}
+                disabled={businessSettingsLoading || competitorTimeoutSubmitting}
+                placeholder={String(DEFAULT_COMPETITOR_TIMEOUT_SECONDS)}
+              />
+              <p className="hint muted">
+                Reduced-context degraded retry timeout. Leave blank to use the deployment default.
+              </p>
+            </div>
+          </div>
 
             <p className="hint muted">
               Allowed range: {COMPETITOR_TIMEOUT_SECONDS_MIN}-{COMPETITOR_TIMEOUT_SECONDS_MAX} seconds.
@@ -2582,7 +2597,7 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
             headingLevel={2}
             variant="support"
           />
-          <FormContainer onSubmit={(event) => void handleSavePromptOverrides(event)} noValidate>
+          <FormContainer className="form-container-full-width" onSubmit={(event) => void handleSavePromptOverrides(event)} noValidate>
             <p className="hint muted">
               AI prompt/model changes affect generated recommendations, competitors, and migration drafts.
             </p>
@@ -2591,82 +2606,93 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
               <p className="hint muted">
                 Keep prompt changes bounded and review output quality after each save.
               </p>
-              <label htmlFor="ai-prompt-text-competitor">Competitor Prompt</label>
-              <textarea
-                id="ai-prompt-text-competitor"
-                rows={8}
-                value={competitorPromptOverrideInput}
-                onChange={(event) => setCompetitorPromptOverrideInput(event.target.value)}
-                disabled={businessSettingsLoading || promptOverrideSubmitting}
-              />
-              <p className="hint muted">
-                Current source:{" "}
-                <strong>
-                  {businessSettings?.ai_prompt_text_competitor
-                    ? "Business admin override"
-                    : "Deployment/default fallback"}
-                </strong>
-              </p>
+              <div className="admin-grid-two">
+                <div className="stack-tight">
+                  <label htmlFor="ai-prompt-text-competitor">Competitor Prompt</label>
+                  <textarea
+                    id="ai-prompt-text-competitor"
+                    rows={7}
+                    value={competitorPromptOverrideInput}
+                    onChange={(event) => setCompetitorPromptOverrideInput(event.target.value)}
+                    disabled={businessSettingsLoading || promptOverrideSubmitting}
+                  />
+                  <p className="hint muted">
+                    Current source:{" "}
+                    <strong>
+                      {businessSettings?.ai_prompt_text_competitor
+                        ? "Business admin override"
+                        : "Deployment/default fallback"}
+                    </strong>
+                  </p>
+                </div>
 
-              <label htmlFor="ai-prompt-text-recommendations">Recommendations Prompt</label>
-              <textarea
-                id="ai-prompt-text-recommendations"
-                rows={8}
-                value={recommendationsPromptOverrideInput}
-                onChange={(event) => setRecommendationsPromptOverrideInput(event.target.value)}
-                disabled={businessSettingsLoading || promptOverrideSubmitting}
-              />
-              <p className="hint muted">
-                Current source:{" "}
-                <strong>
-                  {businessSettings?.ai_prompt_text_recommendations
-                    ? "Business admin override"
-                    : "Deployment/default fallback"}
-                </strong>
-              </p>
+                <div className="stack-tight">
+                  <label htmlFor="ai-prompt-text-recommendations">Recommendations Prompt</label>
+                  <textarea
+                    id="ai-prompt-text-recommendations"
+                    rows={7}
+                    value={recommendationsPromptOverrideInput}
+                    onChange={(event) => setRecommendationsPromptOverrideInput(event.target.value)}
+                    disabled={businessSettingsLoading || promptOverrideSubmitting}
+                  />
+                  <p className="hint muted">
+                    Current source:{" "}
+                    <strong>
+                      {businessSettings?.ai_prompt_text_recommendations
+                        ? "Business admin override"
+                        : "Deployment/default fallback"}
+                    </strong>
+                  </p>
+                </div>
+              </div>
             </div>
+            <div className="admin-grid-two">
+              <div className="stack-tight">
+                <label htmlFor="default-ai-model">Default AI model</label>
+                <input
+                  id="default-ai-model"
+                  type="text"
+                  value={defaultAiModelInput}
+                  onChange={(event) => setDefaultAiModelInput(event.target.value)}
+                  disabled={businessSettingsLoading || promptOverrideSubmitting}
+                  placeholder="gpt-4o-mini"
+                />
+                <p className="hint muted">
+                  Used when no per-run model override is provided. Resolution order: explicit request, business admin
+                  default, deployment env default, provider fallback.
+                </p>
+                <p className="hint muted">
+                  Current source:{" "}
+                  <strong>
+                    {businessSettings?.default_ai_model
+                      ? "Business admin override"
+                      : "Deployment/default fallback"}
+                  </strong>
+                </p>
+              </div>
 
-          <label htmlFor="default-ai-model">Default AI model</label>
-          <input
-            id="default-ai-model"
-            type="text"
-            value={defaultAiModelInput}
-            onChange={(event) => setDefaultAiModelInput(event.target.value)}
-            disabled={businessSettingsLoading || promptOverrideSubmitting}
-            placeholder="gpt-4o-mini"
-          />
-          <p className="hint muted">
-            Used when no per-run model override is provided. Resolution order: explicit request, business admin
-            default, deployment env default, provider fallback.
-          </p>
-          <p className="hint muted">
-            Current source:{" "}
-            <strong>
-              {businessSettings?.default_ai_model
-                ? "Business admin override"
-                : "Deployment/default fallback"}
-            </strong>
-          </p>
-
-          <label htmlFor="migration-draft-timeout-seconds">Migration Draft Timeout (seconds)</label>
-          <input
-            id="migration-draft-timeout-seconds"
-            type="number"
-            min={MIGRATION_DRAFT_TIMEOUT_SECONDS_MIN}
-            max={MIGRATION_DRAFT_TIMEOUT_SECONDS_MAX}
-            step={1}
-            value={migrationDraftTimeoutInput}
-            onChange={(event) => setMigrationDraftTimeoutInput(event.target.value)}
-            disabled={businessSettingsLoading || promptOverrideSubmitting}
-            placeholder={String(DEFAULT_MIGRATION_DRAFT_TIMEOUT_SECONDS)}
-          />
-          <p className="hint muted">
-            Maximum time allowed for AI draft generation. Larger drafts may take 60-120 seconds or more.
-          </p>
-          <p className="hint muted">
-            Allowed range: {MIGRATION_DRAFT_TIMEOUT_SECONDS_MIN}-{MIGRATION_DRAFT_TIMEOUT_SECONDS_MAX} seconds. Leave
-            blank to use the default ({DEFAULT_MIGRATION_DRAFT_TIMEOUT_SECONDS}s).
-          </p>
+              <div className="stack-tight">
+                <label htmlFor="migration-draft-timeout-seconds">Migration Draft Timeout (seconds)</label>
+                <input
+                  id="migration-draft-timeout-seconds"
+                  type="number"
+                  min={MIGRATION_DRAFT_TIMEOUT_SECONDS_MIN}
+                  max={MIGRATION_DRAFT_TIMEOUT_SECONDS_MAX}
+                  step={1}
+                  value={migrationDraftTimeoutInput}
+                  onChange={(event) => setMigrationDraftTimeoutInput(event.target.value)}
+                  disabled={businessSettingsLoading || promptOverrideSubmitting}
+                  placeholder={String(DEFAULT_MIGRATION_DRAFT_TIMEOUT_SECONDS)}
+                />
+                <p className="hint muted">
+                  Maximum time allowed for AI draft generation. Larger drafts may take 60-120 seconds or more.
+                </p>
+                <p className="hint muted">
+                  Allowed range: {MIGRATION_DRAFT_TIMEOUT_SECONDS_MIN}-{MIGRATION_DRAFT_TIMEOUT_SECONDS_MAX} seconds.
+                  Leave blank to use the default ({DEFAULT_MIGRATION_DRAFT_TIMEOUT_SECONDS}s).
+                </p>
+              </div>
+            </div>
 
             <div className="form-actions">
               <button
@@ -2701,138 +2727,177 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
             headingLevel={2}
             variant="support"
           />
-          <FormContainer onSubmit={(event) => void handleSaveGitHubPublishConfig(event)} noValidate>
-            <label htmlFor="github-publish-owner">GitHub account/owner</label>
-            <input
-              id="github-publish-owner"
-              type="text"
-              value={githubPublishOwnerInput}
-              onChange={(event) => setGitHubPublishOwnerInput(event.target.value)}
-              disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
-              placeholder="mhanson13"
-            />
-            {githubPublishValidation.ownerError ? (
-              <p className="hint error">{githubPublishValidation.ownerError}</p>
-            ) : null}
-
-            <label htmlFor="github-publish-default-branch">Default Branch</label>
-            <input
-              id="github-publish-default-branch"
-              type="text"
-              value={githubPublishDefaultBranchInput}
-              onChange={(event) => setGitHubPublishDefaultBranchInput(event.target.value)}
-              disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
-              placeholder="main"
-            />
-            {githubPublishValidation.defaultBranchError ? (
-              <p className="hint error">{githubPublishValidation.defaultBranchError}</p>
-            ) : null}
-
-            <label htmlFor="github-publish-base-path">Base Path</label>
-            <input
-              id="github-publish-base-path"
-              type="text"
-              value={githubPublishBasePathInput}
-              onChange={(event) => setGitHubPublishBasePathInput(event.target.value)}
-              disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
-              placeholder="/"
-            />
-            <p className="hint muted">
-              Use <code>/</code> for repository root or a subpath like <code>/site</code>.
-            </p>
-            {githubPublishValidation.basePathError ? (
-              <p className="hint error">{githubPublishValidation.basePathError}</p>
-            ) : null}
-            {githubPublishValidation.basePathWarning ? (
-              <p className="hint warning">{githubPublishValidation.basePathWarning}</p>
-            ) : null}
-
-            <label htmlFor="github-publish-deploy-workflow-mode">Deploy Workflow Mode</label>
-            <select
-              id="github-publish-deploy-workflow-mode"
-              value={githubPublishDeployWorkflowModeInput}
-              onChange={(event) => setGitHubPublishDeployWorkflowModeInput(event.target.value)}
-              disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
-            >
-              <option value="site_repo_template_v1">site_repo_template_v1</option>
-            </select>
-            <p className="hint muted">
-              Platform-managed template mode for per-site workflow generation in each target repository.
-            </p>
-            {githubPublishValidation.deployWorkflowModeError ? (
-              <p className="hint error">{githubPublishValidation.deployWorkflowModeError}</p>
-            ) : null}
-
-            <label htmlFor="github-publish-target-environment-key">Target Environment Key</label>
-            <input
-              id="github-publish-target-environment-key"
-              type="text"
-              value={githubPublishTargetEnvironmentKeyInput}
-              onChange={(event) => setGitHubPublishTargetEnvironmentKeyInput(event.target.value)}
-              disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
-              placeholder="gke_prod"
-            />
-            <p className="hint muted">
-              Admin-owned deployment environment mapping key used by workflow template generation.
-            </p>
-            {githubPublishValidation.targetEnvironmentKeyError ? (
-              <p className="hint error">{githubPublishValidation.targetEnvironmentKeyError}</p>
-            ) : null}
-            <label htmlFor="github-publish-repository-auto-create-enabled" className="checkbox-chip">
+          <FormContainer className="form-container-full-width" onSubmit={(event) => void handleSaveGitHubPublishConfig(event)} noValidate>
+            <label htmlFor="github-publish-enabled" className="checkbox-chip">
               <input
-                id="github-publish-repository-auto-create-enabled"
+                id="github-publish-enabled"
                 type="checkbox"
-                checked={githubRepositoryAutoCreateEnabled}
-                onChange={(event) => setGitHubRepositoryAutoCreateEnabled(event.target.checked)}
+                checked={githubPublishEnabled}
+                onChange={(event) => setGitHubPublishEnabled(event.target.checked)}
                 disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
               />
-              Enable managed repository auto-create for missing publish targets
+              Enable migration GitHub publish target
             </label>
             <p className="hint muted">
-              Admin-owned policy. When enabled, the runtime GitHub token can create missing repositories under the configured owner only.
+              Managed GKE target metadata and managed deploy secret status are admin-owned here. Secret values are
+              write-only and never returned.
             </p>
+
+            <div className="admin-grid-two">
+              <div className="stack-tight">
+                <label htmlFor="github-publish-owner">GitHub account/owner</label>
+                <input
+                  id="github-publish-owner"
+                  type="text"
+                  value={githubPublishOwnerInput}
+                  onChange={(event) => setGitHubPublishOwnerInput(event.target.value)}
+                  disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
+                  placeholder="mhanson13"
+                />
+                {githubPublishValidation.ownerError ? (
+                  <p className="hint error">{githubPublishValidation.ownerError}</p>
+                ) : null}
+              </div>
+
+              <div className="stack-tight">
+                <label htmlFor="github-publish-default-branch">Default Branch</label>
+                <input
+                  id="github-publish-default-branch"
+                  type="text"
+                  value={githubPublishDefaultBranchInput}
+                  onChange={(event) => setGitHubPublishDefaultBranchInput(event.target.value)}
+                  disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
+                  placeholder="main"
+                />
+                {githubPublishValidation.defaultBranchError ? (
+                  <p className="hint error">{githubPublishValidation.defaultBranchError}</p>
+                ) : null}
+              </div>
+
+              <div className="stack-tight">
+                <label htmlFor="github-publish-base-path">Base Path</label>
+                <input
+                  id="github-publish-base-path"
+                  type="text"
+                  value={githubPublishBasePathInput}
+                  onChange={(event) => setGitHubPublishBasePathInput(event.target.value)}
+                  disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
+                  placeholder="/"
+                />
+                <p className="hint muted">
+                  Use <code>/</code> for repository root or a subpath like <code>/site</code>.
+                </p>
+                {githubPublishValidation.basePathError ? (
+                  <p className="hint error">{githubPublishValidation.basePathError}</p>
+                ) : null}
+                {githubPublishValidation.basePathWarning ? (
+                  <p className="hint warning">{githubPublishValidation.basePathWarning}</p>
+                ) : null}
+              </div>
+
+              <div className="stack-tight">
+                <label htmlFor="github-publish-deploy-workflow-mode">Deploy Workflow Mode</label>
+                <select
+                  id="github-publish-deploy-workflow-mode"
+                  value={githubPublishDeployWorkflowModeInput}
+                  onChange={(event) => setGitHubPublishDeployWorkflowModeInput(event.target.value)}
+                  disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
+                >
+                  <option value="site_repo_template_v1">site_repo_template_v1</option>
+                </select>
+                <p className="hint muted">
+                  Platform-managed template mode for per-site workflow generation in each target repository.
+                </p>
+                {githubPublishValidation.deployWorkflowModeError ? (
+                  <p className="hint error">{githubPublishValidation.deployWorkflowModeError}</p>
+                ) : null}
+              </div>
+
+              <div className="stack-tight">
+                <label htmlFor="github-publish-target-environment-key">Target Environment Key</label>
+                <input
+                  id="github-publish-target-environment-key"
+                  type="text"
+                  value={githubPublishTargetEnvironmentKeyInput}
+                  onChange={(event) => setGitHubPublishTargetEnvironmentKeyInput(event.target.value)}
+                  disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
+                  placeholder="gke_prod"
+                />
+                <p className="hint muted">
+                  Admin-owned deployment environment mapping key used by workflow template generation.
+                </p>
+                {githubPublishValidation.targetEnvironmentKeyError ? (
+                  <p className="hint error">{githubPublishValidation.targetEnvironmentKeyError}</p>
+                ) : null}
+              </div>
+
+              <div className="stack-tight">
+                <label htmlFor="github-publish-repository-auto-create-enabled" className="checkbox-chip">
+                  <input
+                    id="github-publish-repository-auto-create-enabled"
+                    type="checkbox"
+                    checked={githubRepositoryAutoCreateEnabled}
+                    onChange={(event) => setGitHubRepositoryAutoCreateEnabled(event.target.checked)}
+                    disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
+                  />
+                  Enable managed repository auto-create for missing publish targets
+                </label>
+                <p className="hint muted">
+                  Admin-owned policy. When enabled, the runtime GitHub token can create missing repositories under the
+                  configured owner only.
+                </p>
+              </div>
+
+              <div className="stack-tight">
+                <label htmlFor="github-publish-managed-gke-cluster-name">Managed GKE Cluster Name</label>
+                <input
+                  id="github-publish-managed-gke-cluster-name"
+                  type="text"
+                  value={githubPublishManagedGkeClusterNameInput}
+                  onChange={(event) => setGitHubPublishManagedGkeClusterNameInput(event.target.value)}
+                  disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
+                  placeholder="mbsrn-cluster"
+                />
+                {githubPublishValidation.managedGkeClusterNameError ? (
+                  <p className="hint error">{githubPublishValidation.managedGkeClusterNameError}</p>
+                ) : null}
+              </div>
+
+              <div className="stack-tight">
+                <label htmlFor="github-publish-managed-gke-cluster-location">Managed GKE Cluster Location</label>
+                <input
+                  id="github-publish-managed-gke-cluster-location"
+                  type="text"
+                  value={githubPublishManagedGkeClusterLocationInput}
+                  onChange={(event) => setGitHubPublishManagedGkeClusterLocationInput(event.target.value)}
+                  disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
+                  placeholder="us-central1"
+                />
+                {githubPublishValidation.managedGkeClusterLocationError ? (
+                  <p className="hint error">{githubPublishValidation.managedGkeClusterLocationError}</p>
+                ) : null}
+              </div>
+
+              <div className="stack-tight">
+                <label htmlFor="github-publish-managed-gke-project-id">Managed GCP Project ID</label>
+                <input
+                  id="github-publish-managed-gke-project-id"
+                  type="text"
+                  value={githubPublishManagedGkeProjectIdInput}
+                  onChange={(event) => setGitHubPublishManagedGkeProjectIdInput(event.target.value)}
+                  disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
+                  placeholder="mbsrn-prod"
+                />
+                {githubPublishValidation.managedGkeProjectIdError ? (
+                  <p className="hint error">{githubPublishValidation.managedGkeProjectIdError}</p>
+                ) : null}
+              </div>
+            </div>
             <p className="hint muted">
-              Managed GKE target fields below are admin-owned source of truth. Repo vars/secrets remain legacy fallback only.
+              Managed GKE target fields above are admin-owned source of truth. Repo vars/secrets remain legacy fallback
+              only.
             </p>
 
-            <label htmlFor="github-publish-managed-gke-cluster-name">Managed GKE Cluster Name</label>
-            <input
-              id="github-publish-managed-gke-cluster-name"
-              type="text"
-              value={githubPublishManagedGkeClusterNameInput}
-              onChange={(event) => setGitHubPublishManagedGkeClusterNameInput(event.target.value)}
-              disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
-              placeholder="mbsrn-cluster"
-            />
-            {githubPublishValidation.managedGkeClusterNameError ? (
-              <p className="hint error">{githubPublishValidation.managedGkeClusterNameError}</p>
-            ) : null}
-
-            <label htmlFor="github-publish-managed-gke-cluster-location">Managed GKE Cluster Location</label>
-            <input
-              id="github-publish-managed-gke-cluster-location"
-              type="text"
-              value={githubPublishManagedGkeClusterLocationInput}
-              onChange={(event) => setGitHubPublishManagedGkeClusterLocationInput(event.target.value)}
-              disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
-              placeholder="us-central1"
-            />
-            {githubPublishValidation.managedGkeClusterLocationError ? (
-              <p className="hint error">{githubPublishValidation.managedGkeClusterLocationError}</p>
-            ) : null}
-
-            <label htmlFor="github-publish-managed-gke-project-id">Managed GCP Project ID</label>
-            <input
-              id="github-publish-managed-gke-project-id"
-              type="text"
-              value={githubPublishManagedGkeProjectIdInput}
-              onChange={(event) => setGitHubPublishManagedGkeProjectIdInput(event.target.value)}
-              disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
-              placeholder="mbsrn-prod"
-            />
-            {githubPublishValidation.managedGkeProjectIdError ? (
-              <p className="hint error">{githubPublishValidation.managedGkeProjectIdError}</p>
-            ) : null}
             <div className="panel panel-compact stack-tight">
               <strong>Managed Deploy Secret (high-risk)</strong>
               <p className="hint muted">
@@ -2876,19 +2941,20 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
 
             <ManagedNamespacePolicySection />
 
-            <div className="panel panel-compact stack-tight">
-              <strong>Namespace ResourceQuota defaults</strong>
-              <label htmlFor="github-publish-resource-quota-enabled" className="checkbox-chip">
-                <input
-                  id="github-publish-resource-quota-enabled"
-                  type="checkbox"
-                  checked={githubNamespaceIsolationDefaults.resource_quota.enabled}
-                  onChange={(event) => updateNamespaceResourceQuota("enabled", event.target.checked)}
-                  disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
-                />
-                Enable ResourceQuota for managed site namespaces
-              </label>
-              <div className="grid grid-2">
+            <div className="admin-grid-two">
+              <div className="panel panel-compact stack-tight">
+                <strong>Namespace ResourceQuota defaults</strong>
+                <label htmlFor="github-publish-resource-quota-enabled" className="checkbox-chip">
+                  <input
+                    id="github-publish-resource-quota-enabled"
+                    type="checkbox"
+                    checked={githubNamespaceIsolationDefaults.resource_quota.enabled}
+                    onChange={(event) => updateNamespaceResourceQuota("enabled", event.target.checked)}
+                    disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
+                  />
+                  Enable ResourceQuota for managed site namespaces
+                </label>
+                <div className="admin-grid-two admin-grid-two-compact">
                 <label htmlFor="github-publish-resource-quota-requests-cpu" className="stack-tight">
                   <span className="hint muted">Requests CPU</span>
                   <input
@@ -2929,8 +2995,8 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                     disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
                   />
                 </label>
-              </div>
-              <div className="grid grid-2">
+                </div>
+                <div className="admin-grid-two admin-grid-two-compact">
                 <label htmlFor="github-publish-resource-quota-pods" className="stack-tight">
                   <span className="hint muted">Pods</span>
                   <input
@@ -3021,22 +3087,22 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                     disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
                   />
                 </label>
+                </div>
               </div>
-            </div>
 
-            <div className="panel panel-compact stack-tight">
-              <strong>Namespace LimitRange defaults</strong>
-              <label htmlFor="github-publish-limit-range-enabled" className="checkbox-chip">
-                <input
-                  id="github-publish-limit-range-enabled"
-                  type="checkbox"
-                  checked={githubNamespaceIsolationDefaults.limit_range.enabled}
-                  onChange={(event) => updateNamespaceLimitRange("enabled", event.target.checked)}
-                  disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
-                />
-                Enable LimitRange for managed site namespaces
-              </label>
-              <div className="grid grid-2">
+              <div className="panel panel-compact stack-tight">
+                <strong>Namespace LimitRange defaults</strong>
+                <label htmlFor="github-publish-limit-range-enabled" className="checkbox-chip">
+                  <input
+                    id="github-publish-limit-range-enabled"
+                    type="checkbox"
+                    checked={githubNamespaceIsolationDefaults.limit_range.enabled}
+                    onChange={(event) => updateNamespaceLimitRange("enabled", event.target.checked)}
+                    disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
+                  />
+                  Enable LimitRange for managed site namespaces
+                </label>
+                <div className="admin-grid-two admin-grid-two-compact">
                 <label htmlFor="github-publish-limit-range-default-cpu" className="stack-tight">
                   <span className="hint muted">Default CPU</span>
                   <input
@@ -3117,6 +3183,7 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                     disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
                   />
                 </label>
+                </div>
               </div>
             </div>
 
@@ -3145,20 +3212,6 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                 Keep disabled until cluster ingress/egress expectations are validated for this environment.
               </p>
             </div>
-
-            <label htmlFor="github-publish-enabled" className="checkbox-chip">
-              <input
-                id="github-publish-enabled"
-                type="checkbox"
-                checked={githubPublishEnabled}
-                onChange={(event) => setGitHubPublishEnabled(event.target.checked)}
-                disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
-              />
-              Enable migration GitHub publish target
-            </label>
-            <p className="hint muted">
-              Managed GKE target metadata and managed deploy secret status are admin-owned here. Secret values are write-only and never returned.
-            </p>
             <div className="panel panel-compact stack-tight" data-testid="github-publish-effective-preview">
               <p className="hint muted">
                 <strong>Effective target preview</strong>

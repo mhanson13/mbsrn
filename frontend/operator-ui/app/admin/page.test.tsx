@@ -307,6 +307,10 @@ describe("admin route", () => {
     expect(screen.getByLabelText("Default AI model")).toBeInTheDocument();
     expect(screen.getByLabelText("Migration Draft Timeout (seconds)")).toBeInTheDocument();
     expect(screen.getByLabelText("GitHub account/owner")).toBeInTheDocument();
+    const publishEnabledToggle = screen.getByLabelText("Enable migration GitHub publish target");
+    const publishOwnerField = screen.getByLabelText("GitHub account/owner");
+    const publishToggleOrder = publishEnabledToggle.compareDocumentPosition(publishOwnerField);
+    expect(publishToggleOrder & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.getByLabelText("Default Branch")).toBeInTheDocument();
     expect(screen.getByLabelText("Base Path")).toBeInTheDocument();
     expect(screen.getByLabelText("Enable ResourceQuota for managed site namespaces")).toBeInTheDocument();
