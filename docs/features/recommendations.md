@@ -71,6 +71,32 @@ The recommendations route (`frontend/operator-ui/app/recommendations/page.tsx`) 
 
 This is a presentation-only improvement. Recommendation generation, queue mutation semantics, polling behavior, and backend/API workflow contracts are unchanged.
 
+## Queue-First Recommendation Review (Frontend)
+
+The recommendations queue now defaults to a concise operator quick-scan instead of exposing full execution metadata inline.
+
+Operator-first defaults on `/recommendations`:
+- each quick-scan card emphasizes:
+  - recommendation title
+  - concise `Why it matters`
+  - concise `Next step`
+  - `Ready to act?` and status badges
+  - primary `Open recommendation` action
+- expanded quick-scan view keeps compact status context plus a bounded `View evidence/details` disclosure.
+- verbose execution context (inputs/scope/blockers/evidence/measurement detail) is collapsed behind disclosure or available on recommendation detail routes.
+- queue snapshot fact grid is compact (summary-first) rather than a large diagnostic fact matrix.
+
+Wording simplification:
+- `Execution readiness` -> `Ready to act?`
+- `Execution blocker` -> `Blocked by`
+- `GA4 outcome snapshot` -> `Observed result`
+- detailed rationale/evidence remains available through disclosure/detail, not removed from API responses.
+
+Behavioral boundary:
+- no scoring/order changes
+- no recommendation status/action semantic changes
+- no GA4/measurement backend contract changes
+
 ## Shared AI Reliability Substrate (Recommendation Adapter)
 
 Recommendation narrative generation now uses the shared synchronous AI execution core that is also used by migration draft and competitor AI flows.

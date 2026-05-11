@@ -1,10 +1,14 @@
 import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 
 import CompetitorsPage from "./page";
+import { ApiRequestError } from "../../lib/api/client";
 import type {
   CompetitorComparisonRunListResponse,
   CompetitorDomainListResponse,
+  CompetitorProfileGenerationRunDetailResponse,
+  CompetitorProfileGenerationSummaryResponse,
   CompetitorSetListResponse,
   CompetitorSnapshotRunListResponse,
 } from "../../lib/api/types";
@@ -30,6 +34,14 @@ const mockFetchCompetitorSets = jest.fn<Promise<CompetitorSetListResponse>, unkn
 const mockFetchCompetitorDomains = jest.fn<Promise<CompetitorDomainListResponse>, unknown[]>();
 const mockFetchCompetitorSnapshotRuns = jest.fn<Promise<CompetitorSnapshotRunListResponse>, unknown[]>();
 const mockFetchSiteCompetitorComparisonRuns = jest.fn<Promise<CompetitorComparisonRunListResponse>, unknown[]>();
+const mockFetchCompetitorProfileGenerationSummary = jest.fn<
+  Promise<CompetitorProfileGenerationSummaryResponse>,
+  unknown[]
+>();
+const mockCreateCompetitorProfileGenerationRun = jest.fn<
+  Promise<CompetitorProfileGenerationRunDetailResponse>,
+  unknown[]
+>();
 
 jest.mock("next/link", () => {
   return function MockLink({
@@ -62,6 +74,10 @@ jest.mock("../../lib/api/client", () => {
     fetchCompetitorDomains: (...args: unknown[]) => mockFetchCompetitorDomains(...args),
     fetchCompetitorSnapshotRuns: (...args: unknown[]) => mockFetchCompetitorSnapshotRuns(...args),
     fetchSiteCompetitorComparisonRuns: (...args: unknown[]) => mockFetchSiteCompetitorComparisonRuns(...args),
+    fetchCompetitorProfileGenerationSummary: (...args: unknown[]) =>
+      mockFetchCompetitorProfileGenerationSummary(...args),
+    createCompetitorProfileGenerationRun: (...args: unknown[]) =>
+      mockCreateCompetitorProfileGenerationRun(...args),
   };
 });
 
@@ -90,6 +106,58 @@ beforeEach(() => {
   mockFetchSiteCompetitorComparisonRuns.mockResolvedValue({
     items: [],
     total: 0,
+  });
+  mockFetchCompetitorProfileGenerationSummary.mockResolvedValue({
+    business_id: "biz-1",
+    site_id: "site-1",
+    lookback_days: 30,
+    window_start: "2026-03-01T00:00:00Z",
+    window_end: "2026-03-31T00:00:00Z",
+    queued_count: 0,
+    running_count: 0,
+    completed_count: 0,
+    failed_count: 0,
+    retry_child_runs: 0,
+    retried_parent_runs: 0,
+    failed_runs_retried: 0,
+    failure_category_counts: {},
+    total_runs: 0,
+    total_raw_candidate_count: 0,
+    total_included_candidate_count: 0,
+    total_excluded_candidate_count: 0,
+    exclusion_counts_by_reason: {
+      duplicate: 0,
+      low_relevance: 0,
+      directory_or_aggregator: 0,
+      big_box_mismatch: 0,
+      existing_domain_match: 0,
+      invalid_candidate: 0,
+    },
+    latest_run_created_at: null,
+    latest_run_completed_at: null,
+    latest_completed_run_completed_at: null,
+    latest_failed_run_completed_at: null,
+  });
+  mockCreateCompetitorProfileGenerationRun.mockResolvedValue({
+    run: {
+      id: "gen-run-1",
+      business_id: "biz-1",
+      site_id: "site-1",
+      status: "queued",
+      requested_candidate_count: 10,
+      generated_draft_count: 0,
+      provider_name: "openai",
+      model_name: "gpt-5",
+      prompt_version: "v1",
+      failure_category: null,
+      error_summary: null,
+      completed_at: null,
+      created_by_principal_id: "principal-1",
+      created_at: "2026-03-20T00:00:00Z",
+      updated_at: "2026-03-20T00:00:00Z",
+    },
+    drafts: [],
+    total_drafts: 0,
   });
 });
 
@@ -203,7 +271,9 @@ describe("competitors page site-scoped loading", () => {
     const quickScanItem = screen.getByTestId("competitor-quick-scan-item-set-1");
     expect(quickScanItem).toHaveTextContent("Active set");
     expect(quickScanItem).toHaveTextContent("Snapshot: completed");
+    expect(screen.getByTestId("competitors-generate-set-button")).toHaveTextContent("Refresh competitor set");
     expect(mockFetchCompetitorSets).toHaveBeenCalledWith("token-1", "biz-1", "site-1");
+    expect(mockFetchCompetitorProfileGenerationSummary).toHaveBeenCalledWith("token-1", "biz-1", "site-1");
     expect(screen.getByText("Competitor Sets: 1")).toBeInTheDocument();
     expect(screen.getByText("Active Sets")).toBeInTheDocument();
     expect(screen.getByText("1/1")).toBeInTheDocument();
@@ -272,6 +342,7 @@ describe("competitors page site-scoped loading", () => {
 
     const matches = await screen.findAllByText("This site has no competitor sets configured yet.");
     expect(matches.length).toBeGreaterThan(0);
+    expect(screen.getByTestId("competitors-generate-set-button")).toHaveTextContent("Generate competitor set");
   });
 
   it("shows explicit readiness guidance when domains exist but snapshot has not run", async () => {
@@ -316,5 +387,144 @@ describe("competitors page site-scoped loading", () => {
 
     await screen.findByText("No Snapshot Yet");
     expect(screen.getByText("Competitor domains exist, but no snapshot run has been recorded yet.")).toBeInTheDocument();
+  });
+
+  it("starts competitor generation with selected site context and refreshes inventory", async () => {
+    const user = userEvent.setup();
+    mockFetchCompetitorSets.mockResolvedValue({
+      items: [
+        {
+          id: "set-10",
+          business_id: "biz-1",
+          site_id: "site-1",
+          name: "Set One",
+          city: "Denver",
+          state: "CO",
+          is_active: true,
+          created_by_principal_id: "principal-1",
+          created_at: "2026-03-20T00:00:00Z",
+          updated_at: "2026-03-20T00:00:00Z",
+        },
+      ],
+      total: 1,
+    });
+    mockFetchCompetitorDomains.mockResolvedValue({ items: [], total: 0 });
+
+    render(<CompetitorsPage />);
+
+    const actionButton = await screen.findByTestId("competitors-generate-set-button");
+    await user.click(actionButton);
+
+    await waitFor(() => {
+      expect(mockCreateCompetitorProfileGenerationRun).toHaveBeenCalledWith("token-1", "biz-1", "site-1", {});
+    });
+    await waitFor(() => {
+      expect(mockFetchCompetitorSets.mock.calls.length).toBeGreaterThanOrEqual(2);
+    });
+    expect(await screen.findByTestId("competitors-generation-success")).toHaveTextContent(
+      "Competitor generation started",
+    );
+  });
+
+  it("disables generation action while generation request is pending", async () => {
+    const user = userEvent.setup();
+    let resolveRequest!: (value: CompetitorProfileGenerationRunDetailResponse) => void;
+    const pendingRequest = new Promise<CompetitorProfileGenerationRunDetailResponse>((resolve) => {
+      resolveRequest = resolve;
+    });
+    mockCreateCompetitorProfileGenerationRun.mockReturnValueOnce(pendingRequest);
+    mockFetchCompetitorSets.mockResolvedValue({ items: [], total: 0 });
+
+    render(<CompetitorsPage />);
+
+    const actionButton = await screen.findByTestId("competitors-generate-set-button");
+    await user.click(actionButton);
+    expect(actionButton).toBeDisabled();
+    expect(actionButton).toHaveTextContent("Generating competitor set...");
+
+    resolveRequest({
+      run: {
+        id: "gen-run-2",
+        business_id: "biz-1",
+        site_id: "site-1",
+        status: "queued",
+        requested_candidate_count: 10,
+        generated_draft_count: 0,
+        provider_name: "openai",
+        model_name: "gpt-5",
+        prompt_version: "v1",
+        failure_category: null,
+        error_summary: null,
+        completed_at: null,
+        created_by_principal_id: "principal-1",
+        created_at: "2026-03-20T00:00:00Z",
+        updated_at: "2026-03-20T00:00:00Z",
+      },
+      drafts: [],
+      total_drafts: 0,
+    });
+    await waitFor(() => expect(actionButton).not.toHaveTextContent("Generating competitor set..."));
+  });
+
+  it("shows bounded generation error messaging without exposing raw payload details", async () => {
+    const user = userEvent.setup();
+    mockFetchCompetitorSets.mockResolvedValue({ items: [], total: 0 });
+    mockCreateCompetitorProfileGenerationRun.mockRejectedValueOnce(
+      new ApiRequestError("raw provider payload", {
+        status: 422,
+        detail: { provider_error: "full payload should not be shown" },
+      }),
+    );
+
+    render(<CompetitorsPage />);
+
+    await user.click(await screen.findByTestId("competitors-generate-set-button"));
+    const errorMessage = await screen.findByTestId("competitors-generation-error");
+    expect(errorMessage).toHaveTextContent("Competitor generation cannot start until site context is ready.");
+    expect(errorMessage).not.toHaveTextContent("provider_error");
+    expect(errorMessage).not.toHaveTextContent("full payload");
+  });
+
+  it("disables generation action when a run is already queued or running", async () => {
+    mockFetchCompetitorSets.mockResolvedValue({ items: [], total: 0 });
+    mockFetchCompetitorProfileGenerationSummary.mockResolvedValueOnce({
+      business_id: "biz-1",
+      site_id: "site-1",
+      lookback_days: 30,
+      window_start: "2026-03-01T00:00:00Z",
+      window_end: "2026-03-31T00:00:00Z",
+      queued_count: 1,
+      running_count: 0,
+      completed_count: 0,
+      failed_count: 0,
+      retry_child_runs: 0,
+      retried_parent_runs: 0,
+      failed_runs_retried: 0,
+      failure_category_counts: {},
+      total_runs: 1,
+      total_raw_candidate_count: 0,
+      total_included_candidate_count: 0,
+      total_excluded_candidate_count: 0,
+      exclusion_counts_by_reason: {
+        duplicate: 0,
+        low_relevance: 0,
+        directory_or_aggregator: 0,
+        big_box_mismatch: 0,
+        existing_domain_match: 0,
+        invalid_candidate: 0,
+      },
+      latest_run_created_at: "2026-03-20T00:00:00Z",
+      latest_run_completed_at: null,
+      latest_completed_run_completed_at: null,
+      latest_failed_run_completed_at: null,
+    });
+
+    render(<CompetitorsPage />);
+
+    const actionButton = await screen.findByTestId("competitors-generate-set-button");
+    expect(actionButton).toBeDisabled();
+    expect(await screen.findByTestId("competitors-generation-running")).toHaveTextContent(
+      "already queued or running",
+    );
   });
 });

@@ -285,7 +285,7 @@ describe("recommendations queue optimistic workflows", () => {
       "Title",
       "Summary",
       "Status",
-      "Decisiveness",
+      "What to do next",
       "Category",
       "Source",
       "Recommendation Run",
@@ -312,20 +312,16 @@ describe("recommendations queue optimistic workflows", () => {
     expect(screen.getByTestId("recommendations-table-shell")).toBeInTheDocument();
     expect(screen.getByTestId("recommendation-quick-scan")).toBeInTheDocument();
     const quickScanItem = screen.getByTestId("recommendation-quick-scan-item-rec-1");
-    expect(quickScanItem).toHaveTextContent("Recommendation-only review");
+    expect(quickScanItem).toHaveTextContent("Why it matters:");
     expect(quickScanItem).toHaveTextContent("Ready now");
     expect(quickScanItem).toHaveTextContent("Quick win");
     expect(quickScanItem).toHaveTextContent("Blocked by operator review");
-    expect(quickScanItem).toHaveTextContent("No automation linkage detected");
-    const quickScanControls = screen.getByTestId("recommendation-action-controls-rec-1");
-    expect(quickScanControls).toHaveTextContent("Review recommendation");
-    expect(quickScanControls).toHaveTextContent("Generate automation run (preview)");
-    const quickScanAutomationLink = within(quickScanControls).getByRole("link", {
-      name: "Generate automation run (preview)",
+    const quickScanOpenLink = within(quickScanItem).getByRole("link", {
+      name: "Open recommendation",
     });
-    expect(quickScanAutomationLink).toHaveAttribute(
+    expect(quickScanOpenLink).toHaveAttribute(
       "href",
-      "/automation?site_id=site-1&trigger=recommendation&recommendation_id=rec-1&recommendation_title=Recommendation+One",
+      expect.stringContaining("/recommendations/rec-1"),
     );
     const quickScanToggle = within(quickScanItem).getByRole("button", { name: "Show details" });
     expect(quickScanToggle).toHaveAttribute("aria-expanded", "false");
@@ -334,25 +330,18 @@ describe("recommendations queue optimistic workflows", () => {
       "aria-expanded",
       "true",
     );
-    expect(quickScanItem).toHaveTextContent("After action:");
+    expect(quickScanItem).toHaveTextContent("Ready to act?");
     expect(screen.getByTestId("recommendation-queue-outcome-focus")).toBeInTheDocument();
-    expect(screen.getByText("Recommendation outcome snapshot")).toBeInTheDocument();
-    expect(screen.getByText("Why this matters now")).toBeInTheDocument();
+    expect(screen.getByText("Recommendation queue snapshot")).toBeInTheDocument();
+    expect(screen.getByText("Top takeaway")).toBeInTheDocument();
+    expect(screen.getByText("Recommended next action")).toBeInTheDocument();
     expect(screen.getByText("Current status")).toBeInTheDocument();
-    expect(screen.getByText("Lifecycle stage")).toBeInTheDocument();
-    expect(screen.getByText("Revisit timing")).toBeInTheDocument();
-    expect(screen.getByText("Freshness posture")).toBeInTheDocument();
-    expect(screen.getByText("Refresh check")).toBeInTheDocument();
-    expect(screen.getByText("Choice support")).toBeInTheDocument();
-    expect(screen.getByText("Effort signal")).toBeInTheDocument();
-    expect(screen.getByText("Can I act now")).toBeInTheDocument();
-    expect(screen.getByText("Blocking state")).toBeInTheDocument();
-    expect(screen.getByText("After action")).toBeInTheDocument();
-    expect(screen.getByText("Evidence preview")).toBeInTheDocument();
-    expect(screen.getByText("Evidence trust")).toBeInTheDocument();
-    expect(
-      screen.getByText("Yes. Ready-now recommendations still need an operator decision."),
-    ).toBeInTheDocument();
+    expect(screen.getByText("Blocked by")).toBeInTheDocument();
+    expect(screen.getByText("Evidence / measurement")).toBeInTheDocument();
+    expect(screen.getByText("After-action expectation")).toBeInTheDocument();
+    expect(screen.queryByText("Lifecycle stage")).not.toBeInTheDocument();
+    expect(screen.queryByText("Revisit timing")).not.toBeInTheDocument();
+    expect(screen.queryByText("Freshness posture")).not.toBeInTheDocument();
     const decisivenessCellOne = screen.getByTestId("recommendation-decisiveness-rec-1");
     const decisivenessBadges = decisivenessCellOne.querySelectorAll(".badge");
     expect(decisivenessBadges.length).toBeGreaterThanOrEqual(3);
@@ -397,13 +386,10 @@ describe("recommendations queue optimistic workflows", () => {
     expect(recOneDetailPanel).toHaveTextContent(
       "Open the target page and apply the first change for Recommendation One.",
     );
-    expect(recOneDetailPanel).toHaveTextContent("Priority rationale for Recommendation One.");
+    expect(recOneDetailPanel).toHaveTextContent("View evidence/details");
     expect(recOneDetailPanel).toHaveTextContent("Strong evidence");
     expect(screen.queryByTestId("recommendation-competitor-influence-rec-1")).not.toBeInTheDocument();
-    expect(recOneDetailPanel).toHaveTextContent("After action:");
-    expect(recOneDetailPanel).toHaveTextContent("Evidence:");
-    expect(recOneDetailPanel).toHaveTextContent("Support cue:");
-    expect(recOneDetailPanel).toHaveTextContent("Revisit:");
+    expect(recOneDetailPanel).toHaveTextContent("Blocked by:");
     expect(recOneDetailPanel).toHaveTextContent("operator review required");
     expect(screen.getByTestId("recommendation-automation-origin-rec-1")).toHaveTextContent(
       "No automation linkage detected",
@@ -415,7 +401,7 @@ describe("recommendations queue optimistic workflows", () => {
     expect(decisivenessCellTwo).not.toHaveTextContent("Needs review / pending");
     expect(decisivenessCellTwo).not.toHaveTextContent("Fresh enough to act");
     expect(
-      screen.getByText(/Queue controls and recommendation details below show action history/i),
+      screen.getByText(/Use this summary to decide what to review next/i),
     ).toBeInTheDocument();
 
     await user.click(screen.getByLabelText("Select all displayed recommendations"));
@@ -479,6 +465,7 @@ describe("recommendations queue optimistic workflows", () => {
     await screen.findByText("Accepted Recommendation");
     const acceptedDecisiveness = screen.getByTestId("recommendation-decisiveness-rec-21");
     expect(acceptedDecisiveness).toHaveTextContent("Manual follow-up required");
+    expect(within(acceptedDecisiveness).getAllByText("Manual follow-up required")).toHaveLength(1);
     expect(acceptedDecisiveness).toHaveTextContent("Quick win");
     expect(acceptedDecisiveness).not.toHaveTextContent("Applied / completed");
     await user.click(within(acceptedDecisiveness).getByRole("button", { name: "View details" }));
@@ -587,12 +574,9 @@ describe("recommendations queue optimistic workflows", () => {
 
     const quickScanItem = screen.getByTestId("recommendation-quick-scan-item-rec-content-1");
     await user.click(within(quickScanItem).getByRole("button", { name: "Show details" }));
-    expect(screen.getByTestId("recommendation-content-target-rec-content-1")).toHaveTextContent(
-      "Content to update: Main heading and Intro paragraph",
-    );
-    expect(screen.getByTestId("recommendation-action-plan-rec-content-1")).toHaveTextContent(
-      "How to implement:",
-    );
+    expect(screen.queryByTestId("recommendation-content-target-rec-content-1")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("recommendation-action-plan-rec-content-1")).not.toBeInTheDocument();
+    expect(within(quickScanItem).getByText("View evidence/details")).toBeInTheDocument();
   });
 
   it("renders competitor insight only in expanded recommendation details", async () => {
@@ -959,7 +943,7 @@ describe("recommendations queue optimistic workflows", () => {
     await user.click(within(row).getByRole("button", { name: "View details" }));
 
     const outcomeLine = screen.getByTestId("recommendation-expanded-ga4-outcome-snapshot-rec-ga4-outcome-1");
-    expect(outcomeLine).toHaveTextContent("GA4 outcome snapshot (observed after action):");
+    expect(outcomeLine).toHaveTextContent("Observed result:");
     expect(outcomeLine).toHaveTextContent("Sessions 130 -> 160 (+23.1%");
     expect(outcomeLine).toHaveTextContent("Engagement 47% -> 52%");
     expect(outcomeLine).toHaveTextContent("Observed after completion");
@@ -1089,13 +1073,13 @@ describe("recommendations queue optimistic workflows", () => {
 
     await screen.findByText("Clarify metadata for service pages");
     expect(screen.queryByTestId("recommendation-expanded-execution-readiness-rec-execution-1")).not.toBeInTheDocument();
-    expect(screen.queryByText("Execution readiness:")).not.toBeInTheDocument();
+    expect(screen.queryByText("Ready to act?:")).not.toBeInTheDocument();
 
     const decisivenessCell = screen.getByTestId("recommendation-decisiveness-rec-execution-1");
     await user.click(within(decisivenessCell).getByRole("button", { name: "View details" }));
 
     expect(screen.getByTestId("recommendation-expanded-execution-readiness-rec-execution-1")).toHaveTextContent(
-      "Execution readiness: Needs review",
+      "Ready to act?: Needs review",
     );
     expect(screen.getByTestId("recommendation-expanded-execution-type-rec-execution-1")).toHaveTextContent(
       "Execution type: Metadata update",
@@ -1107,7 +1091,7 @@ describe("recommendations queue optimistic workflows", () => {
       "Execution inputs:",
     );
     expect(screen.getByTestId("recommendation-expanded-execution-blocking-rec-execution-1")).toHaveTextContent(
-      "Execution blocker: Target scope is partially specified.",
+      "Blocked by: Target scope is partially specified.",
     );
   });
 

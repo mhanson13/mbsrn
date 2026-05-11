@@ -2352,20 +2352,25 @@ function RecommendationsPageContent() {
     if (loadingItems) {
       return [];
     }
-    const manualFollowUpText = queueSummary.open > 0
-      ? "Yes. Ready-now recommendations still need an operator decision."
-      : queueSummary.accepted > 0
-        ? "Yes. Validate accepted recommendation visibility after the next refresh."
-        : "No immediate follow-up is required for the current view.";
-    const visibilityTimingText = queueSummary.accepted > 0
+    const topTakeaway = recommendationQueueTakeaway;
+    const nextActionText = recommendationQueueNextStep
+      ? `${recommendationQueueNextStep.label}. ${recommendationQueueNextStep.note}`
+      : "Review recommendation queue state.";
+    const evidenceAvailability = recommendationQueueEvidenceTrust;
+    const afterActionExpectation = queueSummary.accepted > 0
       ? "Accepted items may need one refresh cycle before downstream visibility fully updates."
       : "Queue status updates immediately for this view.";
 
     return [
       {
-        label: "Why this matters now",
-        value: recommendationQueueWhyNow,
+        label: "Top takeaway",
+        value: topTakeaway,
         tone: topReadyRecommendation ? "warning" : topAppliedRecommendation ? "neutral" : "neutral",
+      },
+      {
+        label: "Recommended next action",
+        value: nextActionText,
+        tone: topReadyRecommendation ? "warning" : "neutral",
       },
       {
         label: "Current status",
@@ -2373,93 +2378,47 @@ function RecommendationsPageContent() {
         tone: queueSummary.open > 0 ? "warning" : "success",
       },
       {
-        label: "Lifecycle stage",
-        value: recommendationQueueLifecycleStage,
-        tone: topReadyRecommendation ? "warning" : topAppliedRecommendation ? "success" : "neutral",
-      },
-      {
-        label: "Freshness posture",
-        value: recommendationQueueFreshnessPosture,
-        tone: topReadyRecommendation ? "success" : topAppliedRecommendation ? "warning" : "neutral",
-      },
-      {
-        label: "Can I act now",
-        value: recommendationQueueActionability,
-        tone: topReadyRecommendation ? "success" : "neutral",
-      },
-      {
-        label: "Blocking state",
+        label: "Blocked by",
         value: recommendationQueueBlockingState,
         tone: topAppliedRecommendation ? "warning" : "neutral",
       },
       {
-        label: "Revisit timing",
-        value: recommendationQueueRevisitTiming,
-        tone: topReadyRecommendation || topAppliedRecommendation ? "warning" : "neutral",
-      },
-      {
-        label: "Refresh check",
-        value: recommendationQueueRefreshCheck,
-        tone: topAppliedRecommendation ? "warning" : "neutral",
-      },
-      {
-        label: "Choice support",
-        value: recommendationQueueChoiceSupport,
-        tone: topReadyRecommendation ? "warning" : "neutral",
-      },
-      {
-        label: "Effort signal",
-        value: recommendationQueueEffortSignal,
+        label: "Evidence / measurement",
+        value: evidenceAvailability,
         tone: "neutral",
       },
       {
-        label: "After action",
-        value: recommendationQueueAfterAction,
-        tone: topReadyRecommendation || topAppliedRecommendation ? "warning" : "neutral",
+        label: "After-action expectation",
+        value: afterActionExpectation,
+        tone: queueSummary.accepted > 0 ? "warning" : "neutral",
       },
-      {
-        label: "Evidence preview",
-        value: recommendationQueueEvidencePreview,
-        tone: "neutral",
-      },
-      {
-        label: "Evidence trust",
-        value: recommendationQueueEvidenceTrust,
-        tone: "neutral",
-      },
-      {
-        label: "What changed",
-        value: bulkActionSuccess || "No recent queue status change in this session.",
-        tone: bulkActionSuccess ? "success" : "neutral",
-      },
-      {
-        label: "Manual follow-up",
-        value: manualFollowUpText,
-        tone: queueSummary.open > 0 || queueSummary.accepted > 0 ? "warning" : "neutral",
-      },
-      { label: "Expected visibility", value: visibilityTimingText, tone: queueSummary.accepted > 0 ? "warning" : "neutral" },
     ];
   }, [
-    bulkActionSuccess,
     loadingItems,
     queueSummary.accepted,
     queueSummary.open,
-    recommendationQueueActionability,
-    recommendationQueueAfterAction,
     recommendationQueueBlockingState,
-    recommendationQueueChoiceSupport,
-    recommendationQueueEvidencePreview,
-    recommendationQueueEffortSignal,
     recommendationQueueEvidenceTrust,
-    recommendationQueueLifecycleStage,
-    recommendationQueueFreshnessPosture,
-    recommendationQueueRefreshCheck,
-    recommendationQueueRevisitTiming,
-    recommendationQueueWhyNow,
+    recommendationQueueNextStep,
+    recommendationQueueTakeaway,
     topAppliedRecommendation,
     topReadyRecommendation,
   ]);
-  const recommendationQuickScanItems = useMemo(() => items.slice(0, 6), [items]);
+  const recommendationQuickScanItems = useMemo(() => (
+    [...items]
+      .sort((left, right) => {
+        const leftReady = recommendationIsReadyNow(left);
+        const rightReady = recommendationIsReadyNow(right);
+        if (leftReady !== rightReady) {
+          return rightReady ? 1 : -1;
+        }
+        if (left.priority_score !== right.priority_score) {
+          return right.priority_score - left.priority_score;
+        }
+        return (right.updated_at || right.created_at || "").localeCompare(left.updated_at || left.created_at || "");
+      })
+      .slice(0, 6)
+  ), [items]);
 
   function updateQueueParams(nextFilters: FilterState, nextSort: SortState) {
     const params = new URLSearchParams(searchParams.toString());
@@ -3316,8 +3275,6 @@ function RecommendationsPageContent() {
             <div className="operational-item-list">
               {recommendationQuickScanItems.map((item) => {
                 const decisiveness = deriveRecommendationDecisiveness(item, topReadyRecommendation?.id || null);
-                const targetContentSummary = deriveRecommendationTargetContentSummary(item);
-                const actionPlanSteps = normalizeRecommendationActionPlanSteps(item);
                 const automationOriginCue = deriveRecommendationAutomationOriginCue(
                   item,
                   automationLinkedRecommendationRunIds,
@@ -3345,43 +3302,26 @@ function RecommendationsPageContent() {
                 });
                 const recommendationWhyNow = deriveRecommendationWhyNow(item, decisiveness.whyNow);
                 const recommendationNextAction = deriveRecommendationNextAction(item, actionPresentation.nextStep);
-                const recommendationCompetitorInsight = deriveRecommendationCompetitorInsight(item);
-                const recommendationPriorityRationale = deriveRecommendationPriorityRationale(item);
                 const recommendationEvidenceStrength = normalizeRecommendationEvidenceStrength(item);
-                const recommendationMeasurementContext = normalizeRecommendationMeasurementContext(item);
-                const recommendationMeasurementLine = buildRecommendationMeasurementLine(recommendationMeasurementContext);
-                const recommendationSinceLine = buildRecommendationSinceLine(recommendationMeasurementContext);
-                const recommendationGa4HealthLine = buildRecommendationGa4HealthLine(recommendationMeasurementContext);
                 const recommendationGa4PriorityContext = normalizeRecommendationGa4PriorityContext(item);
-                const recommendationGa4PriorityLine = buildRecommendationGa4PriorityLine(recommendationGa4PriorityContext);
                 const recommendationGa4OutcomeSnapshot = normalizeRecommendationGa4OutcomeSnapshot(item);
                 const recommendationGa4OutcomeLine = buildRecommendationGa4OutcomeLine(recommendationGa4OutcomeSnapshot);
-                const recommendationSearchConsoleContext = normalizeRecommendationSearchConsoleContext(item);
-                const recommendationSearchVisibilityLine = buildRecommendationSearchVisibilityLine(
-                  recommendationSearchConsoleContext,
-                );
-                const recommendationSearchSinceLine = buildRecommendationSearchVisibilitySinceLine(
-                  recommendationSearchConsoleContext,
-                );
-                const recommendationEffectivenessSummary = buildRecommendationEffectivenessSummary(item);
-                const recommendationSearchQueryLine = recommendationSearchConsoleContext
-                  && recommendationSearchConsoleContext.searchConsoleStatus === "available"
-                  && recommendationSearchConsoleContext.topQueriesSummary.length > 0
-                  ? recommendationSearchConsoleContext.topQueriesSummary
-                    .map((query) => query.query)
-                    .slice(0, 3)
-                    .join(" · ")
-                  : null;
-                const recommendationExecutionType = normalizeRecommendationExecutionType(item);
                 const recommendationExecutionReadiness = normalizeRecommendationExecutionReadiness(item);
-                const recommendationExecutionScope = deriveRecommendationExecutionScope(item);
-                const recommendationExecutionInputs = deriveRecommendationExecutionInputs(item);
                 const recommendationBlockingReason = deriveRecommendationBlockingReason(item);
                 const actionControls = decorateRecommendationActionControls(
                   deriveActionControls(effectiveActionExecutionItem),
                 );
+                const blockerCueNormalized = decisiveness.blockerCue.trim().toLowerCase();
                 const showBlockerBadge =
-                  decisiveness.blockerCue.trim().length > 0 && decisiveness.blockerCue !== "No blocker";
+                  blockerCueNormalized.length > 0
+                  && blockerCueNormalized !== "no blocker"
+                  && blockerCueNormalized !== decisiveness.actionabilityCue.trim().toLowerCase();
+                const readyToActLabel = recommendationExecutionReadiness
+                  ? formatRecommendationExecutionReadiness(recommendationExecutionReadiness)
+                  : decisiveness.actionabilityCue;
+                const readyToActTone = recommendationExecutionReadiness
+                  ? recommendationExecutionReadinessBadgeClass(recommendationExecutionReadiness)
+                  : decisiveness.actionabilityTone;
                 return (
                   <OperationalItemCard
                     key={`quick-scan-${item.id}`}
@@ -3402,74 +3342,53 @@ function RecommendationsPageContent() {
                     )}
                     summary={
                       <span>
-                        <span className="text-strong">Why now:</span> {truncateRecommendationWhyNow(recommendationWhyNow)}
+                        <span className="text-strong">Why it matters:</span>{" "}
+                        {truncateRecommendationWhyNow(recommendationWhyNow)}
                       </span>
                     }
                     primaryAction={
-                      <ActionControls
-                        controls={actionControls}
-                        resolveHref={(control) => resolveRecommendationControlHref(control, item)}
-                        data-testid={`recommendation-action-controls-${item.id}`}
-                      />
+                      <div className="stack-tight">
+                        <Link href={buildRecommendationDetailHref(item)} className="button button-primary button-inline">
+                          Open recommendation
+                        </Link>
+                        <ActionControls
+                          controls={actionControls}
+                          resolveHref={(control) => resolveRecommendationControlHref(control, item)}
+                          data-testid={`recommendation-action-controls-${item.id}`}
+                        />
+                      </div>
                     }
                     secondaryMeta={
                       <>
                         <span className="badge badge-muted">{item.status}</span>
                         <span className="badge badge-muted">{item.priority_band}</span>
-                        <span className="badge badge-muted">{deriveSourceType(item)}</span>
+                        <span className={`badge ${readyToActTone}`}>Ready to act? {readyToActLabel}</span>
+                        {recommendationEvidenceStrength ? (
+                          <span className={`badge ${recommendationEvidenceStrengthBadgeClass(recommendationEvidenceStrength)}`}>
+                            Evidence: {formatRecommendationEvidenceStrength(recommendationEvidenceStrength)}
+                          </span>
+                        ) : null}
+                        {recommendationGa4PriorityContext?.available ? (
+                          <span className="badge badge-muted">GA4 context available</span>
+                        ) : null}
+                        {recommendationGa4OutcomeSnapshot?.status === "available" ? (
+                          <span className="badge badge-muted">Observed result available</span>
+                        ) : null}
                         <span className={`badge ${automationOriginCue.badgeClass}`}>{automationOriginCue.label}</span>
                       </>
                     }
                     expandedDetail={
                       <>
                         <p className="hint muted">
-                          <span className="text-strong">Action state:</span> {actionPresentation.outcome}
-                        </p>
-                        <p className="hint muted">
                           <span className="text-strong">Next step:</span> {recommendationNextAction}
                         </p>
-                        {recommendationExecutionReadiness ? (
-                          <p
-                            className="hint muted"
-                            data-testid={`recommendation-quick-execution-readiness-${item.id}`}
-                          >
-                            <span className="text-strong">Execution readiness:</span>{" "}
-                            <span className={`badge ${recommendationExecutionReadinessBadgeClass(recommendationExecutionReadiness)}`}>
-                              {formatRecommendationExecutionReadiness(recommendationExecutionReadiness)}
-                            </span>
-                          </p>
-                        ) : null}
-                        {recommendationExecutionType ? (
-                          <p className="hint muted" data-testid={`recommendation-quick-execution-type-${item.id}`}>
-                            <span className="text-strong">Execution type:</span> {formatRecommendationExecutionType(recommendationExecutionType)}
-                          </p>
-                        ) : null}
-                        {recommendationExecutionScope ? (
-                          <p className="hint muted" data-testid={`recommendation-quick-execution-scope-${item.id}`}>
-                            <span className="text-strong">Execution scope:</span> {recommendationExecutionScope}
-                          </p>
-                        ) : null}
-                        {recommendationExecutionInputs.length > 0 ? (
-                          <p className="hint muted" data-testid={`recommendation-quick-execution-inputs-${item.id}`}>
-                            <span className="text-strong">Execution inputs:</span> {recommendationExecutionInputs.join(" · ")}
-                          </p>
-                        ) : null}
-                        {recommendationExecutionReadiness !== "ready" && recommendationBlockingReason ? (
+                        <p className="hint muted">
+                          <span className="text-strong">Ready to act?</span>{" "}
+                          <span className={`badge ${readyToActTone}`}>{readyToActLabel}</span>
+                        </p>
+                        {recommendationBlockingReason ? (
                           <p className="hint muted" data-testid={`recommendation-quick-execution-blocking-${item.id}`}>
-                            <span className="text-strong">Execution blocker:</span> {recommendationBlockingReason}
-                          </p>
-                        ) : null}
-                        {recommendationPriorityRationale ? (
-                          <p className="hint muted">
-                            <span className="text-strong">Priority rationale:</span> {recommendationPriorityRationale}
-                          </p>
-                        ) : null}
-                        {recommendationEvidenceStrength ? (
-                          <p className="hint muted">
-                            <span className="text-strong">Evidence strength:</span>{" "}
-                            <span className={`badge ${recommendationEvidenceStrengthBadgeClass(recommendationEvidenceStrength)}`}>
-                              {formatRecommendationEvidenceStrength(recommendationEvidenceStrength)}
-                            </span>
+                            <span className="text-strong">Blocked by:</span> {recommendationBlockingReason}
                           </p>
                         ) : null}
                         <OutputReview
@@ -3497,110 +3416,42 @@ function RecommendationsPageContent() {
                           resolveOutputHref={(outputId) => resolveRecommendationOutputReviewHref(outputId, item)}
                           data-testid={`recommendation-output-review-${item.id}`}
                         />
-                        <p className="hint muted">
-                          <span className="text-strong">Blocking:</span> {decisiveness.blockingState}
-                        </p>
-                        <p className="hint muted">
-                          <span className="text-strong">After action:</span> {decisiveness.afterAction}
-                        </p>
-                        {targetContentSummary ? (
-                          <p className="hint muted" data-testid={`recommendation-content-target-${item.id}`}>
-                            <span className="text-strong">Content to update:</span> {targetContentSummary}
-                          </p>
-                        ) : null}
-                        {recommendationMeasurementLine ? (
-                          <p className="hint muted" data-testid={`recommendation-measurement-context-${item.id}`}>
-                            <span className="text-strong">Recent traffic for this page/topic:</span>{" "}
-                            {recommendationMeasurementLine}
-                          </p>
-                        ) : null}
-                        {recommendationSinceLine ? (
-                          <p className="hint muted" data-testid={`recommendation-measurement-since-${item.id}`}>
-                            <span className="text-strong">Since this recommendation:</span>{" "}
-                            {recommendationSinceLine}
-                          </p>
-                        ) : null}
-                        {recommendationMeasurementContext?.measurementStatus === "no_match" ? (
-                          <p className="hint muted" data-testid={`recommendation-measurement-no-match-${item.id}`}>
-                            No page-level measurement match available.
-                          </p>
-                        ) : null}
-                        {recommendationGa4HealthLine ? (
-                          <p className="hint muted" data-testid={`recommendation-measurement-health-${item.id}`}>
-                            {recommendationGa4HealthLine}
-                          </p>
-                        ) : null}
-                        {recommendationGa4PriorityLine ? (
-                          <p className="hint muted" data-testid={`recommendation-ga4-priority-context-${item.id}`}>
-                            <span className="text-strong">Analytics context (GA4):</span>{" "}
-                            {recommendationGa4PriorityLine}
-                          </p>
-                        ) : null}
                         {recommendationGa4OutcomeLine ? (
                           <p className="hint muted" data-testid={`recommendation-ga4-outcome-snapshot-${item.id}`}>
-                            <span className="text-strong">GA4 outcome snapshot (observed after action):</span>{" "}
+                            <span className="text-strong">Observed result:</span>{" "}
                             {recommendationGa4OutcomeLine}
                           </p>
                         ) : null}
-                        {recommendationSearchVisibilityLine ? (
-                          <p className="hint muted" data-testid={`recommendation-search-context-${item.id}`}>
-                            <span className="text-strong">Recent search visibility for this page/topic:</span>{" "}
-                            {recommendationSearchVisibilityLine}
-                          </p>
-                        ) : null}
-                        {recommendationSearchSinceLine ? (
-                          <p className="hint muted" data-testid={`recommendation-search-since-${item.id}`}>
-                            <span className="text-strong">Since this recommendation (search):</span>{" "}
-                            {recommendationSearchSinceLine}
-                          </p>
-                        ) : null}
-                        {recommendationSearchQueryLine ? (
-                          <p className="hint muted" data-testid={`recommendation-search-queries-${item.id}`}>
-                            <span className="text-strong">Top queries:</span> {recommendationSearchQueryLine}
-                          </p>
-                        ) : null}
-                        {recommendationSearchConsoleContext?.searchConsoleStatus === "no_match" ? (
-                          <p className="hint muted" data-testid={`recommendation-search-no-match-${item.id}`}>
-                            No page-level search visibility match available.
-                          </p>
-                        ) : null}
-                        {recommendationEffectivenessSummary ? (
-                          <p className="hint muted" data-testid={`recommendation-effectiveness-${item.id}`}>
-                            <span className="text-strong">Directional outcome:</span> {recommendationEffectivenessSummary}
-                          </p>
-                        ) : null}
-                        {actionPlanSteps.length > 0 ? (
-                          <div className="stack-tight" data-testid={`recommendation-action-plan-${item.id}`}>
-                            <p className="hint muted">
-                              <span className="text-strong">How to implement:</span>
-                            </p>
-                            <ol className="compact-list">
-                              {actionPlanSteps.map((step) => (
-                                <li key={`${item.id}-quick-plan-${step.step_number}`}>
-                                  <p className="hint muted">
-                                    <span className="text-strong">
-                                      Step {step.step_number}: {step.title}
-                                    </span>{" "}
-                                    {step.instruction}
-                                  </p>
-                                  {step.before_example ? (
-                                    <p className="hint muted">Before: {step.before_example}</p>
-                                  ) : null}
-                                  {step.after_example ? (
-                                    <p className="hint muted">After: {step.after_example}</p>
-                                  ) : null}
-                                </li>
-                              ))}
-                            </ol>
-                          </div>
-                        ) : null}
                         <p className="hint muted">
-                          <span className="text-strong">Evidence:</span> {decisiveness.evidencePreview}
+                          <Link href={buildRecommendationDetailHref(item)} className="button button-tertiary button-inline">
+                            Open full detail and evidence
+                          </Link>
                         </p>
+                        <details className="stack-tight" data-testid={`recommendation-quick-details-disclosure-${item.id}`}>
+                          <summary className="hint muted">View evidence/details</summary>
+                          <p className="hint muted">
+                            <span className="text-strong">Why now:</span> {recommendationWhyNow}
+                          </p>
+                          <p className="hint muted">
+                            <span className="text-strong">After action:</span> {decisiveness.afterAction}
+                          </p>
+                          {recommendationGa4PriorityContext?.available ? (
+                            <p className="hint muted" data-testid={`recommendation-ga4-priority-context-${item.id}`}>
+                              <span className="text-strong">Analytics context (GA4):</span>{" "}
+                              {recommendationGa4PriorityContext.hint}
+                            </p>
+                          ) : null}
+                          <p className="hint muted">
+                            <span className="text-strong">Evidence preview:</span> {decisiveness.evidencePreview}
+                          </p>
+                          <p className="hint muted">
+                            <span className={`badge ${decisiveness.evidenceTrustTone}`}>
+                              {decisiveness.evidenceTrustCue}
+                            </span>
+                          </p>
+                        </details>
                         <p className="hint muted">
-                          <span className={`badge ${decisiveness.evidenceTrustTone}`}>
-                            {decisiveness.evidenceTrustCue}
-                          </span>
+                          <span className="text-strong">Action state:</span> {actionPresentation.outcome}
                         </p>
                       </>
                     }
@@ -3739,7 +3590,7 @@ function RecommendationsPageContent() {
                 <th className="recommendation-title-column">Title</th>
                 <th className="recommendation-summary-column">Summary</th>
                 <th>Status</th>
-                <th>Decisiveness</th>
+                <th>What to do next</th>
                 <th>Category</th>
                 <th>Source</th>
                 <th>Recommendation Run</th>
@@ -3815,7 +3666,11 @@ function RecommendationsPageContent() {
                 );
                 const isExpanded = expandedRecommendationIds.has(item.id);
                 const detailsId = `recommendation-details-${item.id}`;
-                const showBlockerBadge = decisiveness.blockerCue.trim().length > 0 && decisiveness.blockerCue !== "No blocker";
+                const blockerCueNormalized = decisiveness.blockerCue.trim().toLowerCase();
+                const showBlockerBadge =
+                  blockerCueNormalized.length > 0
+                  && blockerCueNormalized !== "no blocker"
+                  && blockerCueNormalized !== decisiveness.actionabilityCue.trim().toLowerCase();
                 return (
                   <Fragment key={item.id}>
                     <tr
@@ -3920,7 +3775,7 @@ function RecommendationsPageContent() {
                                 className="hint muted"
                                 data-testid={`recommendation-expanded-execution-readiness-${item.id}`}
                               >
-                                <span className="text-strong">Execution readiness:</span>{" "}
+                                <span className="text-strong">Ready to act?:</span>{" "}
                                 <span className={`badge ${recommendationExecutionReadinessBadgeClass(recommendationExecutionReadiness)}`}>
                                   {formatRecommendationExecutionReadiness(recommendationExecutionReadiness)}
                                 </span>
@@ -3948,7 +3803,7 @@ function RecommendationsPageContent() {
                                 className="hint muted"
                                 data-testid={`recommendation-expanded-execution-blocking-${item.id}`}
                               >
-                                <span className="text-strong">Execution blocker:</span> {recommendationBlockingReason}
+                                <span className="text-strong">Blocked by:</span> {recommendationBlockingReason}
                               </p>
                             ) : null}
                             <ActionControls
@@ -3981,162 +3836,165 @@ function RecommendationsPageContent() {
                               resolveOutputHref={(outputId) => resolveRecommendationOutputReviewHref(outputId, item)}
                               data-testid={`recommendation-expanded-output-review-${item.id}`}
                             />
-                            <p className="hint muted">
-                              <span className="text-strong">Priority:</span>{" "}
-                              <span className={`badge ${decisiveness.priorityCueTone}`}>{decisiveness.priorityCue}</span>
-                            </p>
-                            {recommendationPriorityRationale ? (
+                            <details className="stack-tight" data-testid={`recommendation-expanded-supporting-details-${item.id}`}>
+                              <summary className="hint muted">View evidence/details</summary>
                               <p className="hint muted">
-                                <span className="text-strong">Priority rationale:</span> {recommendationPriorityRationale}
+                                <span className="text-strong">Priority:</span>{" "}
+                                <span className={`badge ${decisiveness.priorityCueTone}`}>{decisiveness.priorityCue}</span>
                               </p>
-                            ) : null}
-                            {recommendationEvidenceStrength ? (
-                              <p className="hint muted">
-                                <span className="text-strong">Evidence strength:</span>{" "}
-                                <span className={`badge ${recommendationEvidenceStrengthBadgeClass(recommendationEvidenceStrength)}`}>
-                                  {formatRecommendationEvidenceStrength(recommendationEvidenceStrength)}
-                                </span>
-                              </p>
-                            ) : null}
-                            {recommendationCompetitorInfluence && recommendationCompetitorInfluence !== "none" ? (
-                              <p
-                                className="hint muted"
-                                data-testid={`recommendation-competitor-influence-${item.id}`}
-                              >
-                                <span className="text-strong">Competitor influence:</span>{" "}
-                                <span className={`badge ${recommendationCompetitorInfluenceBadgeClass(recommendationCompetitorInfluence)}`}>
-                                  {formatRecommendationCompetitorInfluenceLabel(recommendationCompetitorInfluence)}
-                                </span>
-                              </p>
-                            ) : null}
-                            <p className="hint muted">
-                              <span className="text-strong">Choice support:</span>{" "}
-                              <span className={`badge ${decisiveness.choiceCueTone}`}>{decisiveness.choiceCue}</span>
-                            </p>
-                            <p className="hint muted">
-                              <span className="text-strong">Lifecycle:</span>{" "}
-                              <span className={`badge ${decisiveness.lifecycleCueTone}`}>{decisiveness.lifecycleCue}</span>
-                            </p>
-                            <p className="hint muted">
-                              <span className="text-strong">Freshness:</span>{" "}
-                              <span className={`badge ${decisiveness.freshnessCueTone}`}>{decisiveness.freshnessCue}</span>{" "}
-                              {decisiveness.refreshCheck}
-                            </p>
-                            <p className="hint muted">
-                              <span className="text-strong">Why now:</span> {recommendationWhyNow}
-                            </p>
-                            {recommendationCompetitorInsight ? (
-                              <p className="hint muted" data-testid={`recommendation-competitor-insight-${item.id}`}>
-                                <span className="text-strong">Competitor insight:</span> {recommendationCompetitorInsight}
-                              </p>
-                            ) : null}
-                            <p className="hint muted">
-                              <span className="text-strong">Blocking:</span> {decisiveness.blockingState}
-                            </p>
-                            <p className="hint muted">
-                              <span className="text-strong">After action:</span> {decisiveness.afterAction}
-                            </p>
-                            {targetContentSummary ? (
-                              <p className="hint muted" data-testid={`recommendation-expanded-content-target-${item.id}`}>
-                                <span className="text-strong">Content to update:</span> {targetContentSummary}
-                              </p>
-                            ) : null}
-                            {recommendationMeasurementLine ? (
-                              <p className="hint muted" data-testid={`recommendation-expanded-measurement-context-${item.id}`}>
-                                <span className="text-strong">Recent traffic for this page/topic:</span>{" "}
-                                {recommendationMeasurementLine}
-                              </p>
-                            ) : null}
-                            {recommendationSinceLine ? (
-                              <p className="hint muted" data-testid={`recommendation-expanded-measurement-since-${item.id}`}>
-                                <span className="text-strong">Since this recommendation:</span>{" "}
-                                {recommendationSinceLine}
-                              </p>
-                            ) : null}
-                            {recommendationMeasurementContext?.measurementStatus === "no_match" ? (
-                              <p className="hint muted" data-testid={`recommendation-expanded-measurement-no-match-${item.id}`}>
-                                No page-level measurement match available.
-                              </p>
-                            ) : null}
-                            {recommendationGa4HealthLine ? (
-                              <p className="hint muted" data-testid={`recommendation-expanded-measurement-health-${item.id}`}>
-                                {recommendationGa4HealthLine}
-                              </p>
-                            ) : null}
-                            {recommendationGa4PriorityLine ? (
-                              <p className="hint muted" data-testid={`recommendation-expanded-ga4-priority-context-${item.id}`}>
-                                <span className="text-strong">Analytics context (GA4):</span>{" "}
-                                {recommendationGa4PriorityLine}
-                              </p>
-                            ) : null}
-                            {recommendationGa4OutcomeLine ? (
-                              <p className="hint muted" data-testid={`recommendation-expanded-ga4-outcome-snapshot-${item.id}`}>
-                                <span className="text-strong">GA4 outcome snapshot (observed after action):</span>{" "}
-                                {recommendationGa4OutcomeLine}
-                              </p>
-                            ) : null}
-                            {recommendationSearchVisibilityLine ? (
-                              <p className="hint muted" data-testid={`recommendation-expanded-search-context-${item.id}`}>
-                                <span className="text-strong">Recent search visibility for this page/topic:</span>{" "}
-                                {recommendationSearchVisibilityLine}
-                              </p>
-                            ) : null}
-                            {recommendationSearchSinceLine ? (
-                              <p className="hint muted" data-testid={`recommendation-expanded-search-since-${item.id}`}>
-                                <span className="text-strong">Since this recommendation (search):</span>{" "}
-                                {recommendationSearchSinceLine}
-                              </p>
-                            ) : null}
-                            {recommendationSearchQueryLine ? (
-                              <p className="hint muted" data-testid={`recommendation-expanded-search-queries-${item.id}`}>
-                                <span className="text-strong">Top queries:</span> {recommendationSearchQueryLine}
-                              </p>
-                            ) : null}
-                            {recommendationSearchConsoleContext?.searchConsoleStatus === "no_match" ? (
-                              <p className="hint muted" data-testid={`recommendation-expanded-search-no-match-${item.id}`}>
-                                No page-level search visibility match available.
-                              </p>
-                            ) : null}
-                            {recommendationEffectivenessSummary ? (
-                              <p className="hint muted" data-testid={`recommendation-expanded-effectiveness-${item.id}`}>
-                                <span className="text-strong">Directional outcome:</span> {recommendationEffectivenessSummary}
-                              </p>
-                            ) : null}
-                            {actionPlanSteps.length > 0 ? (
-                              <div className="stack-tight" data-testid={`recommendation-expanded-action-plan-${item.id}`}>
+                              {recommendationPriorityRationale ? (
                                 <p className="hint muted">
-                                  <span className="text-strong">How to implement:</span>
+                                  <span className="text-strong">Why now:</span> {recommendationPriorityRationale}
                                 </p>
-                                <ol className="compact-list">
-                                  {actionPlanSteps.map((step) => (
-                                    <li key={`${item.id}-expanded-plan-${step.step_number}`}>
-                                      <p className="hint muted">
-                                        <span className="text-strong">
-                                          Step {step.step_number}: {step.title}
-                                        </span>{" "}
-                                        {step.instruction}
-                                      </p>
-                                      {step.before_example ? (
-                                        <p className="hint muted">Before: {step.before_example}</p>
-                                      ) : null}
-                                      {step.after_example ? (
-                                        <p className="hint muted">After: {step.after_example}</p>
-                                      ) : null}
-                                    </li>
-                                  ))}
-                                </ol>
-                              </div>
-                            ) : null}
-                            <p className="hint muted">
-                              <span className="text-strong">Evidence:</span> {decisiveness.evidencePreview}
-                            </p>
-                            <p className="hint muted">
-                              <span className={`badge ${decisiveness.evidenceTrustTone}`}>{decisiveness.evidenceTrustCue}</span>
-                            </p>
-                            <p className="hint muted">
-                              <span className="text-strong">Revisit:</span>{" "}
-                              <span className={`badge ${decisiveness.revisitCueTone}`}>{decisiveness.revisitCue}</span>
-                            </p>
+                              ) : null}
+                              {recommendationEvidenceStrength ? (
+                                <p className="hint muted">
+                                  <span className="text-strong">Evidence strength:</span>{" "}
+                                  <span className={`badge ${recommendationEvidenceStrengthBadgeClass(recommendationEvidenceStrength)}`}>
+                                    {formatRecommendationEvidenceStrength(recommendationEvidenceStrength)}
+                                  </span>
+                                </p>
+                              ) : null}
+                              {recommendationCompetitorInfluence && recommendationCompetitorInfluence !== "none" ? (
+                                <p
+                                  className="hint muted"
+                                  data-testid={`recommendation-competitor-influence-${item.id}`}
+                                >
+                                  <span className="text-strong">Competitor influence:</span>{" "}
+                                  <span className={`badge ${recommendationCompetitorInfluenceBadgeClass(recommendationCompetitorInfluence)}`}>
+                                    {formatRecommendationCompetitorInfluenceLabel(recommendationCompetitorInfluence)}
+                                  </span>
+                                </p>
+                              ) : null}
+                              <p className="hint muted">
+                                <span className="text-strong">Choice support:</span>{" "}
+                                <span className={`badge ${decisiveness.choiceCueTone}`}>{decisiveness.choiceCue}</span>
+                              </p>
+                              <p className="hint muted">
+                                <span className="text-strong">Lifecycle:</span>{" "}
+                                <span className={`badge ${decisiveness.lifecycleCueTone}`}>{decisiveness.lifecycleCue}</span>
+                              </p>
+                              <p className="hint muted">
+                                <span className="text-strong">Freshness:</span>{" "}
+                                <span className={`badge ${decisiveness.freshnessCueTone}`}>{decisiveness.freshnessCue}</span>{" "}
+                                {decisiveness.refreshCheck}
+                              </p>
+                              <p className="hint muted">
+                                <span className="text-strong">Why now:</span> {recommendationWhyNow}
+                              </p>
+                              {recommendationCompetitorInsight ? (
+                                <p className="hint muted" data-testid={`recommendation-competitor-insight-${item.id}`}>
+                                  <span className="text-strong">Competitor insight:</span> {recommendationCompetitorInsight}
+                                </p>
+                              ) : null}
+                              <p className="hint muted">
+                                <span className="text-strong">Blocked by:</span> {decisiveness.blockingState}
+                              </p>
+                              <p className="hint muted">
+                                <span className="text-strong">After action:</span> {decisiveness.afterAction}
+                              </p>
+                              {targetContentSummary ? (
+                                <p className="hint muted" data-testid={`recommendation-expanded-content-target-${item.id}`}>
+                                  <span className="text-strong">Content to update:</span> {targetContentSummary}
+                                </p>
+                              ) : null}
+                              {recommendationMeasurementLine ? (
+                                <p className="hint muted" data-testid={`recommendation-expanded-measurement-context-${item.id}`}>
+                                  <span className="text-strong">Recent traffic for this page/topic:</span>{" "}
+                                  {recommendationMeasurementLine}
+                                </p>
+                              ) : null}
+                              {recommendationSinceLine ? (
+                                <p className="hint muted" data-testid={`recommendation-expanded-measurement-since-${item.id}`}>
+                                  <span className="text-strong">Since this recommendation:</span>{" "}
+                                  {recommendationSinceLine}
+                                </p>
+                              ) : null}
+                              {recommendationMeasurementContext?.measurementStatus === "no_match" ? (
+                                <p className="hint muted" data-testid={`recommendation-expanded-measurement-no-match-${item.id}`}>
+                                  No page-level measurement match available.
+                                </p>
+                              ) : null}
+                              {recommendationGa4HealthLine ? (
+                                <p className="hint muted" data-testid={`recommendation-expanded-measurement-health-${item.id}`}>
+                                  {recommendationGa4HealthLine}
+                                </p>
+                              ) : null}
+                              {recommendationGa4PriorityLine ? (
+                                <p className="hint muted" data-testid={`recommendation-expanded-ga4-priority-context-${item.id}`}>
+                                  <span className="text-strong">Analytics context (GA4):</span>{" "}
+                                  {recommendationGa4PriorityLine}
+                                </p>
+                              ) : null}
+                              {recommendationGa4OutcomeLine ? (
+                                <p className="hint muted" data-testid={`recommendation-expanded-ga4-outcome-snapshot-${item.id}`}>
+                                  <span className="text-strong">Observed result:</span>{" "}
+                                  {recommendationGa4OutcomeLine}
+                                </p>
+                              ) : null}
+                              {recommendationSearchVisibilityLine ? (
+                                <p className="hint muted" data-testid={`recommendation-expanded-search-context-${item.id}`}>
+                                  <span className="text-strong">Recent search visibility for this page/topic:</span>{" "}
+                                  {recommendationSearchVisibilityLine}
+                                </p>
+                              ) : null}
+                              {recommendationSearchSinceLine ? (
+                                <p className="hint muted" data-testid={`recommendation-expanded-search-since-${item.id}`}>
+                                  <span className="text-strong">Since this recommendation (search):</span>{" "}
+                                  {recommendationSearchSinceLine}
+                                </p>
+                              ) : null}
+                              {recommendationSearchQueryLine ? (
+                                <p className="hint muted" data-testid={`recommendation-expanded-search-queries-${item.id}`}>
+                                  <span className="text-strong">Top queries:</span> {recommendationSearchQueryLine}
+                                </p>
+                              ) : null}
+                              {recommendationSearchConsoleContext?.searchConsoleStatus === "no_match" ? (
+                                <p className="hint muted" data-testid={`recommendation-expanded-search-no-match-${item.id}`}>
+                                  No page-level search visibility match available.
+                                </p>
+                              ) : null}
+                              {recommendationEffectivenessSummary ? (
+                                <p className="hint muted" data-testid={`recommendation-expanded-effectiveness-${item.id}`}>
+                                  <span className="text-strong">Directional outcome:</span> {recommendationEffectivenessSummary}
+                                </p>
+                              ) : null}
+                              {actionPlanSteps.length > 0 ? (
+                                <div className="stack-tight" data-testid={`recommendation-expanded-action-plan-${item.id}`}>
+                                  <p className="hint muted">
+                                    <span className="text-strong">How to implement:</span>
+                                  </p>
+                                  <ol className="compact-list">
+                                    {actionPlanSteps.map((step) => (
+                                      <li key={`${item.id}-expanded-plan-${step.step_number}`}>
+                                        <p className="hint muted">
+                                          <span className="text-strong">
+                                            Step {step.step_number}: {step.title}
+                                          </span>{" "}
+                                          {step.instruction}
+                                        </p>
+                                        {step.before_example ? (
+                                          <p className="hint muted">Before: {step.before_example}</p>
+                                        ) : null}
+                                        {step.after_example ? (
+                                          <p className="hint muted">After: {step.after_example}</p>
+                                        ) : null}
+                                      </li>
+                                    ))}
+                                  </ol>
+                                </div>
+                              ) : null}
+                              <p className="hint muted">
+                                <span className="text-strong">Evidence:</span> {decisiveness.evidencePreview}
+                              </p>
+                              <p className="hint muted">
+                                <span className={`badge ${decisiveness.evidenceTrustTone}`}>{decisiveness.evidenceTrustCue}</span>
+                              </p>
+                              <p className="hint muted">
+                                <span className="text-strong">Revisit:</span>{" "}
+                                <span className={`badge ${decisiveness.revisitCueTone}`}>{decisiveness.revisitCue}</span>
+                              </p>
+                            </details>
                           </div>
                         </td>
                       </tr>
@@ -4160,11 +4018,11 @@ function RecommendationsPageContent() {
 
         <DetailFocusPanel
           data-testid="recommendation-queue-outcome-focus"
-          title="Recommendation outcome snapshot"
+          title="Recommendation queue snapshot"
           takeaway={recommendationQueueTakeaway}
           nextStep={recommendationQueueNextStep}
           facts={recommendationQueueFacts}
-          detailHint="Queue controls and recommendation details below show action history, rationale, and lineage."
+          detailHint="Use this summary to decide what to review next, then open recommendation detail for deeper evidence."
         />
       </OperatorPageSectionStack>
     </PageContainer>

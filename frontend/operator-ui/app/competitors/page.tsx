@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 
@@ -21,12 +21,15 @@ import { WorkspaceTableShell } from "../../components/layout/WorkspaceTableShell
 import { useOperatorContext } from "../../components/useOperatorContext";
 import {
   ApiRequestError,
+  createCompetitorProfileGenerationRun,
   fetchCompetitorDomains,
+  fetchCompetitorProfileGenerationSummary,
   fetchCompetitorSets,
   fetchCompetitorSnapshotRuns,
   fetchSiteCompetitorComparisonRuns,
 } from "../../lib/api/client";
 import type {
+  CompetitorProfileGenerationSummaryResponse,
   CompetitorSet,
   CompetitorSnapshotRun,
 } from "../../lib/api/types";
@@ -83,6 +86,24 @@ function safeCompetitorErrorMessage(error: unknown): string {
   return "Unable to load competitors right now. Please try again.";
 }
 
+function safeGenerationErrorMessage(error: unknown): string {
+  if (error instanceof ApiRequestError) {
+    if (error.status === 401) {
+      return "Session expired. Sign in again.";
+    }
+    if (error.status === 403) {
+      return "You are not authorized to generate competitor sets.";
+    }
+    if (error.status === 404) {
+      return "Selected site was not found for competitor generation.";
+    }
+    if (error.status === 422) {
+      return "Competitor generation cannot start until site context is ready.";
+    }
+  }
+  return "Unable to start competitor generation right now. Try again.";
+}
+
 function runActivityTimestamp(
   run: Pick<LatestSiteRun, "completed_at" | "updated_at" | "created_at">,
 ): number {
@@ -136,6 +157,11 @@ function CompetitorsPageContent() {
   const [latestSnapshotRun, setLatestSnapshotRun] = useState<LatestSiteRun | null>(null);
   const [latestComparisonRun, setLatestComparisonRun] = useState<LatestSiteRun | null>(null);
   const [readinessWarning, setReadinessWarning] = useState<string | null>(null);
+  const [generationSummary, setGenerationSummary] = useState<CompetitorProfileGenerationSummaryResponse | null>(null);
+  const [generationInFlight, setGenerationInFlight] = useState(false);
+  const [generationMessage, setGenerationMessage] = useState<string | null>(null);
+  const [generationError, setGenerationError] = useState<string | null>(null);
+  const [refreshNonce, setRefreshNonce] = useState(0);
 
   const totalDomainCount = useMemo(
     () => competitorSets.reduce((total, item) => total + item.domain_count, 0),
@@ -153,6 +179,11 @@ function CompetitorsPageContent() {
     () => sites.find((site) => site.id === selectedSiteId) || null,
     [selectedSiteId, sites],
   );
+  const generationQueuedCount = generationSummary?.queued_count ?? 0;
+  const generationRunningCount = generationSummary?.running_count ?? 0;
+  const generationAlreadyRunning = generationQueuedCount + generationRunningCount > 0;
+  const generationButtonLabel = activeSetCount > 0 ? "Refresh competitor set" : "Generate competitor set";
+  const generationButtonDisabled = !selectedSiteId || generationInFlight || generationAlreadyRunning;
 
   function buildSetDetailHref(setItem: CompetitorSetRow): string {
     const params = new URLSearchParams();
@@ -261,6 +292,7 @@ function CompetitorsPageContent() {
       setReadinessWarning(null);
       setCompetitorsError(null);
       setLoadingCompetitors(false);
+      setGenerationSummary(null);
       return;
     }
     let cancelled = false;
@@ -273,6 +305,20 @@ function CompetitorsPageContent() {
       setLatestComparisonRun(null);
       setReadinessWarning(null);
       try {
+        let nextGenerationSummary: CompetitorProfileGenerationSummaryResponse | null = null;
+        try {
+          nextGenerationSummary = await fetchCompetitorProfileGenerationSummary(
+            token,
+            businessId,
+            activeSiteId,
+          );
+        } catch {
+          nextGenerationSummary = null;
+        }
+        if (!cancelled) {
+          setGenerationSummary(nextGenerationSummary);
+        }
+
         const setResponse = await fetchCompetitorSets(token, businessId, activeSiteId);
         if (cancelled) {
           return;
@@ -414,7 +460,25 @@ function CompetitorsPageContent() {
     return () => {
       cancelled = true;
     };
-  }, [businessId, contextError, contextLoading, selectedSiteId, token]);
+  }, [businessId, contextError, contextLoading, refreshNonce, selectedSiteId, token]);
+
+  const handleGenerateCompetitorSet = useCallback(async () => {
+    if (!selectedSiteId) {
+      return;
+    }
+    setGenerationInFlight(true);
+    setGenerationError(null);
+    setGenerationMessage(null);
+    try {
+      const result = await createCompetitorProfileGenerationRun(token, businessId, selectedSiteId, {});
+      setGenerationMessage(`Competitor generation started (${formatRunStatus(result.run.status)}).`);
+      setRefreshNonce((current) => current + 1);
+    } catch (err) {
+      setGenerationError(safeGenerationErrorMessage(err));
+    } finally {
+      setGenerationInFlight(false);
+    }
+  }, [businessId, selectedSiteId, token]);
 
   if (contextLoading) {
     return (
@@ -466,6 +530,19 @@ function CompetitorsPageContent() {
         subtitle="Track competitor set readiness, run status, and domain coverage for the selected site."
         headingLevel={1}
         data-testid="competitors-page-hero"
+        actions={(
+          <button
+            type="button"
+            className="button button-primary"
+            onClick={() => {
+              void handleGenerateCompetitorSet();
+            }}
+            disabled={generationButtonDisabled}
+            data-testid="competitors-generate-set-button"
+          >
+            {generationInFlight ? "Generating competitor set..." : generationButtonLabel}
+          </button>
+        )}
         summary={(
           <>
             <SummaryStatCard
@@ -510,7 +587,24 @@ function CompetitorsPageContent() {
             />
           </>
         )}
-      />
+      >
+        <WorkspaceMessageStack data-testid="competitors-generation-guidance">
+          <p className="hint muted">
+            Generate a reviewed competitor set for the selected site using existing site, audit, and business context.
+          </p>
+          {generationAlreadyRunning ? (
+            <p className="hint muted" data-testid="competitors-generation-running">
+              A competitor generation run is already queued or running for this site.
+            </p>
+          ) : null}
+          {generationMessage ? (
+            <p className="hint" data-testid="competitors-generation-success">{generationMessage}</p>
+          ) : null}
+          {generationError ? (
+            <p className="hint error" data-testid="competitors-generation-error">{generationError}</p>
+          ) : null}
+        </WorkspaceMessageStack>
+      </OperatorPageHero>
 
       <OperatorPageSectionStack>
         <SectionCard variant="summary" className="role-surface-support">
