@@ -71,6 +71,13 @@ jest.mock("../../lib/api/client", () => ({
 }));
 
 describe("admin route", () => {
+  const expectHeadingOrder = (firstHeading: string, secondHeading: string) => {
+    const first = screen.getByRole("heading", { name: firstHeading });
+    const second = screen.getByRole("heading", { name: secondHeading });
+    const relation = first.compareDocumentPosition(second);
+    expect(relation & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  };
+
   beforeEach(() => {
     mockUpdateBusinessSettings.mockReset();
     mockFetchGitHubPublishConfig.mockReset();
@@ -266,14 +273,19 @@ describe("admin route", () => {
     });
 
     const wrappedSectionHeadings = [
+      "Audit & Crawl Settings",
       "SEO Crawl Settings",
+      "Competitor Generation Settings",
       "AI Competitor Candidate Quality",
       "AI Competitor Generation Timeouts",
+      "AI Provider & Prompt Governance",
       "AI Prompt Overrides",
+      "Publish & Deployment Configuration",
       "GitHub Publish Configuration",
+      "Site Registry Management",
       "Site Management",
+      "Diagnostics & Logs",
       "GCP Logs Query",
-      "Admin Console",
     ];
     wrappedSectionHeadings.forEach((heading) => {
       const headingNode = screen.getByRole("heading", { name: heading });
@@ -281,6 +293,13 @@ describe("admin route", () => {
       expect(section).not.toBeNull();
       expect(section).toHaveClass("section-card");
     });
+
+    expectHeadingOrder("Audit & Crawl Settings", "SEO Crawl Settings");
+    expectHeadingOrder("Competitor Generation Settings", "AI Competitor Candidate Quality");
+    expectHeadingOrder("AI Provider & Prompt Governance", "AI Prompt Overrides");
+    expectHeadingOrder("Publish & Deployment Configuration", "GitHub Publish Configuration");
+    expectHeadingOrder("Site Registry Management", "Site Management");
+    expectHeadingOrder("Diagnostics & Logs", "GCP Logs Query");
 
     expect(screen.queryByRole("heading", { name: "User ID Management" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Create User" })).not.toBeInTheDocument();
@@ -293,9 +312,13 @@ describe("admin route", () => {
     expect(screen.getByLabelText("Enable ResourceQuota for managed site namespaces")).toBeInTheDocument();
     expect(screen.getByLabelText("Enable LimitRange for managed site namespaces")).toBeInTheDocument();
     expect(screen.getByLabelText("Enable managed NetworkPolicy scaffold")).toBeInTheDocument();
-    expect(screen.getByText("Platform operations tools for diagnostics, site maintenance, and safe configuration updates.")).toBeInTheDocument();
+    expect(screen.getByText("Admin configures governance and platform defaults. Workflow execution remains on dedicated operational routes.")).toBeInTheDocument();
+    expect(screen.getByText("AI prompt/model changes affect generated recommendations, competitors, and migration drafts.")).toBeInTheDocument();
+    expect(screen.getByText("Namespace policy controls managed site Kubernetes defaults for new managed site namespaces.")).toBeInTheDocument();
+    expect(screen.getByText("Diagnostics is read-only log investigation for runtime troubleshooting.")).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "Search Console Property" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "Search Console Enabled" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Permanent Delete (destructive)" })).toBeInTheDocument();
     expect(screen.getByText("sc-domain:example.com")).toBeInTheDocument();
     expect(screen.getByText("https://example.com")).toBeInTheDocument();
     expect(
@@ -584,6 +607,9 @@ describe("admin route", () => {
     fireEvent.change(managedGkeClusterNameInput, { target: { value: "mbsrn-cluster-prod" } });
     fireEvent.change(managedGkeClusterLocationInput, { target: { value: "us-central1-b" } });
     fireEvent.change(managedGkeProjectIdInput, { target: { value: "mbsrn-prod-2" } });
+    fireEvent.change(screen.getByLabelText("Managed Deploy Secret (GCP_DEPLOY_KEY)"), {
+      target: { value: "{\"secret\":\"write-only\"}" },
+    });
     fireEvent.click(screen.getByLabelText("Enable ResourceQuota for managed site namespaces"));
     fireEvent.change(screen.getByLabelText("Requests CPU"), { target: { value: "1200m" } });
     fireEvent.change(screen.getByLabelText("Requests Memory"), { target: { value: "2Gi" } });
@@ -644,6 +670,7 @@ describe("admin route", () => {
     expect(await screen.findByLabelText("Default Branch")).toHaveValue("release");
     expect(screen.getByLabelText("Base Path")).toHaveValue("/site/content");
     expect(screen.getByTestId("github-publish-effective-preview")).toHaveTextContent("/site/content");
+    expect(screen.queryByText("{\"secret\":\"write-only\"}")).not.toBeInTheDocument();
   });
 
   it("shows GitHub publish validation guidance and blocks save until issues are resolved", async () => {

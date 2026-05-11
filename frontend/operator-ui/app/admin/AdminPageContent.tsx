@@ -137,6 +137,12 @@ interface AdminPageProps {
   mode?: AdminPageMode;
 }
 
+interface AdminGroupCardProps {
+  id: string;
+  title: string;
+  description: string;
+}
+
 interface SiteManagementDraft {
   name: string;
   url: string;
@@ -164,6 +170,14 @@ interface GitHubPublishConfigValidationResult {
   basePathWarning: string | null;
   namespaceIsolationErrors: string[];
   blockingError: string | null;
+}
+
+function AdminGroupCard({ id, title, description }: AdminGroupCardProps) {
+  return (
+    <SectionCard id={id} variant="support" className="role-surface-support">
+      <SectionHeader title={title} subtitle={description} headingLevel={2} variant="support" />
+    </SectionCard>
+  );
 }
 
 function parseBoundedInteger(input: string, bounds: { min: number; max: number }): number | null {
@@ -2088,6 +2102,7 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
     <PageContainer width="wide" density="compact">
       <div className={mode === "admin" ? "stack" : "role-dashboard-landing"}>
         <SectionCard
+          id="admin-group-overview"
           variant="primary"
           className={[
             "role-dashboard-hero",
@@ -2198,6 +2213,39 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
               <span className="hint muted">Sign-in identities: {identities.length}</span>
               <span className="hint muted">Principals without identity: {principalsWithoutIdentityCount}</span>
             </div>
+          ) : null}
+          {showAdminSettings ? (
+            <>
+              <p className="hint muted">
+                Admin configures governance and platform defaults. Workflow execution remains on dedicated operational routes.
+              </p>
+              <nav className="link-row" aria-label="Admin section navigation">
+                <a href="#admin-group-overview" className="hint muted">
+                  Overview
+                </a>
+                <a href="#admin-group-audit-crawl" className="hint muted">
+                  Audit & Crawl
+                </a>
+                <a href="#admin-group-competitor-generation" className="hint muted">
+                  Competitor Generation
+                </a>
+                <a href="#admin-group-ai-governance" className="hint muted">
+                  AI Governance
+                </a>
+                <a href="#admin-group-publish-deploy" className="hint muted">
+                  Publish & Deploy
+                </a>
+                <a href="#admin-group-namespace-policy" className="hint muted">
+                  Namespace Policy
+                </a>
+                <a href="#admin-group-site-registry" className="hint muted">
+                  Site Registry
+                </a>
+                <a href="#admin-group-diagnostics-logs" className="hint muted">
+                  Diagnostics
+                </a>
+              </nav>
+            </>
           ) : null}
         </SectionCard>
 
@@ -2353,6 +2401,14 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
           ) : null}
 
         {showAdminSettings ? (
+          <AdminGroupCard
+            id="admin-group-audit-crawl"
+            title="Audit & Crawl Settings"
+            description="Audit and crawl controls tune deterministic discovery depth and evidence collection behavior."
+          />
+        ) : null}
+
+        {showAdminSettings ? (
           <SectionCard variant="summary" className="role-surface-support">
           <SectionHeader
             title="SEO Crawl Settings"
@@ -2396,6 +2452,14 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
             {crawlPageLimitError ? <p className="hint error">{crawlPageLimitError}</p> : null}
           </FormContainer>
           </SectionCard>
+        ) : null}
+
+        {showAdminSettings ? (
+          <AdminGroupCard
+            id="admin-group-competitor-generation"
+            title="Competitor Generation Settings"
+            description="Competitor generation controls tune deterministic candidate quality and timeout behavior."
+          />
         ) : null}
 
         {showAdminSettings ? (
@@ -2574,6 +2638,14 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
         ) : null}
 
         {showAdminSettings ? (
+          <AdminGroupCard
+            id="admin-group-ai-governance"
+            title="AI Provider & Prompt Governance"
+            description="AI prompt and model changes affect generated recommendations, competitors, and migration drafts."
+          />
+        ) : null}
+
+        {showAdminSettings ? (
         <SectionCard variant="summary" className="role-surface-support">
           <SectionHeader
             title="AI Prompt Overrides"
@@ -2582,40 +2654,48 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
             variant="support"
           />
           <FormContainer onSubmit={(event) => void handleSavePromptOverrides(event)} noValidate>
+            <p className="hint muted">
+              AI prompt/model changes affect generated recommendations, competitors, and migration drafts.
+            </p>
+            <div className="panel panel-compact stack-tight">
+              <strong>Prompt Overrides (high-impact)</strong>
+              <p className="hint muted">
+                Keep prompt changes bounded and review output quality after each save.
+              </p>
+              <label htmlFor="ai-prompt-text-competitor">Competitor Prompt</label>
+              <textarea
+                id="ai-prompt-text-competitor"
+                rows={8}
+                value={competitorPromptOverrideInput}
+                onChange={(event) => setCompetitorPromptOverrideInput(event.target.value)}
+                disabled={businessSettingsLoading || promptOverrideSubmitting}
+              />
+              <p className="hint muted">
+                Current source:{" "}
+                <strong>
+                  {businessSettings?.ai_prompt_text_competitor
+                    ? "Business admin override"
+                    : "Deployment/default fallback"}
+                </strong>
+              </p>
 
-          <label htmlFor="ai-prompt-text-competitor">Competitor Prompt</label>
-          <textarea
-            id="ai-prompt-text-competitor"
-            rows={8}
-            value={competitorPromptOverrideInput}
-            onChange={(event) => setCompetitorPromptOverrideInput(event.target.value)}
-            disabled={businessSettingsLoading || promptOverrideSubmitting}
-          />
-          <p className="hint muted">
-            Current source:{" "}
-            <strong>
-              {businessSettings?.ai_prompt_text_competitor
-                ? "Business admin override"
-                : "Deployment/default fallback"}
-            </strong>
-          </p>
-
-          <label htmlFor="ai-prompt-text-recommendations">Recommendations Prompt</label>
-          <textarea
-            id="ai-prompt-text-recommendations"
-            rows={8}
-            value={recommendationsPromptOverrideInput}
-            onChange={(event) => setRecommendationsPromptOverrideInput(event.target.value)}
-            disabled={businessSettingsLoading || promptOverrideSubmitting}
-          />
-          <p className="hint muted">
-            Current source:{" "}
-            <strong>
-              {businessSettings?.ai_prompt_text_recommendations
-                ? "Business admin override"
-                : "Deployment/default fallback"}
-            </strong>
-          </p>
+              <label htmlFor="ai-prompt-text-recommendations">Recommendations Prompt</label>
+              <textarea
+                id="ai-prompt-text-recommendations"
+                rows={8}
+                value={recommendationsPromptOverrideInput}
+                onChange={(event) => setRecommendationsPromptOverrideInput(event.target.value)}
+                disabled={businessSettingsLoading || promptOverrideSubmitting}
+              />
+              <p className="hint muted">
+                Current source:{" "}
+                <strong>
+                  {businessSettings?.ai_prompt_text_recommendations
+                    ? "Business admin override"
+                    : "Deployment/default fallback"}
+                </strong>
+              </p>
+            </div>
 
           <label htmlFor="default-ai-model">Default AI model</label>
           <input
@@ -2680,6 +2760,14 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
             {promptOverrideError ? <p className="hint error">{promptOverrideError}</p> : null}
           </FormContainer>
         </SectionCard>
+        ) : null}
+
+        {showAdminSettings ? (
+          <AdminGroupCard
+            id="admin-group-publish-deploy"
+            title="Publish & Deployment Configuration"
+            description="Deployment configuration controls publish/deploy target behavior and managed runtime credentials."
+          />
         ) : null}
 
         {showAdminSettings ? (
@@ -2822,40 +2910,53 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
             {githubPublishValidation.managedGkeProjectIdError ? (
               <p className="hint error">{githubPublishValidation.managedGkeProjectIdError}</p>
             ) : null}
-            <label htmlFor="github-publish-managed-gcp-deploy-key">
-              Managed Deploy Secret (GCP_DEPLOY_KEY)
-            </label>
-            <textarea
-              id="github-publish-managed-gcp-deploy-key"
-              rows={3}
-              value={githubPublishManagedDeployKeyInput}
-              onChange={(event) => setGitHubPublishManagedDeployKeyInput(event.target.value)}
-              disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
-              placeholder="Paste service-account JSON to set or rotate (write-only)"
-              autoComplete="off"
-              spellCheck={false}
-            />
-            <label htmlFor="github-publish-managed-gcp-deploy-key-clear" className="checkbox-chip">
-              <input
-                id="github-publish-managed-gcp-deploy-key-clear"
-                type="checkbox"
-                checked={githubPublishManagedDeployKeyClear}
-                onChange={(event) => setGitHubPublishManagedDeployKeyClear(event.target.checked)}
+            <div className="panel panel-compact stack-tight">
+              <strong>Managed Deploy Secret (high-risk)</strong>
+              <p className="hint muted">
+                Deployment configuration controls publish/deploy target behavior. Secret values are write-only and never returned.
+              </p>
+              <label htmlFor="github-publish-managed-gcp-deploy-key">
+                Managed Deploy Secret (GCP_DEPLOY_KEY)
+              </label>
+              <textarea
+                id="github-publish-managed-gcp-deploy-key"
+                rows={3}
+                value={githubPublishManagedDeployKeyInput}
+                onChange={(event) => setGitHubPublishManagedDeployKeyInput(event.target.value)}
                 disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
+                placeholder="Paste service-account JSON to set or rotate (write-only)"
+                autoComplete="off"
+                spellCheck={false}
               />
-              Clear managed deploy secret on save
-            </label>
-            <p className="hint muted">
-              In-house managed secret for managed deploy targets. The value is never returned after save.
-            </p>
-            <WorkspaceMetadataGrid>
-              <WorkspaceMetadataItem label="Managed deploy secret configured">
-                <span>{githubPublishManagedDeployKeyConfigured ? "Yes" : "No"}</span>
-              </WorkspaceMetadataItem>
-              <WorkspaceMetadataItem label="Managed deploy secret updated">
-                <span>{githubPublishManagedDeployKeyUpdatedAt || "Never"}</span>
-              </WorkspaceMetadataItem>
-            </WorkspaceMetadataGrid>
+              <label htmlFor="github-publish-managed-gcp-deploy-key-clear" className="checkbox-chip">
+                <input
+                  id="github-publish-managed-gcp-deploy-key-clear"
+                  type="checkbox"
+                  checked={githubPublishManagedDeployKeyClear}
+                  onChange={(event) => setGitHubPublishManagedDeployKeyClear(event.target.checked)}
+                  disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
+                />
+                Clear managed deploy secret on save
+              </label>
+              <p className="hint muted">
+                In-house managed secret for managed deploy targets. The value is never returned after save.
+              </p>
+              <WorkspaceMetadataGrid>
+                <WorkspaceMetadataItem label="Managed deploy secret configured">
+                  <span>{githubPublishManagedDeployKeyConfigured ? "Yes" : "No"}</span>
+                </WorkspaceMetadataItem>
+                <WorkspaceMetadataItem label="Managed deploy secret updated">
+                  <span>{githubPublishManagedDeployKeyUpdatedAt || "Never"}</span>
+                </WorkspaceMetadataItem>
+              </WorkspaceMetadataGrid>
+            </div>
+
+            <div id="admin-group-namespace-policy" className="panel panel-compact stack-tight">
+              <strong>Managed Namespace Policy</strong>
+              <p className="hint muted">
+                Namespace policy controls managed site Kubernetes defaults for new managed site namespaces.
+              </p>
+            </div>
 
             <div className="panel panel-compact stack-tight">
               <strong>Namespace ResourceQuota defaults</strong>
@@ -3256,17 +3357,11 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
 
       {showAdminSettings ? (
         <>
-      <SectionCard variant="support" className="role-surface-support">
-        <SectionHeader
-          title="Admin Console"
-          subtitle="Platform operations tools for diagnostics, site maintenance, and safe configuration updates."
-          headingLevel={2}
-          variant="support"
-        />
-        <p className="hint muted">
-          Use Site Management to maintain site records and GCP Logs Query to investigate incidents and runtime behavior.
-        </p>
-      </SectionCard>
+      <AdminGroupCard
+        id="admin-group-site-registry"
+        title="Site Registry Management"
+        description="Site Registry changes affect active site records and destructive deletion controls."
+      />
 
       <SectionCard variant="summary" className="role-surface-support">
         <SectionHeader
@@ -3283,6 +3378,9 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
           Search Console property format: domain property <code>sc-domain:example.com</code> or URL-prefix
           property <code>https://example.com</code>. The value must match the Search Console property exactly.
         </p>
+        <p className="hint warning">
+          Site Registry changes affect active site records and destructive deletion behavior. Review before saving or deleting.
+        </p>
         <div className="table-container">
           <table className="table">
             <thead>
@@ -3294,7 +3392,7 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                 <th>Domain</th>
                 <th>Active</th>
                 <th>Edit</th>
-                <th>Permanent Delete</th>
+                <th>Permanent Delete (destructive)</th>
               </tr>
             </thead>
             <tbody>
@@ -3381,6 +3479,12 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
           </table>
         </div>
       </SectionCard>
+
+      <AdminGroupCard
+        id="admin-group-diagnostics-logs"
+        title="Diagnostics & Logs"
+        description="Diagnostics is read-only log investigation for runtime troubleshooting."
+      />
 
       <SectionCard variant="support" className="role-surface-support">
         <SectionHeader

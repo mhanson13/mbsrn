@@ -439,6 +439,27 @@ Behavior:
 - If no completed audit or comparison input exists, the action remains visible and the UI shows a prerequisite message instead of hiding the control.
 - On success, the workspace refreshes recommendation queue/run/summary sections and shows a concise run-status message (`queued`, `running`, `completed`, or `failed`).
 
+## Admin IA Boundaries
+
+Admin (`/admin`) is a governance/configuration surface. It does not execute workflow operations directly.
+
+Admin ownership groups:
+- Overview: business-level admin posture and configuration navigation.
+- Audit & Crawl Settings: crawl depth and audit evidence collection defaults.
+- Competitor Generation Settings: deterministic candidate quality and generation timeout tuning.
+- AI Provider & Prompt Governance: prompt/model defaults and migration draft timeout guardrails.
+- Publish & Deployment Configuration: GitHub target, managed GKE target, and managed deploy secret controls.
+- Managed Namespace Policy: ResourceQuota, LimitRange, and NetworkPolicy defaults for managed site namespaces.
+- Site Registry Management: site records and destructive site delete controls.
+- Diagnostics & Logs: read-only Cloud Logging investigation.
+
+Execution ownership remains on dedicated routes:
+- Audit Runs: findings/evidence/history and supported audit execution.
+- Recommendations: operator decisioning and queue execution.
+- Automation: repeatable workflow orchestration.
+- Competitors: competitor generation/review workflow.
+- Site Workspace: command-center routing and compact state.
+
 ## Admin Competitor Timeout Controls
 
 Admin settings include two competitor-generation timeout controls:
