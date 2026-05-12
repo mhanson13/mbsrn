@@ -7,7 +7,6 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { ActionControls } from "../../components/action-execution/ActionControls";
 import { OutputReview } from "../../components/action-execution/OutputReview";
 import { DetailFocusPanel, type DetailFocusFact } from "../../components/layout/DetailFocusPanel";
-import { OperationalItemCard } from "../../components/layout/OperationalItemCard";
 import { PageContainer } from "../../components/layout/PageContainer";
 import {
   OperatorPageHero,
@@ -20,7 +19,6 @@ import { SectionCard } from "../../components/layout/SectionCard";
 import { SectionHeader } from "../../components/layout/SectionHeader";
 import { SummaryStatCard } from "../../components/layout/SummaryStatCard";
 import { WorkspaceActionBar } from "../../components/layout/WorkspaceActionBar";
-import { WorkspaceEmptyStateCard } from "../../components/layout/WorkspaceEmptyStateCard";
 import { WorkspaceMessageStack } from "../../components/layout/WorkspaceMessageStack";
 import { WorkspaceMetadataGrid, WorkspaceMetadataItem } from "../../components/layout/WorkspaceMetadataGrid";
 import { WorkspaceTableShell } from "../../components/layout/WorkspaceTableShell";
@@ -2404,22 +2402,6 @@ function RecommendationsPageContent() {
     topAppliedRecommendation,
     topReadyRecommendation,
   ]);
-  const recommendationQuickScanItems = useMemo(() => (
-    [...items]
-      .sort((left, right) => {
-        const leftReady = recommendationIsReadyNow(left);
-        const rightReady = recommendationIsReadyNow(right);
-        if (leftReady !== rightReady) {
-          return rightReady ? 1 : -1;
-        }
-        if (left.priority_score !== right.priority_score) {
-          return right.priority_score - left.priority_score;
-        }
-        return (right.updated_at || right.created_at || "").localeCompare(left.updated_at || left.created_at || "");
-      })
-      .slice(0, 6)
-  ), [items]);
-
   function updateQueueParams(nextFilters: FilterState, nextSort: SortState) {
     const params = new URLSearchParams(searchParams.toString());
     if (nextFilters.status) {
@@ -2570,6 +2552,52 @@ function RecommendationsPageContent() {
       return actionExecutionItem;
     }
     return applyActionDecisionLocally(actionExecutionItem, decision);
+  }
+
+  function renderRecommendationQueueAction(params: {
+    label: string;
+    enabled: boolean;
+    className: string;
+    testId: string;
+    href?: string;
+    disabledReason?: string;
+    onClick?: () => void;
+    expanded?: boolean;
+    controlsId?: string;
+  }) {
+    if (params.enabled && params.href) {
+      return (
+        <Link
+          href={params.href}
+          className={params.className}
+          data-testid={params.testId}
+          onClick={(event) => event.stopPropagation()}
+          onKeyDown={(event) => event.stopPropagation()}
+        >
+          {params.label}
+        </Link>
+      );
+    }
+
+    return (
+      <button
+        type="button"
+        className={params.className}
+        data-testid={params.testId}
+        onClick={(event) => {
+          event.stopPropagation();
+          params.onClick?.();
+        }}
+        onKeyDown={(event) => event.stopPropagation()}
+        disabled={!params.enabled}
+        aria-disabled={params.enabled ? undefined : "true"}
+        aria-expanded={typeof params.expanded === "boolean" ? params.expanded : undefined}
+        aria-controls={params.controlsId}
+        title={!params.enabled && params.disabledReason ? params.disabledReason : undefined}
+      >
+        {params.label}
+      </button>
+    );
   }
 
   async function handleRecommendationActionDecision(
@@ -3257,220 +3285,11 @@ function RecommendationsPageContent() {
         <SectionCard
           variant="summary"
           className="role-surface-support"
-          data-testid="recommendations-quick-scan-section"
-        >
-          <SectionHeader
-            title="Queue quick scan"
-            subtitle="Summary-first cards show current readiness and best-next-action before deep detail review."
-            headingLevel={2}
-            variant="support"
-          />
-          <div className="stack" data-testid="recommendation-quick-scan">
-          {recommendationQuickScanItems.length === 0 && !loadingItems ? (
-            <WorkspaceEmptyStateCard compact={true}>
-              <p className="hint muted">No recommendation items available for quick scan.</p>
-            </WorkspaceEmptyStateCard>
-          ) : null}
-          {recommendationQuickScanItems.length > 0 ? (
-            <div className="operational-item-list">
-              {recommendationQuickScanItems.map((item) => {
-                const decisiveness = deriveRecommendationDecisiveness(item, topReadyRecommendation?.id || null);
-                const automationOriginCue = deriveRecommendationAutomationOriginCue(
-                  item,
-                  automationLinkedRecommendationRunIds,
-                  automationLinkageReady,
-                );
-                const actionStateCue = deriveRecommendationOperatorActionState({
-                  status: item.status,
-                  automationLinkedOutput: automationLinkedRecommendationRunIds.has(item.recommendation_run_id),
-                  automationContextAvailable: automationLinkageReady,
-                });
-                const actionExecutionItem = deriveRecommendationActionExecutionItem({
-                  item,
-                  actionStateCode: actionStateCue.code,
-                  automationLinkedOutput: automationLinkedRecommendationRunIds.has(item.recommendation_run_id),
-                  automationContextAvailable: automationLinkageReady,
-                  automationInFlight,
-                });
-                const effectiveActionExecutionItem = applyLocalActionDecision(actionExecutionItem);
-                const actionPresentation = deriveActionStatePresentation({
-                  item: effectiveActionExecutionItem,
-                  fallbackLabel: actionStateCue.label,
-                  fallbackBadgeClass: actionStateCue.badgeClass,
-                  fallbackOutcome: actionStateCue.outcome,
-                  fallbackNextStep: actionStateCue.nextStep,
-                });
-                const recommendationWhyNow = deriveRecommendationWhyNow(item, decisiveness.whyNow);
-                const recommendationNextAction = deriveRecommendationNextAction(item, actionPresentation.nextStep);
-                const recommendationEvidenceStrength = normalizeRecommendationEvidenceStrength(item);
-                const recommendationGa4PriorityContext = normalizeRecommendationGa4PriorityContext(item);
-                const recommendationGa4OutcomeSnapshot = normalizeRecommendationGa4OutcomeSnapshot(item);
-                const recommendationGa4OutcomeLine = buildRecommendationGa4OutcomeLine(recommendationGa4OutcomeSnapshot);
-                const recommendationExecutionReadiness = normalizeRecommendationExecutionReadiness(item);
-                const recommendationBlockingReason = deriveRecommendationBlockingReason(item);
-                const actionControls = decorateRecommendationActionControls(
-                  deriveActionControls(effectiveActionExecutionItem),
-                );
-                const blockerCueNormalized = decisiveness.blockerCue.trim().toLowerCase();
-                const showBlockerBadge =
-                  blockerCueNormalized.length > 0
-                  && blockerCueNormalized !== "no blocker"
-                  && blockerCueNormalized !== decisiveness.actionabilityCue.trim().toLowerCase();
-                const readyToActLabel = recommendationExecutionReadiness
-                  ? formatRecommendationExecutionReadiness(recommendationExecutionReadiness)
-                  : decisiveness.actionabilityCue;
-                const readyToActTone = recommendationExecutionReadiness
-                  ? recommendationExecutionReadinessBadgeClass(recommendationExecutionReadiness)
-                  : decisiveness.actionabilityTone;
-                return (
-                  <OperationalItemCard
-                    key={`quick-scan-${item.id}`}
-                    data-testid={`recommendation-quick-scan-item-${item.id}`}
-                    title={`Queue item: ${item.title}`}
-                    identity={<code>{item.id}</code>}
-                    chips={(
-                      <>
-                        <span className={actionPresentation.badgeClass}>{actionPresentation.label}</span>
-                        <span className={`badge ${decisiveness.actionabilityTone}`}>
-                          {decisiveness.actionabilityCue}
-                        </span>
-                        <span className={`badge ${decisiveness.effortCueTone}`}>{decisiveness.effortCue}</span>
-                        {showBlockerBadge ? (
-                          <span className={`badge ${decisiveness.blockerCueTone}`}>{decisiveness.blockerCue}</span>
-                        ) : null}
-                      </>
-                    )}
-                    summary={
-                      <span>
-                        <span className="text-strong">Why it matters:</span>{" "}
-                        {truncateRecommendationWhyNow(recommendationWhyNow)}
-                      </span>
-                    }
-                    primaryAction={
-                      <div className="stack-tight">
-                        <Link href={buildRecommendationDetailHref(item)} className="button button-primary button-inline">
-                          Open recommendation
-                        </Link>
-                        <ActionControls
-                          controls={actionControls}
-                          resolveHref={(control) => resolveRecommendationControlHref(control, item)}
-                          data-testid={`recommendation-action-controls-${item.id}`}
-                        />
-                      </div>
-                    }
-                    secondaryMeta={
-                      <>
-                        <span className="badge badge-muted">{item.status}</span>
-                        <span className="badge badge-muted">{item.priority_band}</span>
-                        <span className={`badge ${readyToActTone}`}>Ready to act? {readyToActLabel}</span>
-                        {recommendationEvidenceStrength ? (
-                          <span className={`badge ${recommendationEvidenceStrengthBadgeClass(recommendationEvidenceStrength)}`}>
-                            Evidence: {formatRecommendationEvidenceStrength(recommendationEvidenceStrength)}
-                          </span>
-                        ) : null}
-                        {recommendationGa4PriorityContext?.available ? (
-                          <span className="badge badge-muted">GA4 context available</span>
-                        ) : null}
-                        {recommendationGa4OutcomeSnapshot?.status === "available" ? (
-                          <span className="badge badge-muted">Observed result available</span>
-                        ) : null}
-                        <span className={`badge ${automationOriginCue.badgeClass}`}>{automationOriginCue.label}</span>
-                      </>
-                    }
-                    expandedDetail={
-                      <>
-                        <p className="hint muted">
-                          <span className="text-strong">Next step:</span> {recommendationNextAction}
-                        </p>
-                        <p className="hint muted">
-                          <span className="text-strong">Ready to act?</span>{" "}
-                          <span className={`badge ${readyToActTone}`}>{readyToActLabel}</span>
-                        </p>
-                        {recommendationBlockingReason ? (
-                          <p className="hint muted" data-testid={`recommendation-quick-execution-blocking-${item.id}`}>
-                            <span className="text-strong">Blocked by:</span> {recommendationBlockingReason}
-                          </p>
-                        ) : null}
-                        <OutputReview
-                          item={effectiveActionExecutionItem}
-                          stateLabel={actionPresentation.label}
-                          stateBadgeClass={actionPresentation.badgeClass}
-                          outcome={actionPresentation.outcome}
-                          nextStep={actionPresentation.nextStep}
-                          onDecision={(decision) => {
-                            void handleRecommendationActionDecision(item, decision);
-                          }}
-                          onBindAutomation={(actionExecutionItemId, automationId) =>
-                            handleRecommendationAutomationBinding(item, actionExecutionItemId, automationId)
-                          }
-                          onRunAutomation={(actionExecutionItemId) =>
-                            handleRecommendationAutomationRun(item, actionExecutionItemId)
-                          }
-                          bindAutomationTargetId={automationBindingTargetId}
-                          bindAutomationPendingByActionId={automationBindingPendingByActionId}
-                          bindAutomationErrorByActionId={automationBindingErrorByActionId}
-                          runAutomationPendingByActionId={automationRunPendingByActionId}
-                          runAutomationErrorByActionId={automationRunErrorByActionId}
-                          decisionPending={Boolean(actionDecisionSavingByItemId[item.id])}
-                          decisionError={actionDecisionErrorByItemId[item.id]}
-                          resolveOutputHref={(outputId) => resolveRecommendationOutputReviewHref(outputId, item)}
-                          data-testid={`recommendation-output-review-${item.id}`}
-                        />
-                        {recommendationGa4OutcomeLine ? (
-                          <p className="hint muted" data-testid={`recommendation-ga4-outcome-snapshot-${item.id}`}>
-                            <span className="text-strong">Observed result:</span>{" "}
-                            {recommendationGa4OutcomeLine}
-                          </p>
-                        ) : null}
-                        <p className="hint muted">
-                          <Link href={buildRecommendationDetailHref(item)} className="button button-tertiary button-inline">
-                            Open full detail and evidence
-                          </Link>
-                        </p>
-                        <details className="stack-tight" data-testid={`recommendation-quick-details-disclosure-${item.id}`}>
-                          <summary className="hint muted">View evidence/details</summary>
-                          <p className="hint muted">
-                            <span className="text-strong">Why now:</span> {recommendationWhyNow}
-                          </p>
-                          <p className="hint muted">
-                            <span className="text-strong">After action:</span> {decisiveness.afterAction}
-                          </p>
-                          {recommendationGa4PriorityContext?.available ? (
-                            <p className="hint muted" data-testid={`recommendation-ga4-priority-context-${item.id}`}>
-                              <span className="text-strong">Analytics context (GA4):</span>{" "}
-                              {recommendationGa4PriorityContext.hint}
-                            </p>
-                          ) : null}
-                          <p className="hint muted">
-                            <span className="text-strong">Evidence preview:</span> {decisiveness.evidencePreview}
-                          </p>
-                          <p className="hint muted">
-                            <span className={`badge ${decisiveness.evidenceTrustTone}`}>
-                              {decisiveness.evidenceTrustCue}
-                            </span>
-                          </p>
-                        </details>
-                        <p className="hint muted">
-                          <span className="text-strong">Action state:</span> {actionPresentation.outcome}
-                        </p>
-                      </>
-                    }
-                  />
-                );
-              })}
-            </div>
-          ) : null}
-          </div>
-        </SectionCard>
-
-        <SectionCard
-          variant="summary"
-          className="role-surface-support"
           data-testid="recommendations-execution-history-section"
         >
           <SectionHeader
             title="Queue execution and history"
-            subtitle="Review progress messages, run bulk actions, and inspect recommendation execution detail."
+            subtitle="Filter the queue, scan concise recommendation context, and review execution/history details in one place."
             headingLevel={2}
             variant="support"
           />
@@ -3588,12 +3407,13 @@ function RecommendationsPageContent() {
                 </th>
                 <th>Priority</th>
                 <th className="recommendation-title-column">Title</th>
-                <th className="recommendation-summary-column">Summary</th>
+                <th className="recommendation-summary-column">Why it matters</th>
+                <th>Next step</th>
                 <th>Status</th>
-                <th>What to do next</th>
                 <th>Category</th>
                 <th>Source</th>
                 <th>Recommendation Run</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -3671,9 +3491,28 @@ function RecommendationsPageContent() {
                   blockerCueNormalized.length > 0
                   && blockerCueNormalized !== "no blocker"
                   && blockerCueNormalized !== decisiveness.actionabilityCue.trim().toLowerCase();
+                const readyToActLabel = recommendationExecutionReadiness
+                  ? formatRecommendationExecutionReadiness(recommendationExecutionReadiness)
+                  : decisiveness.actionabilityCue;
+                const readyToActTone = recommendationExecutionReadiness
+                  ? recommendationExecutionReadinessBadgeClass(recommendationExecutionReadiness)
+                  : decisiveness.actionabilityTone;
+                const reviewControl =
+                  actionControls.find((control) => control.type === "review_output")
+                  || actionControls.find((control) => control.type === "review_recommendation")
+                  || null;
+                const reviewActionHref = reviewControl ? resolveRecommendationControlHref(reviewControl, item) : undefined;
+                const markCompleteControl = actionControls.find((control) => control.type === "mark_completed") || null;
+                const markCompleteHref = markCompleteControl
+                  ? resolveRecommendationControlHref(markCompleteControl, item)
+                  : undefined;
+                const markCompleteLabel = markCompleteControl?.enabled
+                  ? "Mark Complete"
+                  : markCompleteControl?.label || "Mark Complete";
                 return (
                   <Fragment key={item.id}>
                     <tr
+                      data-testid={`recommendation-queue-item-${item.id}`}
                       role="link"
                       tabIndex={0}
                       className="clickable-row"
@@ -3701,21 +3540,37 @@ function RecommendationsPageContent() {
                       </td>
                       <td className="recommendation-title-cell">{item.title}</td>
                       <td className="table-cell-wrap recommendation-summary-cell">
-                        {item.rationale}
+                        <p className="hint muted recommendation-decisiveness-why-now">
+                          <span className="text-strong">Why it matters:</span>{" "}
+                          {truncateRecommendationWhyNow(recommendationWhyNow)}
+                        </p>
                         {targetContentSummary ? (
                           <p className="hint muted" data-testid={`recommendation-summary-content-target-${item.id}`}>
                             Content to update: {targetContentSummary}
                           </p>
                         ) : null}
                       </td>
-                      <td>{item.status}</td>
                       <td data-testid={`recommendation-decisiveness-${item.id}`}>
                         <div className="recommendation-decisiveness">
+                          <p className="hint muted">
+                            <span className="text-strong">Next step:</span> {recommendationNextAction}
+                          </p>
                           <div className="recommendation-decisiveness-badge-row">
                             <div className="recommendation-decisiveness-badges recommendation-decisiveness-badges-primary">
                               <span className={actionPresentation.badgeClass}>{actionPresentation.label}</span>
-                              <span className={`badge ${decisiveness.actionabilityTone}`}>{decisiveness.actionabilityCue}</span>
+                              <span className={`badge ${readyToActTone}`}>Ready to act? {readyToActLabel}</span>
                               <span className={`badge ${decisiveness.effortCueTone}`}>{decisiveness.effortCue}</span>
+                              {recommendationEvidenceStrength ? (
+                                <span className={`badge ${recommendationEvidenceStrengthBadgeClass(recommendationEvidenceStrength)}`}>
+                                  Evidence: {formatRecommendationEvidenceStrength(recommendationEvidenceStrength)}
+                                </span>
+                              ) : null}
+                              {recommendationGa4PriorityContext?.available ? (
+                                <span className="badge badge-muted">GA4 context available</span>
+                              ) : null}
+                              {recommendationGa4OutcomeSnapshot?.status === "available" ? (
+                                <span className="badge badge-muted">Observed result available</span>
+                              ) : null}
                             </div>
                             {showBlockerBadge ? (
                               <div className="recommendation-decisiveness-badges recommendation-decisiveness-badges-blocker">
@@ -3723,22 +3578,17 @@ function RecommendationsPageContent() {
                               </div>
                             ) : null}
                           </div>
-                          <p className="hint muted recommendation-decisiveness-why-now">
-                            <span className="text-strong">Why now:</span> {truncateRecommendationWhyNow(recommendationWhyNow)}
-                          </p>
-                          <button
-                            type="button"
-                            className="button button-tertiary button-inline recommendation-decisiveness-toggle"
-                            aria-expanded={isExpanded}
-                            aria-controls={detailsId}
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              toggleRecommendationDetails(item.id);
-                            }}
-                            onKeyDown={(event) => event.stopPropagation()}
-                          >
-                            {isExpanded ? "Hide details" : "View details"}
-                          </button>
+                        </div>
+                      </td>
+                      <td>
+                        <div className="recommendation-decisiveness">
+                          <span className="badge badge-muted">{item.status}</span>
+                          <span className={`badge ${readyToActTone}`}>Ready to act? {readyToActLabel}</span>
+                          {recommendationBlockingReason ? (
+                            <p className="hint muted" data-testid={`recommendation-status-blocking-${item.id}`}>
+                              <span className="text-strong">Blocked by:</span> {recommendationBlockingReason}
+                            </p>
+                          ) : null}
                         </div>
                       </td>
                       <td>{item.category}</td>
@@ -3755,10 +3605,50 @@ function RecommendationsPageContent() {
                           {automationOriginCue.label}
                         </p>
                       </td>
+                      <td className="recommendation-actions-cell">
+                        <div
+                          className="recommendation-queue-action-group"
+                          data-testid={`recommendation-queue-actions-${item.id}`}
+                        >
+                          {renderRecommendationQueueAction({
+                            label: "Open",
+                            enabled: true,
+                            href: buildRecommendationDetailHref(item),
+                            className: "button button-primary button-inline recommendation-queue-action",
+                            testId: `recommendation-action-open-${item.id}`,
+                          })}
+                          {renderRecommendationQueueAction({
+                            label: "Review",
+                            enabled: Boolean(reviewControl?.enabled && reviewActionHref),
+                            href: reviewControl?.enabled ? reviewActionHref : undefined,
+                            disabledReason: reviewControl?.reason || "Review is unavailable for this recommendation state.",
+                            className: "button button-secondary button-inline recommendation-queue-action",
+                            testId: `recommendation-action-review-${item.id}`,
+                          })}
+                          {renderRecommendationQueueAction({
+                            label: markCompleteLabel,
+                            enabled: Boolean(markCompleteControl?.enabled && markCompleteHref),
+                            href: markCompleteControl?.enabled ? markCompleteHref : undefined,
+                            disabledReason:
+                              markCompleteControl?.reason || "Completion is unavailable for this recommendation state.",
+                            className: "button button-secondary button-inline recommendation-queue-action",
+                            testId: `recommendation-action-complete-${item.id}`,
+                          })}
+                          {renderRecommendationQueueAction({
+                            label: isExpanded ? "Hide details" : "Show details",
+                            enabled: true,
+                            expanded: isExpanded,
+                            controlsId: detailsId,
+                            onClick: () => toggleRecommendationDetails(item.id),
+                            className: "button button-tertiary button-inline recommendation-queue-action",
+                            testId: `recommendation-action-details-${item.id}`,
+                          })}
+                        </div>
+                      </td>
                     </tr>
                     {isExpanded ? (
                       <tr className="table-expanded-row" data-testid={`recommendation-decisiveness-detail-row-${item.id}`}>
-                        <td colSpan={9}>
+                        <td colSpan={10}>
                           <div
                             id={detailsId}
                             className="table-expanded-panel recommendation-decisiveness-details"
@@ -3834,7 +3724,7 @@ function RecommendationsPageContent() {
                               decisionPending={Boolean(actionDecisionSavingByItemId[item.id])}
                               decisionError={actionDecisionErrorByItemId[item.id]}
                               resolveOutputHref={(outputId) => resolveRecommendationOutputReviewHref(outputId, item)}
-                              data-testid={`recommendation-expanded-output-review-${item.id}`}
+                              data-testid={`recommendation-output-review-${item.id}`}
                             />
                             <details className="stack-tight" data-testid={`recommendation-expanded-supporting-details-${item.id}`}>
                               <summary className="hint muted">View evidence/details</summary>
@@ -4004,7 +3894,7 @@ function RecommendationsPageContent() {
               })}
               {items.length === 0 && !loadingItems ? (
                 <tr>
-                  <td colSpan={9}>
+                  <td colSpan={10}>
                     {hasActiveFilters
                       ? "No recommendations match the current filters."
                       : "No recommendations found for this site."}

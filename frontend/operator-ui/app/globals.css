@@ -2372,6 +2372,33 @@ code {
   margin-top: 0.2rem;
 }
 
+.recommendation-actions-cell {
+  width: 18%;
+  min-width: 14.5rem;
+}
+
+.recommendation-queue-action-group {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.35rem;
+  align-items: stretch;
+}
+
+.recommendation-queue-action {
+  width: 100%;
+  min-height: 1.9rem;
+}
+
+@media (max-width: 1160px) {
+  .recommendation-actions-cell {
+    min-width: 12rem;
+  }
+
+  .recommendation-queue-action-group {
+    grid-template-columns: 1fr;
+  }
+}
+
 .page-container-has-toast {
   padding-bottom: max(5.25rem, var(--workspace-error-toast-safe-area, 5.25rem));
 }

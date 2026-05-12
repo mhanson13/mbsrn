@@ -61,10 +61,9 @@ The recommendations route (`frontend/operator-ui/app/recommendations/page.tsx`) 
 - Primary actions are grouped near the hero (`Open top ready recommendation`, `Refresh Queue`, `Open Site Workspace`).
 - Queue control surfaces are separated into explicit sections:
   - `Queue controls` (presets, filters, sort, scope metrics)
-  - `Queue quick scan` (summary-first execution cards)
-  - `Queue execution and history` (pagination, bulk actions, table, progress/error messaging)
+  - `Queue execution and history` (single primary queue surface with quick-scan context, pagination, bulk actions, table, progress/error messaging)
 - Queue support states (loading/error/progress/polling) are standardized with `OperatorRouteSupportState` and `WorkspaceMessageStack`.
-- Quick-scan and history framing use consistent empty-state/table-shell treatment.
+- Quick-scan context is integrated into the primary queue rows instead of a separate section.
 - Outcome snapshot details remain available but are positioned as secondary detail below the main queue execution surfaces.
 
 ### Workflow boundary
@@ -76,13 +75,13 @@ This is a presentation-only improvement. Recommendation generation, queue mutati
 The recommendations queue now defaults to a concise operator quick-scan instead of exposing full execution metadata inline.
 
 Operator-first defaults on `/recommendations`:
-- each quick-scan card emphasizes:
+- each queue row emphasizes:
   - recommendation title
   - concise `Why it matters`
   - concise `Next step`
   - `Ready to act?` and status badges
-  - primary `Open recommendation` action
-- expanded quick-scan view keeps compact status context plus a bounded `View evidence/details` disclosure.
+  - consistent actions: `Open`, `Review`, `Mark Complete`, `Show details`
+- expanded queue detail keeps compact status context plus a bounded `View evidence/details` disclosure.
 - verbose execution context (inputs/scope/blockers/evidence/measurement detail) is collapsed behind disclosure or available on recommendation detail routes.
 - queue snapshot fact grid is compact (summary-first) rather than a large diagnostic fact matrix.
 

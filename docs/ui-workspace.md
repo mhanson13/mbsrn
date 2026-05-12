@@ -51,7 +51,9 @@ Primary Site Workspace surfaces:
 
 Workflow ownership boundaries:
 - Audit Runs page owns audit execution (when available), findings evidence, and run history.
-- Recommendations page owns recommendation queue, run history, narratives, and apply execution.
+- Recommendations page owns a single filterable recommendation queue surface, run history, narratives, and apply execution.
+  - queue rows integrate quick-scan context directly (`Why it matters`, `Next step`, readiness/status badges)
+  - each row exposes consistent actions: `Open`, `Review`, `Mark Complete`, `Show details`
 - Automation page owns repeatable multi-step workflow orchestration and run lifecycle.
 - Competitors page owns competitor generation/review workflow, including the primary site-scoped `Generate competitor set` / `Refresh competitor set` action, run tables, and candidate/debug inspection.
 - Migration workflow remains on `/sites/[site_id]/migration`.
