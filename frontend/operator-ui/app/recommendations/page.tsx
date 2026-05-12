@@ -8,19 +8,13 @@ import { ActionControls } from "../../components/action-execution/ActionControls
 import { OutputReview } from "../../components/action-execution/OutputReview";
 import { DetailFocusPanel, type DetailFocusFact } from "../../components/layout/DetailFocusPanel";
 import { PageContainer } from "../../components/layout/PageContainer";
-import {
-  OperatorPageHero,
-  OperatorPageSectionStack,
-} from "../../components/layout/OperatorPageSurface";
+import { OperatorPageSectionStack } from "../../components/layout/OperatorPageSurface";
 import { OperatorRouteSupportState } from "../../components/layout/OperatorRouteSupportState";
-import { RouteActionCluster } from "../../components/layout/RouteActionCluster";
 import { SectionStatusItem, SectionStatusStrip } from "../../components/layout/SectionStatusStrip";
 import { SectionCard } from "../../components/layout/SectionCard";
 import { SectionHeader } from "../../components/layout/SectionHeader";
-import { SummaryStatCard } from "../../components/layout/SummaryStatCard";
 import { WorkspaceActionBar } from "../../components/layout/WorkspaceActionBar";
 import { WorkspaceMessageStack } from "../../components/layout/WorkspaceMessageStack";
-import { WorkspaceMetadataGrid, WorkspaceMetadataItem } from "../../components/layout/WorkspaceMetadataGrid";
 import { WorkspaceTableShell } from "../../components/layout/WorkspaceTableShell";
 import { useOperatorContext } from "../../components/useOperatorContext";
 import {
@@ -59,7 +53,12 @@ type FilterState = {
 };
 
 type SortState = "priority_desc" | "priority_asc" | "newest" | "oldest";
-type QueuePresetKey = "all_recommendations" | "open_high_priority" | "accepted" | "dismissed";
+type QueuePresetKey =
+  | "open_recommendations"
+  | "all_recommendations"
+  | "open_high_priority"
+  | "accepted"
+  | "dismissed";
 type QueuePresetSelection = QueuePresetKey | "__custom__";
 type QueueSummary = {
   total: number;
@@ -216,7 +215,7 @@ type OptimisticBulkQueueState = {
 };
 
 const DEFAULT_FILTERS: FilterState = {
-  status: "",
+  status: "open",
   priorityBand: "",
   category: "",
 };
@@ -275,9 +274,19 @@ const QUEUE_PRESETS: Array<{
   sort: SortState;
 }> = [
   {
+    key: "open_recommendations",
+    label: "Open Recommendations",
+    filters: DEFAULT_FILTERS,
+    sort: DEFAULT_SORT,
+  },
+  {
     key: "all_recommendations",
     label: "All Recommendations",
-    filters: DEFAULT_FILTERS,
+    filters: {
+      status: "",
+      priorityBand: "",
+      category: "",
+    },
     sort: DEFAULT_SORT,
   },
   {
@@ -312,8 +321,14 @@ const QUEUE_PRESETS: Array<{
   },
 ];
 
-function parseStatusFilter(value: string | null): FilterState["status"] {
-  if (!value) {
+function parseStatusFilter(value: string | null, explicitStatusParam: boolean): FilterState["status"] {
+  if (!explicitStatusParam) {
+    return DEFAULT_FILTERS.status;
+  }
+  if (value === null) {
+    return DEFAULT_FILTERS.status;
+  }
+  if (value.trim().length === 0) {
     return "";
   }
   const normalized = value.trim().toLowerCase();
@@ -2050,8 +2065,9 @@ function RecommendationsPageContent() {
   const [automationRunErrorByActionId, setAutomationRunErrorByActionId] = useState<Record<string, string | null>>({});
 
   const filters = useMemo<FilterState>(() => {
+    const explicitStatusParam = searchParams.has("status");
     return {
-      status: parseStatusFilter(searchParams.get("status")),
+      status: parseStatusFilter(searchParams.get("status"), explicitStatusParam),
       priorityBand: parsePriorityFilter(searchParams.get("priority") || searchParams.get("priority_band")),
       category: parseCategoryFilter(searchParams.get("category")),
     };
@@ -2086,7 +2102,11 @@ function RecommendationsPageContent() {
   const firstVisiblePosition = hasVisibleRows ? (activePage - DEFAULT_PAGE) * pageSize + 1 : 0;
   const lastVisiblePosition = hasVisibleRows ? firstVisiblePosition + items.length - 1 : 0;
 
-  const hasActiveFilters = Boolean(filters.status || filters.priorityBand || filters.category);
+  const hasActiveFilters = Boolean(
+    filters.status !== DEFAULT_FILTERS.status
+    || filters.priorityBand !== DEFAULT_FILTERS.priorityBand
+    || filters.category !== DEFAULT_FILTERS.category,
+  );
   const displayedRecommendationIds = useMemo(() => items.map((item) => item.id), [items]);
   const displayedRecommendationIdSet = useMemo(() => new Set(displayedRecommendationIds), [displayedRecommendationIds]);
   const selectedCount = selectedRecommendationIds.length;
@@ -2404,10 +2424,12 @@ function RecommendationsPageContent() {
   ]);
   function updateQueueParams(nextFilters: FilterState, nextSort: SortState) {
     const params = new URLSearchParams(searchParams.toString());
-    if (nextFilters.status) {
-      params.set("status", nextFilters.status);
-    } else {
+    if (nextFilters.status === DEFAULT_FILTERS.status) {
       params.delete("status");
+    } else if (nextFilters.status === "") {
+      params.set("status", "");
+    } else {
+      params.set("status", nextFilters.status);
     }
     if (nextFilters.priorityBand) {
       params.set("priority", nextFilters.priorityBand);
@@ -3003,7 +3025,7 @@ function RecommendationsPageContent() {
   if (context.loading) {
     return (
       <OperatorRouteSupportState
-        title="Recommendation Workflow"
+        title="Recommendations Queue"
         subtitle="Loading recommendation queue state for your selected site."
       />
     );
@@ -3011,7 +3033,7 @@ function RecommendationsPageContent() {
   if (context.error) {
     return (
       <OperatorRouteSupportState
-        title="Recommendation Workflow"
+        title="Recommendations Queue"
         subtitle="Unable to load tenant context. Refresh and sign in again."
       />
     );
@@ -3019,7 +3041,7 @@ function RecommendationsPageContent() {
   if (context.sites.length === 0) {
     return (
       <OperatorRouteSupportState
-        title="Recommendation Workflow"
+        title="Recommendations Queue"
         subtitle="No SEO sites are configured yet. Add a site first to view recommendations."
       />
     );
@@ -3030,99 +3052,38 @@ function RecommendationsPageContent() {
       width="full"
       density="compact"
     >
-      <OperatorPageHero
-        title="Recommendation Workflow"
-        subtitle="Review priorities, update recommendation status, and keep action flow moving."
-        headingLevel={1}
-        data-testid="recommendations-page-hero"
-        summary={(
-          <div data-testid="recommendations-summary-strip">
-            <SummaryStatCard
-              label="Filtered recommendations"
-              value={queueSummary.total}
-              detail={hasActiveFilters ? "Current filter set" : "All statuses"}
-              tone={queueSummary.total > 0 ? "neutral" : "warning"}
-              variant="elevated"
-            />
-            <SummaryStatCard
-              label="Ready now"
-              value={queueSummary.open}
-              detail="Open recommendations awaiting action"
-              tone={queueSummary.open > 0 ? "success" : "neutral"}
-              variant="elevated"
-            />
-            <SummaryStatCard
-              label="Applied / completed"
-              value={queueSummary.accepted}
-              detail="Accepted recommendations in current view"
-              tone={queueSummary.accepted > 0 ? "success" : "neutral"}
-              variant="elevated"
-            />
-            <SummaryStatCard
-              label="High priority"
-              value={queueSummary.highPriority}
-              detail="High or critical priorities in current view"
-              tone={queueSummary.highPriority > 0 ? "warning" : "neutral"}
-              variant="elevated"
-            />
-          </div>
-        )}
-      >
-        <WorkspaceMetadataGrid data-testid="recommendations-decision-support-grid">
-          <WorkspaceMetadataItem label="What matters now">
-            <p className="hint muted">{recommendationQueueTakeaway}</p>
-          </WorkspaceMetadataItem>
-          <WorkspaceMetadataItem label="Do this next">
-            <p className="hint muted">
-              <span className="text-strong">
-                {recommendationQueueNextStep ? `${recommendationQueueNextStep.label}.` : "Review recommendation queue state."}
-              </span>{" "}
-              {recommendationQueueNextStep?.note || "Queue context is still settling."}
-            </p>
-          </WorkspaceMetadataItem>
-          <WorkspaceMetadataItem label="Current queue posture">
-            <p className="hint muted">
-              {queueSummary.open > 0
-                ? "Ready-now recommendations require operator review."
-                : queueSummary.accepted > 0
-                  ? "Applied recommendations should be monitored for visibility changes."
-                  : "No immediate recommendation action is required in this view."}
-            </p>
-          </WorkspaceMetadataItem>
-          <WorkspaceMetadataItem label="Filter scope">
-            <p className="hint muted">
-              {hasActiveFilters
-                ? "Filtered recommendation subset is active."
-                : "Viewing all recommendation statuses."}
-            </p>
-          </WorkspaceMetadataItem>
-        </WorkspaceMetadataGrid>
-        <RouteActionCluster
-          data-testid="recommendations-page-primary-actions"
-          primaryActions={recommendationQueueNextStep ? (
-            <Link href={recommendationQueueNextStep.href} className="button button-primary">
-              {recommendationQueueNextStep.label}
-            </Link>
-          ) : null}
-          secondaryActions={(
-            <button
-              type="button"
-              className="button button-secondary"
-              onClick={() => setBulkRefreshNonce((currentValue) => currentValue + 1)}
-              disabled={loadingItems}
-            >
-              Refresh Queue
-            </button>
-          )}
-          shortcutActions={context.selectedSiteId ? (
-            <Link href={`/sites/${context.selectedSiteId}`} className="button button-tertiary">
-              Open Site Workspace
-            </Link>
-          ) : null}
-        />
-      </OperatorPageHero>
-
       <OperatorPageSectionStack>
+        <DetailFocusPanel
+          data-testid="recommendation-queue-outcome-focus"
+          title="Recommendation Queue Snapshot"
+          takeaway={recommendationQueueTakeaway}
+          nextStep={recommendationQueueNextStep}
+          facts={recommendationQueueFacts}
+          actions={(
+            <WorkspaceActionBar variant="secondary" className="row-wrap-tight" data-testid="recommendation-queue-snapshot-actions">
+              {topReadyRecommendation ? (
+                <Link href={buildRecommendationDetailHref(topReadyRecommendation)} className="button button-primary">
+                  Open Top Ready Recommendation
+                </Link>
+              ) : (
+                <button type="button" className="button button-primary" disabled aria-disabled="true">
+                  Open Top Ready Recommendation
+                </button>
+              )}
+              {context.selectedSiteId ? (
+                <Link href={`/sites/${context.selectedSiteId}`} className="button button-secondary">
+                  Open Site Workspace
+                </Link>
+              ) : (
+                <button type="button" className="button button-secondary" disabled aria-disabled="true">
+                  Open Site Workspace
+                </button>
+              )}
+            </WorkspaceActionBar>
+          )}
+          detailHint="Queue controls drive filtering and refresh. Expand a row or open detail for deeper evidence."
+        />
+
         <SectionCard variant="summary" className="role-surface-support">
         <SectionHeader
           title="Queue controls"
@@ -3265,8 +3226,12 @@ function RecommendationsPageContent() {
           />
           <SectionStatusItem
             label="Queue Scope"
-            value={hasActiveFilters ? "Filtered" : "All"}
-            detail={hasActiveFilters ? "Subset based on active controls" : "No status/category filters"}
+            value={hasActiveFilters ? "Filtered" : "Open by default"}
+            detail={
+              hasActiveFilters
+                ? "Subset based on active controls"
+                : "No additional status/category filters"
+            }
             tone={hasActiveFilters ? "warning" : "neutral"}
           />
         </SectionStatusStrip>
@@ -3276,7 +3241,15 @@ function RecommendationsPageContent() {
           className="row-wrap-end"
           data-testid="recommendations-queue-controls-actions"
         >
-          <span className="hint muted">Scope: {hasActiveFilters ? "Filtered queue" : "All recommendations"}</span>
+          <button
+            type="button"
+            className="button button-secondary"
+            onClick={() => setBulkRefreshNonce((currentValue) => currentValue + 1)}
+            disabled={loadingItems}
+          >
+            Refresh Queue
+          </button>
+          <span className="hint muted">Scope: {hasActiveFilters ? "Filtered queue" : "Open recommendations (default)"}</span>
           <span className="hint muted">Current page: {activePage}</span>
           <span className="hint muted">Results per page: {pageSize}</span>
         </WorkspaceActionBar>
@@ -3635,7 +3608,7 @@ function RecommendationsPageContent() {
                             testId: `recommendation-action-complete-${item.id}`,
                           })}
                           {renderRecommendationQueueAction({
-                            label: isExpanded ? "Hide details" : "Show details",
+                            label: isExpanded ? "Hide Details" : "Show Details",
                             enabled: true,
                             expanded: isExpanded,
                             controlsId: detailsId,
@@ -3897,7 +3870,7 @@ function RecommendationsPageContent() {
                   <td colSpan={10}>
                     {hasActiveFilters
                       ? "No recommendations match the current filters."
-                      : "No recommendations found for this site."}
+                      : "No open recommendations found for this site."}
                   </td>
                 </tr>
               ) : null}
@@ -3906,14 +3879,6 @@ function RecommendationsPageContent() {
         </WorkspaceTableShell>
       </SectionCard>
 
-        <DetailFocusPanel
-          data-testid="recommendation-queue-outcome-focus"
-          title="Recommendation queue snapshot"
-          takeaway={recommendationQueueTakeaway}
-          nextStep={recommendationQueueNextStep}
-          facts={recommendationQueueFacts}
-          detailHint="Use this summary to decide what to review next, then open recommendation detail for deeper evidence."
-        />
       </OperatorPageSectionStack>
     </PageContainer>
   );
@@ -3924,7 +3889,7 @@ export default function RecommendationsPage() {
     <Suspense
       fallback={(
         <OperatorRouteSupportState
-          title="Recommendation Workflow"
+          title="Recommendations Queue"
           subtitle="Loading recommendation queue state for your selected site."
         />
       )}

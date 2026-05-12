@@ -207,7 +207,7 @@ describe("recommendations queue optimistic workflows", () => {
 
     render(<RecommendationsPage />);
 
-    expect(screen.getByRole("heading", { name: "Recommendation Workflow" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Recommendations Queue" })).toBeInTheDocument();
     expect(
       screen.getByText("No SEO sites are configured yet. Add a site first to view recommendations."),
     ).toBeInTheDocument();
@@ -222,6 +222,66 @@ describe("recommendations queue optimistic workflows", () => {
       await screen.findByText("Unable to load recommendations right now. Please try again."),
     ).toBeInTheDocument();
     expect(screen.getByTestId("recommendations-page-message-stack")).toBeInTheDocument();
+  });
+
+  it("defaults queue status to open when status query param is omitted", async () => {
+    navigationState.searchParams = new URLSearchParams("page=1&page_size=25");
+    const openRecommendation = createRecommendation("rec-default-open", "open", "high", "Default Open Recommendation");
+    mockFetchRecommendations.mockResolvedValueOnce(
+      createListResponse(
+        [openRecommendation],
+        {
+          total: 1,
+          open: 1,
+          accepted: 0,
+          dismissed: 0,
+          high_priority: 1,
+        },
+      ),
+    );
+
+    render(<RecommendationsPage />);
+
+    await screen.findByText("Default Open Recommendation");
+    expect(mockFetchRecommendations).toHaveBeenCalledWith(
+      "token-1",
+      "biz-1",
+      "site-1",
+      expect.objectContaining({
+        status: "open",
+      }),
+    );
+    expect(screen.getByLabelText("Status")).toHaveValue("open");
+  });
+
+  it("preserves explicit status query filters", async () => {
+    navigationState.searchParams = new URLSearchParams("status=accepted&page=1&page_size=25");
+    const acceptedRecommendation = createRecommendation("rec-explicit-accepted", "accepted", "high", "Accepted Queue Item");
+    mockFetchRecommendations.mockResolvedValueOnce(
+      createListResponse(
+        [acceptedRecommendation],
+        {
+          total: 1,
+          open: 0,
+          accepted: 1,
+          dismissed: 0,
+          high_priority: 1,
+        },
+      ),
+    );
+
+    render(<RecommendationsPage />);
+
+    await screen.findByText("Accepted Queue Item");
+    expect(mockFetchRecommendations).toHaveBeenCalledWith(
+      "token-1",
+      "biz-1",
+      "site-1",
+      expect.objectContaining({
+        status: "accepted",
+      }),
+    );
+    expect(screen.getByLabelText("Status")).toHaveValue("accepted");
   });
 
   it("updates selected visible rows immediately, rolls back failures, and re-selects failed rows", async () => {
@@ -268,9 +328,19 @@ describe("recommendations queue optimistic workflows", () => {
 
     await screen.findByText("Recommendation One");
     await screen.findByText("Recommendation Two");
+    expect(mockFetchRecommendations).toHaveBeenCalledWith(
+      "token-1",
+      "biz-1",
+      "site-1",
+      expect.objectContaining({
+        status: "open",
+      }),
+    );
     expect(screen.queryByLabelText("Site")).not.toBeInTheDocument();
     expect(screen.getByLabelText("Preset")).toHaveClass("operator-select");
+    expect(screen.getByLabelText("Preset")).toHaveValue("__custom__");
     expect(screen.getByLabelText("Status")).toHaveClass("operator-select");
+    expect(screen.getByLabelText("Status")).toHaveValue("open");
     expect(screen.getByLabelText("Priority")).toHaveClass("operator-select");
     expect(screen.getByLabelText("Category")).toHaveClass("operator-select");
     expect(screen.getByLabelText("Sort")).toHaveClass("operator-select");
@@ -294,19 +364,26 @@ describe("recommendations queue optimistic workflows", () => {
     expect(headerCells).not.toContain("Business");
     expect(headerCells).not.toContain("Site");
     expect(document.querySelector(".page-container-width-full")).toBeTruthy();
-    expect(screen.getByTestId("recommendations-page-hero")).toBeInTheDocument();
-    expect(screen.getByTestId("recommendations-summary-strip")).toBeInTheDocument();
-    expect(screen.getByTestId("recommendations-decision-support-grid")).toBeInTheDocument();
-    expect(screen.getByText("What matters now")).toBeInTheDocument();
-    expect(screen.getByText("Do this next")).toBeInTheDocument();
-    const heroActions = screen.getByTestId("recommendations-page-primary-actions");
-    expect(within(heroActions).getByRole("link", { name: "Open top ready recommendation" })).toHaveAttribute(
+    expect(screen.queryByTestId("recommendations-page-hero")).not.toBeInTheDocument();
+    const snapshotPanel = screen.getByTestId("recommendation-queue-outcome-focus");
+    const queueControlsHeading = screen.getByRole("heading", { name: "Queue controls" });
+    expect(snapshotPanel.compareDocumentPosition(queueControlsHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByText("Top takeaway")).toBeInTheDocument();
+    expect(screen.getByText("Recommended next action")).toBeInTheDocument();
+    const snapshotActions = screen.getByTestId("recommendation-queue-snapshot-actions");
+    expect(within(snapshotActions).getByRole("link", { name: "Open Top Ready Recommendation" })).toHaveAttribute(
       "href",
       expect.stringContaining("/recommendations/rec-1"),
     );
-    expect(within(heroActions).getByRole("button", { name: "Refresh Queue" })).toBeInTheDocument();
+    expect(within(snapshotActions).getByRole("link", { name: "Open Site Workspace" })).toHaveAttribute(
+      "href",
+      "/sites/site-1",
+    );
     expect(screen.getByTestId("recommendations-queue-status-strip")).toBeInTheDocument();
     expect(screen.getByTestId("recommendations-queue-controls-actions")).toBeInTheDocument();
+    expect(
+      within(screen.getByTestId("recommendations-queue-controls-actions")).getByRole("button", { name: "Refresh Queue" }),
+    ).toBeInTheDocument();
     expect(screen.getByTestId("recommendations-execution-history-section")).toBeInTheDocument();
     expect(screen.getByTestId("recommendations-bulk-actions")).toBeInTheDocument();
     expect(screen.getByTestId("recommendations-table-shell")).toBeInTheDocument();
@@ -322,7 +399,7 @@ describe("recommendations queue optimistic workflows", () => {
     expect(queueActions).toHaveTextContent("Open");
     expect(queueActions).toHaveTextContent("Review");
     expect(queueActions).toHaveTextContent("Mark Complete");
-    expect(queueActions).toHaveTextContent("Show details");
+    expect(queueActions).toHaveTextContent("Show Details");
     const openAction = within(queueActions).getByTestId("recommendation-action-open-rec-1");
     expect(openAction).toHaveAttribute(
       "href",
@@ -331,13 +408,13 @@ describe("recommendations queue optimistic workflows", () => {
     const detailsAction = within(queueActions).getByTestId("recommendation-action-details-rec-1");
     expect(detailsAction).toHaveAttribute("aria-expanded", "false");
     await user.click(detailsAction);
-    expect(within(queueActions).getByRole("button", { name: "Hide details" })).toHaveAttribute(
+    expect(within(queueActions).getByRole("button", { name: "Hide Details" })).toHaveAttribute(
       "aria-expanded",
       "true",
     );
     expect(queueItem).toHaveTextContent("Ready to act?");
     expect(screen.getByTestId("recommendation-queue-outcome-focus")).toBeInTheDocument();
-    expect(screen.getByText("Recommendation queue snapshot")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Recommendation Queue Snapshot" })).toBeInTheDocument();
     expect(screen.getByText("Top takeaway")).toBeInTheDocument();
     expect(screen.getByText("Recommended next action")).toBeInTheDocument();
     expect(screen.getByText("Current status")).toBeInTheDocument();
@@ -362,7 +439,7 @@ describe("recommendations queue optimistic workflows", () => {
     );
     expect(decisivenessCellOne).not.toHaveTextContent("After action:");
     const recOneActions = screen.getByTestId("recommendation-queue-actions-rec-1");
-    const recOneExpandButton = within(recOneActions).getByRole("button", { name: "Hide details" });
+    const recOneExpandButton = within(recOneActions).getByRole("button", { name: "Hide Details" });
     expect(recOneExpandButton).toHaveAttribute(
       "aria-expanded",
       "true",
@@ -407,7 +484,7 @@ describe("recommendations queue optimistic workflows", () => {
     expect(decisivenessCellTwo).not.toHaveTextContent("Needs review / pending");
     expect(decisivenessCellTwo).not.toHaveTextContent("Fresh enough to act");
     expect(
-      screen.getByText(/Use this summary to decide what to review next/i),
+      screen.getByText(/Queue controls drive filtering and refresh/i),
     ).toBeInTheDocument();
 
     await user.click(screen.getByLabelText("Select all displayed recommendations"));
@@ -415,9 +492,9 @@ describe("recommendations queue optimistic workflows", () => {
 
     await user.click(screen.getByRole("button", { name: "Dismiss Selected" }));
     expect(screen.getByTestId("bulk-action-progress")).toHaveTextContent("Processing 0/2");
-
-    expect(getRecommendationRow("Recommendation One")).toHaveTextContent("dismissed");
-    expect(getRecommendationRow("Recommendation Two")).toHaveTextContent("dismissed");
+    expect(screen.queryByText("Recommendation One")).not.toBeInTheDocument();
+    expect(screen.queryByText("Recommendation Two")).not.toBeInTheDocument();
+    expect(screen.getByText("No open recommendations found for this site.")).toBeInTheDocument();
 
     await act(async () => {
       firstUpdate.resolve({
@@ -1118,7 +1195,7 @@ describe("recommendations queue optimistic workflows", () => {
     await user.click(screen.getByLabelText("Select all displayed recommendations"));
     await user.click(screen.getByRole("button", { name: "Accept Selected" }));
 
-    expect(screen.getByText("No recommendations match the current filters.")).toBeInTheDocument();
+    expect(screen.getByText("No open recommendations found for this site.")).toBeInTheDocument();
     expect(getSummaryValue("Total Filtered")).toBe("0");
     expect(getSummaryValue("Open")).toBe("0");
     expect(getSummaryValue("High Priority")).toBe("0");
@@ -1234,7 +1311,7 @@ describe("recommendations queue optimistic workflows", () => {
 
     await user.click(screen.getByText("Recommendation Five"));
     expect(navigationState.push).toHaveBeenCalledWith(
-      "/recommendations/rec-5?site_id=site-1&category=SEO&sort=oldest&page=3&page_size=50",
+      "/recommendations/rec-5?site_id=site-1&status=open&category=SEO&sort=oldest&page=3&page_size=50",
     );
   });
 

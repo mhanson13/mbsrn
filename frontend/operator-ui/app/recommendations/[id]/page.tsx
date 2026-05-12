@@ -5,17 +5,11 @@ import { useParams, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
 import { PageContainer } from "../../../components/layout/PageContainer";
-import { DetailFocusPanel, type DetailFocusFact } from "../../../components/layout/DetailFocusPanel";
 import { OperatorRouteSupportState } from "../../../components/layout/OperatorRouteSupportState";
-import {
-  OperatorPageHero,
-  OperatorPageSectionStack,
-} from "../../../components/layout/OperatorPageSurface";
-import { RouteActionCluster } from "../../../components/layout/RouteActionCluster";
+import { OperatorPageSectionStack } from "../../../components/layout/OperatorPageSurface";
 import { SectionStatusItem, SectionStatusStrip } from "../../../components/layout/SectionStatusStrip";
 import { SectionCard } from "../../../components/layout/SectionCard";
-import { SummaryStatCard } from "../../../components/layout/SummaryStatCard";
-import { WorkflowContextPanel } from "../../../components/layout/WorkflowContextPanel";
+import { SectionHeader } from "../../../components/layout/SectionHeader";
 import { WorkspaceActionBar } from "../../../components/layout/WorkspaceActionBar";
 import { WorkspaceMessageStack } from "../../../components/layout/WorkspaceMessageStack";
 import { useOperatorContext } from "../../../components/useOperatorContext";
@@ -93,131 +87,6 @@ function deriveRecommendationEvidenceTrustCue(item: Recommendation): string {
     return "Support cue: recommendation-context evidence";
   }
   return "Support cue: operator review required";
-}
-
-function deriveRecommendationEffortCue(item: Recommendation): string {
-  const effortHint = item.recommendation_priority?.effort_hint || null;
-  if (effortHint === "quick_win") {
-    return "Quick win";
-  }
-  if (effortHint === "larger_change") {
-    return "More involved";
-  }
-  if (effortHint === "moderate") {
-    return "Moderate lift";
-  }
-  const effortBucket = (item.effort_bucket || "").trim().toLowerCase();
-  if (effortBucket === "small") {
-    return "Quick win";
-  }
-  if (effortBucket === "large" || effortBucket === "xlarge") {
-    return "More involved";
-  }
-  if (effortBucket.length > 0) {
-    return "Moderate lift";
-  }
-  return "Effort not specified";
-}
-
-function deriveRecommendationChoiceSupport(item: Recommendation): string {
-  if (item.status === "accepted") {
-    return "Waiting on visibility";
-  }
-  if (item.status === "dismissed" || item.status === "resolved" || item.status === "snoozed") {
-    return "Lower-immediacy background item";
-  }
-  if (item.status === "open" || item.status === "in_progress") {
-    if (item.priority_band === "high" || item.priority_band === "critical") {
-      return "High-value next step";
-    }
-    return "Review before applying";
-  }
-  return "Needs review / pending";
-}
-
-function deriveRecommendationLifecycleSupport(item: Recommendation): {
-  stage: string;
-  stageTone: "neutral" | "success" | "warning";
-  revisit: string;
-  revisitTone: "neutral" | "success" | "warning";
-} {
-  if (item.status === "accepted") {
-    return {
-      stage: "Applied / completed",
-      stageTone: "success",
-      revisit: "Revisit after visibility refresh.",
-      revisitTone: "warning",
-    };
-  }
-  if (item.status === "dismissed" || item.status === "resolved" || item.status === "snoozed") {
-    return {
-      stage: "Background item / revisit later",
-      stageTone: "neutral",
-      revisit: "Ignore for now unless context changes.",
-      revisitTone: "neutral",
-    };
-  }
-  if (item.status === "open" || item.status === "in_progress") {
-    return {
-      stage: "Needs review / pending",
-      stageTone: "warning",
-      revisit: "Revisit now.",
-      revisitTone: "success",
-    };
-  }
-  return {
-    stage: "Needs review / pending",
-    stageTone: "warning",
-    revisit: "Revisit now.",
-    revisitTone: "warning",
-  };
-}
-
-function deriveRecommendationFreshnessSupport(item: Recommendation): {
-  freshness: string;
-  freshnessTone: "neutral" | "success" | "warning";
-  refreshCheck: string;
-  refreshCheckTone: "neutral" | "success" | "warning";
-} {
-  const hasTimestamp = (item.updated_at || item.created_at || "").trim().length > 0;
-  if (!hasTimestamp) {
-    return {
-      freshness: "Possibly outdated",
-      freshnessTone: "warning",
-      refreshCheck: "Refresh likely needed before acting.",
-      refreshCheckTone: "warning",
-    };
-  }
-  if (item.status === "accepted") {
-    return {
-      freshness: "Pending refresh",
-      freshnessTone: "warning",
-      refreshCheck: "Refresh not required before acting. Validate visibility after next refresh.",
-      refreshCheckTone: "warning",
-    };
-  }
-  if (item.status === "dismissed" || item.status === "resolved" || item.status === "snoozed") {
-    return {
-      freshness: "Review soon",
-      freshnessTone: "neutral",
-      refreshCheck: "No immediate refresh needed while deferred.",
-      refreshCheckTone: "neutral",
-    };
-  }
-  if (item.status === "open" || item.status === "in_progress") {
-    return {
-      freshness: "Fresh enough to act",
-      freshnessTone: "success",
-      refreshCheck: "No refresh required before acting.",
-      refreshCheckTone: "success",
-    };
-  }
-  return {
-    freshness: "Possibly outdated",
-    freshnessTone: "warning",
-    refreshCheck: "Refresh likely needed before acting.",
-    refreshCheckTone: "warning",
-  };
 }
 
 function safeRecommendationDetailErrorMessage(error: unknown): string {
@@ -501,219 +370,58 @@ export default function RecommendationDetailPage() {
     }
   }
 
-  const workflowContextLinks = useMemo(() => {
-    const links: Array<{ href: string; label: string }> = [
-      { href: backToRecommendationsHref, label: "Recommendation Queue" },
-    ];
-    if (recommendation?.recommendation_run_id) {
-      links.push({
-        href: `/recommendations/runs/${recommendation.recommendation_run_id}?site_id=${encodeURIComponent(recommendation.site_id)}`,
-        label: "Parent Recommendation Run",
-      });
-    }
-    if (recommendation?.audit_run_id) {
-      links.push({ href: `/audits/${recommendation.audit_run_id}`, label: "Linked Audit Run" });
-    }
-    if (recommendation?.comparison_run_id) {
-      links.push({
-        href: buildComparisonRunHref(recommendation.comparison_run_id, recommendation.site_id),
-        label: "Linked Comparison Run",
-      });
-    }
-    return links;
-  }, [backToRecommendationsHref, recommendation]);
-
-  const workflowNextStep = useMemo(() => {
-    if (!recommendation) {
+  const recommendationRunHref = useMemo(() => {
+    if (!recommendation?.recommendation_run_id) {
       return null;
     }
-    if (recommendation.status === "open" || recommendation.status === "in_progress") {
-      return {
-        href: `/recommendations/runs/${recommendation.recommendation_run_id}?site_id=${encodeURIComponent(recommendation.site_id)}`,
-        label: "Review parent run context",
-        note: "Confirm lineage context before accepting or dismissing this recommendation.",
-      };
-    }
-    return {
-      href: backToRecommendationsHref,
-      label: "Return to recommendation queue",
-      note: "Continue processing remaining recommendation actions.",
-    };
-  }, [backToRecommendationsHref, recommendation]);
-
-  const detailFocusTakeaway = useMemo(() => {
-    if (!recommendation) {
-      return "Recommendation context is still loading.";
-    }
-    if (recommendation.status === "open" || recommendation.status === "in_progress") {
-      return `This recommendation is still actionable and currently in "${recommendation.status}" state.`;
-    }
-    if (recommendation.status === "accepted") {
-      return "This recommendation has been accepted; confirm downstream visibility on the next analysis refresh.";
-    }
-    if (recommendation.status === "dismissed") {
-      return "This recommendation is dismissed; keep lineage available for auditability and future review.";
-    }
-    return `This recommendation is in "${recommendation.status}" state.`;
+    return `/recommendations/runs/${recommendation.recommendation_run_id}?site_id=${encodeURIComponent(recommendation.site_id)}`;
   }, [recommendation]);
 
-  const detailFocusNextStep = useMemo(() => {
-    if (!recommendation) {
-      return null;
-    }
-    if (recommendation.status === "open" || recommendation.status === "in_progress") {
-      return {
-        href: "#recommendation-actions",
-        label: "Review rationale, then accept or dismiss",
-        note: "Use the action controls below once decision context is clear.",
-      };
-    }
-    return {
-      href: backToRecommendationsHref,
-      label: "Return to recommendation queue",
-      note: "Continue with remaining recommendation actions.",
-    };
-  }, [backToRecommendationsHref, recommendation]);
-  const detailFocusFacts = useMemo<DetailFocusFact[]>(() => {
+  const decisionSummaryFacts = useMemo(() => {
     if (!recommendation) {
       return [];
     }
-
-    const applied = recommendation.status === "accepted";
     const pending = recommendation.status === "open" || recommendation.status === "in_progress";
-    const dismissed = recommendation.status === "dismissed";
-    const highValue = recommendation.priority_band === "critical" || recommendation.priority_band === "high";
-
-    const currentStatusLabel = applied
-      ? "Applied / completed"
-      : pending
-        ? "Needs review / pending"
-        : dismissed
-          ? "Dismissed"
-          : recommendation.status;
-
-    const whatChangedLabel = applied
-      ? "Recommendation is marked accepted for this site."
-      : dismissed
-        ? "Recommendation is marked dismissed in the queue."
-        : "No apply change has been recorded yet.";
-
-    const manualFollowUpLabel = applied
-      ? "Yes. Confirm this change in the next analysis refresh."
-      : pending
-        ? "Yes. Review the recommendation and choose accept or dismiss."
-        : "Optional. Re-open only if context changes.";
-
-    const expectedVisibilityLabel = applied
-      ? "Visible after the next refresh; external channels may take additional time to reflect."
-      : pending
-        ? "No downstream visibility change until an apply action is recorded."
-        : "Dismissal is reflected in the queue immediately.";
-    const whyThisMattersLabel = pending
-      ? highValue
-        ? "High-value next step based on current priority and open status."
-        : "Review before applying so status and action stay aligned."
-      : applied
-        ? "Apply is complete and now needs visibility confirmation."
-        : "Item remains in history for reference and auditability.";
-    const canActNowLabel = pending
-      ? "Yes. Open actions below and choose accept or dismiss."
-      : applied
-        ? "No. Wait for refresh, then verify outcome."
-        : "No immediate action is required.";
-    const blockingStateLabel = pending
-      ? "Blocked by pending operator decision."
-      : applied
-        ? "Blocked by visibility timing until next refresh."
-        : "No active blocker.";
-    const choiceSupportLabel = deriveRecommendationChoiceSupport(recommendation);
-    const effortSignalLabel = deriveRecommendationEffortCue(recommendation);
-    const lifecycleSupport = deriveRecommendationLifecycleSupport(recommendation);
-    const freshnessSupport = deriveRecommendationFreshnessSupport(recommendation);
-    const evidencePreviewLabel = deriveRecommendationEvidencePreview(recommendation);
-    const evidenceTrustLabel = deriveRecommendationEvidenceTrustCue(recommendation);
+    const blockedBy = recommendation.blocking_reason
+      || (recommendation.status === "accepted"
+        ? "Already accepted; monitor after refresh."
+        : recommendation.status === "dismissed" || recommendation.status === "resolved" || recommendation.status === "snoozed"
+          ? "Decision closed unless context changes."
+          : "No blocker detected.");
+    const measurementAvailability = recommendation.recommendation_measurement_context
+      ? (() => {
+        const status = (recommendation.recommendation_measurement_context.measurement_status || "").trim().toLowerCase();
+        if (status === "available") {
+          return "Measurement context available.";
+        }
+        if (status === "not_configured") {
+          return "Measurement not configured.";
+        }
+        if (status === "unavailable") {
+          return "Measurement temporarily unavailable.";
+        }
+        if (status === "no_match") {
+          return "No page-level measurement match.";
+        }
+        return "Measurement availability unknown.";
+      })()
+      : "Measurement context not provided.";
 
     return [
+      { label: "What this is", value: recommendation.rationale },
+      { label: "Why it matters", value: recommendation.why_now || recommendation.priority_rationale || recommendation.rationale },
       {
-        label: "Why this matters now",
-        value: whyThisMattersLabel,
-        tone: pending ? "warning" : "neutral",
+        label: "Recommended next action",
+        value: recommendation.next_action || (pending ? "Review and decide: accept or dismiss." : "Return to queue and continue."),
       },
+      { label: "Blocked by", value: blockedBy },
       {
-        label: "Current status",
-        value: currentStatusLabel,
-        tone: applied ? "success" : pending ? "warning" : "neutral",
+        label: "Evidence confidence",
+        value: recommendation.evidence_strength
+          ? `Evidence strength: ${recommendation.evidence_strength}.`
+          : "Evidence strength not specified.",
       },
-      {
-        label: "Lifecycle stage",
-        value: lifecycleSupport.stage,
-        tone: lifecycleSupport.stageTone,
-      },
-      {
-        label: "Freshness posture",
-        value: freshnessSupport.freshness,
-        tone: freshnessSupport.freshnessTone,
-      },
-      {
-        label: "Can I act now",
-        value: canActNowLabel,
-        tone: pending ? "success" : "neutral",
-      },
-      {
-        label: "Blocking state",
-        value: blockingStateLabel,
-        tone: pending || applied ? "warning" : "neutral",
-      },
-      {
-        label: "Revisit timing",
-        value: lifecycleSupport.revisit,
-        tone: lifecycleSupport.revisitTone,
-      },
-      {
-        label: "Refresh check",
-        value: freshnessSupport.refreshCheck,
-        tone: freshnessSupport.refreshCheckTone,
-      },
-      {
-        label: "After action",
-        value: expectedVisibilityLabel,
-        tone: applied ? "warning" : "neutral",
-      },
-      {
-        label: "Evidence preview",
-        value: evidencePreviewLabel,
-        tone: "neutral",
-      },
-      {
-        label: "Evidence trust",
-        value: evidenceTrustLabel,
-        tone: "neutral",
-      },
-      {
-        label: "Choice support",
-        value: choiceSupportLabel,
-        tone: pending ? "warning" : applied ? "warning" : "neutral",
-      },
-      {
-        label: "Effort signal",
-        value: effortSignalLabel,
-        tone: "neutral",
-      },
-      {
-        label: "What changed",
-        value: whatChangedLabel,
-        tone: applied ? "success" : "neutral",
-      },
-      {
-        label: "Manual follow-up",
-        value: manualFollowUpLabel,
-        tone: pending || applied ? "warning" : "neutral",
-      },
-      {
-        label: "Source context",
-        value: `${recommendationSourceType(recommendation)} lineage`,
-        tone: "neutral",
-      },
+      { label: "Measurement availability", value: measurementAvailability },
     ];
   }, [recommendation]);
 
@@ -746,96 +454,48 @@ export default function RecommendationDetailPage() {
 
   return (
     <PageContainer>
-      <OperatorPageHero
-        title="Recommendation Detail"
-        subtitle="Review recommendation context, update decision status, and track linked lineage."
-        headingLevel={1}
-        data-testid="recommendation-detail-hero"
-        meta={(
-          <span className="hint muted">Recommendation: <code>{recommendationId}</code></span>
-        )}
-        actions={(
-          <RouteActionCluster
-            secondaryActions={<Link href={backToRecommendationsHref}>Back to Recommendations</Link>}
-          />
-        )}
-        summary={(
-          <>
-            <SummaryStatCard
-              label="Status"
-              value={recommendation?.status || "Loading"}
-              detail="Current workflow decision state"
-              tone={recommendation?.status === "accepted" ? "success" : recommendation?.status === "dismissed" ? "danger" : "warning"}
-              variant="elevated"
-            />
-            <SummaryStatCard
-              label="Priority"
-              value={recommendation ? `${recommendation.priority_score}` : "-"}
-              detail={recommendation ? recommendation.priority_band : "Priority band pending"}
-              tone="neutral"
-              variant="elevated"
-            />
-            <SummaryStatCard
-              label="Category"
-              value={recommendation?.category || "-"}
-              detail={recommendation ? recommendationSourceType(recommendation) : "Recommendation lineage pending"}
-              tone="neutral"
-              variant="elevated"
-            />
-          </>
-        )}
-      >
-        <WorkspaceMessageStack>
-          {resolvedSiteId ? (
-            <p className="hint muted">Resolved site: <code>{resolvedSiteId}</code></p>
-          ) : null}
-          {loading ? <p className="hint muted">Loading recommendation detail...</p> : null}
-          {!loading && notFound ? (
-            <p className="hint warning">Recommendation not found or not accessible in your tenant scope.</p>
-          ) : null}
-          {!loading && error ? <p className="hint error">{error}</p> : null}
-        </WorkspaceMessageStack>
-      </OperatorPageHero>
-
-      {!loading && !notFound && !error && recommendation ? (
-        <WorkflowContextPanel
-          data-testid="recommendation-detail-workflow-context"
-          lineage="Recommendations → Recommendation detail → Decision update"
-          links={workflowContextLinks}
-          nextStep={workflowNextStep}
-        />
-      ) : null}
-
-      {!loading && !notFound && !error && recommendation ? (
-        <DetailFocusPanel
-          data-testid="recommendation-detail-focus"
-          title="Recommendation outcome snapshot"
-          takeaway={detailFocusTakeaway}
-          nextStep={detailFocusNextStep}
-          facts={detailFocusFacts}
-          detailHint="Recommendation context, decision controls, lineage, and tenant scope are grouped in the sections below."
-        />
-      ) : null}
+      <WorkspaceMessageStack data-testid="recommendation-detail-message-stack">
+        {resolvedSiteId ? (
+          <p className="hint muted">Resolved site: <code>{resolvedSiteId}</code></p>
+        ) : null}
+        {loading ? <p className="hint muted">Loading recommendation detail...</p> : null}
+        {!loading && notFound ? (
+          <p className="hint warning">Recommendation not found or not accessible in your tenant scope.</p>
+        ) : null}
+        {!loading && error ? <p className="hint error">{error}</p> : null}
+      </WorkspaceMessageStack>
 
       {!loading && !notFound && !error && recommendation ? (
         <OperatorPageSectionStack>
-          <SectionCard variant="summary" className="role-surface-support">
-            <h2>Recommendation Context</h2>
-            <p>{recommendation.title}</p>
-            <p>{recommendation.rationale}</p>
-          </SectionCard>
-
-          <SectionCard variant="summary" className="role-surface-support">
-            <h2>Priority and Status</h2>
+          <SectionCard variant="summary" className="role-surface-support" data-testid="recommendation-detail-header">
+            <SectionHeader
+              title="Recommendation Detail"
+              subtitle={recommendation.title}
+              headingLevel={1}
+              variant="support"
+            />
+            <WorkspaceActionBar
+              variant="secondary"
+              className="row-wrap-tight"
+              data-testid="recommendation-detail-header-actions"
+            >
+              <Link href={backToRecommendationsHref} className="button button-secondary">
+                Back to Recommendations
+              </Link>
+              {recommendationRunHref ? (
+                <Link href={recommendationRunHref} className="button button-tertiary">
+                  Parent Recommendation Run
+                </Link>
+              ) : null}
+              {recommendation.audit_run_id ? (
+                <Link href={`/audits/${recommendation.audit_run_id}`} className="button button-tertiary">
+                  Linked Audit Run
+                </Link>
+              ) : null}
+            </WorkspaceActionBar>
             <SectionStatusStrip compact={true} data-testid="recommendation-detail-status-strip">
               <SectionStatusItem
-                label="Priority score"
-                value={recommendation.priority_score}
-                detail={recommendation.priority_band}
-                tone="neutral"
-              />
-              <SectionStatusItem
-                label="Decision status"
+                label="Status"
                 value={recommendation.status}
                 tone={
                   recommendation.status === "accepted"
@@ -846,20 +506,55 @@ export default function RecommendationDetailPage() {
                 }
               />
               <SectionStatusItem
+                label="Priority"
+                value={recommendation.priority_score}
+                detail={recommendation.priority_band}
+                tone="neutral"
+              />
+              <SectionStatusItem
                 label="Category"
                 value={recommendation.category}
                 tone="neutral"
               />
               <SectionStatusItem
-                label="Source type"
+                label="Source"
                 value={recommendationSourceType(recommendation)}
                 tone="neutral"
               />
             </SectionStatusStrip>
           </SectionCard>
 
-          <SectionCard variant="emphasis" className="role-surface-support" id="recommendation-actions">
-            <h2>Actions</h2>
+          <SectionCard variant="summary" className="role-surface-support" data-testid="recommendation-detail-decision-summary">
+            <SectionHeader
+              title="Decision Summary"
+              subtitle="Operator-first context for what this recommendation is and what to do next."
+              headingLevel={2}
+              compact
+              variant="support"
+            />
+            <dl className="detail-focus-facts">
+              {decisionSummaryFacts.map((fact) => (
+                <div key={fact.label} className="detail-focus-fact detail-focus-fact-neutral">
+                  <dt>{fact.label}</dt>
+                  <dd>{fact.value}</dd>
+                </div>
+              ))}
+            </dl>
+          </SectionCard>
+
+          <SectionCard
+            variant="emphasis"
+            className="role-surface-support"
+            id="recommendation-actions"
+            data-testid="recommendation-detail-actions"
+          >
+            <SectionHeader
+              title="Actions"
+              subtitle="Capture the operator decision and save a note."
+              headingLevel={2}
+              compact
+              variant="support"
+            />
             <WorkspaceActionBar variant="primary" className="row-wrap-tight">
               <button
                 className="primary"
@@ -905,53 +600,98 @@ export default function RecommendationDetailPage() {
             </WorkspaceActionBar>
             {actionSuccess ? <p className="hint">{actionSuccess}</p> : null}
             {actionError ? <p className="hint error">{actionError}</p> : null}
-          </SectionCard>
-
-          <SectionCard variant="support" className="role-surface-support">
-            <h2>Saved Note</h2>
-            <p>{recommendation.decision_reason || "No operator note saved yet."}</p>
-          </SectionCard>
-
-          <SectionCard variant="support" className="role-surface-support">
-            <h2>Lineage</h2>
-            <p>
-              Audit Run ID:{" "}
-              {recommendation.audit_run_id ? (
-                <Link href={`/audits/${recommendation.audit_run_id}`}>
-                  <code>{recommendation.audit_run_id}</code>
-                </Link>
-              ) : (
-                <code>-</code>
-              )}
-            </p>
-            <p>
-              Comparison Run ID:{" "}
-              {recommendation.comparison_run_id ? (
-                <Link href={buildComparisonRunHref(recommendation.comparison_run_id, recommendation.site_id)}>
-                  <code>{recommendation.comparison_run_id}</code>
-                </Link>
-              ) : (
-                <code>-</code>
-              )}
-            </p>
-            <p>
-              Recommendation Run ID:{" "}
-              <Link href={`/recommendations/runs/${recommendation.recommendation_run_id}?site_id=${encodeURIComponent(recommendation.site_id)}`}>
-                <code>{recommendation.recommendation_run_id}</code>
-              </Link>
+            <p className="hint muted" data-testid="recommendation-detail-saved-note">
+              Saved note: {recommendation.decision_reason || "No operator note saved yet."}
             </p>
           </SectionCard>
 
-          <SectionCard variant="support" className="role-surface-support">
-            <h2>Tenant Scope</h2>
-            <p>
-              Business ID: <code>{recommendation.business_id}</code>
-            </p>
-            <p>
-              Site ID: <code>{recommendation.site_id}</code>
-            </p>
-            <p>Created: {formatDateTime(recommendation.created_at)}</p>
-            <p>Updated: {formatDateTime(recommendation.updated_at)}</p>
+          <SectionCard variant="support" className="role-surface-support" data-testid="recommendation-detail-supporting-details">
+            <SectionHeader
+              title="Supporting Details"
+              subtitle="Evidence and implementation context are available on demand."
+              headingLevel={2}
+              compact
+              variant="support"
+            />
+            <details className="stack-tight" data-testid="recommendation-detail-supporting-disclosure">
+              <summary className="hint muted">View evidence/details</summary>
+              <p className="hint muted">
+                <span className="text-strong">Summary:</span> {recommendation.rationale}
+              </p>
+              {recommendation.priority_rationale ? (
+                <p className="hint muted">
+                  <span className="text-strong">Why now:</span> {recommendation.priority_rationale}
+                </p>
+              ) : null}
+              <p className="hint muted">
+                <span className="text-strong">Evidence preview:</span> {deriveRecommendationEvidencePreview(recommendation)}
+              </p>
+              <p className="hint muted">
+                <span className="text-strong">Evidence confidence:</span> {deriveRecommendationEvidenceTrustCue(recommendation)}
+              </p>
+              {recommendation.next_action ? (
+                <p className="hint muted">
+                  <span className="text-strong">Implementation context:</span> {recommendation.next_action}
+                </p>
+              ) : null}
+              {recommendation.ga4_priority_hint ? (
+                <p className="hint muted">
+                  <span className="text-strong">GA4 context:</span> {recommendation.ga4_priority_hint}
+                </p>
+              ) : null}
+              {recommendation.ga4_outcome_snapshot?.operator_hint ? (
+                <p className="hint muted">
+                  <span className="text-strong">Observed result:</span> {recommendation.ga4_outcome_snapshot.operator_hint}
+                </p>
+              ) : null}
+            </details>
+          </SectionCard>
+
+          <SectionCard variant="support" className="role-surface-support" data-testid="recommendation-detail-lineage-scope">
+            <SectionHeader
+              title="Lineage & Scope"
+              subtitle="Run links and tenant identifiers are available for traceability."
+              headingLevel={2}
+              compact
+              variant="support"
+            />
+            <details className="stack-tight" data-testid="recommendation-detail-lineage-disclosure">
+              <summary className="hint muted">View lineage and tenant scope</summary>
+              <p>
+                Audit Run:{" "}
+                {recommendation.audit_run_id ? (
+                  <Link href={`/audits/${recommendation.audit_run_id}`}>
+                    <code>{recommendation.audit_run_id}</code>
+                  </Link>
+                ) : (
+                  <code>-</code>
+                )}
+              </p>
+              <p>
+                Comparison Run:{" "}
+                {recommendation.comparison_run_id ? (
+                  <Link href={buildComparisonRunHref(recommendation.comparison_run_id, recommendation.site_id)}>
+                    <code>{recommendation.comparison_run_id}</code>
+                  </Link>
+                ) : (
+                  <code>-</code>
+                )}
+              </p>
+              <p>
+                Recommendation Run:{" "}
+                {recommendationRunHref ? (
+                  <Link href={recommendationRunHref}>
+                    <code>{recommendation.recommendation_run_id}</code>
+                  </Link>
+                ) : (
+                  <code>-</code>
+                )}
+              </p>
+              <p>Business ID: <code>{recommendation.business_id}</code></p>
+              <p>Site ID: <code>{recommendation.site_id}</code></p>
+              <p>Created: {formatDateTime(recommendation.created_at)}</p>
+              <p>Updated: {formatDateTime(recommendation.updated_at)}</p>
+            </details>
           </SectionCard>
         </OperatorPageSectionStack>
       ) : null}

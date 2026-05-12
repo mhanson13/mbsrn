@@ -6,6 +6,64 @@ import { useRouter } from "next/navigation";
 import { GoogleSignIn } from "../components/GoogleSignIn";
 import { useAuth } from "../components/AuthProvider";
 import { exchangeGoogleIdToken, startGoogleAuth } from "../lib/api/client";
+import { normalizeError } from "../lib/errors";
+import { sanitizeDiagnosticMessage } from "../lib/runtimeDiagnostics";
+import { getPublicAppVersion } from "../lib/runtimeMetadata";
+
+type RootAuthDiagnosticClassification =
+  | "auth_bootstrap_invalid_response"
+  | "auth_bootstrap_request_failed"
+  | "auth_exchange_invalid_response"
+  | "auth_exchange_failed"
+  | "auth_missing_state"
+  | "auth_missing_credential"
+  | "gis_initialization_failed";
+
+type GoogleSignInInitializationError = {
+  kind: "script_load_failed" | "script_not_ready" | "button_render_failed";
+  message: string;
+};
+
+function extractOAuthState(payload: unknown): string | null {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return null;
+  }
+  const candidate = payload as { state?: unknown };
+  if (typeof candidate.state !== "string") {
+    return null;
+  }
+  const normalized = candidate.state.trim();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function isValidExchangeResponse(payload: unknown): boolean {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return false;
+  }
+  const candidate = payload as {
+    access_token?: unknown;
+    principal?: unknown;
+  };
+  return typeof candidate.access_token === "string" && candidate.access_token.trim().length > 0 && !!candidate.principal;
+}
+
+function logRootAuthDiagnostic(
+  classification: RootAuthDiagnosticClassification,
+  message: string,
+  level: "warn" | "error" = "error",
+): void {
+  const payload = {
+    route: "/",
+    classification,
+    message: sanitizeDiagnosticMessage(message, "Login bootstrap failure"),
+    app_version: getPublicAppVersion(),
+  };
+  if (level === "warn") {
+    console.warn("[operator-ui] root_auth_warning", payload);
+    return;
+  }
+  console.error("[operator-ui] root_auth_error", payload);
+}
 
 export default function LoginPage() {
   const router = useRouter();
@@ -16,12 +74,30 @@ export default function LoginPage() {
   const [oauthState, setOauthState] = useState<string | null>(null);
   const [oauthStateReady, setOauthStateReady] = useState(false);
 
+  const handleGoogleSignInInitializationError = useCallback((issue: GoogleSignInInitializationError) => {
+    logRootAuthDiagnostic("gis_initialization_failed", `${issue.kind}: ${issue.message}`, "warn");
+    setError("Google sign-in is temporarily unavailable. Retry in a moment.");
+  }, []);
+
   const initializeGoogleLogin = useCallback(async () => {
     setOauthStateReady(false);
+    setError(null);
     try {
       const challenge = await startGoogleAuth();
-      setOauthState(challenge.state);
-    } catch {
+      const nextState = extractOAuthState(challenge);
+      if (!nextState) {
+        logRootAuthDiagnostic(
+          "auth_bootstrap_invalid_response",
+          "Google auth start returned malformed state payload.",
+        );
+        setOauthState(null);
+        setError("Sign-in initialization failed. Retry in a moment.");
+        return;
+      }
+      setOauthState(nextState);
+    } catch (error) {
+      const normalized = normalizeError(error, "Sign-in initialization failed.");
+      logRootAuthDiagnostic("auth_bootstrap_request_failed", normalized.message);
       setOauthState(null);
       setError("Sign-in initialization failed. Retry in a moment.");
     } finally {
@@ -31,8 +107,15 @@ export default function LoginPage() {
 
   const handleExchange = useCallback(
     async (tokenValue: string) => {
+      const normalizedToken = tokenValue.trim();
+      if (!normalizedToken) {
+        logRootAuthDiagnostic("auth_missing_credential", "Google credential was missing from callback payload.", "warn");
+        setError("Google sign-in did not return a credential. Retry in a moment.");
+        return;
+      }
       const currentState = oauthState;
       if (!currentState) {
+        logRootAuthDiagnostic("auth_missing_state", "Missing login state during Google credential exchange.", "warn");
         setError("Sign-in session is unavailable. Retry in a moment.");
         return;
       }
@@ -40,12 +123,22 @@ export default function LoginPage() {
       setError(null);
       let exchangeSucceeded = false;
       try {
-        const result = await exchangeGoogleIdToken(tokenValue, currentState);
+        const result = await exchangeGoogleIdToken(normalizedToken, currentState);
+        if (!isValidExchangeResponse(result)) {
+          throw new Error("Authentication response was incomplete.");
+        }
         exchangeSucceeded = true;
         setSession(result.access_token, result.principal, result.refresh_token);
         router.push("/dashboard");
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Authentication failed.");
+        const normalized = normalizeError(err, "Authentication failed.");
+        if (normalized.message === "Authentication response was incomplete.") {
+          logRootAuthDiagnostic("auth_exchange_invalid_response", normalized.message);
+          setError("Authentication failed. Retry in a moment.");
+        } else {
+          logRootAuthDiagnostic("auth_exchange_failed", normalized.message);
+          setError("Authentication failed. Retry in a moment.");
+        }
       } finally {
         setLoading(false);
         if (!exchangeSucceeded) {
@@ -100,6 +193,7 @@ export default function LoginPage() {
           {oauthStateReady && oauthState ? (
             <GoogleSignIn
               clientId={process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID || ""}
+              onInitializationError={handleGoogleSignInInitializationError}
               onCredential={(credential) => {
                 void handleExchange(credential);
               }}
@@ -107,6 +201,18 @@ export default function LoginPage() {
           ) : (
             <p className="auth-subtitle">Preparing secure sign-in...</p>
           )}
+          {oauthStateReady && !oauthState ? (
+            <button
+              type="button"
+              className="button button-secondary"
+              onClick={() => {
+                void initializeGoogleLogin();
+              }}
+              disabled={loading}
+            >
+              Retry sign-in initialization
+            </button>
+          ) : null}
           {loading ? <p className="auth-subtitle">Signing in...</p> : null}
         </div>
 

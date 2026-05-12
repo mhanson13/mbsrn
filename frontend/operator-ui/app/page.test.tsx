@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 
 import LoginPage from "./page";
 
@@ -28,13 +29,20 @@ jest.mock("../lib/api/client", () => {
 });
 
 jest.mock("../components/GoogleSignIn", () => ({
-  GoogleSignIn: ({ onCredential }: { onCredential: (credential: string) => void }) => (
+  GoogleSignIn: ({
+    onCredential,
+  }: {
+    onCredential: (credential: string) => void;
+    onInitializationError?: (error: { kind: string; message: string }) => void;
+  }) => (
     <button onClick={() => onCredential("google-credential")}>Mock Google Sign-In</button>
   ),
 }));
 
 beforeEach(() => {
   jest.clearAllMocks();
+  jest.spyOn(console, "error").mockImplementation(() => undefined);
+  jest.spyOn(console, "warn").mockImplementation(() => undefined);
   mockUseAuth.mockReturnValue({
     setSession: mockSetSession,
     principal: null,
@@ -59,6 +67,10 @@ beforeEach(() => {
       is_active: true,
     },
   });
+});
+
+afterEach(() => {
+  jest.restoreAllMocks();
 });
 
 describe("login page", () => {
@@ -116,7 +128,37 @@ describe("login page", () => {
     render(<LoginPage />);
 
     expect(await screen.findByText("Sign-in initialization failed. Retry in a moment.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retry sign-in initialization" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Mock Google Sign-In" })).not.toBeInTheDocument();
     expect(mockExchangeGoogleIdToken).not.toHaveBeenCalled();
+  });
+
+  it("handles malformed auth bootstrap payloads with bounded fallback and retry", async () => {
+    mockStartGoogleAuth
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({
+        state: "login-state-2",
+        expires_at: "2026-03-23T00:00:00Z",
+        flow: "google_login_exchange",
+      });
+    const user = userEvent.setup();
+
+    render(<LoginPage />);
+
+    expect(await screen.findByText("Sign-in initialization failed. Retry in a moment.")).toBeInTheDocument();
+    const retryButton = screen.getByRole("button", { name: "Retry sign-in initialization" });
+    expect(retryButton).toBeInTheDocument();
+
+    await user.click(retryButton);
+
+    await screen.findByRole("button", { name: "Mock Google Sign-In" });
+    expect(mockStartGoogleAuth).toHaveBeenCalledTimes(2);
+    expect(console.error).toHaveBeenCalledWith(
+      "[operator-ui] root_auth_error",
+      expect.objectContaining({
+        route: "/",
+        classification: "auth_bootstrap_invalid_response",
+      }),
+    );
   });
 });

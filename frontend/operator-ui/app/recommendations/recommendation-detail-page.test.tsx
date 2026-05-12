@@ -78,7 +78,7 @@ function createRecommendation(overrides: Partial<Recommendation> = {}): Recommen
     business_id: "biz-1",
     site_id: "site-1",
     recommendation_run_id: "rec-run-1",
-    audit_run_id: null,
+    audit_run_id: "audit-run-1",
     comparison_run_id: null,
     status: "open",
     category: "SEO",
@@ -88,6 +88,10 @@ function createRecommendation(overrides: Partial<Recommendation> = {}): Recommen
     effort_bucket: "small",
     title: "Improve title tags",
     rationale: "Pages are missing target keyword in title tags.",
+    why_now: "The homepage ranks for high-volume intent and needs a stronger title signal.",
+    next_action: "Update the homepage title and re-check in the next crawl.",
+    blocking_reason: "Operator review required before publish.",
+    evidence_strength: "strong",
     eeat_categories: [],
     primary_eeat_category: null,
     decision_reason: null,
@@ -119,8 +123,8 @@ beforeEach(() => {
   mockUseOperatorContext.mockReturnValue(baseOperatorContext());
 });
 
-describe("recommendation detail optimistic single-item updates", () => {
-  it("updates status immediately and reconciles state on successful save", async () => {
+describe("recommendation detail decision-first layout", () => {
+  it("renders compact decision-first sections and reconciles optimistic accept saves", async () => {
     mockFetchRecommendation.mockResolvedValueOnce(createRecommendation());
     const updateDeferred = createDeferred<Recommendation>();
     mockUpdateRecommendationStatus.mockImplementationOnce(() => updateDeferred.promise);
@@ -128,53 +132,44 @@ describe("recommendation detail optimistic single-item updates", () => {
     const user = userEvent.setup();
     render(<RecommendationDetailPage />);
 
-    const statusStrip = await screen.findByTestId("recommendation-detail-status-strip");
-    expect(statusStrip).toBeInTheDocument();
+    const header = await screen.findByTestId("recommendation-detail-header");
+    const statusStrip = screen.getByTestId("recommendation-detail-status-strip");
+    const decisionSummary = screen.getByTestId("recommendation-detail-decision-summary");
+    const actionsCard = screen.getByTestId("recommendation-detail-actions");
+    const lineageCard = screen.getByTestId("recommendation-detail-lineage-scope");
+
+    expect(header).toBeInTheDocument();
     expect(within(statusStrip).getByText("open")).toBeInTheDocument();
-    expect(screen.getByTestId("recommendation-detail-workflow-context")).toBeInTheDocument();
-    const detailFocus = screen.getByTestId("recommendation-detail-focus");
-    expect(detailFocus).toBeInTheDocument();
-    expect(screen.getByText("Recommendation outcome snapshot")).toBeInTheDocument();
-    expect(screen.getByText("Why this matters now")).toBeInTheDocument();
-    expect(screen.getByText("Can I act now")).toBeInTheDocument();
-    expect(screen.getByText("Blocking state")).toBeInTheDocument();
-    expect(screen.getByText("After action")).toBeInTheDocument();
-    expect(screen.getByText("Evidence preview")).toBeInTheDocument();
-    expect(screen.getByText("Evidence trust")).toBeInTheDocument();
-    expect(screen.getByText("Lifecycle stage")).toBeInTheDocument();
-    expect(screen.getByText("Revisit timing")).toBeInTheDocument();
-    expect(screen.getByText("Freshness posture")).toBeInTheDocument();
-    expect(screen.getByText("Refresh check")).toBeInTheDocument();
-    expect(screen.getByText("Choice support")).toBeInTheDocument();
-    expect(screen.getByText("Effort signal")).toBeInTheDocument();
-    expect(
-      screen.getByText("High-value next step based on current priority and open status."),
-    ).toBeInTheDocument();
-    expect(screen.getByText("High-value next step")).toBeInTheDocument();
-    expect(screen.getAllByText("Needs review / pending").length).toBeGreaterThan(0);
-    expect(screen.getByText("Fresh enough to act")).toBeInTheDocument();
-    expect(screen.getByText("Revisit now.")).toBeInTheDocument();
-    expect(screen.getByText("No refresh required before acting.")).toBeInTheDocument();
-    expect(screen.getByText("Quick win")).toBeInTheDocument();
-    expect(screen.getByText("Support cue: operator review required")).toBeInTheDocument();
-    expect(
-      screen.getByText("Yes. Open actions below and choose accept or dismiss."),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText("Yes. Review the recommendation and choose accept or dismiss."),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText("No downstream visibility change until an apply action is recorded."),
-    ).toBeInTheDocument();
-    const recommendationContextHeading = screen.getByRole("heading", { name: "Recommendation Context" });
-    expect(detailFocus.compareDocumentPosition(recommendationContextHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(screen.getByRole("link", { name: "Parent Recommendation Run" })).toBeInTheDocument();
+    expect(screen.queryByTestId("recommendation-detail-workflow-context")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("recommendation-detail-focus")).not.toBeInTheDocument();
+    expect(screen.queryByText("Recommendation outcome snapshot")).not.toBeInTheDocument();
+    expect(screen.queryByText("Lifecycle stage")).not.toBeInTheDocument();
+    expect(screen.queryByText("Refresh check")).not.toBeInTheDocument();
+    expect(screen.queryByText("Choice support")).not.toBeInTheDocument();
+
+    expect(within(decisionSummary).getByText("What this is")).toBeInTheDocument();
+    expect(within(decisionSummary).getByText("Why it matters")).toBeInTheDocument();
+    expect(within(decisionSummary).getByText("Recommended next action")).toBeInTheDocument();
+    expect(within(decisionSummary).getByText("Blocked by")).toBeInTheDocument();
+    expect(within(decisionSummary).getByText("Evidence confidence")).toBeInTheDocument();
+    expect(within(decisionSummary).getByText("Measurement availability")).toBeInTheDocument();
+    expect(decisionSummary.querySelectorAll("dt")).toHaveLength(6);
+
+    expect(actionsCard.compareDocumentPosition(lineageCard) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Back to Recommendations" })).toHaveAttribute(
+      "href",
+      "/recommendations?status=open&sort=newest&page=2&page_size=50",
+    );
+    expect(screen.getByRole("link", { name: "Parent Recommendation Run" })).toHaveAttribute(
+      "href",
+      "/recommendations/runs/rec-run-1?site_id=site-1",
+    );
+    expect(screen.getByRole("link", { name: "Linked Audit Run" })).toHaveAttribute("href", "/audits/audit-run-1");
+
     await user.type(screen.getByLabelText("Operator Note"), "Ship this next sprint");
     await user.click(screen.getByRole("button", { name: "Accept" }));
 
     expect(within(statusStrip).getByText("accepted")).toBeInTheDocument();
-    expect(screen.getByText("Recommendation is marked accepted for this site.")).toBeInTheDocument();
-    expect(screen.getByText("Yes. Confirm this change in the next analysis refresh.")).toBeInTheDocument();
     expect(screen.getByDisplayValue("Ship this next sprint")).toBeInTheDocument();
 
     await act(async () => {
@@ -191,15 +186,7 @@ describe("recommendation detail optimistic single-item updates", () => {
     await screen.findByText("Recommendation marked as accepted.");
     expect(within(statusStrip).getByText("accepted")).toBeInTheDocument();
     expect(screen.getByDisplayValue("Backend normalized note")).toBeInTheDocument();
-    expect(screen.getByText("Apply is complete and now needs visibility confirmation.")).toBeInTheDocument();
-    expect(screen.getByText("Waiting on visibility")).toBeInTheDocument();
-    expect(screen.getAllByText("Applied / completed").length).toBeGreaterThan(0);
-    expect(screen.getByText("Pending refresh")).toBeInTheDocument();
-    expect(screen.getByText("Revisit after visibility refresh.")).toBeInTheDocument();
-    expect(
-      screen.getByText("Refresh not required before acting. Validate visibility after next refresh."),
-    ).toBeInTheDocument();
-    expect(screen.getByText("No. Wait for refresh, then verify outcome.")).toBeInTheDocument();
+    expect(screen.getByTestId("recommendation-detail-saved-note")).toHaveTextContent("Saved note: Backend normalized note");
     expect(mockUpdateRecommendationStatus).toHaveBeenCalledWith(
       "token-1",
       "biz-1",
@@ -226,7 +213,9 @@ describe("recommendation detail optimistic single-item updates", () => {
 
     const statusStrip = await screen.findByTestId("recommendation-detail-status-strip");
     expect(within(statusStrip).getByText("open")).toBeInTheDocument();
+
     await user.click(screen.getByRole("button", { name: "Dismiss" }));
+
     expect(mockUpdateRecommendationStatus).toHaveBeenCalledTimes(1);
     await screen.findByText("Recommendation update is not allowed in the current state.");
     expect(within(statusStrip).getByText("open")).toBeInTheDocument();

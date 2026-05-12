@@ -44,7 +44,6 @@ The recommendations route (`frontend/operator-ui/app/recommendations/page.tsx`) 
 
 ### Composition and primitives used
 
-- `OperatorPageHero`
 - `OperatorPageSectionStack`
 - `WorkspaceActionBar`
 - `WorkspaceMessageStack`
@@ -54,17 +53,18 @@ The recommendations route (`frontend/operator-ui/app/recommendations/page.tsx`) 
 
 ### Operator-visible improvements
 
-- A top decision-support layer now answers:
-  - what matters most right now
-  - what to do next
-  - current queue posture/filter scope
-- Primary actions are grouped near the hero (`Open top ready recommendation`, `Refresh Queue`, `Open Site Workspace`).
-- Queue control surfaces are separated into explicit sections:
-  - `Queue controls` (presets, filters, sort, scope metrics)
-  - `Queue execution and history` (single primary queue surface with quick-scan context, pagination, bulk actions, table, progress/error messaging)
+- `/recommendations` defaults to **open items only** when no explicit `status` query param is provided.
+- A top `Recommendation Queue Snapshot` card is the first queue entry point and keeps only compact operator facts:
+  - top takeaway
+  - recommended next action
+  - current queue status
+  - blocker/evidence/after-action context (bounded)
+- Queue controls own refresh/filter/sort scope in one place:
+  - `Queue controls` now includes `Refresh Queue` and `Clear Filters`
+  - `Queue execution and history` remains the single primary queue surface (pagination, bulk actions, row actions, progress/error messaging)
 - Queue support states (loading/error/progress/polling) are standardized with `OperatorRouteSupportState` and `WorkspaceMessageStack`.
 - Quick-scan context is integrated into the primary queue rows instead of a separate section.
-- Outcome snapshot details remain available but are positioned as secondary detail below the main queue execution surfaces.
+- Queue row actions are consistently presented as: `Open`, `Review`, `Mark Complete`, `Show Details`.
 
 ### Workflow boundary
 
@@ -84,6 +84,25 @@ Operator-first defaults on `/recommendations`:
 - expanded queue detail keeps compact status context plus a bounded `View evidence/details` disclosure.
 - verbose execution context (inputs/scope/blockers/evidence/measurement detail) is collapsed behind disclosure or available on recommendation detail routes.
 - queue snapshot fact grid is compact (summary-first) rather than a large diagnostic fact matrix.
+
+## Recommendation Detail Decision-First Layout (Frontend)
+
+The recommendation detail route (`/recommendations/[id]`) now uses a compact decision-first structure:
+
+- `Recommendation Detail` header:
+  - recommendation title
+  - status/priority/category/source badges
+  - links: `Back to Recommendations`, `Parent Recommendation Run`, `Linked Audit Run` (when available)
+- `Decision Summary`:
+  - bounded to concise operator facts (`What this is`, `Why it matters`, `Recommended next action`, `Blocked by`, evidence/measurement availability)
+- `Actions` card appears before lower-priority metadata:
+  - `Accept`, `Dismiss`, operator note, `Save Note`
+- `Supporting Details` and `Lineage & Scope` are available as compact disclosures rather than large always-expanded fact grids.
+
+Boundary:
+- decision controls and note-save behavior are unchanged
+- recommendation API payload/semantics are unchanged
+- no scoring/order/prioritization behavior changes
 
 Wording simplification:
 - `Execution readiness` -> `Ready to act?`

@@ -2,6 +2,7 @@
 
 import Script from "next/script";
 import { useCallback, useEffect, useRef } from "react";
+import { normalizeError } from "../lib/errors";
 
 declare global {
   interface Window {
@@ -19,9 +20,13 @@ declare global {
 interface GoogleSignInProps {
   clientId: string;
   onCredential: (credential: string) => void;
+  onInitializationError?: (error: {
+    kind: "script_load_failed" | "script_not_ready" | "button_render_failed";
+    message: string;
+  }) => void;
 }
 
-export function GoogleSignIn({ clientId, onCredential }: GoogleSignInProps) {
+export function GoogleSignIn({ clientId, onCredential, onInitializationError }: GoogleSignInProps) {
   const renderedRef = useRef(false);
   const retryTimeoutRef = useRef<number | null>(null);
 
@@ -56,10 +61,14 @@ export function GoogleSignIn({ clientId, onCredential }: GoogleSignInProps) {
       renderedRef.current = true;
       return true;
     } catch (error) {
-      console.error("Google Sign-In button render failed.", error);
+      const normalized = normalizeError(error, "Google sign-in button render failed.");
+      onInitializationError?.({
+        kind: "button_render_failed",
+        message: normalized.message,
+      });
       return true;
     }
-  }, [clientId, onCredential]);
+  }, [clientId, onCredential, onInitializationError]);
 
   useEffect(() => {
     if (!clientId || renderedRef.current) {
@@ -75,7 +84,10 @@ export function GoogleSignIn({ clientId, onCredential }: GoogleSignInProps) {
       }
       attempts += 1;
       if (attempts >= maxAttempts) {
-        console.error("Google Sign-In failed to initialize: GIS script not ready.");
+        onInitializationError?.({
+          kind: "script_not_ready",
+          message: "Google sign-in script did not initialize in time.",
+        });
         return;
       }
       retryTimeoutRef.current = window.setTimeout(attemptInitialize, 150);
@@ -89,7 +101,7 @@ export function GoogleSignIn({ clientId, onCredential }: GoogleSignInProps) {
         retryTimeoutRef.current = null;
       }
     };
-  }, [clientId, initializeButton]);
+  }, [clientId, initializeButton, onInitializationError]);
 
   return (
     <>
@@ -100,7 +112,10 @@ export function GoogleSignIn({ clientId, onCredential }: GoogleSignInProps) {
           initializeButton();
         }}
         onError={() => {
-          console.error("Google Identity Services script failed to load.");
+          onInitializationError?.({
+            kind: "script_load_failed",
+            message: "Google Identity Services script failed to load.",
+          });
         }}
       />
       <div id="google-signin-button" />

@@ -21,6 +21,7 @@ type DetailFocusPanelProps = {
   takeaway: ReactNode;
   nextStep?: DetailFocusNextStep | null;
   facts?: DetailFocusFact[] | null;
+  actions?: ReactNode;
   detailHint?: ReactNode;
   "data-testid"?: string;
 };
@@ -30,6 +31,7 @@ export function DetailFocusPanel({
   takeaway,
   nextStep,
   facts,
+  actions,
   detailHint,
   "data-testid": dataTestId,
 }: DetailFocusPanelProps) {
@@ -72,6 +74,11 @@ export function DetailFocusPanel({
             </div>
           ))}
         </dl>
+      ) : null}
+      {actions ? (
+        <div className="detail-focus-actions">
+          {actions}
+        </div>
       ) : null}
       {detailHint ? (
         <p className="detail-focus-line hint muted">

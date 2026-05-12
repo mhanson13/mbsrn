@@ -2825,6 +2825,11 @@ code {
   font-size: var(--type-sm);
 }
 
+.detail-focus-actions {
+  display: grid;
+  gap: var(--space-2);
+}
+
 .detail-focus-facts {
   margin: 0;
   display: grid;
