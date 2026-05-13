@@ -256,7 +256,10 @@ Operator UI/runtime diagnostics hardening:
   - short message classification
 - Next middleware blocks unsupported non-API multipart mutating requests (`POST|PUT|PATCH`) with `400`:
   - `/api` and `/api/*` multipart traffic is still allowed
-  - requests marked with `next-action` are allowed (server-action compatibility guard)
+- Next middleware blocks stale non-API `next-action` mutating requests with `409` and bounded classification:
+  - classification: `stale_server_action_build_mismatch`
+  - operator recovery: refresh/reload the tab after deployment to pick up the current build
+  - `/api` and `/api/*` requests are not remapped by this guard
 - Never log request/form bodies, auth headers, cookies, tokens, or provider payloads.
 
 ## Required GitHub Secrets/Variables

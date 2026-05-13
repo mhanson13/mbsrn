@@ -55,6 +55,18 @@ SEOCompetitorDraftConfidenceLevel = Literal["high", "medium", "low"]
 SEOCompetitorDraftSourceType = Literal["search", "places", "fallback", "synthetic"]
 SEOCompetitorDomainVerificationStatus = Literal["verified", "unverified"]
 SEOAIResponseContractStatus = Literal["accepted", "accepted_with_warnings", "salvaged", "rejected"]
+SEOCompetitorProfileQualityStatus = Literal["ready", "partial", "blocked"]
+SEOCompetitorProfileQualityReason = Literal[
+    "valid",
+    "duplicate_domain",
+    "self_domain",
+    "malformed_domain",
+    "low_relevance",
+    "missing_required_fields",
+    "insufficient_candidates",
+    "provider_unparseable",
+    "provider_returned_empty",
+]
 SEOSummaryStatus = Literal["completed", "failed"]
 SEOFindingCategory = Literal["SEO", "CONTENT", "STRUCTURE", "TECHNICAL"]
 SEOFindingSeverity = Literal["INFO", "WARNING", "CRITICAL"]
@@ -92,6 +104,17 @@ _COMPETITOR_PROFILE_TUNING_EXCLUSION_REASONS: tuple[str, ...] = (
     "directory_or_aggregator_penalty",
     "big_box_mismatch_penalty",
     "insufficient_local_alignment",
+)
+_COMPETITOR_PROFILE_QUALITY_REASONS: tuple[str, ...] = (
+    "valid",
+    "duplicate_domain",
+    "self_domain",
+    "malformed_domain",
+    "low_relevance",
+    "missing_required_fields",
+    "insufficient_candidates",
+    "provider_unparseable",
+    "provider_returned_empty",
 )
 _DRAFT_SOURCE_AI_GENERATED = "ai_generated"
 _DRAFT_SOURCE_AI_FORCED_FALLBACK = "ai_forced_fallback"
@@ -669,6 +692,7 @@ class SEOCompetitorProfileGenerationRunDetailRead(BaseModel):
     candidate_pipeline_summary: SEOCompetitorProfileCandidatePipelineSummaryRead | None = None
     outcome_summary: SEOCompetitorProfileOutcomeSummaryRead | None = None
     response_contract_summary: "SEOAIResponseContractSummaryRead | None" = None
+    quality_summary: "SEOCompetitorProfileGenerationQualitySummaryRead | None" = None
     ai_diagnostics_summary: AIDiagnosticsSummaryRead | None = None
     provider_attempt_count: int = Field(default=0, ge=0)
     provider_degraded_retry_used: bool = False
@@ -686,6 +710,46 @@ class SEOCompetitorProfileGenerationRunDetailRead(BaseModel):
         if not isinstance(value, dict):
             return normalized  # type: ignore[return-value]
         for reason in _COMPETITOR_PROFILE_TUNING_EXCLUSION_REASONS:
+            raw_count = value.get(reason, 0)
+            try:
+                normalized[reason] = max(0, int(raw_count))
+            except (TypeError, ValueError):
+                normalized[reason] = 0
+        return normalized  # type: ignore[return-value]
+
+
+class SEOCompetitorProfileGenerationQualitySummaryRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: SEOCompetitorProfileQualityStatus
+    operator_message: str = Field(min_length=1, max_length=280)
+    total_candidates_returned: int = Field(default=0, ge=0)
+    accepted_candidates: int = Field(default=0, ge=0)
+    rejected_candidates: int = Field(default=0, ge=0)
+    final_active_domains_count: int = Field(default=0, ge=0)
+    top_reason: SEOCompetitorProfileQualityReason | None = None
+    reason_counts: dict[SEOCompetitorProfileQualityReason, int] = Field(default_factory=dict)
+
+    @field_validator("operator_message", mode="before")
+    @classmethod
+    def normalize_operator_message(cls, value: Any) -> str:
+        cleaned = _strip_or_none(str(value) if value is not None else None)
+        if cleaned is None:
+            raise ValueError("operator_message is required")
+        return cleaned
+
+    @field_validator("reason_counts", mode="before")
+    @classmethod
+    def normalize_reason_counts(
+        cls,
+        value: Any,
+    ) -> dict[SEOCompetitorProfileQualityReason, int]:
+        normalized = {reason: 0 for reason in _COMPETITOR_PROFILE_QUALITY_REASONS}
+        if value is None:
+            return normalized  # type: ignore[return-value]
+        if not isinstance(value, dict):
+            return normalized  # type: ignore[return-value]
+        for reason in _COMPETITOR_PROFILE_QUALITY_REASONS:
             raw_count = value.get(reason, 0)
             try:
                 normalized[reason] = max(0, int(raw_count))

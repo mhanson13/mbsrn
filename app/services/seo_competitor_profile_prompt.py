@@ -559,9 +559,11 @@ def _build_default_competitor_instruction_body(
         "3. Exclude any domain listed in excluded_domains.\n"
         "4. Avoid any candidate domain matching non_competitor_domain_hints unless there is clear substitute evidence.\n"
         "5. Domain must be a hostname only (no protocol/path).\n"
-        "6. confidence_score must be a number between 0 and 1.\n"
-        "7. If google_places_seed_candidates are provided, treat them as seed hypotheses and enrich/validate before final selection.\n"
-        "8. Keep summaries concise and evidence specific."
+        "6. Include business_name, domain, competitor_type, reason_selected, and confidence_score for every candidate.\n"
+        "7. Include location_market and service_category_fit when known; use null when unknown.\n"
+        "8. confidence_score must be a number between 0 and 1.\n"
+        "9. If google_places_seed_candidates are provided, treat them as seed hypotheses and enrich/validate before final selection.\n"
+        "10. Keep summaries concise and evidence specific."
     )
 
 

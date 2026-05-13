@@ -38,6 +38,8 @@ const mockFetchCompetitorProfileGenerationSummary = jest.fn<
   Promise<CompetitorProfileGenerationSummaryResponse>,
   unknown[]
 >();
+const mockFetchCompetitorProfileGenerationRuns = jest.fn();
+const mockFetchCompetitorProfileGenerationRunDetail = jest.fn();
 const mockCreateCompetitorProfileGenerationRun = jest.fn<
   Promise<CompetitorProfileGenerationRunDetailResponse>,
   unknown[]
@@ -76,6 +78,10 @@ jest.mock("../../lib/api/client", () => {
     fetchSiteCompetitorComparisonRuns: (...args: unknown[]) => mockFetchSiteCompetitorComparisonRuns(...args),
     fetchCompetitorProfileGenerationSummary: (...args: unknown[]) =>
       mockFetchCompetitorProfileGenerationSummary(...args),
+    fetchCompetitorProfileGenerationRuns: (...args: unknown[]) =>
+      mockFetchCompetitorProfileGenerationRuns(...args),
+    fetchCompetitorProfileGenerationRunDetail: (...args: unknown[]) =>
+      mockFetchCompetitorProfileGenerationRunDetail(...args),
     createCompetitorProfileGenerationRun: (...args: unknown[]) =>
       mockCreateCompetitorProfileGenerationRun(...args),
   };
@@ -137,6 +143,44 @@ beforeEach(() => {
     latest_run_completed_at: null,
     latest_completed_run_completed_at: null,
     latest_failed_run_completed_at: null,
+  });
+  mockFetchCompetitorProfileGenerationRuns.mockResolvedValue({
+    items: [],
+    total: 0,
+  });
+  mockFetchCompetitorProfileGenerationRunDetail.mockResolvedValue({
+    run: {
+      id: "gen-run-0",
+      business_id: "biz-1",
+      site_id: "site-1",
+      status: "completed",
+      requested_candidate_count: 10,
+      generated_draft_count: 0,
+      provider_name: "openai",
+      model_name: "gpt-5",
+      prompt_version: "v1",
+      failure_category: null,
+      error_summary: null,
+      completed_at: "2026-03-20T00:00:00Z",
+      created_by_principal_id: "principal-1",
+      created_at: "2026-03-20T00:00:00Z",
+      updated_at: "2026-03-20T00:00:00Z",
+    },
+    drafts: [],
+    total_drafts: 0,
+    quality_summary: {
+      status: "partial",
+      operator_message: "Competitor snapshot is partial. Some candidates were excluded.",
+      total_candidates_returned: 2,
+      accepted_candidates: 1,
+      rejected_candidates: 1,
+      final_active_domains_count: 1,
+      top_reason: "insufficient_candidates",
+      reason_counts: {
+        valid: 1,
+        insufficient_candidates: 1,
+      },
+    },
   });
   mockCreateCompetitorProfileGenerationRun.mockResolvedValue({
     run: {
@@ -274,6 +318,7 @@ describe("competitors page site-scoped loading", () => {
     expect(screen.getByTestId("competitors-generate-set-button")).toHaveTextContent("Refresh competitor set");
     expect(mockFetchCompetitorSets).toHaveBeenCalledWith("token-1", "biz-1", "site-1");
     expect(mockFetchCompetitorProfileGenerationSummary).toHaveBeenCalledWith("token-1", "biz-1", "site-1");
+    expect(mockFetchCompetitorProfileGenerationRuns).toHaveBeenCalledWith("token-1", "biz-1", "site-1");
     expect(screen.getByText("Competitor Sets: 1")).toBeInTheDocument();
     expect(screen.getByText("Active Sets")).toBeInTheDocument();
     expect(screen.getByText("1/1")).toBeInTheDocument();
@@ -529,6 +574,103 @@ describe("competitors page site-scoped loading", () => {
     expect(await screen.findByTestId("competitors-generation-running")).toHaveTextContent(
       "already queued or running",
     );
+  });
+
+  it("surfaces bounded quality status for the latest completed generation run", async () => {
+    mockFetchCompetitorSets.mockResolvedValueOnce({ items: [], total: 0 });
+    mockFetchCompetitorProfileGenerationRuns.mockResolvedValueOnce({
+      items: [
+        {
+          id: "gen-run-latest",
+          business_id: "biz-1",
+          site_id: "site-1",
+          status: "completed",
+          requested_candidate_count: 10,
+          generated_draft_count: 2,
+          provider_name: "openai",
+          model_name: "gpt-5",
+          prompt_version: "v1",
+          failure_category: null,
+          error_summary: null,
+          completed_at: "2026-03-20T01:00:00Z",
+          created_by_principal_id: "principal-1",
+          created_at: "2026-03-20T00:58:00Z",
+          updated_at: "2026-03-20T01:00:00Z",
+        },
+      ],
+      total: 1,
+    });
+    mockFetchCompetitorProfileGenerationRunDetail.mockResolvedValueOnce({
+      run: {
+        id: "gen-run-latest",
+        business_id: "biz-1",
+        site_id: "site-1",
+        status: "completed",
+        requested_candidate_count: 10,
+        generated_draft_count: 2,
+        provider_name: "openai",
+        model_name: "gpt-5",
+        prompt_version: "v1",
+        failure_category: null,
+        error_summary: null,
+        completed_at: "2026-03-20T01:00:00Z",
+        created_by_principal_id: "principal-1",
+        created_at: "2026-03-20T00:58:00Z",
+        updated_at: "2026-03-20T01:00:00Z",
+      },
+      drafts: [],
+      total_drafts: 0,
+      quality_summary: {
+        status: "blocked",
+        operator_message: "Competitor snapshot quality is blocked. Competitor generation returned no usable candidates for this site.",
+        total_candidates_returned: 0,
+        accepted_candidates: 0,
+        rejected_candidates: 0,
+        final_active_domains_count: 0,
+        top_reason: "provider_returned_empty",
+        reason_counts: {
+          valid: 0,
+          provider_returned_empty: 1,
+        },
+      },
+    });
+
+    render(<CompetitorsPage />);
+
+    expect(await screen.findByTestId("competitors-generation-quality")).toHaveTextContent("Blocked");
+    expect(screen.getByTestId("competitors-generation-quality")).toHaveTextContent("Provider returned no candidates");
+    expect(screen.getByTestId("competitors-generation-quality-message")).toHaveTextContent("quality is blocked");
+  });
+
+  it("shows quality pending when latest generation run is queued", async () => {
+    mockFetchCompetitorSets.mockResolvedValueOnce({ items: [], total: 0 });
+    mockFetchCompetitorProfileGenerationRuns.mockResolvedValueOnce({
+      items: [
+        {
+          id: "gen-run-queued",
+          business_id: "biz-1",
+          site_id: "site-1",
+          status: "queued",
+          requested_candidate_count: 10,
+          generated_draft_count: 0,
+          provider_name: "openai",
+          model_name: "gpt-5",
+          prompt_version: "v1",
+          failure_category: null,
+          error_summary: null,
+          completed_at: null,
+          created_by_principal_id: "principal-1",
+          created_at: "2026-03-20T00:58:00Z",
+          updated_at: "2026-03-20T00:58:00Z",
+        },
+      ],
+      total: 1,
+    });
+
+    render(<CompetitorsPage />);
+
+    expect(await screen.findByTestId("competitors-generation-quality-pending")).toHaveTextContent("queued");
+    expect(mockFetchCompetitorProfileGenerationRunDetail).not.toHaveBeenCalled();
   });
 
   it("classifies unexpected generation responses and still refreshes inventory", async () => {

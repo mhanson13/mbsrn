@@ -5,7 +5,19 @@ import { usePathname } from "next/navigation";
 import { deriveErrorClassName, sanitizeDiagnosticMessage, sanitizePathname } from "../lib/runtimeDiagnostics";
 import { getPublicAppVersion } from "../lib/runtimeMetadata";
 
-type RouteErrorClassification = "route_render_error" | "unexpected_end_of_form" | "missing_error_object";
+type RouteErrorClassification =
+  | "route_render_error"
+  | "unexpected_end_of_form"
+  | "missing_error_object"
+  | "stale_server_action_build_mismatch";
+
+function isStaleServerActionBuildMismatch(message: string): boolean {
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes("failed to find server action") ||
+    (normalized.includes("older or newer deployment") && normalized.includes("workers"))
+  );
+}
 
 type NormalizedRouteError = {
   digest: string | null;
@@ -27,9 +39,12 @@ function normalizeRouteError(error: unknown): NormalizedRouteError {
     ? candidate.digest.trim()
     : null;
   const message = sanitizeDiagnosticMessage(candidate.message, "Route render failure");
-  const classification = message.toLowerCase().includes("unexpected end of form")
-    ? "unexpected_end_of_form"
-    : "route_render_error";
+  let classification: RouteErrorClassification = "route_render_error";
+  if (message.toLowerCase().includes("unexpected end of form")) {
+    classification = "unexpected_end_of_form";
+  } else if (isStaleServerActionBuildMismatch(message)) {
+    classification = "stale_server_action_build_mismatch";
+  }
 
   return { digest, message, classification };
 }
@@ -63,6 +78,10 @@ export default function Error({
       console.warn("[operator-ui] route_render_warning", logPayload);
       return;
     }
+    if (safeClassification === "stale_server_action_build_mismatch") {
+      console.warn("[operator-ui] route_render_warning", logPayload);
+      return;
+    }
     console.error("[operator-ui] route_render_error", logPayload);
   }, [appVersion, safeClassification, safeDigest, safeErrorClass, safeMessage, safePathname]);
 
@@ -72,7 +91,9 @@ export default function Error({
         <header className="operator-page-header">
           <h1 className="operator-page-title">Workspace unavailable</h1>
           <p className="operator-page-subtitle">
-            We hit a rendering problem for this page. Try again, or refresh if the issue continues.
+            {safeClassification === "stale_server_action_build_mismatch"
+              ? "This tab is out of date after a deployment. Refresh and retry this action."
+              : "We hit a rendering problem for this page. Try again, or refresh if the issue continues."}
           </p>
         </header>
         <div className="operator-page-actions">

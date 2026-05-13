@@ -1971,6 +1971,11 @@ class SEOCompetitorProfileGenerationService:
         drafts: list[SEOCompetitorProfileDraft] = []
         ai_draft_source = _PLACES_ENRICHED_DRAFT_SOURCE if used_google_places_seeds else "ai_generated"
         for candidate in final_candidates:
+            reason_selected = self._derive_candidate_reason_selected(
+                summary=candidate.summary,
+                why_competitor=candidate.why_competitor,
+                evidence=candidate.evidence,
+            )
             draft = SEOCompetitorProfileDraft(
                 id=str(uuid4()),
                 business_id=run.business_id,
@@ -1980,7 +1985,7 @@ class SEOCompetitorProfileGenerationService:
                 suggested_domain=candidate.canonical_domain,
                 competitor_type=candidate.competitor_type,
                 summary=candidate.summary,
-                why_competitor=candidate.why_competitor,
+                why_competitor=reason_selected,
                 evidence=candidate.evidence,
                 confidence_score=candidate.confidence_score,
                 relevance_score=candidate.relevance_score,
@@ -1997,6 +2002,11 @@ class SEOCompetitorProfileGenerationService:
             forced_draft_source = (
                 "ai_tier2_fallback" if enable_tiered_fill and len(final_candidates) > 0 else _FORCED_DRAFT_SOURCE
             )
+            forced_reason_selected = self._derive_candidate_reason_selected(
+                summary=candidate.summary,
+                why_competitor=candidate.why_competitor,
+                evidence=candidate.evidence,
+            )
             draft = SEOCompetitorProfileDraft(
                 id=str(uuid4()),
                 business_id=run.business_id,
@@ -2006,7 +2016,7 @@ class SEOCompetitorProfileGenerationService:
                 suggested_domain=forced_domain,
                 competitor_type=candidate.competitor_type,
                 summary=candidate.summary,
-                why_competitor=candidate.why_competitor,
+                why_competitor=forced_reason_selected,
                 evidence=candidate.evidence,
                 confidence_score=candidate.confidence_score,
                 relevance_score=forced_relevance,
@@ -2073,6 +2083,26 @@ class SEOCompetitorProfileGenerationService:
                         min(1.0, self._coerce_float(synthetic_candidate.get("confidence_score"), default=0.3)),
                     )
                     relevance_score = max(0, min(100, int(round(confidence_score * 100))))
+                    synthetic_summary = self._clean_optional(
+                        str(synthetic_candidate.get("summary"))
+                        if synthetic_candidate.get("summary") is not None
+                        else None
+                    )
+                    synthetic_why = self._clean_optional(
+                        str(synthetic_candidate.get("why_competitor"))
+                        if synthetic_candidate.get("why_competitor") is not None
+                        else None
+                    )
+                    synthetic_evidence = self._clean_optional(
+                        str(synthetic_candidate.get("evidence"))
+                        if synthetic_candidate.get("evidence") is not None
+                        else None
+                    )
+                    synthetic_reason_selected = self._derive_candidate_reason_selected(
+                        summary=synthetic_summary,
+                        why_competitor=synthetic_why,
+                        evidence=synthetic_evidence,
+                    )
                     drafts.append(
                         SEOCompetitorProfileDraft(
                             id=str(uuid4()),
@@ -2082,21 +2112,9 @@ class SEOCompetitorProfileGenerationService:
                             suggested_name=suggested_name,
                             suggested_domain=suggested_domain,
                             competitor_type=self._normalize_competitor_type(synthetic_candidate.get("competitor_type")),
-                            summary=self._clean_optional(
-                                str(synthetic_candidate.get("summary"))
-                                if synthetic_candidate.get("summary") is not None
-                                else None
-                            ),
-                            why_competitor=self._clean_optional(
-                                str(synthetic_candidate.get("why_competitor"))
-                                if synthetic_candidate.get("why_competitor") is not None
-                                else None
-                            ),
-                            evidence=self._clean_optional(
-                                str(synthetic_candidate.get("evidence"))
-                                if synthetic_candidate.get("evidence") is not None
-                                else None
-                            ),
+                            summary=synthetic_summary,
+                            why_competitor=synthetic_reason_selected,
+                            evidence=synthetic_evidence,
                             confidence_score=confidence_score,
                             relevance_score=relevance_score,
                             source="synthetic_fallback",
@@ -2951,11 +2969,13 @@ class SEOCompetitorProfileGenerationService:
             reasons.append(INELIGIBILITY_REASON_MISSING_BUSINESS_NAME)
 
         if raw_domain is None:
+            reasons.append(INELIGIBILITY_REASON_MISSING_DOMAIN)
             weak_or_missing_domain = True
         else:
             try:
                 suggested_domain = self._normalize_domain_value(raw_domain)
             except SEOCompetitorProfileGenerationValidationError:
+                reasons.append(INELIGIBILITY_REASON_MALFORMED_URL)
                 weak_or_missing_domain = True
 
         raw_competitor_type = self._clean_optional(candidate.competitor_type)
@@ -3057,6 +3077,19 @@ class SEOCompetitorProfileGenerationService:
             if len(merged) >= REJECTED_CANDIDATE_DEBUG_MAX_ITEMS:
                 break
         return merged
+
+    def _derive_candidate_reason_selected(
+        self,
+        *,
+        summary: str | None,
+        why_competitor: str | None,
+        evidence: str | None,
+    ) -> str:
+        for value in (why_competitor, summary, evidence):
+            cleaned = self._clean_optional(value)
+            if cleaned is not None:
+                return cleaned
+        return "Selected for local service and market overlap review."
 
     def _meets_unknown_usefulness_threshold(
         self,

@@ -8,7 +8,7 @@ import time
 import urllib.parse
 import urllib.request
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from app.integrations.ai_execution_core import (
     AIContextBlock,
@@ -90,11 +90,16 @@ _INVALID_FIELD_DIAGNOSTIC_MAX_ITEMS = 32
 _CANDIDATE_REQUIRED_FIELDS = {"name", "domain", "competitor_type", "confidence_score"}
 _CANDIDATE_FIELD_EXPECTED_TYPES = {
     "name": "string",
+    "business_name": "string|null",
     "domain": "string",
     "competitor_type": "string",
     "summary": "string|null",
     "why_competitor": "string|null",
     "evidence": "string|null",
+    "location_market": "string|null",
+    "service_category_fit": "string|null",
+    "reason_selected": "string|null",
+    "relevance_indicator": "number|null",
     "confidence_score": "number",
 }
 _TYPE_MISMATCH_DISCARD_REASONS = {
@@ -697,9 +702,9 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                     suggested_name=parsed_candidate.name,
                     suggested_domain=parsed_candidate.domain,
                     competitor_type=parsed_candidate.competitor_type,
-                    summary=parsed_candidate.summary,
-                    why_competitor=parsed_candidate.why_competitor,
-                    evidence=parsed_candidate.evidence,
+                    summary=parsed_candidate.summary or parsed_candidate.service_category_fit,
+                    why_competitor=parsed_candidate.why_competitor or parsed_candidate.reason_selected,
+                    evidence=parsed_candidate.evidence or parsed_candidate.location_market,
                     confidence_score=parsed_candidate.confidence_score,
                 )
             )
@@ -728,7 +733,11 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             _clean_optional_value(
                 raw_candidate.get("name")
                 if raw_candidate.get("name") is not None
-                else raw_candidate.get("suggested_name")
+                else (
+                    raw_candidate.get("business_name")
+                    if raw_candidate.get("business_name") is not None
+                    else raw_candidate.get("suggested_name")
+                )
             )
             or ""
         )
@@ -741,9 +750,15 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             or ""
         )
         competitor_type = _clean_optional_value(raw_candidate.get("competitor_type")) or "unknown"
-        summary = _clean_optional_value(raw_candidate.get("summary"))
-        why_competitor = _clean_optional_value(raw_candidate.get("why_competitor"))
-        evidence = _clean_optional_value(raw_candidate.get("evidence"))
+        summary = _clean_optional_value(raw_candidate.get("summary")) or _clean_optional_value(
+            raw_candidate.get("service_category_fit")
+        )
+        why_competitor = _clean_optional_value(raw_candidate.get("why_competitor")) or _clean_optional_value(
+            raw_candidate.get("reason_selected")
+        )
+        evidence = _clean_optional_value(raw_candidate.get("evidence")) or _clean_optional_value(
+            raw_candidate.get("location_market")
+        )
         confidence_score = self._coerce_confidence_score_for_recovery(raw_candidate)
         return SEOCompetitorProfileDraftCandidateOutput(
             suggested_name=suggested_name,
@@ -760,6 +775,11 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             direct_score = self._coerce_optional_float(raw_candidate.get("confidence_score"))
             if direct_score is not None:
                 return direct_score
+            return -1.0
+        if "relevance_indicator" in raw_candidate:
+            relevance_indicator_score = self._coerce_optional_float(raw_candidate.get("relevance_indicator"))
+            if relevance_indicator_score is not None:
+                return relevance_indicator_score
             return -1.0
         relevance = _coerce_bounded_int(raw_candidate.get("relevance_score"), minimum=1, maximum=5, default=3)
         visibility = _coerce_bounded_int(raw_candidate.get("visibility_score"), minimum=1, maximum=5, default=3)
@@ -2308,15 +2328,42 @@ class OpenAISEOCompetitorProfileGenerationProvider:
 
 
 class _OpenAICompetitorProfileCandidate(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
 
     name: str
     domain: str
     competitor_type: str
+    business_name: str | None = None
     summary: str | None = None
     why_competitor: str | None = None
     evidence: str | None = None
+    location_market: str | None = None
+    service_category_fit: str | None = None
+    reason_selected: str | None = None
+    relevance_indicator: float | None = None
     confidence_score: float
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_alias_fields(cls, value: object) -> object:
+        if not isinstance(value, dict):
+            return value
+        payload = dict(value)
+        business_name = _clean_optional_value(payload.get("business_name"))
+        if not _clean_optional_value(payload.get("name")) and business_name:
+            payload["name"] = business_name
+        reason_selected = _clean_optional_value(payload.get("reason_selected"))
+        if not _clean_optional_value(payload.get("why_competitor")) and reason_selected:
+            payload["why_competitor"] = reason_selected
+        service_category_fit = _clean_optional_value(payload.get("service_category_fit"))
+        if not _clean_optional_value(payload.get("summary")) and service_category_fit:
+            payload["summary"] = service_category_fit
+        location_market = _clean_optional_value(payload.get("location_market"))
+        if not _clean_optional_value(payload.get("evidence")) and location_market:
+            payload["evidence"] = location_market
+        if payload.get("confidence_score") is None and payload.get("relevance_indicator") is not None:
+            payload["confidence_score"] = payload.get("relevance_indicator")
+        return payload
 
     @field_validator("name", "domain", "competitor_type", mode="before")
     @classmethod
@@ -2328,7 +2375,16 @@ class _OpenAICompetitorProfileCandidate(BaseModel):
             raise ValueError("value is required")
         return normalized
 
-    @field_validator("summary", "why_competitor", "evidence", mode="before")
+    @field_validator(
+        "business_name",
+        "summary",
+        "why_competitor",
+        "evidence",
+        "location_market",
+        "service_category_fit",
+        "reason_selected",
+        mode="before",
+    )
     @classmethod
     def _normalize_optional_text(cls, value: object) -> str | None:
         if value is None:
@@ -2337,6 +2393,17 @@ class _OpenAICompetitorProfileCandidate(BaseModel):
             raise ValueError("value must be a string or null")
         normalized = str(value).strip()
         return normalized or None
+
+    @field_validator("relevance_indicator", mode="before")
+    @classmethod
+    def _normalize_optional_relevance_indicator(cls, value: object) -> float | None:
+        if value is None:
+            return None
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("relevance_indicator must be numeric or null") from exc
+        return parsed
 
     @field_validator("confidence_score", mode="before")
     @classmethod
@@ -2387,15 +2454,21 @@ def _build_candidate_json_schema(candidate_count: int) -> dict[str, object]:
                         "summary",
                         "why_competitor",
                         "evidence",
+                        "reason_selected",
                         "confidence_score",
                     ],
                     "properties": {
                         "name": {"type": "string"},
+                        "business_name": {"type": ["string", "null"]},
                         "domain": {"type": "string"},
                         "competitor_type": {"type": "string"},
                         "summary": {"type": ["string", "null"]},
                         "why_competitor": {"type": ["string", "null"]},
                         "evidence": {"type": ["string", "null"]},
+                        "location_market": {"type": ["string", "null"]},
+                        "service_category_fit": {"type": ["string", "null"]},
+                        "reason_selected": {"type": ["string", "null"]},
+                        "relevance_indicator": {"type": ["number", "null"]},
                         "confidence_score": {"type": "number"},
                     },
                 },

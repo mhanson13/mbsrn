@@ -1483,6 +1483,30 @@ export interface OperatorResponseContractSummary {
   retryable: boolean;
 }
 
+export type CompetitorGenerationQualityStatus = "ready" | "partial" | "blocked";
+
+export type CompetitorGenerationQualityReason =
+  | "valid"
+  | "duplicate_domain"
+  | "self_domain"
+  | "malformed_domain"
+  | "low_relevance"
+  | "missing_required_fields"
+  | "insufficient_candidates"
+  | "provider_unparseable"
+  | "provider_returned_empty";
+
+export interface CompetitorGenerationQualitySummary {
+  status: CompetitorGenerationQualityStatus;
+  operator_message: string;
+  total_candidates_returned: number;
+  accepted_candidates: number;
+  rejected_candidates: number;
+  final_active_domains_count: number;
+  top_reason: CompetitorGenerationQualityReason | null;
+  reason_counts: Partial<Record<CompetitorGenerationQualityReason, number>>;
+}
+
 export interface AIDiagnosticsSummary {
   failure_category?: string | null;
   failure_reason?: string | null;
@@ -1509,6 +1533,7 @@ export interface CompetitorProfileGenerationRunDetailResponse {
   candidate_pipeline_summary?: CompetitorCandidatePipelineSummary | null;
   outcome_summary?: CompetitorRunOutcomeSummary | null;
   response_contract_summary?: OperatorResponseContractSummary | null;
+  quality_summary?: CompetitorGenerationQualitySummary | null;
   ai_diagnostics_summary?: AIDiagnosticsSummary | null;
   provider_attempt_count?: number;
   provider_degraded_retry_used?: boolean;

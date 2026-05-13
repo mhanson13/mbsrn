@@ -49,6 +49,13 @@ Primary Site Workspace surfaces:
 - workflow launchers (Recommendations, Competitors, Migration, Sites setup)
 - compact latest-activity summary
 
+## Operator UI Build-Mismatch Recovery
+
+- Long-lived operator workflows use client-side API calls rather than first-party Next Server Actions.
+- If a stale tab submits an old action payload after deployment, operator-ui classifies it as `stale_server_action_build_mismatch`.
+- Recovery path is deterministic: refresh/reload the tab, then retry the action.
+- Runtime diagnostics remain bounded and include safe route/app-version context only.
+
 Workflow ownership boundaries:
 - Audit Runs page owns audit execution (when available), findings evidence, and run history.
 - Recommendations page owns a single filterable recommendation queue surface, run history, narratives, and apply execution.
@@ -62,6 +69,11 @@ Workflow ownership boundaries:
 - Competitors page owns competitor generation/review workflow, including the primary site-scoped `Generate competitor set` / `Refresh competitor set` action, run tables, and candidate/debug inspection.
   - action lifecycle is operator-visible: pending state while request is in flight, bounded success/failure feedback, and automatic inventory/readiness refetch after run creation
   - successful action indicates run creation/queueing; completed competitor results can arrive later when backend run processing finishes
+  - latest generation run quality is shown with bounded trust status:
+    - `Ready`
+    - `Partial`
+    - `Blocked`
+  - quality diagnostics remain bounded (accepted/rejected counts + top reason), and raw provider payloads are not shown
 - Migration workflow remains on `/sites/[site_id]/migration`.
 - Prompt/provider debug details stay in dedicated workflow/diagnostics surfaces, not inline in the primary Site Workspace.
 - Google Profile / GA4 / analytics insertion setup now lives under `Sites` in the selected-site setup panel.

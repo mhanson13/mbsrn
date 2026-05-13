@@ -48,6 +48,10 @@ function createRequest(overrides?: {
 }
 
 describe("operator-ui middleware multipart guard", () => {
+  beforeEach(() => {
+    process.env.NEXT_PUBLIC_APP_VERSION = "sha-test-build-1";
+  });
+
   it("blocks unsupported multipart POST requests outside /api", async () => {
     const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => undefined);
     const request = createRequest({
@@ -94,9 +98,37 @@ describe("operator-ui middleware multipart guard", () => {
     expect(response.headers.get("x-middleware-next")).toBe("1");
   });
 
-  it("allows multipart POST requests with next-action header", () => {
+  it("blocks stale server-action requests outside /api with bounded diagnostics", async () => {
+    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => undefined);
     const request = createRequest({
       url: "https://operator.example/sites",
+      method: "POST",
+      contentType: "multipart/form-data; boundary=----abc",
+    });
+    (request as { headers: Headers }).headers.set("next-action", "1");
+
+    const response = middleware(request);
+    expect(response.status).toBe(409);
+    await expect(response.text()).resolves.toContain("out of date after a deployment");
+    expect(response.headers.get("X-Operator-UI-Error-Classification")).toBe(
+      "stale_server_action_build_mismatch",
+    );
+    expect(warnSpy).toHaveBeenCalledWith(
+      "[operator-ui] blocked_stale_server_action_request",
+      expect.objectContaining({
+        method: "POST",
+        pathname: "/sites",
+        classification: "stale_server_action_build_mismatch",
+        app_version: "sha-test-build-1",
+      }),
+    );
+
+    warnSpy.mockRestore();
+  });
+
+  it("allows next-action requests to /api paths", () => {
+    const request = createRequest({
+      url: "https://operator.example/api/forms",
       method: "POST",
       contentType: "multipart/form-data; boundary=----abc",
     });

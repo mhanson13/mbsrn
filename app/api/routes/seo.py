@@ -73,6 +73,7 @@ from app.schemas.seo_competitor import (
     SEOCompetitorProfileDraftRejectRequest,
     SEOCompetitorProfileGenerationRunCreateRequest,
     SEOCompetitorProfileGenerationRunDetailRead,
+    SEOCompetitorProfileGenerationQualitySummaryRead,
     SEOCompetitorProfileGenerationRunListResponse,
     SEOCompetitorProfileGenerationObservabilitySummaryRead,
     SEOCompetitorProfileGenerationRunRead,
@@ -358,6 +359,37 @@ _GA4_PRIORITY_ENGAGEMENT_DECLINE_THRESHOLD_PERCENT = -5.0
 _GA4_OUTCOME_SESSIONS_DIRECTION_THRESHOLD_PERCENT = 5.0
 _GA4_OUTCOME_ORGANIC_DIRECTION_THRESHOLD_PERCENT = 5.0
 _GA4_OUTCOME_ENGAGEMENT_DIRECTION_THRESHOLD_POINTS = 0.02
+_COMPETITOR_QUALITY_MIN_READY_CANDIDATES = 2
+_COMPETITOR_QUALITY_REASON_VALID = "valid"
+_COMPETITOR_QUALITY_REASON_DUPLICATE_DOMAIN = "duplicate_domain"
+_COMPETITOR_QUALITY_REASON_SELF_DOMAIN = "self_domain"
+_COMPETITOR_QUALITY_REASON_MALFORMED_DOMAIN = "malformed_domain"
+_COMPETITOR_QUALITY_REASON_LOW_RELEVANCE = "low_relevance"
+_COMPETITOR_QUALITY_REASON_MISSING_REQUIRED_FIELDS = "missing_required_fields"
+_COMPETITOR_QUALITY_REASON_INSUFFICIENT_CANDIDATES = "insufficient_candidates"
+_COMPETITOR_QUALITY_REASON_PROVIDER_UNPARSEABLE = "provider_unparseable"
+_COMPETITOR_QUALITY_REASON_PROVIDER_RETURNED_EMPTY = "provider_returned_empty"
+_COMPETITOR_QUALITY_REASON_KEYS = (
+    _COMPETITOR_QUALITY_REASON_VALID,
+    _COMPETITOR_QUALITY_REASON_DUPLICATE_DOMAIN,
+    _COMPETITOR_QUALITY_REASON_SELF_DOMAIN,
+    _COMPETITOR_QUALITY_REASON_MALFORMED_DOMAIN,
+    _COMPETITOR_QUALITY_REASON_LOW_RELEVANCE,
+    _COMPETITOR_QUALITY_REASON_MISSING_REQUIRED_FIELDS,
+    _COMPETITOR_QUALITY_REASON_INSUFFICIENT_CANDIDATES,
+    _COMPETITOR_QUALITY_REASON_PROVIDER_UNPARSEABLE,
+    _COMPETITOR_QUALITY_REASON_PROVIDER_RETURNED_EMPTY,
+)
+_COMPETITOR_QUALITY_REASON_PRIORITY = (
+    _COMPETITOR_QUALITY_REASON_PROVIDER_UNPARSEABLE,
+    _COMPETITOR_QUALITY_REASON_PROVIDER_RETURNED_EMPTY,
+    _COMPETITOR_QUALITY_REASON_INSUFFICIENT_CANDIDATES,
+    _COMPETITOR_QUALITY_REASON_SELF_DOMAIN,
+    _COMPETITOR_QUALITY_REASON_MALFORMED_DOMAIN,
+    _COMPETITOR_QUALITY_REASON_MISSING_REQUIRED_FIELDS,
+    _COMPETITOR_QUALITY_REASON_LOW_RELEVANCE,
+    _COMPETITOR_QUALITY_REASON_DUPLICATE_DOMAIN,
+)
 _GA4_PRIORITY_CONTENT_HINT_KEYWORDS = (
     "content",
     "copy",
@@ -5626,6 +5658,19 @@ def _to_competitor_profile_generation_run_detail_response(
         SEOCompetitorProfileTuningRejectedCandidateRead.model_validate(item)
         for item in (tuning_rejected_candidates or [])
     ]
+    quality_summary = _build_competitor_profile_quality_summary(
+        run=run,
+        drafts=serialized_drafts,
+        rejected_candidates=serialized_rejected_candidates,
+        tuning_rejected_candidates=serialized_tuning_rejected_candidates,
+        candidate_pipeline_summary=(
+            SEOCompetitorProfileCandidatePipelineSummaryRead.model_validate(candidate_pipeline_summary)
+            if candidate_pipeline_summary is not None
+            else None
+        ),
+        response_contract_summary=response_contract_summary,
+        outcome_summary=outcome_summary,
+    )
     return SEOCompetitorProfileGenerationRunDetailRead(
         run=SEOCompetitorProfileGenerationRunRead.model_validate(run),
         drafts=serialized_drafts,
@@ -5644,11 +5689,212 @@ def _to_competitor_profile_generation_run_detail_response(
         ),
         outcome_summary=outcome_summary,
         response_contract_summary=response_contract_summary,
+        quality_summary=quality_summary,
         ai_diagnostics_summary=ai_diagnostics_summary,
         provider_attempt_count=max(0, int(provider_attempt_count)),
         provider_degraded_retry_used=bool(provider_degraded_retry_used),
         provider_attempts=provider_attempt_items,
     )
+
+
+def _build_competitor_profile_quality_summary(
+    *,
+    run,
+    drafts: list[SEOCompetitorProfileDraftRead],
+    rejected_candidates: list[SEOCompetitorProfileRejectedCandidateRead],
+    tuning_rejected_candidates: list[SEOCompetitorProfileTuningRejectedCandidateRead],
+    candidate_pipeline_summary: SEOCompetitorProfileCandidatePipelineSummaryRead | None,
+    response_contract_summary,
+    outcome_summary,
+) -> SEOCompetitorProfileGenerationQualitySummaryRead | None:
+    run_status = _clean_optional(getattr(run, "status", None))
+    if run_status in {"queued", "running"}:
+        return None
+
+    reason_counts = {reason: 0 for reason in _COMPETITOR_QUALITY_REASON_KEYS}
+    accepted_candidates = max(0, len(drafts))
+    reason_counts[_COMPETITOR_QUALITY_REASON_VALID] = accepted_candidates
+
+    total_candidates_returned = max(
+        0,
+        int(getattr(run, "raw_candidate_count", 0) or 0),
+    )
+    if candidate_pipeline_summary is not None:
+        total_candidates_returned = max(
+            total_candidates_returned,
+            max(0, int(candidate_pipeline_summary.proposed_candidate_count)),
+        )
+
+    rejected_candidates_count = max(0, int(getattr(run, "excluded_candidate_count", 0) or 0))
+
+    raw_exclusion_counts = getattr(run, "exclusion_counts_by_reason", None)
+    if isinstance(raw_exclusion_counts, dict):
+        reason_counts[_COMPETITOR_QUALITY_REASON_DUPLICATE_DOMAIN] += max(
+            0, int(raw_exclusion_counts.get("duplicate", 0) or 0)
+        )
+        reason_counts[_COMPETITOR_QUALITY_REASON_SELF_DOMAIN] += max(
+            0, int(raw_exclusion_counts.get("existing_domain_match", 0) or 0)
+        )
+        reason_counts[_COMPETITOR_QUALITY_REASON_LOW_RELEVANCE] += max(
+            0, int(raw_exclusion_counts.get("low_relevance", 0) or 0)
+        )
+        reason_counts[_COMPETITOR_QUALITY_REASON_MISSING_REQUIRED_FIELDS] += max(
+            0, int(raw_exclusion_counts.get("invalid_candidate", 0) or 0)
+        )
+
+    if candidate_pipeline_summary is not None:
+        reason_counts[_COMPETITOR_QUALITY_REASON_DUPLICATE_DOMAIN] += max(
+            0,
+            int(candidate_pipeline_summary.removed_by_deduplication_count),
+        )
+        reason_counts[_COMPETITOR_QUALITY_REASON_SELF_DOMAIN] += max(
+            0,
+            int(candidate_pipeline_summary.removed_by_existing_domain_match_count),
+        )
+
+    for candidate in rejected_candidates:
+        reasons = getattr(candidate, "reasons", None)
+        if not isinstance(reasons, list):
+            continue
+        for raw_reason in reasons:
+            normalized_reason = str(raw_reason or "").strip().lower()
+            if not normalized_reason:
+                continue
+            mapped_reason = _map_competitor_quality_reason(normalized_reason)
+            if mapped_reason is None:
+                continue
+            reason_counts[mapped_reason] += 1
+
+    if tuning_rejected_candidates:
+        reason_counts[_COMPETITOR_QUALITY_REASON_LOW_RELEVANCE] += len(tuning_rejected_candidates)
+
+    response_status = None
+    if hasattr(response_contract_summary, "status"):
+        response_status = _clean_optional(getattr(response_contract_summary, "status", None))
+    elif isinstance(response_contract_summary, dict):
+        response_status = _clean_optional(response_contract_summary.get("status"))
+
+    failure_category = _clean_optional(getattr(run, "failure_category", None))
+    if failure_category in {"malformed_output", "schema_validation"}:
+        reason_counts[_COMPETITOR_QUALITY_REASON_PROVIDER_UNPARSEABLE] += 1
+    if total_candidates_returned <= 0:
+        reason_counts[_COMPETITOR_QUALITY_REASON_PROVIDER_RETURNED_EMPTY] += 1
+    if response_status == "rejected":
+        if total_candidates_returned <= 0:
+            reason_counts[_COMPETITOR_QUALITY_REASON_PROVIDER_RETURNED_EMPTY] += 1
+        else:
+            reason_counts[_COMPETITOR_QUALITY_REASON_PROVIDER_UNPARSEABLE] += 1
+
+    if accepted_candidates < _COMPETITOR_QUALITY_MIN_READY_CANDIDATES:
+        reason_counts[_COMPETITOR_QUALITY_REASON_INSUFFICIENT_CANDIDATES] += 1
+
+    quality_status = "ready"
+    has_blocking_issue = (
+        reason_counts[_COMPETITOR_QUALITY_REASON_PROVIDER_UNPARSEABLE] > 0
+        or reason_counts[_COMPETITOR_QUALITY_REASON_PROVIDER_RETURNED_EMPTY] > 0
+        or accepted_candidates <= 0
+    )
+    warning_count = sum(
+        count
+        for reason, count in reason_counts.items()
+        if reason != _COMPETITOR_QUALITY_REASON_VALID
+    )
+    outcome_status_level = _clean_optional(getattr(outcome_summary, "status_level", None))
+    if has_blocking_issue or run_status == "failed":
+        quality_status = "blocked"
+    elif (
+        warning_count > 0
+        or response_status in {"accepted_with_warnings", "salvaged"}
+        or outcome_status_level in {"degraded", "recovered"}
+    ):
+        quality_status = "partial"
+
+    final_active_domains_count = sum(
+        1
+        for item in drafts
+        if _clean_optional(getattr(item, "suggested_domain", None))
+    )
+    top_reason = _top_competitor_quality_reason(reason_counts)
+    operator_message = _build_competitor_quality_operator_message(
+        status=quality_status,
+        top_reason=top_reason,
+    )
+
+    return SEOCompetitorProfileGenerationQualitySummaryRead(
+        status=quality_status,
+        operator_message=operator_message,
+        total_candidates_returned=max(total_candidates_returned, accepted_candidates),
+        accepted_candidates=accepted_candidates,
+        rejected_candidates=max(rejected_candidates_count, 0),
+        final_active_domains_count=final_active_domains_count,
+        top_reason=top_reason,
+        reason_counts=reason_counts,
+    )
+
+
+def _map_competitor_quality_reason(reason: str) -> str | None:
+    normalized = _clean_optional(reason)
+    if normalized is None:
+        return None
+    mapping = {
+        "duplicate": _COMPETITOR_QUALITY_REASON_DUPLICATE_DOMAIN,
+        "existing_domain_match": _COMPETITOR_QUALITY_REASON_SELF_DOMAIN,
+        "missing_domain": _COMPETITOR_QUALITY_REASON_MALFORMED_DOMAIN,
+        "malformed_url": _COMPETITOR_QUALITY_REASON_MALFORMED_DOMAIN,
+        "low_relevance": _COMPETITOR_QUALITY_REASON_LOW_RELEVANCE,
+        "insufficient_overlap_evidence": _COMPETITOR_QUALITY_REASON_LOW_RELEVANCE,
+        "out_of_market": _COMPETITOR_QUALITY_REASON_LOW_RELEVANCE,
+        "missing_business_name": _COMPETITOR_QUALITY_REASON_MISSING_REQUIRED_FIELDS,
+        "unsupported_type": _COMPETITOR_QUALITY_REASON_MISSING_REQUIRED_FIELDS,
+        "invalid_confidence_score": _COMPETITOR_QUALITY_REASON_MISSING_REQUIRED_FIELDS,
+        "invalid_candidate": _COMPETITOR_QUALITY_REASON_MISSING_REQUIRED_FIELDS,
+        "low_usefulness_unknown": _COMPETITOR_QUALITY_REASON_LOW_RELEVANCE,
+    }
+    return mapping.get(normalized)
+
+
+def _top_competitor_quality_reason(reason_counts: dict[str, int]) -> str | None:
+    top_reason = None
+    top_count = 0
+    for reason in _COMPETITOR_QUALITY_REASON_PRIORITY:
+        count = max(0, int(reason_counts.get(reason, 0) or 0))
+        if count <= 0:
+            continue
+        if count > top_count:
+            top_reason = reason
+            top_count = count
+    return top_reason
+
+
+def _build_competitor_quality_operator_message(*, status: str, top_reason: str | None) -> str:
+    if status == "ready":
+        return "Competitor snapshot quality checks passed and results are ready for operator review."
+    reason_messages = {
+        _COMPETITOR_QUALITY_REASON_PROVIDER_UNPARSEABLE: (
+            "Competitor generation completed with unparseable provider output. Start a new run."
+        ),
+        _COMPETITOR_QUALITY_REASON_PROVIDER_RETURNED_EMPTY: (
+            "Competitor generation returned no usable candidates for this site."
+        ),
+        _COMPETITOR_QUALITY_REASON_INSUFFICIENT_CANDIDATES: (
+            "Competitor generation returned too few usable candidates for a trusted snapshot."
+        ),
+        _COMPETITOR_QUALITY_REASON_SELF_DOMAIN: "Some candidates matched the current site domain and were excluded.",
+        _COMPETITOR_QUALITY_REASON_MALFORMED_DOMAIN: "Some candidates had malformed or missing domains.",
+        _COMPETITOR_QUALITY_REASON_MISSING_REQUIRED_FIELDS: (
+            "Some candidates were missing required fields and were excluded."
+        ),
+        _COMPETITOR_QUALITY_REASON_LOW_RELEVANCE: (
+            "Some candidates were excluded because service or market relevance was too low."
+        ),
+        _COMPETITOR_QUALITY_REASON_DUPLICATE_DOMAIN: "Some duplicate competitor domains were removed.",
+    }
+    if top_reason and top_reason in reason_messages:
+        prefix = "Competitor snapshot quality is blocked." if status == "blocked" else "Competitor snapshot is partial."
+        return f"{prefix} {reason_messages[top_reason]}"
+    if status == "blocked":
+        return "Competitor snapshot quality is blocked. Start a new run after reviewing site context readiness."
+    return "Competitor snapshot is partial. Review accepted domains and rerun if higher-confidence coverage is needed."
 
 
 def _derive_competitor_ai_diagnostics_summary(

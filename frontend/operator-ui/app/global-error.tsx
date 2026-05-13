@@ -4,7 +4,19 @@ import { useEffect } from "react";
 import { deriveErrorClassName, sanitizeDiagnosticMessage, sanitizePathname } from "../lib/runtimeDiagnostics";
 import { getPublicAppVersion } from "../lib/runtimeMetadata";
 
-type GlobalErrorClassification = "global_render_error" | "unexpected_end_of_form" | "missing_error_object";
+type GlobalErrorClassification =
+  | "global_render_error"
+  | "unexpected_end_of_form"
+  | "missing_error_object"
+  | "stale_server_action_build_mismatch";
+
+function isStaleServerActionBuildMismatch(message: string): boolean {
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes("failed to find server action") ||
+    (normalized.includes("older or newer deployment") && normalized.includes("workers"))
+  );
+}
 
 function normalizeGlobalError(error: unknown): {
   digest: string | null;
@@ -24,9 +36,12 @@ function normalizeGlobalError(error: unknown): {
     ? candidate.digest.trim()
     : null;
   const message = sanitizeDiagnosticMessage(candidate.message, "Global render failure");
-  const classification = message.toLowerCase().includes("unexpected end of form")
-    ? "unexpected_end_of_form"
-    : "global_render_error";
+  let classification: GlobalErrorClassification = "global_render_error";
+  if (message.toLowerCase().includes("unexpected end of form")) {
+    classification = "unexpected_end_of_form";
+  } else if (isStaleServerActionBuildMismatch(message)) {
+    classification = "stale_server_action_build_mismatch";
+  }
   return { digest, message, classification };
 }
 
@@ -58,6 +73,10 @@ export default function GlobalError({
       console.warn("[operator-ui] global_render_warning", payload);
       return;
     }
+    if (safeClassification === "stale_server_action_build_mismatch") {
+      console.warn("[operator-ui] global_render_warning", payload);
+      return;
+    }
     console.error("[operator-ui] global_render_error", payload);
   }, [appVersion, safeClassification, safeDigest, safeErrorClass, safeMessage, safePathname]);
 
@@ -69,7 +88,9 @@ export default function GlobalError({
             <header className="operator-page-header">
               <h1 className="operator-page-title">Workspace unavailable</h1>
               <p className="operator-page-subtitle">
-                We hit a rendering problem at the app boundary. Refresh, then try again.
+                {safeClassification === "stale_server_action_build_mismatch"
+                  ? "This tab is out of date after a deployment. Refresh and retry this action."
+                  : "We hit a rendering problem at the app boundary. Refresh, then try again."}
               </p>
             </header>
             <div className="operator-page-actions">

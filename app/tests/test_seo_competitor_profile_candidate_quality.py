@@ -303,6 +303,33 @@ def test_existing_domain_match_is_counted_as_excluded_reason() -> None:
     assert result.tuning_rejected_candidates == []
 
 
+def test_site_domain_and_subdomain_are_excluded_as_existing_domain_match() -> None:
+    result = process_competitor_candidates(
+        site=_site(),
+        existing_domains=[],
+        candidates=[
+            _candidate(
+                name="Client Site",
+                domain="acmehomeservices.example",
+                competitor_type="direct",
+                confidence=0.9,
+                index=0,
+            ),
+            _candidate(
+                name="Client Blog",
+                domain="blog.acmehomeservices.example",
+                competitor_type="direct",
+                confidence=0.82,
+                index=1,
+            ),
+        ],
+    )
+    assert result.raw_candidate_count == 2
+    assert result.included_candidates == []
+    assert result.excluded_candidate_count == 2
+    assert result.exclusion_counts_by_reason["existing_domain_match"] == 2
+
+
 def test_default_tuning_is_used_when_quality_tuning_not_provided() -> None:
     default_result = process_competitor_candidates(
         site=_site(),

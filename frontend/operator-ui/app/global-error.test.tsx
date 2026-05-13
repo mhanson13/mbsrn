@@ -69,6 +69,39 @@ describe("app global error boundary", () => {
     warnSpy.mockRestore();
   });
 
+  it("classifies stale server-action build mismatches as warning-level diagnostics", () => {
+    const errorSpy = jest.spyOn(console, "error").mockImplementation(() => undefined);
+    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    render(
+      <AppGlobalError
+        error={{
+          message:
+            "Failed to find Server Action \"abc\". This request might be from an older or newer deployment. Original error: Cannot read properties of undefined (reading 'workers')",
+          digest: null,
+        }}
+        reset={() => undefined}
+      />,
+    );
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      "[operator-ui] global_render_warning",
+      expect.objectContaining({
+        classification: "stale_server_action_build_mismatch",
+        digest: "unavailable",
+        pathname: "/sites/site-1",
+        app_version: "sha-test-build-1",
+      }),
+    );
+    expect(errorSpy).not.toHaveBeenCalled();
+    expect(
+      screen.getByText("This tab is out of date after a deployment. Refresh and retry this action."),
+    ).toBeInTheDocument();
+
+    errorSpy.mockRestore();
+    warnSpy.mockRestore();
+  });
+
   it("renders fallback safely with undefined or non-Error payloads", () => {
     const errorSpy = jest.spyOn(console, "error").mockImplementation(() => undefined);
     const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => undefined);

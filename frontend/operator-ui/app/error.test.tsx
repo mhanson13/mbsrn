@@ -96,6 +96,38 @@ describe("app route error boundary", () => {
     warnSpy.mockRestore();
   });
 
+  it("classifies stale server-action build mismatches as warning-level diagnostics", () => {
+    const errorSpy = jest.spyOn(console, "error").mockImplementation(() => undefined);
+    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    render(
+      <RouteErrorBoundary
+        error={{
+          message:
+            "Failed to find Server Action \"abc\". This request might be from an older or newer deployment. Original error: Cannot read properties of undefined (reading 'workers')",
+          digest: null,
+        }}
+        reset={() => undefined}
+      />,
+    );
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      "[operator-ui] route_render_warning",
+      expect.objectContaining({
+        classification: "stale_server_action_build_mismatch",
+        digest: "unavailable",
+        app_version: "sha-test-build-1",
+      }),
+    );
+    expect(errorSpy).not.toHaveBeenCalled();
+    expect(
+      screen.getByText("This tab is out of date after a deployment. Refresh and retry this action."),
+    ).toBeInTheDocument();
+
+    errorSpy.mockRestore();
+    warnSpy.mockRestore();
+  });
+
   it("logs normal route errors with digest when present", () => {
     const errorSpy = jest.spyOn(console, "error").mockImplementation(() => undefined);
     const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => undefined);

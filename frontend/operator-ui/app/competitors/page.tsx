@@ -22,6 +22,8 @@ import { useOperatorContext } from "../../components/useOperatorContext";
 import {
   ApiRequestError,
   createCompetitorProfileGenerationRun,
+  fetchCompetitorProfileGenerationRunDetail,
+  fetchCompetitorProfileGenerationRuns,
   fetchCompetitorDomains,
   fetchCompetitorProfileGenerationSummary,
   fetchCompetitorSets,
@@ -29,7 +31,10 @@ import {
   fetchSiteCompetitorComparisonRuns,
 } from "../../lib/api/client";
 import type {
+  CompetitorGenerationQualityReason,
+  CompetitorGenerationQualitySummary,
   CompetitorProfileGenerationSummaryResponse,
+  CompetitorProfileGenerationRun,
   CompetitorSet,
   CompetitorSnapshotRun,
 } from "../../lib/api/types";
@@ -174,6 +179,38 @@ function formatRunStatus(status: string): string {
   return cleaned || "unknown";
 }
 
+function formatGenerationQualityStatus(status: string): string {
+  const normalized = status.trim().toLowerCase();
+  if (normalized === "ready") {
+    return "Ready";
+  }
+  if (normalized === "partial") {
+    return "Partial";
+  }
+  if (normalized === "blocked") {
+    return "Blocked";
+  }
+  return "Unknown";
+}
+
+function formatGenerationQualityReason(reason: CompetitorGenerationQualityReason | null): string {
+  if (!reason) {
+    return "unknown";
+  }
+  const labels: Record<CompetitorGenerationQualityReason, string> = {
+    valid: "Valid candidates retained",
+    duplicate_domain: "Duplicate domains removed",
+    self_domain: "Self-domain candidates removed",
+    malformed_domain: "Malformed domains removed",
+    low_relevance: "Low-relevance candidates removed",
+    missing_required_fields: "Candidates missing required fields",
+    insufficient_candidates: "Insufficient usable candidates",
+    provider_unparseable: "Provider output unparseable",
+    provider_returned_empty: "Provider returned no candidates",
+  };
+  return labels[reason];
+}
+
 function CompetitorsPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -200,6 +237,10 @@ function CompetitorsPageContent() {
   const [generationMessage, setGenerationMessage] = useState<string | null>(null);
   const [generationError, setGenerationError] = useState<string | null>(null);
   const [generationWarning, setGenerationWarning] = useState<string | null>(null);
+  const [generationQualitySummary, setGenerationQualitySummary] = useState<CompetitorGenerationQualitySummary | null>(
+    null,
+  );
+  const [latestGenerationRunStatus, setLatestGenerationRunStatus] = useState<string | null>(null);
   const [refreshNonce, setRefreshNonce] = useState(0);
 
   const totalDomainCount = useMemo(
@@ -332,6 +373,8 @@ function CompetitorsPageContent() {
       setCompetitorsError(null);
       setLoadingCompetitors(false);
       setGenerationSummary(null);
+      setGenerationQualitySummary(null);
+      setLatestGenerationRunStatus(null);
       return;
     }
     let cancelled = false;
@@ -345,6 +388,8 @@ function CompetitorsPageContent() {
       setReadinessWarning(null);
       try {
         let nextGenerationSummary: CompetitorProfileGenerationSummaryResponse | null = null;
+        let nextGenerationQualitySummary: CompetitorGenerationQualitySummary | null = null;
+        let nextLatestGenerationRunStatus: string | null = null;
         try {
           nextGenerationSummary = await fetchCompetitorProfileGenerationSummary(
             token,
@@ -354,8 +399,34 @@ function CompetitorsPageContent() {
         } catch {
           nextGenerationSummary = null;
         }
+        try {
+          const generationRuns = await fetchCompetitorProfileGenerationRuns(
+            token,
+            businessId,
+            activeSiteId,
+          );
+          const latestGenerationRun = latestByActivity<CompetitorProfileGenerationRun>(generationRuns.items);
+          if (latestGenerationRun) {
+            nextLatestGenerationRunStatus = latestGenerationRun.status;
+            const normalizedStatus = latestGenerationRun.status.trim().toLowerCase();
+            if (normalizedStatus === "completed" || normalizedStatus === "failed") {
+              const generationDetail = await fetchCompetitorProfileGenerationRunDetail(
+                token,
+                businessId,
+                activeSiteId,
+                latestGenerationRun.id,
+              );
+              nextGenerationQualitySummary = generationDetail.quality_summary ?? null;
+            }
+          }
+        } catch {
+          nextGenerationQualitySummary = null;
+          nextLatestGenerationRunStatus = null;
+        }
         if (!cancelled) {
           setGenerationSummary(nextGenerationSummary);
+          setGenerationQualitySummary(nextGenerationQualitySummary);
+          setLatestGenerationRunStatus(nextLatestGenerationRunStatus);
         }
 
         const setResponse = await fetchCompetitorSets(token, businessId, activeSiteId);
@@ -704,9 +775,37 @@ function CompetitorsPageContent() {
                   <span className="hint muted">none</span>
                 )}
               </WorkspaceMetadataItem>
+              <WorkspaceMetadataItem label="Generation Quality">
+                {generationQualitySummary ? (
+                  <span className="hint muted" data-testid="competitors-generation-quality">
+                    <strong>{formatGenerationQualityStatus(generationQualitySummary.status)}</strong>{" "}
+                    ({generationQualitySummary.accepted_candidates}/{generationQualitySummary.total_candidates_returned} accepted,{" "}
+                    {generationQualitySummary.rejected_candidates} rejected)
+                    {generationQualitySummary.top_reason ? (
+                      <>. Reason: {formatGenerationQualityReason(generationQualitySummary.top_reason)}</>
+                    ) : null}
+                  </span>
+                ) : latestGenerationRunStatus ? (
+                  <span className="hint muted" data-testid="competitors-generation-quality-pending">
+                    Quality pending. Latest generation run is {formatRunStatus(latestGenerationRunStatus)}.
+                  </span>
+                ) : (
+                  <span className="hint muted">none</span>
+                )}
+              </WorkspaceMetadataItem>
             </WorkspaceMetadataGrid>
             <WorkspaceMessageStack>
               {readinessWarning ? <p className="hint warning">{readinessWarning}</p> : null}
+              {generationQualitySummary?.status === "partial" ? (
+                <p className="hint warning" data-testid="competitors-generation-quality-message">
+                  {generationQualitySummary.operator_message}
+                </p>
+              ) : null}
+              {generationQualitySummary?.status === "blocked" ? (
+                <p className="hint error" data-testid="competitors-generation-quality-message">
+                  {generationQualitySummary.operator_message}
+                </p>
+              ) : null}
               <p className="hint muted">{readinessGuidance}</p>
             </WorkspaceMessageStack>
           </div>

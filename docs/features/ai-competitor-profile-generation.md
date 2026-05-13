@@ -250,6 +250,52 @@ Production tuning prep:
    - highest `relevance_score`,
    - then stable lexical tie-breakers.
 
+### Snapshot quality contract (operator-facing)
+Competitor generation run detail now includes an additive bounded quality summary:
+- `quality_summary.status`:
+  - `ready`: usable competitor set quality checks passed
+  - `partial`: usable competitors exist but warnings/rejections reduce trust
+  - `blocked`: no trustworthy usable set from this run
+- `quality_summary` fields:
+  - `total_candidates_returned`
+  - `accepted_candidates`
+  - `rejected_candidates`
+  - `final_active_domains_count`
+  - `top_reason`
+  - `reason_counts` (bounded deterministic keys only)
+  - `operator_message` (safe summary)
+
+Bounded quality reason codes:
+- `valid`
+- `duplicate_domain`
+- `self_domain`
+- `malformed_domain`
+- `low_relevance`
+- `missing_required_fields`
+- `insufficient_candidates`
+- `provider_unparseable`
+- `provider_returned_empty`
+
+Important semantics:
+- run lifecycle (`queued`/`running`/`completed`/`failed`) remains separate from quality trust state.
+- a technically completed run can still be `partial` or `blocked` from a quality perspective.
+- raw provider payloads are not returned in operator quality summaries.
+
+### Provider output contract hardening
+Competitor prompts now explicitly request structured candidate fields for explainability:
+- `business_name`
+- `domain`
+- `competitor_type`
+- `location_market`
+- `service_category_fit`
+- `reason_selected`
+- `confidence_score`
+
+Parser behavior remains backward-compatible and deterministic:
+- alias/fallback handling maps new fields into existing draft fields when present
+- malformed/partial candidates are rejected or salvaged with bounded diagnostics
+- raw provider response bodies are not exposed in operator-facing responses
+
 ### Post-Parse Response Contract Evaluation
 Before run success persistence, parsed candidate output passes a deterministic response-contract evaluator.
 

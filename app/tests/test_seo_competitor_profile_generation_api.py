@@ -2236,6 +2236,26 @@ def test_async_execution_transitions_running_to_completed_and_persists_drafts(db
         "had_schema_repair_or_discard": False,
         "used_google_places_seeds": False,
     }
+    assert payload["quality_summary"] == {
+        "status": "ready",
+        "operator_message": "Competitor snapshot quality checks passed and results are ready for operator review.",
+        "total_candidates_returned": 2,
+        "accepted_candidates": 2,
+        "rejected_candidates": 0,
+        "final_active_domains_count": 2,
+        "top_reason": None,
+        "reason_counts": {
+            "valid": 2,
+            "duplicate_domain": 0,
+            "self_domain": 0,
+            "malformed_domain": 0,
+            "low_relevance": 0,
+            "missing_required_fields": 0,
+            "insufficient_candidates": 0,
+            "provider_unparseable": 0,
+            "provider_returned_empty": 0,
+        },
+    }
 
     persisted_runs = db_session.query(SEOCompetitorProfileGenerationRun).all()
     persisted_drafts = db_session.query(SEOCompetitorProfileDraft).all()
@@ -2276,25 +2296,29 @@ def test_async_execution_forces_minimal_drafts_when_all_candidates_were_filtered
     assert detail.status_code == 200
     payload = detail.json()
     assert payload["run"]["status"] == "completed"
-    assert payload["run"]["generated_draft_count"] == 1
+    assert payload["run"]["generated_draft_count"] == 2
     assert payload["run"]["raw_candidate_count"] == 1
-    assert payload["run"]["included_candidate_count"] == 1
-    assert payload["run"]["excluded_candidate_count"] == 0
+    assert payload["run"]["included_candidate_count"] == 2
+    assert payload["run"]["excluded_candidate_count"] == 1
     assert payload["run"]["error_summary"] is None
     assert payload["run"]["provider_name"] == "invalid-test-provider"
     assert payload["run"]["model_name"] == "invalid-test-model"
     assert payload["run"]["prompt_version"] == "seo-competitor-profile-v1"
     assert payload["run"]["failure_category"] is None
-    assert payload["total_drafts"] == 1
-    assert payload["drafts"][0]["forced_inclusion"] is True
-    assert payload["drafts"][0]["forced_reason"] == "no_valid_drafts_after_filtering"
-    assert payload["drafts"][0]["source"] == "ai_forced_fallback"
-    assert payload["drafts"][0]["provenance_classification"] == "synthetic_fallback"
-    assert (
-        payload["drafts"][0]["provenance_explanation"]
+    assert payload["total_drafts"] == 2
+    assert all(item["forced_inclusion"] is True for item in payload["drafts"])
+    assert all(item["forced_reason"] == "no_valid_drafts_after_filtering" for item in payload["drafts"])
+    assert all(item["source"] == "ai_forced_fallback" for item in payload["drafts"])
+    assert all(item["provenance_classification"] == "synthetic_fallback" for item in payload["drafts"])
+    assert all(
+        item["provenance_explanation"]
         == "Synthetic review scaffold generated because reliable live competitor discovery was unavailable."
+        for item in payload["drafts"]
     )
-    assert payload["drafts"][0]["suggested_domain"].startswith("unknown-domain-")
+    assert all(item["suggested_domain"].startswith("review-scaffold-") for item in payload["drafts"])
+    assert all(item["suggested_domain"].endswith(".invalid") for item in payload["drafts"])
+    assert payload["quality_summary"]["status"] == "partial"
+    assert payload["quality_summary"]["top_reason"] == "malformed_domain"
     persisted_run = (
         db_session.query(SEOCompetitorProfileGenerationRun)
         .filter(SEOCompetitorProfileGenerationRun.business_id == seeded_business.id)
@@ -2304,10 +2328,10 @@ def test_async_execution_forces_minimal_drafts_when_all_candidates_were_filtered
     assert persisted_run.raw_output is not None
     assert "invalid-domain-without-tld" in persisted_run.raw_output
     events = _structured_event_records(caplog)
-    forced_output_event = next(item for item in events if item.get("event") == "competitor_forced_output")
-    assert forced_output_event["run_id"] == run_id
-    assert forced_output_event["raw_candidates"] == 1
-    assert forced_output_event["forced_drafts"] == 1
+    assert all(item.get("event") != "competitor_filtering_relaxation" for item in events)
+    synthetic_fallback_event = next(item for item in events if item.get("event") == "competitor_synthetic_fallback")
+    assert synthetic_fallback_event["provider_raw_candidate_count"] == 1
+    assert synthetic_fallback_event["fallback_candidate_count"] == payload["run"]["generated_draft_count"]
 
 
 def test_empty_candidate_output_uses_synthetic_fallback_drafts(db_session, seeded_business) -> None:
@@ -2379,6 +2403,9 @@ def test_empty_candidate_output_uses_synthetic_fallback_drafts(db_session, seede
         == "Synthetic review scaffold generated because reliable live competitor discovery was unavailable."
         for item in payload["drafts"]
     )
+    assert payload["quality_summary"]["status"] == "blocked"
+    assert payload["quality_summary"]["top_reason"] == "provider_returned_empty"
+    assert payload["quality_summary"]["reason_counts"]["provider_returned_empty"] >= 1
 
 
 def test_synthetic_fallback_quality_gates_duplicates_and_can_return_fewer_rows(db_session, seeded_business) -> None:
@@ -2463,8 +2490,8 @@ def test_malformed_provider_output_skips_invalid_candidates_and_keeps_valid_draf
     assert payload["total_drafts"] == 1
     assert payload["drafts"][0]["suggested_domain"] == "valid-competitor.example"
     assert payload["rejected_candidate_count"] == 1
-    assert payload["rejected_candidates"][0]["domain"].startswith("unknown-domain-")
-    assert "insufficient_overlap_evidence" in payload["rejected_candidates"][0]["reasons"]
+    assert payload["rejected_candidates"][0]["domain"] == "broken"
+    assert "malformed_url" in payload["rejected_candidates"][0]["reasons"]
     assert payload["outcome_summary"]["had_schema_repair_or_discard"] is True
 
 
@@ -2503,7 +2530,8 @@ def test_invalid_candidate_reasons_are_classified_with_specific_codes(db_session
     rejected_reason_set = {reason for item in payload["rejected_candidates"] for reason in item["reasons"]}
     assert rejected_reason_set == {
         "missing_business_name",
-        "insufficient_overlap_evidence",
+        "missing_domain",
+        "malformed_url",
         "invalid_confidence_score",
         "low_usefulness_unknown",
     }
@@ -4428,7 +4456,7 @@ def test_weak_site_mode_still_applies_domain_quality_filters(db_session, seeded_
     assert "no_live_site" in rejected_by_domain["offline-candidate.com"]["reasons"]
 
 
-def test_generation_allows_missing_domain_with_strong_local_reasoning_and_caps_confidence(
+def test_generation_rejects_missing_domain_candidates_and_uses_synthetic_fallback(
     db_session, seeded_business, caplog
 ) -> None:
     deferred_executor = _DeferredRunExecutor()
@@ -4466,15 +4494,16 @@ def test_generation_allows_missing_domain_with_strong_local_reasoning_and_caps_c
     assert detail.status_code == 200
     payload = detail.json()
     assert payload["run"]["status"] == "completed"
-    assert payload["run"]["included_candidate_count"] == 1
-    assert payload["drafts"][0]["suggested_name"] == "Denver Fire Alarm Services"
-    assert payload["drafts"][0]["suggested_domain"] == ""
-    assert payload["drafts"][0]["confidence_score"] == 0.6
+    assert payload["run"]["included_candidate_count"] >= 1
+    assert payload["drafts"][0]["suggested_name"].startswith("Review scaffold:")
+    assert payload["drafts"][0]["suggested_domain"].startswith("review-scaffold-")
+    assert payload["drafts"][0]["suggested_domain"].endswith(".invalid")
+    assert payload["quality_summary"]["status"] == "partial"
+    assert payload["quality_summary"]["top_reason"] == "malformed_domain"
+    rejected_by_domain = {item["domain"]: item for item in payload["rejected_candidates"]}
+    assert "missing_domain" in rejected_by_domain["unknown-domain"]["reasons"]
     events = _structured_event_records(caplog)
-    relaxation_event = next(item for item in events if item.get("event") == "competitor_filtering_relaxation")
-    assert relaxation_event["run_id"] == run_id
-    assert relaxation_event["no_domain_allowed"] == 1
-    assert relaxation_event["unsupported_type_allowed"] == 0
+    assert all(item.get("event") != "competitor_filtering_relaxation" for item in events)
 
 
 def test_generation_forces_output_when_all_candidates_would_be_excluded_and_persists_telemetry(
@@ -4773,7 +4802,7 @@ def test_generation_summary_endpoint_returns_status_failure_and_retry_metrics(db
     assert payload["total_runs"] == 5
     assert payload["total_raw_candidate_count"] == 3
     assert 5 <= payload["total_included_candidate_count"] <= 6
-    assert payload["total_excluded_candidate_count"] == 0
+    assert payload["total_excluded_candidate_count"] == 1
     assert payload["exclusion_counts_by_reason"] == {
         "duplicate": 0,
         "low_relevance": 0,
