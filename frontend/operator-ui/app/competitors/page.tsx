@@ -100,8 +100,46 @@ function safeGenerationErrorMessage(error: unknown): string {
     if (error.status === 422) {
       return "Competitor generation cannot start until site context is ready.";
     }
+    if (error.status === 429) {
+      return "Competitor generation is temporarily rate-limited. Try again shortly.";
+    }
+    if (error.status >= 500) {
+      return "Competitor generation is temporarily unavailable. Try again shortly.";
+    }
   }
   return "Unable to start competitor generation right now. Try again.";
+}
+
+function classifyGenerationStartResponse(
+  response: unknown,
+): { classification: "success" | "unexpected_response"; message: string } {
+  if (!response || typeof response !== "object") {
+    return {
+      classification: "unexpected_response",
+      message:
+        "Competitor generation request returned an unexpected response. Refresh inventory to confirm run status.",
+    };
+  }
+  const responseRecord = response as { run?: unknown };
+  const runRecord =
+    responseRecord.run && typeof responseRecord.run === "object"
+      ? (responseRecord.run as { id?: unknown; status?: unknown })
+      : null;
+  const runId =
+    runRecord && typeof runRecord.id === "string" ? runRecord.id.trim() : "";
+  const runStatus =
+    runRecord && typeof runRecord.status === "string" ? runRecord.status.trim() : "";
+  if (!runId || !runStatus) {
+    return {
+      classification: "unexpected_response",
+      message:
+        "Competitor generation request was accepted, but run details were incomplete. Refresh inventory to confirm status.",
+    };
+  }
+  return {
+    classification: "success",
+    message: `Competitor generation started (run ${runId}, ${formatRunStatus(runStatus)}).`,
+  };
 }
 
 function runActivityTimestamp(
@@ -161,6 +199,7 @@ function CompetitorsPageContent() {
   const [generationInFlight, setGenerationInFlight] = useState(false);
   const [generationMessage, setGenerationMessage] = useState<string | null>(null);
   const [generationError, setGenerationError] = useState<string | null>(null);
+  const [generationWarning, setGenerationWarning] = useState<string | null>(null);
   const [refreshNonce, setRefreshNonce] = useState(0);
 
   const totalDomainCount = useMemo(
@@ -183,7 +222,7 @@ function CompetitorsPageContent() {
   const generationRunningCount = generationSummary?.running_count ?? 0;
   const generationAlreadyRunning = generationQueuedCount + generationRunningCount > 0;
   const generationButtonLabel = activeSetCount > 0 ? "Refresh competitor set" : "Generate competitor set";
-  const generationButtonDisabled = !selectedSiteId || generationInFlight || generationAlreadyRunning;
+  const generationButtonDisabled = !selectedSiteId || generationInFlight;
 
   function buildSetDetailHref(setItem: CompetitorSetRow): string {
     const params = new URLSearchParams();
@@ -469,9 +508,15 @@ function CompetitorsPageContent() {
     setGenerationInFlight(true);
     setGenerationError(null);
     setGenerationMessage(null);
+    setGenerationWarning(null);
     try {
       const result = await createCompetitorProfileGenerationRun(token, businessId, selectedSiteId, {});
-      setGenerationMessage(`Competitor generation started (${formatRunStatus(result.run.status)}).`);
+      const responseClassification = classifyGenerationStartResponse(result);
+      if (responseClassification.classification === "unexpected_response") {
+        setGenerationWarning(responseClassification.message);
+      } else {
+        setGenerationMessage(responseClassification.message);
+      }
       setRefreshNonce((current) => current + 1);
     } catch (err) {
       setGenerationError(safeGenerationErrorMessage(err));
@@ -592,6 +637,11 @@ function CompetitorsPageContent() {
           <p className="hint muted">
             Generate a reviewed competitor set for the selected site using existing site, audit, and business context.
           </p>
+          {generationInFlight ? (
+            <p className="hint muted" data-testid="competitors-generation-pending">
+              {activeSetCount > 0 ? "Refreshing competitor set..." : "Generating competitor set..."}
+            </p>
+          ) : null}
           {generationAlreadyRunning ? (
             <p className="hint muted" data-testid="competitors-generation-running">
               A competitor generation run is already queued or running for this site.
@@ -599,6 +649,9 @@ function CompetitorsPageContent() {
           ) : null}
           {generationMessage ? (
             <p className="hint" data-testid="competitors-generation-success">{generationMessage}</p>
+          ) : null}
+          {generationWarning ? (
+            <p className="hint warning" data-testid="competitors-generation-warning">{generationWarning}</p>
           ) : null}
           {generationError ? (
             <p className="hint error" data-testid="competitors-generation-error">{generationError}</p>

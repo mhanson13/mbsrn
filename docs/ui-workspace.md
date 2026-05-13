@@ -60,6 +60,8 @@ Workflow ownership boundaries:
   - recommendation detail view is decision-first, with supporting evidence and lineage kept in lower-priority disclosures
 - Automation page owns repeatable multi-step workflow orchestration and run lifecycle.
 - Competitors page owns competitor generation/review workflow, including the primary site-scoped `Generate competitor set` / `Refresh competitor set` action, run tables, and candidate/debug inspection.
+  - action lifecycle is operator-visible: pending state while request is in flight, bounded success/failure feedback, and automatic inventory/readiness refetch after run creation
+  - successful action indicates run creation/queueing; completed competitor results can arrive later when backend run processing finishes
 - Migration workflow remains on `/sites/[site_id]/migration`.
 - Prompt/provider debug details stay in dedicated workflow/diagnostics surfaces, not inline in the primary Site Workspace.
 - Google Profile / GA4 / analytics insertion setup now lives under `Sites` in the selected-site setup panel.

@@ -422,7 +422,7 @@ describe("competitors page site-scoped loading", () => {
       expect(mockFetchCompetitorSets.mock.calls.length).toBeGreaterThanOrEqual(2);
     });
     expect(await screen.findByTestId("competitors-generation-success")).toHaveTextContent(
-      "Competitor generation started",
+      "Competitor generation started (run gen-run-1, queued).",
     );
   });
 
@@ -441,6 +441,9 @@ describe("competitors page site-scoped loading", () => {
     await user.click(actionButton);
     expect(actionButton).toBeDisabled();
     expect(actionButton).toHaveTextContent("Generating competitor set...");
+    expect(await screen.findByTestId("competitors-generation-pending")).toHaveTextContent(
+      "Generating competitor set...",
+    );
 
     resolveRequest({
       run: {
@@ -485,7 +488,7 @@ describe("competitors page site-scoped loading", () => {
     expect(errorMessage).not.toHaveTextContent("full payload");
   });
 
-  it("disables generation action when a run is already queued or running", async () => {
+  it("shows queued/running status without blocking a manual refresh click", async () => {
     mockFetchCompetitorSets.mockResolvedValue({ items: [], total: 0 });
     mockFetchCompetitorProfileGenerationSummary.mockResolvedValueOnce({
       business_id: "biz-1",
@@ -522,9 +525,26 @@ describe("competitors page site-scoped loading", () => {
     render(<CompetitorsPage />);
 
     const actionButton = await screen.findByTestId("competitors-generate-set-button");
-    expect(actionButton).toBeDisabled();
+    expect(actionButton).not.toBeDisabled();
     expect(await screen.findByTestId("competitors-generation-running")).toHaveTextContent(
       "already queued or running",
     );
+  });
+
+  it("classifies unexpected generation responses and still refreshes inventory", async () => {
+    const user = userEvent.setup();
+    mockFetchCompetitorSets.mockResolvedValue({ items: [], total: 0 });
+    mockCreateCompetitorProfileGenerationRun.mockResolvedValueOnce(
+      {} as unknown as CompetitorProfileGenerationRunDetailResponse,
+    );
+
+    render(<CompetitorsPage />);
+
+    await user.click(await screen.findByTestId("competitors-generate-set-button"));
+    const warningMessage = await screen.findByTestId("competitors-generation-warning");
+    expect(warningMessage).toHaveTextContent("run details were incomplete");
+    await waitFor(() => {
+      expect(mockFetchCompetitorSets.mock.calls.length).toBeGreaterThanOrEqual(2);
+    });
   });
 });

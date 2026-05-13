@@ -73,6 +73,21 @@ Boundary:
 - presentation consistency only
 - no changes to competitor generation, readiness logic, or API semantics
 
+## Competitor Set Refresh Lifecycle (Operator UX)
+
+The `/competitors` primary action now uses an explicit operator-visible lifecycle for set generation/refresh:
+- button action calls existing backend endpoint:
+  - `POST /api/businesses/{business_id}/seo/sites/{site_id}/competitor-profile-generation-runs`
+- pending state appears immediately (`Generating...` or `Refreshing...`) and the button is disabled while in flight
+- success state confirms run creation with bounded metadata when available (run id + status)
+- unexpected/malformed success payloads are classified and shown as bounded warnings instead of silent no-ops
+- failure state shows bounded operator-safe error copy (no raw provider payloads, tokens, or request bodies)
+- after accepted run creation, the page re-fetches competitor inventory/readiness so queued/running state updates are visible
+
+Operator expectation:
+- this action starts a backend competitor generation run; results may not be immediately available if work is queued/running
+- reviewable draft output appears when the backend run advances to completed state
+
 Bounded exclusion telemetry is persisted at run level for tuning:
 - raw/included/excluded candidate totals,
 - aggregate exclusion counts by deterministic reason code.
