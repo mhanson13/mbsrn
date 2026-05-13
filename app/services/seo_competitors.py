@@ -8,14 +8,18 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.seo_competitor_domain import SEOCompetitorDomain
+from app.models.seo_competitor_domain_feedback import SEOCompetitorDomainFeedback
 from app.models.seo_competitor_snapshot_page import SEOCompetitorSnapshotPage
 from app.models.seo_competitor_set import SEOCompetitorSet
 from app.models.seo_competitor_snapshot_run import SEOCompetitorSnapshotRun
+from app.models.seo_site import SEOSite
 from app.repositories.business_repository import BusinessRepository
 from app.repositories.seo_competitor_repository import SEOCompetitorRepository
 from app.repositories.seo_site_repository import SEOSiteRepository
 from app.schemas.seo_competitor import (
     SEOCompetitorDomainCreateRequest,
+    SEOCompetitorDomainFeedbackUpsertRequest,
+    SEOCompetitorManualSeedCreateRequest,
     SEOCompetitorSetCreateRequest,
     SEOCompetitorSetUpdateRequest,
     SEOCompetitorSnapshotRunCreateRequest,
@@ -28,6 +32,9 @@ class SEOCompetitorNotFoundError(ValueError):
 
 class SEOCompetitorValidationError(ValueError):
     pass
+
+
+_COMPETITOR_FEEDBACK_STATUS_VALUES = {"useful", "not_useful", "excluded", "manually_seeded"}
 
 
 @dataclass(frozen=True)
@@ -174,6 +181,77 @@ class SEOCompetitorService:
         self.seo_competitor_repository.delete_domain(competitor_domain)
         self.session.commit()
 
+    def list_domain_feedback(self, *, business_id: str, site_id: str) -> list[SEOCompetitorDomainFeedback]:
+        self._require_business(business_id)
+        self._require_site(business_id, site_id)
+        return self.seo_competitor_repository.list_domain_feedback_for_business_site(business_id, site_id)
+
+    def upsert_domain_feedback(
+        self,
+        *,
+        business_id: str,
+        site_id: str,
+        payload: SEOCompetitorDomainFeedbackUpsertRequest,
+        principal_id: str | None,
+    ) -> SEOCompetitorDomainFeedback:
+        self._require_business(business_id)
+        site = self._require_site(business_id, site_id)
+        normalized_domain = self._normalize_domain_value(payload.domain)
+        self._ensure_not_site_domain(site=site, candidate_domain=normalized_domain)
+        feedback_status = (payload.feedback_status or "").strip().lower()
+        if feedback_status not in _COMPETITOR_FEEDBACK_STATUS_VALUES:
+            raise SEOCompetitorValidationError("feedback_status is not supported")
+
+        existing = self.seo_competitor_repository.get_domain_feedback_for_business_site_domain(
+            business_id=business_id,
+            site_id=site_id,
+            domain=normalized_domain,
+        )
+        if existing is None:
+            feedback = SEOCompetitorDomainFeedback(
+                id=str(uuid4()),
+                business_id=business_id,
+                site_id=site_id,
+                domain=normalized_domain,
+                feedback_status=feedback_status,
+                display_name=self._clean_optional(payload.display_name),
+                operator_note=self._clean_optional(payload.operator_note),
+                created_by_principal_id=principal_id,
+                updated_by_principal_id=principal_id,
+            )
+            self.seo_competitor_repository.create_domain_feedback(feedback)
+        else:
+            existing.feedback_status = feedback_status
+            existing.display_name = self._clean_optional(payload.display_name)
+            existing.operator_note = self._clean_optional(payload.operator_note)
+            existing.updated_by_principal_id = principal_id
+            self.seo_competitor_repository.save_domain_feedback(existing)
+            feedback = existing
+        self.session.commit()
+        self.session.refresh(feedback)
+        return feedback
+
+    def add_manual_seed_domain_feedback(
+        self,
+        *,
+        business_id: str,
+        site_id: str,
+        payload: SEOCompetitorManualSeedCreateRequest,
+        principal_id: str | None,
+    ) -> SEOCompetitorDomainFeedback:
+        feedback_payload = SEOCompetitorDomainFeedbackUpsertRequest(
+            domain=payload.domain,
+            feedback_status="manually_seeded",
+            display_name=payload.display_name,
+            operator_note=payload.operator_note,
+        )
+        return self.upsert_domain_feedback(
+            business_id=business_id,
+            site_id=site_id,
+            payload=feedback_payload,
+            principal_id=principal_id,
+        )
+
     def create_snapshot_run(
         self,
         *,
@@ -255,10 +333,11 @@ class SEOCompetitorService:
         if business is None:
             raise SEOCompetitorNotFoundError("Business not found")
 
-    def _require_site(self, business_id: str, site_id: str) -> None:
+    def _require_site(self, business_id: str, site_id: str) -> SEOSite:
         site = self.seo_site_repository.get_for_business(business_id, site_id)
         if site is None:
             raise SEOCompetitorNotFoundError("SEO site not found")
+        return site
 
     @staticmethod
     def _clean_optional(value: str | None) -> str | None:
@@ -323,6 +402,13 @@ class SEOCompetitorService:
         if any(ch not in "abcdefghijklmnopqrstuvwxyz0123456789-." for ch in cleaned):
             raise SEOCompetitorValidationError("domain contains invalid characters")
         return cleaned
+
+    def _ensure_not_site_domain(self, *, site: SEOSite, candidate_domain: str) -> None:
+        site_domain = (site.normalized_domain or "").strip().lower()
+        if not site_domain:
+            return
+        if candidate_domain == site_domain or candidate_domain.endswith(f".{site_domain}"):
+            raise SEOCompetitorValidationError("domain cannot match the current site domain")
 
     def _commit_with_constraint_handling(self) -> None:
         try:

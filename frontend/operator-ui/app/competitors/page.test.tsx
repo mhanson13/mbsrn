@@ -5,6 +5,8 @@ import type { ReactNode } from "react";
 import CompetitorsPage from "./page";
 import { ApiRequestError } from "../../lib/api/client";
 import type {
+  CompetitorDomainFeedback,
+  CompetitorDomainFeedbackListResponse,
   CompetitorComparisonRunListResponse,
   CompetitorDomainListResponse,
   CompetitorProfileGenerationRunDetailResponse,
@@ -32,6 +34,9 @@ const navigationState = {
 const mockUseOperatorContext = jest.fn<OperatorContextMockValue, []>();
 const mockFetchCompetitorSets = jest.fn<Promise<CompetitorSetListResponse>, unknown[]>();
 const mockFetchCompetitorDomains = jest.fn<Promise<CompetitorDomainListResponse>, unknown[]>();
+const mockFetchCompetitorDomainFeedback = jest.fn<Promise<CompetitorDomainFeedbackListResponse>, unknown[]>();
+const mockUpsertCompetitorDomainFeedback = jest.fn<Promise<CompetitorDomainFeedback>, unknown[]>();
+const mockCreateCompetitorDomainManualSeed = jest.fn<Promise<CompetitorDomainFeedback>, unknown[]>();
 const mockFetchCompetitorSnapshotRuns = jest.fn<Promise<CompetitorSnapshotRunListResponse>, unknown[]>();
 const mockFetchSiteCompetitorComparisonRuns = jest.fn<Promise<CompetitorComparisonRunListResponse>, unknown[]>();
 const mockFetchCompetitorProfileGenerationSummary = jest.fn<
@@ -74,6 +79,9 @@ jest.mock("../../lib/api/client", () => {
     ...actual,
     fetchCompetitorSets: (...args: unknown[]) => mockFetchCompetitorSets(...args),
     fetchCompetitorDomains: (...args: unknown[]) => mockFetchCompetitorDomains(...args),
+    fetchCompetitorDomainFeedback: (...args: unknown[]) => mockFetchCompetitorDomainFeedback(...args),
+    upsertCompetitorDomainFeedback: (...args: unknown[]) => mockUpsertCompetitorDomainFeedback(...args),
+    createCompetitorDomainManualSeed: (...args: unknown[]) => mockCreateCompetitorDomainManualSeed(...args),
     fetchCompetitorSnapshotRuns: (...args: unknown[]) => mockFetchCompetitorSnapshotRuns(...args),
     fetchSiteCompetitorComparisonRuns: (...args: unknown[]) => mockFetchSiteCompetitorComparisonRuns(...args),
     fetchCompetitorProfileGenerationSummary: (...args: unknown[]) =>
@@ -143,6 +151,36 @@ beforeEach(() => {
     latest_run_completed_at: null,
     latest_completed_run_completed_at: null,
     latest_failed_run_completed_at: null,
+  });
+  mockFetchCompetitorDomainFeedback.mockResolvedValue({
+    items: [],
+    total: 0,
+  });
+  mockUpsertCompetitorDomainFeedback.mockResolvedValue({
+    id: "feedback-1",
+    business_id: "biz-1",
+    site_id: "site-1",
+    domain: "competitor.example",
+    feedback_status: "useful",
+    display_name: null,
+    operator_note: null,
+    created_by_principal_id: "principal-1",
+    updated_by_principal_id: "principal-1",
+    created_at: "2026-03-20T00:00:00Z",
+    updated_at: "2026-03-20T00:00:00Z",
+  });
+  mockCreateCompetitorDomainManualSeed.mockResolvedValue({
+    id: "feedback-manual-1",
+    business_id: "biz-1",
+    site_id: "site-1",
+    domain: "seeded-competitor.example",
+    feedback_status: "manually_seeded",
+    display_name: "Seeded Competitor",
+    operator_note: null,
+    created_by_principal_id: "principal-1",
+    updated_by_principal_id: "principal-1",
+    created_at: "2026-03-20T00:00:00Z",
+    updated_at: "2026-03-20T00:00:00Z",
   });
   mockFetchCompetitorProfileGenerationRuns.mockResolvedValue({
     items: [],
@@ -317,6 +355,7 @@ describe("competitors page site-scoped loading", () => {
     expect(quickScanItem).toHaveTextContent("Snapshot: completed");
     expect(screen.getByTestId("competitors-generate-set-button")).toHaveTextContent("Refresh competitor set");
     expect(mockFetchCompetitorSets).toHaveBeenCalledWith("token-1", "biz-1", "site-1");
+    expect(mockFetchCompetitorDomainFeedback).toHaveBeenCalledWith("token-1", "biz-1", "site-1");
     expect(mockFetchCompetitorProfileGenerationSummary).toHaveBeenCalledWith("token-1", "biz-1", "site-1");
     expect(mockFetchCompetitorProfileGenerationRuns).toHaveBeenCalledWith("token-1", "biz-1", "site-1");
     expect(screen.getByText("Competitor Sets: 1")).toBeInTheDocument();
@@ -430,7 +469,8 @@ describe("competitors page site-scoped loading", () => {
 
     render(<CompetitorsPage />);
 
-    await screen.findByText("No Snapshot Yet");
+    const noSnapshotRows = await screen.findAllByText("No Snapshot Yet");
+    expect(noSnapshotRows.length).toBeGreaterThan(0);
     expect(screen.getByText("Competitor domains exist, but no snapshot run has been recorded yet.")).toBeInTheDocument();
   });
 
@@ -688,5 +728,282 @@ describe("competitors page site-scoped loading", () => {
     await waitFor(() => {
       expect(mockFetchCompetitorSets.mock.calls.length).toBeGreaterThanOrEqual(2);
     });
+  });
+
+  it("renders domain feedback controls and updates feedback with refetch", async () => {
+    const user = userEvent.setup();
+    mockFetchCompetitorSets.mockResolvedValue({
+      items: [
+        {
+          id: "set-feedback-1",
+          business_id: "biz-1",
+          site_id: "site-1",
+          name: "Feedback Set",
+          city: "Denver",
+          state: "CO",
+          is_active: true,
+          created_by_principal_id: "principal-1",
+          created_at: "2026-03-20T00:00:00Z",
+          updated_at: "2026-03-20T00:00:00Z",
+        },
+      ],
+      total: 1,
+    });
+    mockFetchCompetitorDomains.mockResolvedValue({
+      items: [
+        {
+          id: "domain-feedback-1",
+          business_id: "biz-1",
+          site_id: "site-1",
+          competitor_set_id: "set-feedback-1",
+          domain: "competitor-feedback.example",
+          base_url: "https://competitor-feedback.example/",
+          display_name: "Competitor Feedback",
+          source: "manual",
+          is_active: true,
+          notes: null,
+          created_at: "2026-03-20T00:00:00Z",
+          updated_at: "2026-03-20T00:00:00Z",
+        },
+      ],
+      total: 1,
+    });
+    mockUpsertCompetitorDomainFeedback.mockResolvedValueOnce({
+      id: "feedback-2",
+      business_id: "biz-1",
+      site_id: "site-1",
+      domain: "competitor-feedback.example",
+      feedback_status: "useful",
+      display_name: "Competitor Feedback",
+      operator_note: null,
+      created_by_principal_id: "principal-1",
+      updated_by_principal_id: "principal-1",
+      created_at: "2026-03-20T00:00:00Z",
+      updated_at: "2026-03-20T00:01:00Z",
+    });
+
+    render(<CompetitorsPage />);
+
+    await screen.findByTestId("competitor-feedback-panel");
+    await user.click(await screen.findByRole("button", { name: "Mark useful" }));
+
+    await waitFor(() => {
+      expect(mockUpsertCompetitorDomainFeedback).toHaveBeenCalledWith(
+        "token-1",
+        "biz-1",
+        "site-1",
+        {
+          domain: "competitor-feedback.example",
+          feedback_status: "useful",
+          display_name: "Competitor Feedback",
+        },
+      );
+    });
+    expect(await screen.findByTestId("competitors-feedback-success")).toHaveTextContent(
+      "Saved feedback for competitor-feedback.example: Useful.",
+    );
+    await waitFor(() => {
+      expect(mockFetchCompetitorSets.mock.calls.length).toBeGreaterThanOrEqual(2);
+    });
+  });
+
+  it("shows pending feedback state while updating a domain review action", async () => {
+    const user = userEvent.setup();
+    let resolveFeedback!: (value: CompetitorDomainFeedback) => void;
+    const pendingFeedback = new Promise<CompetitorDomainFeedback>((resolve) => {
+      resolveFeedback = resolve;
+    });
+    mockFetchCompetitorSets.mockResolvedValue({
+      items: [
+        {
+          id: "set-feedback-2",
+          business_id: "biz-1",
+          site_id: "site-1",
+          name: "Pending Set",
+          city: "Denver",
+          state: "CO",
+          is_active: true,
+          created_by_principal_id: "principal-1",
+          created_at: "2026-03-20T00:00:00Z",
+          updated_at: "2026-03-20T00:00:00Z",
+        },
+      ],
+      total: 1,
+    });
+    mockFetchCompetitorDomains.mockResolvedValue({
+      items: [
+        {
+          id: "domain-feedback-2",
+          business_id: "biz-1",
+          site_id: "site-1",
+          competitor_set_id: "set-feedback-2",
+          domain: "pending-feedback.example",
+          base_url: "https://pending-feedback.example/",
+          display_name: "Pending Feedback",
+          source: "manual",
+          is_active: true,
+          notes: null,
+          created_at: "2026-03-20T00:00:00Z",
+          updated_at: "2026-03-20T00:00:00Z",
+        },
+      ],
+      total: 1,
+    });
+    mockUpsertCompetitorDomainFeedback.mockReturnValueOnce(pendingFeedback);
+
+    render(<CompetitorsPage />);
+
+    await user.click(await screen.findByRole("button", { name: "Exclude" }));
+    expect(await screen.findByText("Updating feedback...")).toBeInTheDocument();
+
+    resolveFeedback({
+      id: "feedback-3",
+      business_id: "biz-1",
+      site_id: "site-1",
+      domain: "pending-feedback.example",
+      feedback_status: "excluded",
+      display_name: "Pending Feedback",
+      operator_note: null,
+      created_by_principal_id: "principal-1",
+      updated_by_principal_id: "principal-1",
+      created_at: "2026-03-20T00:00:00Z",
+      updated_at: "2026-03-20T00:02:00Z",
+    });
+    await waitFor(() => expect(screen.queryByText("Updating feedback...")).not.toBeInTheDocument());
+  });
+
+  it("classifies unexpected feedback responses and prompts operator refresh", async () => {
+    const user = userEvent.setup();
+    mockFetchCompetitorSets.mockResolvedValue({
+      items: [
+        {
+          id: "set-feedback-4",
+          business_id: "biz-1",
+          site_id: "site-1",
+          name: "Unexpected Set",
+          city: "Denver",
+          state: "CO",
+          is_active: true,
+          created_by_principal_id: "principal-1",
+          created_at: "2026-03-20T00:00:00Z",
+          updated_at: "2026-03-20T00:00:00Z",
+        },
+      ],
+      total: 1,
+    });
+    mockFetchCompetitorDomains.mockResolvedValue({
+      items: [
+        {
+          id: "domain-feedback-4",
+          business_id: "biz-1",
+          site_id: "site-1",
+          competitor_set_id: "set-feedback-4",
+          domain: "unexpected-feedback.example",
+          base_url: "https://unexpected-feedback.example/",
+          display_name: "Unexpected Feedback",
+          source: "manual",
+          is_active: true,
+          notes: null,
+          created_at: "2026-03-20T00:00:00Z",
+          updated_at: "2026-03-20T00:00:00Z",
+        },
+      ],
+      total: 1,
+    });
+    mockUpsertCompetitorDomainFeedback.mockResolvedValueOnce({} as CompetitorDomainFeedback);
+
+    render(<CompetitorsPage />);
+
+    await user.click(await screen.findByRole("button", { name: "Mark useful" }));
+    expect(await screen.findByTestId("competitors-feedback-error")).toHaveTextContent(
+      "Feedback update returned an unexpected response. Refresh to confirm current state.",
+    );
+  });
+
+  it("validates manual seed domain and submits a manual seed with bounded success state", async () => {
+    const user = userEvent.setup();
+    mockFetchCompetitorSets.mockResolvedValue({ items: [], total: 0 });
+
+    render(<CompetitorsPage />);
+
+    await user.click(await screen.findByTestId("competitors-manual-seed-submit"));
+    expect(await screen.findByTestId("competitors-feedback-error")).toHaveTextContent(
+      "Manual seed domain is required.",
+    );
+    expect(mockCreateCompetitorDomainManualSeed).not.toHaveBeenCalled();
+
+    await user.type(screen.getByTestId("competitors-manual-seed-domain-input"), "ManualSeed.example");
+    await user.type(screen.getByTestId("competitors-manual-seed-display-name-input"), "Manual Seed");
+    await user.click(screen.getByTestId("competitors-manual-seed-submit"));
+
+    await waitFor(() => {
+      expect(mockCreateCompetitorDomainManualSeed).toHaveBeenCalledWith(
+        "token-1",
+        "biz-1",
+        "site-1",
+        {
+          domain: "manualseed.example",
+          display_name: "Manual Seed",
+          operator_note: null,
+        },
+      );
+    });
+    expect(await screen.findByTestId("competitors-feedback-success")).toHaveTextContent(
+      "Manual seed saved for seeded-competitor.example.",
+    );
+  });
+
+  it("surfaces bounded feedback errors without exposing raw payload details", async () => {
+    const user = userEvent.setup();
+    mockFetchCompetitorSets.mockResolvedValue({
+      items: [
+        {
+          id: "set-feedback-3",
+          business_id: "biz-1",
+          site_id: "site-1",
+          name: "Error Set",
+          city: "Denver",
+          state: "CO",
+          is_active: true,
+          created_by_principal_id: "principal-1",
+          created_at: "2026-03-20T00:00:00Z",
+          updated_at: "2026-03-20T00:00:00Z",
+        },
+      ],
+      total: 1,
+    });
+    mockFetchCompetitorDomains.mockResolvedValue({
+      items: [
+        {
+          id: "domain-feedback-3",
+          business_id: "biz-1",
+          site_id: "site-1",
+          competitor_set_id: "set-feedback-3",
+          domain: "error-feedback.example",
+          base_url: "https://error-feedback.example/",
+          display_name: "Error Feedback",
+          source: "manual",
+          is_active: true,
+          notes: null,
+          created_at: "2026-03-20T00:00:00Z",
+          updated_at: "2026-03-20T00:00:00Z",
+        },
+      ],
+      total: 1,
+    });
+    mockUpsertCompetitorDomainFeedback.mockRejectedValueOnce(
+      new ApiRequestError("raw provider payload", {
+        status: 422,
+        detail: { provider_payload: "should not render" },
+      }),
+    );
+
+    render(<CompetitorsPage />);
+
+    await user.click(await screen.findByRole("button", { name: "Mark not useful" }));
+    const feedbackError = await screen.findByTestId("competitors-feedback-error");
+    expect(feedbackError).toHaveTextContent("Feedback update was rejected. Check domain format and site relevance.");
+    expect(feedbackError).not.toHaveTextContent("provider_payload");
+    expect(feedbackError).not.toHaveTextContent("raw provider payload");
   });
 });

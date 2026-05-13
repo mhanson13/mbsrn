@@ -7,6 +7,7 @@ from app.models.seo_audit_run import SEOAuditRun
 from app.models.seo_competitor_comparison_finding import SEOCompetitorComparisonFinding
 from app.models.seo_competitor_comparison_run import SEOCompetitorComparisonRun
 from app.models.seo_competitor_domain import SEOCompetitorDomain
+from app.models.seo_competitor_domain_feedback import SEOCompetitorDomainFeedback
 from app.models.seo_competitor_set import SEOCompetitorSet
 from app.models.seo_competitor_snapshot_page import SEOCompetitorSnapshotPage
 from app.models.seo_competitor_snapshot_run import SEOCompetitorSnapshotRun
@@ -143,6 +144,50 @@ class SEOCompetitorRepository:
     def delete_domain(self, competitor_domain: SEOCompetitorDomain) -> None:
         self.session.delete(competitor_domain)
         self.session.flush()
+
+    def list_domain_feedback_for_business_site(
+        self,
+        business_id: str,
+        site_id: str,
+    ) -> list[SEOCompetitorDomainFeedback]:
+        stmt: Select[tuple[SEOCompetitorDomainFeedback]] = (
+            select(SEOCompetitorDomainFeedback)
+            .where(SEOCompetitorDomainFeedback.business_id == business_id)
+            .where(SEOCompetitorDomainFeedback.site_id == site_id)
+            .order_by(SEOCompetitorDomainFeedback.updated_at.desc(), SEOCompetitorDomainFeedback.id.desc())
+        )
+        return list(self.session.scalars(stmt))
+
+    def get_domain_feedback_for_business_site_domain(
+        self,
+        business_id: str,
+        site_id: str,
+        domain: str,
+    ) -> SEOCompetitorDomainFeedback | None:
+        stmt: Select[tuple[SEOCompetitorDomainFeedback]] = (
+            select(SEOCompetitorDomainFeedback)
+            .where(SEOCompetitorDomainFeedback.business_id == business_id)
+            .where(SEOCompetitorDomainFeedback.site_id == site_id)
+            .where(SEOCompetitorDomainFeedback.domain == domain)
+            .limit(1)
+        )
+        return self.session.scalar(stmt)
+
+    def create_domain_feedback(
+        self,
+        domain_feedback: SEOCompetitorDomainFeedback,
+    ) -> SEOCompetitorDomainFeedback:
+        self.session.add(domain_feedback)
+        self.session.flush()
+        return domain_feedback
+
+    def save_domain_feedback(
+        self,
+        domain_feedback: SEOCompetitorDomainFeedback,
+    ) -> SEOCompetitorDomainFeedback:
+        self.session.add(domain_feedback)
+        self.session.flush()
+        return domain_feedback
 
     def create_snapshot_run(self, snapshot_run: SEOCompetitorSnapshotRun) -> SEOCompetitorSnapshotRun:
         competitor_set = self.session.scalar(

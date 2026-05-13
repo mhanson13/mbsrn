@@ -281,6 +281,33 @@ Important semantics:
 - a technically completed run can still be `partial` or `blocked` from a quality perspective.
 - raw provider payloads are not returned in operator quality summaries.
 
+### Operator correction loop (site-scoped)
+Operators can now review and correct competitor-domain quality directly from the Competitors page without changing provider architecture.
+
+Feedback states (bounded):
+- `useful`
+- `not_useful`
+- `excluded`
+- `manually_seeded`
+
+Behavior:
+- feedback is scoped to `business_id + site_id + domain`
+- excluded domains are fed back into future generation context and deterministic exclusion paths for that same site
+- manually seeded domains are passed as preferred known-competitor context for future generation
+- useful/not-useful domains are passed as bounded positive/negative relevance context
+- historical generated drafts/runs are not deleted by feedback updates
+
+API contract (operator workflow):
+- `GET /api/businesses/{business_id}/seo/sites/{site_id}/competitor-domain-feedback`
+- `POST /api/businesses/{business_id}/seo/sites/{site_id}/competitor-domain-feedback`
+- `POST /api/businesses/{business_id}/seo/sites/{site_id}/competitor-domain-manual-seeds`
+
+Safety boundaries:
+- domain inputs use deterministic normalization/validation
+- self-domain submissions are rejected
+- raw provider payloads are not returned through feedback surfaces
+- frontend uses backend endpoints only; no direct provider calls from browser flows
+
 ### Provider output contract hardening
 Competitor prompts now explicitly request structured candidate fields for explainability:
 - `business_name`

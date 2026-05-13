@@ -81,8 +81,12 @@ from app.schemas.seo_competitor import (
     SEOCompetitorProfileRejectedCandidateRead,
     SEOCompetitorProfileTuningRejectedCandidateRead,
     SEOCompetitorDomainCreateRequest,
+    SEOCompetitorDomainFeedbackListResponse,
+    SEOCompetitorDomainFeedbackRead,
+    SEOCompetitorDomainFeedbackUpsertRequest,
     SEOCompetitorDomainListResponse,
     SEOCompetitorDomainRead,
+    SEOCompetitorManualSeedCreateRequest,
     SEOCompetitorSetCreateRequest,
     SEOCompetitorSetListResponse,
     SEOCompetitorSetRead,
@@ -6497,6 +6501,107 @@ def list_competitor_domains(
         items=[SEOCompetitorDomainRead.model_validate(item) for item in items],
         total=len(items),
     )
+
+
+@router.get(
+    "/sites/{site_id}/competitor-domain-feedback",
+    response_model=SEOCompetitorDomainFeedbackListResponse,
+)
+@router_v1.get(
+    "/sites/{site_id}/competitor-domain-feedback",
+    response_model=SEOCompetitorDomainFeedbackListResponse,
+)
+def list_competitor_domain_feedback(
+    business_id: str,
+    site_id: str,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    seo_competitor_service: SEOCompetitorService = Depends(get_seo_competitor_service),
+) -> SEOCompetitorDomainFeedbackListResponse:
+    scoped_business_id = resolve_tenant_business_id(
+        tenant_context=tenant_context,
+        requested_business_id=business_id,
+    )
+    try:
+        feedback_items = seo_competitor_service.list_domain_feedback(
+            business_id=scoped_business_id,
+            site_id=site_id,
+        )
+    except SEOCompetitorNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return SEOCompetitorDomainFeedbackListResponse(
+        items=[SEOCompetitorDomainFeedbackRead.model_validate(item) for item in feedback_items],
+        total=len(feedback_items),
+    )
+
+
+@router.post(
+    "/sites/{site_id}/competitor-domain-feedback",
+    response_model=SEOCompetitorDomainFeedbackRead,
+    status_code=status.HTTP_201_CREATED,
+)
+@router_v1.post(
+    "/sites/{site_id}/competitor-domain-feedback",
+    response_model=SEOCompetitorDomainFeedbackRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def upsert_competitor_domain_feedback(
+    business_id: str,
+    site_id: str,
+    payload: SEOCompetitorDomainFeedbackUpsertRequest,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    seo_competitor_service: SEOCompetitorService = Depends(get_seo_competitor_service),
+) -> SEOCompetitorDomainFeedbackRead:
+    scoped_business_id = resolve_tenant_business_id(
+        tenant_context=tenant_context,
+        requested_business_id=business_id,
+    )
+    try:
+        feedback = seo_competitor_service.upsert_domain_feedback(
+            business_id=scoped_business_id,
+            site_id=site_id,
+            payload=payload,
+            principal_id=tenant_context.principal_id,
+        )
+    except SEOCompetitorNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except SEOCompetitorValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
+    return SEOCompetitorDomainFeedbackRead.model_validate(feedback)
+
+
+@router.post(
+    "/sites/{site_id}/competitor-domain-manual-seeds",
+    response_model=SEOCompetitorDomainFeedbackRead,
+    status_code=status.HTTP_201_CREATED,
+)
+@router_v1.post(
+    "/sites/{site_id}/competitor-domain-manual-seeds",
+    response_model=SEOCompetitorDomainFeedbackRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def add_competitor_domain_manual_seed(
+    business_id: str,
+    site_id: str,
+    payload: SEOCompetitorManualSeedCreateRequest,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    seo_competitor_service: SEOCompetitorService = Depends(get_seo_competitor_service),
+) -> SEOCompetitorDomainFeedbackRead:
+    scoped_business_id = resolve_tenant_business_id(
+        tenant_context=tenant_context,
+        requested_business_id=business_id,
+    )
+    try:
+        feedback = seo_competitor_service.add_manual_seed_domain_feedback(
+            business_id=scoped_business_id,
+            site_id=site_id,
+            payload=payload,
+            principal_id=tenant_context.principal_id,
+        )
+    except SEOCompetitorNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except SEOCompetitorValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
+    return SEOCompetitorDomainFeedbackRead.model_validate(feedback)
 
 
 @router.post(

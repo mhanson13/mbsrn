@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 
@@ -21,7 +21,10 @@ import { WorkspaceTableShell } from "../../components/layout/WorkspaceTableShell
 import { useOperatorContext } from "../../components/useOperatorContext";
 import {
   ApiRequestError,
+  createCompetitorDomainManualSeed,
   createCompetitorProfileGenerationRun,
+  fetchCompetitorDomainFeedback,
+  upsertCompetitorDomainFeedback,
   fetchCompetitorProfileGenerationRunDetail,
   fetchCompetitorProfileGenerationRuns,
   fetchCompetitorDomains,
@@ -31,6 +34,9 @@ import {
   fetchSiteCompetitorComparisonRuns,
 } from "../../lib/api/client";
 import type {
+  CompetitorDomain,
+  CompetitorDomainFeedback,
+  CompetitorDomainFeedbackStatus,
   CompetitorGenerationQualityReason,
   CompetitorGenerationQualitySummary,
   CompetitorProfileGenerationSummaryResponse,
@@ -45,6 +51,10 @@ interface CompetitorSetRow extends CompetitorSet {
   source_summary: string;
   latest_domain_updated_at: string | null;
   latest_snapshot_status: string | null;
+}
+
+interface CompetitorDomainReviewRow extends CompetitorDomain {
+  competitor_set_name: string;
 }
 
 interface LatestSiteRun {
@@ -113,6 +123,57 @@ function safeGenerationErrorMessage(error: unknown): string {
     }
   }
   return "Unable to start competitor generation right now. Try again.";
+}
+
+function safeFeedbackErrorMessage(error: unknown): string {
+  if (error instanceof ApiRequestError) {
+    if (error.status === 401) {
+      return "Session expired. Sign in again.";
+    }
+    if (error.status === 403) {
+      return "You are not authorized to update competitor feedback.";
+    }
+    if (error.status === 404) {
+      return "Selected site was not found for competitor feedback.";
+    }
+    if (error.status === 422) {
+      return "Feedback update was rejected. Check domain format and site relevance.";
+    }
+  }
+  return "Unable to update competitor feedback right now. Try again.";
+}
+
+function normalizeDomainForFeedback(value: string | null | undefined): string {
+  return (value || "").trim().toLowerCase();
+}
+
+function formatFeedbackStatusLabel(status: CompetitorDomainFeedbackStatus | null): string {
+  if (status === "useful") {
+    return "Useful";
+  }
+  if (status === "not_useful") {
+    return "Not useful";
+  }
+  if (status === "excluded") {
+    return "Excluded";
+  }
+  if (status === "manually_seeded") {
+    return "Manual seed";
+  }
+  return "Not reviewed";
+}
+
+function feedbackBadgeClass(status: CompetitorDomainFeedbackStatus | null): string {
+  if (status === "useful") {
+    return "badge-success";
+  }
+  if (status === "excluded" || status === "not_useful") {
+    return "badge-warn";
+  }
+  if (status === "manually_seeded") {
+    return "badge-muted";
+  }
+  return "badge-muted";
 }
 
 function classifyGenerationStartResponse(
@@ -241,6 +302,15 @@ function CompetitorsPageContent() {
     null,
   );
   const [latestGenerationRunStatus, setLatestGenerationRunStatus] = useState<string | null>(null);
+  const [competitorDomains, setCompetitorDomains] = useState<CompetitorDomainReviewRow[]>([]);
+  const [domainFeedbackByDomain, setDomainFeedbackByDomain] = useState<Record<string, CompetitorDomainFeedback>>({});
+  const [feedbackInFlightDomain, setFeedbackInFlightDomain] = useState<string | null>(null);
+  const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
+  const [feedbackError, setFeedbackError] = useState<string | null>(null);
+  const [manualSeedDomain, setManualSeedDomain] = useState("");
+  const [manualSeedDisplayName, setManualSeedDisplayName] = useState("");
+  const [manualSeedNote, setManualSeedNote] = useState("");
+  const [manualSeedInFlight, setManualSeedInFlight] = useState(false);
   const [refreshNonce, setRefreshNonce] = useState(0);
 
   const totalDomainCount = useMemo(
@@ -255,9 +325,11 @@ function CompetitorsPageContent() {
     () => competitorSets.reduce((total, item) => total + item.active_domain_count, 0),
     [competitorSets],
   );
-  const selectedSite = useMemo(
-    () => sites.find((site) => site.id === selectedSiteId) || null,
-    [selectedSiteId, sites],
+  const manualSeedFeedbackItems = useMemo(
+    () => Object.values(domainFeedbackByDomain)
+      .filter((item) => item.feedback_status === "manually_seeded")
+      .sort((left, right) => right.updated_at.localeCompare(left.updated_at)),
+    [domainFeedbackByDomain],
   );
   const generationQueuedCount = generationSummary?.queued_count ?? 0;
   const generationRunningCount = generationSummary?.running_count ?? 0;
@@ -375,6 +447,8 @@ function CompetitorsPageContent() {
       setGenerationSummary(null);
       setGenerationQualitySummary(null);
       setLatestGenerationRunStatus(null);
+      setCompetitorDomains([]);
+      setDomainFeedbackByDomain({});
       return;
     }
     let cancelled = false;
@@ -429,6 +503,28 @@ function CompetitorsPageContent() {
           setLatestGenerationRunStatus(nextLatestGenerationRunStatus);
         }
 
+        let nextDomainFeedbackByDomain: Record<string, CompetitorDomainFeedback> = {};
+        try {
+          const feedbackResponse = await fetchCompetitorDomainFeedback(
+            token,
+            businessId,
+            activeSiteId,
+          );
+          nextDomainFeedbackByDomain = feedbackResponse.items.reduce<Record<string, CompetitorDomainFeedback>>(
+            (accumulator, item) => {
+              const domainKey = normalizeDomainForFeedback(item.domain);
+              if (!domainKey || accumulator[domainKey]) {
+                return accumulator;
+              }
+              accumulator[domainKey] = item;
+              return accumulator;
+            },
+            {},
+          );
+        } catch {
+          nextDomainFeedbackByDomain = {};
+        }
+
         const setResponse = await fetchCompetitorSets(token, businessId, activeSiteId);
         if (cancelled) {
           return;
@@ -437,6 +533,8 @@ function CompetitorsPageContent() {
         setCompetitorSetCount(setResponse.total);
         if (setResponse.items.length === 0) {
           setCompetitorSets([]);
+          setCompetitorDomains([]);
+          setDomainFeedbackByDomain(nextDomainFeedbackByDomain);
           return;
         }
 
@@ -489,12 +587,19 @@ function CompetitorsPageContent() {
                 latest_domain_updated_at: latestDomainUpdatedAt,
                 latest_snapshot_status: latestSnapshotCandidate ? latestSnapshotCandidate.status : null,
               },
+              domains: domainsResponse.items.map((domain) => ({
+                ...domain,
+                competitor_set_name: setItem.name,
+              })),
               latestSnapshotCandidate,
             };
           }),
         );
 
         const rows = setDetails.map((item) => item.row);
+        const domainRows = setDetails
+          .flatMap((item) => item.domains)
+          .sort((left, right) => left.domain.localeCompare(right.domain));
         let nextLatestSnapshotRun: LatestSiteRun | null = null;
         let nextLatestComparisonRun: LatestSiteRun | null = null;
         let nextReadinessWarning: string | null = null;
@@ -555,6 +660,8 @@ function CompetitorsPageContent() {
           setLatestComparisonRun(nextLatestComparisonRun);
           setReadinessWarning(nextReadinessWarning);
           setCompetitorSets(rows);
+          setCompetitorDomains(domainRows);
+          setDomainFeedbackByDomain(nextDomainFeedbackByDomain);
         }
       } catch (err) {
         if (!cancelled) {
@@ -595,6 +702,93 @@ function CompetitorsPageContent() {
       setGenerationInFlight(false);
     }
   }, [businessId, selectedSiteId, token]);
+
+  const handleDomainFeedbackUpdate = useCallback(async (
+    domain: string,
+    feedbackStatus: Exclude<CompetitorDomainFeedbackStatus, "manually_seeded">,
+    displayName?: string | null,
+  ) => {
+    if (!selectedSiteId) {
+      return;
+    }
+    const normalizedDomain = normalizeDomainForFeedback(domain);
+    if (!normalizedDomain) {
+      setFeedbackError("Domain is required to save competitor feedback.");
+      return;
+    }
+    setFeedbackInFlightDomain(normalizedDomain);
+    setFeedbackError(null);
+    setFeedbackMessage(null);
+    try {
+      const response = await upsertCompetitorDomainFeedback(
+        token,
+        businessId,
+        selectedSiteId,
+        {
+          domain: normalizedDomain,
+          feedback_status: feedbackStatus,
+          display_name: displayName ?? null,
+        },
+      );
+      const responseDomain = normalizeDomainForFeedback((response as { domain?: string }).domain);
+      const responseStatus = (response as { feedback_status?: CompetitorDomainFeedbackStatus }).feedback_status;
+      if (!responseDomain || !responseStatus) {
+        setFeedbackError("Feedback update returned an unexpected response. Refresh to confirm current state.");
+        setRefreshNonce((current) => current + 1);
+        return;
+      }
+      setFeedbackMessage(
+        `Saved feedback for ${responseDomain}: ${formatFeedbackStatusLabel(responseStatus)}.`,
+      );
+      setRefreshNonce((current) => current + 1);
+    } catch (error) {
+      setFeedbackError(safeFeedbackErrorMessage(error));
+    } finally {
+      setFeedbackInFlightDomain(null);
+    }
+  }, [businessId, selectedSiteId, token]);
+
+  const handleManualSeedSubmit = useCallback(async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!selectedSiteId) {
+      return;
+    }
+    const normalizedDomain = normalizeDomainForFeedback(manualSeedDomain);
+    if (!normalizedDomain) {
+      setFeedbackError("Manual seed domain is required.");
+      return;
+    }
+    setManualSeedInFlight(true);
+    setFeedbackError(null);
+    setFeedbackMessage(null);
+    try {
+      const response = await createCompetitorDomainManualSeed(
+        token,
+        businessId,
+        selectedSiteId,
+        {
+          domain: normalizedDomain,
+          display_name: manualSeedDisplayName.trim() || null,
+          operator_note: manualSeedNote.trim() || null,
+        },
+      );
+      const responseDomain = normalizeDomainForFeedback((response as { domain?: string }).domain);
+      if (!responseDomain) {
+        setFeedbackError("Manual seed request returned an unexpected response. Refresh to confirm current state.");
+        setRefreshNonce((current) => current + 1);
+        return;
+      }
+      setFeedbackMessage(`Manual seed saved for ${responseDomain}.`);
+      setManualSeedDomain("");
+      setManualSeedDisplayName("");
+      setManualSeedNote("");
+      setRefreshNonce((current) => current + 1);
+    } catch (error) {
+      setFeedbackError(safeFeedbackErrorMessage(error));
+    } finally {
+      setManualSeedInFlight(false);
+    }
+  }, [businessId, manualSeedDisplayName, manualSeedDomain, manualSeedNote, selectedSiteId, token]);
 
   if (contextLoading) {
     return (
@@ -880,6 +1074,162 @@ function CompetitorsPageContent() {
                 })}
               </div>
             ) : null}
+          </div>
+
+          <div className="panel stack section-card-variant-support" data-testid="competitor-feedback-panel">
+            <h3 className="heading-reset">Operator review and corrections</h3>
+            <p className="hint muted">
+              Mark accepted competitor domains as useful or not useful, exclude bad domains from future generation,
+              and seed known competitors for this site.
+            </p>
+            <form
+              className="competitor-feedback-form-grid"
+              onSubmit={(event) => {
+                void handleManualSeedSubmit(event);
+              }}
+              data-testid="competitors-manual-seed-form"
+            >
+              <label>
+                <span>Manual seed domain</span>
+                <input
+                  type="text"
+                  value={manualSeedDomain}
+                  onChange={(event) => setManualSeedDomain(event.target.value)}
+                  placeholder="competitor.example"
+                  data-testid="competitors-manual-seed-domain-input"
+                />
+              </label>
+              <label>
+                <span>Display name (optional)</span>
+                <input
+                  type="text"
+                  value={manualSeedDisplayName}
+                  onChange={(event) => setManualSeedDisplayName(event.target.value)}
+                  placeholder="Known competitor name"
+                  data-testid="competitors-manual-seed-display-name-input"
+                />
+              </label>
+              <label>
+                <span>Note (optional)</span>
+                <input
+                  type="text"
+                  value={manualSeedNote}
+                  onChange={(event) => setManualSeedNote(event.target.value)}
+                  placeholder="Context for future generation"
+                  data-testid="competitors-manual-seed-note-input"
+                />
+              </label>
+              <div className="form-actions">
+                <button
+                  type="submit"
+                  className="button button-tertiary"
+                  disabled={manualSeedInFlight || !selectedSiteId}
+                  data-testid="competitors-manual-seed-submit"
+                >
+                  {manualSeedInFlight ? "Saving seed..." : "Add manual seed"}
+                </button>
+              </div>
+            </form>
+
+            {manualSeedFeedbackItems.length > 0 ? (
+              <p className="hint muted" data-testid="competitors-manual-seed-list">
+                Manual seeds:{" "}
+                {manualSeedFeedbackItems.map((item) => item.domain).join(", ")}
+              </p>
+            ) : null}
+
+            {(feedbackMessage || feedbackError) ? (
+              <WorkspaceMessageStack>
+                {feedbackMessage ? (
+                  <p className="hint" data-testid="competitors-feedback-success">{feedbackMessage}</p>
+                ) : null}
+                {feedbackError ? (
+                  <p className="hint error" data-testid="competitors-feedback-error">{feedbackError}</p>
+                ) : null}
+              </WorkspaceMessageStack>
+            ) : null}
+
+            <WorkspaceTableShell data-testid="competitors-domain-feedback-table-shell">
+              <table className="table table-dense">
+                <thead>
+                  <tr>
+                    <th>Domain</th>
+                    <th>Set</th>
+                    <th>Current feedback</th>
+                    <th>Updated</th>
+                    <th>Review actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {competitorDomains.map((domainItem) => {
+                    const domainKey = normalizeDomainForFeedback(domainItem.domain);
+                    const feedbackItem = domainFeedbackByDomain[domainKey] || null;
+                    const feedbackStatus = feedbackItem?.feedback_status ?? null;
+                    const actionDisabled = feedbackInFlightDomain === domainKey || manualSeedInFlight || !selectedSiteId;
+                    return (
+                      <tr key={domainItem.id} data-testid={`competitor-domain-feedback-row-${domainItem.id}`}>
+                        <td>
+                          <strong>{domainItem.domain}</strong>
+                          {domainItem.display_name ? <><br /><span className="hint muted">{domainItem.display_name}</span></> : null}
+                        </td>
+                        <td>{domainItem.competitor_set_name}</td>
+                        <td>
+                          <span className={`badge ${feedbackBadgeClass(feedbackStatus)}`}>
+                            {formatFeedbackStatusLabel(feedbackStatus)}
+                          </span>
+                        </td>
+                        <td>{formatDateTime(feedbackItem?.updated_at || domainItem.updated_at)}</td>
+                        <td>
+                          <div
+                            className="form-actions competitor-feedback-action-group"
+                            data-testid={`competitor-domain-feedback-actions-${domainItem.id}`}
+                          >
+                            <button
+                              type="button"
+                              className="button button-tertiary button-inline"
+                              disabled={actionDisabled}
+                              onClick={() => {
+                                void handleDomainFeedbackUpdate(domainItem.domain, "useful", domainItem.display_name);
+                              }}
+                            >
+                              Mark useful
+                            </button>
+                            <button
+                              type="button"
+                              className="button button-tertiary button-inline"
+                              disabled={actionDisabled}
+                              onClick={() => {
+                                void handleDomainFeedbackUpdate(domainItem.domain, "not_useful", domainItem.display_name);
+                              }}
+                            >
+                              Mark not useful
+                            </button>
+                            <button
+                              type="button"
+                              className="button button-tertiary button-inline"
+                              disabled={actionDisabled}
+                              onClick={() => {
+                                void handleDomainFeedbackUpdate(domainItem.domain, "excluded", domainItem.display_name);
+                              }}
+                            >
+                              Exclude
+                            </button>
+                          </div>
+                          {feedbackInFlightDomain === domainKey ? (
+                            <span className="hint muted">Updating feedback...</span>
+                          ) : null}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {!loadingCompetitors && competitorDomains.length === 0 ? (
+                    <tr>
+                      <td colSpan={5}>No competitor domains are available yet for review.</td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </WorkspaceTableShell>
           </div>
 
           {loadingCompetitors || competitorsError ? (

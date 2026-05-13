@@ -1332,6 +1332,40 @@ export interface CompetitorDomainListResponse {
   total: number;
 }
 
+export type CompetitorDomainFeedbackStatus = "useful" | "not_useful" | "excluded" | "manually_seeded";
+
+export interface CompetitorDomainFeedback {
+  id: string;
+  business_id: string;
+  site_id: string;
+  domain: string;
+  feedback_status: CompetitorDomainFeedbackStatus;
+  display_name: string | null;
+  operator_note: string | null;
+  created_by_principal_id: string | null;
+  updated_by_principal_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CompetitorDomainFeedbackListResponse {
+  items: CompetitorDomainFeedback[];
+  total: number;
+}
+
+export interface CompetitorDomainFeedbackUpsertRequest {
+  domain: string;
+  feedback_status: CompetitorDomainFeedbackStatus;
+  display_name?: string | null;
+  operator_note?: string | null;
+}
+
+export interface CompetitorDomainManualSeedCreateRequest {
+  domain: string;
+  display_name?: string | null;
+  operator_note?: string | null;
+}
+
 export interface CompetitorProfileGenerationRun {
   id: string;
   business_id: string;

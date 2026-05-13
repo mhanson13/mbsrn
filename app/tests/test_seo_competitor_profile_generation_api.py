@@ -238,6 +238,47 @@ class _ExcludedDomainHintCompetitorProfileProvider:
         )
 
 
+class _FeedbackExcludedDomainCompetitorProfileProvider:
+    provider_name = "feedback-excluded-provider"
+    model_name = "feedback-excluded-model"
+    prompt_version = "seo-competitor-profile-v1"
+
+    def generate_competitor_profiles(
+        self,
+        *,
+        site,  # noqa: ANN001
+        existing_domains,  # noqa: ANN001
+        candidate_count: int,
+    ) -> SEOCompetitorProfileGenerationOutput:
+        del site, existing_domains, candidate_count
+        return SEOCompetitorProfileGenerationOutput(
+            candidates=[
+                SEOCompetitorProfileDraftCandidateOutput(
+                    suggested_name="Excluded By Operator",
+                    suggested_domain="blocked-by-operator.example",
+                    competitor_type="direct",
+                    summary="Should be filtered by operator exclusion context.",
+                    why_competitor="Would otherwise be included.",
+                    evidence="Operator marked this domain excluded.",
+                    confidence_score=0.9,
+                ),
+                SEOCompetitorProfileDraftCandidateOutput(
+                    suggested_name="Valid Replacement Competitor",
+                    suggested_domain="replacement-competitor.example",
+                    competitor_type="direct",
+                    summary="Valid competitor retained after exclusion filtering.",
+                    why_competitor="Local service overlap.",
+                    evidence="Domain and service overlap.",
+                    confidence_score=0.82,
+                ),
+            ],
+            provider_name=self.provider_name,
+            model_name=self.model_name,
+            prompt_version=self.prompt_version,
+            raw_response='{"candidates":[{"domain":"blocked-by-operator.example"},{"domain":"replacement-competitor.example"}]}',
+        )
+
+
 class _ManyInvalidCompetitorProfileProvider:
     provider_name = "many-invalid-provider"
     model_name = "many-invalid-model"
@@ -4296,6 +4337,48 @@ def test_generation_pipeline_summary_tracks_final_limit_stage(db_session, seeded
         "relaxed_filtering_applied": False,
     }
     assert payload["candidate_pipeline_summary"]["final_candidate_count"] == len(payload["drafts"])
+
+
+def test_generation_excludes_domains_marked_excluded_by_operator_feedback(db_session, seeded_business) -> None:
+    deferred_executor = _DeferredRunExecutor()
+    provider = _FeedbackExcludedDomainCompetitorProfileProvider()
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        generation_provider=provider,
+        run_executor=deferred_executor,
+    )
+    site_id = _create_site(client, seeded_business.id, domain="operator-site.example")
+
+    create_feedback = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-domain-feedback",
+        json={
+            "domain": "blocked-by-operator.example",
+            "feedback_status": "excluded",
+            "operator_note": "Do not include this domain in future sets.",
+        },
+    )
+    assert create_feedback.status_code == 201
+
+    run_id = _create_generation_run(client, seeded_business.id, site_id, candidate_count=2)["run"]["id"]
+    _execute_generation_run(
+        db_session=db_session,
+        business_id=seeded_business.id,
+        site_id=site_id,
+        run_id=run_id,
+        provider=provider,
+    )
+
+    detail = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-profile-generation-runs/{run_id}"
+    )
+    assert detail.status_code == 200
+    payload = detail.json()
+    assert payload["run"]["status"] == "completed"
+    assert payload["run"]["exclusion_counts_by_reason"]["existing_domain_match"] >= 1
+    draft_domains = [item["suggested_domain"] for item in payload["drafts"]]
+    assert "blocked-by-operator.example" not in draft_domains
+    assert "replacement-competitor.example" in draft_domains
 
 
 def test_generation_applies_eligibility_filter_before_admin_tuning(db_session, seeded_business) -> None:

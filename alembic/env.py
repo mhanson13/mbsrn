@@ -42,6 +42,7 @@ from app.models import (
     seo_competitor_comparison_run,
     seo_competitor_comparison_summary,
     seo_competitor_domain,
+    seo_competitor_domain_feedback,
     seo_competitor_profile_draft,
     seo_competitor_profile_generation_run,
     seo_competitor_tuning_preview_event,

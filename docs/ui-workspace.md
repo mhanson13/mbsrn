@@ -69,6 +69,11 @@ Workflow ownership boundaries:
 - Competitors page owns competitor generation/review workflow, including the primary site-scoped `Generate competitor set` / `Refresh competitor set` action, run tables, and candidate/debug inspection.
   - action lifecycle is operator-visible: pending state while request is in flight, bounded success/failure feedback, and automatic inventory/readiness refetch after run creation
   - successful action indicates run creation/queueing; completed competitor results can arrive later when backend run processing finishes
+  - operator correction loop is site-scoped and summary-first:
+    - mark competitor domains as `Useful`, `Not useful`, or `Excluded`
+    - add `Manual seed` competitor domains for future generation context
+    - correction updates use bounded backend endpoints and refresh page inventory/readiness after mutation
+    - excluded/manual-seeded/useful/not-useful domain context is used for future generation guidance without direct frontend provider calls
   - latest generation run quality is shown with bounded trust status:
     - `Ready`
     - `Partial`

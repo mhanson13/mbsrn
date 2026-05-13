@@ -54,6 +54,7 @@ SEOCompetitorDraftProvenanceClassification = Literal["places_ai_enriched", "ai_o
 SEOCompetitorDraftConfidenceLevel = Literal["high", "medium", "low"]
 SEOCompetitorDraftSourceType = Literal["search", "places", "fallback", "synthetic"]
 SEOCompetitorDomainVerificationStatus = Literal["verified", "unverified"]
+SEOCompetitorDomainFeedbackStatus = Literal["useful", "not_useful", "excluded", "manually_seeded"]
 SEOAIResponseContractStatus = Literal["accepted", "accepted_with_warnings", "salvaged", "rejected"]
 SEOCompetitorProfileQualityStatus = Literal["ready", "partial", "blocked"]
 SEOCompetitorProfileQualityReason = Literal[
@@ -313,6 +314,58 @@ class SEOCompetitorDomainRead(BaseModel):
 
 class SEOCompetitorDomainListResponse(BaseModel):
     items: list[SEOCompetitorDomainRead]
+    total: int
+
+
+class SEOCompetitorDomainFeedbackUpsertRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    domain: str = Field(min_length=1, max_length=255)
+    feedback_status: SEOCompetitorDomainFeedbackStatus
+    display_name: str | None = Field(default=None, max_length=255)
+    operator_note: str | None = Field(default=None, max_length=500)
+
+    @field_validator("domain", "display_name", "operator_note", mode="before")
+    @classmethod
+    def normalize_optional_strings(cls, value: Any) -> str | None:
+        if value is None:
+            return None
+        return _strip_or_none(str(value))
+
+
+class SEOCompetitorManualSeedCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    domain: str = Field(min_length=1, max_length=255)
+    display_name: str | None = Field(default=None, max_length=255)
+    operator_note: str | None = Field(default=None, max_length=500)
+
+    @field_validator("domain", "display_name", "operator_note", mode="before")
+    @classmethod
+    def normalize_optional_strings(cls, value: Any) -> str | None:
+        if value is None:
+            return None
+        return _strip_or_none(str(value))
+
+
+class SEOCompetitorDomainFeedbackRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    business_id: str
+    site_id: str
+    domain: str
+    feedback_status: SEOCompetitorDomainFeedbackStatus
+    display_name: str | None
+    operator_note: str | None
+    created_by_principal_id: str | None
+    updated_by_principal_id: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class SEOCompetitorDomainFeedbackListResponse(BaseModel):
+    items: list[SEOCompetitorDomainFeedbackRead]
     total: int
 
 

@@ -63,7 +63,11 @@ import type {
   SearchConsoleSiteSummaryResponse,
   SiteAnalyticsSummaryResponse,
   CompetitorComparisonReport,
+  CompetitorDomainFeedback,
+  CompetitorDomainFeedbackListResponse,
+  CompetitorDomainFeedbackUpsertRequest,
   CompetitorDomainListResponse,
+  CompetitorDomainManualSeedCreateRequest,
   CompetitorComparisonRunListResponse,
   CompetitorSnapshotPageListResponse,
   CompetitorSet,
@@ -1005,6 +1009,49 @@ export async function fetchCompetitorDomains(
   return apiRequest<CompetitorDomainListResponse>(
     `/api/businesses/${businessId}/seo/competitor-sets/${competitorSetId}/domains`,
     { token },
+  );
+}
+
+export async function fetchCompetitorDomainFeedback(
+  token: string,
+  businessId: string,
+  siteId: string,
+): Promise<CompetitorDomainFeedbackListResponse> {
+  return apiRequest<CompetitorDomainFeedbackListResponse>(
+    `/api/businesses/${businessId}/seo/sites/${siteId}/competitor-domain-feedback`,
+    { token },
+  );
+}
+
+export async function upsertCompetitorDomainFeedback(
+  token: string,
+  businessId: string,
+  siteId: string,
+  payload: CompetitorDomainFeedbackUpsertRequest,
+): Promise<CompetitorDomainFeedback> {
+  return apiRequest<CompetitorDomainFeedback>(
+    `/api/businesses/${businessId}/seo/sites/${siteId}/competitor-domain-feedback`,
+    {
+      method: "POST",
+      token,
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function createCompetitorDomainManualSeed(
+  token: string,
+  businessId: string,
+  siteId: string,
+  payload: CompetitorDomainManualSeedCreateRequest,
+): Promise<CompetitorDomainFeedback> {
+  return apiRequest<CompetitorDomainFeedback>(
+    `/api/businesses/${businessId}/seo/sites/${siteId}/competitor-domain-manual-seeds`,
+    {
+      method: "POST",
+      token,
+      body: JSON.stringify(payload),
+    },
   );
 }
 

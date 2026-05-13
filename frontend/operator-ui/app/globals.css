@@ -2389,6 +2389,22 @@ code {
   min-height: 1.9rem;
 }
 
+.competitor-feedback-form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 0.5rem;
+  align-items: end;
+}
+
+.competitor-feedback-form-grid label {
+  display: grid;
+  gap: 0.24rem;
+}
+
+.competitor-feedback-action-group {
+  gap: 0.3rem;
+}
+
 @media (max-width: 1160px) {
   .recommendation-actions-cell {
     min-width: 12rem;

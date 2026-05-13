@@ -148,6 +148,7 @@ _TIMEOUT_RECOVERY_PATHS = {"retry_success", "fallback_success", "degraded_succes
 _TIMEOUT_FINAL_OUTCOMES = {"success", "degraded_success", "failure"}
 # TODO: formalize provider abstraction with explicit tool/no-tool interfaces.
 _SITE_CONTENT_SIGNALS_ATTR = "_seo_site_content_signals"
+_OPERATOR_FEEDBACK_CONTEXT_ATTR = "_seo_competitor_operator_feedback_context"
 _MAX_SITE_CONTENT_SIGNAL_PAGES = 40
 _MAX_SITE_CONTENT_SIGNALS = 120
 _MAX_SITE_CONTENT_SIGNAL_LENGTH = 200
@@ -209,6 +210,10 @@ _OUTCOME_STATUS_NORMAL = "normal"
 _OUTCOME_STATUS_RECOVERED = "recovered"
 _OUTCOME_STATUS_DEGRADED = "degraded"
 _OUTCOME_STATUS_FAILED = "failed"
+_COMPETITOR_FEEDBACK_STATUS_USEFUL = "useful"
+_COMPETITOR_FEEDBACK_STATUS_NOT_USEFUL = "not_useful"
+_COMPETITOR_FEEDBACK_STATUS_EXCLUDED = "excluded"
+_COMPETITOR_FEEDBACK_STATUS_MANUALLY_SEEDED = "manually_seeded"
 
 INELIGIBILITY_REASON_MISSING_DOMAIN = "missing_domain"
 INELIGIBILITY_REASON_MALFORMED_URL = "malformed_url"
@@ -452,6 +457,14 @@ class SEOCompetitorProfileGenerationObservabilitySummary:
     latest_run_completed_at: datetime | None
     latest_completed_run_completed_at: datetime | None
     latest_failed_run_completed_at: datetime | None
+
+
+@dataclass(frozen=True)
+class SEOCompetitorOperatorFeedbackContext:
+    useful_domains: list[str] = field(default_factory=list)
+    not_useful_domains: list[str] = field(default_factory=list)
+    excluded_domains: list[str] = field(default_factory=list)
+    manually_seeded_domains: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -719,11 +732,23 @@ class SEOCompetitorProfileGenerationService:
                     site_id,
                 )
             ]
+            operator_feedback_context = self._load_operator_feedback_context(
+                business_id=business_id,
+                site_id=site_id,
+            )
+            self._attach_operator_feedback_context(
+                site=site,
+                operator_feedback_context=operator_feedback_context,
+            )
+            generation_existing_domains = self._merge_generation_existing_domains(
+                existing_domains=existing_domains,
+                excluded_feedback_domains=operator_feedback_context.excluded_domains,
+            )
             self._attach_site_content_signals(site=site, business_id=business_id, site_id=site_id)
             resolved_prompt = self._apply_resolved_competitor_prompt_settings(business)
             google_places_seed_candidates = self._discover_google_places_seed_candidates(
                 site=site,
-                existing_domains=existing_domains,
+                existing_domains=generation_existing_domains,
                 requested_candidate_count=run.requested_candidate_count,
                 prompt_text_competitor=resolved_prompt.prompt_text,
                 run_id=run.id,
@@ -731,7 +756,7 @@ class SEOCompetitorProfileGenerationService:
             output = self._generate_competitor_profiles_with_timeout_retry(
                 business=business,
                 site=site,
-                existing_domains=existing_domains,
+                existing_domains=generation_existing_domains,
                 run_id=run.id,
                 requested_candidate_count=run.requested_candidate_count,
                 provider_attempts=provider_attempts,
@@ -745,7 +770,7 @@ class SEOCompetitorProfileGenerationService:
 
             draft_result = self._build_drafts(
                 site=site,
-                existing_domains=existing_domains,
+                existing_domains=generation_existing_domains,
                 run=run,
                 raw_candidates=output.candidates,
                 used_google_places_seeds=bool(google_places_seed_candidates),
@@ -754,7 +779,7 @@ class SEOCompetitorProfileGenerationService:
                 synthetic_fallback_result = self._build_synthetic_fallback_draft_result(
                     site=site,
                     run=run,
-                    existing_domains=existing_domains,
+                    existing_domains=generation_existing_domains,
                     fallback_reason=_SYNTHETIC_FALLBACK_REASON_ZERO_USABLE_CANDIDATES,
                     baseline_result=draft_result,
                 )
@@ -1415,16 +1440,28 @@ class SEOCompetitorProfileGenerationService:
         bounded_candidate_count = max(1, int(candidate_count))
         resolved_prompt_version = self._clean_optional(prompt_version) or self._default_prompt_version()
         resolved_prompt = self._resolve_competitor_prompt_settings(business)
+        operator_feedback_context = self._load_operator_feedback_context(
+            business_id=business_id,
+            site_id=site_id,
+        )
+        self._attach_operator_feedback_context(
+            site=site,
+            operator_feedback_context=operator_feedback_context,
+        )
         self._attach_site_content_signals(site=site, business_id=business_id, site_id=site_id)
+        existing_domains = [
+            item.domain
+            for item in self.seo_competitor_repository.list_domains_for_business_site(
+                business_id,
+                site_id,
+            )
+        ]
         prompt = build_seo_competitor_profile_prompt(
             site=site,
-            existing_domains=[
-                item.domain
-                for item in self.seo_competitor_repository.list_domains_for_business_site(
-                    business_id,
-                    site_id,
-                )
-            ],
+            existing_domains=self._merge_generation_existing_domains(
+                existing_domains=existing_domains,
+                excluded_feedback_domains=operator_feedback_context.excluded_domains,
+            ),
             candidate_count=bounded_candidate_count,
             prompt_version=resolved_prompt_version,
             prompt_text_competitor=resolved_prompt.prompt_text,
@@ -1442,6 +1479,86 @@ class SEOCompetitorProfileGenerationService:
             trusted_site_context=prompt.trusted_site_context,
             prompt_metrics=prompt.prompt_telemetry,
         )
+
+    def _load_operator_feedback_context(
+        self,
+        *,
+        business_id: str,
+        site_id: str,
+    ) -> SEOCompetitorOperatorFeedbackContext:
+        feedback_items = self.seo_competitor_repository.list_domain_feedback_for_business_site(
+            business_id=business_id,
+            site_id=site_id,
+        )
+        useful_domains: list[str] = []
+        not_useful_domains: list[str] = []
+        excluded_domains: list[str] = []
+        manually_seeded_domains: list[str] = []
+        seen_domains: set[tuple[str, str]] = set()
+
+        for item in feedback_items:
+            normalized_domain = self._normalize_optional_domain_value(getattr(item, "domain", None))
+            if normalized_domain is None:
+                continue
+            status = self._clean_optional(getattr(item, "feedback_status", None))
+            if status is None:
+                continue
+            status_key = status.lower()
+            dedupe_key = (status_key, normalized_domain)
+            if dedupe_key in seen_domains:
+                continue
+            seen_domains.add(dedupe_key)
+
+            if status_key == _COMPETITOR_FEEDBACK_STATUS_USEFUL:
+                useful_domains.append(normalized_domain)
+            elif status_key == _COMPETITOR_FEEDBACK_STATUS_NOT_USEFUL:
+                not_useful_domains.append(normalized_domain)
+            elif status_key == _COMPETITOR_FEEDBACK_STATUS_EXCLUDED:
+                excluded_domains.append(normalized_domain)
+            elif status_key == _COMPETITOR_FEEDBACK_STATUS_MANUALLY_SEEDED:
+                manually_seeded_domains.append(normalized_domain)
+
+        return SEOCompetitorOperatorFeedbackContext(
+            useful_domains=sorted(useful_domains),
+            not_useful_domains=sorted(not_useful_domains),
+            excluded_domains=sorted(excluded_domains),
+            manually_seeded_domains=sorted(manually_seeded_domains),
+        )
+
+    def _attach_operator_feedback_context(
+        self,
+        *,
+        site: SEOSite,
+        operator_feedback_context: SEOCompetitorOperatorFeedbackContext,
+    ) -> None:
+        setattr(
+            site,
+            _OPERATOR_FEEDBACK_CONTEXT_ATTR,
+            {
+                "useful_domains": list(operator_feedback_context.useful_domains),
+                "not_useful_domains": list(operator_feedback_context.not_useful_domains),
+                "excluded_domains": list(operator_feedback_context.excluded_domains),
+                "manual_seed_domains": list(operator_feedback_context.manually_seeded_domains),
+            },
+        )
+
+    def _merge_generation_existing_domains(
+        self,
+        *,
+        existing_domains: list[str],
+        excluded_feedback_domains: list[str],
+    ) -> list[str]:
+        merged: list[str] = []
+        seen: set[str] = set()
+        for raw_domain in [*(existing_domains or []), *(excluded_feedback_domains or [])]:
+            normalized_domain = self._normalize_optional_domain_value(raw_domain)
+            if normalized_domain is None:
+                continue
+            if normalized_domain in seen:
+                continue
+            seen.add(normalized_domain)
+            merged.append(normalized_domain)
+        return merged
 
     def _extract_prompt_version_from_user_prompt(self, user_prompt: str) -> str | None:
         if not user_prompt:
@@ -2844,10 +2961,21 @@ class SEOCompetitorProfileGenerationService:
                 site.id,
             )
         ]
+        operator_feedback_context = self._load_operator_feedback_context(
+            business_id=business_id,
+            site_id=site.id,
+        )
+        self._attach_operator_feedback_context(
+            site=site,
+            operator_feedback_context=operator_feedback_context,
+        )
         draft_result = self._build_synthetic_fallback_draft_result(
             site=site,
             run=run,
-            existing_domains=existing_domains,
+            existing_domains=self._merge_generation_existing_domains(
+                existing_domains=existing_domains,
+                excluded_feedback_domains=operator_feedback_context.excluded_domains,
+            ),
             fallback_reason=fallback_reason,
         )
         if draft_result is None:

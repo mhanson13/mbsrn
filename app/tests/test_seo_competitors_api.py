@@ -241,6 +241,102 @@ def test_snapshot_run_requires_active_verified_competitor_domains(db_session, se
     assert "active verified competitor domains" in create_snapshot_without_verified.json()["detail"]
 
 
+def test_competitor_domain_feedback_upsert_and_manual_seed_flow(db_session, seeded_business) -> None:
+    client = _make_client(db_session, business_id=seeded_business.id)
+
+    create_site = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites",
+        json={"display_name": "Main", "base_url": "https://example.com/"},
+    )
+    assert create_site.status_code == 201
+    site_id = create_site.json()["id"]
+
+    create_feedback = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-domain-feedback",
+        json={
+            "domain": "UsefulCompetitor.com",
+            "feedback_status": "useful",
+            "display_name": "Useful Competitor",
+            "operator_note": "Strong overlap",
+        },
+    )
+    assert create_feedback.status_code == 201
+    created_payload = create_feedback.json()
+    assert created_payload["domain"] == "usefulcompetitor.com"
+    assert created_payload["feedback_status"] == "useful"
+    created_feedback_id = created_payload["id"]
+
+    update_feedback = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-domain-feedback",
+        json={
+            "domain": "usefulcompetitor.com",
+            "feedback_status": "excluded",
+            "operator_note": "Exclude from future runs",
+        },
+    )
+    assert update_feedback.status_code == 201
+    updated_payload = update_feedback.json()
+    assert updated_payload["id"] == created_feedback_id
+    assert updated_payload["feedback_status"] == "excluded"
+
+    create_manual_seed = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-domain-manual-seeds",
+        json={
+            "domain": "SeedCompetitor.com",
+            "display_name": "Seed Competitor",
+        },
+    )
+    assert create_manual_seed.status_code == 201
+    manual_seed_payload = create_manual_seed.json()
+    assert manual_seed_payload["domain"] == "seedcompetitor.com"
+    assert manual_seed_payload["feedback_status"] == "manually_seeded"
+
+    list_feedback = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-domain-feedback"
+    )
+    assert list_feedback.status_code == 200
+    list_payload = list_feedback.json()
+    assert list_payload["total"] == 2
+    statuses = {item["feedback_status"] for item in list_payload["items"]}
+    assert statuses == {"excluded", "manually_seeded"}
+
+
+def test_competitor_domain_feedback_validates_domain_and_scope(db_session, seeded_business) -> None:
+    other_business = _seed_other_business(db_session)
+    client = _make_client(db_session, business_id=seeded_business.id)
+
+    create_site = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites",
+        json={"display_name": "Main", "base_url": "https://example.com/"},
+    )
+    assert create_site.status_code == 201
+    site_id = create_site.json()["id"]
+
+    self_domain_feedback = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-domain-feedback",
+        json={
+            "domain": "example.com",
+            "feedback_status": "excluded",
+        },
+    )
+    assert self_domain_feedback.status_code == 422
+    assert "current site domain" in self_domain_feedback.json()["detail"]
+
+    malformed_domain_feedback = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-domain-feedback",
+        json={
+            "domain": "invalid-domain",
+            "feedback_status": "useful",
+        },
+    )
+    assert malformed_domain_feedback.status_code == 422
+
+    cross_tenant_feedback = client.get(
+        f"/api/businesses/{other_business.id}/seo/sites/{site_id}/competitor-domain-feedback"
+    )
+    assert cross_tenant_feedback.status_code == 404
+
+
 def test_competitor_routes_enforce_business_scoping(db_session, seeded_business) -> None:
     other_business = _seed_other_business(db_session)
     client = _make_client(db_session, business_id=seeded_business.id)
