@@ -3612,6 +3612,73 @@ def test_non_timeout_provider_failure_does_not_retry(db_session, seeded_business
     assert provider.provider_call_types == ["non_tool", "tool_enabled"]
 
 
+def test_generation_emits_terminal_update_event_for_completed_run(db_session, seeded_business, caplog) -> None:
+    deferred_executor = _DeferredRunExecutor()
+    provider = _DeterministicCompetitorProfileProvider()
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        generation_provider=provider,
+        run_executor=deferred_executor,
+    )
+    site_id = _create_site(client, seeded_business.id)
+    run_id = _create_generation_run(client, seeded_business.id, site_id, candidate_count=1)["run"]["id"]
+
+    with caplog.at_level(logging.INFO):
+        _execute_generation_run(
+            db_session=db_session,
+            business_id=seeded_business.id,
+            site_id=site_id,
+            run_id=run_id,
+            provider=provider,
+        )
+
+    events = _structured_event_records(caplog)
+    terminal_events = [
+        item
+        for item in events
+        if item.get("event") == "competitor_generation_run_terminal_update" and item.get("run_id") == run_id
+    ]
+    assert terminal_events
+    terminal_event = terminal_events[-1]
+    assert terminal_event["status"] == "completed"
+    assert terminal_event["terminal_reason"] == "completed"
+    assert terminal_event["provider_attempt_count"] >= 1
+
+
+def test_generation_emits_terminal_update_event_for_failed_run(db_session, seeded_business, caplog) -> None:
+    deferred_executor = _DeferredRunExecutor()
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        generation_provider=_DeterministicCompetitorProfileProvider(),
+        run_executor=deferred_executor,
+    )
+    site_id = _create_site(client, seeded_business.id)
+    run_id = _create_generation_run(client, seeded_business.id, site_id, candidate_count=5)["run"]["id"]
+
+    with caplog.at_level(logging.WARNING):
+        _execute_generation_run(
+            db_session=db_session,
+            business_id=seeded_business.id,
+            site_id=site_id,
+            run_id=run_id,
+            provider=_ProviderRequestFailureObservingProvider(),
+        )
+
+    events = _structured_event_records(caplog)
+    terminal_events = [
+        item
+        for item in events
+        if item.get("event") == "competitor_generation_run_terminal_update" and item.get("run_id") == run_id
+    ]
+    assert terminal_events
+    terminal_event = terminal_events[-1]
+    assert terminal_event["status"] == "failed"
+    assert terminal_event["terminal_reason"] == "failed"
+    assert terminal_event["failure_category"] == "provider_request"
+
+
 def test_list_runs_reconciles_stale_queued_and_running_runs(db_session, seeded_business) -> None:
     deferred_executor = _DeferredRunExecutor()
     client = _make_client(

@@ -45,6 +45,8 @@ import type {
   CompetitorSnapshotRun,
 } from "../../lib/api/types";
 
+const COMPETITOR_GENERATION_POLL_INTERVAL_MS = 5000;
+
 interface CompetitorSetRow extends CompetitorSet {
   domain_count: number;
   active_domain_count: number;
@@ -335,7 +337,11 @@ function CompetitorsPageContent() {
   );
   const generationQueuedCount = generationSummary?.queued_count ?? 0;
   const generationRunningCount = generationSummary?.running_count ?? 0;
-  const generationAlreadyRunning = generationQueuedCount + generationRunningCount > 0;
+  const normalizedLatestGenerationRunStatus = (latestGenerationRunStatus || "").trim().toLowerCase();
+  const generationAlreadyRunning =
+    generationQueuedCount + generationRunningCount > 0 ||
+    normalizedLatestGenerationRunStatus === "queued" ||
+    normalizedLatestGenerationRunStatus === "running";
   const generationButtonLabel = activeSetCount > 0 ? "Refresh competitor set" : "Generate competitor set";
   const generationButtonDisabled = !selectedSiteId || generationInFlight;
 
@@ -681,6 +687,30 @@ function CompetitorsPageContent() {
     };
   }, [businessId, contextError, contextLoading, refreshNonce, selectedSiteId, token]);
 
+  useEffect(() => {
+    if (!selectedSiteId || contextLoading || contextError) {
+      return;
+    }
+    if (generationInFlight) {
+      return;
+    }
+    if (normalizedLatestGenerationRunStatus !== "queued" && normalizedLatestGenerationRunStatus !== "running") {
+      return;
+    }
+    const pollTimer = window.setTimeout(() => {
+      setRefreshNonce((current) => current + 1);
+    }, COMPETITOR_GENERATION_POLL_INTERVAL_MS);
+    return () => {
+      window.clearTimeout(pollTimer);
+    };
+  }, [
+    contextError,
+    contextLoading,
+    generationInFlight,
+    normalizedLatestGenerationRunStatus,
+    selectedSiteId,
+  ]);
+
   const handleGenerateCompetitorSet = useCallback(async () => {
     if (!selectedSiteId) {
       return;
@@ -984,6 +1014,10 @@ function CompetitorsPageContent() {
                 ) : latestGenerationRunStatus ? (
                   <span className="hint muted" data-testid="competitors-generation-quality-pending">
                     Quality pending. Latest generation run is {formatRunStatus(latestGenerationRunStatus)}.
+                    {normalizedLatestGenerationRunStatus === "queued" ||
+                    normalizedLatestGenerationRunStatus === "running"
+                      ? " Checking status automatically."
+                      : ""}
                   </span>
                 ) : (
                   <span className="hint muted">none</span>

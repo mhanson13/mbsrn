@@ -42,7 +42,10 @@ _PROMPT_SIZE_WARN_THRESHOLD_CHARS = 10000
 _PROMPT_SIZE_HIGH_RISK_CHARS = 14000
 _STRUCTURED_LOG_EVENT_REQUEST_START = "competitor_provider_request_start"
 _STRUCTURED_LOG_EVENT_REQUEST_COMPLETE = "competitor_provider_request_complete"
+_STRUCTURED_LOG_EVENT_REQUEST_SUCCESS = "competitor_provider_request_success"
 _STRUCTURED_LOG_EVENT_REQUEST_ERROR = "competitor_provider_request_error"
+_STRUCTURED_LOG_EVENT_REQUEST_TIMEOUT = "competitor_provider_request_timeout"
+_STRUCTURED_LOG_EVENT_RESPONSE_PARSE_ERROR = "competitor_provider_response_parse_error"
 _STRUCTURED_LOG_EVENT_CANDIDATE_PIPELINE = "competitor_candidate_pipeline"
 _STRUCTURED_LOG_EVENT_CANDIDATE_SCHEMA_DIAGNOSTICS = "competitor_candidate_schema_diagnostics"
 _MALFORMED_OUTPUT_REASON_JSON_DECODE_ERROR = "json_decode_error"
@@ -1411,6 +1414,11 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             event=_STRUCTURED_LOG_EVENT_REQUEST_COMPLETE,
             payload=payload,
         )
+        self._emit_structured_provider_log(
+            level=logging.INFO,
+            event=_STRUCTURED_LOG_EVENT_REQUEST_SUCCESS,
+            payload=payload,
+        )
 
     def _log_provider_request_error(
         self,
@@ -1464,6 +1472,18 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             event=_STRUCTURED_LOG_EVENT_REQUEST_ERROR,
             payload=payload,
         )
+        if failure_kind == "timeout":
+            self._emit_structured_provider_log(
+                level=logging.WARNING,
+                event=_STRUCTURED_LOG_EVENT_REQUEST_TIMEOUT,
+                payload=payload,
+            )
+        elif failure_kind == "malformed_output":
+            self._emit_structured_provider_log(
+                level=logging.WARNING,
+                event=_STRUCTURED_LOG_EVENT_RESPONSE_PARSE_ERROR,
+                payload=payload,
+            )
 
     def _should_log_structured_error(self, provider_error: SEOCompetitorProfileProviderError) -> bool:
         if provider_error.code in {
@@ -1945,9 +1965,7 @@ class OpenAISEOCompetitorProfileGenerationProvider:
         budget_payload = (
             request_debug.get("request_budget") if isinstance(request_debug.get("request_budget"), dict) else {}
         )
-        level = logging.WARNING if prompt_size_risk in {"high", "elevated"} else logging.INFO
-        logger.log(
-            level,
+        logger.info(
             (
                 "SEO competitor prompt assembly telemetry provider_name=%s model_name=%s "
                 "provider_call_type=%s execution_mode=%s endpoint=%s "

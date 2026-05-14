@@ -1262,6 +1262,9 @@ def test_structured_provider_logs_include_start_and_complete_trace_fields(monkey
     complete_event = next(
         item for item in structured_events if item.get("event") == "competitor_provider_request_complete"
     )
+    success_event = next(
+        item for item in structured_events if item.get("event") == "competitor_provider_request_success"
+    )
 
     assert start_event["run_id"] == "run-structured-123"
     assert start_event["attempt_number"] == 2
@@ -1284,9 +1287,44 @@ def test_structured_provider_logs_include_start_and_complete_trace_fields(monkey
     assert complete_event["discovery_candidate_count"] == 1
     assert complete_event["post_parse_candidate_count"] == 1
     assert complete_event["duration_ms"] >= 0
+    assert success_event["run_id"] == "run-structured-123"
+    assert success_event["duration_ms"] >= 0
 
     assert "SENSITIVE_PROMPT_BLOCK" not in caplog.text
     assert _candidate_json_text() not in caplog.text
+
+
+def test_prompt_assembly_telemetry_is_info_even_when_prompt_size_risk_is_elevated(monkeypatch, caplog) -> None:
+    def _valid_urlopen(request: urllib.request.Request, timeout: int):  # noqa: ANN001
+        assert timeout == 30
+        return _FakeHTTPResponse(json.dumps(_responses_api_payload(model="gpt-4.1-mini")))
+
+    monkeypatch.setattr(urllib.request, "urlopen", _valid_urlopen)
+    provider = OpenAISEOCompetitorProfileGenerationProvider(
+        api_key="sk-test",
+        model_name="gpt-4.1-mini",
+        prompt_text_competitor="X" * 12000,
+    )
+
+    with caplog.at_level(logging.INFO):
+        provider.generate_competitor_profiles(
+            site=_site(),
+            existing_domains=[],
+            candidate_count=1,
+            run_id="run-prompt-telemetry-level",
+            attempt_number=1,
+            degraded_mode=False,
+            execution_mode="full",
+            provider_call_type="tool_enabled",
+        )
+
+    telemetry_records = [
+        record
+        for record in caplog.records
+        if "SEO competitor prompt assembly telemetry" in record.getMessage()
+    ]
+    assert telemetry_records
+    assert all(record.levelno == logging.INFO for record in telemetry_records)
 
 
 def test_structured_provider_logs_include_malformed_reason_without_raw_response_text(monkeypatch, caplog) -> None:
@@ -1323,6 +1361,9 @@ def test_structured_provider_logs_include_malformed_reason_without_raw_response_
 
     structured_events = _structured_event_records(caplog)
     error_event = next(item for item in structured_events if item.get("event") == "competitor_provider_request_error")
+    parse_error_event = next(
+        item for item in structured_events if item.get("event") == "competitor_provider_response_parse_error"
+    )
 
     assert error_event["run_id"] == "run-malformed-1"
     assert error_event["attempt_number"] == 1
@@ -1334,6 +1375,8 @@ def test_structured_provider_logs_include_malformed_reason_without_raw_response_
     assert error_event["malformed_output_reason"] == "json_decode_error"
     assert error_event["error_type"] == "invalid_output"
     assert error_event["duration_ms"] >= 0
+    assert parse_error_event["run_id"] == "run-malformed-1"
+    assert parse_error_event["failure_kind"] == "malformed_output"
     assert malformed_response_text not in caplog.text
 
 
@@ -1417,9 +1460,13 @@ def test_structured_provider_timeout_error_log_includes_timeout_type(monkeypatch
 
     structured_events = _structured_event_records(caplog)
     error_event = next(item for item in structured_events if item.get("event") == "competitor_provider_request_error")
+    timeout_event = next(item for item in structured_events if item.get("event") == "competitor_provider_request_timeout")
     assert error_event["run_id"] == "run-timeout-1"
     assert error_event["failure_kind"] == "timeout"
     assert error_event["timeout_type"] == "read"
+    assert timeout_event["run_id"] == "run-timeout-1"
+    assert timeout_event["failure_kind"] == "timeout"
+    assert timeout_event["timeout_type"] == "read"
 
 
 def test_structured_provider_logs_allow_attempt_zero_non_tool_fast_path(monkeypatch, caplog) -> None:
@@ -1453,6 +1500,9 @@ def test_structured_provider_logs_allow_attempt_zero_non_tool_fast_path(monkeypa
     complete_event = next(
         item for item in structured_events if item.get("event") == "competitor_provider_request_complete"
     )
+    success_event = next(
+        item for item in structured_events if item.get("event") == "competitor_provider_request_success"
+    )
 
     assert start_event["run_id"] == "run-fast-path-0"
     assert start_event["attempt_number"] == 0
@@ -1468,6 +1518,8 @@ def test_structured_provider_logs_allow_attempt_zero_non_tool_fast_path(monkeypa
     assert complete_event["endpoint_path"] == "/chat/completions"
     assert complete_event["web_search_enabled"] is False
     assert complete_event["duration_ms"] >= 0
+    assert success_event["run_id"] == "run-fast-path-0"
+    assert success_event["provider_call_type"] == "non_tool"
 
 
 def test_structured_candidate_pipeline_log_reports_raw_valid_and_dropped_counts(monkeypatch, caplog) -> None:

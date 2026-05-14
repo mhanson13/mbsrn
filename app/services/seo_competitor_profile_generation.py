@@ -723,6 +723,16 @@ class SEOCompetitorProfileGenerationService:
             site_id,
             run.id,
         )
+        self._emit_structured_service_log(
+            payload={
+                "event": "competitor_generation_run_execution_started",
+                "run_id": run.id,
+                "business_id": business_id,
+                "site_id": site_id,
+                "status": run.status,
+            },
+            fallback_message="competitor_generation_run_execution_started",
+        )
 
         provider_name = run.provider_name
         model_name = run.model_name
@@ -973,6 +983,11 @@ class SEOCompetitorProfileGenerationService:
                 run=run,
                 provider_attempts=provider_attempts,
                 had_schema_repair_or_discard=bool(output.had_schema_repair_or_discard),
+            )
+            self._emit_generation_run_terminal_update(
+                run=run,
+                provider_attempts=provider_attempts,
+                terminal_reason="completed",
             )
             return SEOCompetitorProfileGenerationRunDetail(
                 run=run,
@@ -1245,6 +1260,44 @@ class SEOCompetitorProfileGenerationService:
         except (TypeError, ValueError):
             message = fallback_message
         logger.log(level, message, extra={"json_fields": payload})
+
+    def _emit_generation_run_terminal_update(
+        self,
+        *,
+        run: SEOCompetitorProfileGenerationRun,
+        provider_attempts: list[SEOCompetitorProfileProviderAttemptDebug] | None,
+        terminal_reason: str,
+        synthetic_fallback_reason: str | None = None,
+    ) -> None:
+        normalized_status = self._clean_optional(run.status) or "unknown"
+        level = logging.WARNING if normalized_status == "failed" else logging.INFO
+        payload: dict[str, object] = {
+            "event": "competitor_generation_run_terminal_update",
+            "run_id": run.id,
+            "business_id": run.business_id,
+            "site_id": run.site_id,
+            "status": normalized_status,
+            "terminal_reason": self._clean_optional(terminal_reason) or "unknown",
+            "failure_category": self._clean_optional(run.failure_category),
+            "provider_name": self._clean_optional(run.provider_name),
+            "model_name": self._clean_optional(run.model_name),
+            "prompt_version": self._clean_optional(run.prompt_version),
+            "generated_draft_count": max(0, int(run.generated_draft_count or 0)),
+            "raw_candidate_count": max(0, int(run.raw_candidate_count or 0)),
+            "included_candidate_count": max(0, int(run.included_candidate_count or 0)),
+            "excluded_candidate_count": max(0, int(run.excluded_candidate_count or 0)),
+            "provider_attempt_count": (
+                max(0, int(len(provider_attempts))) if isinstance(provider_attempts, list) else None
+            ),
+            "synthetic_fallback_reason": self._clean_optional(synthetic_fallback_reason),
+        }
+        if normalized_status == "failed":
+            payload["error_summary"] = self._clean_optional(run.error_summary)
+        self._emit_structured_service_log(
+            payload=payload,
+            fallback_message="competitor_generation_run_terminal_update",
+            level=level,
+        )
 
     def _build_candidate_rejection_reason_histogram(
         self,
@@ -3084,6 +3137,12 @@ class SEOCompetitorProfileGenerationService:
             run=run,
             provider_attempts=provider_attempts,
             had_schema_repair_or_discard=False,
+        )
+        self._emit_generation_run_terminal_update(
+            run=run,
+            provider_attempts=provider_attempts,
+            terminal_reason="synthetic_fallback_completed",
+            synthetic_fallback_reason=fallback_reason,
         )
         return SEOCompetitorProfileGenerationRunDetail(
             run=run,
@@ -6067,6 +6126,12 @@ class SEOCompetitorProfileGenerationService:
                 run.id,
             )
         self.session.commit()
+        for run in [*stale_queued_runs, *stale_running_runs]:
+            self._emit_generation_run_terminal_update(
+                run=run,
+                provider_attempts=None,
+                terminal_reason="stale_timeout_reconciled",
+            )
         return len(stale_queued_runs) + len(stale_running_runs)
 
     def _set_run_failed(
@@ -6140,6 +6205,17 @@ class SEOCompetitorProfileGenerationService:
             generation_run_id,
         )
         if run is None:
+            self._emit_structured_service_log(
+                payload={
+                    "event": "competitor_generation_run_terminal_update_missing",
+                    "run_id": generation_run_id,
+                    "business_id": business_id,
+                    "expected_status": "failed",
+                    "terminal_reason": "mark_run_failed_run_not_found",
+                },
+                fallback_message="competitor_generation_run_terminal_update_missing",
+                level=logging.WARNING,
+            )
             return
         self._set_run_failed(
             run,
@@ -6155,6 +6231,11 @@ class SEOCompetitorProfileGenerationService:
             exclusion_counts_by_reason=exclusion_counts_by_reason,
         )
         self.session.commit()
+        self._emit_generation_run_terminal_update(
+            run=run,
+            provider_attempts=None,
+            terminal_reason="failed",
+        )
 
     def _commit_with_constraint_handling(self) -> None:
         try:

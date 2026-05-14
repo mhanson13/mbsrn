@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 
@@ -854,6 +854,52 @@ describe("competitors page site-scoped loading", () => {
 
     expect(await screen.findByTestId("competitors-generation-quality-pending")).toHaveTextContent("queued");
     expect(mockFetchCompetitorProfileGenerationRunDetail).not.toHaveBeenCalled();
+  });
+
+  it("polls generation status while latest run is queued", async () => {
+    jest.useFakeTimers();
+    try {
+      mockFetchCompetitorSets.mockResolvedValue({ items: [], total: 0 });
+      mockFetchCompetitorProfileGenerationRuns.mockResolvedValue({
+        items: [
+          {
+            id: "gen-run-polling",
+            business_id: "biz-1",
+            site_id: "site-1",
+            status: "queued",
+            requested_candidate_count: 10,
+            generated_draft_count: 0,
+            provider_name: "openai",
+            model_name: "gpt-5",
+            prompt_version: "v1",
+            failure_category: null,
+            error_summary: null,
+            completed_at: null,
+            created_by_principal_id: "principal-1",
+            created_at: "2026-03-20T00:58:00Z",
+            updated_at: "2026-03-20T00:58:00Z",
+          },
+        ],
+        total: 1,
+      });
+
+      render(<CompetitorsPage />);
+
+      expect(await screen.findByTestId("competitors-generation-quality-pending")).toHaveTextContent(
+        "Checking status automatically.",
+      );
+      const initialRunFetchCalls = mockFetchCompetitorProfileGenerationRuns.mock.calls.length;
+
+      await act(async () => {
+        jest.advanceTimersByTime(5000);
+      });
+
+      await waitFor(() => {
+        expect(mockFetchCompetitorProfileGenerationRuns.mock.calls.length).toBeGreaterThan(initialRunFetchCalls);
+      });
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it("classifies unexpected generation responses and still refreshes inventory", async () => {

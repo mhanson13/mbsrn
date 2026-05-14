@@ -83,10 +83,19 @@ The `/competitors` primary action now uses an explicit operator-visible lifecycl
 - unexpected/malformed success payloads are classified and shown as bounded warnings instead of silent no-ops
 - failure state shows bounded operator-safe error copy (no raw provider payloads, tokens, or request bodies)
 - after accepted run creation, the page re-fetches competitor inventory/readiness so queued/running state updates are visible
+- while the latest generation run is `queued` or `running`, the page performs bounded automatic status refresh checks (no raw payload logging)
 
 Operator expectation:
 - this action starts a backend competitor generation run; results may not be immediately available if work is queued/running
 - reviewable draft output appears when the backend run advances to completed state
+
+Backend execution diagnostics now include bounded lifecycle events for triage correlation:
+- `competitor_provider_request_start`
+- `competitor_provider_request_success` (plus legacy `competitor_provider_request_complete`)
+- `competitor_provider_request_error`
+- `competitor_provider_request_timeout`
+- `competitor_provider_response_parse_error`
+- `competitor_generation_run_terminal_update`
 
 Bounded exclusion telemetry is persisted at run level for tuning:
 - raw/included/excluded candidate totals,
