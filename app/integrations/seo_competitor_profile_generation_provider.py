@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 import logging
+import os
 import re
 import time
 import urllib.parse
@@ -22,6 +23,7 @@ from app.integrations.seo_summary_provider import (
     SEOCompetitorProfileGenerationOutput,
 )
 from app.models.seo_site import SEOSite
+from app.core.runtime_metadata import get_runtime_build_metadata
 from app.services.competitors.normalizer import normalize_competitor_response
 from app.services.seo_competitor_profile_prompt import (
     SEO_COMPETITOR_PROFILE_PROMPT_VERSION,
@@ -138,6 +140,8 @@ _COMPETITOR_OPTIONAL_TRIM_ORDER = (
     "existing_domains",
     "seed_candidates",
 )
+_COMPETITOR_RESPONSE_FORMAT_NAME = "seo_competitor_profile_generation_response"
+_COMPETITOR_RESPONSE_SCHEMA_NAME = _COMPETITOR_RESPONSE_FORMAT_NAME
 
 _PROVIDER_SCHEMA_INVALID_MESSAGE_TOKENS = (
     "invalid_json_schema",
@@ -145,6 +149,23 @@ _PROVIDER_SCHEMA_INVALID_MESSAGE_TOKENS = (
     "response_format 'seo_competitor_profile_generation_response'",
     "missing 'business_name'",
     "'required' is required to be supplied",
+)
+_PROVIDER_INVALID_REQUEST_CONTRACT_TOKENS = (
+    "unsupported parameter",
+    "response_format",
+    "json_schema",
+    "not supported with this model",
+    "is not supported for this model",
+    "invalid value for",
+    "must be one of",
+)
+_PROVIDER_INVALID_TOOL_REQUEST_TOKENS = (
+    "web_search",
+    "\"tools\"",
+    "tools[",
+    "tool_choice",
+    "invalid tool",
+    "unknown tool",
 )
 
 
@@ -277,6 +298,12 @@ class OpenAISEOCompetitorProfileGenerationProvider:
         self.prompt_source = str(prompt_source or "unknown").strip() or "unknown"
         self.prompt_config_key = str(prompt_config_key or "ai_prompt_text_competitor").strip()
         self.legacy_config_used = bool(legacy_config_used)
+        self.runtime_build_metadata = get_runtime_build_metadata()
+        self.runtime_app_version = (
+            _clean_optional_value(self.runtime_build_metadata.get("build_version")) or "unknown"
+        )
+        self.runtime_build_sha = _clean_optional_value(self.runtime_build_metadata.get("git_commit")) or "unknown"
+        self.runtime_pod_name = _clean_optional_value(os.getenv("HOSTNAME"))
 
     def generate_competitor_profiles(
         self,
@@ -1286,7 +1313,13 @@ class OpenAISEOCompetitorProfileGenerationProvider:
         event: str,
         payload: dict[str, object],
     ) -> None:
-        structured_payload = {"event": event, "provider_name": self.provider_name}
+        structured_payload = {
+            "event": event,
+            "provider_name": self.provider_name,
+            "app_version": self.runtime_app_version,
+            "build_sha": self.runtime_build_sha,
+            "runtime_pod": self.runtime_pod_name,
+        }
         structured_payload.update(payload)
         safe_payload = {key: value for key, value in structured_payload.items() if value is not None}
         try:
@@ -1352,10 +1385,14 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                 "execution_mode": _clean_optional_value(debug.get("execution_mode")),
                 "provider_call_type": _clean_optional_value(debug.get("provider_call_type")),
                 "endpoint_path": endpoint_path,
+                "log_scope": "attempt",
+                "attempt_terminal": False,
                 "model": self.model_name,
                 "web_search_enabled": debug.get("web_search_enabled"),
                 "degraded_mode": bool(debug.get("degraded_mode")),
                 "reduced_context_mode": bool(debug.get("reduced_context_mode")),
+                "response_format_name": _clean_optional_value(debug.get("response_format_name")),
+                "schema_name": _clean_optional_value(debug.get("schema_name")),
                 "prompt_chars": _coerce_optional_bounded_int(
                     debug.get("prompt_total_chars"),
                     minimum=0,
@@ -1389,6 +1426,8 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             "execution_mode": _clean_optional_value(debug.get("execution_mode")),
             "provider_call_type": _clean_optional_value(debug.get("provider_call_type")),
             "endpoint_path": endpoint_path,
+            "log_scope": "attempt",
+            "attempt_terminal": False,
             "duration_ms": _coerce_optional_bounded_int(
                 request_duration_ms,
                 minimum=0,
@@ -1398,6 +1437,8 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             "web_search_enabled": debug.get("web_search_enabled"),
             "degraded_mode": bool(debug.get("degraded_mode")),
             "reduced_context_mode": bool(debug.get("reduced_context_mode")),
+            "response_format_name": _clean_optional_value(debug.get("response_format_name")),
+            "schema_name": _clean_optional_value(debug.get("schema_name")),
             "timeout_seconds_used": _coerce_optional_bounded_int(
                 debug.get("timeout_seconds"),
                 minimum=1,
@@ -1426,12 +1467,20 @@ class OpenAISEOCompetitorProfileGenerationProvider:
         endpoint_path: str,
         request_debug: dict[str, object] | None,
         error_type: str | None,
+        error_code: str | None = None,
+        http_status: int | None = None,
         failure_kind: str,
         malformed_output_reason: str | None = None,
         timeout_type: str | None = None,
         request_duration_ms: int | None = None,
+        normalized_failure_category: str | None = None,
+        normalized_failure_reason: str | None = None,
+        normalized_failure_source: str | None = None,
+        normalized_retryable: bool | None = None,
     ) -> None:
         debug = request_debug or {}
+        normalized_reason = _clean_optional_value(normalized_failure_reason)
+        normalized_category = _clean_optional_value(normalized_failure_category)
         payload: dict[str, object] = {
             "run_id": _clean_optional_value(debug.get("run_id")),
             "attempt_number": _coerce_optional_bounded_int(
@@ -1442,6 +1491,8 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             "execution_mode": _clean_optional_value(debug.get("execution_mode")),
             "provider_call_type": _clean_optional_value(debug.get("provider_call_type")),
             "endpoint_path": endpoint_path,
+            "log_scope": "attempt",
+            "attempt_terminal": False,
             "duration_ms": _coerce_optional_bounded_int(
                 request_duration_ms,
                 minimum=0,
@@ -1451,36 +1502,48 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             "web_search_enabled": debug.get("web_search_enabled"),
             "degraded_mode": bool(debug.get("degraded_mode")),
             "reduced_context_mode": bool(debug.get("reduced_context_mode")),
+            "response_format_name": _clean_optional_value(debug.get("response_format_name")),
+            "schema_name": _clean_optional_value(debug.get("schema_name")),
             "timeout_seconds_used": _coerce_optional_bounded_int(
                 debug.get("timeout_seconds"),
                 minimum=1,
                 maximum=3600,
             ),
             "error_type": _sanitize_log_error_type(error_type),
+            "error_code": _sanitize_log_error_type(error_code),
+            "http_status": _coerce_optional_bounded_int(http_status, minimum=100, maximum=599),
             "failure_kind": failure_kind,
+            "provider_error_category": normalized_category,
+            "failure_category": normalized_category,
+            "failure_reason": normalized_reason,
+            "failure_source": _clean_optional_value(normalized_failure_source),
+            "retryable": normalized_retryable if isinstance(normalized_retryable, bool) else None,
         }
         normalized_timeout_type = _clean_optional_value((timeout_type or "").strip().lower())
         if failure_kind == "timeout":
             payload["timeout_type"] = (
                 normalized_timeout_type if normalized_timeout_type in _TIMEOUT_TYPE_VALUES else _TIMEOUT_TYPE_UNKNOWN
             )
-        normalized_reason = _clean_optional_value(str(malformed_output_reason or "").strip().lower())
-        if normalized_reason in _MALFORMED_OUTPUT_ALLOWED_REASONS:
-            payload["malformed_output_reason"] = normalized_reason
+        normalized_malformed_output_reason = _clean_optional_value(str(malformed_output_reason or "").strip().lower())
+        if normalized_malformed_output_reason in _MALFORMED_OUTPUT_ALLOWED_REASONS:
+            payload["malformed_output_reason"] = normalized_malformed_output_reason
+        level = logging.WARNING
+        if isinstance(normalized_retryable, bool) and not normalized_retryable:
+            level = logging.ERROR
         self._emit_structured_provider_log(
-            level=logging.WARNING,
+            level=level,
             event=_STRUCTURED_LOG_EVENT_REQUEST_ERROR,
             payload=payload,
         )
         if failure_kind == "timeout":
             self._emit_structured_provider_log(
-                level=logging.WARNING,
+                level=level,
                 event=_STRUCTURED_LOG_EVENT_REQUEST_TIMEOUT,
                 payload=payload,
             )
         elif failure_kind == "malformed_output":
             self._emit_structured_provider_log(
-                level=logging.WARNING,
+                level=level,
                 event=_STRUCTURED_LOG_EVENT_RESPONSE_PARSE_ERROR,
                 payload=payload,
             )
@@ -1525,6 +1588,10 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             malformed_output_reason=malformed_output_reason,
             timeout_type=timeout_type,
             request_duration_ms=duration_ms,
+            normalized_failure_category=provider_error.normalized_failure_category,
+            normalized_failure_reason=provider_error.normalized_failure_reason,
+            normalized_failure_source=provider_error.normalized_failure_source,
+            normalized_retryable=provider_error.normalized_retryable,
         )
 
     def _extract_structured_failure_details(
@@ -1627,6 +1694,13 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             normalized_failure_reason = exc.normalized_failure.reason
             normalized_failure_source = exc.normalized_failure.source
             normalized_retryable = bool(exc.normalized_failure.retryable)
+            classified_invalid_request_reason = self._classify_invalid_request_error(
+                http_status=http_status,
+                error_type=error_type,
+                error_code=error_code,
+                error_message=error_message,
+                provider_error_body=body_text,
+            )
             schema_invalid = self._is_provider_schema_invalid_error(
                 http_status=http_status,
                 error_type=error_type,
@@ -1639,6 +1713,11 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                 normalized_failure_reason = "provider_schema_invalid"
                 normalized_failure_source = "local_configuration"
                 normalized_retryable = False
+            elif classified_invalid_request_reason is not None:
+                normalized_failure_category = "configuration_invalid"
+                normalized_failure_reason = classified_invalid_request_reason
+                normalized_failure_source = "local_configuration"
+                normalized_retryable = False
 
             if (
                 failure_category == "configuration_invalid"
@@ -1649,8 +1728,14 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                     endpoint_path=normalized_endpoint,
                     request_debug=request_debug,
                     error_type=error_type or error_code or "auth_error",
+                    error_code=error_code,
+                    http_status=http_status,
                     failure_kind="provider_request",
                     request_duration_ms=request_duration_ms,
+                    normalized_failure_category=normalized_failure_category,
+                    normalized_failure_reason=normalized_failure_reason,
+                    normalized_failure_source=normalized_failure_source,
+                    normalized_retryable=normalized_retryable,
                 )
                 raise self._provider_error(
                     code=_PROVIDER_ERROR_AUTH_CONFIG,
@@ -1679,7 +1764,8 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             logger.warning(
                 (
                     "SEO competitor provider HTTP error status=%s provider_name=%s model_name=%s "
-                    "endpoint=%s error_type=%s error_code=%s error_message=%s "
+                    "endpoint=%s run_id=%s attempt_number=%s app_version=%s build_sha=%s runtime_pod=%s "
+                    "error_type=%s error_code=%s error_message=%s "
                     "prompt_total_chars=%s context_json_chars=%s prompt_size_risk=%s "
                     "original_input_size=%s final_input_size=%s trimmed_bytes=%s trimming_pass_count=%s difficulty_score=%s"
                 ),
@@ -1687,6 +1773,15 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                 self.provider_name,
                 self.model_name,
                 normalized_endpoint,
+                _clean_optional_value(request_debug.get("run_id")) if isinstance(request_debug, dict) else None,
+                (
+                    _coerce_optional_bounded_int(request_debug.get("attempt_number"), minimum=0, maximum=1000)
+                    if isinstance(request_debug, dict)
+                    else None
+                ),
+                self.runtime_app_version,
+                self.runtime_build_sha,
+                self.runtime_pod_name,
                 error_type,
                 error_code,
                 error_message,
@@ -1703,9 +1798,15 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                 endpoint_path=normalized_endpoint,
                 request_debug=request_debug,
                 error_type=error_type or error_code or "http_error",
+                error_code=error_code,
+                http_status=http_status,
                 failure_kind=failure_kind,
                 timeout_type=(timeout_type or _TIMEOUT_TYPE_OVERALL if failure_kind == "timeout" else None),
                 request_duration_ms=request_duration_ms,
+                normalized_failure_category=normalized_failure_category,
+                normalized_failure_reason=normalized_failure_reason,
+                normalized_failure_source=normalized_failure_source,
+                normalized_retryable=normalized_retryable,
             )
             if failure_kind == "timeout":
                 raise self._provider_error(
@@ -1736,10 +1837,23 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                     "Competitor profile generation is blocked by a local provider schema configuration issue."
                     if schema_invalid
                     else (
-                    "Competitor profile generation request is too large or complex for synchronous generation."
-                    if failure_category == "local_validation_failure"
-                    and exc.normalized_failure.reason in {"request_too_large", "request_too_large_or_complex"}
-                    else "Competitor profile generation provider request failed."
+                        "Competitor profile generation request uses an invalid provider request contract."
+                        if normalized_failure_reason == "provider_request_contract_invalid"
+                        else (
+                            "Competitor profile generation request uses an invalid tool request shape."
+                            if normalized_failure_reason == "provider_tool_request_invalid"
+                            else (
+                                "Competitor profile generation request is invalid for the configured provider."
+                                if normalized_failure_reason == "provider_invalid_request_unknown"
+                                else (
+                                    "Competitor profile generation request is too large or complex for synchronous generation."
+                                    if failure_category == "local_validation_failure"
+                                    and exc.normalized_failure.reason
+                                    in {"request_too_large", "request_too_large_or_complex"}
+                                    else "Competitor profile generation provider request failed."
+                                )
+                            )
+                        )
                     )
                 ),
                 raw_output=self._build_request_failure_debug_payload(
@@ -1818,7 +1932,7 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             "text": {
                 "format": {
                     "type": "json_schema",
-                    "name": "seo_competitor_profile_generation_response",
+                    "name": _COMPETITOR_RESPONSE_FORMAT_NAME,
                     "strict": True,
                     "schema": _build_candidate_json_schema(candidate_count),
                 }
@@ -1845,7 +1959,7 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             "response_format": {
                 "type": "json_schema",
                 "json_schema": {
-                    "name": "seo_competitor_profile_generation_response",
+                    "name": _COMPETITOR_RESPONSE_FORMAT_NAME,
                     "strict": True,
                     "schema": _build_candidate_json_schema(candidate_count),
                 },
@@ -1958,6 +2072,49 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             return True
         return False
 
+    def _classify_invalid_request_error(
+        self,
+        *,
+        http_status: int | None,
+        error_type: str | None,
+        error_code: str | None,
+        error_message: str | None,
+        provider_error_body: str | None,
+    ) -> str | None:
+        if http_status != 400:
+            return None
+        normalized_type = (error_type or "").strip().lower()
+        if normalized_type != "invalid_request_error":
+            return None
+        normalized_code = (error_code or "").strip().lower()
+        normalized_message = (error_message or "").strip().lower()
+        normalized_body = (provider_error_body or "").strip().lower()
+        combined = "\n".join(
+            part
+            for part in (
+                normalized_type,
+                normalized_code,
+                normalized_message,
+                normalized_body,
+            )
+            if part
+        )
+        if not combined:
+            return "provider_invalid_request_unknown"
+        if self._is_provider_schema_invalid_error(
+            http_status=http_status,
+            error_type=error_type,
+            error_code=error_code,
+            error_message=error_message,
+            provider_error_body=provider_error_body,
+        ):
+            return "provider_schema_invalid"
+        if any(token in combined for token in _PROVIDER_INVALID_TOOL_REQUEST_TOKENS):
+            return "provider_tool_request_invalid"
+        if any(token in combined for token in _PROVIDER_INVALID_REQUEST_CONTRACT_TOKENS):
+            return "provider_request_contract_invalid"
+        return "provider_invalid_request_unknown"
+
     def _log_prompt_telemetry(self, request_debug: dict[str, object]) -> None:
         prompt_total_chars = request_debug.get("prompt_total_chars")
         context_json_chars = request_debug.get("context_json_chars")
@@ -1968,7 +2125,9 @@ class OpenAISEOCompetitorProfileGenerationProvider:
         logger.info(
             (
                 "SEO competitor prompt assembly telemetry provider_name=%s model_name=%s "
+                "run_id=%s attempt_number=%s app_version=%s build_sha=%s runtime_pod=%s "
                 "provider_call_type=%s execution_mode=%s endpoint=%s "
+                "response_format_name=%s schema_name=%s "
                 "prompt_total_chars=%s context_json_chars=%s prompt_size_risk=%s "
                 "google_places_seed_count=%s context_budget_initial_size_chars=%s "
                 "context_budget_final_size_chars=%s context_budget_size_chars=%s "
@@ -1978,9 +2137,16 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             ),
             self.provider_name,
             self.model_name,
+            request_debug.get("run_id"),
+            request_debug.get("attempt_number"),
+            self.runtime_app_version,
+            self.runtime_build_sha,
+            self.runtime_pod_name,
             request_debug.get("provider_call_type"),
             request_debug.get("execution_mode"),
             request_debug.get("endpoint_path"),
+            request_debug.get("response_format_name"),
+            request_debug.get("schema_name"),
             prompt_total_chars,
             context_json_chars,
             prompt_size_risk,
@@ -2007,6 +2173,7 @@ class OpenAISEOCompetitorProfileGenerationProvider:
         logger.info(
             (
                 "competitor_request_budget provider_name=%s model_name=%s run_id=%s attempt_number=%s "
+                "app_version=%s build_sha=%s runtime_pod=%s "
                 "budget_outcome=%s initial_size_chars=%s final_size_chars=%s budget_size_chars=%s "
                 "original_input_size=%s final_input_size=%s trimmed_bytes=%s trimming_pass_count=%s "
                 "section_count=%s dropped_optional_blocks=%s dropped_duplicate_blocks=%s overflow=%s"
@@ -2015,6 +2182,9 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             self.model_name,
             _clean_optional_value(run_id),
             _coerce_optional_bounded_int(attempt_number, minimum=0, maximum=1000),
+            self.runtime_app_version,
+            self.runtime_build_sha,
+            self.runtime_pod_name,
             _clean_optional_value(budget_outcome) or "unknown",
             budget_result.get("initial_size_chars"),
             budget_result.get("final_size_chars"),
@@ -2116,6 +2286,8 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             "execution_mode": normalized_execution_mode,
             "provider_call_type": normalized_provider_call_type,
             "endpoint_path": normalized_endpoint,
+            "response_format_name": _COMPETITOR_RESPONSE_FORMAT_NAME,
+            "schema_name": _COMPETITOR_RESPONSE_SCHEMA_NAME,
             "candidate_count": max(1, int(candidate_count)),
             "prompt_total_chars": prompt_total_chars,
             "context_json_chars": context_json_chars,
@@ -2179,6 +2351,8 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                 "execution_mode": request_debug.get("execution_mode"),
                 "provider_call_type": request_debug.get("provider_call_type"),
                 "degraded_mode": request_debug.get("degraded_mode"),
+                "response_format_name": request_debug.get("response_format_name"),
+                "schema_name": request_debug.get("schema_name"),
                 "candidate_count": request_debug.get("candidate_count"),
                 "prompt_total_chars": request_debug.get("prompt_total_chars"),
                 "context_json_chars": request_debug.get("context_json_chars"),

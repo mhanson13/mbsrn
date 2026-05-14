@@ -670,6 +670,114 @@ def test_openai_provider_invalid_json_schema_is_classified_as_local_configuratio
     assert payload["normalized_failure_source"] == "local_configuration"
 
 
+def test_openai_provider_invalid_request_contract_is_classified(monkeypatch) -> None:
+    def _invalid_contract_urlopen(request: urllib.request.Request, timeout: int):  # noqa: ANN001
+        del timeout
+        raise urllib.error.HTTPError(
+            url=request.full_url,
+            code=400,
+            msg="Bad Request",
+            hdrs=None,
+            fp=BytesIO(
+                json.dumps(
+                    {
+                        "error": {
+                            "type": "invalid_request_error",
+                            "code": "unsupported_parameter",
+                            "message": "Unsupported parameter: 'temperature' is not supported with this model.",
+                        }
+                    }
+                ).encode("utf-8")
+            ),
+        )
+
+    monkeypatch.setattr(urllib.request, "urlopen", _invalid_contract_urlopen)
+    provider = OpenAISEOCompetitorProfileGenerationProvider(
+        api_key="sk-test",
+        model_name="gpt-5-mini",
+    )
+
+    with pytest.raises(SEOCompetitorProfileProviderError) as exc_info:
+        provider.generate_competitor_profiles(site=_site(), existing_domains=[], candidate_count=1)
+
+    assert exc_info.value.code == "provider_request"
+    assert exc_info.value.normalized_failure_reason == "provider_request_contract_invalid"
+    assert exc_info.value.normalized_failure_source == "local_configuration"
+    assert exc_info.value.normalized_retryable is False
+
+
+def test_openai_provider_invalid_tool_request_is_classified(monkeypatch) -> None:
+    def _invalid_tool_urlopen(request: urllib.request.Request, timeout: int):  # noqa: ANN001
+        del timeout
+        raise urllib.error.HTTPError(
+            url=request.full_url,
+            code=400,
+            msg="Bad Request",
+            hdrs=None,
+            fp=BytesIO(
+                json.dumps(
+                    {
+                        "error": {
+                            "type": "invalid_request_error",
+                            "code": "unsupported_parameter",
+                            "message": "web_search is not supported for this request.",
+                        }
+                    }
+                ).encode("utf-8")
+            ),
+        )
+
+    monkeypatch.setattr(urllib.request, "urlopen", _invalid_tool_urlopen)
+    provider = OpenAISEOCompetitorProfileGenerationProvider(
+        api_key="sk-test",
+        model_name="gpt-5-mini",
+    )
+
+    with pytest.raises(SEOCompetitorProfileProviderError) as exc_info:
+        provider.generate_competitor_profiles(site=_site(), existing_domains=[], candidate_count=1)
+
+    assert exc_info.value.code == "provider_request"
+    assert exc_info.value.normalized_failure_reason == "provider_tool_request_invalid"
+    assert exc_info.value.normalized_failure_source == "local_configuration"
+    assert exc_info.value.normalized_retryable is False
+
+
+def test_openai_provider_unknown_invalid_request_is_classified(monkeypatch) -> None:
+    def _unknown_invalid_request_urlopen(request: urllib.request.Request, timeout: int):  # noqa: ANN001
+        del timeout
+        raise urllib.error.HTTPError(
+            url=request.full_url,
+            code=400,
+            msg="Bad Request",
+            hdrs=None,
+            fp=BytesIO(
+                json.dumps(
+                    {
+                        "error": {
+                            "type": "invalid_request_error",
+                            "code": "invalid_request",
+                            "message": "Request is invalid.",
+                        }
+                    }
+                ).encode("utf-8")
+            ),
+        )
+
+    monkeypatch.setattr(urllib.request, "urlopen", _unknown_invalid_request_urlopen)
+    provider = OpenAISEOCompetitorProfileGenerationProvider(
+        api_key="sk-test",
+        model_name="gpt-5-mini",
+    )
+
+    with pytest.raises(SEOCompetitorProfileProviderError) as exc_info:
+        provider.generate_competitor_profiles(site=_site(), existing_domains=[], candidate_count=1)
+
+    assert exc_info.value.code == "provider_request"
+    assert exc_info.value.normalized_failure_reason == "provider_invalid_request_unknown"
+    assert exc_info.value.normalized_failure_source == "local_configuration"
+    assert exc_info.value.normalized_retryable is False
+
+
 def test_competitor_context_budget_trims_breadth_before_depth_and_preserves_required_prompt() -> None:
     provider = OpenAISEOCompetitorProfileGenerationProvider(
         api_key="sk-test",
@@ -1381,6 +1489,9 @@ def test_structured_provider_logs_include_malformed_reason_without_raw_response_
 
 
 def test_structured_provider_error_log_includes_endpoint_and_search_metadata(monkeypatch, caplog) -> None:
+    monkeypatch.setenv("MBSRN_BUILD_VERSION", "unit-build")
+    monkeypatch.setenv("MBSRN_GIT_COMMIT", "unit-sha")
+
     def _bad_request_urlopen(request: urllib.request.Request, timeout: int):  # noqa: ANN001
         del timeout
         raise urllib.error.HTTPError(
@@ -1430,6 +1541,16 @@ def test_structured_provider_error_log_includes_endpoint_and_search_metadata(mon
     assert error_event["web_search_enabled"] is True
     assert error_event["failure_kind"] == "provider_request"
     assert error_event["error_type"] == "invalid_request_error"
+    assert error_event["error_code"] == "unsupported_parameter"
+    assert error_event["http_status"] == 400
+    assert error_event["failure_reason"] == "provider_tool_request_invalid"
+    assert error_event["failure_category"] == "configuration_invalid"
+    assert error_event["failure_source"] == "local_configuration"
+    assert error_event["retryable"] is False
+    assert error_event["log_scope"] == "attempt"
+    assert error_event["attempt_terminal"] is False
+    assert error_event["app_version"] == "unit-build"
+    assert error_event["build_sha"] == "unit-sha"
     assert error_event["duration_ms"] >= 0
     assert "SENSITIVE_PROVIDER_PROMPT_TEXT" not in caplog.text
 

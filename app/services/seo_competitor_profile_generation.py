@@ -13,6 +13,7 @@ from uuid import uuid4
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.core.runtime_metadata import get_runtime_build_metadata
 from app.core.time import utc_now
 from app.integrations.seo_competitor_profile_generation_provider import SEOCompetitorProfileProviderError
 from app.integrations.seo_summary_provider import (
@@ -579,6 +580,9 @@ class SEOCompetitorProfileGenerationService:
         )
         self.retention_policy = retention_policy
         self.observability_lookback_days = max(1, int(observability_lookback_days))
+        self.runtime_build_metadata = get_runtime_build_metadata()
+        self.runtime_app_version = self._clean_optional(self.runtime_build_metadata.get("build_version")) or "unknown"
+        self.runtime_build_sha = self._clean_optional(self.runtime_build_metadata.get("git_commit")) or "unknown"
 
     def create_run(
         self,
@@ -1255,11 +1259,14 @@ class SEOCompetitorProfileGenerationService:
         fallback_message: str,
         level: int = logging.INFO,
     ) -> None:
+        enriched_payload = dict(payload)
+        enriched_payload.setdefault("app_version", self.runtime_app_version)
+        enriched_payload.setdefault("build_sha", self.runtime_build_sha)
         try:
-            message = json.dumps(payload, ensure_ascii=True, sort_keys=True)
+            message = json.dumps(enriched_payload, ensure_ascii=True, sort_keys=True)
         except (TypeError, ValueError):
             message = fallback_message
-        logger.log(level, message, extra={"json_fields": payload})
+        logger.log(level, message, extra={"json_fields": enriched_payload})
 
     def _emit_generation_run_terminal_update(
         self,
@@ -1270,15 +1277,21 @@ class SEOCompetitorProfileGenerationService:
         synthetic_fallback_reason: str | None = None,
     ) -> None:
         normalized_status = self._clean_optional(run.status) or "unknown"
-        level = logging.WARNING if normalized_status == "failed" else logging.INFO
+        level = logging.ERROR if normalized_status == "failed" else logging.INFO
+        failure_reason, failure_source, retryable = self._extract_failure_debug_fields(run.raw_output)
         payload: dict[str, object] = {
             "event": "competitor_generation_run_terminal_update",
             "run_id": run.id,
             "business_id": run.business_id,
             "site_id": run.site_id,
+            "log_scope": "terminal",
+            "attempt_terminal": True,
             "status": normalized_status,
             "terminal_reason": self._clean_optional(terminal_reason) or "unknown",
             "failure_category": self._clean_optional(run.failure_category),
+            "failure_reason": failure_reason,
+            "failure_source": failure_source,
+            "retryable": retryable,
             "provider_name": self._clean_optional(run.provider_name),
             "model_name": self._clean_optional(run.model_name),
             "prompt_version": self._clean_optional(run.prompt_version),
@@ -1298,6 +1311,22 @@ class SEOCompetitorProfileGenerationService:
             fallback_message="competitor_generation_run_terminal_update",
             level=level,
         )
+
+    def _extract_failure_debug_fields(self, raw_output: str | None) -> tuple[str | None, str | None, bool | None]:
+        normalized_raw_output = self._clean_optional(raw_output)
+        if not normalized_raw_output:
+            return None, None, None
+        try:
+            parsed = json.loads(normalized_raw_output)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return None, None, None
+        if not isinstance(parsed, dict):
+            return None, None, None
+        failure_reason = self._clean_optional(parsed.get("normalized_failure_reason"))
+        failure_source = self._clean_optional(parsed.get("normalized_failure_source"))
+        retryable_value = parsed.get("normalized_retryable")
+        retryable = retryable_value if isinstance(retryable_value, bool) else None
+        return failure_reason, failure_source, retryable
 
     def _build_candidate_rejection_reason_histogram(
         self,

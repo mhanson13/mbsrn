@@ -3067,6 +3067,14 @@ def test_timeout_retry_recovers_on_full_attempt_without_degraded_mode(db_session
     assert timeout_outcome_event["final_outcome"] == "success"
     assert timeout_outcome_event["recovery_path"] == "retry_success"
     assert timeout_outcome_event["recovered_after_timeout"] is True
+    terminal_events = [
+        item
+        for item in events
+        if item.get("event") == "competitor_generation_run_terminal_update" and item.get("run_id") == run_id
+    ]
+    assert terminal_events
+    assert terminal_events[-1]["status"] == "completed"
+    assert all(item.get("status") != "failed" for item in terminal_events)
     timeout_outcome_record = next(
         record for record in caplog.records if '"event": "competitor_timeout_outcome"' in record.getMessage()
     )
@@ -3612,7 +3620,14 @@ def test_non_timeout_provider_failure_does_not_retry(db_session, seeded_business
     assert provider.provider_call_types == ["non_tool", "tool_enabled"]
 
 
-def test_generation_emits_terminal_update_event_for_completed_run(db_session, seeded_business, caplog) -> None:
+def test_generation_emits_terminal_update_event_for_completed_run(
+    db_session,
+    seeded_business,
+    caplog,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("MBSRN_BUILD_VERSION", "svc-build")
+    monkeypatch.setenv("MBSRN_GIT_COMMIT", "svc-sha")
     deferred_executor = _DeferredRunExecutor()
     provider = _DeterministicCompetitorProfileProvider()
     client = _make_client(
@@ -3643,10 +3658,21 @@ def test_generation_emits_terminal_update_event_for_completed_run(db_session, se
     terminal_event = terminal_events[-1]
     assert terminal_event["status"] == "completed"
     assert terminal_event["terminal_reason"] == "completed"
+    assert terminal_event["log_scope"] == "terminal"
+    assert terminal_event["attempt_terminal"] is True
+    assert terminal_event["app_version"] == "svc-build"
+    assert terminal_event["build_sha"] == "svc-sha"
     assert terminal_event["provider_attempt_count"] >= 1
 
 
-def test_generation_emits_terminal_update_event_for_failed_run(db_session, seeded_business, caplog) -> None:
+def test_generation_emits_terminal_update_event_for_failed_run(
+    db_session,
+    seeded_business,
+    caplog,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("MBSRN_BUILD_VERSION", "svc-build")
+    monkeypatch.setenv("MBSRN_GIT_COMMIT", "svc-sha")
     deferred_executor = _DeferredRunExecutor()
     client = _make_client(
         db_session,
@@ -3676,6 +3702,13 @@ def test_generation_emits_terminal_update_event_for_failed_run(db_session, seede
     terminal_event = terminal_events[-1]
     assert terminal_event["status"] == "failed"
     assert terminal_event["terminal_reason"] == "failed"
+    assert terminal_event["log_scope"] == "terminal"
+    assert terminal_event["attempt_terminal"] is True
+    assert terminal_event["failure_reason"] == "provider_transport_error"
+    assert terminal_event["failure_source"] == "remote_provider"
+    assert terminal_event["retryable"] is True
+    assert terminal_event["app_version"] == "svc-build"
+    assert terminal_event["build_sha"] == "svc-sha"
     assert terminal_event["failure_category"] == "provider_request"
 
 

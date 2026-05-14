@@ -97,6 +97,36 @@ Backend execution diagnostics now include bounded lifecycle events for triage co
 - `competitor_provider_response_parse_error`
 - `competitor_generation_run_terminal_update`
 
+Production triage notes:
+- provider attempt-level events now include bounded deploy/runtime correlation fields:
+  - `app_version`
+  - `build_sha`
+  - `runtime_pod` (when available from env)
+- correlate stale-vs-current logs by filtering competitor events to the currently deployed `app_version`/`build_sha`.
+- use `run_id` to follow a single generation lifecycle.
+- attempt-level provider errors are explicitly marked:
+  - `log_scope=attempt`
+  - `attempt_terminal=false`
+- terminal run status is explicitly marked:
+  - `event=competitor_generation_run_terminal_update`
+  - `log_scope=terminal`
+  - `attempt_terminal=true`
+- expected event order for a run attempt is:
+  1. `competitor_provider_request_start`
+  2. `competitor_provider_request_success` or `competitor_provider_request_error`
+  3. terminal `competitor_generation_run_terminal_update` (completed/failed)
+
+`invalid_request_error` failure-reason classes:
+- `provider_schema_invalid`
+- `provider_request_contract_invalid`
+- `provider_tool_request_invalid`
+- `prompt_override_contract_invalid`
+- `provider_invalid_request_unknown`
+
+Interpretation:
+- attempt-level provider errors can occur before a successful retry path and are not terminal by themselves.
+- only terminal run events represent final run status.
+
 Bounded exclusion telemetry is persisted at run level for tuning:
 - raw/included/excluded candidate totals,
 - aggregate exclusion counts by deterministic reason code.
