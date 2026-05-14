@@ -43,7 +43,9 @@ from app.repositories.seo_competitor_repository import SEOCompetitorRepository
 from app.repositories.seo_site_repository import SEOSiteRepository
 from app.services.seo_competitor_profile_generation import (
     INVALID_OUTPUT_ERROR_SUMMARY,
+    PROMPT_OVERRIDE_CONTRACT_INVALID_ERROR_SUMMARY,
     PROVIDER_AUTH_CONFIG_ERROR_SUMMARY,
+    PROVIDER_SCHEMA_INVALID_ERROR_SUMMARY,
     PROVIDER_TIMEOUT_ERROR_SUMMARY,
     STALE_QUEUED_RUN_ERROR_SUMMARY,
     STALE_QUEUED_RUN_TIMEOUT,
@@ -1050,6 +1052,54 @@ class _ProviderRequestFailureObservingProvider:
                 '"}}'
             ),
         )
+
+
+class _ProviderSchemaInvalidCompetitorProfileProvider:
+    provider_name = "openai"
+    model_name = "gpt-4.1-mini"
+    prompt_version = "seo-competitor-profile-v1"
+
+    def generate_competitor_profiles(
+        self,
+        *,
+        site,  # noqa: ANN001
+        existing_domains,  # noqa: ANN001
+        candidate_count: int,
+    ) -> SEOCompetitorProfileGenerationOutput:
+        del site, existing_domains, candidate_count
+        raise SEOCompetitorProfileProviderError(
+            code="provider_request",
+            safe_message="provider schema invalid",
+            provider_name=self.provider_name,
+            model_name=self.model_name,
+            prompt_version=self.prompt_version,
+            normalized_failure_category="configuration_invalid",
+            normalized_failure_reason="provider_schema_invalid",
+            normalized_failure_source="local_configuration",
+            normalized_retryable=False,
+            raw_output=(
+                '{"normalized_failure_category":"configuration_invalid",'
+                '"normalized_failure_reason":"provider_schema_invalid",'
+                '"normalized_failure_source":"local_configuration",'
+                '"normalized_retryable":false}'
+            ),
+        )
+
+
+class _ShouldNotBeCalledCompetitorProfileProvider:
+    provider_name = "unexpected-provider"
+    model_name = "unexpected-model"
+    prompt_version = "seo-competitor-profile-v1"
+
+    def generate_competitor_profiles(
+        self,
+        *,
+        site,  # noqa: ANN001
+        existing_domains,  # noqa: ANN001
+        candidate_count: int,
+    ) -> SEOCompetitorProfileGenerationOutput:
+        del site, existing_domains, candidate_count
+        raise AssertionError("provider should not be invoked when prompt override contract is invalid")
 
 
 class _ProviderAuthCompetitorProfileProvider:
@@ -2295,6 +2345,8 @@ def test_async_execution_transitions_running_to_completed_and_persists_drafts(db
             "insufficient_candidates": 0,
             "provider_unparseable": 0,
             "provider_returned_empty": 0,
+            "provider_schema_invalid": 0,
+            "prompt_override_contract_invalid": 0,
         },
     }
 
@@ -2738,6 +2790,90 @@ def test_provider_auth_failure_marks_run_failed_safely(db_session, seeded_busine
         "had_schema_repair_or_discard": False,
         "used_google_places_seeds": False,
     }
+
+
+def test_provider_schema_invalid_failure_maps_to_configuration_blocked_quality_summary(
+    db_session,
+    seeded_business,
+) -> None:
+    deferred_executor = _DeferredRunExecutor()
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        generation_provider=_DeterministicCompetitorProfileProvider(),
+        run_executor=deferred_executor,
+    )
+    site_id = _create_site(client, seeded_business.id)
+    run_id = _create_generation_run(client, seeded_business.id, site_id)["run"]["id"]
+
+    _execute_generation_run(
+        db_session=db_session,
+        business_id=seeded_business.id,
+        site_id=site_id,
+        run_id=run_id,
+        provider=_ProviderSchemaInvalidCompetitorProfileProvider(),
+    )
+
+    detail = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-profile-generation-runs/{run_id}"
+    )
+    assert detail.status_code == 200
+    payload = detail.json()
+    assert payload["run"]["status"] == "failed"
+    assert payload["run"]["failure_category"] == "provider_config"
+    assert payload["run"]["error_summary"] == PROVIDER_SCHEMA_INVALID_ERROR_SUMMARY
+    assert payload["ai_diagnostics_summary"]["failure_reason"] == "provider_schema_invalid"
+    assert payload["quality_summary"]["status"] == "blocked"
+    assert payload["quality_summary"]["top_reason"] == "provider_schema_invalid"
+    assert payload["quality_summary"]["reason_counts"]["provider_schema_invalid"] >= 1
+    assert payload["quality_summary"]["reason_counts"]["provider_returned_empty"] == 0
+    assert "schema configuration issue" in payload["quality_summary"]["operator_message"].lower()
+
+
+def test_prompt_override_contract_invalid_blocks_generation_before_provider_execution(
+    db_session,
+    seeded_business,
+) -> None:
+    deferred_executor = _DeferredRunExecutor()
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        generation_provider=_DeterministicCompetitorProfileProvider(),
+        run_executor=deferred_executor,
+    )
+    site_id = _create_site(client, seeded_business.id)
+    business = db_session.query(Business).filter(Business.id == seeded_business.id).one()
+    business.ai_prompt_text_competitor = (
+        'PROMPT_VERSION: seo-competitor-profile-v5\n'
+        '{"candidates":[{"confidence":0.8}]}'
+    )
+    db_session.add(business)
+    db_session.commit()
+
+    run_id = _create_generation_run(client, seeded_business.id, site_id)["run"]["id"]
+    _execute_generation_run(
+        db_session=db_session,
+        business_id=seeded_business.id,
+        site_id=site_id,
+        run_id=run_id,
+        provider=_ShouldNotBeCalledCompetitorProfileProvider(),
+    )
+
+    detail = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-profile-generation-runs/{run_id}"
+    )
+    assert detail.status_code == 200
+    payload = detail.json()
+    assert payload["run"]["status"] == "failed"
+    assert payload["run"]["failure_category"] == "provider_config"
+    assert payload["run"]["error_summary"] == PROMPT_OVERRIDE_CONTRACT_INVALID_ERROR_SUMMARY
+    assert payload["ai_diagnostics_summary"]["failure_reason"] == "prompt_override_contract_invalid"
+    assert payload["ai_diagnostics_summary"]["failure_source"] == "admin_configuration"
+    assert payload["quality_summary"]["status"] == "blocked"
+    assert payload["quality_summary"]["top_reason"] == "prompt_override_contract_invalid"
+    assert payload["quality_summary"]["reason_counts"]["prompt_override_contract_invalid"] >= 1
+    assert payload["quality_summary"]["reason_counts"]["provider_returned_empty"] == 0
+    assert "active admin prompt override" in payload["quality_summary"]["operator_message"].lower()
 
 
 def test_service_passes_explicit_provider_call_type_intent_for_provider_capable_signature(

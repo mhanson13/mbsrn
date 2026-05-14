@@ -87,20 +87,40 @@ _TIMEOUT_TYPE_VALUES = {
 }
 _PROMPT_VERSION_MARKER_PATTERN = re.compile(r"(?mi)^\s*PROMPT_VERSION:\s*([^\r\n]+)\s*$")
 _INVALID_FIELD_DIAGNOSTIC_MAX_ITEMS = 32
-_CANDIDATE_REQUIRED_FIELDS = {"name", "domain", "competitor_type", "confidence_score"}
+_CANDIDATE_SCHEMA_PROPERTY_KEYS = (
+    "name",
+    "domain",
+    "competitor_type",
+    "summary",
+    "why_competitor",
+    "evidence",
+    "confidence_score",
+    "business_name",
+    "location_market",
+    "service_category_fit",
+    "reason_selected",
+    "confidence",
+    "reasoning",
+    "reason",
+    "relevance_indicator",
+)
+_CANDIDATE_REQUIRED_FIELDS = set(_CANDIDATE_SCHEMA_PROPERTY_KEYS)
 _CANDIDATE_FIELD_EXPECTED_TYPES = {
-    "name": "string",
-    "business_name": "string|null",
+    "name": "string|null",
     "domain": "string",
-    "competitor_type": "string",
+    "competitor_type": "string|null",
     "summary": "string|null",
     "why_competitor": "string|null",
     "evidence": "string|null",
+    "confidence_score": "number|null",
+    "business_name": "string|null",
     "location_market": "string|null",
     "service_category_fit": "string|null",
     "reason_selected": "string|null",
+    "confidence": "number|null",
+    "reasoning": "string|null",
+    "reason": "string|null",
     "relevance_indicator": "number|null",
-    "confidence_score": "number",
 }
 _TYPE_MISMATCH_DISCARD_REASONS = {
     "invalid_field_type",
@@ -114,6 +134,14 @@ _COMPETITOR_REQUIRED_CONTEXT_KEYS = ("prompt_text_competitor",)
 _COMPETITOR_OPTIONAL_TRIM_ORDER = (
     "existing_domains",
     "seed_candidates",
+)
+
+_PROVIDER_SCHEMA_INVALID_MESSAGE_TOKENS = (
+    "invalid_json_schema",
+    "invalid schema for response_format",
+    "response_format 'seo_competitor_profile_generation_response'",
+    "missing 'business_name'",
+    "'required' is required to be supplied",
 )
 
 
@@ -753,8 +781,11 @@ class OpenAISEOCompetitorProfileGenerationProvider:
         summary = _clean_optional_value(raw_candidate.get("summary")) or _clean_optional_value(
             raw_candidate.get("service_category_fit")
         )
-        why_competitor = _clean_optional_value(raw_candidate.get("why_competitor")) or _clean_optional_value(
-            raw_candidate.get("reason_selected")
+        why_competitor = (
+            _clean_optional_value(raw_candidate.get("why_competitor"))
+            or _clean_optional_value(raw_candidate.get("reason_selected"))
+            or _clean_optional_value(raw_candidate.get("reasoning"))
+            or _clean_optional_value(raw_candidate.get("reason"))
         )
         evidence = _clean_optional_value(raw_candidate.get("evidence")) or _clean_optional_value(
             raw_candidate.get("location_market")
@@ -775,6 +806,11 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             direct_score = self._coerce_optional_float(raw_candidate.get("confidence_score"))
             if direct_score is not None:
                 return direct_score
+            return -1.0
+        if "confidence" in raw_candidate:
+            confidence_alias = self._coerce_optional_float(raw_candidate.get("confidence"))
+            if confidence_alias is not None:
+                return confidence_alias
             return -1.0
         if "relevance_indicator" in raw_candidate:
             relevance_indicator_score = self._coerce_optional_float(raw_candidate.get("relevance_indicator"))
@@ -1567,6 +1603,22 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             failure_category = _clean_optional_value(exc.normalized_failure.category)
             http_status = exc.normalized_failure.http_status
             timeout_type = _clean_optional_value(exc.normalized_failure.timeout_type)
+            normalized_failure_category = exc.normalized_failure.category
+            normalized_failure_reason = exc.normalized_failure.reason
+            normalized_failure_source = exc.normalized_failure.source
+            normalized_retryable = bool(exc.normalized_failure.retryable)
+            schema_invalid = self._is_provider_schema_invalid_error(
+                http_status=http_status,
+                error_type=error_type,
+                error_code=error_code,
+                error_message=error_message,
+                provider_error_body=body_text,
+            )
+            if schema_invalid:
+                normalized_failure_category = "configuration_invalid"
+                normalized_failure_reason = "provider_schema_invalid"
+                normalized_failure_source = "local_configuration"
+                normalized_retryable = False
 
             if (
                 failure_category == "configuration_invalid"
@@ -1584,10 +1636,10 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                     code=_PROVIDER_ERROR_AUTH_CONFIG,
                     safe_message=("AI provider authentication failed. Verify competitor profile provider credentials."),
                     raw_output=body_text,
-                    normalized_failure_category=exc.normalized_failure.category,
-                    normalized_failure_reason=exc.normalized_failure.reason,
-                    normalized_failure_source=exc.normalized_failure.source,
-                    normalized_retryable=bool(exc.normalized_failure.retryable),
+                    normalized_failure_category=normalized_failure_category,
+                    normalized_failure_reason=normalized_failure_reason,
+                    normalized_failure_source=normalized_failure_source,
+                    normalized_retryable=normalized_retryable,
                     attempt_count=max(1, int(exc.attempt_count)),
                 ) from exc
 
@@ -1646,25 +1698,29 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                         provider_error_body=provider_error_body,
                         timeout_type=(timeout_type or _TIMEOUT_TYPE_OVERALL),
                         request_duration_ms=request_duration_ms,
-                        normalized_failure_category=exc.normalized_failure.category,
-                        normalized_failure_reason=exc.normalized_failure.reason,
-                        normalized_failure_source=exc.normalized_failure.source,
-                        normalized_retryable=bool(exc.normalized_failure.retryable),
+                        normalized_failure_category=normalized_failure_category,
+                        normalized_failure_reason=normalized_failure_reason,
+                        normalized_failure_source=normalized_failure_source,
+                        normalized_retryable=normalized_retryable,
                         attempt_count=max(1, int(exc.attempt_count)),
                     ),
-                    normalized_failure_category=exc.normalized_failure.category,
-                    normalized_failure_reason=exc.normalized_failure.reason,
-                    normalized_failure_source=exc.normalized_failure.source,
-                    normalized_retryable=bool(exc.normalized_failure.retryable),
+                    normalized_failure_category=normalized_failure_category,
+                    normalized_failure_reason=normalized_failure_reason,
+                    normalized_failure_source=normalized_failure_source,
+                    normalized_retryable=normalized_retryable,
                     attempt_count=max(1, int(exc.attempt_count)),
                 ) from exc
             raise self._provider_error(
                 code=_PROVIDER_ERROR_REQUEST,
                 safe_message=(
+                    "Competitor profile generation is blocked by a local provider schema configuration issue."
+                    if schema_invalid
+                    else (
                     "Competitor profile generation request is too large or complex for synchronous generation."
                     if failure_category == "local_validation_failure"
                     and exc.normalized_failure.reason in {"request_too_large", "request_too_large_or_complex"}
                     else "Competitor profile generation provider request failed."
+                    )
                 ),
                 raw_output=self._build_request_failure_debug_payload(
                     endpoint_path=normalized_endpoint,
@@ -1672,16 +1728,16 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                     request_debug=request_debug,
                     provider_error_body=provider_error_body,
                     request_duration_ms=request_duration_ms,
-                    normalized_failure_category=exc.normalized_failure.category,
-                    normalized_failure_reason=exc.normalized_failure.reason,
-                    normalized_failure_source=exc.normalized_failure.source,
-                    normalized_retryable=bool(exc.normalized_failure.retryable),
+                    normalized_failure_category=normalized_failure_category,
+                    normalized_failure_reason=normalized_failure_reason,
+                    normalized_failure_source=normalized_failure_source,
+                    normalized_retryable=normalized_retryable,
                     attempt_count=max(1, int(exc.attempt_count)),
                 ),
-                normalized_failure_category=exc.normalized_failure.category,
-                normalized_failure_reason=exc.normalized_failure.reason,
-                normalized_failure_source=exc.normalized_failure.source,
-                normalized_retryable=bool(exc.normalized_failure.retryable),
+                normalized_failure_category=normalized_failure_category,
+                normalized_failure_reason=normalized_failure_reason,
+                normalized_failure_source=normalized_failure_source,
+                normalized_retryable=normalized_retryable,
                 attempt_count=max(1, int(exc.attempt_count)),
             ) from exc
 
@@ -1846,6 +1902,41 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             error_message = _clean_optional_value(error_payload.get("message"))
             return error_type, error_code, _compact_log_message(error_message)
         return None, None, _compact_log_message(_clean_optional_value(parsed.get("message")))
+
+    def _is_provider_schema_invalid_error(
+        self,
+        *,
+        http_status: int | None,
+        error_type: str | None,
+        error_code: str | None,
+        error_message: str | None,
+        provider_error_body: str | None,
+    ) -> bool:
+        if http_status != 400:
+            return False
+        normalized_type = (error_type or "").strip().lower()
+        normalized_code = (error_code or "").strip().lower()
+        normalized_message = (error_message or "").strip().lower()
+        normalized_body = (provider_error_body or "").strip().lower()
+        combined = "\n".join(
+            part
+            for part in (normalized_type, normalized_code, normalized_message, normalized_body)
+            if part
+        )
+        if not combined:
+            return False
+        if normalized_code == "invalid_json_schema":
+            return True
+        if "invalid_json_schema" in combined:
+            return True
+        if normalized_type == "invalid_request_error":
+            if all(token in combined for token in _PROVIDER_SCHEMA_INVALID_MESSAGE_TOKENS):
+                return True
+            if "invalid schema for response_format" in combined:
+                return True
+        if "required' is required to be supplied" in combined and "response_format" in combined:
+            return True
+        return False
 
     def _log_prompt_telemetry(self, request_debug: dict[str, object]) -> None:
         prompt_total_chars = request_debug.get("prompt_total_chars")
@@ -2340,7 +2431,10 @@ class _OpenAICompetitorProfileCandidate(BaseModel):
     location_market: str | None = None
     service_category_fit: str | None = None
     reason_selected: str | None = None
+    reasoning: str | None = None
+    reason: str | None = None
     relevance_indicator: float | None = None
+    confidence: float | None = None
     confidence_score: float
 
     @model_validator(mode="before")
@@ -2352,17 +2446,42 @@ class _OpenAICompetitorProfileCandidate(BaseModel):
         business_name = _clean_optional_value(payload.get("business_name"))
         if not _clean_optional_value(payload.get("name")) and business_name:
             payload["name"] = business_name
+        if not business_name and _clean_optional_value(payload.get("name")):
+            payload["business_name"] = _clean_optional_value(payload.get("name"))
         reason_selected = _clean_optional_value(payload.get("reason_selected"))
+        if not reason_selected:
+            reason_selected = (
+                _clean_optional_value(payload.get("reasoning"))
+                or _clean_optional_value(payload.get("reason"))
+                or _clean_optional_value(payload.get("why_competitor"))
+            )
+            if reason_selected:
+                payload["reason_selected"] = reason_selected
         if not _clean_optional_value(payload.get("why_competitor")) and reason_selected:
             payload["why_competitor"] = reason_selected
         service_category_fit = _clean_optional_value(payload.get("service_category_fit"))
+        if not service_category_fit and _clean_optional_value(payload.get("summary")):
+            service_category_fit = _clean_optional_value(payload.get("summary"))
+            if service_category_fit:
+                payload["service_category_fit"] = service_category_fit
         if not _clean_optional_value(payload.get("summary")) and service_category_fit:
             payload["summary"] = service_category_fit
         location_market = _clean_optional_value(payload.get("location_market"))
+        if not location_market and _clean_optional_value(payload.get("evidence")):
+            location_market = _clean_optional_value(payload.get("evidence"))
+            if location_market:
+                payload["location_market"] = location_market
         if not _clean_optional_value(payload.get("evidence")) and location_market:
             payload["evidence"] = location_market
-        if payload.get("confidence_score") is None and payload.get("relevance_indicator") is not None:
-            payload["confidence_score"] = payload.get("relevance_indicator")
+        if not _clean_optional_value(payload.get("competitor_type")):
+            payload["competitor_type"] = "unknown"
+        if payload.get("confidence_score") is None:
+            if payload.get("confidence") is not None:
+                payload["confidence_score"] = payload.get("confidence")
+            elif payload.get("relevance_indicator") is not None:
+                payload["confidence_score"] = payload.get("relevance_indicator")
+            else:
+                payload["confidence_score"] = 0.5
         return payload
 
     @field_validator("name", "domain", "competitor_type", mode="before")
@@ -2383,6 +2502,8 @@ class _OpenAICompetitorProfileCandidate(BaseModel):
         "location_market",
         "service_category_fit",
         "reason_selected",
+        "reasoning",
+        "reason",
         mode="before",
     )
     @classmethod
@@ -2404,6 +2525,16 @@ class _OpenAICompetitorProfileCandidate(BaseModel):
         except (TypeError, ValueError) as exc:
             raise ValueError("relevance_indicator must be numeric or null") from exc
         return parsed
+
+    @field_validator("confidence", mode="before")
+    @classmethod
+    def _normalize_optional_confidence(cls, value: object) -> float | None:
+        if value is None:
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("confidence must be numeric or null") from exc
 
     @field_validator("confidence_score", mode="before")
     @classmethod
@@ -2435,6 +2566,23 @@ class _OpenAICompetitorProfileResponse(BaseModel):
 
 def _build_candidate_json_schema(candidate_count: int) -> dict[str, object]:
     bounded_count = max(1, min(20, candidate_count))
+    candidate_properties: dict[str, object] = {
+        "name": {"type": ["string", "null"]},
+        "domain": {"type": "string"},
+        "competitor_type": {"type": ["string", "null"]},
+        "summary": {"type": ["string", "null"]},
+        "why_competitor": {"type": ["string", "null"]},
+        "evidence": {"type": ["string", "null"]},
+        "confidence_score": {"type": ["number", "null"]},
+        "business_name": {"type": ["string", "null"]},
+        "location_market": {"type": ["string", "null"]},
+        "service_category_fit": {"type": ["string", "null"]},
+        "reason_selected": {"type": ["string", "null"]},
+        "confidence": {"type": ["number", "null"]},
+        "reasoning": {"type": ["string", "null"]},
+        "reason": {"type": ["string", "null"]},
+        "relevance_indicator": {"type": ["number", "null"]},
+    }
     return {
         "type": "object",
         "additionalProperties": False,
@@ -2447,30 +2595,8 @@ def _build_candidate_json_schema(candidate_count: int) -> dict[str, object]:
                 "items": {
                     "type": "object",
                     "additionalProperties": False,
-                    "required": [
-                        "name",
-                        "domain",
-                        "competitor_type",
-                        "summary",
-                        "why_competitor",
-                        "evidence",
-                        "reason_selected",
-                        "confidence_score",
-                    ],
-                    "properties": {
-                        "name": {"type": "string"},
-                        "business_name": {"type": ["string", "null"]},
-                        "domain": {"type": "string"},
-                        "competitor_type": {"type": "string"},
-                        "summary": {"type": ["string", "null"]},
-                        "why_competitor": {"type": ["string", "null"]},
-                        "evidence": {"type": ["string", "null"]},
-                        "location_market": {"type": ["string", "null"]},
-                        "service_category_fit": {"type": ["string", "null"]},
-                        "reason_selected": {"type": ["string", "null"]},
-                        "relevance_indicator": {"type": ["number", "null"]},
-                        "confidence_score": {"type": "number"},
-                    },
+                    "required": list(candidate_properties.keys()),
+                    "properties": candidate_properties,
                 },
             },
         },

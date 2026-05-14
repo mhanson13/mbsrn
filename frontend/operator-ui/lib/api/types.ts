@@ -1528,7 +1528,9 @@ export type CompetitorGenerationQualityReason =
   | "missing_required_fields"
   | "insufficient_candidates"
   | "provider_unparseable"
-  | "provider_returned_empty";
+  | "provider_returned_empty"
+  | "provider_schema_invalid"
+  | "prompt_override_contract_invalid";
 
 export interface CompetitorGenerationQualitySummary {
   status: CompetitorGenerationQualityStatus;

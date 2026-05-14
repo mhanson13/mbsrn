@@ -5,6 +5,7 @@ import json
 from app.models.seo_site import SEOSite
 from app.services.seo_competitor_profile_prompt import (
     SEO_COMPETITOR_PROFILE_PROMPT_VERSION,
+    assess_seo_competitor_prompt_override_contract,
     build_seo_competitor_profile_prompt,
 )
 
@@ -784,6 +785,9 @@ def test_prompt_builder_uses_competitor_override_once_as_instruction_text_only()
         not in prompt.user_prompt
     )
     assert "COMPETITOR_QUALITY_CONTRACT:" not in prompt.user_prompt
+    assert "CANONICAL_OUTPUT_CONTRACT:" in prompt.user_prompt
+    assert "business_name (string|null)" in prompt.user_prompt
+    assert "reason_selected (string|null)" in prompt.user_prompt
     assert prompt.user_prompt.count("SITE_CONTEXT_JSON:") == 1
     assert prompt.user_prompt.count("REQUESTED_CANDIDATE_COUNT:") == 1
     assert "ADDITIONAL_COMPETITOR_TEXT:" not in prompt.user_prompt
@@ -934,6 +938,26 @@ def test_prompt_builder_override_cannot_change_runtime_candidate_constraints() -
         "ALLOWED_COMPETITOR_TYPES: direct, indirect, local, marketplace, informational, unknown" in prompt.user_prompt
     )
     assert prompt.user_prompt.count("ALLOWED_COMPETITOR_TYPES:") == 1
+
+
+def test_prompt_override_contract_assessment_marks_legacy_alias_shape() -> None:
+    legacy_override = (
+        "OUTPUT FORMAT:\n"
+        '{"candidates":[{"name":"Example","domain":"example.com","reasoning":"same market"}]}'
+    )
+    assessment = assess_seo_competitor_prompt_override_contract(legacy_override)
+    assert assessment.status == "legacy_alias"
+    assert assessment.reason == "prompt_override_contract_legacy"
+
+
+def test_prompt_override_contract_assessment_marks_invalid_shape_when_required_fields_missing() -> None:
+    invalid_override = (
+        "OUTPUT FORMAT:\n"
+        '{"candidates":[{"domain":"example.com","confidence":0.7}]}'
+    )
+    assessment = assess_seo_competitor_prompt_override_contract(invalid_override)
+    assert assessment.status == "invalid"
+    assert assessment.reason == "prompt_override_contract_invalid"
 
 
 def test_prompt_builder_is_deterministic_for_same_inputs() -> None:

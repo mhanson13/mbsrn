@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 import re
+from typing import Literal
 
 from app.models.seo_site import SEOSite
 from app.services.seo_sites import (
@@ -188,6 +189,13 @@ _US_STATE_ABBREVIATIONS = {
 }
 _OPERATOR_FEEDBACK_CONTEXT_ATTR = "_seo_competitor_operator_feedback_context"
 
+_PROMPT_OVERRIDE_CONTRACT_STATUS_COMPATIBLE = "compatible"
+_PROMPT_OVERRIDE_CONTRACT_STATUS_LEGACY_ALIAS = "legacy_alias"
+_PROMPT_OVERRIDE_CONTRACT_STATUS_INVALID = "invalid"
+
+_PROMPT_OVERRIDE_CONTRACT_REASON_LEGACY = "prompt_override_contract_legacy"
+_PROMPT_OVERRIDE_CONTRACT_REASON_INVALID = "prompt_override_contract_invalid"
+
 
 @dataclass(frozen=True)
 class SEOCompetitorProfilePrompt:
@@ -210,6 +218,60 @@ class _WeakSiteContextDecision:
     industry_context_source: str
     context_source_classification: str
     structured_context_fields_used: list[str]
+
+
+@dataclass(frozen=True)
+class SEOCompetitorPromptOverrideContractAssessment:
+    status: Literal["compatible", "legacy_alias", "invalid"]
+    reason: str | None = None
+
+
+def assess_seo_competitor_prompt_override_contract(
+    prompt_text_competitor: str | None,
+) -> SEOCompetitorPromptOverrideContractAssessment:
+    cleaned_prompt = _sanitize_optional(prompt_text_competitor, max_length=_MAX_PROMPT_TEXT_COMPETITOR_LENGTH)
+    if not cleaned_prompt:
+        return SEOCompetitorPromptOverrideContractAssessment(
+            status=_PROMPT_OVERRIDE_CONTRACT_STATUS_COMPATIBLE,
+            reason=None,
+        )
+
+    lowered = cleaned_prompt.lower()
+    has_candidate_shape = "candidates" in lowered
+    if not has_candidate_shape:
+        return SEOCompetitorPromptOverrideContractAssessment(
+            status=_PROMPT_OVERRIDE_CONTRACT_STATUS_COMPATIBLE,
+            reason=None,
+        )
+
+    has_domain_field = _prompt_contains_field_reference(lowered, "domain")
+    has_business_name_field = _prompt_contains_field_reference(lowered, "business_name")
+    has_name_field = _prompt_contains_field_reference(lowered, "name")
+    has_reason_selected_field = _prompt_contains_field_reference(lowered, "reason_selected")
+    has_reasoning_field = _prompt_contains_field_reference(lowered, "reasoning")
+    has_reason_field = _prompt_contains_field_reference(lowered, "reason")
+
+    has_name_contract = has_business_name_field or has_name_field
+    has_reason_contract = has_reason_selected_field or has_reasoning_field or has_reason_field
+    if not has_domain_field or not has_name_contract or not has_reason_contract:
+        return SEOCompetitorPromptOverrideContractAssessment(
+            status=_PROMPT_OVERRIDE_CONTRACT_STATUS_INVALID,
+            reason=_PROMPT_OVERRIDE_CONTRACT_REASON_INVALID,
+        )
+
+    uses_legacy_aliases = (has_name_field and not has_business_name_field) or (
+        (has_reasoning_field or has_reason_field) and not has_reason_selected_field
+    )
+    if uses_legacy_aliases:
+        return SEOCompetitorPromptOverrideContractAssessment(
+            status=_PROMPT_OVERRIDE_CONTRACT_STATUS_LEGACY_ALIAS,
+            reason=_PROMPT_OVERRIDE_CONTRACT_REASON_LEGACY,
+        )
+
+    return SEOCompetitorPromptOverrideContractAssessment(
+        status=_PROMPT_OVERRIDE_CONTRACT_STATUS_COMPATIBLE,
+        reason=None,
+    )
 
 
 def build_seo_competitor_profile_prompt(
@@ -603,7 +665,8 @@ def _build_default_competitor_instruction_body(
         "9. Include location_market and service_category_fit when known; use null when unknown.\n"
         "10. confidence_score must be a number between 0 and 1.\n"
         "11. If google_places_seed_candidates are provided, treat them as seed hypotheses and enrich/validate before final selection.\n"
-        "12. Keep summaries concise and evidence specific."
+        "12. Keep summaries concise and evidence specific.\n"
+        f"{_build_canonical_output_contract_block()}"
     )
 
 
@@ -732,6 +795,41 @@ def _build_override_template_values(
     }
 
 
+def _prompt_contains_field_reference(prompt_text: str, field_name: str) -> bool:
+    escaped_field = re.escape(field_name)
+    quoted_pattern = rf'["\']{escaped_field}["\']'
+    bare_pattern = rf"\b{escaped_field}\b"
+    return bool(re.search(quoted_pattern, prompt_text) or re.search(bare_pattern, prompt_text))
+
+
+def _build_canonical_output_contract_block() -> str:
+    return "\n".join(
+        [
+            "CANONICAL_OUTPUT_CONTRACT:",
+            "1. Return a JSON object with a single top-level `candidates` array.",
+            "2. Every candidate object must include every key below. Use null when unknown for nullable fields.",
+            "3. Canonical keys:",
+            "   - business_name (string|null)",
+            "   - domain (string hostname)",
+            "   - location_market (string|null)",
+            "   - service_category_fit (string|null)",
+            "   - reason_selected (string|null)",
+            "   - confidence_score (number|null)",
+            "4. Compatibility keys (also required for strict schema alignment):",
+            "   - name (string|null, mirror business_name when possible)",
+            "   - competitor_type (string|null, use `unknown` when uncertain)",
+            "   - summary (string|null, mirror service_category_fit when possible)",
+            "   - why_competitor (string|null, mirror reason_selected when possible)",
+            "   - evidence (string|null, mirror location_market when possible)",
+            "   - confidence (number|null, optional alias for confidence_score)",
+            "   - reasoning (string|null, optional alias for reason_selected)",
+            "   - reason (string|null, optional alias for reason_selected)",
+            "   - relevance_indicator (number|null)",
+            "5. Do not omit keys. Do not include additional keys.",
+        ]
+    )
+
+
 def _build_override_competitor_user_prompt(
     *,
     competitor_instructions_block: str,
@@ -750,6 +848,7 @@ def _build_override_competitor_user_prompt(
         "7. Return at least REQUESTED_CANDIDATE_COUNT candidates when possible; keep plausible lower-confidence candidates if needed.",
         f"REQUESTED_CANDIDATE_COUNT: {candidate_count}",
         f"ALLOWED_COMPETITOR_TYPES: {', '.join(_ALLOWED_COMPETITOR_TYPES)}",
+        _build_canonical_output_contract_block(),
         "SITE_CONTEXT_JSON:",
         context_json,
     ]

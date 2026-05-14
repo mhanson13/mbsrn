@@ -268,6 +268,8 @@ function formatGenerationQualityReason(reason: CompetitorGenerationQualityReason
     insufficient_candidates: "Insufficient usable candidates",
     provider_unparseable: "Provider output unparseable",
     provider_returned_empty: "Provider returned no candidates",
+    provider_schema_invalid: "Provider schema configuration invalid",
+    prompt_override_contract_invalid: "Admin competitor prompt override is incompatible",
   };
   return labels[reason];
 }

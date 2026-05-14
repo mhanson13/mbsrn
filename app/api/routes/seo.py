@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Response, status
+import json
 import logging
 import re
 from urllib.parse import urlparse
@@ -373,6 +374,8 @@ _COMPETITOR_QUALITY_REASON_MISSING_REQUIRED_FIELDS = "missing_required_fields"
 _COMPETITOR_QUALITY_REASON_INSUFFICIENT_CANDIDATES = "insufficient_candidates"
 _COMPETITOR_QUALITY_REASON_PROVIDER_UNPARSEABLE = "provider_unparseable"
 _COMPETITOR_QUALITY_REASON_PROVIDER_RETURNED_EMPTY = "provider_returned_empty"
+_COMPETITOR_QUALITY_REASON_PROVIDER_SCHEMA_INVALID = "provider_schema_invalid"
+_COMPETITOR_QUALITY_REASON_PROMPT_OVERRIDE_CONTRACT_INVALID = "prompt_override_contract_invalid"
 _COMPETITOR_QUALITY_REASON_KEYS = (
     _COMPETITOR_QUALITY_REASON_VALID,
     _COMPETITOR_QUALITY_REASON_DUPLICATE_DOMAIN,
@@ -383,8 +386,12 @@ _COMPETITOR_QUALITY_REASON_KEYS = (
     _COMPETITOR_QUALITY_REASON_INSUFFICIENT_CANDIDATES,
     _COMPETITOR_QUALITY_REASON_PROVIDER_UNPARSEABLE,
     _COMPETITOR_QUALITY_REASON_PROVIDER_RETURNED_EMPTY,
+    _COMPETITOR_QUALITY_REASON_PROVIDER_SCHEMA_INVALID,
+    _COMPETITOR_QUALITY_REASON_PROMPT_OVERRIDE_CONTRACT_INVALID,
 )
 _COMPETITOR_QUALITY_REASON_PRIORITY = (
+    _COMPETITOR_QUALITY_REASON_PROMPT_OVERRIDE_CONTRACT_INVALID,
+    _COMPETITOR_QUALITY_REASON_PROVIDER_SCHEMA_INVALID,
     _COMPETITOR_QUALITY_REASON_PROVIDER_UNPARSEABLE,
     _COMPETITOR_QUALITY_REASON_PROVIDER_RETURNED_EMPTY,
     _COMPETITOR_QUALITY_REASON_INSUFFICIENT_CANDIDATES,
@@ -5674,6 +5681,7 @@ def _to_competitor_profile_generation_run_detail_response(
         ),
         response_contract_summary=response_contract_summary,
         outcome_summary=outcome_summary,
+        ai_diagnostics_summary=ai_diagnostics_summary,
     )
     return SEOCompetitorProfileGenerationRunDetailRead(
         run=SEOCompetitorProfileGenerationRunRead.model_validate(run),
@@ -5710,6 +5718,7 @@ def _build_competitor_profile_quality_summary(
     candidate_pipeline_summary: SEOCompetitorProfileCandidatePipelineSummaryRead | None,
     response_contract_summary,
     outcome_summary,
+    ai_diagnostics_summary: dict[str, object] | None,
 ) -> SEOCompetitorProfileGenerationQualitySummaryRead | None:
     run_status = _clean_optional(getattr(run, "status", None))
     if run_status in {"queued", "running"}:
@@ -5779,12 +5788,23 @@ def _build_competitor_profile_quality_summary(
         response_status = _clean_optional(response_contract_summary.get("status"))
 
     failure_category = _clean_optional(getattr(run, "failure_category", None))
+    diagnostic_failure_reason = None
+    if isinstance(ai_diagnostics_summary, dict):
+        diagnostic_failure_reason = _clean_optional(ai_diagnostics_summary.get("failure_reason"))
     if failure_category in {"malformed_output", "schema_validation"}:
         reason_counts[_COMPETITOR_QUALITY_REASON_PROVIDER_UNPARSEABLE] += 1
-    if total_candidates_returned <= 0:
+    if diagnostic_failure_reason == "provider_schema_invalid":
+        reason_counts[_COMPETITOR_QUALITY_REASON_PROVIDER_SCHEMA_INVALID] += 1
+    elif diagnostic_failure_reason == "prompt_override_contract_invalid":
+        reason_counts[_COMPETITOR_QUALITY_REASON_PROMPT_OVERRIDE_CONTRACT_INVALID] += 1
+    has_configuration_block = (
+        reason_counts[_COMPETITOR_QUALITY_REASON_PROVIDER_SCHEMA_INVALID] > 0
+        or reason_counts[_COMPETITOR_QUALITY_REASON_PROMPT_OVERRIDE_CONTRACT_INVALID] > 0
+    )
+    if total_candidates_returned <= 0 and not has_configuration_block:
         reason_counts[_COMPETITOR_QUALITY_REASON_PROVIDER_RETURNED_EMPTY] += 1
     if response_status == "rejected":
-        if total_candidates_returned <= 0:
+        if total_candidates_returned <= 0 and not has_configuration_block:
             reason_counts[_COMPETITOR_QUALITY_REASON_PROVIDER_RETURNED_EMPTY] += 1
         else:
             reason_counts[_COMPETITOR_QUALITY_REASON_PROVIDER_UNPARSEABLE] += 1
@@ -5794,7 +5814,9 @@ def _build_competitor_profile_quality_summary(
 
     quality_status = "ready"
     has_blocking_issue = (
-        reason_counts[_COMPETITOR_QUALITY_REASON_PROVIDER_UNPARSEABLE] > 0
+        reason_counts[_COMPETITOR_QUALITY_REASON_PROVIDER_SCHEMA_INVALID] > 0
+        or reason_counts[_COMPETITOR_QUALITY_REASON_PROMPT_OVERRIDE_CONTRACT_INVALID] > 0
+        or reason_counts[_COMPETITOR_QUALITY_REASON_PROVIDER_UNPARSEABLE] > 0
         or reason_counts[_COMPETITOR_QUALITY_REASON_PROVIDER_RETURNED_EMPTY] > 0
         or accepted_candidates <= 0
     )
@@ -5874,6 +5896,12 @@ def _build_competitor_quality_operator_message(*, status: str, top_reason: str |
     if status == "ready":
         return "Competitor snapshot quality checks passed and results are ready for operator review."
     reason_messages = {
+        _COMPETITOR_QUALITY_REASON_PROVIDER_SCHEMA_INVALID: (
+            "Competitor generation is blocked by a local provider schema configuration issue."
+        ),
+        _COMPETITOR_QUALITY_REASON_PROMPT_OVERRIDE_CONTRACT_INVALID: (
+            "Competitor generation is blocked because the active Admin prompt override does not match the required output contract."
+        ),
         _COMPETITOR_QUALITY_REASON_PROVIDER_UNPARSEABLE: (
             "Competitor generation completed with unparseable provider output. Start a new run."
         ),
@@ -5914,6 +5942,12 @@ def _derive_competitor_ai_diagnostics_summary(
             latest_attempt_payload = latest_attempt.model_dump(mode="json")
         elif isinstance(latest_attempt, dict):
             latest_attempt_payload = latest_attempt
+    if not latest_attempt_payload:
+        raw_output_payload = _extract_competitor_generation_failure_payload(
+            raw_output=getattr(run, "raw_output", None),
+        )
+        if raw_output_payload is not None:
+            latest_attempt_payload = raw_output_payload
 
     normalized_failure_category = _clean_optional(
         latest_attempt_payload.get("normalized_failure_category"),
@@ -5992,6 +6026,36 @@ def _derive_competitor_ai_diagnostics_summary(
     if not any(value is not None for value in summary.values()):
         return None
     return summary
+
+
+def _extract_competitor_generation_failure_payload(*, raw_output: object) -> dict[str, object] | None:
+    if not isinstance(raw_output, str):
+        return None
+    try:
+        parsed = json.loads(raw_output)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    normalized_failure_category = _clean_optional(parsed.get("normalized_failure_category"))
+    normalized_failure_reason = _clean_optional(parsed.get("normalized_failure_reason"))
+    normalized_failure_source = _clean_optional(parsed.get("normalized_failure_source"))
+    normalized_retryable = parsed.get("normalized_retryable")
+    if (
+        normalized_failure_category is None
+        and normalized_failure_reason is None
+        and normalized_failure_source is None
+        and not isinstance(normalized_retryable, bool)
+    ):
+        return None
+    return {
+        "normalized_failure_category": normalized_failure_category,
+        "normalized_failure_reason": normalized_failure_reason,
+        "normalized_failure_source": normalized_failure_source,
+        "normalized_retryable": normalized_retryable if isinstance(normalized_retryable, bool) else None,
+        "prompt_size_risk": _clean_optional(parsed.get("prompt_size_risk")),
+        "prompt_total_chars": parsed.get("prompt_total_chars"),
+    }
 
 
 def _clean_optional(value: object) -> str | None:

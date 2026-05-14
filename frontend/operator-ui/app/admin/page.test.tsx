@@ -385,6 +385,47 @@ describe("admin route", () => {
     expect(screen.getByText("Use sc-domain:example.com or https://example.com.")).toBeInTheDocument();
   });
 
+  it("shows a compact warning when competitor prompt override uses legacy output aliases", async () => {
+    mockFetchBusinessSettings.mockResolvedValueOnce({
+      id: "biz-1",
+      name: "Biz",
+      notification_phone: null,
+      notification_email: null,
+      sms_enabled: false,
+      email_enabled: false,
+      customer_auto_ack_enabled: false,
+      contractor_alerts_enabled: false,
+      seo_audit_crawl_max_pages: 200,
+      competitor_candidate_min_relevance_score: 30,
+      competitor_candidate_big_box_penalty: 20,
+      competitor_candidate_directory_penalty: 20,
+      competitor_candidate_local_alignment_bonus: 10,
+      competitor_primary_timeout_seconds: null,
+      competitor_degraded_timeout_seconds: null,
+      migration_draft_timeout_seconds: null,
+      ai_prompt_text_competitor:
+        'PROMPT_VERSION: seo-competitor-profile-v5\n{"candidates":[{"name":"Example","domain":"example.com","reasoning":"same market"}]}',
+      ai_prompt_text_recommendations: null,
+      default_ai_model: null,
+      timezone: "UTC",
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+    });
+    mockUseAuth.mockReturnValue({
+      principal: {
+        business_id: "biz-1",
+        principal_id: "admin-legacy-prompt",
+        display_name: "Admin Prompt",
+        role: "admin",
+        is_active: true,
+      },
+    });
+
+    render(<AdminPage />);
+
+    expect(await screen.findByTestId("competitor-prompt-override-warning")).toHaveTextContent("legacy aliases");
+  });
+
   it("loads and saves business default AI model and migration timeout in admin settings", async () => {
     mockFetchBusinessSettings.mockResolvedValueOnce({
       id: "biz-1",

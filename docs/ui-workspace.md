@@ -78,6 +78,10 @@ Workflow ownership boundaries:
     - `Ready`
     - `Partial`
     - `Blocked`
+  - configuration-blocked quality states are surfaced explicitly and not conflated with no-candidate outcomes:
+    - `provider_schema_invalid` (local structured-output schema configuration issue)
+    - `prompt_override_contract_invalid` (active Admin competitor prompt override contract mismatch)
+  - when Admin override text uses legacy alias shape (`name` / `reasoning`), Admin prompt governance shows a compact compatibility warning while backend canonical schema enforcement remains authoritative
   - quality diagnostics remain bounded (accepted/rejected counts + top reason), and raw provider payloads are not shown
 - Migration workflow remains on `/sites/[site_id]/migration`.
 - Prompt/provider debug details stay in dedicated workflow/diagnostics surfaces, not inline in the primary Site Workspace.

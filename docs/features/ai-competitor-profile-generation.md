@@ -275,6 +275,8 @@ Bounded quality reason codes:
 - `insufficient_candidates`
 - `provider_unparseable`
 - `provider_returned_empty`
+- `provider_schema_invalid`
+- `prompt_override_contract_invalid`
 
 Important semantics:
 - run lifecycle (`queued`/`running`/`completed`/`failed`) remains separate from quality trust state.
@@ -309,19 +311,47 @@ Safety boundaries:
 - frontend uses backend endpoints only; no direct provider calls from browser flows
 
 ### Provider output contract hardening
-Competitor prompts now explicitly request structured candidate fields for explainability:
-- `business_name`
-- `domain`
-- `competitor_type`
-- `location_market`
-- `service_category_fit`
-- `reason_selected`
-- `confidence_score`
+Competitor generation now enforces one canonical machine contract for provider structured output.
+The provider `response_format` schema is strict and aligned so every object `properties` key is present in `required`.
+
+Canonical candidate fields (authoritative):
+- `business_name` (`string|null`)
+- `domain` (`string`)
+- `location_market` (`string|null`)
+- `service_category_fit` (`string|null`)
+- `reason_selected` (`string|null`)
+- `confidence_score` (`number|null`)
+
+Compatibility alias fields (accepted, normalized, still represented in strict schema):
+- `name` -> `business_name`
+- `reasoning` -> `reason_selected`
+- `reason` -> `reason_selected`
+- `confidence` -> `confidence_score`
+
+Strict structured-output rule:
+- every key declared under candidate `properties` is listed in `required`
+- optional semantics are represented by nullable types (`type: ["string","null"]` / `["number","null"]`) or bounded empty values
+- keys are not omitted to represent optional data
 
 Parser behavior remains backward-compatible and deterministic:
-- alias/fallback handling maps new fields into existing draft fields when present
+- legacy alias payloads are normalized into canonical fields
 - malformed/partial candidates are rejected or salvaged with bounded diagnostics
 - raw provider response bodies are not exposed in operator-facing responses
+
+### Admin prompt override contract rules
+Admin override text can guide competitor selection criteria, but it must not redefine the machine output shape.
+
+Rules:
+- override text is treated as guidance, not schema authority
+- canonical output contract instructions are always appended/enforced in final prompt construction
+- obvious incompatible override contracts are classified before provider execution
+
+Compatibility handling:
+- legacy alias contracts (`name` / `reasoning`) are allowed with compatibility normalization and bounded warnings
+- incompatible contracts (for example missing canonical identity/domain/reason structure) are blocked with:
+  - `failure_category=configuration_invalid`
+  - `failure_reason=prompt_override_contract_invalid`
+  - `failure_source=admin_configuration`
 
 ### Post-Parse Response Contract Evaluation
 Before run success persistence, parsed candidate output passes a deterministic response-contract evaluator.
@@ -553,6 +583,12 @@ Behavior notes:
   - run marked `failed`,
   - safe `error_summary` returned to operator surfaces,
   - normalized `failure_category` stored for observability.
+- Local structured-schema configuration mismatch:
+  - classified as `provider_schema_invalid`
+  - surfaced as configuration-blocked quality state (not `provider_returned_empty`)
+- Incompatible Admin competitor prompt override contract:
+  - classified as `prompt_override_contract_invalid`
+  - surfaced as configuration-blocked quality state (not `provider_returned_empty`)
 - Provider misconfiguration (missing API credentials):
   - provider resolves to misconfigured mode,
   - operators see safe message: `AI provider credentials are not configured for competitor profile generation.`,
@@ -570,6 +606,13 @@ Behavior notes:
   - cleanup execution record stores `failed` status and safe error summary.
 
 Operator-visible behavior remains safe and non-diagnostic (no stack traces, no raw provider internals).
+
+### Configuration-blocked recovery steps
+When quality status is blocked with `provider_schema_invalid` or `prompt_override_contract_invalid`:
+1. Open Admin prompt governance and verify competitor override output guidance references canonical fields (`business_name`, `domain`, `reason_selected`, `confidence_score`).
+2. Keep competitor override focused on selection heuristics; do not redefine output JSON schema.
+3. Re-run competitor generation after override correction.
+4. If schema block persists without override changes, treat as local provider schema configuration issue and escalate with run id + bounded diagnostics class only (no raw provider payload sharing).
 
 ## Security Considerations
 

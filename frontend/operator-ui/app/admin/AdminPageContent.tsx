@@ -177,6 +177,13 @@ interface GitHubPublishConfigValidationResult {
   blockingError: string | null;
 }
 
+type CompetitorPromptContractWarningState = "none" | "legacy_alias" | "invalid";
+
+interface CompetitorPromptContractWarning {
+  state: CompetitorPromptContractWarningState;
+  message: string | null;
+}
+
 function parseBoundedInteger(input: string, bounds: { min: number; max: number }): number | null {
   const normalized = input.trim();
   if (!/^\d+$/.test(normalized)) {
@@ -191,6 +198,45 @@ function parseBoundedInteger(input: string, bounds: { min: number; max: number }
     return null;
   }
   return parsed;
+}
+
+function promptIncludesField(value: string, fieldName: string): boolean {
+  const escaped = fieldName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const quotedPattern = new RegExp(`["']${escaped}["']`, "i");
+  const barePattern = new RegExp(`\\b${escaped}\\b`, "i");
+  return quotedPattern.test(value) || barePattern.test(value);
+}
+
+function assessCompetitorPromptOverrideContract(promptOverride: string): CompetitorPromptContractWarning {
+  const normalized = promptOverride.trim().toLowerCase();
+  if (!normalized || !normalized.includes("candidates")) {
+    return { state: "none", message: null };
+  }
+
+  const hasDomain = promptIncludesField(normalized, "domain");
+  const hasBusinessName = promptIncludesField(normalized, "business_name");
+  const hasName = promptIncludesField(normalized, "name");
+  const hasReasonSelected = promptIncludesField(normalized, "reason_selected");
+  const hasReasoning = promptIncludesField(normalized, "reasoning");
+  const hasReason = promptIncludesField(normalized, "reason");
+
+  if (!hasDomain || !(hasBusinessName || hasName) || !(hasReasonSelected || hasReasoning || hasReason)) {
+    return {
+      state: "invalid",
+      message:
+        "Competitor prompt override appears incompatible with the required output contract. Required fields include business_name, domain, and reason_selected.",
+    };
+  }
+
+  if ((hasName && !hasBusinessName) || ((hasReasoning || hasReason) && !hasReasonSelected)) {
+    return {
+      state: "legacy_alias",
+      message:
+        "Competitor prompt override uses legacy aliases (name/reasoning). Canonical fields are business_name, domain, location_market, service_category_fit, reason_selected, and confidence_score.",
+    };
+  }
+
+  return { state: "none", message: null };
 }
 
 function parseOptionalBoundedInteger(
@@ -1072,6 +1118,10 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
   const [promptOverrideSubmitting, setPromptOverrideSubmitting] = useState(false);
   const [promptOverrideMessage, setPromptOverrideMessage] = useState<string | null>(null);
   const [promptOverrideError, setPromptOverrideError] = useState<string | null>(null);
+  const competitorPromptContractWarning = useMemo(
+    () => assessCompetitorPromptOverrideContract(competitorPromptOverrideInput),
+    [competitorPromptOverrideInput],
+  );
   const [githubPublishOwnerInput, setGitHubPublishOwnerInput] = useState("");
   const [githubPublishDefaultBranchInput, setGitHubPublishDefaultBranchInput] = useState("main");
   const [githubPublishBasePathInput, setGitHubPublishBasePathInput] = useState("/");
@@ -2601,6 +2651,16 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
             <p className="hint muted">
               AI prompt/model changes affect generated recommendations, competitors, and migration drafts.
             </p>
+            {competitorPromptContractWarning.state === "legacy_alias" ? (
+              <p className="hint warning" data-testid="competitor-prompt-override-warning">
+                {competitorPromptContractWarning.message}
+              </p>
+            ) : null}
+            {competitorPromptContractWarning.state === "invalid" ? (
+              <p className="hint error" data-testid="competitor-prompt-override-warning">
+                {competitorPromptContractWarning.message}
+              </p>
+            ) : null}
             <div className="panel panel-compact stack-tight">
               <strong>Prompt Overrides (high-impact)</strong>
               <p className="hint muted">

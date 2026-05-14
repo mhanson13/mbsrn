@@ -682,6 +682,149 @@ describe("competitors page site-scoped loading", () => {
     expect(screen.getByTestId("competitors-generation-quality-message")).toHaveTextContent("quality is blocked");
   });
 
+  it("renders provider schema configuration failures as blocked configuration quality", async () => {
+    mockFetchCompetitorSets.mockResolvedValueOnce({ items: [], total: 0 });
+    mockFetchCompetitorProfileGenerationRuns.mockResolvedValueOnce({
+      items: [
+        {
+          id: "gen-run-schema",
+          business_id: "biz-1",
+          site_id: "site-1",
+          status: "failed",
+          requested_candidate_count: 10,
+          generated_draft_count: 0,
+          provider_name: "openai",
+          model_name: "gpt-5",
+          prompt_version: "v1",
+          failure_category: "provider_config",
+          error_summary: "Competitor generation is blocked by a local provider schema configuration issue.",
+          completed_at: "2026-03-20T01:00:00Z",
+          created_by_principal_id: "principal-1",
+          created_at: "2026-03-20T00:58:00Z",
+          updated_at: "2026-03-20T01:00:00Z",
+        },
+      ],
+      total: 1,
+    });
+    mockFetchCompetitorProfileGenerationRunDetail.mockResolvedValueOnce({
+      run: {
+        id: "gen-run-schema",
+        business_id: "biz-1",
+        site_id: "site-1",
+        status: "failed",
+        requested_candidate_count: 10,
+        generated_draft_count: 0,
+        provider_name: "openai",
+        model_name: "gpt-5",
+        prompt_version: "v1",
+        failure_category: "provider_config",
+        error_summary: "Competitor generation is blocked by a local provider schema configuration issue.",
+        completed_at: "2026-03-20T01:00:00Z",
+        created_by_principal_id: "principal-1",
+        created_at: "2026-03-20T00:58:00Z",
+        updated_at: "2026-03-20T01:00:00Z",
+      },
+      drafts: [],
+      total_drafts: 0,
+      quality_summary: {
+        status: "blocked",
+        operator_message: "Competitor generation is blocked by a local provider schema configuration issue.",
+        total_candidates_returned: 0,
+        accepted_candidates: 0,
+        rejected_candidates: 0,
+        final_active_domains_count: 0,
+        top_reason: "provider_schema_invalid",
+        reason_counts: {
+          valid: 0,
+          provider_schema_invalid: 1,
+        },
+      },
+    });
+
+    render(<CompetitorsPage />);
+
+    expect(await screen.findByTestId("competitors-generation-quality")).toHaveTextContent(
+      "Provider schema configuration invalid",
+    );
+    expect(screen.getByTestId("competitors-generation-quality-message")).toHaveTextContent(
+      "schema configuration issue",
+    );
+    expect(screen.getByTestId("competitors-generation-quality")).not.toHaveTextContent("Provider returned no candidates");
+  });
+
+  it("renders incompatible admin prompt override failures as blocked configuration quality", async () => {
+    mockFetchCompetitorSets.mockResolvedValueOnce({ items: [], total: 0 });
+    mockFetchCompetitorProfileGenerationRuns.mockResolvedValueOnce({
+      items: [
+        {
+          id: "gen-run-override",
+          business_id: "biz-1",
+          site_id: "site-1",
+          status: "failed",
+          requested_candidate_count: 10,
+          generated_draft_count: 0,
+          provider_name: "openai",
+          model_name: "gpt-5",
+          prompt_version: "v1",
+          failure_category: "provider_config",
+          error_summary:
+            "Competitor generation is blocked because the active Admin prompt override does not match the required output contract.",
+          completed_at: "2026-03-20T01:00:00Z",
+          created_by_principal_id: "principal-1",
+          created_at: "2026-03-20T00:58:00Z",
+          updated_at: "2026-03-20T01:00:00Z",
+        },
+      ],
+      total: 1,
+    });
+    mockFetchCompetitorProfileGenerationRunDetail.mockResolvedValueOnce({
+      run: {
+        id: "gen-run-override",
+        business_id: "biz-1",
+        site_id: "site-1",
+        status: "failed",
+        requested_candidate_count: 10,
+        generated_draft_count: 0,
+        provider_name: "openai",
+        model_name: "gpt-5",
+        prompt_version: "v1",
+        failure_category: "provider_config",
+        error_summary:
+          "Competitor generation is blocked because the active Admin prompt override does not match the required output contract.",
+        completed_at: "2026-03-20T01:00:00Z",
+        created_by_principal_id: "principal-1",
+        created_at: "2026-03-20T00:58:00Z",
+        updated_at: "2026-03-20T01:00:00Z",
+      },
+      drafts: [],
+      total_drafts: 0,
+      quality_summary: {
+        status: "blocked",
+        operator_message:
+          "Competitor generation is blocked because the active Admin prompt override does not match the required output contract.",
+        total_candidates_returned: 0,
+        accepted_candidates: 0,
+        rejected_candidates: 0,
+        final_active_domains_count: 0,
+        top_reason: "prompt_override_contract_invalid",
+        reason_counts: {
+          valid: 0,
+          prompt_override_contract_invalid: 1,
+        },
+      },
+    });
+
+    render(<CompetitorsPage />);
+
+    expect(await screen.findByTestId("competitors-generation-quality")).toHaveTextContent(
+      "Admin competitor prompt override is incompatible",
+    );
+    expect(screen.getByTestId("competitors-generation-quality-message")).toHaveTextContent(
+      "active Admin prompt override",
+    );
+    expect(screen.getByTestId("competitors-generation-quality")).not.toHaveTextContent("Provider returned no candidates");
+  });
+
   it("shows quality pending when latest generation run is queued", async () => {
     mockFetchCompetitorSets.mockResolvedValueOnce({ items: [], total: 0 });
     mockFetchCompetitorProfileGenerationRuns.mockResolvedValueOnce({

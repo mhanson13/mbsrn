@@ -9,6 +9,7 @@ import urllib.request
 import pytest
 
 from app.integrations.seo_competitor_profile_generation_provider import (
+    _build_candidate_json_schema,
     OpenAISEOCompetitorProfileGenerationProvider,
     SEOCompetitorProfileProviderError,
 )
@@ -296,6 +297,79 @@ def test_response_parsing_supports_business_name_reason_selected_and_market_fit_
     assert candidate.confidence_score == pytest.approx(0.69)
 
 
+def test_response_parsing_supports_legacy_reasoning_and_missing_name_aliases(monkeypatch) -> None:
+    payload = json.dumps(
+        {
+            "model": "gpt-4.1-mini-2026-01-01",
+            "output": [
+                {
+                    "content": [
+                        {
+                            "type": "output_text",
+                            "text": json.dumps(
+                                {
+                                    "candidates": [
+                                        {
+                                            "business_name": "Legacy Alias Competitor",
+                                            "domain": "legacy-alias.example",
+                                            "reasoning": "Competes directly on the same local service intent.",
+                                            "location_market": "Denver, CO",
+                                            "service_category_fit": "Local fire protection services",
+                                            "confidence": 0.74,
+                                        }
+                                    ]
+                                }
+                            ),
+                        }
+                    ]
+                }
+            ],
+        }
+    )
+
+    def _fake_urlopen(request: urllib.request.Request, timeout: int):  # noqa: ANN001
+        assert timeout == 20
+        assert request.full_url.endswith("/responses")
+        return _FakeHTTPResponse(payload)
+
+    monkeypatch.setattr(urllib.request, "urlopen", _fake_urlopen)
+    provider = OpenAISEOCompetitorProfileGenerationProvider(
+        api_key="sk-test",
+        model_name="gpt-4.1-mini",
+        timeout_seconds=20,
+    )
+
+    output = provider.generate_competitor_profiles(
+        site=_site(),
+        existing_domains=["known.example"],
+        candidate_count=1,
+    )
+
+    assert len(output.candidates) == 1
+    candidate = output.candidates[0]
+    assert candidate.suggested_name == "Legacy Alias Competitor"
+    assert candidate.suggested_domain == "legacy-alias.example"
+    assert candidate.competitor_type == "unknown"
+    assert candidate.summary == "Local fire protection services"
+    assert candidate.why_competitor == "Competes directly on the same local service intent."
+    assert candidate.evidence == "Denver, CO"
+    assert candidate.confidence_score == pytest.approx(0.74)
+
+
+def test_candidate_json_schema_requires_every_candidate_property_key() -> None:
+    schema = _build_candidate_json_schema(5)
+    candidates_schema = schema["properties"]["candidates"]["items"]
+    required_fields = candidates_schema["required"]
+    property_fields = candidates_schema["properties"]
+
+    assert isinstance(required_fields, list)
+    assert isinstance(property_fields, dict)
+    assert set(required_fields) == set(property_fields.keys())
+    assert "business_name" in required_fields
+    assert "domain" in required_fields
+    assert "reason_selected" in required_fields
+
+
 def test_output_prompt_version_uses_resolved_prompt_marker_when_override_is_present(monkeypatch) -> None:
     def _fake_urlopen(request: urllib.request.Request, timeout: int):  # noqa: ANN001
         assert timeout == 20
@@ -547,6 +621,53 @@ def test_openai_provider_auth_error_is_normalized(monkeypatch) -> None:
     assert exc_info.value.normalized_failure_source == "local_configuration"
     assert exc_info.value.normalized_retryable is False
     assert exc_info.value.attempt_count == 1
+
+
+def test_openai_provider_invalid_json_schema_is_classified_as_local_configuration(monkeypatch) -> None:
+    def _invalid_schema_urlopen(request: urllib.request.Request, timeout: int):  # noqa: ANN001
+        del timeout
+        raise urllib.error.HTTPError(
+            url=request.full_url,
+            code=400,
+            msg="Bad Request",
+            hdrs=None,
+            fp=BytesIO(
+                json.dumps(
+                    {
+                        "error": {
+                            "type": "invalid_request_error",
+                            "code": "invalid_json_schema",
+                            "message": (
+                                "Invalid schema for response_format 'seo_competitor_profile_generation_response': "
+                                "Missing 'business_name'."
+                            ),
+                        }
+                    }
+                ).encode("utf-8")
+            ),
+        )
+
+    monkeypatch.setattr(urllib.request, "urlopen", _invalid_schema_urlopen)
+    provider = OpenAISEOCompetitorProfileGenerationProvider(
+        api_key="sk-test",
+        model_name="gpt-4.1-mini",
+    )
+
+    with pytest.raises(SEOCompetitorProfileProviderError) as exc_info:
+        provider.generate_competitor_profiles(site=_site(), existing_domains=[], candidate_count=1)
+
+    assert exc_info.value.code == "provider_request"
+    assert exc_info.value.safe_message == (
+        "Competitor profile generation is blocked by a local provider schema configuration issue."
+    )
+    assert exc_info.value.normalized_failure_category == "configuration_invalid"
+    assert exc_info.value.normalized_failure_reason == "provider_schema_invalid"
+    assert exc_info.value.normalized_failure_source == "local_configuration"
+    assert exc_info.value.normalized_retryable is False
+    assert exc_info.value.raw_output is not None
+    payload = json.loads(exc_info.value.raw_output)
+    assert payload["normalized_failure_reason"] == "provider_schema_invalid"
+    assert payload["normalized_failure_source"] == "local_configuration"
 
 
 def test_competitor_context_budget_trims_breadth_before_depth_and_preserves_required_prompt() -> None:
@@ -1473,7 +1594,7 @@ def test_malformed_candidate_fields_are_recoverable_warning_with_diagnostics(mon
     assert invalid_fields
     assert invalid_fields[0]["candidate_index"] == 1
     assert invalid_fields[0]["field_name"] == "confidence_score"
-    assert invalid_fields[0]["expected_type"] == "number"
+    assert invalid_fields[0]["expected_type"] == "number|null"
     assert invalid_fields[0]["actual_type"] == "object"
     assert invalid_fields[0]["required_or_optional"] == "required"
     diagnostics_records = [
@@ -1772,7 +1893,7 @@ def test_confidence_score_unsupported_object_wrapper_emits_schema_diagnostics(mo
     invalid_fields = diagnostics_event["invalid_fields"]
     assert isinstance(invalid_fields, list)
     assert invalid_fields[0]["field_name"] == "confidence_score"
-    assert invalid_fields[0]["expected_type"] == "number"
+    assert invalid_fields[0]["expected_type"] == "number|null"
     assert invalid_fields[0]["actual_type"] == "object"
 
 

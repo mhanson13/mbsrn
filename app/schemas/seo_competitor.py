@@ -67,6 +67,8 @@ SEOCompetitorProfileQualityReason = Literal[
     "insufficient_candidates",
     "provider_unparseable",
     "provider_returned_empty",
+    "provider_schema_invalid",
+    "prompt_override_contract_invalid",
 ]
 SEOSummaryStatus = Literal["completed", "failed"]
 SEOFindingCategory = Literal["SEO", "CONTENT", "STRUCTURE", "TECHNICAL"]
@@ -116,6 +118,8 @@ _COMPETITOR_PROFILE_QUALITY_REASONS: tuple[str, ...] = (
     "insufficient_candidates",
     "provider_unparseable",
     "provider_returned_empty",
+    "provider_schema_invalid",
+    "prompt_override_contract_invalid",
 )
 _DRAFT_SOURCE_AI_GENERATED = "ai_generated"
 _DRAFT_SOURCE_AI_FORCED_FALLBACK = "ai_forced_fallback"

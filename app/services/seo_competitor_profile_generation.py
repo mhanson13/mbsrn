@@ -73,7 +73,9 @@ from app.services.seo_competitor_profile_candidate_quality import (
 )
 from app.services.seo_competitor_profile_prompt import SEO_COMPETITOR_PROFILE_PROMPT_VERSION
 from app.services.seo_competitor_profile_prompt import (
+    SEOCompetitorPromptOverrideContractAssessment,
     SEO_COMPETITOR_PROFILE_PROMPT_LABEL,
+    assess_seo_competitor_prompt_override_contract,
     build_seo_competitor_profile_prompt,
 )
 from app.services.ai_response_contract_evaluator import (
@@ -101,6 +103,12 @@ PROVIDER_TIMEOUT_ERROR_SUMMARY = (
     "Competitor profile generation timed out while contacting the AI provider. Start a new generation run to retry."
 )
 PROVIDER_AUTH_CONFIG_ERROR_SUMMARY = "AI provider credentials are not configured for competitor profile generation."
+PROVIDER_SCHEMA_INVALID_ERROR_SUMMARY = (
+    "Competitor generation is blocked by a local provider schema configuration issue."
+)
+PROMPT_OVERRIDE_CONTRACT_INVALID_ERROR_SUMMARY = (
+    "Competitor generation is blocked because the active Admin prompt override does not match the required output contract."
+)
 INVALID_OUTPUT_ERROR_SUMMARY = (
     "Competitor profile generation returned invalid structured output. Start a new generation run to retry."
 )
@@ -133,6 +141,7 @@ _PROVIDER_ATTEMPT_COUNT_KEY = "provider_attempt_count"
 _PROVIDER_DEGRADED_RETRY_USED_KEY = "provider_degraded_retry_used"
 _RESPONSE_CONTRACT_SUMMARY_KEY = "response_contract_summary"
 _RESPONSE_CONTRACT_EVALUATION_EVENT = "competitor_response_contract_evaluation"
+_PROMPT_OVERRIDE_CONTRACT_EVENT = "competitor_prompt_override_contract_validation"
 _EXECUTION_MODES = {"fast_path", "full", "degraded", "fallback"}
 _EXECUTION_MODE_FAST_PATH = "fast_path"
 _EXECUTION_MODE_FULL = "full"
@@ -746,6 +755,16 @@ class SEOCompetitorProfileGenerationService:
             )
             self._attach_site_content_signals(site=site, business_id=business_id, site_id=site_id)
             resolved_prompt = self._apply_resolved_competitor_prompt_settings(business)
+            override_contract_assessment = self._assess_prompt_override_contract(
+                business_id=business_id,
+                site_id=site_id,
+                run_id=run.id,
+                resolved_prompt=resolved_prompt,
+            )
+            if override_contract_assessment and override_contract_assessment.status == "invalid":
+                raise self._build_prompt_override_contract_provider_error(
+                    reason=override_contract_assessment.reason or "prompt_override_contract_invalid",
+                )
             google_places_seed_candidates = self._discover_google_places_seed_candidates(
                 site=site,
                 existing_domains=generation_existing_domains,
@@ -3622,6 +3641,57 @@ class SEOCompetitorProfileGenerationService:
             setattr(self.provider, "legacy_config_used", resolved.legacy_config_used)
         return resolved
 
+    def _assess_prompt_override_contract(
+        self,
+        *,
+        business_id: str,
+        site_id: str,
+        run_id: str,
+        resolved_prompt: ResolvedAIPromptText,
+    ) -> SEOCompetitorPromptOverrideContractAssessment | None:
+        if resolved_prompt.prompt_source != "admin_config":
+            return None
+        assessment = assess_seo_competitor_prompt_override_contract(resolved_prompt.prompt_text)
+        if assessment.status == "compatible":
+            return assessment
+        self._emit_structured_service_log(
+            payload={
+                "event": _PROMPT_OVERRIDE_CONTRACT_EVENT,
+                "business_id": business_id,
+                "site_id": site_id,
+                "run_id": run_id,
+                "prompt_source": resolved_prompt.prompt_source,
+                "assessment_status": assessment.status,
+                "assessment_reason": assessment.reason,
+            },
+            fallback_message=_PROMPT_OVERRIDE_CONTRACT_EVENT,
+            level=(logging.WARNING if assessment.status == "invalid" else logging.INFO),
+        )
+        return assessment
+
+    def _build_prompt_override_contract_provider_error(self, *, reason: str) -> SEOCompetitorProfileProviderError:
+        normalized_reason = self._clean_optional(reason) or "prompt_override_contract_invalid"
+        debug_payload = {
+            "failure_kind": "provider_request",
+            "normalized_failure_category": "configuration_invalid",
+            "normalized_failure_reason": normalized_reason,
+            "normalized_failure_source": "admin_configuration",
+            "normalized_retryable": False,
+        }
+        return SEOCompetitorProfileProviderError(
+            code="provider_request",
+            safe_message=PROMPT_OVERRIDE_CONTRACT_INVALID_ERROR_SUMMARY,
+            provider_name=self._default_provider_name(),
+            model_name=self._default_model_name(),
+            prompt_version=self._default_prompt_version(),
+            raw_output=json.dumps(debug_payload, ensure_ascii=True, sort_keys=True),
+            normalized_failure_category="configuration_invalid",
+            normalized_failure_reason=normalized_reason,
+            normalized_failure_source="admin_configuration",
+            normalized_retryable=False,
+            attempt_count=1,
+        )
+
     def _attach_site_content_signals(self, *, site: SEOSite, business_id: str, site_id: str) -> None:
         signals = self._load_site_content_signals(
             business_id=business_id,
@@ -3764,6 +3834,11 @@ class SEOCompetitorProfileGenerationService:
         return max(1, int(lookback_days))
 
     def _provider_error_summary(self, error: SEOCompetitorProfileProviderError) -> str:
+        normalized_reason = self._clean_optional(error.normalized_failure_reason)
+        if normalized_reason == "provider_schema_invalid":
+            return PROVIDER_SCHEMA_INVALID_ERROR_SUMMARY
+        if normalized_reason == "prompt_override_contract_invalid":
+            return PROMPT_OVERRIDE_CONTRACT_INVALID_ERROR_SUMMARY
         if error.code == "timeout":
             return PROVIDER_TIMEOUT_ERROR_SUMMARY
         if error.code in {"provider_auth", "provider_auth_config"}:
@@ -3773,6 +3848,12 @@ class SEOCompetitorProfileGenerationService:
         return GENERIC_PROVIDER_ERROR_SUMMARY
 
     def _provider_failure_category(self, error: SEOCompetitorProfileProviderError) -> str:
+        normalized_category = self._clean_optional(error.normalized_failure_category)
+        normalized_reason = self._clean_optional(error.normalized_failure_reason)
+        if normalized_reason in {"provider_schema_invalid", "prompt_override_contract_invalid"}:
+            return FAILURE_CATEGORY_PROVIDER_CONFIG
+        if normalized_category == "configuration_invalid":
+            return FAILURE_CATEGORY_PROVIDER_CONFIG
         if error.code == "timeout":
             return FAILURE_CATEGORY_TIMEOUT
         if error.code == "provider_auth":
