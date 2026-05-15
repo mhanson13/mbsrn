@@ -55,6 +55,17 @@ SEOCompetitorDraftConfidenceLevel = Literal["high", "medium", "low"]
 SEOCompetitorDraftSourceType = Literal["search", "places", "fallback", "synthetic"]
 SEOCompetitorDomainVerificationStatus = Literal["verified", "unverified"]
 SEOCompetitorDomainFeedbackStatus = Literal["useful", "not_useful", "excluded", "manually_seeded"]
+SEOCompetitorReviewedState = Literal[
+    "accepted",
+    "useful",
+    "not_useful",
+    "excluded",
+    "needs_review",
+    "manual_seed",
+    "generated_suggestion",
+    "legacy_synthetic",
+]
+SEOCompetitorReviewedProvenance = Literal["ai_suggested", "manual_seed", "existing", "legacy"]
 SEOAIResponseContractStatus = Literal["accepted", "accepted_with_warnings", "salvaged", "rejected"]
 SEOCompetitorProfileQualityStatus = Literal["ready", "partial", "blocked"]
 SEOCompetitorProfileQualityReason = Literal[
@@ -371,6 +382,82 @@ class SEOCompetitorDomainFeedbackRead(BaseModel):
 class SEOCompetitorDomainFeedbackListResponse(BaseModel):
     items: list[SEOCompetitorDomainFeedbackRead]
     total: int
+
+
+class SEOCompetitorReviewedCompetitorRowRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    domain: str = Field(min_length=1, max_length=255)
+    display_name: str | None = Field(default=None, max_length=255)
+    review_state: SEOCompetitorReviewedState
+    provenance: SEOCompetitorReviewedProvenance
+    confidence_score: float | None = Field(default=None, ge=0, le=1)
+    reason_selected: str | None = Field(default=None, max_length=500)
+    is_synthetic: bool = False
+    is_excluded: bool = False
+    is_accepted_or_useful: bool = False
+    updated_at: datetime | None = None
+    operator_note: str | None = Field(default=None, max_length=500)
+    source_set_id: str | None = Field(default=None, max_length=36)
+    source_generation_run_id: str | None = Field(default=None, max_length=36)
+
+
+class SEOCompetitorReviewedListSummaryRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    total: int = Field(default=0, ge=0)
+    accepted_useful: int = Field(default=0, ge=0)
+    needs_review: int = Field(default=0, ge=0)
+    excluded: int = Field(default=0, ge=0)
+    manual_seeds: int = Field(default=0, ge=0)
+    last_suggestion_status: SEOCompetitorProfileGenerationRunStatus | None = None
+
+
+class SEOCompetitorReviewedSuggestionSummaryRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    run_id: str | None = Field(default=None, max_length=36)
+    run_status: SEOCompetitorProfileGenerationRunStatus | None = None
+    local_seeds_considered: int = Field(default=0, ge=0)
+    suggestions_returned: int = Field(default=0, ge=0)
+    added_to_review_list: int = Field(default=0, ge=0)
+    already_known: int = Field(default=0, ge=0)
+    rejected_by_quality_gate: int = Field(default=0, ge=0)
+    excluded_by_operator_feedback: int = Field(default=0, ge=0)
+    failure_reason: str | None = Field(default=None, max_length=280)
+
+
+class SEOCompetitorAdvancedRunReferenceRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    status: str
+    competitor_set_id: str
+    competitor_set_name: str
+    created_at: datetime
+    updated_at: datetime
+    completed_at: datetime | None
+
+
+class SEOCompetitorReviewedDiagnosticsRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    competitor_set_count: int = Field(default=0, ge=0)
+    active_set_count: int = Field(default=0, ge=0)
+    latest_snapshot_run: SEOCompetitorAdvancedRunReferenceRead | None = None
+    latest_comparison_run: SEOCompetitorAdvancedRunReferenceRead | None = None
+
+
+class SEOCompetitorReviewedListResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    business_id: str
+    site_id: str
+    summary: SEOCompetitorReviewedListSummaryRead
+    latest_suggestion: SEOCompetitorReviewedSuggestionSummaryRead
+    quality_summary: "SEOCompetitorProfileGenerationQualitySummaryRead | None" = None
+    diagnostics: SEOCompetitorReviewedDiagnosticsRead
+    items: list[SEOCompetitorReviewedCompetitorRowRead]
 
 
 class SEOCompetitorProfileGenerationRunCreateRequest(BaseModel):

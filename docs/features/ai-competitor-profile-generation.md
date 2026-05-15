@@ -289,6 +289,27 @@ Production tuning prep:
    - highest `relevance_score`,
    - then stable lexical tie-breakers.
 
+### Admin governance remains authoritative
+Admin controls remain the first-class governance layer for competitor suggestion quality. The Competitors page is the
+human-review surface; it does not replace Admin tuning controls.
+
+Authoritative Admin candidate-quality settings and effects:
+- `competitor_candidate_min_relevance_score`: minimum score required for non-forced candidate acceptance.
+- `competitor_candidate_big_box_penalty`: deterministic score reduction for big-box/national mismatch candidates.
+- `competitor_candidate_directory_penalty`: deterministic score reduction for directory/aggregator candidates.
+- `competitor_candidate_local_alignment_bonus`: deterministic score boost for strong local market overlap.
+
+Operator correction signals are additive and bounded:
+- `useful` and `manually_seeded` domains add positive relevance bias.
+- `not_useful` domains add negative relevance bias.
+- `excluded` domains remain excluded regardless score via deterministic exclusion paths.
+
+Safety precedence:
+- self-domain and existing-domain matches remain excluded regardless score.
+- synthetic/placeholder/test domain patterns (including `.invalid`, `example.com`, `unknown*`,
+  `review-scaffold*`, and similar test placeholders) are rejected by deterministic eligibility gating and are not
+  treated as healthy competitors.
+
 ### Snapshot quality contract (operator-facing)
 Competitor generation run detail now includes an additive bounded quality summary:
 - `quality_summary.status`:
@@ -331,12 +352,42 @@ Feedback states (bounded):
 - `excluded`
 - `manually_seeded`
 
+Reviewed-list states shown to operators:
+- `accepted`
+- `useful`
+- `not_useful`
+- `excluded`
+- `needs_review`
+- `manual_seed`
+- `generated_suggestion`
+- `legacy_synthetic`
+
+Provenance labels:
+- `ai_suggested`
+- `manual_seed`
+- `existing`
+- `legacy`
+
 Behavior:
 - feedback is scoped to `business_id + site_id + domain`
 - excluded domains are fed back into future generation context and deterministic exclusion paths for that same site
 - manually seeded domains are passed as preferred known-competitor context for future generation
 - useful/not-useful domains are passed as bounded positive/negative relevance context
 - historical generated drafts/runs are not deleted by feedback updates
+
+Competitors page generation summary remains compact and operator-safe:
+- suggestions returned
+- accepted/useful
+- needs review
+- excluded
+- rejected by quality gate
+- local seeds considered
+- latest generation status/reason
+- reminder that summary results use Admin-configured relevance/local-alignment/exclusion/timeout/prompt-governance rules
+
+Primary/advanced boundary:
+- primary page is the reviewed competitor list and review actions
+- set/snapshot/comparison identifiers and historical run internals are shown only under `Advanced diagnostics`
 
 API contract (operator workflow):
 - `GET /api/businesses/{business_id}/seo/sites/{site_id}/competitor-domain-feedback`

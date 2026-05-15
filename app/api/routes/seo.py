@@ -87,6 +87,12 @@ from app.schemas.seo_competitor import (
     SEOCompetitorDomainFeedbackUpsertRequest,
     SEOCompetitorDomainListResponse,
     SEOCompetitorDomainRead,
+    SEOCompetitorReviewedCompetitorRowRead,
+    SEOCompetitorReviewedDiagnosticsRead,
+    SEOCompetitorReviewedListResponse,
+    SEOCompetitorReviewedListSummaryRead,
+    SEOCompetitorReviewedSuggestionSummaryRead,
+    SEOCompetitorAdvancedRunReferenceRead,
     SEOCompetitorManualSeedCreateRequest,
     SEOCompetitorSetCreateRequest,
     SEOCompetitorSetListResponse,
@@ -400,6 +406,35 @@ _COMPETITOR_QUALITY_REASON_PRIORITY = (
     _COMPETITOR_QUALITY_REASON_MISSING_REQUIRED_FIELDS,
     _COMPETITOR_QUALITY_REASON_LOW_RELEVANCE,
     _COMPETITOR_QUALITY_REASON_DUPLICATE_DOMAIN,
+)
+_COMPETITOR_REVIEW_STATE_ACCEPTED = "accepted"
+_COMPETITOR_REVIEW_STATE_USEFUL = "useful"
+_COMPETITOR_REVIEW_STATE_NOT_USEFUL = "not_useful"
+_COMPETITOR_REVIEW_STATE_EXCLUDED = "excluded"
+_COMPETITOR_REVIEW_STATE_NEEDS_REVIEW = "needs_review"
+_COMPETITOR_REVIEW_STATE_MANUAL_SEED = "manual_seed"
+_COMPETITOR_REVIEW_STATE_GENERATED_SUGGESTION = "generated_suggestion"
+_COMPETITOR_REVIEW_STATE_LEGACY_SYNTHETIC = "legacy_synthetic"
+_COMPETITOR_REVIEW_PROVENANCE_AI_SUGGESTED = "ai_suggested"
+_COMPETITOR_REVIEW_PROVENANCE_MANUAL_SEED = "manual_seed"
+_COMPETITOR_REVIEW_PROVENANCE_EXISTING = "existing"
+_COMPETITOR_REVIEW_PROVENANCE_LEGACY = "legacy"
+_COMPETITOR_LEGACY_SYNTHETIC_EXACT_DOMAINS = {
+    "example.com",
+    "localhost",
+    "unknown",
+}
+_COMPETITOR_LEGACY_SYNTHETIC_SUFFIXES = (
+    ".invalid",
+    ".test",
+    ".localhost",
+    ".mbsrn-fallback.local",
+)
+_COMPETITOR_LEGACY_SYNTHETIC_ROOT_PREFIXES = (
+    "unknown",
+    "review-scaffold",
+    "placeholder",
+    "test",
 )
 _GA4_PRIORITY_CONTENT_HINT_KEYWORDS = (
     "content",
@@ -5617,6 +5652,46 @@ def get_site_search_console_summary(
     )
 
 
+def _normalize_competitor_domain_key(raw_domain: object) -> str:
+    cleaned = str(raw_domain or "").strip().lower()
+    if not cleaned:
+        return ""
+    if "://" in cleaned:
+        parsed = urlparse(cleaned)
+        host = (parsed.hostname or "").strip().lower().strip(".")
+    else:
+        parsed = urlparse(f"https://{cleaned}")
+        host = (parsed.hostname or cleaned).strip().lower().strip(".")
+    if host.startswith("www."):
+        host = host[4:]
+    return host
+
+
+def _is_legacy_synthetic_competitor_domain(raw_domain: object) -> bool:
+    normalized = _normalize_competitor_domain_key(raw_domain)
+    if not normalized:
+        return True
+    if normalized in _COMPETITOR_LEGACY_SYNTHETIC_EXACT_DOMAINS:
+        return True
+    if any(normalized.endswith(suffix) for suffix in _COMPETITOR_LEGACY_SYNTHETIC_SUFFIXES):
+        return True
+    domain_root = normalized.split(".", 1)[0]
+    return any(domain_root.startswith(prefix) for prefix in _COMPETITOR_LEGACY_SYNTHETIC_ROOT_PREFIXES)
+
+
+def _run_activity_timestamp(run: object) -> datetime:
+    completed_at = getattr(run, "completed_at", None)
+    if isinstance(completed_at, datetime):
+        return completed_at
+    updated_at = getattr(run, "updated_at", None)
+    if isinstance(updated_at, datetime):
+        return updated_at
+    created_at = getattr(run, "created_at", None)
+    if isinstance(created_at, datetime):
+        return created_at
+    return datetime.min.replace(tzinfo=timezone.utc)
+
+
 @router.get("/sites/{site_id}/competitor-sets", response_model=SEOCompetitorSetListResponse)
 @router_v1.get("/sites/{site_id}/competitor-sets", response_model=SEOCompetitorSetListResponse)
 def list_competitor_sets(
@@ -5636,6 +5711,368 @@ def list_competitor_sets(
     return SEOCompetitorSetListResponse(
         items=[SEOCompetitorSetRead.model_validate(item) for item in items],
         total=len(items),
+    )
+
+
+@router.get(
+    "/sites/{site_id}/competitor-reviewed-list",
+    response_model=SEOCompetitorReviewedListResponse,
+)
+@router_v1.get(
+    "/sites/{site_id}/competitor-reviewed-list",
+    response_model=SEOCompetitorReviewedListResponse,
+)
+def get_competitor_reviewed_list(
+    business_id: str,
+    site_id: str,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    seo_site_service: SEOSiteService = Depends(get_seo_site_service),
+    seo_competitor_service: SEOCompetitorService = Depends(get_seo_competitor_service),
+    seo_competitor_repository: SEOCompetitorRepository = Depends(get_seo_competitor_repository),
+    generation_service: SEOCompetitorProfileGenerationService = Depends(get_seo_competitor_profile_generation_service),
+    comparison_service: SEOCompetitorComparisonService = Depends(get_seo_competitor_comparison_service),
+) -> SEOCompetitorReviewedListResponse:
+    scoped_business_id = resolve_tenant_business_id(
+        tenant_context=tenant_context,
+        requested_business_id=business_id,
+    )
+    try:
+        seo_site_service.get_site(business_id=scoped_business_id, site_id=site_id)
+        competitor_sets = seo_competitor_service.list_sets(
+            business_id=scoped_business_id,
+            site_id=site_id,
+        )
+        feedback_items = seo_competitor_service.list_domain_feedback(
+            business_id=scoped_business_id,
+            site_id=site_id,
+        )
+        generation_runs = generation_service.list_runs(
+            business_id=scoped_business_id,
+            site_id=site_id,
+        )
+        comparison_runs = comparison_service.list_runs_for_site(
+            business_id=scoped_business_id,
+            site_id=site_id,
+        )
+    except (
+        SEOCompetitorNotFoundError,
+        SEOCompetitorProfileGenerationNotFoundError,
+        SEOSiteNotFoundError,
+        SEOCompetitorComparisonNotFoundError,
+    ) as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    domains = seo_competitor_repository.list_domains_for_business_site(
+        scoped_business_id,
+        site_id,
+    )
+
+    feedback_by_domain: dict[str, SEOCompetitorDomainFeedbackRead] = {}
+    manual_seed_count = 0
+    for feedback_item in feedback_items:
+        domain_key = _normalize_competitor_domain_key(feedback_item.domain)
+        if not domain_key:
+            continue
+        if domain_key not in feedback_by_domain:
+            feedback_by_domain[domain_key] = SEOCompetitorDomainFeedbackRead.model_validate(feedback_item)
+        if str(feedback_item.feedback_status).strip().lower() == "manually_seeded":
+            manual_seed_count += 1
+
+    latest_generation_run = (
+        max(generation_runs, key=_run_activity_timestamp) if generation_runs else None
+    )
+    latest_generation_detail_response: SEOCompetitorProfileGenerationRunDetailRead | None = None
+    latest_quality_summary: SEOCompetitorProfileGenerationQualitySummaryRead | None = None
+    if latest_generation_run is not None and str(latest_generation_run.status).strip().lower() in {"completed", "failed"}:
+        latest_generation_detail = generation_service.get_run_detail(
+            business_id=scoped_business_id,
+            site_id=site_id,
+            generation_run_id=latest_generation_run.id,
+        )
+        latest_generation_detail_response = _to_competitor_profile_generation_run_detail_response(
+            run=latest_generation_detail.run,
+            drafts=latest_generation_detail.drafts,
+            rejected_candidate_count=latest_generation_detail.rejected_candidate_count,
+            rejected_candidates=latest_generation_detail.rejected_candidates,
+            tuning_rejected_candidate_count=latest_generation_detail.tuning_rejected_candidate_count,
+            tuning_rejected_candidates=latest_generation_detail.tuning_rejected_candidates,
+            tuning_rejection_reason_counts=latest_generation_detail.tuning_rejection_reason_counts,
+            candidate_pipeline_summary=latest_generation_detail.candidate_pipeline_summary,
+            outcome_summary=latest_generation_detail.outcome_summary,
+            response_contract_summary=latest_generation_detail.response_contract_summary,
+            provider_attempt_count=latest_generation_detail.provider_attempt_count,
+            provider_degraded_retry_used=latest_generation_detail.provider_degraded_retry_used,
+            provider_attempts=latest_generation_detail.provider_attempts,
+        )
+        latest_quality_summary = latest_generation_detail_response.quality_summary
+
+    accepted_drafts_by_domain: dict[str, SEOCompetitorProfileDraftRead] = {}
+    pending_suggestion_drafts: list[SEOCompetitorProfileDraftRead] = []
+    if latest_generation_detail_response is not None:
+        for draft in latest_generation_detail_response.drafts:
+            draft_domain_key = _normalize_competitor_domain_key(draft.suggested_domain)
+            if not draft_domain_key:
+                continue
+            if draft.review_status == "accepted":
+                accepted_drafts_by_domain[draft_domain_key] = draft
+                continue
+            if draft.review_status in {"pending", "edited"}:
+                pending_suggestion_drafts.append(draft)
+
+    reviewed_rows_by_domain: dict[str, SEOCompetitorReviewedCompetitorRowRead] = {}
+
+    for domain_item in domains:
+        domain_key = _normalize_competitor_domain_key(domain_item.domain)
+        if not domain_key:
+            continue
+        feedback_item = feedback_by_domain.get(domain_key)
+        accepted_draft = accepted_drafts_by_domain.get(domain_key)
+        source_value = str(domain_item.source or "").strip().lower()
+        is_synthetic = _is_legacy_synthetic_competitor_domain(domain_key) or "synthetic" in source_value
+
+        review_state = _COMPETITOR_REVIEW_STATE_ACCEPTED
+        if is_synthetic:
+            review_state = _COMPETITOR_REVIEW_STATE_LEGACY_SYNTHETIC
+        elif feedback_item is not None:
+            normalized_feedback_status = str(feedback_item.feedback_status or "").strip().lower()
+            if normalized_feedback_status == "excluded":
+                review_state = _COMPETITOR_REVIEW_STATE_EXCLUDED
+            elif normalized_feedback_status == "not_useful":
+                review_state = _COMPETITOR_REVIEW_STATE_NOT_USEFUL
+            elif normalized_feedback_status == "useful":
+                review_state = _COMPETITOR_REVIEW_STATE_USEFUL
+            elif normalized_feedback_status == "manually_seeded":
+                review_state = _COMPETITOR_REVIEW_STATE_MANUAL_SEED
+
+        provenance = _COMPETITOR_REVIEW_PROVENANCE_EXISTING
+        if is_synthetic:
+            provenance = _COMPETITOR_REVIEW_PROVENANCE_LEGACY
+        elif review_state == _COMPETITOR_REVIEW_STATE_MANUAL_SEED:
+            provenance = _COMPETITOR_REVIEW_PROVENANCE_MANUAL_SEED
+        elif source_value.startswith("ai") or source_value.startswith("places") or source_value.startswith("search"):
+            provenance = _COMPETITOR_REVIEW_PROVENANCE_AI_SUGGESTED
+
+        confidence_score = accepted_draft.confidence_score if accepted_draft is not None else None
+        reason_selected = None
+        if accepted_draft is not None:
+            reason_selected = (
+                _clean_optional(accepted_draft.why_competitor)
+                or _clean_optional(accepted_draft.summary)
+                or _clean_optional(accepted_draft.evidence)
+            )
+        updated_at = domain_item.updated_at
+        if feedback_item is not None and feedback_item.updated_at > updated_at:
+            updated_at = feedback_item.updated_at
+        source_generation_run_id = accepted_draft.generation_run_id if accepted_draft is not None else None
+        reviewed_rows_by_domain[domain_key] = SEOCompetitorReviewedCompetitorRowRead(
+            domain=domain_key,
+            display_name=feedback_item.display_name if feedback_item and feedback_item.display_name else domain_item.display_name,
+            review_state=review_state,
+            provenance=provenance,
+            confidence_score=confidence_score,
+            reason_selected=reason_selected,
+            is_synthetic=is_synthetic,
+            is_excluded=review_state == _COMPETITOR_REVIEW_STATE_EXCLUDED,
+            is_accepted_or_useful=review_state in {_COMPETITOR_REVIEW_STATE_ACCEPTED, _COMPETITOR_REVIEW_STATE_USEFUL},
+            updated_at=updated_at,
+            operator_note=feedback_item.operator_note if feedback_item else None,
+            source_set_id=domain_item.competitor_set_id,
+            source_generation_run_id=source_generation_run_id,
+        )
+
+    for domain_key, feedback_item in feedback_by_domain.items():
+        if domain_key in reviewed_rows_by_domain:
+            continue
+        normalized_feedback_status = str(feedback_item.feedback_status or "").strip().lower()
+        is_synthetic = _is_legacy_synthetic_competitor_domain(domain_key)
+        if is_synthetic:
+            review_state = _COMPETITOR_REVIEW_STATE_LEGACY_SYNTHETIC
+        elif normalized_feedback_status == "excluded":
+            review_state = _COMPETITOR_REVIEW_STATE_EXCLUDED
+        elif normalized_feedback_status == "not_useful":
+            review_state = _COMPETITOR_REVIEW_STATE_NOT_USEFUL
+        elif normalized_feedback_status == "useful":
+            review_state = _COMPETITOR_REVIEW_STATE_USEFUL
+        elif normalized_feedback_status == "manually_seeded":
+            review_state = _COMPETITOR_REVIEW_STATE_MANUAL_SEED
+        else:
+            review_state = _COMPETITOR_REVIEW_STATE_NEEDS_REVIEW
+
+        provenance = _COMPETITOR_REVIEW_PROVENANCE_EXISTING
+        if is_synthetic:
+            provenance = _COMPETITOR_REVIEW_PROVENANCE_LEGACY
+        elif review_state == _COMPETITOR_REVIEW_STATE_MANUAL_SEED:
+            provenance = _COMPETITOR_REVIEW_PROVENANCE_MANUAL_SEED
+
+        reviewed_rows_by_domain[domain_key] = SEOCompetitorReviewedCompetitorRowRead(
+            domain=domain_key,
+            display_name=feedback_item.display_name,
+            review_state=review_state,
+            provenance=provenance,
+            confidence_score=None,
+            reason_selected=None,
+            is_synthetic=is_synthetic,
+            is_excluded=review_state == _COMPETITOR_REVIEW_STATE_EXCLUDED,
+            is_accepted_or_useful=review_state in {_COMPETITOR_REVIEW_STATE_ACCEPTED, _COMPETITOR_REVIEW_STATE_USEFUL},
+            updated_at=feedback_item.updated_at,
+            operator_note=feedback_item.operator_note,
+            source_set_id=None,
+            source_generation_run_id=None,
+        )
+
+    added_to_review_list = 0
+    already_known = 0
+    excluded_by_operator_feedback = 0
+    for draft in pending_suggestion_drafts:
+        draft_domain_key = _normalize_competitor_domain_key(draft.suggested_domain)
+        if not draft_domain_key:
+            continue
+        draft_feedback = feedback_by_domain.get(draft_domain_key)
+        if draft_feedback is not None and str(draft_feedback.feedback_status).strip().lower() == "excluded":
+            excluded_by_operator_feedback += 1
+            continue
+        if draft_domain_key in reviewed_rows_by_domain:
+            already_known += 1
+            continue
+        is_synthetic = (
+            _is_legacy_synthetic_competitor_domain(draft_domain_key)
+            or (str(draft.source_type or "").strip().lower() == "synthetic")
+            or (str(draft.provenance_classification or "").strip().lower() == "synthetic_fallback")
+        )
+        review_state = (
+            _COMPETITOR_REVIEW_STATE_LEGACY_SYNTHETIC
+            if is_synthetic
+            else _COMPETITOR_REVIEW_STATE_GENERATED_SUGGESTION
+        )
+        reviewed_rows_by_domain[draft_domain_key] = SEOCompetitorReviewedCompetitorRowRead(
+            domain=draft_domain_key,
+            display_name=draft.suggested_name,
+            review_state=review_state,
+            provenance=(
+                _COMPETITOR_REVIEW_PROVENANCE_LEGACY
+                if is_synthetic
+                else _COMPETITOR_REVIEW_PROVENANCE_AI_SUGGESTED
+            ),
+            confidence_score=draft.confidence_score,
+            reason_selected=(
+                _clean_optional(draft.why_competitor)
+                or _clean_optional(draft.summary)
+                or _clean_optional(draft.evidence)
+            ),
+            is_synthetic=is_synthetic,
+            is_excluded=False,
+            is_accepted_or_useful=False,
+            updated_at=draft.updated_at,
+            operator_note=draft_feedback.operator_note if draft_feedback else None,
+            source_set_id=None,
+            source_generation_run_id=draft.generation_run_id,
+        )
+        added_to_review_list += 1
+
+    review_state_priority = {
+        _COMPETITOR_REVIEW_STATE_GENERATED_SUGGESTION: 0,
+        _COMPETITOR_REVIEW_STATE_NEEDS_REVIEW: 1,
+        _COMPETITOR_REVIEW_STATE_USEFUL: 2,
+        _COMPETITOR_REVIEW_STATE_ACCEPTED: 3,
+        _COMPETITOR_REVIEW_STATE_MANUAL_SEED: 4,
+        _COMPETITOR_REVIEW_STATE_NOT_USEFUL: 5,
+        _COMPETITOR_REVIEW_STATE_EXCLUDED: 6,
+        _COMPETITOR_REVIEW_STATE_LEGACY_SYNTHETIC: 7,
+    }
+    reviewed_rows = sorted(
+        reviewed_rows_by_domain.values(),
+        key=lambda row: (
+            review_state_priority.get(row.review_state, 99),
+            -(row.updated_at.timestamp() if row.updated_at else 0),
+            row.domain,
+        ),
+    )
+
+    accepted_useful_count = sum(
+        1 for item in reviewed_rows if item.review_state in {_COMPETITOR_REVIEW_STATE_ACCEPTED, _COMPETITOR_REVIEW_STATE_USEFUL}
+    )
+    needs_review_count = sum(
+        1
+        for item in reviewed_rows
+        if item.review_state in {_COMPETITOR_REVIEW_STATE_NEEDS_REVIEW, _COMPETITOR_REVIEW_STATE_GENERATED_SUGGESTION}
+    )
+    excluded_count = sum(1 for item in reviewed_rows if item.review_state == _COMPETITOR_REVIEW_STATE_EXCLUDED)
+    manual_seed_row_count = sum(1 for item in reviewed_rows if item.review_state == _COMPETITOR_REVIEW_STATE_MANUAL_SEED)
+
+    latest_snapshot_run = None
+    for competitor_set in competitor_sets:
+        snapshot_runs = seo_competitor_service.list_snapshot_runs(
+            business_id=scoped_business_id,
+            competitor_set_id=competitor_set.id,
+        )
+        if not snapshot_runs:
+            continue
+        candidate_snapshot = max(snapshot_runs, key=_run_activity_timestamp)
+        if latest_snapshot_run is None or _run_activity_timestamp(candidate_snapshot) > _run_activity_timestamp(latest_snapshot_run):
+            latest_snapshot_run = candidate_snapshot
+
+    latest_comparison_run = max(comparison_runs, key=_run_activity_timestamp) if comparison_runs else None
+    set_name_by_id = {item.id: item.name for item in competitor_sets}
+
+    def _to_advanced_run_reference(run: object | None) -> SEOCompetitorAdvancedRunReferenceRead | None:
+        if run is None:
+            return None
+        competitor_set_id = str(getattr(run, "competitor_set_id", "") or "")
+        competitor_set_name = set_name_by_id.get(competitor_set_id, competitor_set_id or "unknown")
+        return SEOCompetitorAdvancedRunReferenceRead(
+            id=str(getattr(run, "id")),
+            status=str(getattr(run, "status") or "unknown"),
+            competitor_set_id=competitor_set_id,
+            competitor_set_name=competitor_set_name,
+            created_at=getattr(run, "created_at"),
+            updated_at=getattr(run, "updated_at"),
+            completed_at=getattr(run, "completed_at", None),
+        )
+
+    suggestions_returned = 0
+    rejected_by_quality_gate = 0
+    failure_reason = None
+    if latest_quality_summary is not None:
+        suggestions_returned = max(0, int(latest_quality_summary.total_candidates_returned))
+        rejected_by_quality_gate = max(0, int(latest_quality_summary.rejected_candidates))
+    elif latest_generation_run is not None:
+        suggestions_returned = max(0, int(getattr(latest_generation_run, "raw_candidate_count", 0) or 0))
+        rejected_by_quality_gate = max(0, int(getattr(latest_generation_run, "excluded_candidate_count", 0) or 0))
+    if latest_generation_run is not None:
+        failure_reason = _clean_optional(getattr(latest_generation_run, "error_summary", None))
+    if failure_reason is not None and len(failure_reason) > 280:
+        failure_reason = f"{failure_reason[:277]}..."
+
+    return SEOCompetitorReviewedListResponse(
+        business_id=scoped_business_id,
+        site_id=site_id,
+        summary=SEOCompetitorReviewedListSummaryRead(
+            total=len(reviewed_rows),
+            accepted_useful=accepted_useful_count,
+            needs_review=needs_review_count,
+            excluded=excluded_count,
+            manual_seeds=manual_seed_row_count,
+            last_suggestion_status=(str(latest_generation_run.status) if latest_generation_run is not None else None),
+        ),
+        latest_suggestion=SEOCompetitorReviewedSuggestionSummaryRead(
+            run_id=(str(latest_generation_run.id) if latest_generation_run is not None else None),
+            run_status=(str(latest_generation_run.status) if latest_generation_run is not None else None),
+            local_seeds_considered=manual_seed_count,
+            suggestions_returned=suggestions_returned,
+            added_to_review_list=added_to_review_list,
+            already_known=already_known,
+            rejected_by_quality_gate=rejected_by_quality_gate,
+            excluded_by_operator_feedback=excluded_by_operator_feedback,
+            failure_reason=failure_reason,
+        ),
+        quality_summary=latest_quality_summary,
+        diagnostics=SEOCompetitorReviewedDiagnosticsRead(
+            competitor_set_count=len(competitor_sets),
+            active_set_count=sum(1 for item in competitor_sets if bool(getattr(item, "is_active", False))),
+            latest_snapshot_run=_to_advanced_run_reference(latest_snapshot_run),
+            latest_comparison_run=_to_advanced_run_reference(latest_comparison_run),
+        ),
+        items=reviewed_rows,
     )
 
 

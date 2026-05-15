@@ -68,6 +68,7 @@ import type {
   CompetitorDomainFeedbackUpsertRequest,
   CompetitorDomainListResponse,
   CompetitorDomainManualSeedCreateRequest,
+  ReviewedCompetitorListResponse,
   CompetitorComparisonRunListResponse,
   CompetitorSnapshotPageListResponse,
   CompetitorSet,
@@ -1019,6 +1020,17 @@ export async function fetchCompetitorDomainFeedback(
 ): Promise<CompetitorDomainFeedbackListResponse> {
   return apiRequest<CompetitorDomainFeedbackListResponse>(
     `/api/businesses/${businessId}/seo/sites/${siteId}/competitor-domain-feedback`,
+    { token },
+  );
+}
+
+export async function fetchReviewedCompetitorList(
+  token: string,
+  businessId: string,
+  siteId: string,
+): Promise<ReviewedCompetitorListResponse> {
+  return apiRequest<ReviewedCompetitorListResponse>(
+    `/api/businesses/${businessId}/seo/sites/${siteId}/competitor-reviewed-list`,
     { token },
   );
 }

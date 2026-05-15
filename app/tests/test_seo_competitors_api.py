@@ -11,6 +11,8 @@ from app.api.routes.seo import router_v1 as seo_v1_router
 from app.models.business import Business
 from app.models.seo_audit_run import SEOAuditRun
 from app.models.seo_competitor_domain import SEOCompetitorDomain
+from app.models.seo_competitor_profile_draft import SEOCompetitorProfileDraft
+from app.models.seo_competitor_profile_generation_run import SEOCompetitorProfileGenerationRun
 from app.models.seo_competitor_snapshot_page import SEOCompetitorSnapshotPage
 
 
@@ -335,6 +337,191 @@ def test_competitor_domain_feedback_validates_domain_and_scope(db_session, seede
         f"/api/businesses/{other_business.id}/seo/sites/{site_id}/competitor-domain-feedback"
     )
     assert cross_tenant_feedback.status_code == 404
+
+
+def test_competitor_reviewed_list_is_site_scoped_and_derives_review_states(db_session, seeded_business) -> None:
+    client = _make_client(db_session, business_id=seeded_business.id)
+
+    create_site = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites",
+        json={"display_name": "Main", "base_url": "https://example.com/"},
+    )
+    assert create_site.status_code == 201
+    site_id = create_site.json()["id"]
+
+    create_other_site = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites",
+        json={"display_name": "Secondary", "base_url": "https://secondary.example/"},
+    )
+    assert create_other_site.status_code == 201
+    other_site_id = create_other_site.json()["id"]
+
+    create_set = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-sets",
+        json={"name": "Front Range Competitors", "city": "Denver", "state": "CO"},
+    )
+    assert create_set.status_code == 201
+    set_id = create_set.json()["id"]
+
+    create_other_set = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{other_site_id}/competitor-sets",
+        json={"name": "Secondary Competitors"},
+    )
+    assert create_other_set.status_code == 201
+    other_set_id = create_other_set.json()["id"]
+
+    add_domain = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/competitor-sets/{set_id}/domains",
+        json={"domain": "alpha.example", "display_name": "Alpha Services"},
+    )
+    assert add_domain.status_code == 201
+
+    add_other_domain = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/competitor-sets/{other_set_id}/domains",
+        json={"domain": "outside-scope.example", "display_name": "Outside Scope"},
+    )
+    assert add_other_domain.status_code == 201
+
+    synthetic_domain = SEOCompetitorDomain(
+        id=str(uuid4()),
+        business_id=seeded_business.id,
+        site_id=site_id,
+        competitor_set_id=set_id,
+        domain="review-scaffold-legacy.invalid",
+        base_url="https://review-scaffold-legacy.invalid",
+        display_name="Legacy Synthetic",
+        source="synthetic_seed",
+    )
+    db_session.add(synthetic_domain)
+
+    generation_run_id = str(uuid4())
+    generation_run = SEOCompetitorProfileGenerationRun(
+        id=generation_run_id,
+        business_id=seeded_business.id,
+        site_id=site_id,
+        status="completed",
+        requested_candidate_count=6,
+        generated_draft_count=1,
+        raw_candidate_count=4,
+        included_candidate_count=2,
+        excluded_candidate_count=2,
+        provider_name="openai",
+        model_name="gpt-5.1",
+        prompt_version="seo-competitor-profile-v6",
+    )
+    generation_draft = SEOCompetitorProfileDraft(
+        id=str(uuid4()),
+        business_id=seeded_business.id,
+        site_id=site_id,
+        generation_run_id=generation_run_id,
+        suggested_name="Beta Builders",
+        suggested_domain="beta.example",
+        competitor_type="direct",
+        summary="Strong overlap in services.",
+        why_competitor="Competes for similar local service demand.",
+        evidence="Local service coverage and overlapping categories.",
+        confidence_score=0.81,
+        relevance_score=78,
+        source="ai_generated",
+        review_status="pending",
+    )
+    db_session.add(generation_run)
+    db_session.add(generation_draft)
+    db_session.commit()
+
+    mark_useful = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-domain-feedback",
+        json={
+            "domain": "alpha.example",
+            "feedback_status": "useful",
+            "display_name": "Alpha Services",
+        },
+    )
+    assert mark_useful.status_code == 201
+
+    create_manual_seed = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-domain-manual-seeds",
+        json={
+            "domain": "seeded.example",
+            "display_name": "Seeded Competitor",
+        },
+    )
+    assert create_manual_seed.status_code == 201
+
+    reviewed_list = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-reviewed-list"
+    )
+    assert reviewed_list.status_code == 200
+    payload = reviewed_list.json()
+
+    assert payload["business_id"] == seeded_business.id
+    assert payload["site_id"] == site_id
+    rows_by_domain = {item["domain"]: item for item in payload["items"]}
+
+    assert "outside-scope.example" not in rows_by_domain
+    assert rows_by_domain["alpha.example"]["review_state"] == "useful"
+    assert rows_by_domain["alpha.example"]["is_accepted_or_useful"] is True
+    assert rows_by_domain["seeded.example"]["review_state"] == "manual_seed"
+    assert rows_by_domain["seeded.example"]["provenance"] == "manual_seed"
+    assert rows_by_domain["beta.example"]["review_state"] == "generated_suggestion"
+    assert rows_by_domain["review-scaffold-legacy.invalid"]["review_state"] == "legacy_synthetic"
+    assert rows_by_domain["review-scaffold-legacy.invalid"]["is_accepted_or_useful"] is False
+
+    assert payload["summary"]["accepted_useful"] == 1
+    assert payload["summary"]["manual_seeds"] == 1
+    assert payload["summary"]["needs_review"] >= 1
+    assert payload["latest_suggestion"]["run_id"] == generation_run_id
+    assert payload["latest_suggestion"]["run_status"] == "completed"
+    assert payload["latest_suggestion"]["suggestions_returned"] >= 0
+    assert payload["latest_suggestion"]["added_to_review_list"] >= 1
+
+    assert "raw_output" not in payload
+    assert "provider_payload" not in payload
+
+
+def test_competitor_reviewed_list_keeps_snapshot_queue_in_advanced_diagnostics_only(
+    db_session, seeded_business
+) -> None:
+    client = _make_client(db_session, business_id=seeded_business.id)
+
+    create_site = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites",
+        json={"display_name": "Main", "base_url": "https://example.com/"},
+    )
+    assert create_site.status_code == 201
+    site_id = create_site.json()["id"]
+
+    create_set = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-sets",
+        json={"name": "Front Range Competitors", "city": "Denver", "state": "CO"},
+    )
+    assert create_set.status_code == 201
+    set_id = create_set.json()["id"]
+
+    add_domain = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/competitor-sets/{set_id}/domains",
+        json={"domain": "stablecompetitor.example", "display_name": "Stable Competitor"},
+    )
+    assert add_domain.status_code == 201
+
+    queue_snapshot = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/competitor-sets/{set_id}/snapshot-runs",
+        json={},
+    )
+    assert queue_snapshot.status_code == 201
+
+    reviewed_list = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-reviewed-list"
+    )
+    assert reviewed_list.status_code == 200
+    payload = reviewed_list.json()
+
+    rows_by_domain = {item["domain"]: item for item in payload["items"]}
+    assert rows_by_domain["stablecompetitor.example"]["review_state"] == "accepted"
+    assert payload["summary"]["accepted_useful"] == 1
+    assert payload["summary"]["needs_review"] == 0
+    assert payload["diagnostics"]["latest_snapshot_run"] is not None
+    assert payload["diagnostics"]["latest_snapshot_run"]["status"] == "queued"
 
 
 def test_competitor_routes_enforce_business_scoping(db_session, seeded_business) -> None:

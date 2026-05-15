@@ -2,72 +2,36 @@
 
 import { Suspense, useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 
 import { PageContainer } from "../../components/layout/PageContainer";
 import {
   OperatorPageHero,
   OperatorPageSectionStack,
 } from "../../components/layout/OperatorPageSurface";
-import { OperationalItemCard } from "../../components/layout/OperationalItemCard";
 import { SectionCard } from "../../components/layout/SectionCard";
 import { SectionHeader } from "../../components/layout/SectionHeader";
 import { SummaryStatCard } from "../../components/layout/SummaryStatCard";
-import { WorkspaceActionBar } from "../../components/layout/WorkspaceActionBar";
 import { WorkspaceEmptyStateCard } from "../../components/layout/WorkspaceEmptyStateCard";
 import { WorkspaceMessageStack } from "../../components/layout/WorkspaceMessageStack";
-import { WorkspaceMetadataGrid, WorkspaceMetadataItem } from "../../components/layout/WorkspaceMetadataGrid";
 import { WorkspaceTableShell } from "../../components/layout/WorkspaceTableShell";
 import { useOperatorContext } from "../../components/useOperatorContext";
 import {
   ApiRequestError,
   createCompetitorDomainManualSeed,
   createCompetitorProfileGenerationRun,
-  fetchCompetitorDomainFeedback,
+  fetchReviewedCompetitorList,
   upsertCompetitorDomainFeedback,
-  fetchCompetitorProfileGenerationRunDetail,
-  fetchCompetitorProfileGenerationRuns,
-  fetchCompetitorDomains,
-  fetchCompetitorProfileGenerationSummary,
-  fetchCompetitorSets,
-  fetchCompetitorSnapshotRuns,
-  fetchSiteCompetitorComparisonRuns,
 } from "../../lib/api/client";
 import type {
-  CompetitorDomain,
-  CompetitorDomainFeedback,
   CompetitorDomainFeedbackStatus,
-  CompetitorGenerationQualityReason,
   CompetitorGenerationQualitySummary,
-  CompetitorProfileGenerationSummaryResponse,
-  CompetitorProfileGenerationRun,
-  CompetitorSet,
-  CompetitorSnapshotRun,
+  ReviewedCompetitorListResponse,
+  ReviewedCompetitorRow,
+  ReviewedCompetitorState,
 } from "../../lib/api/types";
 
 const COMPETITOR_GENERATION_POLL_INTERVAL_MS = 5000;
-
-interface CompetitorSetRow extends CompetitorSet {
-  domain_count: number;
-  active_domain_count: number;
-  source_summary: string;
-  latest_domain_updated_at: string | null;
-  latest_snapshot_status: string | null;
-}
-
-interface CompetitorDomainReviewRow extends CompetitorDomain {
-  competitor_set_name: string;
-}
-
-interface LatestSiteRun {
-  id: string;
-  competitor_set_id: string;
-  competitor_set_name: string;
-  status: string;
-  created_at: string;
-  updated_at: string;
-  completed_at: string | null;
-}
 
 function formatDateTime(value: string | null): string {
   if (!value) {
@@ -78,14 +42,6 @@ function formatDateTime(value: string | null): string {
     return value;
   }
   return parsed.toLocaleString();
-}
-
-function formatLocation(city: string | null, state: string | null): string {
-  const locationParts = [city, state].filter((part) => Boolean(part && part.trim()));
-  if (locationParts.length === 0) {
-    return "-";
-  }
-  return locationParts.join(", ");
 }
 
 function safeCompetitorErrorMessage(error: unknown): string {
@@ -109,22 +65,22 @@ function safeGenerationErrorMessage(error: unknown): string {
       return "Session expired. Sign in again.";
     }
     if (error.status === 403) {
-      return "You are not authorized to generate competitor sets.";
+      return "You are not authorized to suggest competitors.";
     }
     if (error.status === 404) {
-      return "Selected site was not found for competitor generation.";
+      return "Selected site was not found for competitor suggestions.";
     }
     if (error.status === 422) {
-      return "Competitor generation cannot start until site context is ready.";
+      return "Competitor suggestions cannot start until site context is ready.";
     }
     if (error.status === 429) {
-      return "Competitor generation is temporarily rate-limited. Try again shortly.";
+      return "Competitor suggestions are temporarily rate-limited. Try again shortly.";
     }
     if (error.status >= 500) {
-      return "Competitor generation is temporarily unavailable. Try again shortly.";
+      return "Competitor suggestions are temporarily unavailable. Try again shortly.";
     }
   }
-  return "Unable to start competitor generation right now. Try again.";
+  return "Unable to start competitor suggestions right now. Try again.";
 }
 
 function safeFeedbackErrorMessage(error: unknown): string {
@@ -165,19 +121,6 @@ function formatFeedbackStatusLabel(status: CompetitorDomainFeedbackStatus | null
   return "Not reviewed";
 }
 
-function feedbackBadgeClass(status: CompetitorDomainFeedbackStatus | null): string {
-  if (status === "useful") {
-    return "badge-success";
-  }
-  if (status === "excluded" || status === "not_useful") {
-    return "badge-warn";
-  }
-  if (status === "manually_seeded") {
-    return "badge-muted";
-  }
-  return "badge-muted";
-}
-
 function classifyGenerationStartResponse(
   response: unknown,
 ): { classification: "success" | "unexpected_response"; message: string } {
@@ -185,7 +128,7 @@ function classifyGenerationStartResponse(
     return {
       classification: "unexpected_response",
       message:
-        "Competitor generation request returned an unexpected response. Refresh inventory to confirm run status.",
+        "Competitor suggestion request returned an unexpected response. Refresh to confirm run status.",
     };
   }
   const responseRecord = response as { run?: unknown };
@@ -201,45 +144,62 @@ function classifyGenerationStartResponse(
     return {
       classification: "unexpected_response",
       message:
-        "Competitor generation request was accepted, but run details were incomplete. Refresh inventory to confirm status.",
+        "Competitor suggestion request was accepted, but run details were incomplete. Refresh to confirm status.",
     };
   }
   return {
     classification: "success",
-    message: `Competitor generation started (run ${runId}, ${formatRunStatus(runStatus)}).`,
+    message: `Competitor suggestion started (run ${runId}, ${runStatus}).`,
   };
 }
 
-function runActivityTimestamp(
-  run: Pick<LatestSiteRun, "completed_at" | "updated_at" | "created_at">,
-): number {
-  const activityAt = run.completed_at || run.updated_at || run.created_at;
-  const parsed = Date.parse(activityAt);
-  return Number.isNaN(parsed) ? 0 : parsed;
+function formatReviewStateLabel(state: ReviewedCompetitorState): string {
+  switch (state) {
+    case "accepted":
+      return "Accepted";
+    case "useful":
+      return "Useful";
+    case "not_useful":
+      return "Not useful";
+    case "excluded":
+      return "Excluded";
+    case "needs_review":
+      return "Needs review";
+    case "manual_seed":
+      return "Manual seed";
+    case "generated_suggestion":
+      return "Generated suggestion";
+    case "legacy_synthetic":
+      return "Legacy/synthetic";
+    default:
+      return state;
+  }
 }
 
-function latestByActivity<T extends Pick<LatestSiteRun, "completed_at" | "updated_at" | "created_at">>(
-  runs: T[],
-): T | null {
-  if (runs.length === 0) {
-    return null;
+function reviewStateBadgeClass(state: ReviewedCompetitorState): string {
+  if (state === "accepted" || state === "useful") {
+    return "badge-success";
   }
-  let latest = runs[0];
-  let latestTimestamp = runActivityTimestamp(latest);
-  for (let index = 1; index < runs.length; index += 1) {
-    const candidate = runs[index];
-    const candidateTimestamp = runActivityTimestamp(candidate);
-    if (candidateTimestamp > latestTimestamp) {
-      latest = candidate;
-      latestTimestamp = candidateTimestamp;
-    }
+  if (state === "generated_suggestion" || state === "needs_review") {
+    return "badge-warn";
   }
-  return latest;
+  if (state === "excluded" || state === "legacy_synthetic") {
+    return "badge-warn";
+  }
+  return "badge-muted";
 }
 
-function formatRunStatus(status: string): string {
-  const cleaned = status.trim();
-  return cleaned || "unknown";
+function formatProvenanceLabel(value: ReviewedCompetitorRow["provenance"]): string {
+  if (value === "ai_suggested") {
+    return "AI suggested";
+  }
+  if (value === "manual_seed") {
+    return "Manual seed";
+  }
+  if (value === "legacy") {
+    return "Legacy";
+  }
+  return "Existing";
 }
 
 function formatGenerationQualityStatus(status: string): string {
@@ -256,11 +216,11 @@ function formatGenerationQualityStatus(status: string): string {
   return "Unknown";
 }
 
-function formatGenerationQualityReason(reason: CompetitorGenerationQualityReason | null): string {
+function formatGenerationQualityReason(reason: CompetitorGenerationQualitySummary["top_reason"]): string {
   if (!reason) {
     return "unknown";
   }
-  const labels: Record<CompetitorGenerationQualityReason, string> = {
+  const labels: Record<NonNullable<CompetitorGenerationQualitySummary["top_reason"]>, string> = {
     valid: "Valid candidates retained",
     duplicate_domain: "Duplicate domains removed",
     self_domain: "Self-domain candidates removed",
@@ -276,8 +236,25 @@ function formatGenerationQualityReason(reason: CompetitorGenerationQualityReason
   return labels[reason];
 }
 
+function buildSnapshotRunHref(siteId: string | null, setId: string, runId: string): string {
+  const params = new URLSearchParams();
+  params.set("set_id", setId);
+  if (siteId) {
+    params.set("site_id", siteId);
+  }
+  return `/competitors/snapshot-runs/${runId}?${params.toString()}`;
+}
+
+function buildComparisonRunHref(siteId: string | null, setId: string, runId: string): string {
+  const params = new URLSearchParams();
+  params.set("set_id", setId);
+  if (siteId) {
+    params.set("site_id", siteId);
+  }
+  return `/competitors/comparison-runs/${runId}?${params.toString()}`;
+}
+
 function CompetitorsPageContent() {
-  const router = useRouter();
   const searchParams = useSearchParams();
   const context = useOperatorContext();
   const {
@@ -289,25 +266,15 @@ function CompetitorsPageContent() {
     selectedSiteId,
     setSelectedSiteId,
   } = context;
+
   const requestedSiteId = (searchParams.get("site_id") || "").trim();
-  const [competitorSets, setCompetitorSets] = useState<CompetitorSetRow[]>([]);
   const [loadingCompetitors, setLoadingCompetitors] = useState(false);
   const [competitorsError, setCompetitorsError] = useState<string | null>(null);
-  const [competitorSetCount, setCompetitorSetCount] = useState(0);
-  const [latestSnapshotRun, setLatestSnapshotRun] = useState<LatestSiteRun | null>(null);
-  const [latestComparisonRun, setLatestComparisonRun] = useState<LatestSiteRun | null>(null);
-  const [readinessWarning, setReadinessWarning] = useState<string | null>(null);
-  const [generationSummary, setGenerationSummary] = useState<CompetitorProfileGenerationSummaryResponse | null>(null);
+  const [reviewedList, setReviewedList] = useState<ReviewedCompetitorListResponse | null>(null);
   const [generationInFlight, setGenerationInFlight] = useState(false);
   const [generationMessage, setGenerationMessage] = useState<string | null>(null);
   const [generationError, setGenerationError] = useState<string | null>(null);
   const [generationWarning, setGenerationWarning] = useState<string | null>(null);
-  const [generationQualitySummary, setGenerationQualitySummary] = useState<CompetitorGenerationQualitySummary | null>(
-    null,
-  );
-  const [latestGenerationRunStatus, setLatestGenerationRunStatus] = useState<string | null>(null);
-  const [competitorDomains, setCompetitorDomains] = useState<CompetitorDomainReviewRow[]>([]);
-  const [domainFeedbackByDomain, setDomainFeedbackByDomain] = useState<Record<string, CompetitorDomainFeedback>>({});
   const [feedbackInFlightDomain, setFeedbackInFlightDomain] = useState<string | null>(null);
   const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
   const [feedbackError, setFeedbackError] = useState<string | null>(null);
@@ -317,111 +284,22 @@ function CompetitorsPageContent() {
   const [manualSeedInFlight, setManualSeedInFlight] = useState(false);
   const [refreshNonce, setRefreshNonce] = useState(0);
 
-  const totalDomainCount = useMemo(
-    () => competitorSets.reduce((total, item) => total + item.domain_count, 0),
-    [competitorSets],
+  const reviewedRows = useMemo(() => reviewedList?.items ?? [], [reviewedList]);
+  const reviewedSummary = reviewedList?.summary;
+  const latestSuggestion = reviewedList?.latest_suggestion;
+  const generationQualitySummary = reviewedList?.quality_summary;
+  const diagnostics = reviewedList?.diagnostics;
+  const manualSeedRows = useMemo(
+    () => reviewedRows.filter((item) => item.review_state === "manual_seed"),
+    [reviewedRows],
   );
-  const activeSetCount = useMemo(
-    () => competitorSets.filter((item) => item.is_active).length,
-    [competitorSets],
-  );
-  const activeDomainCount = useMemo(
-    () => competitorSets.reduce((total, item) => total + item.active_domain_count, 0),
-    [competitorSets],
-  );
-  const manualSeedFeedbackItems = useMemo(
-    () => Object.values(domainFeedbackByDomain)
-      .filter((item) => item.feedback_status === "manually_seeded")
-      .sort((left, right) => right.updated_at.localeCompare(left.updated_at)),
-    [domainFeedbackByDomain],
-  );
-  const generationQueuedCount = generationSummary?.queued_count ?? 0;
-  const generationRunningCount = generationSummary?.running_count ?? 0;
-  const normalizedLatestGenerationRunStatus = (latestGenerationRunStatus || "").trim().toLowerCase();
-  const generationAlreadyRunning =
-    generationQueuedCount + generationRunningCount > 0 ||
-    normalizedLatestGenerationRunStatus === "queued" ||
-    normalizedLatestGenerationRunStatus === "running";
-  const generationButtonLabel = activeSetCount > 0 ? "Refresh competitor set" : "Generate competitor set";
+
+  const generationButtonLabel = (reviewedSummary?.total ?? 0) > 0
+    ? "Refresh competitor suggestions"
+    : "Suggest competitors";
   const generationButtonDisabled = !selectedSiteId || generationInFlight;
-
-  function buildSetDetailHref(setItem: CompetitorSetRow): string {
-    const params = new URLSearchParams();
-    params.set("site_id", setItem.site_id);
-    return `/competitors/${setItem.id}?${params.toString()}`;
-  }
-
-  function buildSnapshotRunHref(run: LatestSiteRun): string {
-    const params = new URLSearchParams();
-    params.set("set_id", run.competitor_set_id);
-    if (selectedSiteId) {
-      params.set("site_id", selectedSiteId);
-    }
-    return `/competitors/snapshot-runs/${run.id}?${params.toString()}`;
-  }
-
-  function buildComparisonRunHref(run: LatestSiteRun): string {
-    const params = new URLSearchParams();
-    params.set("set_id", run.competitor_set_id);
-    if (selectedSiteId) {
-      params.set("site_id", selectedSiteId);
-    }
-    return `/competitors/comparison-runs/${run.id}?${params.toString()}`;
-  }
-
-  const readinessGuidance = useMemo(() => {
-    if (contextLoading || loadingCompetitors) {
-      return "Loading competitor readiness for this site.";
-    }
-    if (contextError || competitorsError) {
-      return "Competitor readiness is temporarily unavailable due to a data-loading issue.";
-    }
-    if (!selectedSiteId) {
-      return "No site is currently selected.";
-    }
-    if (competitorSetCount === 0) {
-      return "This site has no competitor sets configured yet.";
-    }
-    if (totalDomainCount === 0) {
-      return "Competitor sets exist, but no competitor domains are configured yet.";
-    }
-    if (!latestSnapshotRun) {
-      return "Competitor domains exist, but no snapshot run has been recorded yet.";
-    }
-    if (formatRunStatus(latestSnapshotRun.status).toLowerCase() !== "completed") {
-      return `Latest snapshot run is ${formatRunStatus(latestSnapshotRun.status)}. Comparison results may not be available yet.`;
-    }
-    if (!latestComparisonRun) {
-      return "Snapshot results exist, but no comparison run has been recorded yet.";
-    }
-    if (formatRunStatus(latestComparisonRun.status).toLowerCase() !== "completed") {
-      return `Latest comparison run is ${formatRunStatus(latestComparisonRun.status)}. Findings may still be in progress.`;
-    }
-    return "This site has configured competitor data and recent comparison activity.";
-  }, [
-    competitorSetCount,
-    competitorsError,
-    contextError,
-    contextLoading,
-    latestComparisonRun,
-    latestSnapshotRun,
-    loadingCompetitors,
-    selectedSiteId,
-    totalDomainCount,
-  ]);
-
-  const tableEmptyReason = useMemo(() => {
-    if (competitorsError) {
-      return "Competitor data is currently unavailable for this site.";
-    }
-    if (!selectedSiteId) {
-      return "No site is selected. Choose a site to inspect competitors.";
-    }
-    if (competitorSetCount === 0) {
-      return "This site has no competitor sets configured yet.";
-    }
-    return "Competitor sets are configured, but none are currently visible.";
-  }, [competitorSetCount, competitorsError, selectedSiteId]);
+  const generationRunStatus = (latestSuggestion?.run_status || "").trim().toLowerCase();
+  const generationAlreadyRunning = generationRunStatus === "queued" || generationRunStatus === "running";
 
   useEffect(() => {
     if (contextLoading || contextError || !requestedSiteId) {
@@ -445,235 +323,30 @@ function CompetitorsPageContent() {
 
   useEffect(() => {
     if (contextLoading || contextError || !selectedSiteId) {
-      setCompetitorSets([]);
-      setCompetitorSetCount(0);
-      setLatestSnapshotRun(null);
-      setLatestComparisonRun(null);
-      setReadinessWarning(null);
+      setReviewedList(null);
       setCompetitorsError(null);
       setLoadingCompetitors(false);
-      setGenerationSummary(null);
-      setGenerationQualitySummary(null);
-      setLatestGenerationRunStatus(null);
-      setCompetitorDomains([]);
-      setDomainFeedbackByDomain({});
       return;
     }
     let cancelled = false;
-    const activeSiteId = selectedSiteId;
 
-    async function loadCompetitors() {
+    async function loadReviewedCompetitors() {
+      if (!selectedSiteId) {
+        return;
+      }
+      const siteId = selectedSiteId;
       setLoadingCompetitors(true);
       setCompetitorsError(null);
-      setLatestSnapshotRun(null);
-      setLatestComparisonRun(null);
-      setReadinessWarning(null);
       try {
-        let nextGenerationSummary: CompetitorProfileGenerationSummaryResponse | null = null;
-        let nextGenerationQualitySummary: CompetitorGenerationQualitySummary | null = null;
-        let nextLatestGenerationRunStatus: string | null = null;
-        try {
-          nextGenerationSummary = await fetchCompetitorProfileGenerationSummary(
-            token,
-            businessId,
-            activeSiteId,
-          );
-        } catch {
-          nextGenerationSummary = null;
-        }
-        try {
-          const generationRuns = await fetchCompetitorProfileGenerationRuns(
-            token,
-            businessId,
-            activeSiteId,
-          );
-          const latestGenerationRun = latestByActivity<CompetitorProfileGenerationRun>(generationRuns.items);
-          if (latestGenerationRun) {
-            nextLatestGenerationRunStatus = latestGenerationRun.status;
-            const normalizedStatus = latestGenerationRun.status.trim().toLowerCase();
-            if (normalizedStatus === "completed" || normalizedStatus === "failed") {
-              const generationDetail = await fetchCompetitorProfileGenerationRunDetail(
-                token,
-                businessId,
-                activeSiteId,
-                latestGenerationRun.id,
-              );
-              nextGenerationQualitySummary = generationDetail.quality_summary ?? null;
-            }
-          }
-        } catch {
-          nextGenerationQualitySummary = null;
-          nextLatestGenerationRunStatus = null;
-        }
-        if (!cancelled) {
-          setGenerationSummary(nextGenerationSummary);
-          setGenerationQualitySummary(nextGenerationQualitySummary);
-          setLatestGenerationRunStatus(nextLatestGenerationRunStatus);
-        }
-
-        let nextDomainFeedbackByDomain: Record<string, CompetitorDomainFeedback> = {};
-        try {
-          const feedbackResponse = await fetchCompetitorDomainFeedback(
-            token,
-            businessId,
-            activeSiteId,
-          );
-          nextDomainFeedbackByDomain = feedbackResponse.items.reduce<Record<string, CompetitorDomainFeedback>>(
-            (accumulator, item) => {
-              const domainKey = normalizeDomainForFeedback(item.domain);
-              if (!domainKey || accumulator[domainKey]) {
-                return accumulator;
-              }
-              accumulator[domainKey] = item;
-              return accumulator;
-            },
-            {},
-          );
-        } catch {
-          nextDomainFeedbackByDomain = {};
-        }
-
-        const setResponse = await fetchCompetitorSets(token, businessId, activeSiteId);
+        const response = await fetchReviewedCompetitorList(token, businessId, siteId);
         if (cancelled) {
           return;
         }
-
-        setCompetitorSetCount(setResponse.total);
-        if (setResponse.items.length === 0) {
-          setCompetitorSets([]);
-          setCompetitorDomains([]);
-          setDomainFeedbackByDomain(nextDomainFeedbackByDomain);
-          return;
-        }
-
-        let snapshotStatusUnavailable = false;
-        const setNameById = new Map<string, string>();
-        for (const setItem of setResponse.items) {
-          setNameById.set(setItem.id, setItem.name);
-        }
-
-        const setDetails = await Promise.all(
-          setResponse.items.map(async (setItem) => {
-            const domainsResponse = await fetchCompetitorDomains(
-              token,
-              businessId,
-              setItem.id,
-            );
-            let latestSnapshotCandidate: CompetitorSnapshotRun | null = null;
-            try {
-              const snapshotRunsResponse = await fetchCompetitorSnapshotRuns(
-                token,
-                businessId,
-                setItem.id,
-              );
-              latestSnapshotCandidate = latestByActivity(snapshotRunsResponse.items);
-            } catch {
-              snapshotStatusUnavailable = true;
-            }
-            const sourceSet = new Set<string>();
-            let latestDomainUpdatedAt: string | null = null;
-            let activeDomainCount = 0;
-
-            for (const domain of domainsResponse.items) {
-              if (domain.source.trim()) {
-                sourceSet.add(domain.source.trim());
-              }
-              if (domain.is_active) {
-                activeDomainCount += 1;
-              }
-              if (!latestDomainUpdatedAt || domain.updated_at > latestDomainUpdatedAt) {
-                latestDomainUpdatedAt = domain.updated_at;
-              }
-            }
-
-            return {
-              row: {
-                ...setItem,
-                domain_count: domainsResponse.total,
-                active_domain_count: activeDomainCount,
-                source_summary: sourceSet.size > 0 ? [...sourceSet].sort().join(", ") : "-",
-                latest_domain_updated_at: latestDomainUpdatedAt,
-                latest_snapshot_status: latestSnapshotCandidate ? latestSnapshotCandidate.status : null,
-              },
-              domains: domainsResponse.items.map((domain) => ({
-                ...domain,
-                competitor_set_name: setItem.name,
-              })),
-              latestSnapshotCandidate,
-            };
-          }),
-        );
-
-        const rows = setDetails.map((item) => item.row);
-        const domainRows = setDetails
-          .flatMap((item) => item.domains)
-          .sort((left, right) => left.domain.localeCompare(right.domain));
-        let nextLatestSnapshotRun: LatestSiteRun | null = null;
-        let nextLatestComparisonRun: LatestSiteRun | null = null;
-        let nextReadinessWarning: string | null = null;
-        const latestSnapshotCandidate = latestByActivity(
-          setDetails
-            .map((item) => item.latestSnapshotCandidate)
-            .filter((item): item is CompetitorSnapshotRun => item !== null),
-        );
-        if (latestSnapshotCandidate) {
-          nextLatestSnapshotRun = {
-            id: latestSnapshotCandidate.id,
-            competitor_set_id: latestSnapshotCandidate.competitor_set_id,
-            competitor_set_name:
-              setNameById.get(latestSnapshotCandidate.competitor_set_id) ||
-              latestSnapshotCandidate.competitor_set_id,
-            status: latestSnapshotCandidate.status,
-            created_at: latestSnapshotCandidate.created_at,
-            updated_at: latestSnapshotCandidate.updated_at,
-            completed_at: latestSnapshotCandidate.completed_at,
-          };
-        }
-
-        let comparisonStatusUnavailable = false;
-        try {
-          const comparisonRunsResponse = await fetchSiteCompetitorComparisonRuns(
-            token,
-            businessId,
-            activeSiteId,
-          );
-          const latestComparisonCandidate = latestByActivity(comparisonRunsResponse.items);
-          if (latestComparisonCandidate) {
-            nextLatestComparisonRun = {
-              id: latestComparisonCandidate.id,
-              competitor_set_id: latestComparisonCandidate.competitor_set_id,
-              competitor_set_name:
-                setNameById.get(latestComparisonCandidate.competitor_set_id) ||
-                latestComparisonCandidate.competitor_set_id,
-              status: latestComparisonCandidate.status,
-              created_at: latestComparisonCandidate.created_at,
-              updated_at: latestComparisonCandidate.updated_at,
-              completed_at: latestComparisonCandidate.completed_at,
-            };
-          }
-        } catch {
-          comparisonStatusUnavailable = true;
-        }
-
-        if (snapshotStatusUnavailable && comparisonStatusUnavailable) {
-          nextReadinessWarning = "Snapshot and comparison run status are temporarily unavailable.";
-        } else if (snapshotStatusUnavailable) {
-          nextReadinessWarning = "Snapshot run status is temporarily unavailable.";
-        } else if (comparisonStatusUnavailable) {
-          nextReadinessWarning = "Comparison run status is temporarily unavailable.";
-        }
-
+        setReviewedList(response);
+      } catch (error) {
         if (!cancelled) {
-          setLatestSnapshotRun(nextLatestSnapshotRun);
-          setLatestComparisonRun(nextLatestComparisonRun);
-          setReadinessWarning(nextReadinessWarning);
-          setCompetitorSets(rows);
-          setCompetitorDomains(domainRows);
-          setDomainFeedbackByDomain(nextDomainFeedbackByDomain);
-        }
-      } catch (err) {
-        if (!cancelled) {
-          setCompetitorsError(safeCompetitorErrorMessage(err));
+          setCompetitorsError(safeCompetitorErrorMessage(error));
+          setReviewedList(null);
         }
       } finally {
         if (!cancelled) {
@@ -681,7 +354,8 @@ function CompetitorsPageContent() {
         }
       }
     }
-    void loadCompetitors();
+
+    void loadReviewedCompetitors();
     return () => {
       cancelled = true;
     };
@@ -694,7 +368,7 @@ function CompetitorsPageContent() {
     if (generationInFlight) {
       return;
     }
-    if (normalizedLatestGenerationRunStatus !== "queued" && normalizedLatestGenerationRunStatus !== "running") {
+    if (!latestSuggestion || (generationRunStatus !== "queued" && generationRunStatus !== "running")) {
       return;
     }
     const pollTimer = window.setTimeout(() => {
@@ -707,11 +381,12 @@ function CompetitorsPageContent() {
     contextError,
     contextLoading,
     generationInFlight,
-    normalizedLatestGenerationRunStatus,
+    generationRunStatus,
+    latestSuggestion,
     selectedSiteId,
   ]);
 
-  const handleGenerateCompetitorSet = useCallback(async () => {
+  const handleGenerateCompetitors = useCallback(async () => {
     if (!selectedSiteId) {
       return;
     }
@@ -728,8 +403,8 @@ function CompetitorsPageContent() {
         setGenerationMessage(responseClassification.message);
       }
       setRefreshNonce((current) => current + 1);
-    } catch (err) {
-      setGenerationError(safeGenerationErrorMessage(err));
+    } catch (error) {
+      setGenerationError(safeGenerationErrorMessage(error));
     } finally {
       setGenerationInFlight(false);
     }
@@ -769,9 +444,7 @@ function CompetitorsPageContent() {
         setRefreshNonce((current) => current + 1);
         return;
       }
-      setFeedbackMessage(
-        `Saved feedback for ${responseDomain}: ${formatFeedbackStatusLabel(responseStatus)}.`,
-      );
+      setFeedbackMessage(`Saved feedback for ${responseDomain}: ${formatFeedbackStatusLabel(responseStatus)}.`);
       setRefreshNonce((current) => current + 1);
     } catch (error) {
       setFeedbackError(safeFeedbackErrorMessage(error));
@@ -827,8 +500,8 @@ function CompetitorsPageContent() {
       <PageContainer width="wide" density="compact">
         <SectionCard as="div" variant="support" className="role-surface-support">
           <SectionHeader
-            title="Competitor Intelligence"
-            subtitle="Loading competitor set readiness for your selected site."
+            title="Competitors"
+            subtitle="Loading reviewed competitor list for your selected site."
             headingLevel={1}
             variant="support"
           />
@@ -836,12 +509,13 @@ function CompetitorsPageContent() {
       </PageContainer>
     );
   }
+
   if (contextError) {
     return (
       <PageContainer width="wide" density="compact">
         <SectionCard as="div" variant="support" className="role-surface-support">
           <SectionHeader
-            title="Competitor Intelligence"
+            title="Competitors"
             subtitle="Unable to load tenant context. Refresh and sign in again."
             headingLevel={1}
             variant="support"
@@ -850,13 +524,14 @@ function CompetitorsPageContent() {
       </PageContainer>
     );
   }
+
   if (sites.length === 0) {
     return (
       <PageContainer width="wide" density="compact">
         <SectionCard variant="support" className="role-surface-support">
           <SectionHeader
-            title="Competitor Intelligence"
-            subtitle="No SEO sites are configured yet. Add a site first to view competitors."
+            title="Competitors"
+            subtitle="No SEO sites are configured yet. Add a site first to review competitors."
             headingLevel={1}
             variant="support"
           />
@@ -868,8 +543,8 @@ function CompetitorsPageContent() {
   return (
     <PageContainer width="wide" density="compact">
       <OperatorPageHero
-        title="Competitor Intelligence"
-        subtitle="Track competitor set readiness, run status, and domain coverage for the selected site."
+        title="Competitors"
+        subtitle="AI can suggest competitors, but humans choose who counts."
         headingLevel={1}
         data-testid="competitors-page-hero"
         actions={(
@@ -877,53 +552,61 @@ function CompetitorsPageContent() {
             type="button"
             className="button button-primary"
             onClick={() => {
-              void handleGenerateCompetitorSet();
+              void handleGenerateCompetitors();
             }}
             disabled={generationButtonDisabled}
             data-testid="competitors-generate-set-button"
           >
-            {generationInFlight ? "Generating competitor set..." : generationButtonLabel}
+            {generationInFlight ? "Suggesting competitors..." : generationButtonLabel}
           </button>
         )}
         summary={(
           <>
             <SummaryStatCard
-              label="Competitor sets"
-              value={competitorSetCount}
-              detail={`${activeSetCount} active`}
-              tone={competitorSetCount > 0 ? "success" : "warning"}
+              label="Total"
+              value={reviewedSummary?.total ?? 0}
+              detail="Reviewed competitor rows"
+              tone={(reviewedSummary?.total ?? 0) > 0 ? "success" : "warning"}
               variant="elevated"
             />
             <SummaryStatCard
-              label="Domains"
-              value={totalDomainCount}
-              detail={`${activeDomainCount} active domains`}
-              tone={totalDomainCount > 0 ? "success" : "warning"}
+              label="Accepted/useful"
+              value={reviewedSummary?.accepted_useful ?? 0}
+              detail="Trusted competitors"
+              tone={(reviewedSummary?.accepted_useful ?? 0) > 0 ? "success" : "neutral"}
               variant="elevated"
             />
             <SummaryStatCard
-              label="Snapshot status"
-              value={latestSnapshotRun ? formatRunStatus(latestSnapshotRun.status) : "none"}
-              detail={latestSnapshotRun ? latestSnapshotRun.competitor_set_name : "No snapshot run yet"}
+              label="Needs review"
+              value={reviewedSummary?.needs_review ?? 0}
+              detail="Pending operator decision"
+              tone={(reviewedSummary?.needs_review ?? 0) > 0 ? "warning" : "neutral"}
+              variant="elevated"
+            />
+            <SummaryStatCard
+              label="Excluded"
+              value={reviewedSummary?.excluded ?? 0}
+              detail="Excluded by operator"
+              tone={(reviewedSummary?.excluded ?? 0) > 0 ? "warning" : "neutral"}
+              variant="elevated"
+            />
+            <SummaryStatCard
+              label="Manual seeds"
+              value={reviewedSummary?.manual_seeds ?? 0}
+              detail="Operator-seeded domains"
+              tone={(reviewedSummary?.manual_seeds ?? 0) > 0 ? "success" : "neutral"}
+              variant="elevated"
+            />
+            <SummaryStatCard
+              label="Last suggestion"
+              value={reviewedSummary?.last_suggestion_status || "none"}
+              detail={latestSuggestion?.run_id ? `Run ${latestSuggestion.run_id}` : "No run yet"}
               tone={
-                latestSnapshotRun?.status?.toLowerCase() === "completed"
-                  ? "success"
-                  : latestSnapshotRun
-                    ? "warning"
+                reviewedSummary?.last_suggestion_status === "failed"
+                  ? "warning"
+                  : reviewedSummary?.last_suggestion_status
+                    ? "success"
                     : "neutral"
-              }
-              variant="elevated"
-            />
-            <SummaryStatCard
-              label="Comparison status"
-              value={latestComparisonRun ? formatRunStatus(latestComparisonRun.status) : "none"}
-              detail={latestComparisonRun ? latestComparisonRun.competitor_set_name : "No comparison run yet"}
-              tone={
-                latestComparisonRun?.status?.toLowerCase() === "completed"
-                  ? "success"
-                  : latestComparisonRun
-                    ? "warning"
-                : "neutral"
               }
               variant="elevated"
             />
@@ -932,16 +615,14 @@ function CompetitorsPageContent() {
       >
         <WorkspaceMessageStack data-testid="competitors-generation-guidance">
           <p className="hint muted">
-            Generate a reviewed competitor set for the selected site using existing site, audit, and business context.
+            Suggest competitors using current site, audit, manual-seed, and operator-feedback context.
           </p>
           {generationInFlight ? (
-            <p className="hint muted" data-testid="competitors-generation-pending">
-              {activeSetCount > 0 ? "Refreshing competitor set..." : "Generating competitor set..."}
-            </p>
+            <p className="hint muted" data-testid="competitors-generation-pending">Suggesting competitors...</p>
           ) : null}
           {generationAlreadyRunning ? (
             <p className="hint muted" data-testid="competitors-generation-running">
-              A competitor generation run is already queued or running for this site.
+              A competitor suggestion run is already queued or running for this site.
             </p>
           ) : null}
           {generationMessage ? (
@@ -953,170 +634,44 @@ function CompetitorsPageContent() {
           {generationError ? (
             <p className="hint error" data-testid="competitors-generation-error">{generationError}</p>
           ) : null}
+          <p className="hint muted" data-testid="competitors-generation-summary-line">
+            Local seeds considered: {latestSuggestion?.local_seeds_considered ?? 0}. Suggestions returned: {latestSuggestion?.suggestions_returned ?? 0}. Added to review list: {latestSuggestion?.added_to_review_list ?? 0}. Already known: {latestSuggestion?.already_known ?? 0}. Rejected by quality gate: {latestSuggestion?.rejected_by_quality_gate ?? 0}. Excluded by operator feedback: {latestSuggestion?.excluded_by_operator_feedback ?? 0}.
+            {latestSuggestion?.failure_reason ? ` Failure reason: ${latestSuggestion.failure_reason}.` : ""}
+          </p>
+          <p className="hint muted" data-testid="competitors-admin-governance-hint">
+            Suggestions use Admin-configured relevance, local alignment, exclusion, timeout, and prompt-governance rules.
+          </p>
         </WorkspaceMessageStack>
       </OperatorPageHero>
 
       <OperatorPageSectionStack>
         <SectionCard variant="summary" className="role-surface-support">
           <SectionHeader
-            title="Competitor set inventory"
-            subtitle="Review readiness diagnostics and open competitor sets, snapshot runs, and comparison runs."
+            title="Reviewed competitor list"
+            subtitle="Review competitor suggestions and decide who counts."
             headingLevel={2}
             variant="support"
           />
 
-          <div className="panel stack section-card-variant-support">
-            <h2 className="heading-reset">Readiness</h2>
-            <WorkspaceMetadataGrid>
-              <WorkspaceMetadataItem label="Active Sets">
-                <span className="hint muted">{activeSetCount}/{competitorSetCount}</span>
-              </WorkspaceMetadataItem>
-              <WorkspaceMetadataItem label="Competitor Domains">
-                <span className="hint muted">{totalDomainCount}</span>
-              </WorkspaceMetadataItem>
-              <WorkspaceMetadataItem label="Active Domains">
-                <span className="hint muted">{activeDomainCount}</span>
-              </WorkspaceMetadataItem>
-              <WorkspaceMetadataItem label="Latest Snapshot Run">
-                {latestSnapshotRun ? (
-                  <span className="hint muted">
-                    <strong>{formatRunStatus(latestSnapshotRun.status)}</strong>{" "}
-                    ({formatDateTime(latestSnapshotRun.completed_at || latestSnapshotRun.updated_at || latestSnapshotRun.created_at)})
-                    {" "}for {latestSnapshotRun.competitor_set_name}{" "}
-                    <Link href={buildSnapshotRunHref(latestSnapshotRun)}>View</Link>
-                  </span>
-                ) : (
-                  <span className="hint muted">none</span>
-                )}
-              </WorkspaceMetadataItem>
-              <WorkspaceMetadataItem label="Latest Comparison Run">
-                {latestComparisonRun ? (
-                  <span className="hint muted">
-                    <strong>{formatRunStatus(latestComparisonRun.status)}</strong>{" "}
-                    ({formatDateTime(latestComparisonRun.completed_at || latestComparisonRun.updated_at || latestComparisonRun.created_at)})
-                    {" "}for {latestComparisonRun.competitor_set_name}{" "}
-                    <Link href={buildComparisonRunHref(latestComparisonRun)}>View</Link>
-                  </span>
-                ) : (
-                  <span className="hint muted">none</span>
-                )}
-              </WorkspaceMetadataItem>
-              <WorkspaceMetadataItem label="Generation Quality">
-                {generationQualitySummary ? (
-                  <span className="hint muted" data-testid="competitors-generation-quality">
-                    <strong>{formatGenerationQualityStatus(generationQualitySummary.status)}</strong>{" "}
-                    ({generationQualitySummary.accepted_candidates}/{generationQualitySummary.total_candidates_returned} accepted,{" "}
-                    {generationQualitySummary.rejected_candidates} rejected)
-                    {generationQualitySummary.top_reason ? (
-                      <>. Reason: {formatGenerationQualityReason(generationQualitySummary.top_reason)}</>
-                    ) : null}
-                  </span>
-                ) : latestGenerationRunStatus ? (
-                  <span className="hint muted" data-testid="competitors-generation-quality-pending">
-                    Quality pending. Latest generation run is {formatRunStatus(latestGenerationRunStatus)}.
-                    {normalizedLatestGenerationRunStatus === "queued" ||
-                    normalizedLatestGenerationRunStatus === "running"
-                      ? " Checking status automatically."
-                      : ""}
-                  </span>
-                ) : (
-                  <span className="hint muted">none</span>
-                )}
-              </WorkspaceMetadataItem>
-            </WorkspaceMetadataGrid>
+          {generationQualitySummary ? (
             <WorkspaceMessageStack>
-              {readinessWarning ? <p className="hint warning">{readinessWarning}</p> : null}
-              {generationQualitySummary?.status === "partial" ? (
-                <p className="hint warning" data-testid="competitors-generation-quality-message">
+              <p className="hint muted" data-testid="competitors-generation-quality">
+                <strong>{formatGenerationQualityStatus(generationQualitySummary.status)}</strong>
+                {" "}({generationQualitySummary.accepted_candidates}/{generationQualitySummary.total_candidates_returned} accepted, {generationQualitySummary.rejected_candidates} rejected)
+                {generationQualitySummary.top_reason ? `; reason: ${formatGenerationQualityReason(generationQualitySummary.top_reason)}` : ""}
+              </p>
+              {generationQualitySummary.status !== "ready" ? (
+                <p className={`hint ${generationQualitySummary.status === "blocked" ? "error" : "warning"}`} data-testid="competitors-generation-quality-message">
                   {generationQualitySummary.operator_message}
                 </p>
               ) : null}
-              {generationQualitySummary?.status === "blocked" ? (
-                <p className="hint error" data-testid="competitors-generation-quality-message">
-                  {generationQualitySummary.operator_message}
-                </p>
-              ) : null}
-              <p className="hint muted">{readinessGuidance}</p>
             </WorkspaceMessageStack>
-          </div>
-
-          <WorkspaceActionBar variant="secondary">
-            <span className="hint muted">Competitor Sets: {competitorSetCount}</span>
-            <span className="hint muted">Domains Across Sets: {totalDomainCount}</span>
-          </WorkspaceActionBar>
-
-          <div className="stack" data-testid="competitor-quick-scan">
-            <h3 className="heading-reset">Set quick scan</h3>
-            <p className="hint muted">
-              Summary-first cards highlight readiness and the next set to review before opening full tables.
-            </p>
-            {competitorSets.length === 0 && !loadingCompetitors ? (
-              <WorkspaceEmptyStateCard compact={true}>
-                <p className="hint muted">No competitor sets available for quick scan.</p>
-              </WorkspaceEmptyStateCard>
-            ) : null}
-            {competitorSets.length > 0 ? (
-              <div className="operational-item-list">
-                {competitorSets.slice(0, 6).map((item) => {
-                  const snapshotStatus = item.latest_snapshot_status
-                    ? formatRunStatus(item.latest_snapshot_status)
-                    : "No snapshot";
-                  return (
-                    <OperationalItemCard
-                      key={`competitor-quick-scan-${item.id}`}
-                      data-testid={`competitor-quick-scan-item-${item.id}`}
-                      title={`Set: ${item.name}`}
-                      identity={<code>{item.id}</code>}
-                      chips={(
-                        <>
-                          <span className={`badge ${item.is_active ? "badge-success" : "badge-muted"}`}>
-                            {item.is_active ? "Active set" : "Inactive set"}
-                          </span>
-                          <span className="badge badge-muted">{item.active_domain_count}/{item.domain_count} active domains</span>
-                          <span className={`badge ${snapshotStatus.toLowerCase() === "completed" ? "badge-success" : "badge-warn"}`}>
-                            Snapshot: {snapshotStatus}
-                          </span>
-                        </>
-                      )}
-                      summary={`Location: ${formatLocation(item.city, item.state)}. Provenance: ${item.source_summary}.`}
-                      primaryAction={
-                        <Link href={buildSetDetailHref(item)} className="button button-tertiary button-inline">
-                          Open set detail
-                        </Link>
-                      }
-                      secondaryMeta={
-                        <>
-                          <span className="hint muted">Latest domain update: {formatDateTime(item.latest_domain_updated_at)}</span>
-                        </>
-                      }
-                      expandedDetail={
-                        <>
-                          <p className="hint muted">
-                            <span className="text-strong">Business:</span> {item.business_id}
-                          </p>
-                          <p className="hint muted">
-                            <span className="text-strong">Site:</span> {item.site_id}
-                          </p>
-                          <p className="hint muted">
-                            <span className="text-strong">Created:</span> {formatDateTime(item.created_at)}
-                          </p>
-                          <p className="hint muted">
-                            <span className="text-strong">Updated:</span> {formatDateTime(item.updated_at)}
-                          </p>
-                        </>
-                      }
-                    />
-                  );
-                })}
-              </div>
-            ) : null}
-          </div>
+          ) : null}
 
           <div className="panel stack section-card-variant-support" data-testid="competitor-feedback-panel">
-            <h3 className="heading-reset">Operator review and corrections</h3>
+            <h3 className="heading-reset">Manual seeds</h3>
             <p className="hint muted">
-              Mark accepted competitor domains as useful or not useful, exclude bad domains from future generation,
-              and seed known competitors for this site.
+              Add known competitors that should be considered during future suggestions.
             </p>
             <form
               className="competitor-feedback-form-grid"
@@ -1166,107 +721,19 @@ function CompetitorsPageContent() {
                 </button>
               </div>
             </form>
-
-            {manualSeedFeedbackItems.length > 0 ? (
+            {manualSeedRows.length > 0 ? (
               <p className="hint muted" data-testid="competitors-manual-seed-list">
-                Manual seeds:{" "}
-                {manualSeedFeedbackItems.map((item) => item.domain).join(", ")}
+                Manual seeds: {manualSeedRows.map((item) => item.domain).join(", ")}
               </p>
             ) : null}
-
-            {(feedbackMessage || feedbackError) ? (
-              <WorkspaceMessageStack>
-                {feedbackMessage ? (
-                  <p className="hint" data-testid="competitors-feedback-success">{feedbackMessage}</p>
-                ) : null}
-                {feedbackError ? (
-                  <p className="hint error" data-testid="competitors-feedback-error">{feedbackError}</p>
-                ) : null}
-              </WorkspaceMessageStack>
-            ) : null}
-
-            <WorkspaceTableShell data-testid="competitors-domain-feedback-table-shell">
-              <table className="table table-dense">
-                <thead>
-                  <tr>
-                    <th>Domain</th>
-                    <th>Set</th>
-                    <th>Current feedback</th>
-                    <th>Updated</th>
-                    <th>Review actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {competitorDomains.map((domainItem) => {
-                    const domainKey = normalizeDomainForFeedback(domainItem.domain);
-                    const feedbackItem = domainFeedbackByDomain[domainKey] || null;
-                    const feedbackStatus = feedbackItem?.feedback_status ?? null;
-                    const actionDisabled = feedbackInFlightDomain === domainKey || manualSeedInFlight || !selectedSiteId;
-                    return (
-                      <tr key={domainItem.id} data-testid={`competitor-domain-feedback-row-${domainItem.id}`}>
-                        <td>
-                          <strong>{domainItem.domain}</strong>
-                          {domainItem.display_name ? <><br /><span className="hint muted">{domainItem.display_name}</span></> : null}
-                        </td>
-                        <td>{domainItem.competitor_set_name}</td>
-                        <td>
-                          <span className={`badge ${feedbackBadgeClass(feedbackStatus)}`}>
-                            {formatFeedbackStatusLabel(feedbackStatus)}
-                          </span>
-                        </td>
-                        <td>{formatDateTime(feedbackItem?.updated_at || domainItem.updated_at)}</td>
-                        <td>
-                          <div
-                            className="form-actions competitor-feedback-action-group"
-                            data-testid={`competitor-domain-feedback-actions-${domainItem.id}`}
-                          >
-                            <button
-                              type="button"
-                              className="button button-tertiary button-inline"
-                              disabled={actionDisabled}
-                              onClick={() => {
-                                void handleDomainFeedbackUpdate(domainItem.domain, "useful", domainItem.display_name);
-                              }}
-                            >
-                              Mark useful
-                            </button>
-                            <button
-                              type="button"
-                              className="button button-tertiary button-inline"
-                              disabled={actionDisabled}
-                              onClick={() => {
-                                void handleDomainFeedbackUpdate(domainItem.domain, "not_useful", domainItem.display_name);
-                              }}
-                            >
-                              Mark not useful
-                            </button>
-                            <button
-                              type="button"
-                              className="button button-tertiary button-inline"
-                              disabled={actionDisabled}
-                              onClick={() => {
-                                void handleDomainFeedbackUpdate(domainItem.domain, "excluded", domainItem.display_name);
-                              }}
-                            >
-                              Exclude
-                            </button>
-                          </div>
-                          {feedbackInFlightDomain === domainKey ? (
-                            <span className="hint muted">Updating feedback...</span>
-                          ) : null}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                  {!loadingCompetitors && competitorDomains.length === 0 ? (
-                    <tr>
-                      <td colSpan={5}>No competitor domains are available yet for review.</td>
-                    </tr>
-                  ) : null}
-                </tbody>
-              </table>
-            </WorkspaceTableShell>
           </div>
+
+          {(feedbackMessage || feedbackError) ? (
+            <WorkspaceMessageStack>
+              {feedbackMessage ? <p className="hint" data-testid="competitors-feedback-success">{feedbackMessage}</p> : null}
+              {feedbackError ? <p className="hint error" data-testid="competitors-feedback-error">{feedbackError}</p> : null}
+            </WorkspaceMessageStack>
+          ) : null}
 
           {loadingCompetitors || competitorsError ? (
             <WorkspaceMessageStack data-testid="competitors-page-message-stack">
@@ -1279,63 +746,138 @@ function CompetitorsPageContent() {
             <table className="table table-dense">
               <thead>
                 <tr>
-                  <th>Set</th>
-                  <th>Business</th>
-                  <th>Site</th>
-                  <th>Location</th>
-                  <th>Status</th>
-                  <th>Domains</th>
+                  <th>Domain</th>
+                  <th>Name</th>
+                  <th>Review state</th>
                   <th>Provenance</th>
-                  <th>Created By</th>
-                  <th>Created</th>
+                  <th>Confidence</th>
+                  <th>Rationale</th>
                   <th>Updated</th>
-                  <th>Latest Domain Update</th>
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {competitorSets.map((item) => (
-                  <tr
-                    key={item.id}
-                    role="link"
-                    tabIndex={0}
-                    className="clickable-row"
-                    onClick={() => router.push(buildSetDetailHref(item))}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" || event.key === " ") {
-                        event.preventDefault();
-                        router.push(buildSetDetailHref(item));
-                      }
-                    }}
-                  >
-                    <td>
-                      <strong>{item.name}</strong>
-                      <br />
-                      <span className="hint muted">{item.id}</span>
-                    </td>
-                    <td>{item.business_id}</td>
-                    <td>{item.site_id}</td>
-                    <td>{formatLocation(item.city, item.state)}</td>
-                    <td>{item.is_active ? "active" : "inactive"}</td>
-                    <td>
-                      {item.active_domain_count}/{item.domain_count} active
-                    </td>
-                    <td>{item.source_summary}</td>
-                    <td>{item.created_by_principal_id || "-"}</td>
-                    <td>{formatDateTime(item.created_at)}</td>
-                    <td>{formatDateTime(item.updated_at)}</td>
-                    <td>{formatDateTime(item.latest_domain_updated_at)}</td>
-                  </tr>
-                ))}
-                {!loadingCompetitors && competitorSets.length === 0 ? (
+                {reviewedRows.map((row) => {
+                  const domainKey = normalizeDomainForFeedback(row.domain);
+                  const actionDisabled = feedbackInFlightDomain === domainKey || manualSeedInFlight || !selectedSiteId;
+                  return (
+                    <tr key={`reviewed-competitor-${row.domain}`} data-testid={`competitor-row-${row.domain}`}>
+                      <td>
+                        <strong>{row.domain}</strong>
+                      </td>
+                      <td>{row.display_name || "-"}</td>
+                      <td>
+                        <span className={`badge ${reviewStateBadgeClass(row.review_state)}`}>
+                          {formatReviewStateLabel(row.review_state)}
+                        </span>
+                      </td>
+                      <td>{formatProvenanceLabel(row.provenance)}</td>
+                      <td>{typeof row.confidence_score === "number" ? row.confidence_score.toFixed(2) : "-"}</td>
+                      <td>{row.reason_selected || row.operator_note || "-"}</td>
+                      <td>{formatDateTime(row.updated_at)}</td>
+                      <td>
+                        <div className="form-actions competitor-feedback-action-group" data-testid={`competitor-domain-feedback-actions-${row.domain}`}>
+                          <button
+                            type="button"
+                            className="button button-tertiary button-inline"
+                            disabled={actionDisabled}
+                            onClick={() => {
+                              void handleDomainFeedbackUpdate(row.domain, "useful", row.display_name);
+                            }}
+                          >
+                            Mark accepted/useful
+                          </button>
+                          <button
+                            type="button"
+                            className="button button-tertiary button-inline"
+                            disabled={actionDisabled}
+                            onClick={() => {
+                              void handleDomainFeedbackUpdate(row.domain, "not_useful", row.display_name);
+                            }}
+                          >
+                            Mark not useful
+                          </button>
+                          <button
+                            type="button"
+                            className="button button-tertiary button-inline"
+                            disabled={actionDisabled}
+                            onClick={() => {
+                              void handleDomainFeedbackUpdate(row.domain, "excluded", row.display_name);
+                            }}
+                          >
+                            Exclude
+                          </button>
+                          {row.review_state === "excluded" ? (
+                            <button
+                              type="button"
+                              className="button button-tertiary button-inline"
+                              disabled={actionDisabled}
+                              onClick={() => {
+                                void handleDomainFeedbackUpdate(row.domain, "not_useful", row.display_name);
+                              }}
+                            >
+                              Restore/reconsider
+                            </button>
+                          ) : null}
+                        </div>
+                        {feedbackInFlightDomain === domainKey ? <span className="hint muted">Updating feedback...</span> : null}
+                      </td>
+                    </tr>
+                  );
+                })}
+                {!loadingCompetitors && reviewedRows.length === 0 ? (
                   <tr>
-                    <td colSpan={11}>
-                      {tableEmptyReason}
+                    <td colSpan={8}>
+                      <WorkspaceEmptyStateCard compact={true}>
+                        <p className="hint muted">No competitor rows are available yet. Suggest competitors or add manual seeds.</p>
+                      </WorkspaceEmptyStateCard>
                     </td>
                   </tr>
                 ) : null}
               </tbody>
             </table>
           </WorkspaceTableShell>
+        </SectionCard>
+
+        <SectionCard variant="support" className="role-surface-support">
+          <SectionHeader
+            title="Advanced diagnostics"
+            subtitle="Set, snapshot, and comparison workflow internals."
+            headingLevel={2}
+            variant="support"
+          />
+          <details data-testid="competitors-advanced-diagnostics">
+            <summary>Show advanced diagnostics</summary>
+            <WorkspaceMessageStack>
+              <p className="hint muted">Competitor sets: {diagnostics?.competitor_set_count ?? 0} ({diagnostics?.active_set_count ?? 0} active)</p>
+              <p className="hint muted">Latest generation run: {latestSuggestion?.run_id || "none"} ({latestSuggestion?.run_status || "none"})</p>
+              <p className="hint muted">
+                Latest snapshot run:{" "}
+                {diagnostics?.latest_snapshot_run ? (
+                  <>
+                    <strong>{diagnostics.latest_snapshot_run.status}</strong> ({formatDateTime(diagnostics.latest_snapshot_run.completed_at || diagnostics.latest_snapshot_run.updated_at)}){" "}
+                    <Link href={buildSnapshotRunHref(selectedSiteId, diagnostics.latest_snapshot_run.competitor_set_id, diagnostics.latest_snapshot_run.id)}>
+                      Open
+                    </Link>
+                  </>
+                ) : "none"}
+              </p>
+              <p className="hint muted">
+                Latest comparison run:{" "}
+                {diagnostics?.latest_comparison_run ? (
+                  <>
+                    <strong>{diagnostics.latest_comparison_run.status}</strong> ({formatDateTime(diagnostics.latest_comparison_run.completed_at || diagnostics.latest_comparison_run.updated_at)}){" "}
+                    <Link href={buildComparisonRunHref(selectedSiteId, diagnostics.latest_comparison_run.competitor_set_id, diagnostics.latest_comparison_run.id)}>
+                      Open
+                    </Link>
+                  </>
+                ) : "none"}
+              </p>
+              {diagnostics?.latest_snapshot_run && diagnostics.latest_snapshot_run.status.toLowerCase() !== "completed" ? (
+                <p className="hint warning">Latest snapshot run is not completed yet; snapshot-derived diagnostics may be stale.</p>
+              ) : null}
+            </WorkspaceMessageStack>
+          </details>
         </SectionCard>
       </OperatorPageSectionStack>
     </PageContainer>
@@ -1349,8 +891,8 @@ export default function CompetitorsPage() {
         <PageContainer width="wide" density="compact">
           <SectionCard as="div" variant="support" className="role-surface-support">
             <SectionHeader
-              title="Competitor Intelligence"
-              subtitle="Loading competitor set readiness for your selected site."
+              title="Competitors"
+              subtitle="Loading reviewed competitor list for your selected site."
               headingLevel={1}
               variant="support"
             />

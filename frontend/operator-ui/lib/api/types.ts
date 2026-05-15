@@ -1353,6 +1353,82 @@ export interface CompetitorDomainFeedbackListResponse {
   total: number;
 }
 
+export type ReviewedCompetitorState =
+  | "accepted"
+  | "useful"
+  | "not_useful"
+  | "excluded"
+  | "needs_review"
+  | "manual_seed"
+  | "generated_suggestion"
+  | "legacy_synthetic";
+
+export type ReviewedCompetitorProvenance = "ai_suggested" | "manual_seed" | "existing" | "legacy";
+
+export interface ReviewedCompetitorRow {
+  domain: string;
+  display_name: string | null;
+  review_state: ReviewedCompetitorState;
+  provenance: ReviewedCompetitorProvenance;
+  confidence_score: number | null;
+  reason_selected: string | null;
+  is_synthetic: boolean;
+  is_excluded: boolean;
+  is_accepted_or_useful: boolean;
+  updated_at: string | null;
+  operator_note: string | null;
+  source_set_id: string | null;
+  source_generation_run_id: string | null;
+}
+
+export interface ReviewedCompetitorListSummary {
+  total: number;
+  accepted_useful: number;
+  needs_review: number;
+  excluded: number;
+  manual_seeds: number;
+  last_suggestion_status: "queued" | "running" | "completed" | "failed" | null;
+}
+
+export interface ReviewedCompetitorLatestSuggestion {
+  run_id: string | null;
+  run_status: "queued" | "running" | "completed" | "failed" | null;
+  local_seeds_considered: number;
+  suggestions_returned: number;
+  added_to_review_list: number;
+  already_known: number;
+  rejected_by_quality_gate: number;
+  excluded_by_operator_feedback: number;
+  failure_reason: string | null;
+}
+
+export interface ReviewedCompetitorAdvancedRunReference {
+  id: string;
+  status: string;
+  competitor_set_id: string;
+  competitor_set_name: string;
+  created_at: string;
+  updated_at: string;
+  completed_at: string | null;
+}
+
+export interface ReviewedCompetitorDiagnostics {
+  competitor_set_count: number;
+  active_set_count: number;
+  latest_snapshot_run: ReviewedCompetitorAdvancedRunReference | null;
+  latest_comparison_run: ReviewedCompetitorAdvancedRunReference | null;
+}
+
+export interface ReviewedCompetitorListResponse {
+  business_id: string;
+  site_id: string;
+  summary: ReviewedCompetitorListSummary;
+  latest_suggestion: ReviewedCompetitorLatestSuggestion;
+  quality_summary: CompetitorGenerationQualitySummary | null;
+  diagnostics: ReviewedCompetitorDiagnostics;
+  items: ReviewedCompetitorRow[];
+}
+
 export interface CompetitorDomainFeedbackUpsertRequest {
   domain: string;
   feedback_status: CompetitorDomainFeedbackStatus;

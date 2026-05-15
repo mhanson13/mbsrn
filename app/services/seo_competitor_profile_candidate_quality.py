@@ -59,6 +59,8 @@ DEFAULT_MIN_RELEVANCE_SCORE = 35
 DEFAULT_BIG_BOX_PENALTY = 20
 DEFAULT_DIRECTORY_PENALTY = 35
 DEFAULT_LOCAL_ALIGNMENT_BONUS = 10
+DEFAULT_OPERATOR_PREFERRED_DOMAIN_BONUS = 18
+DEFAULT_OPERATOR_NOT_USEFUL_DOMAIN_PENALTY = 18
 
 MIN_RELEVANCE_SCORE_MIN = 0
 MIN_RELEVANCE_SCORE_MAX = 100
@@ -135,6 +137,32 @@ _EXCLUDED_DOMAIN_SUBSTRINGS = (
     "buy-this-domain",
     "sedoparking",
     "parkingcrew",
+)
+_EXCLUDED_DOMAIN_SUFFIXES = (
+    ".invalid",
+    ".localhost",
+    ".test",
+)
+_EXCLUDED_DOMAIN_EXACT_MATCHES = {
+    "example.com",
+    "localhost",
+    "unknown",
+}
+_EXCLUDED_DOMAIN_ROOT_MATCHES = {
+    "dummy",
+    "placeholder",
+    "review-scaffold",
+    "staging",
+    "test",
+    "unknown",
+}
+_EXCLUDED_DOMAIN_ROOT_PREFIXES = (
+    "dummy-",
+    "placeholder-",
+    "review-scaffold",
+    "staging-",
+    "test-",
+    "unknown-",
 )
 _BUSINESS_IDENTITY_CUES = {
     "about",
@@ -510,6 +538,8 @@ def process_competitor_candidates(
     site: SEOSite,
     candidates: list[CompetitorCandidateInput],
     existing_domains: list[str],
+    preferred_domains: list[str] | None = None,
+    not_useful_domains: list[str] | None = None,
     minimum_relevance_score: int = DEFAULT_MIN_RELEVANCE_SCORE,
     quality_tuning: CompetitorCandidateQualityTuning | None = None,
 ) -> CompetitorCandidateProcessingResult:
@@ -519,6 +549,8 @@ def process_competitor_candidates(
         tuning = quality_tuning
     context = _build_site_context(site)
     existing_domain_set = {_canonicalize_domain(value) for value in existing_domains if value.strip()}
+    preferred_domain_set = {_canonicalize_domain(value) for value in (preferred_domains or []) if value.strip()}
+    not_useful_domain_set = {_canonicalize_domain(value) for value in (not_useful_domains or []) if value.strip()}
     exclusion_counts_by_reason = _new_exclusion_reason_counts()
     tuning_rejection_reason_counts = _new_tuning_exclusion_reason_counts()
     tuning_rejected_candidates: list[CompetitorCandidateTuningRejection] = []
@@ -529,6 +561,8 @@ def process_competitor_candidates(
             context=context,
             existing_domain_set=existing_domain_set,
             tuning=tuning,
+            preferred_domain_set=preferred_domain_set,
+            not_useful_domain_set=not_useful_domain_set,
         )
         for candidate in candidates
     ]
@@ -537,6 +571,8 @@ def process_competitor_candidates(
         scored_candidates,
         context=context,
         tuning=tuning,
+        preferred_domain_set=preferred_domain_set,
+        not_useful_domain_set=not_useful_domain_set,
     )
     exclusion_counts_by_reason[EXCLUSION_REASON_DUPLICATE] = duplicate_count
     included: list[RankedCompetitorCandidate] = []
@@ -662,6 +698,8 @@ def _to_scored_state(
     context: _SiteScoringContext,
     existing_domain_set: set[str],
     tuning: CompetitorCandidateQualityTuning,
+    preferred_domain_set: set[str],
+    not_useful_domain_set: set[str],
 ) -> _ScoredCandidateState:
     normalized_name = normalize_competitor_name_for_matching(candidate.suggested_name)
     normalized_name_compact = normalized_name.replace(" ", "")
@@ -694,6 +732,8 @@ def _to_scored_state(
         is_big_box_candidate=is_big_box_candidate,
         existing_domain_set=existing_domain_set,
         tuning=tuning,
+        preferred_domain_set=preferred_domain_set,
+        not_useful_domain_set=not_useful_domain_set,
     )
 
     return _ScoredCandidateState(
@@ -723,6 +763,8 @@ def _dedupe_scored_candidates(
     *,
     context: _SiteScoringContext,
     tuning: CompetitorCandidateQualityTuning,
+    preferred_domain_set: set[str],
+    not_useful_domain_set: set[str],
 ) -> tuple[list[_ScoredCandidateState], int]:
     deduped: list[_ScoredCandidateState] = []
     duplicate_count = 0
@@ -743,6 +785,8 @@ def _dedupe_scored_candidates(
             secondary=candidate,
             site_context=context,
             tuning=tuning,
+            preferred_domain_set=preferred_domain_set,
+            not_useful_domain_set=not_useful_domain_set,
         )
         deduped[duplicate_index] = merged
         duplicate_count += 1
@@ -803,6 +847,8 @@ def _merge_duplicate_candidates(
     secondary: _ScoredCandidateState,
     site_context: _SiteScoringContext,
     tuning: CompetitorCandidateQualityTuning,
+    preferred_domain_set: set[str],
+    not_useful_domain_set: set[str],
 ) -> _ScoredCandidateState:
     stronger = _stronger_candidate(primary, secondary)
     weaker = secondary if stronger is primary else primary
@@ -833,6 +879,8 @@ def _merge_duplicate_candidates(
         context=site_context,
         existing_domain_set=set(),
         tuning=tuning,
+        preferred_domain_set=preferred_domain_set,
+        not_useful_domain_set=not_useful_domain_set,
     )
 
 
@@ -1039,7 +1087,19 @@ def _candidate_text_blob(candidate: CompetitorCandidateInput) -> str:
 def _has_excluded_domain_pattern(domain: str) -> bool:
     if not domain:
         return False
-    return any(pattern in domain for pattern in _EXCLUDED_DOMAIN_SUBSTRINGS)
+    normalized = domain.strip().lower().strip(".")
+    if not normalized:
+        return False
+    if normalized in _EXCLUDED_DOMAIN_EXACT_MATCHES:
+        return True
+    if any(normalized.endswith(suffix) for suffix in _EXCLUDED_DOMAIN_SUFFIXES):
+        return True
+    domain_root = normalized.split(".", 1)[0]
+    if domain_root in _EXCLUDED_DOMAIN_ROOT_MATCHES:
+        return True
+    if any(domain_root.startswith(prefix) for prefix in _EXCLUDED_DOMAIN_ROOT_PREFIXES):
+        return True
+    return any(pattern in normalized for pattern in _EXCLUDED_DOMAIN_SUBSTRINGS)
 
 
 def _contains_parked_markers(text: str) -> bool:
@@ -1260,6 +1320,8 @@ def _score_candidate(
     is_big_box_candidate: bool,
     existing_domain_set: set[str],
     tuning: CompetitorCandidateQualityTuning,
+    preferred_domain_set: set[str],
+    not_useful_domain_set: set[str],
 ) -> int:
     score = 25
     score += max(0, min(20, int(round(candidate.confidence_score * 20))))
@@ -1325,6 +1387,11 @@ def _score_candidate(
 
     if context.domain and domain_root and domain_root != context.domain.split(".", 1)[0]:
         score += 2
+
+    if canonical_domain and canonical_domain in preferred_domain_set:
+        score += DEFAULT_OPERATOR_PREFERRED_DOMAIN_BONUS
+    if canonical_domain and canonical_domain in not_useful_domain_set:
+        score -= DEFAULT_OPERATOR_NOT_USEFUL_DOMAIN_PENALTY
 
     return max(0, min(100, score))
 

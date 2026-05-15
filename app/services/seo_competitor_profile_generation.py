@@ -1643,6 +1643,32 @@ class SEOCompetitorProfileGenerationService:
             },
         )
 
+    def _build_feedback_domains_for_candidate_quality(self, *, site: SEOSite) -> tuple[list[str], list[str]]:
+        raw_context = getattr(site, _OPERATOR_FEEDBACK_CONTEXT_ATTR, None)
+        if not isinstance(raw_context, dict):
+            return [], []
+
+        preferred_domains: list[str] = []
+        not_useful_domains: list[str] = []
+        seen_preferred: set[str] = set()
+        seen_not_useful: set[str] = set()
+
+        for raw_domain in [*(raw_context.get("useful_domains") or []), *(raw_context.get("manual_seed_domains") or [])]:
+            normalized = self._normalize_optional_domain_value(raw_domain)
+            if normalized is None or normalized in seen_preferred:
+                continue
+            seen_preferred.add(normalized)
+            preferred_domains.append(normalized)
+
+        for raw_domain in raw_context.get("not_useful_domains") or []:
+            normalized = self._normalize_optional_domain_value(raw_domain)
+            if normalized is None or normalized in seen_not_useful:
+                continue
+            seen_not_useful.add(normalized)
+            not_useful_domains.append(normalized)
+
+        return preferred_domains, not_useful_domains
+
     def _merge_generation_existing_domains(
         self,
         *,
@@ -2067,11 +2093,16 @@ class SEOCompetitorProfileGenerationService:
             secondary=eligibility_rejected_candidates,
         )
         quality_tuning = self._resolve_candidate_quality_tuning(business_id=run.business_id)
+        preferred_feedback_domains, not_useful_feedback_domains = self._build_feedback_domains_for_candidate_quality(
+            site=site
+        )
         candidate_processing = process_competitor_candidates(
             site=site,
             candidates=eligibility_result.eligible_candidates,
             existing_domains=existing_domains,
             quality_tuning=quality_tuning,
+            preferred_domains=preferred_feedback_domains,
+            not_useful_domains=not_useful_feedback_domains,
         )
         tuning_rejected_candidates = self._build_tuning_rejected_candidate_debug(
             rejections=candidate_processing.tuning_rejected_candidates,

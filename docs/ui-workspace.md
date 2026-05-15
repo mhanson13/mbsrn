@@ -66,7 +66,18 @@ Workflow ownership boundaries:
   - each row exposes consistent actions: `Open`, `Review`, `Mark Complete`, `Show Details`
   - recommendation detail view is decision-first, with supporting evidence and lineage kept in lower-priority disclosures
 - Automation page owns repeatable multi-step workflow orchestration and run lifecycle.
-- Competitors page owns competitor generation/review workflow, including the primary site-scoped `Generate competitor set` / `Refresh competitor set` action, run tables, and candidate/debug inspection.
+- Competitors page is a list-first human-in-the-loop review surface, with a primary site-scoped `Suggest competitors` / `Refresh competitor suggestions` action.
+  - primary summary is operator-facing: total, accepted/useful, needs review, excluded, manual seeds, latest suggestion status
+  - primary table rows are review decisions (`Mark accepted/useful`, `Mark not useful`, `Exclude`, `Restore/reconsider`)
+  - generation outputs become reviewable competitor rows (`generated_suggestion` / `needs_review`), not auto-accepted competitors
+  - set/snapshot/comparison internals are de-emphasized under an `Advanced diagnostics` disclosure
+  - Admin remains the configuration/governance owner for competitor generation tuning:
+    - minimum relevance score
+    - big-box mismatch penalty
+    - directory/aggregator penalty
+    - local alignment bonus
+    - primary/degraded competitor timeouts
+    - competitor prompt overrides
   - action lifecycle is operator-visible: pending state while request is in flight, bounded success/failure feedback, and automatic inventory/readiness refetch after run creation
   - successful action indicates run creation/queueing; completed competitor results can arrive later when backend run processing finishes
   - operator correction loop is site-scoped and summary-first:
@@ -78,6 +89,16 @@ Workflow ownership boundaries:
     - `Ready`
     - `Partial`
     - `Blocked`
+  - generation summary is compact and operator-facing:
+    - suggestions returned
+    - accepted/useful
+    - needs review
+    - excluded
+    - rejected by quality gate
+    - local seeds considered
+    - latest generation status/reason
+  - generation summary explicitly states that candidate suggestions are governed by Admin-configured relevance, local
+    alignment, exclusion, timeout, and prompt-governance rules
   - configuration-blocked quality states are surfaced explicitly and not conflated with no-candidate outcomes:
     - `provider_schema_invalid` (local structured-output schema configuration issue)
     - `prompt_override_contract_invalid` (active Admin competitor prompt override contract mismatch)

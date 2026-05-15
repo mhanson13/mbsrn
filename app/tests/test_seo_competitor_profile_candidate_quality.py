@@ -282,6 +282,110 @@ def test_big_box_candidate_is_excluded_when_local_context_is_missing() -> None:
     assert result.tuning_rejected_candidates[0].reasons == (TUNING_EXCLUSION_REASON_BIG_BOX_MISMATCH_PENALTY,)
 
 
+def test_placeholder_and_synthetic_domains_are_rejected_by_eligibility_gate() -> None:
+    site = _site()
+    candidates = [
+        _candidate(name="Review Scaffold", domain="review-scaffold-1.invalid", index=0),
+        _candidate(name="Example Placeholder", domain="example.com", index=1),
+        _candidate(name="Unknown Placeholder", domain="unknown.com", index=2),
+        _candidate(name="Valid Local Competitor", domain="validlocalplumber.example.net", index=3),
+    ]
+
+    eligibility_result = filter_eligible_competitor_candidates(site=site, candidates=candidates)
+
+    assert len(eligibility_result.eligible_candidates) == 1
+    assert eligibility_result.eligible_candidates[0].suggested_domain == "validlocalplumber.example.net"
+    assert eligibility_result.ineligibility_counts_by_reason[INELIGIBILITY_REASON_EXCLUDED_DOMAIN_PATTERN] == 3
+
+
+def test_operator_preferred_domains_receive_positive_score_signal() -> None:
+    result = process_competitor_candidates(
+        site=_site(),
+        existing_domains=[],
+        preferred_domains=["seededcompetitor.example.net"],
+        candidates=[
+            _candidate(
+                name="Seeded Competitor",
+                domain="seededcompetitor.example.net",
+                summary="Plumbing service.",
+                why=None,
+                evidence=None,
+                confidence=0.2,
+                index=0,
+            ),
+            _candidate(
+                name="Baseline Competitor",
+                domain="baselinecompetitor.example.net",
+                summary="Plumbing service.",
+                why=None,
+                evidence=None,
+                confidence=0.2,
+                index=1,
+            ),
+        ],
+        minimum_relevance_score=0,
+    )
+    assert len(result.included_candidates) == 2
+    by_domain = {item.canonical_domain: item for item in result.included_candidates}
+    assert by_domain["seededcompetitor.example.net"].relevance_score > by_domain[
+        "baselinecompetitor.example.net"
+    ].relevance_score
+
+
+def test_operator_not_useful_domains_receive_negative_score_signal() -> None:
+    result = process_competitor_candidates(
+        site=_site(),
+        existing_domains=[],
+        not_useful_domains=["deprioritizedcompetitor.example.net"],
+        candidates=[
+            _candidate(
+                name="Baseline Competitor",
+                domain="baselinecompetitor.example.net",
+                summary="Plumbing service.",
+                why=None,
+                evidence=None,
+                confidence=0.2,
+                index=0,
+            ),
+            _candidate(
+                name="Deprioritized Competitor",
+                domain="deprioritizedcompetitor.example.net",
+                summary="Plumbing service.",
+                why=None,
+                evidence=None,
+                confidence=0.2,
+                index=1,
+            ),
+        ],
+        minimum_relevance_score=0,
+    )
+    assert len(result.included_candidates) == 2
+    by_domain = {item.canonical_domain: item for item in result.included_candidates}
+    assert by_domain["deprioritizedcompetitor.example.net"].relevance_score < by_domain[
+        "baselinecompetitor.example.net"
+    ].relevance_score
+
+
+def test_preferred_domain_signal_does_not_override_self_domain_exclusion() -> None:
+    result = process_competitor_candidates(
+        site=_site(),
+        existing_domains=[],
+        preferred_domains=["acmehomeservices.example"],
+        candidates=[
+            _candidate(
+                name="Client Site",
+                domain="acmehomeservices.example",
+                competitor_type="direct",
+                confidence=0.95,
+                index=0,
+            )
+        ],
+        minimum_relevance_score=0,
+    )
+    assert result.included_candidates == []
+    assert result.exclusion_counts_by_reason["existing_domain_match"] == 1
+
+
 def test_existing_domain_match_is_counted_as_excluded_reason() -> None:
     result = process_competitor_candidates(
         site=_site(),
