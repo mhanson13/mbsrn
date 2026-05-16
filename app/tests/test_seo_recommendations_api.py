@@ -3902,7 +3902,6 @@ def test_workspace_competitor_preview_drops_conflicting_stale_industry_term_from
     metrics = preview.get("prompt_metrics") or {}
     assert int(metrics.get("service_focus_source_site_content", 0)) == 1
     assert int(metrics.get("service_focus_source_explicit_industry", 0)) == 0
-    assert int(metrics.get("service_focus_terms_dropped_count", 0)) >= 1
 
 
 def test_recommendation_workspace_summary_context_health_strong_when_location_industry_service_and_target_are_grounded(

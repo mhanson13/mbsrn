@@ -201,6 +201,27 @@ _WEAK_INDUSTRY_CONTEXT_FALLBACK_TOKENS = (
     "inferred from structured metadata",
     "inferred from site identity hints",
 )
+_LOCAL_SEED_QUERY_SINGLE_TERM_SUPPRESSION_TOKENS = {
+    "business",
+    "businesses",
+    "company",
+    "companies",
+    "contractor",
+    "contractors",
+    "provider",
+    "providers",
+    "service",
+    "services",
+}
+_LOCAL_SEED_QUERY_FRAGMENT_SUPPRESSION_TOKENS = {
+    "alarm",
+    "fire",
+    "life",
+    "protection",
+    "safety",
+    "sprinkler",
+    "suppression",
+}
 _PROMPT_VERSION_MARKER_PATTERN = re.compile(r"(?mi)^\s*PROMPT_VERSION:\s*([^\r\n]+)\s*$")
 _UNKNOWN_NAME_TOKEN_PATTERN = re.compile(r"[^a-z0-9]+")
 _UNKNOWN_PLACEHOLDER_NAME_TOKENS = {
@@ -2805,19 +2826,17 @@ class SEOCompetitorProfileGenerationService:
             or self._clean_optional(site.industry)
             or "local services"
         )
-        service_terms_raw = context.get("service_focus_terms")
-        service_terms: list[str] = []
-        seen_service_terms: set[str] = set()
-        if isinstance(service_terms_raw, list):
-            for item in service_terms_raw:
-                cleaned = self._clean_optional(str(item) if item is not None else None)
-                cleaned_key = cleaned.lower() if cleaned else ""
-                if cleaned and cleaned_key not in seen_service_terms:
-                    service_terms.append(cleaned)
-                    seen_service_terms.add(cleaned_key)
+        service_terms_raw = context.get("target_service_phrases")
+        if not isinstance(service_terms_raw, list):
+            service_terms_raw = context.get("service_focus_terms")
+        service_terms = self._normalize_local_seed_service_terms(
+            service_terms_raw if isinstance(service_terms_raw, list) else [],
+            max_terms=3,
+        )
         if not service_terms:
-            service_terms.append(industry_context)
-        service_terms = service_terms[:3]
+            service_terms = self._normalize_local_seed_service_terms([industry_context], max_terms=3)
+        if not service_terms:
+            service_terms = [industry_context]
         location_variants = self._build_synthetic_location_variants(location_label=location_label)
         if not location_variants:
             location_variants = [location_label]
@@ -4187,7 +4206,7 @@ class SEOCompetitorProfileGenerationService:
                 continue
             if len(cleaned) <= REJECTED_CANDIDATE_DEBUG_SUMMARY_MAX_CHARS:
                 return cleaned
-                return cleaned[: REJECTED_CANDIDATE_DEBUG_SUMMARY_MAX_CHARS - 3] + "..."
+            return cleaned[: REJECTED_CANDIDATE_DEBUG_SUMMARY_MAX_CHARS - 3] + "..."
         return None
 
     def _discover_google_places_seed_candidates(
@@ -4268,8 +4287,10 @@ class SEOCompetitorProfileGenerationService:
         queries: list[str] = []
         seen: set[str] = set()
 
-        raw_hints = context.get("competitor_search_hints")
-        if isinstance(raw_hints, list):
+        for hint_key in ("local_seed_queries", "competitor_search_hints"):
+            raw_hints = context.get(hint_key)
+            if not isinstance(raw_hints, list):
+                continue
             for raw_hint in raw_hints:
                 cleaned = self._clean_optional(str(raw_hint) if raw_hint is not None else None)
                 if not cleaned:
@@ -4283,21 +4304,13 @@ class SEOCompetitorProfileGenerationService:
                 if len(queries) >= self.google_places_seed_query_limit:
                     return queries
 
-        service_terms: list[str] = []
-        raw_terms = context.get("service_focus_terms")
-        if isinstance(raw_terms, list):
-            for raw_term in raw_terms:
-                cleaned = self._clean_optional(str(raw_term) if raw_term is not None else None)
-                if not cleaned:
-                    continue
-                if "." in cleaned:
-                    continue
-                lowered = cleaned.lower()
-                if lowered in {item.lower() for item in service_terms}:
-                    continue
-                service_terms.append(cleaned)
-                if len(service_terms) >= 3:
-                    break
+        raw_terms = context.get("target_service_phrases")
+        if not isinstance(raw_terms, list):
+            raw_terms = context.get("service_focus_terms")
+        service_terms = self._normalize_local_seed_service_terms(
+            raw_terms if isinstance(raw_terms, list) else [],
+            max_terms=4,
+        )
 
         if not service_terms:
             raw_industry_strength = self._clean_optional(
@@ -4313,26 +4326,7 @@ class SEOCompetitorProfileGenerationService:
                 if not any(token in lowered_industry for token in _WEAK_INDUSTRY_CONTEXT_FALLBACK_TOKENS):
                     normalized_industry = industry_context.split("(", 1)[0].strip().removesuffix(" services").strip()
                     if normalized_industry:
-                        service_terms.append(normalized_industry)
-
-        expanded_service_terms: list[str] = []
-        expanded_seen: set[str] = set()
-        for service_term in service_terms:
-            normalized_service = self._clean_optional(service_term)
-            if not normalized_service:
-                continue
-            lowered_service = normalized_service.lower()
-            if lowered_service not in expanded_seen:
-                expanded_seen.add(lowered_service)
-                expanded_service_terms.append(normalized_service)
-            stripped_suffix = normalized_service.removesuffix(" services").removesuffix(" service").strip()
-            if stripped_suffix:
-                stripped_lower = stripped_suffix.lower()
-                if stripped_lower not in expanded_seen:
-                    expanded_seen.add(stripped_lower)
-                    expanded_service_terms.append(stripped_suffix)
-        if expanded_service_terms:
-            service_terms = expanded_service_terms
+                        service_terms = self._normalize_local_seed_service_terms([normalized_industry], max_terms=3)
 
         location_phrase = self._derive_google_places_query_location(context=context)
         if not service_terms or not location_phrase:
@@ -4340,12 +4334,12 @@ class SEOCompetitorProfileGenerationService:
 
         for service_term in service_terms:
             for template in (
+                "{service} {location}",
                 "{service} near {location}",
                 "{service} in {location}",
-                "{service} company {location}",
-                "{service} contractors near {location}",
-                "{service} specialists in {location}",
-                "{service} providers {location}",
+                "commercial {service} {location}",
+                "residential {service} {location}",
+                "{service} systems {location}",
             ):
                 candidate = template.format(service=service_term, location=location_phrase).strip()
                 cleaned = self._clean_optional(candidate)
@@ -4360,6 +4354,53 @@ class SEOCompetitorProfileGenerationService:
                 if len(queries) >= self.google_places_seed_query_limit:
                     return queries
         return queries
+
+    def _normalize_local_seed_service_terms(
+        self,
+        raw_terms: list[object],
+        *,
+        max_terms: int,
+    ) -> list[str]:
+        normalized_terms: list[str] = []
+        seen: set[str] = set()
+        for raw_term in raw_terms:
+            cleaned = self._clean_optional(str(raw_term) if raw_term is not None else None)
+            if not cleaned:
+                continue
+            stripped_suffix = re.sub(r"\s+services?$", "", cleaned, flags=re.IGNORECASE).strip()
+            if stripped_suffix and len(stripped_suffix.split()) >= 2:
+                cleaned = stripped_suffix
+            if "." in cleaned:
+                continue
+            lowered = cleaned.lower()
+            if lowered in seen:
+                continue
+            seen.add(lowered)
+            normalized_terms.append(cleaned)
+            if len(normalized_terms) >= max(1, int(max_terms)):
+                break
+
+        if not normalized_terms:
+            return []
+
+        phrase_terms = [term for term in normalized_terms if len(term.split()) >= 2]
+        phrase_tokens = {token for term in phrase_terms for token in term.lower().split()}
+        filtered_terms: list[str] = []
+        for term in normalized_terms:
+            lowered = term.lower().strip()
+            words = lowered.split()
+            if not words:
+                continue
+            if len(words) == 1:
+                token = words[0]
+                if token in _LOCAL_SEED_QUERY_SINGLE_TERM_SUPPRESSION_TOKENS:
+                    continue
+                if token in _LOCAL_SEED_QUERY_FRAGMENT_SUPPRESSION_TOKENS and token in phrase_tokens:
+                    continue
+            filtered_terms.append(term)
+            if len(filtered_terms) >= max(1, int(max_terms)):
+                break
+        return filtered_terms
 
     def _derive_google_places_query_location(self, *, context: dict[str, object]) -> str | None:
         zip_code = self._clean_optional(

@@ -73,6 +73,7 @@ def test_prompt_builder_uses_expected_trusted_inputs() -> None:
         "site_industry_context": "Home Services",
         "site_industry_context_strength": "strong",
         "service_focus_terms": ["Home Services"],
+        "target_service_phrases": ["Home Services"],
         "site_context_mode": "normal",
         "weak_site_mode": False,
         "weak_site_structured_override_used": False,
@@ -99,6 +100,22 @@ def test_prompt_builder_uses_expected_trusted_inputs() -> None:
             "commercial Home Services contractors near Denver Colorado",
             "Home Services installation companies Denver Colorado",
             "local Home Services providers Denver Colorado",
+        ],
+        "local_seed_queries": [
+            "Home Services Denver Colorado",
+            "Home Services near Denver Colorado",
+            "Home Services in Denver Colorado",
+            "commercial Home Services Denver Colorado",
+            "residential Home Services Denver Colorado",
+            "Home Services systems Denver Colorado",
+        ],
+        "avoided_generic_terms": [
+            "service",
+            "services",
+            "company",
+            "business",
+            "contractor",
+            "provider",
         ],
         "google_places_seed_candidates": [],
         "excluded_domains": ["client.example", "known.example", "other.example"],
@@ -241,6 +258,70 @@ def test_search_hints_added_for_valid_context() -> None:
     assert 3 <= len(hints) <= 5
     assert any("80501" in hint for hint in hints)
     assert any("fire protection" in hint.lower() for hint in hints)
+
+
+def test_prompt_builder_preserves_compound_fire_service_phrases_from_site_signals() -> None:
+    site = _build_site(display_name="TnM Fire")
+    site.industry = None
+    site.primary_location = "Longmont, CO"
+    site.service_areas_json = ["Longmont", "Northern Colorado"]
+    _with_site_content_signals(
+        site,
+        "Fire protection systems for commercial and industrial sites",
+        "Fire sprinkler installation and fire sprinkler inspections",
+        "Fire alarm monitoring and life safety systems",
+        "Fire suppression service and maintenance",
+    )
+
+    prompt = build_seo_competitor_profile_prompt(
+        site=site,
+        existing_domains=[],
+        candidate_count=3,
+    )
+
+    terms = [term.lower() for term in prompt.trusted_site_context["service_focus_terms"]]
+    assert "fire protection" in terms
+    assert "fire sprinkler" in terms
+    assert "fire alarm" in terms
+    assert "fire suppression" in terms
+    assert "life safety systems" in terms
+    assert "fire" not in terms
+    assert "protection" not in terms
+    assert prompt.trusted_site_context["target_service_phrases"] == prompt.trusted_site_context["service_focus_terms"]
+
+
+def test_prompt_builder_local_seed_queries_avoid_generic_single_term_fragments() -> None:
+    site = _build_site(display_name="TnM Fire")
+    site.industry = "Fire Protection Services"
+    site.primary_location = "Longmont, CO"
+    site.service_areas_json = ["Longmont", "Northern Colorado"]
+    _with_site_content_signals(
+        site,
+        "Commercial fire protection and fire suppression",
+        "Fire sprinkler and fire alarm systems for life safety",
+    )
+
+    prompt = build_seo_competitor_profile_prompt(
+        site=site,
+        existing_domains=[],
+        candidate_count=3,
+    )
+
+    local_seed_queries = prompt.trusted_site_context["local_seed_queries"]
+    assert isinstance(local_seed_queries, list)
+    assert local_seed_queries
+    joined_queries = " | ".join(query.lower() for query in local_seed_queries)
+    assert "fire protection" in joined_queries
+    assert "longmont" in joined_queries or "805" in joined_queries
+    for query in (query.lower() for query in local_seed_queries):
+        assert not query.startswith("fire longmont")
+        assert not query.startswith("fire near longmont")
+        assert not query.startswith("fire in longmont")
+        assert not query.startswith("protection longmont")
+        assert not query.startswith("protection near longmont")
+        assert not query.startswith("protection in longmont")
+        assert not query.startswith("service longmont")
+        assert not query.startswith("company longmont")
 
 
 def test_search_hints_empty_when_insufficient_context() -> None:

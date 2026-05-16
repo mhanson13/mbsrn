@@ -1722,7 +1722,10 @@ def test_google_places_seed_queries_are_generated_from_service_and_location_cont
     assert len(seed_client.queries) <= 5
     joined_queries = " | ".join(seed_client.queries).lower()
     assert "80501" in joined_queries or "longmont" in joined_queries
-    assert "fire protection services" in joined_queries
+    assert "fire protection" in joined_queries
+    assert "fire longmont" not in joined_queries
+    assert "protection longmont" not in joined_queries
+    assert "service longmont" not in joined_queries
     assert seed_client.max_results == 3
 
 
@@ -2546,6 +2549,44 @@ def test_synthetic_fallback_quality_gates_duplicates_and_can_return_fewer_rows(d
         family = (match.group(1).strip().lower(), match.group(2).strip().lower())
         assert family not in phrase_families
         phrase_families.add(family)
+
+
+def test_synthetic_fallback_scaffold_names_prefer_compound_service_phrases(db_session, seeded_business) -> None:
+    deferred_executor = _DeferredRunExecutor()
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        generation_provider=_DeterministicCompetitorProfileProvider(),
+        run_executor=deferred_executor,
+    )
+    site_id = _create_site(client, seeded_business.id, domain="tnmfire.example")
+    site = db_session.get(SEOSite, site_id)
+    assert site is not None
+    site.display_name = "TnM Fire"
+    site.industry = "Fire Protection Services"
+    site.primary_location = "Longmont, CO"
+    site.service_areas_json = ["Longmont", "Northern Colorado"]
+    db_session.add(site)
+    db_session.commit()
+
+    run_id = _create_generation_run(client, seeded_business.id, site_id, candidate_count=3)["run"]["id"]
+    _execute_generation_run(
+        db_session=db_session,
+        business_id=seeded_business.id,
+        site_id=site_id,
+        run_id=run_id,
+        provider=_EmptyCompetitorProfileProvider(),
+    )
+
+    detail = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-profile-generation-runs/{run_id}"
+    )
+    assert detail.status_code == 200
+    payload = detail.json()
+    names = [str(item["suggested_name"]).lower() for item in payload["drafts"]]
+    assert any("review scaffold: fire protection competitors" in name for name in names), names
+    assert all("review scaffold: fire competitors" not in name for name in names)
+    assert all("review scaffold: protection competitors" not in name for name in names)
 
 
 def test_malformed_provider_output_skips_invalid_candidates_and_keeps_valid_drafts(db_session, seeded_business) -> None:

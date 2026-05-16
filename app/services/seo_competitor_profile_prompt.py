@@ -27,8 +27,12 @@ _MAX_SERVICE_AREA_LENGTH = 120
 _MAX_SERVICE_AREAS = 25
 _MAX_SERVICE_FOCUS_TERM_LENGTH = 32
 _MAX_SERVICE_FOCUS_TERMS = 8
+_MAX_TARGET_SERVICE_PHRASES = 8
+_MAX_AVOIDED_GENERIC_TERMS = 8
 _MAX_COMPETITOR_SEARCH_HINT_LENGTH = 120
 _MAX_COMPETITOR_SEARCH_HINTS = 5
+_MAX_LOCAL_SEED_QUERY_LENGTH = 120
+_MAX_LOCAL_SEED_QUERIES = 8
 _MAX_GOOGLE_PLACES_SEED_CANDIDATES = 5
 _MAX_GOOGLE_PLACES_SEED_NAME_LENGTH = 140
 _MAX_GOOGLE_PLACES_SEED_PLACE_ID_LENGTH = 255
@@ -58,6 +62,8 @@ _RETRY_REDUCED_CONTEXT_SERVICE_AREA_CAP = 4
 _RETRY_REDUCED_CONTEXT_NON_COMPETITOR_HINT_CAP = 4
 _RETRY_REDUCED_CONTEXT_COMPETITOR_SEARCH_HINT_CAP = 4
 _RETRY_REDUCED_CONTEXT_SERVICE_FOCUS_TERMS_CAP = 6
+_RETRY_REDUCED_CONTEXT_TARGET_SERVICE_PHRASE_CAP = 6
+_RETRY_REDUCED_CONTEXT_LOCAL_SEED_QUERY_CAP = 4
 _RETRY_REDUCED_CONTEXT_GOOGLE_PLACES_SEED_CAP = 3
 _BUDGET_CONTEXT_EXISTING_DOMAIN_CAP = 20
 _BUDGET_CONTEXT_EXISTING_DOMAIN_TOTAL_CHARS = 500
@@ -68,6 +74,8 @@ _BUDGET_CONTEXT_OPERATOR_FEEDBACK_DOMAIN_TOTAL_CHARS = 420
 _BUDGET_CONTEXT_SERVICE_AREA_CAP = 10
 _BUDGET_CONTEXT_NON_COMPETITOR_HINT_CAP = 6
 _BUDGET_CONTEXT_COMPETITOR_SEARCH_HINT_CAP = 4
+_BUDGET_CONTEXT_TARGET_SERVICE_PHRASE_CAP = 6
+_BUDGET_CONTEXT_LOCAL_SEED_QUERY_CAP = 4
 _BUDGET_CONTEXT_GOOGLE_PLACES_SEED_CAP = 3
 _LOCATION_FALLBACK_TEXT = "Location not yet established from available business/site data."
 _INDUSTRY_FALLBACK_TEXT = "Industry not yet confidently classified from available structured data."
@@ -131,6 +139,29 @@ _NON_COMPETITOR_DOMAIN_HINTS = (
     "yellowpages.com",
     "youtube.com",
 )
+_AVOIDED_GENERIC_SERVICE_TERMS = (
+    "service",
+    "services",
+    "company",
+    "business",
+    "contractor",
+    "provider",
+)
+_LOCAL_SEED_QUERY_FRAGMENT_SUPPRESSION_TERMS = {
+    "alarm",
+    "cleaning",
+    "drain",
+    "fire",
+    "heater",
+    "life",
+    "protection",
+    "repair",
+    "roof",
+    "safety",
+    "sprinkler",
+    "suppression",
+    "water",
+}
 _OVERRIDE_PLACEHOLDER_PATTERN = re.compile(r"\{([a-zA-Z0-9_]+)\}")
 _LOCATION_CITY_STATE_PATTERN = re.compile(r"([A-Za-z][A-Za-z '\-]{1,60})\s*,\s*([A-Za-z]{2,20})")
 _DOMAIN_TOKEN_PATTERN = re.compile(r"\b[a-z0-9][a-z0-9\-]*\.[a-z]{2,}\b", re.IGNORECASE)
@@ -418,6 +449,15 @@ def build_seo_competitor_profile_prompt(
         industry_context_strength=effective_site_context.industry_context_strength,
         weak_site_mode=weak_site_decision.weak_site_mode,
     )
+    local_seed_queries = _build_local_seed_queries(
+        primary_business_zip=primary_business_zip,
+        primary_location=primary_location,
+        location_context=location_context,
+        service_focus_terms=service_focus_terms,
+        industry_context=industry_context,
+        industry_context_strength=effective_site_context.industry_context_strength,
+        weak_site_mode=weak_site_decision.weak_site_mode,
+    )
     google_places_seed_candidates = _sanitize_google_places_seed_candidates(seed_candidates)
 
     context: dict[str, object] = {
@@ -435,6 +475,7 @@ def build_seo_competitor_profile_prompt(
         "site_industry_context": industry_context,
         "site_industry_context_strength": effective_site_context.industry_context_strength,
         "service_focus_terms": service_focus_terms,
+        "target_service_phrases": service_focus_terms,
         "site_context_mode": weak_site_decision.context_mode,
         "weak_site_mode": weak_site_decision.weak_site_mode,
         "weak_site_structured_override_used": weak_site_decision.structured_override_used,
@@ -447,6 +488,8 @@ def build_seo_competitor_profile_prompt(
         "site_content_signal_count": weak_site_decision.site_content_signal_count,
         "target_customer_context": target_customer_context,
         "competitor_search_hints": competitor_search_hints,
+        "local_seed_queries": local_seed_queries,
+        "avoided_generic_terms": list(_AVOIDED_GENERIC_SERVICE_TERMS),
         "google_places_seed_candidates": google_places_seed_candidates,
         "excluded_domains": excluded_domains,
         "operator_excluded_domains": operator_excluded_domains,
@@ -514,10 +557,13 @@ def build_seo_competitor_profile_prompt(
     user_prompt_chars = len(user_prompt)
     context_service_areas = context.get("site_service_areas")
     context_service_focus_terms = context.get("service_focus_terms")
+    context_target_service_phrases = context.get("target_service_phrases")
     context_existing_domains = context.get("existing_competitor_domains")
     context_excluded_domains = context.get("excluded_domains")
     context_non_competitor_hints = context.get("non_competitor_domain_hints")
     context_competitor_search_hints = context.get("competitor_search_hints")
+    context_local_seed_queries = context.get("local_seed_queries")
+    context_avoided_generic_terms = context.get("avoided_generic_terms")
     context_google_places_seed_candidates = context.get("google_places_seed_candidates")
     context_operator_useful_domains = context.get("operator_useful_domains")
     context_operator_not_useful_domains = context.get("operator_not_useful_domains")
@@ -532,6 +578,9 @@ def build_seo_competitor_profile_prompt(
         "service_focus_terms_count": (
             len(context_service_focus_terms) if isinstance(context_service_focus_terms, list) else 0
         ),
+        "target_service_phrases_count": (
+            len(context_target_service_phrases) if isinstance(context_target_service_phrases, list) else 0
+        ),
         "existing_competitor_domains_count": (
             len(context_existing_domains) if isinstance(context_existing_domains, list) else 0
         ),
@@ -541,6 +590,12 @@ def build_seo_competitor_profile_prompt(
         ),
         "competitor_search_hints_count": (
             len(context_competitor_search_hints) if isinstance(context_competitor_search_hints, list) else 0
+        ),
+        "local_seed_queries_count": (
+            len(context_local_seed_queries) if isinstance(context_local_seed_queries, list) else 0
+        ),
+        "avoided_generic_terms_count": (
+            len(context_avoided_generic_terms) if isinstance(context_avoided_generic_terms, list) else 0
         ),
         "google_places_seed_candidates_count": (
             len(context_google_places_seed_candidates) if isinstance(context_google_places_seed_candidates, list) else 0
@@ -665,7 +720,9 @@ def _build_default_competitor_instruction_body(
         "9. Include location_market and service_category_fit when known; use null when unknown.\n"
         "10. confidence_score must be a number between 0 and 1.\n"
         "11. If google_places_seed_candidates are provided, treat them as seed hypotheses and enrich/validate before final selection.\n"
-        "12. Keep summaries concise and evidence specific.\n"
+        "12. Prioritize target_service_phrases and local_seed_queries over isolated generic single-word terms.\n"
+        "13. Avoid generic terms listed in avoided_generic_terms unless they appear inside a stronger service phrase.\n"
+        "14. Keep summaries concise and evidence specific.\n"
         f"{_build_canonical_output_contract_block()}"
     )
 
@@ -681,6 +738,12 @@ def _build_override_template_values(
         cleaned_terms = [str(term) for term in service_focus_terms if isinstance(term, str) and term]
         if cleaned_terms:
             service_focus_terms_text = ", ".join(cleaned_terms)
+    target_service_phrases = context.get("target_service_phrases")
+    target_service_phrases_text = service_focus_terms_text
+    if isinstance(target_service_phrases, list):
+        cleaned_target_phrases = [str(term) for term in target_service_phrases if isinstance(term, str) and term]
+        if cleaned_target_phrases:
+            target_service_phrases_text = ", ".join(cleaned_target_phrases)
 
     site_service_areas = context.get("site_service_areas")
     site_service_areas_text = ""
@@ -709,6 +772,18 @@ def _build_override_template_values(
         cleaned_hints = [str(item) for item in non_competitor_hints if isinstance(item, str) and item]
         if cleaned_hints:
             non_competitor_hints_text = ", ".join(cleaned_hints)
+    local_seed_queries = context.get("local_seed_queries")
+    local_seed_queries_text = ""
+    if isinstance(local_seed_queries, list):
+        cleaned_seed_queries = [str(item) for item in local_seed_queries if isinstance(item, str) and item]
+        if cleaned_seed_queries:
+            local_seed_queries_text = ", ".join(cleaned_seed_queries)
+    avoided_generic_terms = context.get("avoided_generic_terms")
+    avoided_generic_terms_text = ""
+    if isinstance(avoided_generic_terms, list):
+        cleaned_avoided_generic_terms = [str(item) for item in avoided_generic_terms if isinstance(item, str) and item]
+        if cleaned_avoided_generic_terms:
+            avoided_generic_terms_text = ", ".join(cleaned_avoided_generic_terms)
 
     operator_useful_domains = context.get("operator_useful_domains")
     operator_useful_domains_text = ""
@@ -779,10 +854,13 @@ def _build_override_template_values(
             fallback="weak",
         ),
         "service_focus_terms": service_focus_terms_text,
+        "target_service_phrases": target_service_phrases_text,
         "target_customer_context": _coerce_override_template_value(
             context.get("target_customer_context"),
             fallback=_TARGET_CUSTOMER_CONTEXT_FALLBACK,
         ),
+        "local_seed_queries": local_seed_queries_text,
+        "avoided_generic_terms": avoided_generic_terms_text,
         "existing_competitor_domains": existing_domains_text,
         "excluded_domains": excluded_domains_text,
         "non_competitor_domain_hints": non_competitor_hints_text,
@@ -975,6 +1053,99 @@ def _build_competitor_search_hints(
     return _sanitize_competitor_search_hints(hint_candidates)
 
 
+def _build_local_seed_queries(
+    *,
+    primary_business_zip: str | None,
+    primary_location: str | None,
+    location_context: str,
+    service_focus_terms: list[str],
+    industry_context: str,
+    industry_context_strength: str,
+    weak_site_mode: bool,
+) -> list[str]:
+    normalized_terms = _normalize_service_terms_for_local_seed_queries(service_focus_terms)
+    if weak_site_mode:
+        normalized_terms = [term for term in normalized_terms if not _is_thin_service_focus_term(term)]
+    if not normalized_terms:
+        fallback_industry_term = _sanitize_optional(industry_context, max_length=_MAX_INDUSTRY_LENGTH)
+        if (
+            fallback_industry_term
+            and industry_context_strength == "strong"
+            and fallback_industry_term != _INDUSTRY_FALLBACK_TEXT
+        ):
+            cleaned_industry = fallback_industry_term.split("(", 1)[0].strip()
+            cleaned_industry = cleaned_industry.removesuffix(" services").strip()
+            if cleaned_industry:
+                normalized_terms = _normalize_service_terms_for_local_seed_queries([cleaned_industry])
+    if not normalized_terms:
+        return []
+
+    location_phrase = _derive_competitor_hint_location_phrase(
+        primary_business_zip=primary_business_zip,
+        primary_location=primary_location,
+        location_context=location_context,
+    )
+    if location_phrase is None:
+        return []
+
+    query_candidates: list[str] = []
+    for service_term in normalized_terms:
+        for template in (
+            "{service} {location}",
+            "{service} near {location}",
+            "{service} in {location}",
+            "commercial {service} {location}",
+            "residential {service} {location}",
+            "{service} systems {location}",
+        ):
+            query_candidates.append(template.format(service=service_term, location=location_phrase).strip())
+    return _sanitize_local_seed_queries(query_candidates)
+
+
+def _normalize_service_terms_for_local_seed_queries(service_focus_terms: list[str]) -> list[str]:
+    normalized_terms: list[str] = []
+    seen: set[str] = set()
+    for term in service_focus_terms:
+        cleaned = _sanitize_optional(term, max_length=_MAX_SERVICE_FOCUS_TERM_LENGTH)
+        if not cleaned:
+            continue
+        stripped_suffix = re.sub(r"\s+services?$", "", cleaned, flags=re.IGNORECASE).strip()
+        if stripped_suffix and len(stripped_suffix.split()) >= 2:
+            cleaned = stripped_suffix
+        lowered = cleaned.lower().strip()
+        if lowered in seen:
+            continue
+        if _DOMAIN_TOKEN_PATTERN.search(lowered):
+            continue
+        words = lowered.split()
+        if not words:
+            continue
+        if len(words) == 1 and words[0] in _AVOIDED_GENERIC_SERVICE_TERMS:
+            continue
+        seen.add(lowered)
+        normalized_terms.append(cleaned)
+        if len(normalized_terms) >= _MAX_TARGET_SERVICE_PHRASES:
+            break
+
+    if not normalized_terms:
+        return []
+
+    phrase_terms = [term for term in normalized_terms if len(term.split()) >= 2]
+    phrase_tokens = {token for term in phrase_terms for token in term.lower().split()}
+    filtered_terms: list[str] = []
+    for term in normalized_terms:
+        lowered = term.lower().strip()
+        words = lowered.split()
+        if len(words) == 1:
+            token = words[0]
+            if token in _LOCAL_SEED_QUERY_FRAGMENT_SUPPRESSION_TERMS and token in phrase_tokens:
+                continue
+        filtered_terms.append(term)
+        if len(filtered_terms) >= _MAX_TARGET_SERVICE_PHRASES:
+            break
+    return filtered_terms
+
+
 def _normalize_service_terms_for_hints(service_focus_terms: list[str]) -> list[str]:
     normalized_terms: list[str] = []
     seen: set[str] = set()
@@ -992,6 +1163,25 @@ def _normalize_service_terms_for_hints(service_focus_terms: list[str]) -> list[s
         if len(normalized_terms) >= 3:
             break
     return normalized_terms
+
+
+def _sanitize_local_seed_queries(hints: list[str]) -> list[str]:
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for hint in hints:
+        normalized = _sanitize_optional(hint, max_length=_MAX_LOCAL_SEED_QUERY_LENGTH)
+        if not normalized:
+            continue
+        if _DOMAIN_TOKEN_PATTERN.search(normalized):
+            continue
+        lowered = normalized.lower()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        cleaned.append(normalized)
+        if len(cleaned) >= _MAX_LOCAL_SEED_QUERIES:
+            break
+    return cleaned
 
 
 def _derive_competitor_hint_location_phrase(
@@ -1149,6 +1339,15 @@ def _apply_context_budget(
     competitor_search_hints = budgeted.get("competitor_search_hints")
     if isinstance(competitor_search_hints, list):
         budgeted["competitor_search_hints"] = competitor_search_hints[:_BUDGET_CONTEXT_COMPETITOR_SEARCH_HINT_CAP]
+    local_seed_queries = budgeted.get("local_seed_queries")
+    if isinstance(local_seed_queries, list):
+        budgeted["local_seed_queries"] = local_seed_queries[:_BUDGET_CONTEXT_LOCAL_SEED_QUERY_CAP]
+    target_service_phrases = budgeted.get("target_service_phrases")
+    if isinstance(target_service_phrases, list):
+        budgeted["target_service_phrases"] = target_service_phrases[:_BUDGET_CONTEXT_TARGET_SERVICE_PHRASE_CAP]
+    avoided_generic_terms = budgeted.get("avoided_generic_terms")
+    if isinstance(avoided_generic_terms, list):
+        budgeted["avoided_generic_terms"] = avoided_generic_terms[:_MAX_AVOIDED_GENERIC_TERMS]
     google_places_seed_candidates = budgeted.get("google_places_seed_candidates")
     if isinstance(google_places_seed_candidates, list):
         budgeted["google_places_seed_candidates"] = google_places_seed_candidates[
@@ -1166,10 +1365,15 @@ def _apply_context_budget(
         budgeted["site_service_areas"] = []
         budgeted["non_competitor_domain_hints"] = []
         budgeted["competitor_search_hints"] = []
+        budgeted["local_seed_queries"] = []
         budgeted["google_places_seed_candidates"] = []
         service_focus_terms = budgeted.get("service_focus_terms")
         if isinstance(service_focus_terms, list):
             budgeted["service_focus_terms"] = service_focus_terms[:4]
+            budgeted["target_service_phrases"] = service_focus_terms[:4]
+        else:
+            budgeted["target_service_phrases"] = []
+        budgeted["avoided_generic_terms"] = list(_AVOIDED_GENERIC_SERVICE_TERMS[:_MAX_AVOIDED_GENERIC_TERMS])
         context_json = _serialize_context_json(budgeted)
 
     if len(context_json) > _MAX_CONTEXT_JSON_CHARS:
@@ -1194,8 +1398,11 @@ def _apply_context_budget(
             "site_industry_context": budgeted.get("site_industry_context"),
             "site_industry_context_strength": budgeted.get("site_industry_context_strength"),
             "service_focus_terms": budgeted.get("service_focus_terms"),
+            "target_service_phrases": budgeted.get("target_service_phrases"),
             "target_customer_context": budgeted.get("target_customer_context"),
             "competitor_search_hints": budgeted.get("competitor_search_hints"),
+            "local_seed_queries": budgeted.get("local_seed_queries"),
+            "avoided_generic_terms": budgeted.get("avoided_generic_terms"),
             "google_places_seed_candidates": budgeted.get("google_places_seed_candidates"),
             "excluded_domains": [site_domain],
             "operator_excluded_domains": [],
@@ -1271,6 +1478,9 @@ def _apply_retry_reduced_context_mode(
     competitor_search_hints = reduced.get("competitor_search_hints")
     if isinstance(competitor_search_hints, list):
         reduced["competitor_search_hints"] = competitor_search_hints[:_RETRY_REDUCED_CONTEXT_COMPETITOR_SEARCH_HINT_CAP]
+    local_seed_queries = reduced.get("local_seed_queries")
+    if isinstance(local_seed_queries, list):
+        reduced["local_seed_queries"] = local_seed_queries[:_RETRY_REDUCED_CONTEXT_LOCAL_SEED_QUERY_CAP]
     google_places_seed_candidates = reduced.get("google_places_seed_candidates")
     if isinstance(google_places_seed_candidates, list):
         reduced["google_places_seed_candidates"] = google_places_seed_candidates[
@@ -1280,6 +1490,12 @@ def _apply_retry_reduced_context_mode(
     service_focus_terms = reduced.get("service_focus_terms")
     if isinstance(service_focus_terms, list):
         reduced["service_focus_terms"] = service_focus_terms[:_RETRY_REDUCED_CONTEXT_SERVICE_FOCUS_TERMS_CAP]
+    target_service_phrases = reduced.get("target_service_phrases")
+    if isinstance(target_service_phrases, list):
+        reduced["target_service_phrases"] = target_service_phrases[:_RETRY_REDUCED_CONTEXT_TARGET_SERVICE_PHRASE_CAP]
+    avoided_generic_terms = reduced.get("avoided_generic_terms")
+    if isinstance(avoided_generic_terms, list):
+        reduced["avoided_generic_terms"] = avoided_generic_terms[:_MAX_AVOIDED_GENERIC_TERMS]
 
     return reduced
 
@@ -1386,6 +1602,13 @@ def _sanitize_structured_context_data(
         max_length=_MAX_SERVICE_FOCUS_TERM_LENGTH,
         max_items=_MAX_SERVICE_FOCUS_TERMS,
     )
+    sanitized["target_service_phrases"] = _sanitize_data_string_list(
+        sanitized.get("target_service_phrases"),
+        max_length=_MAX_SERVICE_FOCUS_TERM_LENGTH,
+        max_items=_MAX_TARGET_SERVICE_PHRASES,
+    )
+    if not sanitized["target_service_phrases"]:
+        sanitized["target_service_phrases"] = list(sanitized["service_focus_terms"][:_MAX_TARGET_SERVICE_PHRASES])
     raw_site_context_mode = _sanitize_text_if_data_only(
         sanitized.get("site_context_mode"),
         max_length=32,
@@ -1455,6 +1678,20 @@ def _sanitize_structured_context_data(
         max_length=_MAX_COMPETITOR_SEARCH_HINT_LENGTH,
         max_items=_MAX_COMPETITOR_SEARCH_HINTS,
     )
+    sanitized["local_seed_queries"] = _sanitize_data_string_list(
+        sanitized.get("local_seed_queries"),
+        max_length=_MAX_LOCAL_SEED_QUERY_LENGTH,
+        max_items=_MAX_LOCAL_SEED_QUERIES,
+    )
+    if not sanitized["local_seed_queries"]:
+        sanitized["local_seed_queries"] = list(sanitized["competitor_search_hints"][:_MAX_LOCAL_SEED_QUERIES])
+    sanitized["avoided_generic_terms"] = _sanitize_data_string_list(
+        sanitized.get("avoided_generic_terms"),
+        max_length=32,
+        max_items=_MAX_AVOIDED_GENERIC_TERMS,
+    )
+    if not sanitized["avoided_generic_terms"]:
+        sanitized["avoided_generic_terms"] = list(_AVOIDED_GENERIC_SERVICE_TERMS[:_MAX_AVOIDED_GENERIC_TERMS])
     sanitized["google_places_seed_candidates"] = _sanitize_google_places_seed_candidates(
         sanitized.get("google_places_seed_candidates")
     )

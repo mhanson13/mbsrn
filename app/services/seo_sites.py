@@ -141,14 +141,105 @@ _SITE_CONTEXT_SERVICE_HINTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("carpet installation", ("carpet installation", "carpet flooring", "carpet replacement")),
     ("floor refinishing", ("floor refinishing", "hardwood refinishing", "floor refinish")),
     ("roofing", ("roofing", "roof repair", "roof replacement")),
+    ("roof repair", ("roof repair", "roofing repair", "repair roof", "roof leak repair")),
     ("plumbing", ("plumbing", "plumber")),
+    ("plumbing repair", ("plumbing repair", "plumber repair", "pipe repair")),
+    ("drain cleaning", ("drain cleaning", "drain unclogging", "sewer drain cleaning")),
+    ("water heater", ("water heater", "water heater repair", "water heater installation")),
     ("electrical", ("electrical", "electrician")),
     ("hvac", ("hvac", "heating", "cooling", "air conditioning")),
+    ("fire protection", ("fire protection", "fire protection service", "fire protection system")),
+    ("fire sprinkler", ("fire sprinkler", "fire sprinklers", "sprinkler system", "sprinkler installation")),
+    ("fire alarm", ("fire alarm", "fire alarms", "alarm monitoring", "alarm system")),
+    ("fire suppression", ("fire suppression", "suppression system", "suppression services")),
+    ("life safety systems", ("life safety", "life safety systems", "life-safety systems")),
+    ("commercial fire protection", ("commercial fire protection", "commercial fire sprinkler", "commercial fire alarm")),
+    ("residential fire sprinkler", ("residential fire sprinkler", "residential sprinkler", "home fire sprinkler")),
     ("landscaping", ("landscaping", "landscape")),
     ("concrete", ("concrete", "foundation")),
     ("painting", ("painting", "painter")),
     ("home services", ("home service", "home services")),
 )
+_SITE_CONTEXT_SERVICE_PHRASE_ANCHOR_TOKENS = {
+    "alarm",
+    "cleaning",
+    "concrete",
+    "construction",
+    "contracting",
+    "drain",
+    "electrical",
+    "fire",
+    "flooring",
+    "heater",
+    "heating",
+    "hvac",
+    "install",
+    "installation",
+    "kitchen",
+    "landscape",
+    "landscaping",
+    "life",
+    "paint",
+    "painting",
+    "plumbing",
+    "protection",
+    "remodel",
+    "remodeling",
+    "renovation",
+    "repair",
+    "replacement",
+    "roof",
+    "roofing",
+    "safety",
+    "sprinkler",
+    "suppression",
+    "systems",
+    "tile",
+    "water",
+}
+_SITE_CONTEXT_SERVICE_PHRASE_BOUNDARY_STOP_TOKENS = {
+    "a",
+    "an",
+    "and",
+    "around",
+    "at",
+    "by",
+    "for",
+    "in",
+    "near",
+    "of",
+    "on",
+    "or",
+    "the",
+    "to",
+    "with",
+}
+_SITE_CONTEXT_SINGLE_TERM_REJECT_TOKENS = {
+    "business",
+    "businesses",
+    "company",
+    "companies",
+    "contractor",
+    "contractors",
+    "provider",
+    "providers",
+    "service",
+    "services",
+}
+_SITE_CONTEXT_SINGLE_TERM_FRAGMENT_SUPPRESSION_TOKENS = {
+    "alarm",
+    "cleaning",
+    "fire",
+    "heater",
+    "life",
+    "protection",
+    "repair",
+    "roof",
+    "safety",
+    "sprinkler",
+    "suppression",
+    "water",
+}
 
 # Ordered child-table deletion for permanent site removal.
 _SITE_PERMANENT_DELETE_MODELS = (
@@ -540,6 +631,13 @@ def _infer_service_terms_from_sources(
     if inferred:
         return inferred
 
+    inferred_phrases = _infer_compound_service_phrases_from_sources(
+        raw_sources,
+        max_terms=max_terms,
+    )
+    if inferred_phrases:
+        return inferred_phrases
+
     if not allow_token_fallback:
         return []
 
@@ -556,8 +654,99 @@ def _infer_service_terms_from_sources(
     for token, count in token_counts.most_common(max_terms):
         if count < 2:
             continue
+        if token in _SITE_CONTEXT_SINGLE_TERM_REJECT_TOKENS:
+            continue
         fallback_terms.append(token)
     return fallback_terms
+
+
+def _infer_compound_service_phrases_from_sources(
+    raw_sources: list[str],
+    *,
+    max_terms: int,
+) -> list[str]:
+    if not raw_sources:
+        return []
+
+    phrase_counts: Counter[str] = Counter()
+    for source in raw_sources:
+        tokens = _tokenize_context(source)
+        if len(tokens) < 2:
+            continue
+        for window_size in (4, 3, 2):
+            if len(tokens) < window_size:
+                continue
+            for start in range(0, len(tokens) - window_size + 1):
+                phrase_tokens = tokens[start : start + window_size]
+                if not _is_valid_service_phrase_tokens(phrase_tokens):
+                    continue
+                phrase = " ".join(phrase_tokens).strip()
+                if phrase:
+                    phrase_counts[phrase] += 1
+
+    if not phrase_counts:
+        return []
+
+    ranked = sorted(
+        phrase_counts.items(),
+        key=lambda item: (-item[1], -len(item[0].split()), item[0]),
+    )
+    selected: list[str] = []
+    selected_token_sets: list[set[str]] = []
+    for phrase, _count in ranked:
+        token_set = set(phrase.split())
+        if not token_set:
+            continue
+        if any(token_set.issubset(existing_tokens) for existing_tokens in selected_token_sets):
+            continue
+        selected.append(phrase)
+        selected_token_sets.append(token_set)
+        if len(selected) >= max_terms:
+            break
+
+    if not selected:
+        return []
+
+    selected_token_union = {token for phrase in selected for token in phrase.split()}
+    filtered_selected: list[str] = []
+    for phrase in selected:
+        phrase_tokens = phrase.split()
+        if len(phrase_tokens) == 1:
+            token = phrase_tokens[0]
+            if token in _SITE_CONTEXT_SINGLE_TERM_REJECT_TOKENS:
+                continue
+            if (
+                token in _SITE_CONTEXT_SINGLE_TERM_FRAGMENT_SUPPRESSION_TOKENS
+                and token in selected_token_union
+                and any(token in other.split() for other in selected if other != phrase and " " in other)
+            ):
+                continue
+        filtered_selected.append(phrase)
+        if len(filtered_selected) >= max_terms:
+            break
+    return filtered_selected
+
+
+def _is_valid_service_phrase_tokens(tokens: list[str]) -> bool:
+    if len(tokens) < 2 or len(tokens) > 4:
+        return False
+    if any(len(token) < 3 for token in tokens):
+        return False
+    if tokens[0] in _SITE_CONTEXT_SERVICE_PHRASE_BOUNDARY_STOP_TOKENS:
+        return False
+    if tokens[-1] in _SITE_CONTEXT_SERVICE_PHRASE_BOUNDARY_STOP_TOKENS:
+        return False
+    if any(token in _SITE_CONTEXT_SERVICE_NOISE_TOKENS for token in tokens):
+        return False
+    if not any(token in _SITE_CONTEXT_SERVICE_PHRASE_ANCHOR_TOKENS for token in tokens):
+        return False
+    non_generic_tokens = [
+        token
+        for token in tokens
+        if token not in _SITE_CONTEXT_GENERIC_INDUSTRY_TOKENS
+        and token not in _SITE_CONTEXT_SINGLE_TERM_REJECT_TOKENS
+    ]
+    return bool(non_generic_tokens)
 
 
 def _dedupe_terms(terms: list[str], *, max_terms: int) -> list[str]:
