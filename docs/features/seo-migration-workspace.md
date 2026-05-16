@@ -322,13 +322,33 @@ Suggestion safety constraints:
 Source-site media discovery:
 - source ingest now captures bounded discovered image metadata under:
   - `source_snapshot.discovered_images`
+- source image discovery now scans a bounded set of source pages (default max 8):
+  - homepage always
+  - prioritized same-site navigation/pages such as `/projects`, `/project`, `/gallery`, `/work`, `/portfolio`, `/services`, `/about`
+  - discovery does not crawl arbitrary external sites
+- each discovered candidate includes bounded source provenance:
+  - `source_page_url`
+  - `pages_scanned_count`
+  - `pages_scanned`
 - discovery sources include:
   - `img[src]`
   - `img[data-src]`
+  - `img[data-lazy-src]`
+  - `img[data-original]`
   - `img[srcset]`
+  - `img[data-srcset]`
   - `picture/source[srcset]`
+  - inline `style="background-image:url(...)"` when present
   - OpenGraph/Twitter image meta tags
+- GoDaddy/wsimg media URLs (for example `img1.wsimg.com/isteam/...`) are normalized with canonical dedupe keys so crop/resize variants do not inflate counts
+- candidate validation is bounded and content-type aware:
+  - HEAD-first probe, bounded GET fallback when needed
+  - accepts image content types only (`image/jpeg`, `image/png`, `image/webp`, `image/gif`, `image/avif`)
+  - HTML/text route URLs (for example `/m`, `/projects`, `/services`) are rejected as non-image candidates
 - normalized URLs are deduplicated and query strings are stripped from normalized metadata fields
+- discovery diagnostics remain bounded:
+  - no raw source HTML dumps
+  - no raw media bytes exposed in operator payloads
 
 Workspace media APIs:
 - `GET /api/businesses/{business_id}/seo/sites/{site_id}/migration/media/assets`

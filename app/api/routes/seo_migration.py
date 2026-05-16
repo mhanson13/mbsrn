@@ -664,6 +664,7 @@ def list_seo_migration_media_assets(
         operator_uploaded=[SEOMigrationMediaAssetRead.model_validate(item) for item in operator_uploaded or []],
         selected_assets=[SEOMigrationMediaAssetRead.model_validate(item) for item in selected_assets or []],
         source_discovered_count=int(payload.get("source_discovered_count") or 0) if isinstance(payload, dict) else 0,
+        pages_scanned_count=int(payload.get("pages_scanned_count") or 0) if isinstance(payload, dict) else 0,
         source_imported_count=int(payload.get("source_imported_count") or 0) if isinstance(payload, dict) else 0,
         operator_uploaded_count=int(payload.get("operator_uploaded_count") or 0) if isinstance(payload, dict) else 0,
         selected_assets_count=int(payload.get("selected_assets_count") or 0) if isinstance(payload, dict) else 0,

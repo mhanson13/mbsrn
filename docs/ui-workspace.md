@@ -341,6 +341,9 @@ Draft-generate error envelope (422 detail) fields surfaced in UI workflows:
 
 Media UX note:
 - discovered source-site images and operator uploads are both visible in migration media sections
+- source discovery is bounded and same-site:
+  - homepage + prioritized internal image-bearing pages (for example projects/services/gallery/work/about)
+  - `Pages scanned` count is shown in migration media image counts
 - Site Images render in a compact responsive image-card grid:
   - desktop: up to 4 columns
   - tablet: 2 columns
@@ -385,6 +388,7 @@ Media UX note:
   - `Applied`
   - `Not Available` / `Rejected`
 - low-value/rejected discovered candidates are hidden/de-emphasized by default and can be revealed explicitly
+- non-image routes discovered during crawl-like extraction (for example `/m` or other HTML routes) are classified as rejected and are not shown as normal importable candidates
 - lightweight local media filters are available (`All`, `Needs import`, `Selected`, `Uploaded/imported`, `Suggestions available`, `Low-value/rejected`)
 - batch suggestion feedback is rendered with per-asset status/reason summaries:
   - `batch_status` (`Completed`, `Partial success`, `Failed`)
@@ -427,6 +431,8 @@ Media-required readiness/quality cues:
 - draft readiness shows warning `media_required_but_not_selected` when operator requirements request real/existing media and no usable selected media exists
 - readiness remains generate-able in this case (warning, not hard block, unless broader workspace blockers exist)
 - Media / Images section shows a compact "Media needed for this draft" callout with operator action guidance
+- when useful source images were discovered but none are imported/selected yet, warning copy is explicit:
+  - `Useful source images were discovered. Import and select images before approving the draft.`
 - Artifact Quality Summary surfaces `required_media_missing` when required media is absent and placeholder-heavy output is detected
 
 ## Competitor Run Quality States

@@ -475,6 +475,8 @@ class SEOMigrationSourceSnapshotRead(BaseModel):
     addresses: list[str] = Field(default_factory=list)
     internal_links: list[str] = Field(default_factory=list)
     service_blocks: list[str] = Field(default_factory=list)
+    pages_scanned_count: int = 0
+    pages_scanned: list[str] = Field(default_factory=list)
     asset_references: dict[str, list[str]] = Field(default_factory=dict)
     discovered_images: list[dict[str, object]] = Field(default_factory=list)
     cleaned_text_blocks: list[str] = Field(default_factory=list)
@@ -531,6 +533,7 @@ class SEOMigrationMediaAssetListRead(BaseModel):
     operator_uploaded: list[SEOMigrationMediaAssetRead] = Field(default_factory=list)
     selected_assets: list[SEOMigrationMediaAssetRead] = Field(default_factory=list)
     source_discovered_count: int = 0
+    pages_scanned_count: int = 0
     source_imported_count: int = 0
     operator_uploaded_count: int = 0
     selected_assets_count: int = 0

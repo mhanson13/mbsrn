@@ -445,6 +445,8 @@ export interface MigrationSourceSnapshot {
   addresses: string[];
   internal_links: string[];
   service_blocks: string[];
+  pages_scanned_count?: number | null;
+  pages_scanned?: string[];
   asset_references: Record<string, string[]>;
   discovered_images?: Array<Record<string, unknown>>;
   cleaned_text_blocks: string[];
@@ -481,6 +483,7 @@ export interface MigrationMediaAssetListResponse {
   operator_uploaded: MigrationMediaAsset[];
   selected_assets: MigrationMediaAsset[];
   source_discovered_count: number;
+  pages_scanned_count?: number | null;
   source_imported_count: number;
   operator_uploaded_count: number;
   selected_assets_count: number;

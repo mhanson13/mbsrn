@@ -2877,6 +2877,7 @@ describe("site migration workflow route", () => {
         },
         media_assets: {
           source_discovered_count: 2,
+          pages_scanned_count: 3,
           source_imported_count: 1,
           operator_uploaded_count: 1,
           selected_assets_count: 1,
@@ -2931,6 +2932,7 @@ describe("site migration workflow route", () => {
     const mediaSection = await screen.findByTestId("migration-media-section");
     expect(within(mediaSection).getByText("Media / Images")).toBeInTheDocument();
     expect(within(mediaSection).getByText("Discovered Source Images: 2")).toBeInTheDocument();
+    expect(within(mediaSection).getByText("Pages scanned: 3")).toBeInTheDocument();
     expect(within(mediaSection).getByText("Selected Images: 1")).toBeInTheDocument();
     expect(within(mediaSection).getByRole("button", { name: "Analyze Selected Images" })).toBeInTheDocument();
     expect(within(mediaSection).getByRole("button", { name: "Discover / Refresh Source Images" })).toBeInTheDocument();
@@ -3963,16 +3965,50 @@ describe("site migration workflow route", () => {
         selected_usable_media_assets_count: 0,
         media_requirement_satisfied: false,
         media_requirement_warning_reason: "media_required_but_not_selected",
+        useful_discovered_images_count: 1,
         operator_action:
           "Draft can be generated, but operator-requested real media is missing. Import/select source images or upload project photos before approval.",
       }),
     );
+    const summary = buildMigrationWorkspaceSummary({
+      context_summary: {
+        media_assets: {
+          source_discovered_count: 1,
+          pages_scanned_count: 2,
+          source_imported_count: 0,
+          operator_uploaded_count: 0,
+          selected_assets_count: 0,
+          media_asset_categories: [],
+          selected_assets_trimmed: false,
+          diagnostics: [],
+          source_discovered: [
+            {
+              asset_id: "srcimg-useful-only",
+              display_filename: "project-hero.jpg",
+              normalized_url: "https://legacy.example/images/project-hero.jpg",
+              provenance: "source_site_import",
+              import_status: "discovered",
+              selected_for_draft: false,
+              candidate_quality: "useful",
+            },
+          ],
+          operator_uploaded: [],
+          selected_assets: [],
+        },
+      },
+    });
+    const mediaAssetsPayload = (summary.context_summary as Record<string, unknown>).media_assets as Record<
+      string,
+      unknown
+    >;
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(summary);
+    mockFetchMigrationMediaAssets.mockResolvedValueOnce(mediaAssetsPayload);
 
     render(<SiteMigrationWorkflowPage />);
 
     const readinessCard = await screen.findByTestId("migration-draft-readiness");
     expect(readinessCard).toHaveTextContent(
-      "Real/existing media was requested, but no usable selected media is in draft context yet.",
+      "Useful source images were discovered. Import and select images before approving the draft.",
     );
     const mediaSection = await screen.findByTestId("migration-media-section");
     expect(within(mediaSection).getByTestId("migration-media-required-callout")).toHaveTextContent(
@@ -4773,6 +4809,8 @@ function buildMigrationWorkspaceSummary(
       addresses: ["123 Main Street"],
       internal_links: ["https://legacy.example/services"],
       service_blocks: ["Installation and inspection"],
+      pages_scanned_count: 1,
+      pages_scanned: ["https://legacy.example/"],
       asset_references: { stylesheets: [], scripts: [], images: [] },
       discovered_images: [],
       cleaned_text_blocks: ["Legacy content block"],

@@ -13109,12 +13109,21 @@ class SEOMigrationService:
             max_items=20,
             max_item_length=180,
         )
+        pages_scanned = _normalize_string_list(
+            source_snapshot.get("pages_scanned"),
+            max_items=24,
+            max_item_length=2048,
+        )
+        pages_scanned_count = _coerce_non_negative_int(source_snapshot.get("pages_scanned_count"))
+        if pages_scanned_count is None:
+            pages_scanned_count = len(pages_scanned)
         return {
             "source_discovered": source_discovered,
             "operator_uploaded": operator_uploaded,
             "all_assets": all_assets,
             "all_assets_count": len(all_assets),
             "source_discovered_count": len(source_discovered),
+            "pages_scanned_count": pages_scanned_count,
             "source_imported_count": source_imported_count,
             "useful_discovered_images_count": useful_discovered_images_count,
             "low_value_discovered_images_count": low_value_discovered_images_count,

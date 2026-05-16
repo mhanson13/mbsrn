@@ -3684,6 +3684,10 @@ export function MigrationWorkspacePanel({
   const draftReadinessPreflight = asRecord(draftReadinessSnapshot);
   const sourceDiscoveredMediaCount =
     asNonNegativeInt(mediaSummary.source_discovered_count) ?? sourceDiscoveredMediaAssets.length;
+  const pagesScannedCount =
+    asNonNegativeInt(mediaSummary.pages_scanned_count)
+    ?? asNonNegativeInt(asRecord(sourceSnapshot || {}).pages_scanned_count)
+    ?? 0;
   const usefulDiscoveredImagesCount =
     asNonNegativeInt(draftReadinessPreflight.useful_discovered_images_count)
     ?? asNonNegativeInt(draftInputSummary.useful_discovered_images_count)
@@ -3721,6 +3725,8 @@ export function MigrationWorkspacePanel({
     asBooleanOrNull(draftReadinessPreflight.media_requirement_satisfied)
     ?? asBooleanOrNull(draftInputSummary.media_requirement_satisfied)
     ?? (!mediaRequiredByOperator || selectedUsableMediaAssetsCount > 0);
+  const usefulDiscoveredButNotImportedOrSelected =
+    usefulDiscoveredImagesCount > 0 && sourceImportedMediaCount <= 0 && selectedUsableMediaAssetsCount <= 0;
   const mediaRequirementWarningReason =
     asStringOrNull(draftReadinessPreflight.media_requirement_warning_reason)
     || asStringOrNull(draftInputSummary.media_requirement_warning_reason);
@@ -6446,7 +6452,9 @@ export function MigrationWorkspacePanel({
             <span className={mediaRequirementSatisfied ? "hint muted" : "hint warning"}>
               {mediaRequirementSatisfied
                 ? "Operator requirements include real/existing media and at least one usable image is selected."
-                : "Operator requirements ask for real/existing media, but no usable imported/uploaded image is selected yet."}
+                : usefulDiscoveredButNotImportedOrSelected
+                  ? "Useful source images were discovered. Import and select images before approving the draft."
+                  : "Operator requirements ask for real/existing media, but no usable imported/uploaded image is selected yet."}
             </span>
             {mediaRequirementWarningReason ? (
               <span className="hint muted">
@@ -6574,6 +6582,7 @@ export function MigrationWorkspacePanel({
           <div className="panel panel-compact stack-tight" data-testid="migration-media-counts">
             <strong>Image Counts</strong>
             <span className="hint">Discovered Source Images: {sourceDiscoveredMediaCount}</span>
+            <span className="hint">Pages scanned: {pagesScannedCount}</span>
             <span className="hint">Useful discovered candidates: {usefulDiscoveredImagesCount}</span>
             <span className="hint">Low-value discovered candidates: {lowValueDiscoveredImagesCount}</span>
             <span className="hint">Rejected discovered candidates: {rejectedDiscoveredImagesCount}</span>
@@ -7377,7 +7386,9 @@ export function MigrationWorkspacePanel({
           <span className={draftReadinessToneClass}>{draftReadiness.summary}</span>
           {mediaRequiredByOperator && !mediaRequirementSatisfied ? (
             <span className="hint warning" data-testid="migration-media-required-readiness-warning">
-              Real/existing media was requested, but no usable selected media is in draft context yet.
+              {usefulDiscoveredButNotImportedOrSelected
+                ? "Useful source images were discovered. Import and select images before approving the draft."
+                : "Real/existing media was requested, but no usable selected media is in draft context yet."}
             </span>
           ) : null}
           {mediaRequiredByOperator ? (
