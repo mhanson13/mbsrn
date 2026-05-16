@@ -60,11 +60,19 @@ Workflow ownership boundaries:
 - Audit Runs page owns audit execution (when available), findings evidence, and run history.
 - Recommendations page owns a single filterable recommendation queue surface, run history, narratives, and apply execution.
   - default queue scope is open recommendations when no explicit status filter is provided
+  - open queue defaults to grouped current work (one representative row per repeated issue)
+  - queue controls include `Queue view` toggle: grouped current work vs all rows/history
   - top-of-page `Recommendation Queue Snapshot` gives compact triage context and quick launch actions
   - queue controls own filter/sort/refresh
   - queue rows integrate quick-scan context directly (`Why it matters`, `Next step`, readiness/status badges)
+  - queue rows keep source context bounded:
+    - source badges (`Audit`, `Comparison`, `Competitors`, `GA4`, `Search`, `GBP`)
+    - compact competitor/GA4/GBP signal summaries when available
+    - run IDs are de-emphasized from primary row scan content
   - each row exposes consistent actions: `Open`, `Review`, `Mark Complete`, `Show Details`
-  - recommendation detail view is decision-first, with supporting evidence and lineage kept in lower-priority disclosures
+  - recommendation detail view is decision-first (`What to do`, `Why it matters`, `First step`, `Success signal`, `Evidence used`)
+  - recommendation detail keeps run lineage/tenant scope in `Advanced Diagnostics` disclosure
+  - recommendation run detail is explicitly diagnostic; operators should return to queue for recommendation decisions
 - Automation page owns repeatable multi-step workflow orchestration and run lifecycle.
 - Competitors page is a list-first human-in-the-loop review surface, with a primary site-scoped `Suggest competitors` / `Refresh competitor suggestions` action.
   - primary summary is operator-facing: total, accepted/useful, needs review, excluded, manual seeds, latest suggestion status

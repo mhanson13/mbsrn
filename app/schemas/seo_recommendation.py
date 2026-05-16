@@ -157,6 +157,14 @@ SEORecommendationPriorityReason = Literal[
     "pending_refresh_context",
     "general",
 ]
+SEORecommendationSourceBasis = Literal[
+    "audit_findings",
+    "comparison_findings",
+    "accepted_competitors",
+    "ga4_insights",
+    "search_console_insights",
+    "gbp_insights",
+]
 SEORecommendationTheme = Literal[
     "trust_and_legitimacy",
     "experience_and_proof",
@@ -216,6 +224,12 @@ _RECOMMENDATION_GA4_SUPPORTING_METRIC_SUMMARY_MAX_CHARS = 180
 _RECOMMENDATION_GA4_CONTEXT_SOURCE_MAX_CHARS = 80
 _RECOMMENDATION_GA4_OUTCOME_OPERATOR_HINT_MAX_CHARS = 220
 _RECOMMENDATION_GA4_OUTCOME_SOURCE_MAX_CHARS = 80
+_RECOMMENDATION_SOURCE_BASIS_MAX_ITEMS = 6
+_RECOMMENDATION_SOURCE_BASIS_ITEM_MAX_CHARS = 40
+_RECOMMENDATION_COMPETITOR_CONTEXT_SUMMARY_MAX_CHARS = 280
+_RECOMMENDATION_COMPETITOR_EXCLUSION_SUMMARY_MAX_CHARS = 220
+_RECOMMENDATION_GBP_CONTEXT_SUMMARY_MAX_CHARS = 220
+_RECOMMENDATION_DUPLICATE_GROUP_KEY_MAX_CHARS = 80
 _RECOMMENDATION_EVIDENCE_TRACE_MAX_CHARS = 80
 _RECOMMENDATION_EVIDENCE_TRACE_MAX_ITEMS = 5
 _RECOMMENDATION_TARGET_PAGE_HINT_MAX_CHARS = 120
@@ -1981,6 +1995,56 @@ def _derive_recommendation_competitor_insight(
     )
 
 
+def _derive_recommendation_source_basis(
+    *,
+    audit_run_id: str | None,
+    comparison_run_id: str | None,
+    competitor_influence_level: SEORecommendationCompetitorInfluenceLevel,
+    recommendation_measurement_context: SEORecommendationMeasurementContextRead | None,
+    recommendation_search_console_context: SEORecommendationSearchConsoleContextRead | None,
+    ga4_priority_context_available: bool,
+    ga4_outcome_snapshot: SEORecommendationGA4OutcomeSnapshotRead | None,
+    gbp_context_summary: str | None,
+) -> list[SEORecommendationSourceBasis]:
+    basis: list[SEORecommendationSourceBasis] = []
+
+    if (audit_run_id or "").strip():
+        basis.append("audit_findings")
+    if (comparison_run_id or "").strip():
+        basis.append("comparison_findings")
+    if competitor_influence_level in {"supporting", "meaningful"}:
+        basis.append("accepted_competitors")
+
+    measurement_status = (
+        str(getattr(recommendation_measurement_context, "measurement_status", "") or "").strip().lower()
+    )
+    if measurement_status == "available" or ga4_priority_context_available:
+        basis.append("ga4_insights")
+    elif ga4_outcome_snapshot is not None and ga4_outcome_snapshot.status in {"available", "pending_after_window"}:
+        basis.append("ga4_insights")
+
+    search_console_status = (
+        str(getattr(recommendation_search_console_context, "search_console_status", "") or "").strip().lower()
+    )
+    if search_console_status == "available":
+        basis.append("search_console_insights")
+
+    gbp_summary = (gbp_context_summary or "").strip().lower()
+    if gbp_summary.startswith("gbp-informed"):
+        basis.append("gbp_insights")
+
+    deduped: list[SEORecommendationSourceBasis] = []
+    seen: set[str] = set()
+    for item in basis:
+        if item in seen:
+            continue
+        seen.add(item)
+        deduped.append(item)
+        if len(deduped) >= _RECOMMENDATION_SOURCE_BASIS_MAX_ITEMS:
+            break
+    return deduped
+
+
 def _derive_recommendation_target_context(
     *,
     rule_key: str | None,
@@ -3444,6 +3508,28 @@ class SEORecommendationRead(BaseModel):
     )
     ga4_context_source: str | None = Field(default=None, max_length=_RECOMMENDATION_GA4_CONTEXT_SOURCE_MAX_CHARS)
     ga4_outcome_snapshot: SEORecommendationGA4OutcomeSnapshotRead | None = None
+    source_basis: list[SEORecommendationSourceBasis] = Field(default_factory=list)
+    competitor_context_summary: str | None = Field(
+        default=None,
+        max_length=_RECOMMENDATION_COMPETITOR_CONTEXT_SUMMARY_MAX_CHARS,
+    )
+    competitor_exclusion_summary: str | None = Field(
+        default=None,
+        max_length=_RECOMMENDATION_COMPETITOR_EXCLUSION_SUMMARY_MAX_CHARS,
+    )
+    gbp_context_summary: str | None = Field(
+        default=None,
+        max_length=_RECOMMENDATION_GBP_CONTEXT_SUMMARY_MAX_CHARS,
+    )
+    duplicate_count: int | None = Field(default=None, ge=1)
+    duplicate_group_key: str | None = Field(
+        default=None,
+        max_length=_RECOMMENDATION_DUPLICATE_GROUP_KEY_MAX_CHARS,
+    )
+    latest_duplicate_created_at: datetime | None = None
+    grouped_from_runs_count: int | None = Field(default=None, ge=1)
+    is_duplicate_representative: bool | None = None
+    duplicate_representative_id: str | None = Field(default=None, max_length=36)
     execution_type: SEORecommendationExecutionType = "mixed"
     execution_scope: str | None = Field(
         default=None,
@@ -3720,6 +3806,64 @@ class SEORecommendationRead(BaseModel):
     @classmethod
     def normalize_ga4_context_source(cls, value: Any) -> str | None:
         return _compact_text(value, max_length=_RECOMMENDATION_GA4_CONTEXT_SOURCE_MAX_CHARS)
+
+    @field_validator("source_basis", mode="before")
+    @classmethod
+    def normalize_source_basis(cls, value: Any) -> list[SEORecommendationSourceBasis]:
+        if value is None:
+            return []
+        if not isinstance(value, list):
+            return []
+        normalized: list[SEORecommendationSourceBasis] = []
+        seen: set[str] = set()
+        for raw in value:
+            cleaned = _compact_text(raw, max_length=_RECOMMENDATION_SOURCE_BASIS_ITEM_MAX_CHARS)
+            if cleaned is None:
+                continue
+            key = cleaned.strip().lower()
+            if key in seen:
+                continue
+            if key not in {
+                "audit_findings",
+                "comparison_findings",
+                "accepted_competitors",
+                "ga4_insights",
+                "search_console_insights",
+                "gbp_insights",
+            }:
+                continue
+            seen.add(key)
+            normalized.append(key)  # type: ignore[arg-type]
+            if len(normalized) >= _RECOMMENDATION_SOURCE_BASIS_MAX_ITEMS:
+                break
+        return normalized
+
+    @field_validator("competitor_context_summary", mode="before")
+    @classmethod
+    def normalize_competitor_context_summary(cls, value: Any) -> str | None:
+        return _compact_text(value, max_length=_RECOMMENDATION_COMPETITOR_CONTEXT_SUMMARY_MAX_CHARS)
+
+    @field_validator("competitor_exclusion_summary", mode="before")
+    @classmethod
+    def normalize_competitor_exclusion_summary(cls, value: Any) -> str | None:
+        return _compact_text(value, max_length=_RECOMMENDATION_COMPETITOR_EXCLUSION_SUMMARY_MAX_CHARS)
+
+    @field_validator("gbp_context_summary", mode="before")
+    @classmethod
+    def normalize_gbp_context_summary(cls, value: Any) -> str | None:
+        return _compact_text(value, max_length=_RECOMMENDATION_GBP_CONTEXT_SUMMARY_MAX_CHARS)
+
+    @field_validator("duplicate_group_key", mode="before")
+    @classmethod
+    def normalize_duplicate_group_key(cls, value: Any) -> str | None:
+        return _compact_text(value, max_length=_RECOMMENDATION_DUPLICATE_GROUP_KEY_MAX_CHARS)
+
+    @field_validator("duplicate_representative_id", mode="before")
+    @classmethod
+    def normalize_duplicate_representative_id(cls, value: Any) -> str | None:
+        if value is None:
+            return None
+        return _strip_or_none(str(value))
 
     @field_validator("execution_type", mode="before")
     @classmethod
@@ -4337,6 +4481,22 @@ class SEORecommendationRead(BaseModel):
             recommendation_observed_gap_summary=self.recommendation_observed_gap_summary,
             recommendation_target_context=self.recommendation_target_context,
             recommendation_target_content_summary=self.recommendation_target_content_summary,
+        )
+        return self
+
+    @model_validator(mode="after")
+    def derive_source_basis(self) -> "SEORecommendationRead":
+        if self.source_basis:
+            return self
+        self.source_basis = _derive_recommendation_source_basis(
+            audit_run_id=self.audit_run_id,
+            comparison_run_id=self.comparison_run_id,
+            competitor_influence_level=self.competitor_influence_level,
+            recommendation_measurement_context=self.recommendation_measurement_context,
+            recommendation_search_console_context=self.recommendation_search_console_context,
+            ga4_priority_context_available=self.ga4_priority_context_available,
+            ga4_outcome_snapshot=self.ga4_outcome_snapshot,
+            gbp_context_summary=self.gbp_context_summary,
         )
         return self
 
@@ -5034,6 +5194,7 @@ class SEORecommendationListQuery(BaseModel):
     assigned_principal_id: str | None = None
     source_type: SEORecommendationSourceType | None = None
     recommendation_run_id: str | None = None
+    group_duplicates: bool | None = None
     sort_by: SEORecommendationSortBy = "priority_score"
     sort_order: SortOrder = "desc"
     page: int = Field(default=1, ge=1, le=10_000)
@@ -5059,6 +5220,22 @@ class SEORecommendationListQuery(BaseModel):
         if value is None:
             return None
         return _normalize_source_type(value)
+
+    @field_validator("group_duplicates", mode="before")
+    @classmethod
+    def normalize_group_duplicates(cls, value: Any) -> bool | None:
+        if value is None:
+            return None
+        if isinstance(value, bool):
+            return value
+        normalized = str(value).strip().lower()
+        if normalized in {"", "null", "none"}:
+            return None
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+        raise ValueError("Invalid group_duplicates")
 
     @field_validator("sort_by", mode="before")
     @classmethod

@@ -65,10 +65,46 @@ The recommendations route (`frontend/operator-ui/app/recommendations/page.tsx`) 
 - Queue support states (loading/error/progress/polling) are standardized with `OperatorRouteSupportState` and `WorkspaceMessageStack`.
 - Quick-scan context is integrated into the primary queue rows instead of a separate section.
 - Queue row actions are consistently presented as: `Open`, `Review`, `Mark Complete`, `Show Details`.
+- Primary queue rows are now source-first and bounded:
+  - source badges are compact (`Audit`, `Comparison`, `Competitors`, `GA4`, `Search`, `GBP`)
+  - competitor/GA4/GBP context appears as short directional lines when available
+  - recommendation run IDs are de-emphasized from primary row scan content
+- Open queue defaults now apply read-time duplicate grouping for current work:
+  - repeated findings from multiple runs collapse into one representative row
+  - representative selection priority: open/in-progress status, then higher priority score, then newer timestamps
+  - additive grouped metadata is exposed on representatives:
+    - `duplicate_count`
+    - `duplicate_group_key` (opaque)
+    - `latest_duplicate_created_at`
+    - `grouped_from_runs_count`
+  - operators can switch queue view to `Show all rows` when raw/history-level visibility is needed
 
 ### Workflow boundary
 
 This is a presentation-only improvement. Recommendation generation, queue mutation semantics, polling behavior, and backend/API workflow contracts are unchanged.
+
+## Recommendation Context Signals (Reviewed Competitors + GA4 + GBP)
+
+Recommendation read payloads now carry additive, bounded context signals to improve operator decision support without changing scoring/order semantics.
+
+Additive fields:
+- `source_basis`
+  - bounded values: `audit_findings`, `comparison_findings`, `accepted_competitors`, `ga4_insights`, `search_console_insights`, `gbp_insights`
+- `competitor_context_summary`
+- `competitor_exclusion_summary`
+- `gbp_context_summary`
+
+Context rules:
+- competitor-positive context prefers reviewed competitor inputs (`useful`, `manually_seeded`, active accepted domains)
+- `excluded` and `not_useful` competitor feedback is used as negative context only
+- legacy synthetic competitor domains are excluded from positive competitor examples
+- GA4/GBP cues remain directional support only and must not imply causality
+- missing GA4/GBP context remains explicit and non-fabricated
+
+Safety boundary:
+- no raw provider payloads
+- no raw analytics payloads
+- no OAuth/token/header/cookie leakage in recommendation responses
 
 ## Queue-First Recommendation Review (Frontend)
 
@@ -94,10 +130,15 @@ The recommendation detail route (`/recommendations/[id]`) now uses a compact dec
   - status/priority/category/source badges
   - links: `Back to Recommendations`, `Parent Recommendation Run`, `Linked Audit Run` (when available)
 - `Decision Summary`:
-  - bounded to concise operator facts (`What this is`, `Why it matters`, `Recommended next action`, `Blocked by`, evidence/measurement availability)
+  - bounded to concise operator facts (`What to do`, `Why it matters`, `First step`, `Success signal`, `Blocked by`, `Evidence used`)
 - `Actions` card appears before lower-priority metadata:
   - `Accept`, `Dismiss`, operator note, `Save Note`
-- `Supporting Details` and `Lineage & Scope` are available as compact disclosures rather than large always-expanded fact grids.
+- `Supporting Details` and `Advanced Diagnostics` are available as compact disclosures rather than large always-expanded fact grids.
+- supporting cues show compact signal lines when present:
+  - audit signal
+  - competitor signal
+  - GA4 signal
+  - GBP signal
 
 Boundary:
 - decision controls and note-save behavior are unchanged
@@ -110,10 +151,21 @@ Wording simplification:
 - `GA4 outcome snapshot` -> `Observed result`
 - detailed rationale/evidence remains available through disclosure/detail, not removed from API responses.
 
+## Recommendation Run Detail Boundary (Frontend)
+
+`/recommendations/runs/[run_id]` is a diagnostic surface, not the primary operator decision workflow.
+
+Current UX boundary:
+- keeps run status, recommendation count, and output health summary
+- includes explicit diagnostic callout that operators should manage individual recommendations from the queue
+- de-emphasizes always-open narrative blocks (narrative text is disclosure-based)
+- preserves run/narrative routes for troubleshooting and traceability without making them first-pass operator workflow surfaces
+
 Behavioral boundary:
 - no scoring/order changes
 - no recommendation status/action semantic changes
 - no GA4/measurement backend contract changes
+- duplicate grouping is read-time only; historical recommendation rows are preserved
 
 ## Shared AI Reliability Substrate (Recommendation Adapter)
 

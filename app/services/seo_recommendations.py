@@ -387,6 +387,30 @@ class SEORecommendationService:
             sort_order=query.sort_order,
         )
 
+    def list_site_recommendations_filtered(
+        self,
+        *,
+        business_id: str,
+        site_id: str,
+        query: SEORecommendationListQuery,
+    ) -> list[SEORecommendation]:
+        self._require_business(business_id)
+        self._require_site(business_id=business_id, site_id=site_id)
+        return self.seo_recommendation_repository.list_recommendations_for_business_site(
+            business_id=business_id,
+            site_id=site_id,
+            status=query.status,
+            category=query.category,
+            severity=query.severity,
+            effort_bucket=query.effort_bucket,
+            priority_band=query.priority_band,
+            assigned_principal_id=query.assigned_principal_id,
+            source_type=query.source_type,
+            recommendation_run_id=query.recommendation_run_id,
+            sort_by=query.sort_by,
+            sort_order=query.sort_order,
+        )
+
     def update_recommendation_workflow(
         self,
         *,
@@ -1026,13 +1050,15 @@ class SEORecommendationService:
         target_content_summary: str | None,
     ) -> str:
         normalized_finding_label = finding_type.replace("_", " ").strip()
-        count_text = f"{max(1, finding_count)} page finding{'s' if finding_count != 1 else ''}"
+        normalized_count = max(1, finding_count)
+        count_text = f"{normalized_count} page finding{'s' if normalized_count != 1 else ''}"
+        verb = "indicates" if normalized_count == 1 else "indicate"
         if target_content_summary:
             return (
-                f"{count_text} indicate a {normalized_finding_label} issue. "
+                f"{count_text} {verb} a {normalized_finding_label} issue. "
                 f"Update {target_content_summary.lower()} on the affected pages."
             )
-        return f"{count_text} indicate a {normalized_finding_label} issue in the latest site analysis."
+        return f"{count_text} {verb} a {normalized_finding_label} issue in the latest site analysis."
 
     def _build_comparison_recommendation_rationale(
         self,

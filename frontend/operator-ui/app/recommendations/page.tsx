@@ -60,6 +60,7 @@ type QueuePresetKey =
   | "accepted"
   | "dismissed";
 type QueuePresetSelection = QueuePresetKey | "__custom__";
+type QueueGroupingMode = "grouped" | "all_rows";
 type QueueSummary = {
   total: number;
   open: number;
@@ -363,6 +364,36 @@ function parseCategoryFilter(value: string | null): FilterState["category"] {
   return normalized as FilterState["category"];
 }
 
+function defaultGroupDuplicatesForStatus(status: FilterState["status"]): boolean {
+  return status === "open";
+}
+
+function parseGroupDuplicatesFilter(
+  value: string | null,
+  options: {
+    status: FilterState["status"];
+    explicitGroupedParam: boolean;
+  },
+): boolean {
+  if (!options.explicitGroupedParam) {
+    return defaultGroupDuplicatesForStatus(options.status);
+  }
+  if (value === null) {
+    return defaultGroupDuplicatesForStatus(options.status);
+  }
+  const normalized = value.trim().toLowerCase();
+  if (normalized.length === 0) {
+    return defaultGroupDuplicatesForStatus(options.status);
+  }
+  if (["1", "true", "yes", "on", "grouped"].includes(normalized)) {
+    return true;
+  }
+  if (["0", "false", "no", "off", "all", "all_rows"].includes(normalized)) {
+    return false;
+  }
+  return defaultGroupDuplicatesForStatus(options.status);
+}
+
 function extractAutomationLinkedRecommendationRunIds(runs: AutomationRun[]): Set<string> {
   const linkedRecommendationRunIds = new Set<string>();
   for (const run of runs) {
@@ -603,6 +634,60 @@ function deriveSourceType(item: Recommendation): string {
     return "comparison";
   }
   return "unknown";
+}
+
+function deriveRecommendationSourceBasis(item: Recommendation): Array<
+  "audit_findings" | "comparison_findings" | "accepted_competitors" | "ga4_insights" | "search_console_insights" | "gbp_insights"
+> {
+  if (Array.isArray(item.source_basis) && item.source_basis.length > 0) {
+    return item.source_basis;
+  }
+  const basis: Array<
+    "audit_findings" | "comparison_findings" | "accepted_competitors" | "ga4_insights" | "search_console_insights" | "gbp_insights"
+  > = [];
+  if (item.audit_run_id) {
+    basis.push("audit_findings");
+  }
+  if (item.comparison_run_id) {
+    basis.push("comparison_findings");
+  }
+  if (item.competitor_influence_level && item.competitor_influence_level !== "none") {
+    basis.push("accepted_competitors");
+  }
+  if (item.ga4_priority_context_available || item.ga4_outcome_snapshot?.status === "available") {
+    basis.push("ga4_insights");
+  }
+  if (item.gbp_context_summary && item.gbp_context_summary.toLowerCase().startsWith("gbp-informed")) {
+    basis.push("gbp_insights");
+  }
+  return basis;
+}
+
+function sourceBasisBadgeLabel(
+  value:
+    | "audit_findings"
+    | "comparison_findings"
+    | "accepted_competitors"
+    | "ga4_insights"
+    | "search_console_insights"
+    | "gbp_insights",
+): string {
+  if (value === "audit_findings") {
+    return "Audit";
+  }
+  if (value === "comparison_findings") {
+    return "Comparison";
+  }
+  if (value === "accepted_competitors") {
+    return "Competitors";
+  }
+  if (value === "ga4_insights") {
+    return "GA4";
+  }
+  if (value === "search_console_insights") {
+    return "Search";
+  }
+  return "GBP";
 }
 
 function truncateRecommendationEvidence(text: string, maxChars: number): string {
@@ -2072,6 +2157,17 @@ function RecommendationsPageContent() {
       category: parseCategoryFilter(searchParams.get("category")),
     };
   }, [searchParams]);
+  const groupDuplicates = useMemo<boolean>(() => {
+    const explicitGroupedParam = searchParams.has("grouped");
+    return parseGroupDuplicatesFilter(searchParams.get("grouped"), {
+      status: filters.status,
+      explicitGroupedParam,
+    });
+  }, [filters.status, searchParams]);
+  const groupingMode = useMemo<QueueGroupingMode>(
+    () => (groupDuplicates ? "grouped" : "all_rows"),
+    [groupDuplicates],
+  );
   const sort = useMemo<SortState>(() => {
     return parseSortOption(
       searchParams.get("sort"),
@@ -2105,7 +2201,8 @@ function RecommendationsPageContent() {
   const hasActiveFilters = Boolean(
     filters.status !== DEFAULT_FILTERS.status
     || filters.priorityBand !== DEFAULT_FILTERS.priorityBand
-    || filters.category !== DEFAULT_FILTERS.category,
+    || filters.category !== DEFAULT_FILTERS.category
+    || groupDuplicates !== defaultGroupDuplicatesForStatus(filters.status),
   );
   const displayedRecommendationIds = useMemo(() => items.map((item) => item.id), [items]);
   const displayedRecommendationIdSet = useMemo(() => new Set(displayedRecommendationIds), [displayedRecommendationIds]);
@@ -2148,6 +2245,9 @@ function RecommendationsPageContent() {
     if (filters.category) {
       params.set("category", filters.category);
     }
+    if (groupDuplicates !== defaultGroupDuplicatesForStatus(filters.status)) {
+      params.set("grouped", groupDuplicates ? "true" : "false");
+    }
     if (sort !== DEFAULT_SORT) {
       params.set("sort", sort);
     }
@@ -2158,7 +2258,7 @@ function RecommendationsPageContent() {
       params.set("page_size", String(pageSize));
     }
     return `/recommendations/${item.id}?${params.toString()}`;
-  }, [activePage, filters.category, filters.priorityBand, filters.status, pageSize, sort]);
+  }, [activePage, filters.category, filters.priorityBand, filters.status, groupDuplicates, pageSize, sort]);
   const topReadyRecommendation = useMemo(() => {
     const openItems = items.filter((item) => recommendationIsReadyNow(item));
     if (openItems.length === 0) {
@@ -2422,7 +2522,11 @@ function RecommendationsPageContent() {
     topAppliedRecommendation,
     topReadyRecommendation,
   ]);
-  function updateQueueParams(nextFilters: FilterState, nextSort: SortState) {
+  function updateQueueParams(
+    nextFilters: FilterState,
+    nextSort: SortState,
+    nextGroupDuplicates: boolean = groupDuplicates,
+  ) {
     const params = new URLSearchParams(searchParams.toString());
     if (nextFilters.status === DEFAULT_FILTERS.status) {
       params.delete("status");
@@ -2442,6 +2546,11 @@ function RecommendationsPageContent() {
     } else {
       params.delete("category");
     }
+    if (nextGroupDuplicates !== defaultGroupDuplicatesForStatus(nextFilters.status)) {
+      params.set("grouped", nextGroupDuplicates ? "true" : "false");
+    } else {
+      params.delete("grouped");
+    }
     if (nextSort === DEFAULT_SORT) {
       params.delete("sort");
     } else {
@@ -2456,11 +2565,12 @@ function RecommendationsPageContent() {
   }
 
   function updateFilterParams(nextFilters: FilterState) {
-    updateQueueParams(nextFilters, sort);
+    const resolvedGrouping = defaultGroupDuplicatesForStatus(nextFilters.status);
+    updateQueueParams(nextFilters, sort, resolvedGrouping);
   }
 
   function updateSortParam(nextSort: SortState) {
-    updateQueueParams(filters, nextSort);
+    updateQueueParams(filters, nextSort, groupDuplicates);
   }
 
   function applyPreset(presetKey: QueuePresetKey) {
@@ -2468,7 +2578,16 @@ function RecommendationsPageContent() {
     if (!preset) {
       return;
     }
-    updateQueueParams(preset.filters, preset.sort);
+    updateQueueParams(
+      preset.filters,
+      preset.sort,
+      defaultGroupDuplicatesForStatus(preset.filters.status),
+    );
+  }
+
+  function updateGroupingMode(nextMode: QueueGroupingMode) {
+    const nextGroupDuplicates = nextMode === "grouped";
+    updateQueueParams(filters, sort, nextGroupDuplicates);
   }
 
   function updatePaginationParams(nextPage: number, nextPageSize: number) {
@@ -2507,6 +2626,9 @@ function RecommendationsPageContent() {
     }
     if (filters.category) {
       params.set("category", filters.category);
+    }
+    if (groupDuplicates !== defaultGroupDuplicatesForStatus(filters.status)) {
+      params.set("grouped", groupDuplicates ? "true" : "false");
     }
     if (sort !== DEFAULT_SORT) {
       params.set("sort", sort);
@@ -2935,6 +3057,7 @@ function RecommendationsPageContent() {
         if (filters.category) {
           activeFilters.category = filters.category;
         }
+        activeFilters.group_duplicates = groupDuplicates;
         const sortConfig = mapSortToApi(sort);
         activeFilters.sort_by = sortConfig.sort_by;
         activeFilters.sort_order = sortConfig.sort_order;
@@ -3016,6 +3139,7 @@ function RecommendationsPageContent() {
     filters.status,
     filters.priorityBand,
     filters.category,
+    groupDuplicates,
     sort,
     currentPage,
     pageSize,
@@ -3188,6 +3312,18 @@ function RecommendationsPageContent() {
             ))}
           </select>
           </div>
+          <div className="stack-tight">
+          <label htmlFor="recommendation-grouping">Queue view</label>
+          <select
+            id="recommendation-grouping"
+            className="operator-select"
+            value={groupingMode}
+            onChange={(event) => updateGroupingMode(event.target.value as QueueGroupingMode)}
+          >
+            <option value="grouped">Show grouped current work</option>
+            <option value="all_rows">Show all rows</option>
+          </select>
+          </div>
           <button
             type="button"
             className="button button-secondary"
@@ -3226,13 +3362,13 @@ function RecommendationsPageContent() {
           />
           <SectionStatusItem
             label="Queue Scope"
-            value={hasActiveFilters ? "Filtered" : "Open by default"}
+            value={groupDuplicates ? "Grouped current work" : "All rows"}
             detail={
-              hasActiveFilters
-                ? "Subset based on active controls"
-                : "No additional status/category filters"
+              groupDuplicates
+                ? "Showing one representative task per repeated issue"
+                : "Showing every matching recommendation row"
             }
-            tone={hasActiveFilters ? "warning" : "neutral"}
+            tone={groupDuplicates ? "neutral" : "warning"}
           />
         </SectionStatusStrip>
         <p className="hint muted">Section strip reflects all filtered results across pages.</p>
@@ -3385,7 +3521,6 @@ function RecommendationsPageContent() {
                 <th>Status</th>
                 <th>Category</th>
                 <th>Source</th>
-                <th>Recommendation Run</th>
                 <th>Actions</th>
               </tr>
             </thead>
@@ -3454,6 +3589,7 @@ function RecommendationsPageContent() {
                 const recommendationExecutionScope = deriveRecommendationExecutionScope(item);
                 const recommendationExecutionInputs = deriveRecommendationExecutionInputs(item);
                 const recommendationBlockingReason = deriveRecommendationBlockingReason(item);
+                const recommendationSourceBasis = deriveRecommendationSourceBasis(item);
                 const actionControls = decorateRecommendationActionControls(
                   deriveActionControls(effectiveActionExecutionItem),
                 );
@@ -3517,6 +3653,11 @@ function RecommendationsPageContent() {
                           <span className="text-strong">Why it matters:</span>{" "}
                           {truncateRecommendationWhyNow(recommendationWhyNow)}
                         </p>
+                        {(item.duplicate_count ?? 0) > 1 ? (
+                          <p className="hint muted" data-testid={`recommendation-duplicate-summary-${item.id}`}>
+                            Grouped from {item.duplicate_count} similar recommendations.
+                          </p>
+                        ) : null}
                         {targetContentSummary ? (
                           <p className="hint muted" data-testid={`recommendation-summary-content-target-${item.id}`}>
                             Content to update: {targetContentSummary}
@@ -3539,10 +3680,13 @@ function RecommendationsPageContent() {
                                 </span>
                               ) : null}
                               {recommendationGa4PriorityContext?.available ? (
-                                <span className="badge badge-muted">GA4 context available</span>
+                                <span className="badge badge-muted">GA4-informed</span>
                               ) : null}
                               {recommendationGa4OutcomeSnapshot?.status === "available" ? (
                                 <span className="badge badge-muted">Observed result available</span>
+                              ) : null}
+                              {item.gbp_context_summary?.toLowerCase().startsWith("gbp-informed") ? (
+                                <span className="badge badge-muted">GBP-informed</span>
                               ) : null}
                             </div>
                             {showBlockerBadge ? (
@@ -3565,15 +3709,31 @@ function RecommendationsPageContent() {
                         </div>
                       </td>
                       <td>{item.category}</td>
-                      <td>{deriveSourceType(item)}</td>
-                      <td>
-                        <Link
-                          href={buildRecommendationRunDetailHref(item)}
-                          onClick={(event) => event.stopPropagation()}
-                          onKeyDown={(event) => event.stopPropagation()}
-                        >
-                          <code>{item.recommendation_run_id}</code>
-                        </Link>
+                      <td className="table-cell-wrap">
+                        <div className="recommendation-decisiveness-badges recommendation-decisiveness-badges-primary">
+                          {recommendationSourceBasis.length > 0
+                            ? recommendationSourceBasis.slice(0, 4).map((sourceBasis) => (
+                              <span key={`${item.id}-${sourceBasis}`} className="badge badge-muted">
+                                {sourceBasisBadgeLabel(sourceBasis)}
+                              </span>
+                            ))
+                            : <span className="badge badge-muted">{deriveSourceType(item)}</span>}
+                        </div>
+                        {item.competitor_context_summary ? (
+                          <p className="hint muted" data-testid={`recommendation-source-competitor-${item.id}`}>
+                            {item.competitor_context_summary}
+                          </p>
+                        ) : null}
+                        {item.ga4_priority_hint ? (
+                          <p className="hint muted" data-testid={`recommendation-source-ga4-${item.id}`}>
+                            GA4-informed: {item.ga4_priority_hint}
+                          </p>
+                        ) : null}
+                        {item.gbp_context_summary ? (
+                          <p className="hint muted" data-testid={`recommendation-source-gbp-${item.id}`}>
+                            {item.gbp_context_summary}
+                          </p>
+                        ) : null}
                         <p className="hint muted" data-testid={`recommendation-automation-origin-${item.id}`}>
                           {automationOriginCue.label}
                         </p>
@@ -3621,7 +3781,7 @@ function RecommendationsPageContent() {
                     </tr>
                     {isExpanded ? (
                       <tr className="table-expanded-row" data-testid={`recommendation-decisiveness-detail-row-${item.id}`}>
-                        <td colSpan={10}>
+                        <td colSpan={9}>
                           <div
                             id={detailsId}
                             className="table-expanded-panel recommendation-decisiveness-details"
@@ -3867,7 +4027,7 @@ function RecommendationsPageContent() {
               })}
               {items.length === 0 && !loadingItems ? (
                 <tr>
-                  <td colSpan={10}>
+                  <td colSpan={9}>
                     {hasActiveFilters
                       ? "No recommendations match the current filters."
                       : "No open recommendations found for this site."}

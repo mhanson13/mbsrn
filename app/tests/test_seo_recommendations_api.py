@@ -35,6 +35,7 @@ from app.models.seo_audit_run import SEOAuditRun
 from app.models.seo_competitor_comparison_finding import SEOCompetitorComparisonFinding
 from app.models.seo_competitor_comparison_run import SEOCompetitorComparisonRun
 from app.models.seo_competitor_domain import SEOCompetitorDomain
+from app.models.seo_competitor_domain_feedback import SEOCompetitorDomainFeedback
 from app.models.seo_competitor_profile_draft import SEOCompetitorProfileDraft
 from app.models.seo_competitor_profile_generation_run import SEOCompetitorProfileGenerationRun
 from app.models.seo_competitor_set import SEOCompetitorSet
@@ -628,6 +629,32 @@ def _seed_completed_audit_run(
     return run.id
 
 
+def _seed_recommendation_run(
+    db_session,
+    *,
+    business_id: str,
+    site_id: str,
+    audit_run_id: str,
+) -> str:
+    run = SEORecommendationRun(
+        id=str(uuid4()),
+        business_id=business_id,
+        site_id=site_id,
+        audit_run_id=audit_run_id,
+        comparison_run_id=None,
+        status="completed",
+        total_recommendations=0,
+        critical_recommendations=0,
+        warning_recommendations=0,
+        info_recommendations=0,
+        category_counts_json={},
+        effort_bucket_counts_json={},
+    )
+    db_session.add(run)
+    db_session.commit()
+    return run.id
+
+
 def _seed_audit_pages(
     db_session,
     *,
@@ -1111,6 +1138,214 @@ def test_recommendation_ga4_priority_context_top_landing_page_signal(db_session,
     assert "top landing page" in str(context_item.get("ga4_priority_hint", "")).lower()
     assert "sessions:" in str(context_item.get("ga4_supporting_metric_summary", "")).lower()
     assert context_item.get("ga4_context_source") == "ga4_insights"
+
+
+def test_recommendation_list_includes_reviewed_competitor_context_and_source_basis(db_session, seeded_business) -> None:
+    client = _make_client(db_session, business_id=seeded_business.id)
+    site_id = _create_site(client, seeded_business.id, domain="reviewed-competitor-context.example")
+    audit_run_id = _seed_completed_audit_run(db_session, business_id=seeded_business.id, site_id=site_id)
+    run_response = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs",
+        json={"audit_run_id": audit_run_id},
+    )
+    assert run_response.status_code == 201
+    run_id = run_response.json()["id"]
+
+    competitor_set = SEOCompetitorSet(
+        id=str(uuid4()),
+        business_id=seeded_business.id,
+        site_id=site_id,
+        name="Reviewed Context Set",
+        is_active=True,
+    )
+    db_session.add(competitor_set)
+    db_session.flush()
+    db_session.add_all(
+        [
+            SEOCompetitorDomain(
+                id=str(uuid4()),
+                business_id=seeded_business.id,
+                site_id=site_id,
+                competitor_set_id=competitor_set.id,
+                domain="alpha-fire-protection.example",
+                base_url="https://alpha-fire-protection.example/",
+                display_name="Alpha Fire Protection",
+                source="manual",
+                verification_status="verified",
+                is_active=True,
+                notes=None,
+            ),
+            SEOCompetitorDomain(
+                id=str(uuid4()),
+                business_id=seeded_business.id,
+                site_id=site_id,
+                competitor_set_id=competitor_set.id,
+                domain="excluded-bad-fit.example",
+                base_url="https://excluded-bad-fit.example/",
+                display_name="Excluded Bad Fit",
+                source="manual",
+                verification_status="verified",
+                is_active=True,
+                notes=None,
+            ),
+            SEOCompetitorDomain(
+                id=str(uuid4()),
+                business_id=seeded_business.id,
+                site_id=site_id,
+                competitor_set_id=competitor_set.id,
+                domain="not-useful-fit.example",
+                base_url="https://not-useful-fit.example/",
+                display_name="Not Useful Fit",
+                source="manual",
+                verification_status="verified",
+                is_active=True,
+                notes=None,
+            ),
+            SEOCompetitorDomain(
+                id=str(uuid4()),
+                business_id=seeded_business.id,
+                site_id=site_id,
+                competitor_set_id=competitor_set.id,
+                domain="review-scaffold-fire.invalid",
+                base_url="https://review-scaffold-fire.invalid/",
+                display_name="Legacy Synthetic",
+                source="manual",
+                verification_status="unverified",
+                is_active=True,
+                notes=None,
+            ),
+        ]
+    )
+    db_session.add_all(
+        [
+            SEOCompetitorDomainFeedback(
+                id=str(uuid4()),
+                business_id=seeded_business.id,
+                site_id=site_id,
+                domain="alpha-fire-protection.example",
+                feedback_status="useful",
+                display_name="Alpha Fire Protection",
+                operator_note=None,
+                created_by_principal_id="principal-1",
+                updated_by_principal_id="principal-1",
+            ),
+            SEOCompetitorDomainFeedback(
+                id=str(uuid4()),
+                business_id=seeded_business.id,
+                site_id=site_id,
+                domain="excluded-bad-fit.example",
+                feedback_status="excluded",
+                display_name="Excluded Bad Fit",
+                operator_note=None,
+                created_by_principal_id="principal-1",
+                updated_by_principal_id="principal-1",
+            ),
+            SEOCompetitorDomainFeedback(
+                id=str(uuid4()),
+                business_id=seeded_business.id,
+                site_id=site_id,
+                domain="not-useful-fit.example",
+                feedback_status="not_useful",
+                display_name="Not Useful Fit",
+                operator_note=None,
+                created_by_principal_id="principal-1",
+                updated_by_principal_id="principal-1",
+            ),
+            SEOCompetitorDomainFeedback(
+                id=str(uuid4()),
+                business_id=seeded_business.id,
+                site_id=site_id,
+                domain="manual-seed.example",
+                feedback_status="manually_seeded",
+                display_name="Manual Seed",
+                operator_note=None,
+                created_by_principal_id="principal-1",
+                updated_by_principal_id="principal-1",
+            ),
+            SEOCompetitorDomainFeedback(
+                id=str(uuid4()),
+                business_id=seeded_business.id,
+                site_id=site_id,
+                domain="review-scaffold-fire.invalid",
+                feedback_status="useful",
+                display_name="Legacy Synthetic",
+                operator_note=None,
+                created_by_principal_id="principal-1",
+                updated_by_principal_id="principal-1",
+            ),
+        ]
+    )
+    db_session.commit()
+
+    list_recommendations = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs/{run_id}/recommendations"
+    )
+    assert list_recommendations.status_code == 200
+    payload = list_recommendations.json()
+    assert payload["items"]
+    item = payload["items"][0]
+    assert "audit_findings" in item.get("source_basis", [])
+    assert "accepted_competitors" in item.get("source_basis", [])
+    competitor_summary = str(item.get("competitor_context_summary", ""))
+    assert "alpha-fire-protection.example" in competitor_summary
+    assert "manual seeds were included" in competitor_summary.lower()
+    assert "review-scaffold-fire.invalid" not in competitor_summary
+    exclusion_summary = str(item.get("competitor_exclusion_summary", ""))
+    assert "1 excluded" in exclusion_summary
+    assert "1 marked not useful" in exclusion_summary
+
+
+def test_recommendation_detail_derives_gbp_context_summary_and_source_basis(db_session, seeded_business) -> None:
+    client = _make_client(db_session, business_id=seeded_business.id)
+    site_id = _create_site(client, seeded_business.id, domain="gbp-context-summary.example")
+    audit_run_id = _seed_completed_audit_run(db_session, business_id=seeded_business.id, site_id=site_id)
+    run_response = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs",
+        json={"audit_run_id": audit_run_id},
+    )
+    assert run_response.status_code == 201
+    run_id = run_response.json()["id"]
+
+    list_response = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs/{run_id}/recommendations"
+    )
+    assert list_response.status_code == 200
+    recommendation_id = list_response.json()["items"][0]["id"]
+    recommendation = db_session.get(SEORecommendation, recommendation_id)
+    assert recommendation is not None
+    recommendation.why_now = (
+        "Google Business Profile website clicks and map pack activity are available for local visibility decisions."
+    )
+    db_session.add(recommendation)
+    db_session.commit()
+
+    detail_response = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/{recommendation_id}"
+    )
+    assert detail_response.status_code == 200
+    payload = detail_response.json()
+    assert payload.get("gbp_context_summary") == "GBP-informed: local profile signals were considered directionally."
+    assert "gbp_insights" in payload.get("source_basis", [])
+
+
+def test_generated_recommendation_rationale_avoids_singular_grammar_error(db_session, seeded_business) -> None:
+    client = _make_client(db_session, business_id=seeded_business.id)
+    site_id = _create_site(client, seeded_business.id, domain="recommendation-grammar.example")
+    audit_run_id = _seed_completed_audit_run(db_session, business_id=seeded_business.id, site_id=site_id)
+    run_response = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs",
+        json={"audit_run_id": audit_run_id},
+    )
+    assert run_response.status_code == 201
+    run_id = run_response.json()["id"]
+
+    list_response = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendation-runs/{run_id}/recommendations"
+    )
+    assert list_response.status_code == 200
+    items = list_response.json()["items"]
+    assert items
+    assert all("1 page finding indicate " not in str(item.get("rationale", "")).lower() for item in items)
 
 
 def test_recommendation_ga4_priority_context_traffic_decline_signal(db_session, seeded_business) -> None:
@@ -5522,3 +5757,345 @@ def test_recommendation_workspace_summary_enforces_business_scope(db_session, se
 
     summary = client.get(f"/api/businesses/{other_business.id}/seo/sites/{site_id}/recommendations/workspace-summary")
     assert summary.status_code == 404
+
+
+def test_recommendation_list_groups_duplicate_open_rows_by_default(db_session, seeded_business) -> None:
+    client = _make_client(db_session, business_id=seeded_business.id)
+    site_id = _create_site(client, seeded_business.id, domain="dedupe-open.example")
+    other_site_id = _create_site(client, seeded_business.id, domain="dedupe-other.example")
+
+    audit_run_a = _seed_completed_audit_run(db_session, business_id=seeded_business.id, site_id=site_id)
+    audit_run_b = _seed_completed_audit_run(db_session, business_id=seeded_business.id, site_id=site_id)
+    other_site_audit = _seed_completed_audit_run(db_session, business_id=seeded_business.id, site_id=other_site_id)
+    run_a = _seed_recommendation_run(
+        db_session,
+        business_id=seeded_business.id,
+        site_id=site_id,
+        audit_run_id=audit_run_a,
+    )
+    run_b = _seed_recommendation_run(
+        db_session,
+        business_id=seeded_business.id,
+        site_id=site_id,
+        audit_run_id=audit_run_b,
+    )
+    other_site_run = _seed_recommendation_run(
+        db_session,
+        business_id=seeded_business.id,
+        site_id=other_site_id,
+        audit_run_id=other_site_audit,
+    )
+
+    now = utc_now()
+    canonical_old_id = str(uuid4())
+    canonical_new_id = str(uuid4())
+    h1_id = str(uuid4())
+    db_session.add_all(
+        [
+            SEORecommendation(
+                id=canonical_old_id,
+                business_id=seeded_business.id,
+                site_id=site_id,
+                recommendation_run_id=run_a,
+                audit_run_id=audit_run_a,
+                comparison_run_id=None,
+                rule_key="missing_canonical",
+                category="TECHNICAL",
+                severity="WARNING",
+                title="Add missing canonical tags",
+                rationale="Canonical tags are missing on key pages.",
+                priority_score=72,
+                priority_band="high",
+                effort_bucket="MEDIUM",
+                status="open",
+                created_at=now - timedelta(days=4),
+                updated_at=now - timedelta(days=4),
+            ),
+            SEORecommendation(
+                id=canonical_new_id,
+                business_id=seeded_business.id,
+                site_id=site_id,
+                recommendation_run_id=run_b,
+                audit_run_id=audit_run_b,
+                comparison_run_id=None,
+                rule_key="missing_canonical",
+                category="TECHNICAL",
+                severity="WARNING",
+                title="Add missing canonical tags",
+                rationale="Canonical tags are missing on key pages.",
+                priority_score=86,
+                priority_band="high",
+                effort_bucket="MEDIUM",
+                status="open",
+                created_at=now - timedelta(days=1),
+                updated_at=now - timedelta(days=1),
+            ),
+            SEORecommendation(
+                id=h1_id,
+                business_id=seeded_business.id,
+                site_id=site_id,
+                recommendation_run_id=run_b,
+                audit_run_id=audit_run_b,
+                comparison_run_id=None,
+                rule_key="multiple_h1",
+                category="CONTENT",
+                severity="WARNING",
+                title="Normalize multiple H1 headings",
+                rationale="Pages include more than one H1 heading.",
+                priority_score=75,
+                priority_band="high",
+                effort_bucket="SMALL",
+                status="open",
+                created_at=now - timedelta(days=2),
+                updated_at=now - timedelta(days=2),
+            ),
+            SEORecommendation(
+                id=str(uuid4()),
+                business_id=seeded_business.id,
+                site_id=other_site_id,
+                recommendation_run_id=other_site_run,
+                audit_run_id=other_site_audit,
+                comparison_run_id=None,
+                rule_key="missing_canonical",
+                category="TECHNICAL",
+                severity="WARNING",
+                title="Add missing canonical tags",
+                rationale="Canonical tags are missing on key pages.",
+                priority_score=91,
+                priority_band="critical",
+                effort_bucket="MEDIUM",
+                status="open",
+                created_at=now - timedelta(days=1),
+                updated_at=now - timedelta(days=1),
+            ),
+        ]
+    )
+    db_session.commit()
+
+    grouped = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations",
+        params={"status": "open"},
+    )
+    assert grouped.status_code == 200
+    payload = grouped.json()
+    assert payload["total"] == 2
+    assert payload["filtered_summary"]["total"] == 2
+    ids = {item["id"] for item in payload["items"]}
+    assert canonical_new_id in ids
+    assert h1_id in ids
+    assert canonical_old_id not in ids
+    canonical_item = next(item for item in payload["items"] if item["id"] == canonical_new_id)
+    assert canonical_item["duplicate_count"] == 2
+    assert canonical_item["grouped_from_runs_count"] == 2
+    assert canonical_item["is_duplicate_representative"] is True
+    assert canonical_item["duplicate_representative_id"] == canonical_new_id
+    assert canonical_item["latest_duplicate_created_at"] is not None
+    assert "audit_findings" in canonical_item["source_basis"]
+
+
+def test_recommendation_list_respects_group_duplicates_false_and_accepts_history_views(
+    db_session, seeded_business
+) -> None:
+    client = _make_client(db_session, business_id=seeded_business.id)
+    site_id = _create_site(client, seeded_business.id, domain="dedupe-history.example")
+    audit_run_old = _seed_completed_audit_run(db_session, business_id=seeded_business.id, site_id=site_id)
+    audit_run_new = _seed_completed_audit_run(db_session, business_id=seeded_business.id, site_id=site_id)
+    run_old = _seed_recommendation_run(
+        db_session,
+        business_id=seeded_business.id,
+        site_id=site_id,
+        audit_run_id=audit_run_old,
+    )
+    run_new = _seed_recommendation_run(
+        db_session,
+        business_id=seeded_business.id,
+        site_id=site_id,
+        audit_run_id=audit_run_new,
+    )
+    now = utc_now()
+    open_old_id = str(uuid4())
+    open_new_id = str(uuid4())
+    accepted_old_id = str(uuid4())
+    accepted_new_id = str(uuid4())
+    db_session.add_all(
+        [
+            SEORecommendation(
+                id=open_old_id,
+                business_id=seeded_business.id,
+                site_id=site_id,
+                recommendation_run_id=run_old,
+                audit_run_id=audit_run_old,
+                comparison_run_id=None,
+                rule_key="long_title_tag",
+                category="SEO",
+                severity="WARNING",
+                title="Tighten long title tags",
+                rationale="Long titles reduce clarity in search previews.",
+                priority_score=66,
+                priority_band="medium",
+                effort_bucket="SMALL",
+                status="open",
+                created_at=now - timedelta(days=6),
+                updated_at=now - timedelta(days=6),
+            ),
+            SEORecommendation(
+                id=open_new_id,
+                business_id=seeded_business.id,
+                site_id=site_id,
+                recommendation_run_id=run_new,
+                audit_run_id=audit_run_new,
+                comparison_run_id=None,
+                rule_key="long_title_tag",
+                category="SEO",
+                severity="WARNING",
+                title="Tighten long title tags",
+                rationale="Long titles reduce clarity in search previews.",
+                priority_score=78,
+                priority_band="high",
+                effort_bucket="SMALL",
+                status="open",
+                created_at=now - timedelta(days=1),
+                updated_at=now - timedelta(days=1),
+            ),
+            SEORecommendation(
+                id=accepted_old_id,
+                business_id=seeded_business.id,
+                site_id=site_id,
+                recommendation_run_id=run_old,
+                audit_run_id=audit_run_old,
+                comparison_run_id=None,
+                rule_key="missing_h1",
+                category="CONTENT",
+                severity="WARNING",
+                title="Normalize multiple H1 headings",
+                rationale="Pages contain multiple H1 tags.",
+                priority_score=70,
+                priority_band="medium",
+                effort_bucket="SMALL",
+                status="accepted",
+                created_at=now - timedelta(days=8),
+                updated_at=now - timedelta(days=8),
+            ),
+            SEORecommendation(
+                id=accepted_new_id,
+                business_id=seeded_business.id,
+                site_id=site_id,
+                recommendation_run_id=run_new,
+                audit_run_id=audit_run_new,
+                comparison_run_id=None,
+                rule_key="missing_h1",
+                category="CONTENT",
+                severity="WARNING",
+                title="Normalize multiple H1 headings",
+                rationale="Pages contain multiple H1 tags.",
+                priority_score=74,
+                priority_band="high",
+                effort_bucket="SMALL",
+                status="accepted",
+                created_at=now - timedelta(days=2),
+                updated_at=now - timedelta(days=2),
+            ),
+        ]
+    )
+    db_session.commit()
+
+    raw_open = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations",
+        params={"status": "open", "group_duplicates": "false"},
+    )
+    assert raw_open.status_code == 200
+    raw_open_payload = raw_open.json()
+    assert raw_open_payload["total"] == 2
+    assert {item["id"] for item in raw_open_payload["items"]} == {open_old_id, open_new_id}
+
+    accepted_history = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations",
+        params={"status": "accepted"},
+    )
+    assert accepted_history.status_code == 200
+    accepted_payload = accepted_history.json()
+    assert accepted_payload["total"] == 2
+    assert {item["id"] for item in accepted_payload["items"]} == {accepted_old_id, accepted_new_id}
+
+
+def test_recommendation_detail_reports_duplicate_metadata_for_grouped_findings(db_session, seeded_business) -> None:
+    client = _make_client(db_session, business_id=seeded_business.id)
+    site_id = _create_site(client, seeded_business.id, domain="dedupe-detail.example")
+    audit_run_old = _seed_completed_audit_run(db_session, business_id=seeded_business.id, site_id=site_id)
+    audit_run_new = _seed_completed_audit_run(db_session, business_id=seeded_business.id, site_id=site_id)
+    run_old = _seed_recommendation_run(
+        db_session,
+        business_id=seeded_business.id,
+        site_id=site_id,
+        audit_run_id=audit_run_old,
+    )
+    run_new = _seed_recommendation_run(
+        db_session,
+        business_id=seeded_business.id,
+        site_id=site_id,
+        audit_run_id=audit_run_new,
+    )
+    now = utc_now()
+    older_id = str(uuid4())
+    newest_id = str(uuid4())
+    db_session.add_all(
+        [
+            SEORecommendation(
+                id=older_id,
+                business_id=seeded_business.id,
+                site_id=site_id,
+                recommendation_run_id=run_old,
+                audit_run_id=audit_run_old,
+                comparison_run_id=None,
+                rule_key="missing_canonical",
+                category="TECHNICAL",
+                severity="WARNING",
+                title="Add missing canonical tags",
+                rationale="Canonical tags are missing on key pages.",
+                priority_score=72,
+                priority_band="high",
+                effort_bucket="MEDIUM",
+                status="open",
+                created_at=now - timedelta(days=5),
+                updated_at=now - timedelta(days=5),
+            ),
+            SEORecommendation(
+                id=newest_id,
+                business_id=seeded_business.id,
+                site_id=site_id,
+                recommendation_run_id=run_new,
+                audit_run_id=audit_run_new,
+                comparison_run_id=None,
+                rule_key="missing_canonical",
+                category="TECHNICAL",
+                severity="WARNING",
+                title="Add missing canonical tags",
+                rationale="Canonical tags are missing on key pages.",
+                priority_score=84,
+                priority_band="high",
+                effort_bucket="MEDIUM",
+                status="open",
+                created_at=now - timedelta(days=1),
+                updated_at=now - timedelta(days=1),
+            ),
+        ]
+    )
+    db_session.commit()
+
+    older_detail = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/{older_id}"
+    )
+    assert older_detail.status_code == 200
+    older_payload = older_detail.json()
+    assert older_payload["duplicate_count"] == 2
+    assert older_payload["is_duplicate_representative"] is False
+    assert older_payload["duplicate_representative_id"] == newest_id
+
+    newest_detail = client.get(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/{newest_id}"
+    )
+    assert newest_detail.status_code == 200
+    newest_payload = newest_detail.json()
+    assert newest_payload["duplicate_count"] == 2
+    assert newest_payload["is_duplicate_representative"] is True
+    assert newest_payload["duplicate_representative_id"] == newest_id

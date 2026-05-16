@@ -407,21 +407,67 @@ export default function RecommendationDetailPage() {
       })()
       : "Measurement context not provided.";
 
+    const firstStep = (() => {
+      const planStep = recommendation.action_plan?.action_steps?.[0];
+      if (planStep && typeof planStep.instruction === "string" && planStep.instruction.trim().length > 0) {
+        return planStep.instruction.trim();
+      }
+      const nextAction = (recommendation.next_action || "").trim();
+      if (nextAction.length > 0) {
+        return nextAction;
+      }
+      return "Open this recommendation and review evidence before making a decision.";
+    })();
+    const successSignal = (() => {
+      const expected = (recommendation.recommendation_expected_outcome || "").trim();
+      if (expected.length > 0) {
+        return expected;
+      }
+      const ga4Hint = (recommendation.ga4_outcome_snapshot?.operator_hint || "").trim();
+      if (ga4Hint.length > 0) {
+        return ga4Hint;
+      }
+      return "Use the next audit and directional GA4/GBP trends to verify movement. Do not infer causality from one signal.";
+    })();
+    const evidenceUsed = (() => {
+      const sources = Array.isArray(recommendation.source_basis) ? recommendation.source_basis : [];
+      const sourceLabels = sources.map((source) => {
+        if (source === "audit_findings") {
+          return "audit findings";
+        }
+        if (source === "comparison_findings") {
+          return "comparison findings";
+        }
+        if (source === "accepted_competitors") {
+          return "accepted/useful competitors";
+        }
+        if (source === "ga4_insights") {
+          return "GA4 signals";
+        }
+        if (source === "search_console_insights") {
+          return "search signals";
+        }
+        if (source === "gbp_insights") {
+          return "GBP signals";
+        }
+        return source;
+      });
+      if (sourceLabels.length > 0) {
+        return `Source basis: ${sourceLabels.join(", ")}.`;
+      }
+      return "Source basis is not explicitly captured for this recommendation.";
+    })();
+
     return [
-      { label: "What this is", value: recommendation.rationale },
-      { label: "Why it matters", value: recommendation.why_now || recommendation.priority_rationale || recommendation.rationale },
       {
-        label: "Recommended next action",
+        label: "What to do",
         value: recommendation.next_action || (pending ? "Review and decide: accept or dismiss." : "Return to queue and continue."),
       },
+      { label: "Why it matters", value: recommendation.why_now || recommendation.priority_rationale || recommendation.rationale },
+      { label: "First step", value: firstStep },
+      { label: "Success signal", value: successSignal },
       { label: "Blocked by", value: blockedBy },
-      {
-        label: "Evidence confidence",
-        value: recommendation.evidence_strength
-          ? `Evidence strength: ${recommendation.evidence_strength}.`
-          : "Evidence strength not specified.",
-      },
-      { label: "Measurement availability", value: measurementAvailability },
+      { label: "Evidence used", value: `${evidenceUsed} ${measurementAvailability}`.trim() },
     ];
   }, [recommendation]);
 
@@ -522,6 +568,12 @@ export default function RecommendationDetailPage() {
                 tone="neutral"
               />
             </SectionStatusStrip>
+            {(recommendation.duplicate_count ?? 0) > 1 ? (
+              <p className="hint muted" data-testid="recommendation-detail-duplicate-notice">
+                Similar findings exist from previous runs. This recommendation is the current representative
+                (latest of {recommendation.duplicate_count} repeated findings).
+              </p>
+            ) : null}
           </SectionCard>
 
           <SectionCard variant="summary" className="role-surface-support" data-testid="recommendation-detail-decision-summary">
@@ -608,11 +660,30 @@ export default function RecommendationDetailPage() {
           <SectionCard variant="support" className="role-surface-support" data-testid="recommendation-detail-supporting-details">
             <SectionHeader
               title="Supporting Details"
-              subtitle="Evidence and implementation context are available on demand."
+              subtitle="Directional signals used for this recommendation."
               headingLevel={2}
               compact
               variant="support"
             />
+            <p className="hint muted">
+              <span className="text-strong">Audit signal:</span>{" "}
+              {recommendation.audit_run_id ? "Audit finding context available." : "No audit-linked context attached."}
+            </p>
+            {recommendation.competitor_context_summary ? (
+              <p className="hint muted" data-testid="recommendation-detail-competitor-signal">
+                <span className="text-strong">Competitor signal:</span> {recommendation.competitor_context_summary}
+              </p>
+            ) : null}
+            {recommendation.ga4_priority_hint ? (
+              <p className="hint muted" data-testid="recommendation-detail-ga4-signal">
+                <span className="text-strong">GA4 signal:</span> {recommendation.ga4_priority_hint}
+              </p>
+            ) : null}
+            {recommendation.gbp_context_summary ? (
+              <p className="hint muted" data-testid="recommendation-detail-gbp-signal">
+                <span className="text-strong">GBP signal:</span> {recommendation.gbp_context_summary}
+              </p>
+            ) : null}
             <details className="stack-tight" data-testid="recommendation-detail-supporting-disclosure">
               <summary className="hint muted">View evidence/details</summary>
               <p className="hint muted">
@@ -649,14 +720,14 @@ export default function RecommendationDetailPage() {
 
           <SectionCard variant="support" className="role-surface-support" data-testid="recommendation-detail-lineage-scope">
             <SectionHeader
-              title="Lineage & Scope"
-              subtitle="Run links and tenant identifiers are available for traceability."
+              title="Advanced Diagnostics"
+              subtitle="Run lineage and tenant scope metadata."
               headingLevel={2}
               compact
               variant="support"
             />
             <details className="stack-tight" data-testid="recommendation-detail-lineage-disclosure">
-              <summary className="hint muted">View lineage and tenant scope</summary>
+              <summary className="hint muted">View run lineage and tenant scope</summary>
               <p>
                 Audit Run:{" "}
                 {recommendation.audit_run_id ? (

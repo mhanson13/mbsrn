@@ -300,7 +300,8 @@ describe("recommendation run detail page presentation", () => {
     expect(screen.getByRole("link", { name: "Narrative History" })).toBeInTheDocument();
     expect(screen.getAllByText("Run status").length).toBeGreaterThan(0);
     expect(screen.getByText("Recommendations")).toBeInTheDocument();
-    expect(screen.getByText("Latest Narrative")).toBeInTheDocument();
+    expect(screen.getByText("Latest Narrative Diagnostics")).toBeInTheDocument();
+    expect(screen.getByTestId("recommendation-run-diagnostic-callout")).toBeInTheDocument();
     expect(screen.getByTestId("recommendation-run-context-status-strip")).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "Choice support" })).toBeInTheDocument();
     expect(

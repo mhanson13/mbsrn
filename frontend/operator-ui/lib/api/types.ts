@@ -2531,6 +2531,23 @@ export interface Recommendation {
   ga4_supporting_metric_summary?: string | null;
   ga4_context_source?: string | null;
   ga4_outcome_snapshot?: RecommendationGA4OutcomeSnapshot | null;
+  source_basis?: Array<
+    | "audit_findings"
+    | "comparison_findings"
+    | "accepted_competitors"
+    | "ga4_insights"
+    | "search_console_insights"
+    | "gbp_insights"
+  >;
+  competitor_context_summary?: string | null;
+  competitor_exclusion_summary?: string | null;
+  gbp_context_summary?: string | null;
+  duplicate_count?: number | null;
+  duplicate_group_key?: string | null;
+  latest_duplicate_created_at?: string | null;
+  grouped_from_runs_count?: number | null;
+  is_duplicate_representative?: boolean | null;
+  duplicate_representative_id?: string | null;
   action_lineage?: ActionLineageResponse | null;
   decision_reason: string | null;
   created_at: string;
@@ -2550,6 +2567,7 @@ export interface RecommendationListFilters {
   category?: "SEO" | "CONTENT" | "STRUCTURE" | "TECHNICAL";
   source_type?: "audit" | "comparison" | "mixed";
   recommendation_run_id?: string;
+  group_duplicates?: boolean;
   sort_by?: "priority_score" | "created_at" | "updated_at" | "due_at";
   sort_order?: "asc" | "desc";
   page?: number;

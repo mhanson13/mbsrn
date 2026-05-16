@@ -92,8 +92,6 @@ _DEFAULT_TUNING_VALUES: dict[str, int] = {
     "competitor_candidate_directory_penalty": DEFAULT_DIRECTORY_PENALTY,
     "competitor_candidate_local_alignment_bonus": DEFAULT_LOCAL_ALIGNMENT_BONUS,
 }
-
-
 class SEORecommendationNarrativeNotFoundError(ValueError):
     pass
 

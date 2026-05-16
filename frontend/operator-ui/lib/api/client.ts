@@ -1429,6 +1429,9 @@ export async function fetchRecommendations(
   if (filters.recommendation_run_id) {
     params.set("recommendation_run_id", filters.recommendation_run_id);
   }
+  if (typeof filters.group_duplicates === "boolean") {
+    params.set("group_duplicates", filters.group_duplicates ? "true" : "false");
+  }
   if (filters.sort_by) {
     params.set("sort_by", filters.sort_by);
   }

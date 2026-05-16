@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Response, status
+import hashlib
 import json
 import logging
 import re
@@ -370,6 +371,18 @@ _GA4_PRIORITY_ENGAGEMENT_DECLINE_THRESHOLD_PERCENT = -5.0
 _GA4_OUTCOME_SESSIONS_DIRECTION_THRESHOLD_PERCENT = 5.0
 _GA4_OUTCOME_ORGANIC_DIRECTION_THRESHOLD_PERCENT = 5.0
 _GA4_OUTCOME_ENGAGEMENT_DIRECTION_THRESHOLD_POINTS = 0.02
+_RECOMMENDATION_CONTEXT_MAX_COMPETITOR_DOMAINS = 5
+_RECOMMENDATION_CONTEXT_COMPETITOR_SUMMARY_MAX_CHARS = 280
+_RECOMMENDATION_CONTEXT_COMPETITOR_EXCLUSION_MAX_CHARS = 220
+_RECOMMENDATION_DUPLICATE_GROUP_PAGE_HINTS_MAX_ITEMS = 2
+_RECOMMENDATION_DUPLICATE_GROUP_STATUS_RANKS: dict[str, int] = {
+    "open": 5,
+    "in_progress": 4,
+    "accepted": 3,
+    "snoozed": 2,
+    "resolved": 1,
+    "dismissed": 0,
+}
 _COMPETITOR_QUALITY_MIN_READY_CANDIDATES = 2
 _COMPETITOR_QUALITY_REASON_VALID = "valid"
 _COMPETITOR_QUALITY_REASON_DUPLICATE_DOMAIN = "duplicate_domain"
@@ -479,6 +492,141 @@ def _summarize_recommendation_items(
         dict(sorted(by_effort_bucket.items())),
         dict(sorted(by_priority_band.items())),
     )
+
+
+def _normalize_recommendation_duplicate_key_text(value: str | None) -> str:
+    normalized = re.sub(r"[^a-z0-9]+", " ", str(value or "").strip().lower()).strip()
+    return re.sub(r"\s+", " ", normalized)
+
+
+def _normalize_recommendation_duplicate_page_hints(recommendation: SEORecommendationRead) -> tuple[str, ...]:
+    hints = recommendation.recommendation_target_page_hints or []
+    normalized = [
+        _normalize_recommendation_duplicate_key_text(hint)
+        for hint in hints[:_RECOMMENDATION_DUPLICATE_GROUP_PAGE_HINTS_MAX_ITEMS]
+    ]
+    return tuple(item for item in normalized if item)
+
+
+def _derive_recommendation_duplicate_source_type(recommendation: SEORecommendationRead) -> str:
+    has_audit = bool(str(recommendation.audit_run_id or "").strip())
+    has_comparison = bool(str(recommendation.comparison_run_id or "").strip())
+    if has_audit and has_comparison:
+        return "mixed"
+    if has_audit:
+        return "audit"
+    if has_comparison:
+        return "comparison"
+    return "unknown"
+
+
+def _build_recommendation_duplicate_group_key(recommendation: SEORecommendationRead) -> str:
+    page_hints = _normalize_recommendation_duplicate_page_hints(recommendation)
+    group_material = "|".join(
+        [
+            _normalize_recommendation_duplicate_key_text(recommendation.rule_key),
+            _normalize_recommendation_duplicate_key_text(recommendation.title),
+            _normalize_recommendation_duplicate_key_text(recommendation.category),
+            _normalize_recommendation_duplicate_key_text(recommendation.recommendation_target_context),
+            _normalize_recommendation_duplicate_key_text(recommendation.recommendation_target_content_summary),
+            _normalize_recommendation_duplicate_key_text(_derive_recommendation_duplicate_source_type(recommendation)),
+            "|".join(page_hints),
+        ]
+    )
+    digest = hashlib.sha1(group_material.encode("utf-8")).hexdigest()[:16]
+    return f"dup_{digest}"
+
+
+def _recommendation_duplicate_datetime_rank(value: datetime | None) -> float:
+    if value is None:
+        return 0.0
+    resolved = value
+    if resolved.tzinfo is None:
+        resolved = resolved.replace(tzinfo=timezone.utc)
+    return resolved.timestamp()
+
+
+def _recommendation_duplicate_representative_rank(recommendation: SEORecommendationRead) -> tuple[int, int, float, float, str, str]:
+    status_rank = _RECOMMENDATION_DUPLICATE_GROUP_STATUS_RANKS.get(recommendation.status, 0)
+    priority_score = int(recommendation.priority_score or 0)
+    updated_rank = _recommendation_duplicate_datetime_rank(recommendation.updated_at)
+    created_rank = _recommendation_duplicate_datetime_rank(recommendation.created_at)
+    run_rank = str(recommendation.recommendation_run_id or "")
+    identifier_rank = str(recommendation.id or "")
+    return (
+        status_rank,
+        priority_score,
+        updated_rank,
+        created_rank,
+        run_rank,
+        identifier_rank,
+    )
+
+
+def _group_recommendation_duplicates(
+    recommendations: list[SEORecommendationRead],
+) -> tuple[list[SEORecommendationRead], dict[str, dict[str, object]]]:
+    if not recommendations:
+        return [], {}
+
+    grouped_items: dict[str, list[SEORecommendationRead]] = {}
+    first_index_by_group_key: dict[str, int] = {}
+    for index, recommendation in enumerate(recommendations):
+        group_key = _build_recommendation_duplicate_group_key(recommendation)
+        if group_key not in grouped_items:
+            grouped_items[group_key] = []
+            first_index_by_group_key[group_key] = index
+        grouped_items[group_key].append(recommendation)
+
+    metadata_by_recommendation_id: dict[str, dict[str, object]] = {}
+    representatives: list[SEORecommendationRead] = []
+    for group_key in sorted(grouped_items.keys(), key=lambda key: first_index_by_group_key.get(key, 0)):
+        group = grouped_items[group_key]
+        representative = max(group, key=_recommendation_duplicate_representative_rank)
+        duplicate_count = len(group)
+        run_count = len({item.recommendation_run_id for item in group if str(item.recommendation_run_id or "").strip()})
+        latest_created_at = max((item.created_at for item in group if item.created_at is not None), default=None)
+        representative_id = str(representative.id or "")
+
+        for item in group:
+            metadata_by_recommendation_id[str(item.id)] = {
+                "duplicate_count": duplicate_count,
+                "duplicate_group_key": group_key,
+                "latest_duplicate_created_at": latest_created_at,
+                "grouped_from_runs_count": max(1, run_count),
+                "is_duplicate_representative": str(item.id or "") == representative_id,
+                "duplicate_representative_id": representative_id,
+            }
+        representatives.append(
+            representative.model_copy(
+                update={
+                    **metadata_by_recommendation_id.get(representative_id, {}),
+                    "is_duplicate_representative": True,
+                }
+            )
+        )
+
+    recommendation_position = {str(item.id): index for index, item in enumerate(recommendations)}
+    representatives.sort(key=lambda item: recommendation_position.get(str(item.id), len(recommendations) + 1))
+    return representatives, metadata_by_recommendation_id
+
+
+def _resolve_recommendation_duplicate_grouping(query: SEORecommendationListQuery) -> bool:
+    if query.group_duplicates is not None:
+        return bool(query.group_duplicates)
+    return query.status == "open" and query.recommendation_run_id is None
+
+
+def _paginate_recommendation_reads(
+    *,
+    items: list[SEORecommendationRead],
+    page: int,
+    page_size: int,
+) -> list[SEORecommendationRead]:
+    start_index = max(0, (page - 1) * page_size)
+    if start_index >= len(items):
+        return []
+    return items[start_index : start_index + page_size]
 
 
 def _attach_action_lineage_to_recommendations(
@@ -1718,6 +1866,206 @@ def _attach_measurement_context_to_recommendations(
                 ),
                 **ga4_priority_context_by_recommendation_id.get(recommendation.id, {}),
                 "ga4_outcome_snapshot": ga4_outcome_snapshot_by_recommendation_id.get(recommendation.id),
+            }
+        )
+        for recommendation in recommendations
+    ]
+
+
+def _build_recommendation_reviewed_competitor_context(
+    *,
+    business_id: str,
+    site_id: str,
+    seo_competitor_repository: SEOCompetitorRepository,
+    seo_competitor_service: SEOCompetitorService,
+) -> dict[str, object]:
+    positive_domains: set[str] = set()
+    manual_seed_domains: set[str] = set()
+    excluded_domains: set[str] = set()
+    not_useful_domains: set[str] = set()
+
+    domains = seo_competitor_repository.list_domains_for_business_site(
+        business_id,
+        site_id,
+    )
+    feedback_items = seo_competitor_service.list_domain_feedback(
+        business_id=business_id,
+        site_id=site_id,
+    )
+
+    feedback_by_domain: dict[str, str] = {}
+    for feedback_item in feedback_items:
+        domain_key = _normalize_competitor_domain_key(feedback_item.domain)
+        if not domain_key:
+            continue
+        status_value = str(feedback_item.feedback_status or "").strip().lower()
+        if status_value:
+            feedback_by_domain[domain_key] = status_value
+
+    known_domains: set[str] = set()
+    for domain_item in domains:
+        domain_key = _normalize_competitor_domain_key(domain_item.domain)
+        if not domain_key:
+            continue
+        known_domains.add(domain_key)
+        if _is_legacy_synthetic_competitor_domain(domain_key):
+            continue
+        feedback_status = feedback_by_domain.get(domain_key, "")
+        if feedback_status == "excluded":
+            excluded_domains.add(domain_key)
+            continue
+        if feedback_status == "not_useful":
+            not_useful_domains.add(domain_key)
+            continue
+        if feedback_status == "manually_seeded":
+            manual_seed_domains.add(domain_key)
+        positive_domains.add(domain_key)
+
+    for feedback_item in feedback_items:
+        domain_key = _normalize_competitor_domain_key(feedback_item.domain)
+        if not domain_key or domain_key in known_domains:
+            continue
+        if _is_legacy_synthetic_competitor_domain(domain_key):
+            continue
+        feedback_status = str(feedback_item.feedback_status or "").strip().lower()
+        if feedback_status == "excluded":
+            excluded_domains.add(domain_key)
+            continue
+        if feedback_status == "not_useful":
+            not_useful_domains.add(domain_key)
+            continue
+        if feedback_status == "manually_seeded":
+            manual_seed_domains.add(domain_key)
+        if feedback_status in {"useful", "manually_seeded"}:
+            positive_domains.add(domain_key)
+
+    ordered_positive = sorted(positive_domains)[:_RECOMMENDATION_CONTEXT_MAX_COMPETITOR_DOMAINS]
+    ordered_manual = sorted(manual_seed_domains)[:_RECOMMENDATION_CONTEXT_MAX_COMPETITOR_DOMAINS]
+    return {
+        "positive_domains": ordered_positive,
+        "manual_seed_domains": ordered_manual,
+        "positive_count": len(positive_domains),
+        "manual_seed_count": len(manual_seed_domains),
+        "excluded_count": len(excluded_domains),
+        "not_useful_count": len(not_useful_domains),
+    }
+
+
+def _build_recommendation_competitor_context_summary(context: dict[str, object]) -> str | None:
+    positive_domains = context.get("positive_domains")
+    if not isinstance(positive_domains, list) or len(positive_domains) == 0:
+        return None
+    sample_domains = ", ".join(str(item) for item in positive_domains[:3] if str(item).strip())
+    if not sample_domains:
+        return None
+    manual_seed_count = int(context.get("manual_seed_count") or 0)
+    summary = f"Competitor-informed: accepted/useful reviewed competitors include {sample_domains}."
+    if manual_seed_count > 0:
+        summary += " Operator manual seeds were included in context."
+    return _clean_optional(summary[:_RECOMMENDATION_CONTEXT_COMPETITOR_SUMMARY_MAX_CHARS])
+
+
+def _build_recommendation_competitor_exclusion_summary(context: dict[str, object]) -> str | None:
+    excluded_count = int(context.get("excluded_count") or 0)
+    not_useful_count = int(context.get("not_useful_count") or 0)
+    if excluded_count <= 0 and not_useful_count <= 0:
+        return None
+    parts: list[str] = []
+    if excluded_count > 0:
+        parts.append(f"{excluded_count} excluded")
+    if not_useful_count > 0:
+        parts.append(f"{not_useful_count} marked not useful")
+    summary = (
+        "Negative competitor feedback is applied as context: "
+        + " and ".join(parts)
+        + " domains are excluded from positive examples."
+    )
+    return _clean_optional(summary[:_RECOMMENDATION_CONTEXT_COMPETITOR_EXCLUSION_MAX_CHARS])
+
+
+def _build_recommendation_gbp_context_summary(recommendation: SEORecommendationRead) -> str | None:
+    keyword_candidates = [
+        recommendation.why_now,
+        recommendation.priority_rationale,
+        recommendation.recommendation_evidence_summary,
+        recommendation.recommendation_observed_gap_summary,
+        recommendation.recommendation_action_clarity,
+        recommendation.recommendation_expected_outcome,
+    ]
+    normalized_text = " ".join(str(candidate or "").strip().lower() for candidate in keyword_candidates if candidate)
+    if not normalized_text:
+        return None
+    if any(
+        keyword in normalized_text
+        for keyword in (
+            "gbp",
+            "google business profile",
+            "map pack",
+            "local profile",
+            "directions",
+            "website clicks",
+            "business calls",
+            "reviews",
+        )
+    ):
+        return "GBP-informed: local profile signals were considered directionally."
+    return None
+
+
+def _derive_recommendation_source_basis(
+    *,
+    recommendation: SEORecommendationRead,
+    competitor_context: dict[str, object],
+    gbp_context_summary: str | None,
+) -> list[str]:
+    source_basis: list[str] = []
+    if recommendation.audit_run_id:
+        source_basis.append("audit_findings")
+    if recommendation.comparison_run_id:
+        source_basis.append("comparison_findings")
+    if int(competitor_context.get("positive_count") or 0) > 0:
+        source_basis.append("accepted_competitors")
+    if (
+        recommendation.ga4_priority_context_available
+        or str(getattr(recommendation.recommendation_measurement_context, "measurement_status", "")).lower()
+        == "available"
+        or (
+            recommendation.ga4_outcome_snapshot is not None
+            and recommendation.ga4_outcome_snapshot.status in {"available", "pending_after_window"}
+        )
+    ):
+        source_basis.append("ga4_insights")
+    if (
+        recommendation.recommendation_search_console_context is not None
+        and recommendation.recommendation_search_console_context.search_console_status == "available"
+    ):
+        source_basis.append("search_console_insights")
+    if (gbp_context_summary or "").strip().lower().startswith("gbp-informed"):
+        source_basis.append("gbp_insights")
+    deduped = list(dict.fromkeys(source_basis))
+    return deduped[:6]
+
+
+def _attach_reviewed_competitor_and_signal_context_to_recommendations(
+    *,
+    recommendations: list[SEORecommendationRead],
+    competitor_context: dict[str, object],
+) -> list[SEORecommendationRead]:
+    if not recommendations:
+        return recommendations
+    competitor_summary = _build_recommendation_competitor_context_summary(competitor_context)
+    competitor_exclusion_summary = _build_recommendation_competitor_exclusion_summary(competitor_context)
+    return [
+        recommendation.model_copy(
+            update={
+                "source_basis": _derive_recommendation_source_basis(
+                    recommendation=recommendation,
+                    competitor_context=competitor_context,
+                    gbp_context_summary=_build_recommendation_gbp_context_summary(recommendation),
+                ),
+                "competitor_context_summary": competitor_summary,
+                "competitor_exclusion_summary": competitor_exclusion_summary,
+                "gbp_context_summary": _build_recommendation_gbp_context_summary(recommendation),
             }
         )
         for recommendation in recommendations
@@ -4464,6 +4812,8 @@ def list_seo_recommendations_for_run(
     recommendation_service: SEORecommendationService = Depends(get_seo_recommendation_service),
     seo_analytics_service: SEOAnalyticsService = Depends(get_seo_analytics_service),
     action_lineage_service: ActionLineageService = Depends(get_action_lineage_service),
+    seo_competitor_service: SEOCompetitorService = Depends(get_seo_competitor_service),
+    seo_competitor_repository: SEOCompetitorRepository = Depends(get_seo_competitor_repository),
 ) -> SEORecommendationListResponse:
     scoped_business_id = resolve_tenant_business_id(
         tenant_context=tenant_context,
@@ -4516,6 +4866,16 @@ def list_seo_recommendations_for_run(
         search_console_property_url=site.search_console_property_url,
         search_console_enabled=bool(site.search_console_enabled),
     )
+    competitor_context = _build_recommendation_reviewed_competitor_context(
+        business_id=scoped_business_id,
+        site_id=site_id,
+        seo_competitor_repository=seo_competitor_repository,
+        seo_competitor_service=seo_competitor_service,
+    )
+    serialized_items = _attach_reviewed_competitor_and_signal_context_to_recommendations(
+        recommendations=serialized_items,
+        competitor_context=competitor_context,
+    )
     by_status, by_category, by_severity, by_effort_bucket, by_priority_band = _summarize_recommendation_items(
         serialized_items
     )
@@ -4541,24 +4901,51 @@ def list_seo_recommendations(
     recommendation_service: SEORecommendationService = Depends(get_seo_recommendation_service),
     seo_analytics_service: SEOAnalyticsService = Depends(get_seo_analytics_service),
     action_lineage_service: ActionLineageService = Depends(get_action_lineage_service),
+    seo_competitor_service: SEOCompetitorService = Depends(get_seo_competitor_service),
+    seo_competitor_repository: SEOCompetitorRepository = Depends(get_seo_competitor_repository),
 ) -> SEORecommendationListResponse:
     scoped_business_id = resolve_tenant_business_id(
         tenant_context=tenant_context,
         requested_business_id=business_id,
     )
+    should_group_duplicates = _resolve_recommendation_duplicate_grouping(query)
     try:
         site = seo_site_service.get_site(business_id=scoped_business_id, site_id=site_id)
-        page_result = recommendation_service.list_site_recommendations(
-            business_id=scoped_business_id,
-            site_id=site_id,
-            query=query,
-        )
+        if should_group_duplicates:
+            filtered_items = recommendation_service.list_site_recommendations_filtered(
+                business_id=scoped_business_id,
+                site_id=site_id,
+                query=query,
+            )
+            serialized_filtered_items = [SEORecommendationRead.model_validate(item) for item in filtered_items]
+            grouped_representatives, _ = _group_recommendation_duplicates(serialized_filtered_items)
+            total_count = len(grouped_representatives)
+            by_status, by_category, by_severity, by_effort_bucket, by_priority_band = _summarize_recommendation_items(
+                grouped_representatives
+            )
+            serialized_items = _paginate_recommendation_reads(
+                items=grouped_representatives,
+                page=query.page,
+                page_size=query.page_size,
+            )
+        else:
+            page_result = recommendation_service.list_site_recommendations(
+                business_id=scoped_business_id,
+                site_id=site_id,
+                query=query,
+            )
+            serialized_items = [SEORecommendationRead.model_validate(item) for item in page_result.items]
+            total_count = page_result.total
+            by_status = page_result.by_status
+            by_category = page_result.by_category
+            by_severity = page_result.by_severity
+            by_effort_bucket = page_result.by_effort_bucket
+            by_priority_band = page_result.by_priority_band
     except (SEOSiteNotFoundError, SEORecommendationNotFoundError) as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     except SEORecommendationValidationError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
 
-    serialized_items = [SEORecommendationRead.model_validate(item) for item in page_result.items]
     serialized_items = _attach_action_lineage_to_recommendations(
         recommendations=serialized_items,
         business_id=scoped_business_id,
@@ -4588,22 +4975,32 @@ def list_seo_recommendations(
         search_console_property_url=site.search_console_property_url,
         search_console_enabled=bool(site.search_console_enabled),
     )
+    competitor_context = _build_recommendation_reviewed_competitor_context(
+        business_id=scoped_business_id,
+        site_id=site_id,
+        seo_competitor_repository=seo_competitor_repository,
+        seo_competitor_service=seo_competitor_service,
+    )
+    serialized_items = _attach_reviewed_competitor_and_signal_context_to_recommendations(
+        recommendations=serialized_items,
+        competitor_context=competitor_context,
+    )
     filtered_summary = SEORecommendationFilteredSummary(
-        total=page_result.total,
-        open=page_result.by_status.get("open", 0),
-        accepted=page_result.by_status.get("accepted", 0),
-        dismissed=page_result.by_status.get("dismissed", 0),
-        high_priority=page_result.by_priority_band.get("high", 0) + page_result.by_priority_band.get("critical", 0),
+        total=total_count,
+        open=by_status.get("open", 0),
+        accepted=by_status.get("accepted", 0),
+        dismissed=by_status.get("dismissed", 0),
+        high_priority=by_priority_band.get("high", 0) + by_priority_band.get("critical", 0),
     )
     return SEORecommendationListResponse(
         items=serialized_items,
-        total=page_result.total,
+        total=total_count,
         filtered_summary=filtered_summary,
-        by_status=page_result.by_status,
-        by_category=page_result.by_category,
-        by_severity=page_result.by_severity,
-        by_effort_bucket=page_result.by_effort_bucket,
-        by_priority_band=page_result.by_priority_band,
+        by_status=by_status,
+        by_category=by_category,
+        by_severity=by_severity,
+        by_effort_bucket=by_effort_bucket,
+        by_priority_band=by_priority_band,
     )
 
 
@@ -4619,6 +5016,8 @@ def patch_seo_recommendation(
     recommendation_service: SEORecommendationService = Depends(get_seo_recommendation_service),
     seo_analytics_service: SEOAnalyticsService = Depends(get_seo_analytics_service),
     action_lineage_service: ActionLineageService = Depends(get_action_lineage_service),
+    seo_competitor_service: SEOCompetitorService = Depends(get_seo_competitor_service),
+    seo_competitor_repository: SEOCompetitorRepository = Depends(get_seo_competitor_repository),
 ) -> SEORecommendationRead:
     scoped_business_id = resolve_tenant_business_id(
         tenant_context=tenant_context,
@@ -4667,7 +5066,28 @@ def patch_seo_recommendation(
         search_console_property_url=site.search_console_property_url,
         search_console_enabled=bool(site.search_console_enabled),
     )
-    return serialized_with_measurement[0]
+    competitor_context = _build_recommendation_reviewed_competitor_context(
+        business_id=scoped_business_id,
+        site_id=site_id,
+        seo_competitor_repository=seo_competitor_repository,
+        seo_competitor_service=seo_competitor_service,
+    )
+    serialized_with_context = _attach_reviewed_competitor_and_signal_context_to_recommendations(
+        recommendations=serialized_with_measurement,
+        competitor_context=competitor_context,
+    )
+    duplicate_candidates = recommendation_service.list_site_recommendations_filtered(
+        business_id=scoped_business_id,
+        site_id=site_id,
+        query=SEORecommendationListQuery(
+            sort_by="priority_score",
+            sort_order="desc",
+        ),
+    )
+    duplicate_candidate_reads = [SEORecommendationRead.model_validate(item) for item in duplicate_candidates]
+    _, duplicate_metadata_by_recommendation_id = _group_recommendation_duplicates(duplicate_candidate_reads)
+    duplicate_metadata = duplicate_metadata_by_recommendation_id.get(str(recommendation_id), {})
+    return serialized_with_context[0].model_copy(update=duplicate_metadata)
 
 
 @router.get("/sites/{site_id}/actions/{action_id}/next-actions", response_model=list[NextActionDraft])
@@ -4929,6 +5349,8 @@ def get_seo_recommendation(
     recommendation_service: SEORecommendationService = Depends(get_seo_recommendation_service),
     seo_analytics_service: SEOAnalyticsService = Depends(get_seo_analytics_service),
     action_lineage_service: ActionLineageService = Depends(get_action_lineage_service),
+    seo_competitor_service: SEOCompetitorService = Depends(get_seo_competitor_service),
+    seo_competitor_repository: SEOCompetitorRepository = Depends(get_seo_competitor_repository),
 ) -> SEORecommendationRead:
     scoped_business_id = resolve_tenant_business_id(
         tenant_context=tenant_context,
@@ -4977,7 +5399,28 @@ def get_seo_recommendation(
         search_console_property_url=site.search_console_property_url,
         search_console_enabled=bool(site.search_console_enabled),
     )
-    return serialized_with_measurement[0]
+    competitor_context = _build_recommendation_reviewed_competitor_context(
+        business_id=scoped_business_id,
+        site_id=site_id,
+        seo_competitor_repository=seo_competitor_repository,
+        seo_competitor_service=seo_competitor_service,
+    )
+    serialized_with_context = _attach_reviewed_competitor_and_signal_context_to_recommendations(
+        recommendations=serialized_with_measurement,
+        competitor_context=competitor_context,
+    )
+    duplicate_candidates = recommendation_service.list_site_recommendations_filtered(
+        business_id=scoped_business_id,
+        site_id=site_id,
+        query=SEORecommendationListQuery(
+            sort_by="priority_score",
+            sort_order="desc",
+        ),
+    )
+    duplicate_candidate_reads = [SEORecommendationRead.model_validate(item) for item in duplicate_candidates]
+    _, duplicate_metadata_by_recommendation_id = _group_recommendation_duplicates(duplicate_candidate_reads)
+    duplicate_metadata = duplicate_metadata_by_recommendation_id.get(str(recommendation_id), {})
+    return serialized_with_context[0].model_copy(update=duplicate_metadata)
 
 
 @router.get(
@@ -4997,6 +5440,8 @@ def get_seo_recommendation_run_report(
     recommendation_service: SEORecommendationService = Depends(get_seo_recommendation_service),
     seo_analytics_service: SEOAnalyticsService = Depends(get_seo_analytics_service),
     action_lineage_service: ActionLineageService = Depends(get_action_lineage_service),
+    seo_competitor_service: SEOCompetitorService = Depends(get_seo_competitor_service),
+    seo_competitor_repository: SEOCompetitorRepository = Depends(get_seo_competitor_repository),
 ) -> SEORecommendationRunReportRead:
     scoped_business_id = resolve_tenant_business_id(
         tenant_context=tenant_context,
@@ -5044,6 +5489,16 @@ def get_seo_recommendation_run_report(
         ga4_property_id=site.ga4_property_id,
         search_console_property_url=site.search_console_property_url,
         search_console_enabled=bool(site.search_console_enabled),
+    )
+    competitor_context = _build_recommendation_reviewed_competitor_context(
+        business_id=scoped_business_id,
+        site_id=site_id,
+        seo_competitor_repository=seo_competitor_repository,
+        seo_competitor_service=seo_competitor_service,
+    )
+    serialized_items = _attach_reviewed_competitor_and_signal_context_to_recommendations(
+        recommendations=serialized_items,
+        competitor_context=competitor_context,
     )
     by_status, by_category, by_severity, by_effort_bucket, by_priority_band = _summarize_recommendation_items(
         serialized_items

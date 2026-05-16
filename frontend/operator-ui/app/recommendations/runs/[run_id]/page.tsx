@@ -1507,7 +1507,7 @@ export default function RecommendationRunDetailPage() {
     <PageContainer>
       <OperatorPageHero
         title="Recommendation Run Detail"
-        subtitle="Inspect recommendation reasoning lineage, generated narrative context, and run-level output health."
+        subtitle="Diagnostic run view for recommendation generation and output health."
         headingLevel={1}
         data-testid="recommendation-run-detail-hero"
         meta={(
@@ -1630,6 +1630,15 @@ export default function RecommendationRunDetailPage() {
           {!loading && error ? <p className="hint error">{error}</p> : null}
         </WorkspaceMessageStack>
       </OperatorPageHero>
+
+      {!loading && !notFound && !error && run ? (
+        <SectionCard variant="support" className="role-surface-support" data-testid="recommendation-run-diagnostic-callout">
+          <p className="hint muted">
+            This is a run diagnostic view. Manage individual recommendations from the{" "}
+            <Link href={backToRecommendationsHref}>Recommendations queue</Link>.
+          </p>
+        </SectionCard>
+      ) : null}
 
       {!loading && !notFound && !error && run ? (
         <WorkflowContextPanel
@@ -1843,7 +1852,7 @@ export default function RecommendationRunDetailPage() {
           </SectionCard>
 
           <SectionCard variant="support" className="role-surface-support">
-            <h2>Latest Narrative</h2>
+            <h2>Latest Narrative Diagnostics</h2>
             <p>
               <Link href={recommendationRunNarrativeHistoryHref}>View Narrative History</Link>
             </p>
@@ -1878,10 +1887,13 @@ export default function RecommendationRunDetailPage() {
                     <Link href={latestNarrativeDetailHref}>Open Narrative Detail</Link>
                   </p>
                 ) : null}
-                <div className="panel stack panel-compact">
-                  <h3>Narrative Text</h3>
-                  <p className="pre-wrap">{latestNarrative.narrative_text || "No narrative text returned."}</p>
-                </div>
+                <details className="stack-tight">
+                  <summary className="hint muted">View narrative text</summary>
+                  <div className="panel stack panel-compact">
+                    <h3>Narrative Text</h3>
+                    <p className="pre-wrap">{latestNarrative.narrative_text || "No narrative text returned."}</p>
+                  </div>
+                </details>
               </>
             )}
           </SectionCard>

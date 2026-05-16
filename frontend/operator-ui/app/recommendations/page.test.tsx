@@ -284,6 +284,79 @@ describe("recommendations queue optimistic workflows", () => {
     expect(screen.getByLabelText("Status")).toHaveValue("accepted");
   });
 
+  it("defaults to grouped current work in open queue view", async () => {
+    navigationState.searchParams = new URLSearchParams("status=open&page=1&page_size=25");
+    const groupedRecommendation = {
+      ...createRecommendation("rec-grouped-1", "open", "high", "Grouped Canonical Recommendation"),
+      duplicate_count: 3,
+      grouped_from_runs_count: 3,
+      is_duplicate_representative: true,
+    } satisfies Recommendation;
+    mockFetchRecommendations.mockResolvedValueOnce(
+      createListResponse(
+        [groupedRecommendation],
+        {
+          total: 1,
+          open: 1,
+          accepted: 0,
+          dismissed: 0,
+          high_priority: 1,
+        },
+        1,
+      ),
+    );
+
+    render(<RecommendationsPage />);
+
+    await screen.findByText("Grouped Canonical Recommendation");
+    expect(mockFetchRecommendations).toHaveBeenCalledWith(
+      "token-1",
+      "biz-1",
+      "site-1",
+      expect.objectContaining({
+        status: "open",
+        group_duplicates: true,
+      }),
+    );
+    expect(screen.getByLabelText("Queue view")).toHaveValue("grouped");
+    expect(screen.getByTestId("recommendation-duplicate-summary-rec-grouped-1")).toHaveTextContent(
+      "Grouped from 3 similar recommendations.",
+    );
+  });
+
+  it("allows all-rows queue mode when grouped=false is explicit", async () => {
+    navigationState.searchParams = new URLSearchParams("status=open&grouped=false&page=1&page_size=25");
+    const rawOne = createRecommendation("rec-raw-1", "open", "high", "Raw Canonical 1");
+    const rawTwo = createRecommendation("rec-raw-2", "open", "high", "Raw Canonical 2");
+    mockFetchRecommendations.mockResolvedValueOnce(
+      createListResponse(
+        [rawOne, rawTwo],
+        {
+          total: 2,
+          open: 2,
+          accepted: 0,
+          dismissed: 0,
+          high_priority: 2,
+        },
+        2,
+      ),
+    );
+
+    render(<RecommendationsPage />);
+
+    await screen.findByText("Raw Canonical 1");
+    expect(mockFetchRecommendations).toHaveBeenCalledWith(
+      "token-1",
+      "biz-1",
+      "site-1",
+      expect.objectContaining({
+        status: "open",
+        group_duplicates: false,
+      }),
+    );
+    expect(screen.getByLabelText("Queue view")).toHaveValue("all_rows");
+  });
+
   it("updates selected visible rows immediately, rolls back failures, and re-selects failed rows", async () => {
     navigationState.searchParams = new URLSearchParams("sort=newest&page=1&page_size=25");
     const recOne = createRecommendation("rec-1", "open", "high", "Recommendation One");
@@ -358,7 +431,6 @@ describe("recommendations queue optimistic workflows", () => {
       "Status",
       "Category",
       "Source",
-      "Recommendation Run",
       "Actions",
     ]);
     expect(headerCells).not.toContain("Business");
@@ -457,7 +529,7 @@ describe("recommendations queue optimistic workflows", () => {
       "/automation?site_id=site-1&trigger=recommendation&recommendation_id=rec-1&recommendation_title=Recommendation+One",
     );
     expect(recOneDetailRow).toBeInTheDocument();
-    expect(recOneDetailPanel.closest("td")).toHaveAttribute("colspan", "10");
+    expect(recOneDetailPanel.closest("td")).toHaveAttribute("colspan", "9");
     expect(recOneDetailPanel).toHaveTextContent("High-value next step");
     expect(recOneDetailPanel).toHaveTextContent("Best immediate move");
     expect(recOneDetailPanel).toHaveTextContent("Needs review / pending");
@@ -927,6 +999,45 @@ describe("recommendations queue optimistic workflows", () => {
     expect(ga4PriorityLine).toHaveTextContent("top landing page");
     expect(ga4PriorityLine).toHaveTextContent("Page: /");
     expect(ga4PriorityLine).toHaveTextContent("Sessions: 160");
+  });
+
+  it("renders bounded source-basis badges and competitor/GA4/GBP signal summaries", async () => {
+    const recommendation = {
+      ...createRecommendation("rec-source-basis-1", "open", "high", "Improve local service landing copy"),
+      source_basis: ["audit_findings", "accepted_competitors", "ga4_insights", "gbp_insights"],
+      competitor_context_summary:
+        "Competitor-informed: accepted/useful reviewed competitors include alpha-fire-protection.example.",
+      ga4_priority_hint:
+        "Homepage engagement is available and directional trend context can support prioritization.",
+      gbp_context_summary: "GBP-informed: local profile signals were considered directionally.",
+    } satisfies Recommendation;
+    mockFetchRecommendations.mockResolvedValueOnce(
+      createListResponse([recommendation], {
+        total: 1,
+        open: 1,
+        accepted: 0,
+        dismissed: 0,
+        high_priority: 1,
+      }),
+    );
+
+    render(<RecommendationsPage />);
+
+    await screen.findByText("Improve local service landing copy");
+    expect(screen.getByText("Audit")).toBeInTheDocument();
+    expect(screen.getByText("Competitors")).toBeInTheDocument();
+    expect(screen.getByText("GA4")).toBeInTheDocument();
+    expect(screen.getByText("GBP")).toBeInTheDocument();
+    expect(screen.getByTestId("recommendation-source-competitor-rec-source-basis-1")).toHaveTextContent(
+      "accepted/useful reviewed competitors include alpha-fire-protection.example",
+    );
+    expect(screen.getByTestId("recommendation-source-ga4-rec-source-basis-1")).toHaveTextContent(
+      "GA4-informed:",
+    );
+    expect(screen.getByTestId("recommendation-source-gbp-rec-source-basis-1")).toHaveTextContent(
+      "GBP-informed: local profile signals were considered directionally.",
+    );
+    expect(screen.queryByRole("columnheader", { name: "Recommendation Run" })).not.toBeInTheDocument();
   });
 
   it("does not render noisy GA4 priority context lines when unavailable or malformed", async () => {

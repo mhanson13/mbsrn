@@ -147,12 +147,12 @@ describe("recommendation detail decision-first layout", () => {
     expect(screen.queryByText("Refresh check")).not.toBeInTheDocument();
     expect(screen.queryByText("Choice support")).not.toBeInTheDocument();
 
-    expect(within(decisionSummary).getByText("What this is")).toBeInTheDocument();
+    expect(within(decisionSummary).getByText("What to do")).toBeInTheDocument();
     expect(within(decisionSummary).getByText("Why it matters")).toBeInTheDocument();
-    expect(within(decisionSummary).getByText("Recommended next action")).toBeInTheDocument();
+    expect(within(decisionSummary).getByText("First step")).toBeInTheDocument();
+    expect(within(decisionSummary).getByText("Success signal")).toBeInTheDocument();
     expect(within(decisionSummary).getByText("Blocked by")).toBeInTheDocument();
-    expect(within(decisionSummary).getByText("Evidence confidence")).toBeInTheDocument();
-    expect(within(decisionSummary).getByText("Measurement availability")).toBeInTheDocument();
+    expect(within(decisionSummary).getByText("Evidence used")).toBeInTheDocument();
     expect(decisionSummary.querySelectorAll("dt")).toHaveLength(6);
 
     expect(actionsCard.compareDocumentPosition(lineageCard) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -219,5 +219,51 @@ describe("recommendation detail decision-first layout", () => {
     expect(mockUpdateRecommendationStatus).toHaveBeenCalledTimes(1);
     await screen.findByText("Recommendation update is not allowed in the current state.");
     expect(within(statusStrip).getByText("open")).toBeInTheDocument();
+  });
+
+  it("renders bounded competitor, GA4, and GBP evidence cues with advanced diagnostics disclosure", async () => {
+    mockFetchRecommendation.mockResolvedValueOnce(
+      createRecommendation({
+        source_basis: ["audit_findings", "accepted_competitors", "ga4_insights", "gbp_insights"],
+        competitor_context_summary:
+          "Competitor-informed: accepted/useful reviewed competitors include alpha-fire-protection.example.",
+        ga4_priority_hint:
+          "Homepage engagement is available and directional trend context can support prioritization.",
+        gbp_context_summary: "GBP-informed: local profile signals were considered directionally.",
+      }),
+    );
+
+    render(<RecommendationDetailPage />);
+
+    await screen.findByText("Improve title tags");
+    const supporting = screen.getByTestId("recommendation-detail-supporting-details");
+    expect(screen.getByText("Advanced Diagnostics")).toBeInTheDocument();
+    expect(screen.queryByText("Lineage & Scope")).not.toBeInTheDocument();
+    expect(within(supporting).getByTestId("recommendation-detail-competitor-signal")).toHaveTextContent(
+      "Competitor signal:",
+    );
+    expect(within(supporting).getByTestId("recommendation-detail-ga4-signal")).toHaveTextContent("GA4 signal:");
+    expect(within(supporting).getByTestId("recommendation-detail-gbp-signal")).toHaveTextContent("GBP signal:");
+  });
+
+  it("shows duplicate-group notice when similar findings exist across runs", async () => {
+    mockFetchRecommendation.mockResolvedValueOnce(
+      createRecommendation({
+        duplicate_count: 4,
+        duplicate_group_key: "dup_abc123",
+        is_duplicate_representative: true,
+        duplicate_representative_id: "rec-detail-1",
+      }),
+    );
+
+    render(<RecommendationDetailPage />);
+
+    expect(await screen.findByText("Improve title tags")).toBeInTheDocument();
+    expect(screen.getByTestId("recommendation-detail-duplicate-notice")).toHaveTextContent(
+      "Similar findings exist from previous runs.",
+    );
+    expect(screen.getByTestId("recommendation-detail-duplicate-notice")).toHaveTextContent(
+      "latest of 4 repeated findings",
+    );
   });
 });
