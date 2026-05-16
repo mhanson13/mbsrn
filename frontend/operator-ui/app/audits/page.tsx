@@ -155,6 +155,9 @@ export default function AuditsPage() {
   const recommendationsHref = context.selectedSiteId
     ? `/recommendations?site_id=${encodeURIComponent(context.selectedSiteId)}`
     : "/recommendations";
+  const analysisHref = context.selectedSiteId
+    ? `/automation?site_id=${encodeURIComponent(context.selectedSiteId)}`
+    : "/automation";
 
   async function handleRunAuditNow(): Promise<void> {
     if (!context.selectedSiteId) {
@@ -171,7 +174,7 @@ export default function AuditsPage() {
         const merged = [createdRun, ...deduped];
         return merged.sort((left, right) => deriveAuditRunRecencyMs(right) - deriveAuditRunRecencyMs(left));
       });
-      setTriggerRunSuccess("Audit run started. Refresh the run detail as new findings complete.");
+      setTriggerRunSuccess("Audit-only run started. Refresh run detail as findings complete.");
     } catch (error) {
       setTriggerRunError(safeAuditRunStartErrorMessage(error));
     } finally {
@@ -218,8 +221,8 @@ export default function AuditsPage() {
       <PageContainer width="wide" density="compact">
         <SectionCard as="div" variant="support" className="role-surface-support">
           <SectionHeader
-            title="Audit Runs"
-            subtitle="Loading audit history and run status for the selected site."
+            title="Audit Evidence"
+            subtitle="Loading audit evidence history and run status for the selected site."
             headingLevel={1}
             variant="support"
           />
@@ -232,7 +235,7 @@ export default function AuditsPage() {
       <PageContainer width="wide" density="compact">
         <SectionCard as="div" variant="support" className="role-surface-support">
           <SectionHeader
-            title="Audit Runs"
+            title="Audit Evidence"
             subtitle="Unable to load tenant context. Refresh and sign in again."
             headingLevel={1}
             variant="support"
@@ -246,8 +249,8 @@ export default function AuditsPage() {
       <PageContainer width="wide" density="compact">
         <SectionCard variant="support" className="role-surface-support">
           <SectionHeader
-            title="Audit Runs"
-            subtitle="No SEO sites are configured yet. Add a site first to view audit runs."
+            title="Audit Evidence"
+            subtitle="No SEO sites are configured yet. Add a site first to review audit evidence."
             headingLevel={1}
             variant="support"
           />
@@ -259,8 +262,8 @@ export default function AuditsPage() {
   return (
     <PageContainer width="wide" density="compact">
       <OperatorPageHero
-        title="Audit Runs"
-        subtitle="Track crawl coverage, run outcomes, and retry needs across your selected site."
+        title="Audit Evidence"
+        subtitle="Use this page for crawl findings and history. Run full Site Analysis when you need end-to-end recommendation generation."
         headingLevel={1}
         data-testid="audits-page-hero"
         summary={(
@@ -300,8 +303,8 @@ export default function AuditsPage() {
       <OperatorPageSectionStack>
         <SectionCard variant="summary" className="role-surface-support">
           <SectionHeader
-            title="Audit run list"
-            subtitle="Review findings history and run outcomes. Use Recommendations to decide what to do next."
+            title="Audit evidence history"
+            subtitle="Review crawl findings and run outcomes. Recommendation decisions stay on Recommendations."
             headingLevel={2}
             variant="support"
           />
@@ -317,13 +320,18 @@ export default function AuditsPage() {
                 disabled={triggerRunPending || loadingRuns}
                 data-testid="audits-run-audit-button"
               >
-                {triggerRunPending ? "Starting audit..." : "Run Audit"}
+                {triggerRunPending ? "Starting audit..." : "Run audit only"}
               </button>
             )}
             secondaryActions={(
-              <Link className="button button-secondary" href={recommendationsHref}>
-                Open Recommendations
-              </Link>
+              <>
+                <Link className="button button-secondary" href={analysisHref}>
+                  Run full site analysis
+                </Link>
+                <Link className="button button-secondary" href={recommendationsHref}>
+                  Open Recommendations
+                </Link>
+              </>
             )}
             shortcutActions={(
               <>
@@ -345,7 +353,7 @@ export default function AuditsPage() {
             )}
           />
           <p className="hint muted" data-testid="audits-boundary-note">
-            Audit Runs own evidence and history. Recommendation decisions stay on the Recommendations page.
+            Use Site Analysis for the full workflow. Use Audit Evidence for crawl details and finding history. Audit evidence feeds recommendations, and operators usually act from Recommendations.
           </p>
 
           {loadingRuns || runsError ? (
@@ -370,7 +378,7 @@ export default function AuditsPage() {
           ) : null}
 
           <div className="stack" data-testid="audit-quick-scan">
-            <h3 className="heading-reset">Run quick scan</h3>
+            <h3 className="heading-reset">Recent audit evidence runs</h3>
             <p className="hint muted">
               Summary-first cards surface current run state before full run-history table review.
             </p>

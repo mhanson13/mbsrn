@@ -108,7 +108,7 @@ describe("audit run detail workflow context", () => {
     render(<AuditRunDetailPage />);
 
     await screen.findByTestId("audit-run-workflow-context");
-    expect(screen.getByRole("link", { name: "Audit Runs" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Audit Evidence" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Recommendation Queue" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Competitor Sets" })).toBeInTheDocument();
   });

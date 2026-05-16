@@ -1,26 +1,26 @@
-# Automation Feature Notes
+# Site Analysis (Automation) Feature Notes
 
-## What "Run automation" Actually Executes
+## What "Run site analysis" Executes
 
-`Run automation` is an internal SEO workflow trigger. It does **not** publish or modify external websites.
+`Run site analysis` on `/automation` is an internal SEO workflow trigger. It does **not** publish or modify external websites.
 
-## Workflow Boundary (Audit vs Recommendations vs Automation)
+## Workflow Boundary (Analysis vs Audit Evidence vs Recommendations)
 
-Automation is the orchestration surface for repeatable multi-step runs.
+Site Analysis (`/automation`) is the orchestration surface for repeatable multi-step runs.
 
-- Audit Runs: evidence, findings, and run history.
+- Audit Evidence (`/audits`): evidence, findings, and run history.
 - Recommendations: operator decisions, queue review, and output acceptance/rejection/completion.
-- Automation: run lifecycle orchestration across audit, competitor, recommendation, and narrative steps.
+- Site Analysis: run lifecycle orchestration across audit, competitor, recommendation, and narrative steps.
 
-Use Automation to run and monitor workflow steps, then move to dedicated pages for detailed execution review:
-- `Open Audit Runs` for findings and run evidence.
+Use Site Analysis to run and monitor workflow steps, then move to dedicated pages for detailed execution review:
+- `Open Audit Evidence` for findings and run evidence.
 - `Open Recommendations` for decisioning and queue actions.
 - `Open Competitors` for competitor generation/review workflow.
 
 ## Operator Run Initiation
 
 - Recommendation surfaces use `Generate automation run (preview)` to route into Automation with recommendation context.
-- The Automation page empty state always provides a primary `Run SEO automation` CTA so the page is not a dead end.
+- The Site Analysis page empty state always provides a primary `Run site analysis` CTA so the page is not a dead end.
 - Runs are on-demand operator-triggered analysis runs, not continuous/scheduled automation in this phase.
 - Manual run prerequisites:
   - site must resolve inside the current business scope
@@ -33,17 +33,17 @@ Operator-visible run trigger failures are mapped to actionable states:
 - missing inputs/validation: `This site is missing required automation inputs. Review site setup and retry.`
 - unavailable/other errors: `Automation run creation is unavailable for this site right now.`
 
-## Automation Page Control-Surface Modernization
+## Analysis Page Control-Surface Modernization
 
 The `/automation` route now follows the same control-surface/page composition rhythm used on upgraded operator routes:
 
 - route hero (`OperatorPageHero`) with summary strip metrics and decision-first status context
 - explicit primary action grouping (`WorkspaceActionBar`) for run/start and refresh actions
 - post-hero section cadence (`OperatorPageSectionStack`) separating:
-  - automation operations/configuration
-  - latest run outcome
-  - run quick scan
-  - run history table
+  - analysis workflow/configuration
+  - latest analysis outcome
+  - recent analysis runs
+  - analysis run history table
 - standardized support-state framing (`OperatorRouteSupportState`, `WorkspaceMessageStack`, `WorkspaceEmptyStateCard`, `WorkspaceTableShell`)
 
 This is a frontend presentation upgrade only. Automation orchestration, polling cadence, API contracts, and execution semantics are unchanged.

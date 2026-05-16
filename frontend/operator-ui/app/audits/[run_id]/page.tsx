@@ -236,7 +236,7 @@ export default function AuditRunDetailPage() {
 
   const workflowContextLinks = useMemo(() => {
     const links: Array<{ href: string; label: string }> = [
-      { href: "/audits", label: "Audit Runs" },
+      { href: "/audits", label: "Audit Evidence" },
       { href: "/recommendations", label: "Recommendation Queue" },
       { href: run ? `/competitors?site_id=${encodeURIComponent(run.site_id)}` : "/competitors", label: "Competitor Sets" },
     ];
@@ -474,7 +474,7 @@ export default function AuditRunDetailPage() {
             headingLevel={1}
             variant="support"
           />
-          <p><Link href="/audits">Back to Audit Runs</Link></p>
+          <p><Link href="/audits">Back to Audit Evidence</Link></p>
         </SectionCard>
       </PageContainer>
     );
@@ -490,7 +490,7 @@ export default function AuditRunDetailPage() {
             headingLevel={1}
             variant="hero"
             meta={<span className="hint muted">Audit run: <code>{runId}</code></span>}
-            actions={<Link href="/audits">Back to Audit Runs</Link>}
+            actions={<Link href="/audits">Back to Audit Evidence</Link>}
           />
           <div className="workspace-summary-strip role-summary-strip">
             <SummaryStatCard

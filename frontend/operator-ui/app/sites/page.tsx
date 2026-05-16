@@ -409,7 +409,7 @@ export default function SitesPage() {
                   Open Site Workspace
                 </Link>
                 <Link href="/audits" className="button button-secondary button-inline">
-                  Audit Runs
+                  Audit Evidence
                 </Link>
                 <Link href="/recommendations" className="button button-secondary button-inline">
                   Recommendations

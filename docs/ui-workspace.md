@@ -57,7 +57,8 @@ Primary Site Workspace surfaces:
 - Runtime diagnostics remain bounded and include safe route/app-version context only.
 
 Workflow ownership boundaries:
-- Audit Runs page owns audit execution (when available), findings evidence, and run history.
+- Site Analysis (`/automation`) is the primary analysis workflow surface. It orchestrates repeatable multi-step runs.
+- Audit Evidence (`/audits`) owns audit execution (when needed), crawl findings evidence, and run history.
 - Recommendations page owns a single filterable recommendation queue surface, run history, narratives, and apply execution.
   - default queue scope is open recommendations when no explicit status filter is provided
   - open queue defaults to grouped current work (one representative row per repeated issue)
@@ -73,8 +74,7 @@ Workflow ownership boundaries:
   - recommendation detail view is decision-first (`What to do`, `Why it matters`, `First step`, `Success signal`, `Evidence used`)
   - recommendation detail keeps run lineage/tenant scope in `Advanced Diagnostics` disclosure
   - recommendation run detail is explicitly diagnostic; operators should return to queue for recommendation decisions
-- Automation page owns repeatable multi-step workflow orchestration and run lifecycle.
-- Competitors page is a list-first human-in-the-loop review surface, with a primary site-scoped `Suggest competitors` / `Refresh competitor suggestions` action.
+ - Competitors page is a list-first human-in-the-loop review surface, with a primary site-scoped `Suggest competitors` / `Refresh competitor suggestions` action.
   - primary summary is operator-facing: total, accepted/useful, needs review, excluded, manual seeds, latest suggestion status
   - primary table rows are review decisions (`Mark accepted/useful`, `Mark not useful`, `Exclude`, `Restore/reconsider`)
   - generation outputs become reviewable competitor rows (`generated_suggestion` / `needs_review`), not auto-accepted competitors
@@ -88,6 +88,12 @@ Workflow ownership boundaries:
     - competitor prompt overrides
   - action lifecycle is operator-visible: pending state while request is in flight, bounded success/failure feedback, and automatic inventory/readiness refetch after run creation
   - successful action indicates run creation/queueing; completed competitor results can arrive later when backend run processing finishes
+
+Operator workflow path:
+1. Run site analysis.
+2. Review grouped recommendations.
+3. Open audit evidence only when crawl/finding detail is needed.
+4. Tune workflow and governance settings separately in Admin.
   - operator correction loop is site-scoped and summary-first:
     - mark competitor domains as `Useful`, `Not useful`, or `Excluded`
     - add `Manual seed` competitor domains for future generation context
@@ -512,9 +518,9 @@ Admin ownership groups:
 - Diagnostics & Logs: read-only Cloud Logging investigation.
 
 Execution ownership remains on dedicated routes:
-- Audit Runs: findings/evidence/history and supported audit execution.
+- Site Analysis (`/automation`): orchestrated analysis runs and workflow configuration.
+- Audit Evidence (`/audits`): findings/evidence/history and optional audit-only execution.
 - Recommendations: operator decisioning and queue execution.
-- Automation: repeatable workflow orchestration.
 - Competitors: competitor generation/review workflow.
 - Site Workspace: command-center routing and compact state.
 

@@ -188,6 +188,43 @@ describe("NavShell", () => {
     expect(screen.getByTestId("topnav-site-selector-row")).toBeInTheDocument();
   });
 
+  it("uses analysis and audit evidence route framing in nav and context copy", () => {
+    mockUsePathname.mockReturnValue("/automation");
+    mockUseAuth.mockReturnValue({
+      token: "token-1",
+      refreshToken: "refresh-1",
+      principal: {
+        business_id: "biz-1",
+        principal_id: "operator-2",
+        display_name: "Operator Two",
+        role: "operator",
+        is_active: true,
+      },
+      clearSession: jest.fn(),
+    });
+
+    const { rerender } = render(
+      <NavShell>
+        <div>content</div>
+      </NavShell>,
+    );
+
+    expect(screen.getByRole("link", { name: "Analysis" })).toHaveAttribute("href", "/automation");
+    expect(screen.getByRole("link", { name: "Audit Evidence" })).toHaveAttribute("href", "/audits");
+    expect(screen.getByTestId("topnav-route-context")).toHaveTextContent("Current area: Site analysis runs");
+    expect(screen.getByTestId("topnav-route-context")).toHaveTextContent("Open analysis runs");
+
+    mockUsePathname.mockReturnValue("/audits");
+    rerender(
+      <NavShell>
+        <div>content</div>
+      </NavShell>,
+    );
+
+    expect(screen.getByTestId("topnav-route-context")).toHaveTextContent("Current area: Audit evidence");
+    expect(screen.getByTestId("topnav-route-context")).toHaveTextContent("Review audit evidence");
+  });
+
   it("applies wide shell width mode for business profile and admin routes", () => {
     mockUseAuth.mockReturnValue({
       token: "token-1",

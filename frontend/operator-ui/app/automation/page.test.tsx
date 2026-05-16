@@ -116,9 +116,9 @@ describe("automation page shared-shell framing", () => {
 
     render(<AutomationPage />);
 
-    expect(screen.getByRole("heading", { name: "Automation Run History" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Site Analysis Runs" })).toBeInTheDocument();
     expect(
-      screen.getByText("No SEO sites are configured yet. Add a site before reviewing automation run history."),
+      screen.getByText("No SEO sites are configured yet. Add a site before running analysis."),
     ).toBeInTheDocument();
   });
 
@@ -134,9 +134,9 @@ describe("automation page shared-shell framing", () => {
     render(<AutomationPage />);
 
     const emptyState = await screen.findByTestId("automation-empty-state");
-    expect(emptyState).toHaveTextContent("No automation runs yet");
+    expect(emptyState).toHaveTextContent("No analysis runs yet");
     const runButton = screen.getByTestId("automation-empty-state-run-button");
-    expect(runButton).toHaveTextContent("Run SEO automation");
+    expect(runButton).toHaveTextContent("Run site analysis");
 
     await user.click(runButton);
 
@@ -188,7 +188,7 @@ describe("automation page shared-shell framing", () => {
     await user.click(await screen.findByTestId("automation-empty-state-run-button"));
 
     expect(await screen.findByTestId("automation-empty-state-run-error")).toHaveTextContent(
-      "Automation configuration was missing and could not be prepared for this site. Retry in a moment.",
+      "Analysis workflow configuration was missing and could not be prepared for this site. Retry in a moment.",
     );
   });
 
@@ -271,13 +271,14 @@ describe("automation page shared-shell framing", () => {
     expect(screen.getByText("Running")).toBeInTheDocument();
     expect(screen.getByText("Failed")).toBeInTheDocument();
     expect(screen.getByTestId("automation-non-publishing-banner")).toHaveTextContent(
-      "This automation analyzes your site and generates recommendations. It does not make changes to your website.",
+      "Site Analysis evaluates your site and generates recommendations. It does not make changes to your website.",
     );
     expect(screen.getByTestId("automation-boundary-note")).toHaveTextContent(
-      "Use Audit Runs for findings and history, Recommendations for decisioning, and Competitors for profile generation/review.",
+      "Run site analysis here, act from Recommendations, and use Audit Evidence only when crawl/finding detail is needed.",
     );
-    expect(screen.getByTestId("automation-boundary-links")).toHaveTextContent("Open dedicated workflow pages");
-    expect(screen.getByRole("link", { name: "Open Audit Runs" })).toHaveAttribute("href", "/audits");
+    expect(screen.getByTestId("analysis-workflow-explainer")).toHaveTextContent("How site analysis works");
+    expect(screen.getByTestId("automation-boundary-links")).toHaveTextContent("Open related workflow pages");
+    expect(screen.getByRole("link", { name: "Open Audit Evidence" })).toHaveAttribute("href", "/audits");
     expect(screen.getByRole("link", { name: "Open Recommendations" })).toHaveAttribute(
       "href",
       "/recommendations?site_id=site-1",
@@ -286,19 +287,19 @@ describe("automation page shared-shell framing", () => {
       "href",
       "/competitors?site_id=site-1",
     );
-    expect(screen.getByTestId("automation-config-summary")).toHaveTextContent("Automation configuration");
+    expect(screen.getByTestId("automation-config-summary")).toHaveTextContent("Workflow configuration (advanced)");
     expect(screen.getByTestId("automation-config-summary")).toHaveTextContent(
-      "Configure which automation outputs are generated for this site. Changes apply to future runs only.",
+      "Configure which analysis workflow steps are generated for this site. Changes apply to future runs only.",
     );
     expect(screen.getByTestId("automation-config-summary")).toHaveTextContent("Config source: Default system configuration");
     expect(screen.getByTestId("automation-config-group-site-audit")).toHaveTextContent("Site audit");
     expect(screen.getByTestId("automation-config-group-site-audit")).toHaveTextContent(
       "Audit summary is most useful when Audit run is enabled.",
     );
-    expect(screen.getByTestId("automation-config-group-competitor-analysis")).toHaveTextContent("Competitor analysis");
+    expect(screen.getByTestId("automation-config-group-competitor-analysis")).toHaveTextContent("Competitor context");
     expect(screen.getByTestId("automation-config-group-recommendations")).toHaveTextContent("Recommendations");
     expect(screen.getByTestId("automation-config-edit-button")).toHaveTextContent("Edit step settings");
-    expect(screen.getByTestId("automation-latest-run-summary")).toHaveTextContent("Latest automation outcome");
+    expect(screen.getByTestId("automation-latest-run-summary")).toHaveTextContent("Latest analysis outcome");
     expect(screen.getByTestId("automation-latest-run-status-strip")).toBeInTheDocument();
     expect(screen.getByTestId("automation-latest-run-summary")).toHaveTextContent("Complete");
     expect(screen.getByTestId("automation-latest-run-summary")).toHaveTextContent("Next step:");
@@ -384,9 +385,8 @@ describe("automation page shared-shell framing", () => {
     expect(latestSummary).toHaveTextContent("1 completed");
     expect(latestSummary).toHaveTextContent("2 skipped");
     expect(latestSummary).toHaveTextContent(
-      "Review skipped steps and rerun after prerequisites are available.",
+      "Recommendations are ready. Review skipped optional steps and rerun analysis if needed.",
     );
-    expect(latestSummary).toHaveTextContent("Skipped because competitor snapshot output was not completed.");
 
     const quickScanItem = screen.getByTestId("automation-quick-scan-item-run-with-skips-1");
     await user.click(within(quickScanItem).getByRole("button", { name: "Show details" }));
@@ -430,7 +430,7 @@ describe("automation page shared-shell framing", () => {
     const quickScanItem = await screen.findByTestId("automation-quick-scan-item-run-disabled-steps-1");
     await user.click(within(quickScanItem).getByRole("button", { name: "Show details" }));
 
-    expect(quickScanItem).toHaveTextContent("Step: Competitor snapshot");
+    expect(quickScanItem).toHaveTextContent("Step: Competitor context snapshot (legacy)");
     expect(quickScanItem).toHaveTextContent("Status: skipped");
     expect(quickScanItem).toHaveTextContent("Reason: Disabled in automation configuration");
     expect(quickScanItem).toHaveTextContent("Config source: Default system configuration");
@@ -453,12 +453,12 @@ describe("automation page shared-shell framing", () => {
 
     await user.click(await screen.findByTestId("automation-config-edit-button"));
     expect(screen.getByTestId("automation-config-group-competitor-analysis")).toHaveTextContent(
-      "Competitor comparison and summary rely on competitor snapshot output.",
+      "Competitor context comparison and summary rely on competitor context snapshot output.",
     );
     expect(screen.getByTestId("automation-config-group-recommendations")).toHaveTextContent(
       "Generates narrative guidance from recommendation output. Disable when structured recommendation data is enough.",
     );
-    const snapshotToggle = screen.getByRole("checkbox", { name: "Competitor snapshot" });
+    const snapshotToggle = screen.getByRole("checkbox", { name: "Competitor context snapshot (legacy)" });
     expect(snapshotToggle).not.toBeChecked();
     await user.click(snapshotToggle);
     expect(snapshotToggle).toBeChecked();
@@ -472,7 +472,7 @@ describe("automation page shared-shell framing", () => {
         { trigger_competitor_snapshot: true },
       ),
     );
-    expect(await screen.findByText("Automation configuration updated.")).toBeInTheDocument();
+    expect(await screen.findByText("Analysis workflow configuration updated.")).toBeInTheDocument();
   });
 
   it("keeps automation configuration read-only for non-admin operators", async () => {
@@ -487,9 +487,9 @@ describe("automation page shared-shell framing", () => {
     render(<AutomationPage />);
 
     const summary = await screen.findByTestId("automation-config-summary");
-    expect(summary).toHaveTextContent("Read-only view. Contact admin to change automation settings.");
+    expect(summary).toHaveTextContent("Read-only view. Contact admin to change analysis workflow settings.");
     expect(summary).toHaveTextContent("Site audit");
-    expect(summary).toHaveTextContent("Competitor analysis");
+    expect(summary).toHaveTextContent("Competitor context");
     expect(summary).toHaveTextContent("Recommendations");
     expect(screen.queryByTestId("automation-config-edit-button")).not.toBeInTheDocument();
   });

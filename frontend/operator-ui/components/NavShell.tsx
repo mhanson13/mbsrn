@@ -12,10 +12,10 @@ import { logoutSession } from "../lib/api/client";
 const links = [
   { href: "/dashboard", label: "Dashboard" },
   { href: "/sites", label: "Sites" },
-  { href: "/audits", label: "Audit Runs" },
+  { href: "/audits", label: "Audit Evidence" },
   { href: "/competitors", label: "Competitors" },
   { href: "/recommendations", label: "Recommendations" },
-  { href: "/automation", label: "Automation" },
+  { href: "/automation", label: "Analysis" },
   { href: "/admin", label: "Admin", adminOnly: true },
   { href: "/user-mgmt", label: "User Mgmt", adminOnly: true },
 ];
@@ -91,10 +91,10 @@ function resolveShellRouteContext(pathname: string): ShellRouteContext {
   }
   if (pathname.startsWith("/automation")) {
     return {
-      label: "Automation oversight",
-      summary: "Track current automation status and intervene quickly when run outcomes regress.",
+      label: "Site analysis runs",
+      summary: "Run and monitor the full analysis workflow, then move to Recommendations for decisions.",
       quickHref: "/automation",
-      quickLabel: "View automation",
+      quickLabel: "Open analysis runs",
       badgeClass: "badge-success",
     };
   }
@@ -109,10 +109,10 @@ function resolveShellRouteContext(pathname: string): ShellRouteContext {
   }
   if (pathname.startsWith("/audits")) {
     return {
-      label: "Audit runs",
-      summary: "Check crawl and audit outcomes before triggering recommendation generation.",
+      label: "Audit evidence",
+      summary: "Inspect crawl findings and audit history. Use analysis runs for full recommendation generation.",
       quickHref: "/audits",
-      quickLabel: "Review audits",
+      quickLabel: "Review audit evidence",
       badgeClass: "badge-muted",
     };
   }

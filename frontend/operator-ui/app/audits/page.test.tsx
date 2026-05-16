@@ -62,9 +62,9 @@ describe("audits page shared-shell framing", () => {
 
     render(<AuditsPage />);
 
-    expect(screen.getByRole("heading", { name: "Audit Runs" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Audit Evidence" })).toBeInTheDocument();
     expect(
-      screen.getByText("No SEO sites are configured yet. Add a site first to view audit runs."),
+      screen.getByText("No SEO sites are configured yet. Add a site first to review audit evidence."),
     ).toBeInTheDocument();
   });
 
@@ -94,14 +94,18 @@ describe("audits page shared-shell framing", () => {
     expect(document.querySelector(".page-container-width-wide")).toBeTruthy();
     expect(screen.getByTestId("audits-page-hero")).toHaveClass("operator-page-hero-surface");
     expect(screen.getByTestId("audits-page-actions")).toBeInTheDocument();
-    expect(screen.getByTestId("audits-run-audit-button")).toHaveTextContent("Run Audit");
+    expect(screen.getByTestId("audits-run-audit-button")).toHaveTextContent("Run audit only");
+    expect(screen.getByRole("link", { name: "Run full site analysis" })).toHaveAttribute(
+      "href",
+      "/automation?site_id=site-1",
+    );
     expect(screen.getByRole("link", { name: "Open Recommendations" })).toHaveAttribute(
       "href",
       "/recommendations?site_id=site-1",
     );
     expect(screen.getByTestId("audits-open-latest-findings-link")).toHaveAttribute("href", "/audits/run-1");
     expect(screen.getByTestId("audits-boundary-note")).toHaveTextContent(
-      "Audit Runs own evidence and history. Recommendation decisions stay on the Recommendations page.",
+      "Use Site Analysis for the full workflow. Use Audit Evidence for crawl details and finding history. Audit evidence feeds recommendations, and operators usually act from Recommendations.",
     );
     expect(screen.getByTestId("audit-quick-scan")).toBeInTheDocument();
     const quickScanItem = screen.getByTestId("audit-quick-scan-item-run-1");
@@ -154,7 +158,7 @@ describe("audits page shared-shell framing", () => {
 
     expect(mockCreateAuditRun).toHaveBeenCalledWith("token-1", "biz-1", "site-1", {});
     expect(await screen.findByTestId("audits-run-audit-success")).toHaveTextContent(
-      "Audit run started. Refresh the run detail as new findings complete.",
+      "Audit-only run started. Refresh run detail as findings complete.",
     );
     expect(screen.getByTestId("audit-quick-scan-item-run-2")).toBeInTheDocument();
   });

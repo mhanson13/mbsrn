@@ -597,7 +597,7 @@ function SiteWorkspaceHero({
           secondaryActions={(
             <>
               <Link href="/sites">Back to Sites</Link>
-              <Link href="/audits">Audit Runs</Link>
+              <Link href="/audits">Audit Evidence</Link>
             </>
           )}
           shortcutActions={(
@@ -951,7 +951,7 @@ function WorkspaceLatestActivity({
       <WorkspaceActionBar variant="secondary">
         <Link href="/recommendations" className="button button-secondary button-inline">Recommendation Runs</Link>
         <Link href={`/competitors?site_id=${encodeURIComponent(selectedSiteId)}`} className="button button-secondary button-inline">Competitor Runs</Link>
-        <Link href="/audits" className="button button-secondary button-inline">Audit Runs</Link>
+        <Link href="/audits" className="button button-secondary button-inline">Audit Evidence</Link>
       </WorkspaceActionBar>
     </div>
   );
@@ -1749,7 +1749,7 @@ export default function SiteWorkspacePage() {
         ? `Completed ${formatDateTime(latestCompletedAuditRun.completed_at)}.`
         : "Run your first audit to establish a reliable baseline.",
       latestCompletedAuditRun ? "done" : "pending",
-      "Open Audit Runs",
+      "Open Audit Evidence",
       "/audits",
     ),
     checklistItem(

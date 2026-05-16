@@ -51,9 +51,9 @@ import type {
 const AUTOMATION_STEP_LABELS: Record<string, string> = {
   audit_run: "Audit run",
   audit_summary: "Audit summary",
-  competitor_snapshot_run: "Competitor snapshot",
-  comparison_run: "Competitor comparison",
-  competitor_summary: "Competitor summary",
+  competitor_snapshot_run: "Competitor context snapshot (legacy)",
+  comparison_run: "Competitor context comparison (legacy)",
+  competitor_summary: "Competitor context summary",
   recommendation_run: "Recommendation run",
   recommendation_narrative: "Recommendation narrative",
 };
@@ -113,21 +113,21 @@ const AUTOMATION_CONFIG_STEP_DEFINITIONS: Record<AutomationEditableStepField, Au
   },
   trigger_competitor_snapshot: {
     field: "trigger_competitor_snapshot",
-    label: "Competitor snapshot",
+    label: "Competitor context snapshot (legacy)",
     helperText:
-      "Collects competitor baseline inputs. Disable when competitor analysis is intentionally out of scope.",
+      "Collects competitor context baseline inputs using legacy snapshot internals. Disable when competitor context is intentionally out of scope.",
   },
   trigger_comparison: {
     field: "trigger_comparison",
-    label: "Competitor comparison",
+    label: "Competitor context comparison (legacy)",
     helperText:
-      "Compares your site against snapshot output. Most useful when competitor snapshot is enabled.",
+      "Compares your site against legacy snapshot output. Most useful when competitor context snapshot is enabled.",
   },
   trigger_competitor_summary: {
     field: "trigger_competitor_summary",
-    label: "Competitor summary",
+    label: "Competitor context summary",
     helperText:
-      "Summarizes competitor comparison findings for operators. Disable if you only need raw comparison output.",
+      "Summarizes competitor context findings for operators. Disable if you only need raw comparison output.",
   },
   trigger_recommendations: {
     field: "trigger_recommendations",
@@ -172,9 +172,9 @@ const AUTOMATION_CONFIG_STEP_GROUPS: AutomationConfigStepGroup[] = [
   },
   {
     id: "competitor-analysis",
-    label: "Competitor analysis",
-    description: "Competitor snapshot, comparison, and summary outputs.",
-    dependencyNote: "Competitor comparison and summary rely on competitor snapshot output.",
+    label: "Competitor context",
+    description: "Competitor context outputs using legacy snapshot/comparison internals.",
+    dependencyNote: "Competitor context comparison and summary rely on competitor context snapshot output.",
     fields: ["trigger_competitor_snapshot", "trigger_comparison", "trigger_competitor_summary"],
   },
   {
@@ -290,12 +290,12 @@ function buildAutomationConfigPatchPayload(
 
 function mapAutomationConfigSaveError(error: ApiRequestError): string {
   if (error.status === 404) {
-    return "Automation configuration is unavailable for this site right now.";
+    return "Analysis workflow configuration is unavailable for this site right now.";
   }
   if (error.status === 422) {
-    return "Unable to save settings. Keep at least one automation step enabled.";
+    return "Unable to save settings. Keep at least one analysis step enabled.";
   }
-  return "Unable to save automation settings right now.";
+  return "Unable to save analysis workflow settings right now.";
 }
 
 function describeAutomationConfigStepState(enabled: boolean | null): string {
@@ -504,7 +504,7 @@ function deriveAutomationActionExecutionItem(params: {
   const steps = normalizeAutomationRunSteps(run);
   return {
     id: run.id,
-    title: `Automation run ${run.id}`,
+    title: `Analysis run ${run.id}`,
     actionStateCode: deriveAutomationRunOperatorActionState({
       runStatus: run.status,
       hasRecommendationOutput: Boolean(recommendationRunOutputId),
@@ -516,7 +516,7 @@ function deriveAutomationActionExecutionItem(params: {
     automationInFlight: normalizedStatus === "queued" || normalizedStatus === "running",
     blockedReason:
       normalizedStatus === "failed"
-        ? "Automation failed before linked outputs completed."
+        ? "Analysis run failed before linked outputs completed."
         : undefined,
     triggerSource: run.trigger_source,
     outputReview: recommendationRunOutputId || recommendationNarrativeOutputId
@@ -524,7 +524,7 @@ function deriveAutomationActionExecutionItem(params: {
           outputId: recommendationRunOutputId || recommendationNarrativeOutputId,
           summary: summarizeAutomationRunOutcome(run),
           details: summarizeAutomationRunNextStep(run),
-          sourceLabel: "Automation output",
+          sourceLabel: "Analysis output",
           stepDetails: steps.map((step) => ({
             stepName: formatAutomationStepName(step.step_name),
             status: step.status,
@@ -665,6 +665,23 @@ function summarizeAutomationStepReason(step: AutomationRunStep): string | null {
 
 function summarizeAutomationRunOutcome(run: AutomationRun): string {
   const canonicalSummary = normalizeAutomationRunOutcomeSummary(run);
+  if (canonicalSummary?.terminal_outcome === "completed") {
+    if ((canonicalSummary.recommendations_generated_count ?? 0) > 0) {
+      return `Analysis completed. Recommendations are ready (${canonicalSummary.recommendations_generated_count} generated).`;
+    }
+    return "Analysis completed. Recommendations are ready for review.";
+  }
+  if (canonicalSummary?.terminal_outcome === "completed_with_skips") {
+    const skipped = canonicalSummary.steps_skipped_count;
+    const skippedSummary = skipped > 0 ? ` ${skipped} optional step${skipped === 1 ? "" : "s"} skipped.` : "";
+    return `Analysis completed; some optional steps were skipped by configuration or dependency checks.${skippedSummary}`;
+  }
+  if (canonicalSummary?.terminal_outcome === "failed") {
+    return "Analysis did not complete. Review failed steps before rerunning.";
+  }
+  if (canonicalSummary?.terminal_outcome === "partial") {
+    return "Analysis finished with partial outputs. Review available results and rerun missing steps.";
+  }
   if (canonicalSummary?.summary_text) {
     return canonicalSummary.summary_text;
   }
@@ -688,18 +705,18 @@ function summarizeAutomationRunOutcome(run: AutomationRun): string {
         : "no linked output recorded";
 
   if (runStatus === "completed") {
-    return `Completed. ${stepSummary}; ${outputSummary}.`;
+    return `Analysis completed. ${stepSummary}; ${outputSummary}.`;
   }
   if (runStatus === "running") {
-    return `Running. ${stepSummary}; output may still change.`;
+    return `Analysis running. ${stepSummary}; outputs may still change.`;
   }
   if (runStatus === "queued") {
-    return `Queued. ${stepSummary}; waiting for execution.`;
+    return `Analysis queued. ${stepSummary}; waiting for execution.`;
   }
   if (runStatus === "failed") {
-    return `Failed. ${stepSummary}; ${outputSummary}.`;
+    return `Analysis failed. ${stepSummary}; ${outputSummary}.`;
   }
-  return `Status ${run.status}. ${stepSummary}; ${outputSummary}.`;
+  return `Analysis status ${run.status}. ${stepSummary}; ${outputSummary}.`;
 }
 
 function summarizeAutomationRunNextStep(run: AutomationRun): string {
@@ -710,13 +727,13 @@ function summarizeAutomationRunNextStep(run: AutomationRun): string {
       : "Review completed SEO artifacts and proceed with the next operator action.";
   }
   if (canonicalSummary?.terminal_outcome === "completed_with_skips") {
-    return "Review skipped steps and rerun after prerequisites are available.";
+    return "Recommendations are ready. Review skipped optional steps and rerun analysis if needed.";
   }
   if (canonicalSummary?.terminal_outcome === "failed") {
-    return "Review failed step details before rerunning SEO automation.";
+    return "Review failed step details before rerunning analysis.";
   }
   if (canonicalSummary?.terminal_outcome === "partial") {
-    return "Review partial outputs and rerun remaining steps once prerequisites are ready.";
+    return "Review partial outputs and rerun remaining analysis steps once prerequisites are ready.";
   }
 
   const status = normalizeStatusValue(run.status);
@@ -724,10 +741,10 @@ function summarizeAutomationRunNextStep(run: AutomationRun): string {
     return "Review linked recommendation artifacts and decide next operator action.";
   }
   if (status === "failed") {
-    return "Review failed step details and rerun automation after addressing blockers.";
+    return "Review failed step details and rerun analysis after addressing blockers.";
   }
   if (status === "running" || status === "queued") {
-    return "Wait for completion before taking downstream recommendation actions.";
+    return "Wait for completion, then review recommendations for next actions.";
   }
   return "Review run detail to confirm lifecycle and output state.";
 }
@@ -750,21 +767,21 @@ function deriveLatestAutomationRun(items: AutomationRun[]): AutomationRun | null
 function mapAutomationRunCreateError(error: ApiRequestError): string {
   const normalizedMessage = (error.message || "").trim().toLowerCase();
   if (error.status === 409) {
-    return "An automation run is already in progress for this site.";
+    return "A site analysis run is already in progress for this site.";
   }
   if (error.status === 404) {
     if (normalizedMessage.includes("automation config not found")) {
-      return "Automation configuration was missing and could not be prepared for this site. Retry in a moment.";
+      return "Analysis workflow configuration was missing and could not be prepared for this site. Retry in a moment.";
     }
     if (normalizedMessage.includes("seo site not found")) {
       return "This site context could not be resolved. Re-select the site and try again.";
     }
-    return "Automation run creation is unavailable for this site right now.";
+    return "Site analysis run creation is unavailable for this site right now.";
   }
   if (error.status === 422) {
-    return "This site is missing required automation inputs. Review site setup and retry.";
+    return "This site is missing required analysis inputs. Review site setup and retry.";
   }
-  return "Unable to start an automation run right now.";
+  return "Unable to start a site analysis run right now.";
 }
 
 export default function AutomationPage() {
@@ -871,7 +888,7 @@ export default function AutomationPage() {
   const automationControlNextStep = latestRunActionPresentation?.nextStep || latestRunActionState.nextStep;
   const automationControlFocus = latestRun
     ? summarizeAutomationRunOutcome(latestRun)
-    : "No automation runs recorded yet for this site.";
+    : "No analysis runs recorded yet for this site.";
   const latestRunActivityAt = latestRun
     ? formatDateTime(latestRun.finished_at || latestRun.started_at || latestRun.created_at || null)
     : "-";
@@ -885,7 +902,7 @@ export default function AutomationPage() {
 
   async function handleRunAutomationNow(): Promise<void> {
     if (!context.selectedSiteId || context.loading || context.error) {
-      setTriggerRunError("Select a site before starting automation.");
+      setTriggerRunError("Select a site before starting analysis.");
       return;
     }
     setTriggerRunPending(true);
@@ -903,7 +920,7 @@ export default function AutomationPage() {
       if (error instanceof ApiRequestError) {
         setTriggerRunError(mapAutomationRunCreateError(error));
       } else {
-        setTriggerRunError("Unable to start an automation run right now.");
+        setTriggerRunError("Unable to start a site analysis run right now.");
       }
     } finally {
       setTriggerRunPending(false);
@@ -942,12 +959,12 @@ export default function AutomationPage() {
       return;
     }
     if (!automationConfigHasEnabledStep) {
-      setAutomationConfigSaveError("Keep at least one automation step enabled.");
+      setAutomationConfigSaveError("Keep at least one analysis step enabled.");
       return;
     }
     if (!automationConfigHasChanges) {
       setAutomationConfigEditing(false);
-      setAutomationConfigSaveSuccess("No automation configuration changes to save.");
+      setAutomationConfigSaveSuccess("No analysis workflow configuration changes to save.");
       return;
     }
     setAutomationConfigSaving(true);
@@ -963,12 +980,12 @@ export default function AutomationPage() {
       setAutomationConfig(updatedConfig);
       setAutomationConfigDraft(extractAutomationConfigStepDraft(updatedConfig));
       setAutomationConfigEditing(false);
-      setAutomationConfigSaveSuccess("Automation configuration updated.");
+      setAutomationConfigSaveSuccess("Analysis workflow configuration updated.");
     } catch (error) {
       if (error instanceof ApiRequestError) {
         setAutomationConfigSaveError(mapAutomationConfigSaveError(error));
       } else {
-        setAutomationConfigSaveError("Unable to save automation settings right now.");
+        setAutomationConfigSaveError("Unable to save analysis workflow settings right now.");
       }
     } finally {
       setAutomationConfigSaving(false);
@@ -1020,7 +1037,7 @@ export default function AutomationPage() {
           setItems(sortAutomationRunsNewestFirst(runsResult.value.items));
         } else {
           setItemsError(
-            runsResult.reason instanceof Error ? runsResult.reason.message : "Failed to load automation runs.",
+            runsResult.reason instanceof Error ? runsResult.reason.message : "Failed to load analysis runs.",
           );
         }
         if (statusResult.status === "fulfilled") {
@@ -1062,15 +1079,15 @@ export default function AutomationPage() {
   if (context.loading) {
     return (
       <OperatorRouteSupportState
-        title="Automation Run History"
-        subtitle="Loading automation run status for your selected site."
+        title="Site Analysis Runs"
+        subtitle="Loading analysis run status for your selected site."
       />
     );
   }
   if (context.error) {
     return (
       <OperatorRouteSupportState
-        title="Automation Run History"
+        title="Site Analysis Runs"
         subtitle={`Error: ${context.error}`}
       />
     );
@@ -1078,8 +1095,8 @@ export default function AutomationPage() {
   if (context.sites.length === 0) {
     return (
       <OperatorRouteSupportState
-        title="Automation Run History"
-        subtitle="No SEO sites are configured yet. Add a site before reviewing automation run history."
+        title="Site Analysis Runs"
+        subtitle="No SEO sites are configured yet. Add a site before running analysis."
       />
     );
   }
@@ -1087,8 +1104,8 @@ export default function AutomationPage() {
   return (
     <PageContainer width="wide" density="compact">
       <OperatorPageHero
-        title="Automation Run History"
-        subtitle="Monitor repeatable workflow runs that orchestrate audits, competitor analysis, and recommendation generation."
+        title="Site Analysis Runs"
+        subtitle="Run the repeatable analysis workflow that collects audit evidence, uses competitor and analytics context when available, and generates recommendations."
         headingLevel={1}
         data-testid="automation-page-hero"
         summary={(
@@ -1096,7 +1113,7 @@ export default function AutomationPage() {
             <SummaryStatCard
               label="Total runs"
               value={items.length}
-              detail={items.length > 0 ? "Automation events for selected site" : "No runs recorded"}
+              detail={items.length > 0 ? "Analysis runs for selected site" : "No runs recorded"}
               tone={items.length > 0 ? "neutral" : "warning"}
               variant="elevated"
             />
@@ -1110,7 +1127,7 @@ export default function AutomationPage() {
             <SummaryStatCard
               label="Running"
               value={runningRuns}
-              detail="Active automation executions"
+              detail="Active analysis executions"
               tone={runningRuns > 0 ? "warning" : "neutral"}
               variant="elevated"
             />
@@ -1125,7 +1142,7 @@ export default function AutomationPage() {
         )}
       >
         <WorkspaceMetadataGrid data-testid="automation-control-grid">
-          <WorkspaceMetadataItem label="Automation status">
+          <WorkspaceMetadataItem label="Analysis status">
             <p className="hint muted">
               <span className={latestRunActionPresentation?.badgeClass || latestRunActionState.badgeClass}>
                 {automationControlStatusLabel}
@@ -1159,7 +1176,7 @@ export default function AutomationPage() {
               }}
               disabled={triggerRunPending}
             >
-              {triggerRunPending ? "Starting run..." : "Run SEO automation"}
+              {triggerRunPending ? "Starting analysis..." : "Run site analysis"}
             </button>
           )}
           secondaryActions={(
@@ -1195,20 +1212,20 @@ export default function AutomationPage() {
       <OperatorPageSectionStack>
         <SectionCard variant="summary" className="role-surface-support">
           <SectionHeader
-            title="Automation operations"
-            subtitle="Automation orchestrates workflow runs. Recommendation decisions and queue review stay on Recommendations."
+            title="Analysis workflow"
+            subtitle="Site Analysis orchestrates repeatable runs. Use Recommendations for decisions and queue execution."
             headingLevel={2}
             variant="support"
           />
 
           <WorkspaceMessageStack>
-            {loadingItems ? <p className="hint muted">Loading automation runs...</p> : null}
+            {loadingItems ? <p className="hint muted">Loading analysis runs...</p> : null}
             {itemsError ? <p className="hint error">{itemsError}</p> : null}
             <p className="hint muted" data-testid="automation-non-publishing-banner">
-              This automation analyzes your site and generates recommendations. It does not make changes to your website.
+              Site Analysis evaluates your site and generates recommendations. It does not make changes to your website.
             </p>
             <p className="hint muted" data-testid="automation-boundary-note">
-              Use Audit Runs for findings and history, Recommendations for decisioning, and Competitors for profile generation/review.
+              Run site analysis here, act from Recommendations, and use Audit Evidence only when crawl/finding detail is needed.
             </p>
             {triggerContext.recommendationTitle ? (
               <p className="hint muted" data-testid="automation-trigger-context">
@@ -1218,25 +1235,34 @@ export default function AutomationPage() {
             ) : null}
             {automationPollingActive ? (
               <p className="hint muted" data-testid="automation-polling-status">
-                Automation execution is in progress. Status refreshes automatically every few seconds.
+                Analysis execution is in progress. Status refreshes automatically every few seconds.
               </p>
             ) : null}
           </WorkspaceMessageStack>
+          <div className="panel panel-compact stack-tight workspace-section-block" data-testid="analysis-workflow-explainer">
+            <span className="text-strong">How site analysis works</span>
+            <ol className="hint muted">
+              <li>Collect audit evidence.</li>
+              <li>Use competitors, GA4, and GBP context when available.</li>
+              <li>Generate recommendations.</li>
+              <li>Review and decide in Recommendations.</li>
+            </ol>
+          </div>
           <div className="panel panel-compact stack-tight workspace-section-block" data-testid="automation-boundary-links">
-            <span className="text-strong">Open dedicated workflow pages</span>
+            <span className="text-strong">Open related workflow pages</span>
             <span className="hint muted">
-              Automation run history stays here. Full findings and execution review live on dedicated pages.
+              Analysis run history stays here. Full crawl evidence and recommendation decisions live on dedicated pages.
             </span>
             <div className="link-row">
-              <Link href="/audits">Open Audit Runs</Link>
+              <Link href="/audits">Open Audit Evidence</Link>
               <Link href={buildRecommendationsHref(context.selectedSiteId || "")}>Open Recommendations</Link>
               <Link href={buildCompetitorsHref(context.selectedSiteId || "")}>Open Competitors</Link>
             </div>
           </div>
           <div className="panel panel-compact stack-tight workspace-section-block" data-testid="automation-config-summary">
-          <span className="text-strong">Automation configuration</span>
+          <span className="text-strong">Workflow configuration (advanced)</span>
           <span className="hint muted">
-            Configure which automation outputs are generated for this site. Changes apply to future runs only.
+            Configure which analysis workflow steps are generated for this site. Changes apply to future runs only.
           </span>
           {automationConfigEditing && automationConfigDraft ? (
             <div className="stack-tight" data-testid="automation-config-editor">
@@ -1338,14 +1364,14 @@ export default function AutomationPage() {
               </WorkspaceActionBar>
             )
           ) : (
-            <span className="hint muted">Read-only view. Contact admin to change automation settings.</span>
+            <span className="hint muted">Read-only view. Contact admin to change analysis workflow settings.</span>
           )}
         </div>
           {!loadingItems && items.length === 0 ? (
             <WorkspaceEmptyStateCard data-testid="automation-empty-state">
-              <strong>No automation runs yet</strong>
+              <strong>No analysis runs yet</strong>
               <span className="hint muted">
-                Generate a new automation run to analyze this site and produce updated recommendations.
+                Run site analysis to gather fresh evidence and generate updated recommendations.
               </span>
               <WorkspaceActionBar variant="primary">
                 <button
@@ -1357,7 +1383,7 @@ export default function AutomationPage() {
                   disabled={triggerRunPending}
                   data-testid="automation-empty-state-run-button"
                 >
-                  {triggerRunPending ? "Starting run..." : "Run SEO automation"}
+                  {triggerRunPending ? "Starting analysis..." : "Run site analysis"}
                 </button>
               </WorkspaceActionBar>
               {triggerRunError ? (
@@ -1373,8 +1399,8 @@ export default function AutomationPage() {
         {latestRun ? (
           <SectionCard variant="summary" className="role-surface-support" data-testid="automation-latest-run-summary">
             <SectionHeader
-              title="Latest automation outcome"
-              subtitle="Summary-first lifecycle and workflow-step visibility for the most recent run."
+              title="Latest analysis outcome"
+              subtitle="Summary-first lifecycle and workflow-step visibility for the most recent analysis run."
               headingLevel={2}
               variant="support"
             />
@@ -1520,15 +1546,15 @@ export default function AutomationPage() {
 
         <SectionCard variant="summary" className="role-surface-support">
           <SectionHeader
-            title="Run quick scan"
-            subtitle="Summary-first cards show workflow status, blockers, and cross-page follow-up before deep history review."
+            title="Recent analysis runs"
+            subtitle="Summary-first cards show workflow status, blockers, and follow-up before deep history review."
             headingLevel={2}
             variant="support"
           />
           <div className="stack" data-testid="automation-quick-scan">
             {items.length === 0 && !loadingItems ? (
               <WorkspaceEmptyStateCard compact={true}>
-                <p className="hint muted">No automation runs available for quick scan. Start a run to populate history.</p>
+                <p className="hint muted">No analysis runs available yet. Start a run to populate history.</p>
               </WorkspaceEmptyStateCard>
             ) : null}
             {items.length > 0 ? (
@@ -1585,7 +1611,7 @@ export default function AutomationPage() {
                   <OperationalItemCard
                     key={`automation-quick-scan-${item.id}`}
                     data-testid={`automation-quick-scan-item-${item.id}`}
-                    title={`Automation run ${item.id}`}
+                    title={`Analysis run ${item.id}`}
                     chips={(
                       <>
                         <span className={actionPresentation.badgeClass}>{actionPresentation.label}</span>
@@ -1778,7 +1804,7 @@ export default function AutomationPage() {
 
         <SectionCard variant="summary" className="role-surface-support">
           <SectionHeader
-            title="Run history"
+            title="Analysis run history"
             subtitle="Recent run lifecycle records for auditability and follow-up."
             headingLevel={2}
             variant="support"
@@ -1808,7 +1834,7 @@ export default function AutomationPage() {
                 ))}
                 {items.length === 0 && !loadingItems ? (
                   <tr>
-                    <td colSpan={6}>No automation runs found for this site.</td>
+                    <td colSpan={6}>No analysis runs found for this site.</td>
                   </tr>
                 ) : null}
               </tbody>
