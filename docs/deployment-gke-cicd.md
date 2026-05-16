@@ -71,6 +71,60 @@ Workflows use Google Cloud Buildpacks:
 
 This produces OCI-compatible images suitable for containerd on GKE.
 
+### Next.js Security Baseline (Self-Hosted)
+
+MBSRN is self-hosted on GKE, so Vercel-hosted protections do not apply.
+
+For `GHSA-c4j6-fc7j-m34r` / `CVE-2026-44578` (Next.js WebSocket upgrade SSRF), treat
+`>=13.4.13 <15.5.16` as affected in this deployment model.
+
+Minimum patched baseline for MBSRN self-hosted Next.js apps:
+- `next >= 15.5.16`
+
+Pinned application versions:
+- `frontend/operator-ui`
+  - `next: 15.5.16`
+  - `eslint-config-next: 15.5.16`
+  - `react: 18.3.1`
+  - `react-dom: 18.3.1`
+- `frontend/www`
+  - `next: 15.5.16`
+  - `eslint-config-next: 15.5.16`
+  - `react: 18.3.1`
+  - `react-dom: 18.3.1`
+
+Validation commands used during the upgrade:
+
+```bash
+cd frontend/operator-ui
+npm install
+npm ls next react react-dom eslint-config-next
+npx tsc --noEmit --pretty false
+npm run lint
+npm test -- --runInBand middleware
+npm test -- --runInBand app/admin
+npm test -- --runInBand app/audits
+npm test -- --runInBand app/automation
+npm test -- --runInBand app/competitors
+npm test -- --runInBand app/recommendations
+npm test -- --runInBand
+npm run build
+
+cd ../www
+npm install
+npm ls next react react-dom eslint-config-next
+npx tsc --noEmit --pretty false
+npm run lint
+npm run build
+npm run validate:standalone-runtime
+```
+
+Defense-in-depth follow-up (not changed by this pass):
+- if WebSocket upgrades are not required for UI/website traffic, block upgrade requests at
+  the load-balancer/reverse-proxy layer
+- keep egress controls conservative so pods cannot reach metadata/internal destinations
+  unnecessarily (`169.254.169.254`, `metadata.google.internal`)
+
 ## GitHub Actions Workflows
 
 - `backend-ci.yml`
