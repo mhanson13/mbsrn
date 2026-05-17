@@ -19225,8 +19225,14 @@ def _media_asset_unusable_reason_code(value: object) -> str | None:
     quality_reason = _normalize_media_quality_reason(item.get("quality_reason"))
     if candidate_quality == _MIGRATION_MEDIA_CANDIDATE_QUALITY_REJECTED:
         return quality_reason or _MIGRATION_MEDIA_REASON_ASSET_REJECTED
-    if candidate_quality == _MIGRATION_MEDIA_CANDIDATE_QUALITY_LOW_VALUE:
-        return quality_reason or _MIGRATION_MEDIA_REASON_ASSET_LOW_VALUE
+    if (
+        candidate_quality == _MIGRATION_MEDIA_CANDIDATE_QUALITY_LOW_VALUE
+        and quality_reason in {
+            _MIGRATION_MEDIA_REASON_NON_IMAGE_CANDIDATE_DETECTED,
+            _MIGRATION_MEDIA_REASON_TRACKING_PIXEL_DETECTED,
+        }
+    ):
+        return quality_reason
 
     import_status = (_normalize_string(item.get("import_status"), max_length=40) or "").lower()
     provenance = (_normalize_string(item.get("provenance"), max_length=40) or "source_site_import").lower()

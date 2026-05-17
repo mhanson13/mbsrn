@@ -2192,7 +2192,7 @@ def test_workspace_media_metadata_batch_suggestion_returns_partial_success_for_r
     assert (results_by_asset.get("srcimg-remote-only") or {}).get("reason_code") == "media_asset_not_imported"
 
 
-def test_workspace_media_selection_and_batch_suggestion_reject_low_value_discovered_assets(db_session) -> None:
+def test_workspace_media_selection_and_batch_suggestion_require_imported_discovered_assets(db_session) -> None:
     service = _build_service(db_session, _StaticMigrationProvider(_build_publishable_output()))
     business_id, site_id = _seed_business_and_site(db_session)
     _seed_workspace(service, business_id=business_id, site_id=site_id)
@@ -2222,7 +2222,7 @@ def test_workspace_media_selection_and_batch_suggestion_reject_low_value_discove
             selected_for_draft=True,
             principal_id="principal-1",
         )
-    assert selection_error.value.error_code == "placeholder_image_detected"
+    assert selection_error.value.error_code == "media_asset_not_imported"
 
     batch_result = service.suggest_media_assets_metadata_batch(
         business_id=business_id,
@@ -2240,7 +2240,7 @@ def test_workspace_media_selection_and_batch_suggestion_reject_low_value_discove
     assert len(results) == 1
     result = results[0] if isinstance(results[0], dict) else {}
     assert result.get("suggestion_status") == "not_available"
-    assert result.get("reason_code") == "placeholder_image_detected"
+    assert result.get("reason_code") == "media_asset_not_imported"
     assert result.get("retryable") is False
 
 

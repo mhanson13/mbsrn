@@ -3227,7 +3227,7 @@ def test_migration_media_suggest_metadata_returns_image_not_imported_for_remote_
         assert forbidden not in serialized
 
 
-def test_migration_media_update_rejects_selecting_unimported_or_low_value_discovered_assets(db_session) -> None:
+def test_migration_media_update_rejects_selecting_unimported_discovered_assets(db_session) -> None:
     business_id = "11111111-1111-1111-1111-111111111111"
     site_id = "22222222-2222-2222-2222-222222222222"
     _seed_business_and_site(db_session, business_id=business_id, site_id=site_id)
@@ -3285,7 +3285,7 @@ def test_migration_media_update_rejects_selecting_unimported_or_low_value_discov
     )
     assert low_value_select_response.status_code == 422
     low_value_detail = low_value_select_response.json().get("detail") or {}
-    assert low_value_detail.get("error_code") == "placeholder_image_detected"
+    assert low_value_detail.get("error_code") == "media_asset_not_imported"
 
 
 def test_migration_media_batch_suggest_metadata_succeeds_for_selected_uploaded_assets(db_session) -> None:

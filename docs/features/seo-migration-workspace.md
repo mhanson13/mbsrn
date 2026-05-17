@@ -374,8 +374,7 @@ Media / Images compact browser behavior:
 - default card content is intentionally minimal:
   - short image name
   - thumbnail preview (or compact preview-unavailable placeholder)
-  - source/status badges (`Uploaded`, `Discovered`, `Imported`, `Selected for Draft`)
-  - image reference token (`@image(...)`)
+  - source/status badges (`Uploaded`, `Discovered`, `Imported`, `Included in draft`)
   - one primary next action
   - optional compact reason label
 - grid density:
@@ -384,60 +383,38 @@ Media / Images compact browser behavior:
   - mobile: 1 column
 - acquisition controls are visible at the top of the section:
   - `Upload images` (disclosure)
-  - `Import Selected Source Images`
   - `Discover / Refresh Source Images` (reuses existing ingest path)
-- example helper text shown in UI:
-  - `Use @image(backflow-4) on the Services page hero.`
-  - `Use @image(backflow-4) on the Fire Sprinkler Services page near the backflow prevention section.`
-- image reference controls:
-  - `Copy reference`
-  - `Insert into requirements` (local operator-field update only)
-- image references do not affect draft generation until saved in Operator Requirements
+  - `Use checked images in draft` (bulk action)
+- checkbox semantics are explicit:
+  - checked means `Use in draft`
+  - unchecked means do not include in next draft
+  - unsafe rejected rows keep checkbox disabled
 - verbose metadata remains available, but is disclosure-only per image:
   - full URL
   - provenance details
   - suggestion and candidate-quality diagnostics
-- primary action gating remains behaviorally unchanged:
-  - discovered unimported useful image -> `Import image`
-  - imported/uploaded unselected usable image -> `Select for Draft`
-  - selected usable image without completed suggestion -> `Analyze image`
-  - completed suggestion not yet applied -> `Apply suggestions`
-  - unavailable/low-value/rejected -> details-only action
-- secondary actions remain available under details:
-  - edit metadata (or discovery notes while unimported)
-  - unselect selected images
-  - mark/unmark discovered import candidates
-  - re-analyze image (when compatible)
-- lightweight local filters prioritize actionable images first:
-  - `All`, `Needs import`, `Selected`, `Uploaded/imported`, `Suggestions available`, `Low-value/rejected`
-- low-value/rejected discovered candidates remain hidden/de-emphasized by default unless explicitly shown
-- AI metadata suggestion action labels are image-specific:
-  - per-image: `Analyze image`
-  - batch: `Analyze Selected Images`
-- if AI image analysis is unavailable in the runtime, cards show concise unavailable guidance and do not show a misleading active analyze action
-- image placement/operator intent guidance is intentionally requirements-first:
-  - copy/insert image references into Operator Requirements
-  - save requirements before generating draft so references are included in draft context
-
-Preview behavior and safety contract:
-- preview is display-only and never changes import/selection/suggestion state
-- preview trigger supports keyboard focus and click toggle fallback in addition to hover/focus affordance
-- safe preview URLs are derived from bounded existing image metadata only; no new backend import/URL semantics were introduced
-- query/hash components are stripped before rendering preview URLs
-- private/internal/metadata/local host targets are blocked from preview rendering
-- preview unavailable reasons are explicit and deterministic:
-  - `preview_url_missing`
-  - `preview_url_unsafe`
-  - `image_not_imported`
-  - `unsupported_image_type`
-  - `storage_preview_not_available`
-- preview surfaces remain metadata-safe:
-  - no storage keys
-  - no local filesystem paths
-  - no raw bytes/base64
-- preview does not imply imported/selected/published state
-- uploaded/imported images with safe preview URLs can preview directly
-- discovered/unimported images keep import-first action gating; preview availability remains bounded by safe URL checks
+- primary actions are simplified:
+  - per-image: `Use in draft` (or `Use in draft anyway` for low-value safe candidates)
+  - bulk: `Use checked images in draft`
+  - unsafe rejected images have no import/use action
+- combined use-in-draft behavior:
+  1. import checked/per-image safe discovered assets if needed
+  2. mark included in draft (`selected_for_draft=true`)
+  3. run metadata suggestion analysis when available
+  4. apply safe suggestions when supported, otherwise stage suggestions
+- quality vs safety boundary:
+  - low-value is a quality warning only
+  - unsafe rejected is a hard block
+- simplified local filters:
+  - `All usable images`
+  - `Discovered`
+  - `Uploaded/imported`
+  - `Unsafe rejected`
+- removed/retired controls:
+  - `Insert into requirements`
+  - per-card `Preview`
+  - per-card `View details`
+  - `Show low-value/rejected` toggles
 
 Operator uploads:
 - uploads are stored as workspace-scoped media assets with provenance `operator_upload`
@@ -538,9 +515,9 @@ Selected discovered-image import (runtime-gated, 2026-05):
   - `reason_code`: deterministic import reason
   - optional sanitized `media_asset` (no storage key, no local path, no raw bytes/base64)
 - import controls are explicit and lifecycle-safe:
-  - per-card actions (`Import image`, `Import anyway`) provide pending/success/failure feedback
-  - bulk action imports marked candidates when selected, otherwise imports currently useful/import-eligible discovered candidates
-  - import does not auto-select assets for draft; operator must explicitly select imported assets
+  - per-card combined action (`Use in draft` / `Use in draft anyway`) provides pending/success/failure feedback
+  - bulk action (`Use checked images in draft`) processes only checked safe images
+  - unchecked assets are never auto-imported or auto-included
 
 Import safety controls:
 - only `http`/`https` schemes
@@ -571,16 +548,15 @@ Low-value override import semantics:
 
 Media lifecycle action rules (coherence pass, 2026-05):
 - discovered remote source assets are not draft-usable by default (`import_status=discovered`)
-- import-first operator flow:
-  - primary action is `Import image` (or `Import Selected Source Images` for marked candidates)
-  - draft selection and AI suggestion actions are not active until asset is imported/controlled
+- use-in-draft operator flow:
+  - primary actions are `Use in draft` (per-image) and `Use checked images in draft` (bulk)
+  - discovered assets are imported as part of that combined action when validation/safety checks pass
 - uploaded/imported assets:
-  - support `Select for Draft`, `Analyze image`, and `Apply suggestions` (when suggestion is completed and not already applied)
+  - can be included in draft immediately and analyzed in the same combined action
 - low-value/rejected discovered candidates:
-  - low-value safe candidates can be imported with explicit override and then follow the normal imported-asset lifecycle
+  - low-value safe candidates can be used via explicit operator override (`Use in draft anyway` / `allow_quality_override=true`)
   - safety-rejected candidates are excluded from import, draft selection, and AI suggestion actions
-  - remain visible via diagnostics/secondary controls only
-  - are hidden/de-emphasized by default in UI, with explicit operator toggle to reveal them
+  - remain visible for diagnostics under `Unsafe rejected` filter with blocked status
 
 Low-value discovered-image classification (bounded heuristic, no remote fetch):
 - classifier emits:
@@ -608,10 +584,9 @@ Media lifecycle enforcement reason codes:
 Migration operator flow (streamlined):
 1. Ingest source.
 2. Discover source images.
-3. Review useful and low-value/rejected candidates.
-4. Import safe source images (`Import anyway` is available only for safe low-value candidates).
-5. Select draft images.
-6. Generate draft with bounded context.
+3. Check images to use in draft (safe discovered + uploaded/imported).
+4. Use checked images in draft (`Use in draft anyway` is available only for safe low-value candidates).
+5. Generate draft with bounded context.
 7. Review, approve, publish, and deploy explicitly.
 
 Draft-context budget/operator diagnostics:
@@ -638,7 +613,7 @@ Migration route grouping in the UI now explicitly separates:
     - `Discovered`
     - `Uploaded`
     - `Imported` (when import/selection state indicates controlled availability)
-    - `Selected for Draft`
+    - `Included in Draft`
     - `AI Suggested`
     - `Applied`
     - `Not Available` / `Rejected`

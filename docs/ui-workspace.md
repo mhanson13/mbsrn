@@ -204,7 +204,7 @@ The dedicated migration route (`/sites/[site_id]/migration`) keeps primary opera
   - source ingest action + source snapshot summary
   - operator requirements (source of truth) + optional AI suggestion drafts
 - B. Media / Images (single source of truth for media):
-  - Site Images state (`Discovered Source Images`, `Imported Images`, `Uploaded Images`, `Selected Images`)
+  - Site Images state (`Discovered Source Images`, `Imported Images`, `Uploaded Images`, `Images included in draft`)
   - image counts and image actions
   - media-required readiness cue
 - C. Draft Readiness + Generate:
@@ -351,53 +351,44 @@ Media UX note:
   - tablet: 2 columns
   - mobile: 1 column
 - card defaults are compact (thumbnail/preview placeholder, short name, source/status badges, one primary action)
-- verbose metadata (full URL, provenance detail, suggestion/candidate diagnostics) is behind per-image `Image details`
-- per-image preview is available from an explicit `Preview` trigger (hover/focus + click toggle fallback)
-- preview is bounded (`object-fit: contain`) and does not imply import/selection state change
-- when no safe preview URL is available, UI shows deterministic reason cues:
-  - `preview_url_missing`
-  - `preview_url_unsafe`
-  - `image_not_imported`
-  - `unsupported_image_type`
-  - `storage_preview_not_available`
+- verbose metadata (full URL, provenance detail, suggestion/candidate diagnostics) is behind per-image native `Image details` disclosure
 - selected discovered-image import is controlled by runtime flag `SEO_MIGRATION_REMOTE_IMAGE_IMPORT_ENABLED` (default enabled)
 - when disabled, import action shows deterministic `remote_import_disabled` guidance
-- discovered remote-only images show import-required guidance before draft selection or AI suggestion can run
-- discovered remote-only lifecycle gating:
-  - primary action is import (`Import image`, `Import anyway`, or bulk `Import Useful Source Images` / `Import Selected Source Images`)
-  - `Select for Draft`, `Analyze image`, and `Apply suggestions` are not active until import completes
-  - edit action is labeled as discovery-notes editing while still unimported
-- import keeps explicit operator control:
-  - successful import marks asset as available/imported
-  - imported assets are not auto-selected for draft by default
-  - operator explicitly selects imported assets to include them in next draft context
-- no hotlink fallback is used for this workflow; images must be imported into workspace control before analysis/use
-- diagnostics should surface safe import rejection reason codes without exposing storage paths or raw bytes
-- AI suggestions are editable and are stored separately from operator-authored metadata until explicitly applied
 - image acquisition controls stay visible at top of Media / Images:
   - `Upload images` (compact disclosure)
-  - `Import Selected Source Images`
-  - `Discover / Refresh Source Images` (reuses existing ingest path)
-- each image card exposes an operator-safe reference token (for example `@image(backflow-4)`):
-  - `Copy reference`
-  - `Insert into requirements` (local operator field update only)
-- helper examples are shown in UI:
-  - `Use @image(backflow-4) on the Services page hero.`
-  - `Use @image(backflow-4) on the Fire Sprinkler Services page near the backflow prevention section.`
-- image references affect draft generation only after operators save the updated Operator Requirements.
+  - `Discover / Refresh Source Images`
+  - `Use checked images in draft` (bulk action)
+- checkbox semantics are operator-first:
+  - checked means `Use in draft`
+  - unchecked means leave out of the next draft
+  - unsafe rejected rows keep checkbox disabled
+- bulk action behavior (`Use checked images in draft`):
+  1. import checked safe discovered images when needed
+  2. mark them included in draft (`selected_for_draft` backend flag)
+  3. run metadata suggestion analysis where runtime support exists
+  4. apply safe suggestions when supported; otherwise keep staged suggestion state
+- per-image primary action mirrors the bulk flow:
+  - `Use in draft`
+  - `Use in draft anyway` for low-value but safe discovered images
+- low-value is a quality warning only; it is not a hard operator block
+- unsafe rejected is the hard block and stays non-importable/non-usable
+- removed controls:
+  - `Insert into requirements`
+  - per-card `Preview`
+  - per-card `View details`
+  - `Show low-value/rejected` toggles
 - lifecycle/status labels are rendered per asset to clarify state transitions:
   - `Discovered`
   - `Uploaded`
   - `Imported`
-  - `Selected for Draft`
+  - `Included in draft`
   - `AI Suggested`
   - `Applied`
   - `Not Available` / `Rejected`
-- low-value/rejected discovered candidates are hidden/de-emphasized by default and can be revealed explicitly
-- low-value safe candidates can show explicit override action (`Import anyway`) when candidate validation/safety checks passed
+- low-value safe candidates can use explicit override action (`Use in draft anyway`) when validation/safety checks pass
 - safety-rejected candidates remain non-importable and show bounded reason diagnostics only
 - non-image routes discovered during crawl-like extraction (for example `/m` or other HTML routes) are classified as rejected and are not shown as normal importable candidates
-- lightweight local media filters are available (`All`, `Needs import`, `Selected`, `Uploaded/imported`, `Suggestions available`, `Low-value/rejected`)
+- lightweight local media filters are available (`All usable images`, `Discovered`, `Uploaded/imported`, `Unsafe rejected`)
 - batch suggestion feedback is rendered with per-asset status/reason summaries:
   - `batch_status` (`Completed`, `Partial success`, `Failed`)
   - `completed_count`, `failed_count`, `skipped_count`
