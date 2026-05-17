@@ -75,6 +75,14 @@ This produces OCI-compatible images suitable for containerd on GKE.
 
 MBSRN is self-hosted on GKE, so Vercel-hosted protections do not apply.
 
+Middleware authorization bypass baseline:
+- advisory: `GHSA-f82v-jwr5-mffw`
+- affected pattern: authorization decisions that rely only on Next.js middleware and trust inbound
+  `x-middleware-subrequest` traffic
+- fixed in Next 15.x at `15.2.3+`
+- baseline control: keep all self-hosted apps on patched Next 15.x and keep route/API authorization
+  checks enforced server-side; middleware is defense-in-depth, not sole authorization.
+
 For `GHSA-c4j6-fc7j-m34r` / `CVE-2026-44578` (Next.js WebSocket upgrade SSRF), treat
 `>=13.4.13 <15.5.16` as affected in this deployment model.
 
