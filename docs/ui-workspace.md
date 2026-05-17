@@ -247,6 +247,8 @@ Compact informational-summary defaults:
 - Draft Inputs / AI Context renders a compact summary-first layout:
   - `Context Signals` dense key/value summary
   - `Bounded Provenance` dense key/value summary
+  - recommendation budget summary surfaces included-vs-available counts and trim state (for example `Recommendation context: 10 of 81 included`, `Context trimmed: Yes`)
+  - recommendations are presented as interpreted audit context; raw audit findings may be summarized/omitted for budget control and shown as secondary diagnostics context
   - long recommendation-title text is truncated in default view and disclosed through `Show full recommendation titles`
 - these sections are informational summaries, not operator action surfaces.
 
@@ -342,7 +344,7 @@ Draft-generate error envelope (422 detail) fields surfaced in UI workflows:
 Media UX note:
 - discovered source-site images and operator uploads are both visible in migration media sections
 - source discovery is bounded and same-site:
-  - homepage + prioritized internal image-bearing pages (for example projects/services/gallery/work/about)
+  - homepage + prioritized internal image-bearing pages (for example projects/services/process/gallery/work/about)
   - `Pages scanned` count is shown in migration media image counts
 - Site Images render in a compact responsive image-card grid:
   - desktop: up to 4 columns
@@ -359,7 +361,7 @@ Media UX note:
   - `unsupported_image_type`
   - `storage_preview_not_available`
 - selected discovered-image import is available behind feature flag `SEO_MIGRATION_REMOTE_IMAGE_IMPORT_ENABLED` (default disabled)
-- when disabled, import action shows deterministic `remote_image_import_disabled` guidance
+- when disabled, import action shows deterministic `remote_import_disabled` guidance
 - discovered remote-only images show import-required guidance before draft selection or AI suggestion can run
 - discovered remote-only lifecycle gating:
   - primary action is import (`Import image` or marked `Import Selected Source Images`)
@@ -388,6 +390,8 @@ Media UX note:
   - `Applied`
   - `Not Available` / `Rejected`
 - low-value/rejected discovered candidates are hidden/de-emphasized by default and can be revealed explicitly
+- low-value safe candidates can show explicit override action (`Import anyway`) when candidate validation/safety checks passed
+- safety-rejected candidates remain non-importable and show bounded reason diagnostics only
 - non-image routes discovered during crawl-like extraction (for example `/m` or other HTML routes) are classified as rejected and are not shown as normal importable candidates
 - lightweight local media filters are available (`All`, `Needs import`, `Selected`, `Uploaded/imported`, `Suggestions available`, `Low-value/rejected`)
 - batch suggestion feedback is rendered with per-asset status/reason summaries:
@@ -416,16 +420,14 @@ Media suggestion reason-code cues in UI:
   - candidate-quality classifier reasons used for low-value/rejected source discovery filtering and lifecycle gating
 
 Media import reason-code cues in UI:
-- `remote_image_import_disabled`: runtime feature flag is off
-- `remote_image_imported`: import completed (or asset already imported)
-- `image_not_found_in_source_snapshot`: requested id/url is not in current discovered snapshot
-- `image_import_unsafe_url`: URL failed scheme/format safety validation
-- `image_import_private_address_blocked`: hostname/IP blocked by SSRF safety controls
-- `unsupported_image_type`: source response is not an allowed image MIME
-- `image_too_large`: source response exceeded bounded size limits
-- `image_fetch_timeout` / `image_fetch_failed`: bounded fetch failure surfaced without sensitive URL detail
-- `image_content_type_mismatch`: declared vs sniffed type mismatch
-- `media_import_count_limit_reached`: request/workspace import limit reached
+- `remote_import_disabled`: runtime feature flag is off
+- `candidate_not_validated`: candidate is missing required validation evidence
+- `blocked_private_network`: hostname/IP blocked by SSRF safety controls
+- `unsupported_content_type`: source response is not an allowed image MIME
+- `file_too_large`: source response exceeded bounded size limits
+- `fetch_timeout`: bounded fetch timeout
+- `unsafe_redirect`: redirect target failed safety validation
+- `storage_write_failed`: workspace storage write failed
 
 Media-required readiness/quality cues:
 - draft readiness shows warning `media_required_but_not_selected` when operator requirements request real/existing media and no usable selected media exists

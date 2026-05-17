@@ -535,12 +535,15 @@ export async function importMigrationDiscoveredMediaAssets(
     {
       method: "POST",
       token,
-      body: JSON.stringify({
-        discovered_image_ids: Array.isArray(payload.discovered_image_ids) ? payload.discovered_image_ids : [],
-        normalized_urls: Array.isArray(payload.normalized_urls) ? payload.normalized_urls : [],
-        selected_for_draft:
-          typeof payload.selected_for_draft === "boolean" ? payload.selected_for_draft : null,
-      }),
+      body: JSON.stringify(
+        {
+          discovered_image_ids: Array.isArray(payload.discovered_image_ids) ? payload.discovered_image_ids : [],
+          normalized_urls: Array.isArray(payload.normalized_urls) ? payload.normalized_urls : [],
+          selected_for_draft:
+            typeof payload.selected_for_draft === "boolean" ? payload.selected_for_draft : null,
+          ...(payload.allow_quality_override === true ? { allow_quality_override: true } : {}),
+        },
+      ),
     },
   );
 }

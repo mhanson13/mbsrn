@@ -767,6 +767,9 @@ function toMediaSuggestionReasonLabel(value: string | null): string | null {
   if (normalized === "remote_image_import_disabled") {
     return "Remote source image import is currently disabled for this environment.";
   }
+  if (normalized === "remote_import_disabled") {
+    return "Remote source image import is currently disabled for this environment.";
+  }
   if (normalized === "remote_image_imported") {
     return "Source image imported into workspace media.";
   }
@@ -776,10 +779,19 @@ function toMediaSuggestionReasonLabel(value: string | null): string | null {
   if (normalized === "image_import_unsafe_url") {
     return "Source image URL is not eligible for safe import.";
   }
+  if (normalized === "candidate_not_validated") {
+    return "Source candidate was not content-validated as an importable image. Refresh discovery first.";
+  }
   if (normalized === "image_import_private_address_blocked") {
     return "Source image URL resolves to a blocked private/internal address.";
   }
+  if (normalized === "blocked_private_network") {
+    return "Source image URL resolves to a blocked private/internal address.";
+  }
   if (normalized === "image_fetch_timeout") {
+    return "Source image fetch timed out before completion.";
+  }
+  if (normalized === "fetch_timeout") {
     return "Source image fetch timed out before completion.";
   }
   if (normalized === "image_fetch_failed") {
@@ -787,6 +799,18 @@ function toMediaSuggestionReasonLabel(value: string | null): string | null {
   }
   if (normalized === "image_content_type_mismatch") {
     return "Source image content type does not match payload signature.";
+  }
+  if (normalized === "unsupported_content_type" || normalized === "unsupported_image_type") {
+    return "Source candidate content type is not importable as an image.";
+  }
+  if (normalized === "file_too_large" || normalized === "image_too_large") {
+    return "Source image exceeds the import size limit.";
+  }
+  if (normalized === "unsafe_redirect") {
+    return "Source image URL redirect chain was blocked for safety.";
+  }
+  if (normalized === "storage_write_failed") {
+    return "Source image fetch succeeded but storing the image failed.";
   }
   if (normalized === "media_import_count_limit_reached") {
     return "Source image import limit was reached for this workspace/request.";
@@ -897,7 +921,7 @@ function toMediaLifecycleBadgeClass(label: string): string {
   return "badge";
 }
 
-type MediaPrimaryAction = "import" | "select" | "suggest" | "apply" | "view_details";
+type MediaPrimaryAction = "import" | "import_override" | "select" | "suggest" | "apply" | "view_details";
 
 type MediaBrowserFilter =
   | "all"
@@ -1287,6 +1311,24 @@ function isSourceAssetImportRequired(asset: Record<string, unknown>): boolean {
   return importStatus === "discovered";
 }
 
+function isDiscoveredCandidateValidatedForImport(asset: Record<string, unknown>): boolean {
+  const contentType = (asStringOrNull(asset.content_type) || "").trim().toLowerCase();
+  const fetchStatus = (asStringOrNull(asset.fetch_status) || "").trim().toLowerCase();
+  if (contentType.startsWith("image/")) {
+    return true;
+  }
+  return fetchStatus === "validated_head" || fetchStatus === "validated_get" || fetchStatus === "validated_fetch";
+}
+
+function isDiscoveredQualityOverrideImportAllowed(asset: Record<string, unknown>): boolean {
+  const candidateQuality = mediaCandidateQuality(asset);
+  if (candidateQuality !== "low_value") {
+    return false;
+  }
+  const reason = (mediaCandidateReasonCode(asset) || "").trim().toLowerCase();
+  return reason !== "tracking_pixel_detected" && reason !== "non_image_candidate_detected";
+}
+
 function mediaAssetUnavailableReasonCode(asset: Record<string, unknown>): string | null {
   const candidateQuality = mediaCandidateQuality(asset);
   const candidateReason = mediaCandidateReasonCode(asset);
@@ -1301,6 +1343,9 @@ function mediaAssetUnavailableReasonCode(asset: Record<string, unknown>): string
   const provenance = (asStringOrNull(asset.provenance) || "").trim().toLowerCase();
   if (importStatus === "failed" || importStatus === "disabled" || importStatus === "not_available") {
     return "media_asset_not_available";
+  }
+  if (provenance === "source_site_import" && isSourceAssetImportRequired(asset) && !isDiscoveredCandidateValidatedForImport(asset)) {
+    return "candidate_not_validated";
   }
   if (provenance === "source_site_import" && isSourceAssetImportRequired(asset)) {
     return "media_asset_not_imported";
@@ -3688,6 +3733,7 @@ export function MigrationWorkspacePanel({
     asNonNegativeInt(mediaSummary.pages_scanned_count)
     ?? asNonNegativeInt(asRecord(sourceSnapshot || {}).pages_scanned_count)
     ?? 0;
+  const pagesScannedUrls = asStringList(asRecord(sourceSnapshot || {}).pages_scanned);
   const usefulDiscoveredImagesCount =
     asNonNegativeInt(draftReadinessPreflight.useful_discovered_images_count)
     ?? asNonNegativeInt(draftInputSummary.useful_discovered_images_count)
@@ -3833,6 +3879,10 @@ export function MigrationWorkspacePanel({
         const suggestionReason = toMediaSuggestionReasonLabel(asStringOrNull(suggestion.reason_code));
         const lifecycleLabels = toMediaLifecycleLabels(asset);
         const remoteImportRequired = isSourceAssetImportRequired(asset);
+        const validatedForImport = isDiscoveredCandidateValidatedForImport(asset);
+        const canImportWithOverride = remoteImportRequired
+          && validatedForImport
+          && isDiscoveredQualityOverrideImportAllowed(asset);
         const unavailableReasonCode = mediaAssetUnavailableReasonCode(asset);
         const unavailableReason = toMediaSuggestionReasonLabel(unavailableReasonCode);
         const canSelectForDraft = isMediaAssetUsableForDraft(asset);
@@ -3876,8 +3926,10 @@ export function MigrationWorkspacePanel({
             ? "Discovered"
             : "Imported";
         let primaryAction: MediaPrimaryAction = "view_details";
-        if (remoteImportRequired && candidateQuality === "useful") {
+        if (remoteImportRequired && candidateQuality === "useful" && validatedForImport) {
           primaryAction = "import";
+        } else if (canImportWithOverride) {
+          primaryAction = "import_override";
         } else if (canSelectForDraft && !selected) {
           primaryAction = "select";
         } else if (canSuggestMetadata && suggestionCompleted && !suggestionApplied) {
@@ -3888,6 +3940,8 @@ export function MigrationWorkspacePanel({
         const compactReasonLabel =
           primaryAction === "import"
             ? "Import before draft selection or AI analysis."
+            : primaryAction === "import_override"
+              ? "Candidate is low-value. Import anyway only if operator-reviewed."
             : primaryAction === "apply"
               ? "Suggestions ready to apply."
               : primaryAction === "suggest" && suggestionReason
@@ -3909,6 +3963,8 @@ export function MigrationWorkspacePanel({
           suggestionCompleted,
           suggestionApplied,
           remoteImportRequired,
+          validatedForImport,
+          canImportWithOverride,
           candidateQuality,
           mediaUnavailableReasonCode: unavailableReasonCode,
           mediaUnavailableReason: unavailableReason,
@@ -5677,7 +5733,7 @@ export function MigrationWorkspacePanel({
   };
 
   const handleImportSelectedDiscoveredMediaAssets = async (
-    options?: { assetIds?: string[] },
+    options?: { assetIds?: string[]; allowQualityOverride?: boolean },
   ): Promise<void> => {
     const importAssetIds = (() => {
       const provided = options?.assetIds || [];
@@ -5714,6 +5770,7 @@ export function MigrationWorkspacePanel({
       const batchResult = await importMigrationDiscoveredMediaAssets(token, businessId, siteId, {
         discovered_image_ids: importAssetIds,
         selected_for_draft: true,
+        ...(options?.allowQualityOverride === true ? { allow_quality_override: true } : {}),
       });
       setMediaImportBatchSnapshot(asRecord(batchResult));
       setSelectedDiscoveredImportIds((current) => {
@@ -6414,13 +6471,16 @@ export function MigrationWorkspacePanel({
       <div className="panel stack workspace-section-block" data-testid="migration-source-summary">
         <h3>Source Snapshot Summary</h3>
         {sourceSnapshot ? (
-          <div className="stack-tight">
-            <span className="hint">Title: {asString(sourceSnapshot.title) || "-"}</span>
-            <span className="hint">Description: {asString(sourceSnapshot.meta_description) || "-"}</span>
-            <span className="hint">Canonical: {asString(sourceSnapshot.canonical_url) || "-"}</span>
-            <span className="hint">Headings: {asStringList(sourceSnapshot.headings).length}</span>
-            <span className="hint">Internal links: {asStringList(sourceSnapshot.internal_links).length}</span>
-          </div>
+          <details className="workspace-details-shell" data-testid="migration-source-summary-details">
+            <summary>Show source snapshot details</summary>
+            <div className="stack-tight">
+              <span className="hint">Title: {asString(sourceSnapshot.title) || "-"}</span>
+              <span className="hint">Description: {asString(sourceSnapshot.meta_description) || "-"}</span>
+              <span className="hint">Canonical: {asString(sourceSnapshot.canonical_url) || "-"}</span>
+              <span className="hint">Headings: {asStringList(sourceSnapshot.headings).length}</span>
+              <span className="hint">Internal links: {asStringList(sourceSnapshot.internal_links).length}</span>
+            </div>
+          </details>
         ) : (
           <WorkspaceEmptyStateCard data-testid="migration-source-summary-empty-state">
             <p className="hint muted">No source snapshot ingested yet.</p>
@@ -6583,6 +6643,16 @@ export function MigrationWorkspacePanel({
             <strong>Image Counts</strong>
             <span className="hint">Discovered Source Images: {sourceDiscoveredMediaCount}</span>
             <span className="hint">Pages scanned: {pagesScannedCount}</span>
+            {pagesScannedUrls.length > 0 ? (
+              <details className="workspace-details-shell" data-testid="migration-media-pages-scanned">
+                <summary>Show scanned pages</summary>
+                <ul className="stack-tight">
+                  {pagesScannedUrls.slice(0, 8).map((url, index) => (
+                    <li key={`migration-media-pages-scanned-${index}`} className="hint muted">{url}</li>
+                  ))}
+                </ul>
+              </details>
+            ) : null}
             <span className="hint">Useful discovered candidates: {usefulDiscoveredImagesCount}</span>
             <span className="hint">Low-value discovered candidates: {lowValueDiscoveredImagesCount}</span>
             <span className="hint">Rejected discovered candidates: {rejectedDiscoveredImagesCount}</span>
@@ -6855,6 +6925,22 @@ export function MigrationWorkspacePanel({
                             disabled={isActionInFlight}
                           >
                             Import image
+                          </button>
+                        ) : null}
+                        {item.primaryAction === "import_override" ? (
+                          <button
+                            type="button"
+                            className="button button-secondary"
+                            data-testid={`migration-media-primary-action-${item.assetId}`}
+                            onClick={() =>
+                              void handleImportSelectedDiscoveredMediaAssets({
+                                assetIds: [item.assetId],
+                                allowQualityOverride: true,
+                              })
+                            }
+                            disabled={isActionInFlight}
+                          >
+                            Import anyway
                           </button>
                         ) : null}
                         {item.primaryAction === "select" ? (
@@ -7265,9 +7351,20 @@ export function MigrationWorkspacePanel({
             <strong>Context Signals</strong>
             <div className="migration-compact-kv">
               <span className="migration-compact-kv-row">
-                <span className="migration-compact-kv-label">Recommendations included</span>
+                <span className="migration-compact-kv-label">Recommendation context</span>
                 <span className="migration-compact-kv-value">
-                  {asNonNegativeInt(draftInputSummary.recommendations_included_count) ?? 0}
+                  {(asNonNegativeInt(draftInputSummary.recommendations_included_count) ?? 0)}
+                  {" of "}
+                  {(asNonNegativeInt(draftInputSummary.recommendations_available_count)
+                    ?? asNonNegativeInt(draftInputSummary.recommendations_included_count)
+                    ?? 0)}
+                  {" included"}
+                </span>
+              </span>
+              <span className="migration-compact-kv-row">
+                <span className="migration-compact-kv-label">Recommendation basis</span>
+                <span className="migration-compact-kv-value">
+                  {(asStringOrNull(draftInputSummary.recommendations_context_basis) || "interpreted_audit_context").replace(/_/g, " ")}
                 </span>
               </span>
               <span className="migration-compact-kv-row">
@@ -7309,12 +7406,21 @@ export function MigrationWorkspacePanel({
                 </span>
               </span>
               <span className="migration-compact-kv-row">
-                <span className="migration-compact-kv-label">Audit findings included</span>
+                <span className="migration-compact-kv-label">Raw audit findings included</span>
                 <span className="migration-compact-kv-value">
-                  {asNonNegativeInt(draftInputSummary.audit_findings_included_count) ?? 0}
+                  {asNonNegativeInt(draftInputSummary.raw_audit_findings_included_count)
+                    ?? asNonNegativeInt(draftInputSummary.audit_findings_included_count)
+                    ?? 0}
                 </span>
               </span>
             </div>
+            {(asStringOrNull(draftInputSummary.raw_audit_findings_note)
+              || "Recommendations summarize audit evidence for draft context.") ? (
+              <span className="hint muted" data-testid="migration-draft-input-audit-context-note">
+                {asStringOrNull(draftInputSummary.raw_audit_findings_note)
+                  || "Recommendations summarize audit evidence for draft context."}
+              </span>
+            ) : null}
             {topRecommendationTitlesCompact.truncated ? (
               <details
                 className="workspace-details-shell migration-compact-details"
@@ -7360,6 +7466,22 @@ export function MigrationWorkspacePanel({
                 <span className="migration-compact-kv-label">AI context trimmed</span>
                 <span className="migration-compact-kv-value">
                   {formatBooleanStateLabel(asBooleanOrNull(draftInputSummary.ai_context_trimmed))}
+                </span>
+              </span>
+              <span className="migration-compact-kv-row" data-testid="migration-draft-input-recommendation-trimmed">
+                <span className="migration-compact-kv-label">Recommendation context trimmed</span>
+                <span className="migration-compact-kv-value">
+                  {formatBooleanStateLabel(asBooleanOrNull(draftInputSummary.recommendations_context_trimmed))}
+                </span>
+              </span>
+              <span className="migration-compact-kv-row" data-testid="migration-draft-input-context-budget-summary">
+                <span className="migration-compact-kv-label">Draft context trimmed</span>
+                <span className="migration-compact-kv-value">
+                  {formatBooleanStateLabel(
+                    asBooleanOrNull(draftInputSummary.ai_context_trimmed)
+                    || asBooleanOrNull(draftInputSummary.media_context_trimmed)
+                    || asBooleanOrNull(draftInputSummary.recommendations_context_trimmed),
+                  )}
                 </span>
               </span>
             </div>

@@ -121,6 +121,7 @@ _SCANNABLE_PATH_HINTS = (
     "/work",
     "/portfolio",
     "/services",
+    "/process",
     "/about",
 )
 _SCANNABLE_LABEL_HINTS = (
@@ -735,6 +736,8 @@ def _internal_link_priority(*, url: str, label: str | None) -> int:
     if "/projects" in lowered_url:
         score += 8
     if "/services" in lowered_url:
+        score += 6
+    if "/process" in lowered_url:
         score += 6
     return score
 

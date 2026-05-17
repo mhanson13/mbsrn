@@ -385,6 +385,7 @@ class SEOMigrationDiscoveredMediaImportRequest(BaseModel):
     discovered_image_ids: list[str] = Field(default_factory=list)
     normalized_urls: list[str] = Field(default_factory=list)
     selected_for_draft: bool | None = None
+    allow_quality_override: bool = False
 
     @field_validator("discovered_image_ids", mode="before")
     @classmethod
@@ -507,6 +508,8 @@ class SEOMigrationMediaAssetRead(BaseModel):
     asset_id: str | None = None
     display_filename: str | None = None
     content_type: str | None = None
+    fetch_status: str | None = None
+    validation_checked_at: str | None = None
     size_bytes: int | None = None
     width: int | None = None
     height: int | None = None

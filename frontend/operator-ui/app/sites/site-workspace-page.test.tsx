@@ -3784,6 +3784,9 @@ describe("site migration workflow route", () => {
               provenance: "source_site_import",
               import_status: "discovered",
               selected_for_draft: false,
+              candidate_quality: "useful",
+              fetch_status: "validated_head",
+              content_type: "image/jpeg",
             },
           ],
           operator_uploaded: [],
@@ -3852,6 +3855,9 @@ describe("site migration workflow route", () => {
               provenance: "source_site_import",
               import_status: "discovered",
               selected_for_draft: false,
+              candidate_quality: "useful",
+              fetch_status: "validated_head",
+              content_type: "image/jpeg",
             },
           ],
           operator_uploaded: [],
@@ -3875,7 +3881,7 @@ describe("site migration workflow route", () => {
         {
           asset_id: "srcimg-disabled",
           status: "disabled",
-          reason_code: "remote_image_import_disabled",
+          reason_code: "remote_import_disabled",
         },
       ],
     });
@@ -3914,6 +3920,8 @@ describe("site migration workflow route", () => {
               import_status: "discovered",
               selected_for_draft: false,
               candidate_quality: "useful",
+              fetch_status: "validated_head",
+              content_type: "image/jpeg",
             },
             {
               asset_id: "srcimg-low",
@@ -3924,6 +3932,8 @@ describe("site migration workflow route", () => {
               selected_for_draft: false,
               candidate_quality: "low_value",
               quality_reason: "placeholder_image_detected",
+              fetch_status: "validated_head",
+              content_type: "image/png",
             },
           ],
           operator_uploaded: [],
@@ -3953,6 +3963,7 @@ describe("site migration workflow route", () => {
     await userEvent.setup().click(showLowValueButton);
     expect(sourceList).toHaveTextContent("transparent_placeholder.png");
     expect(sourceList).toHaveTextContent("Candidate was classified as placeholder-like imagery.");
+    expect(within(sourceList).getByRole("button", { name: "Import anyway" })).toBeInTheDocument();
   });
 
   it("surfaces media-required readiness warning when no usable media is selected", async () => {

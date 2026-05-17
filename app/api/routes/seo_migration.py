@@ -844,6 +844,7 @@ def import_seo_migration_discovered_media_assets(
             discovered_image_ids=payload.discovered_image_ids,
             normalized_urls=payload.normalized_urls,
             selected_for_draft=payload.selected_for_draft,
+            allow_quality_override=bool(payload.allow_quality_override),
             principal_id=tenant_context.principal_id,
         )
     except SEOMigrationNotFoundError as exc:

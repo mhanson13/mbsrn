@@ -221,7 +221,10 @@ Purpose:
 
 Current summary fields include:
 - recommendation coverage:
+  - `recommendations_available_count`
   - `recommendations_included_count`
+  - `recommendations_context_trimmed`
+  - `recommendations_context_basis`
   - `recommendation_categories_included`
   - `top_recommendation_titles`
 - analytics/competitor/audit/operator coverage:
@@ -233,7 +236,9 @@ Current summary fields include:
   - `requirement_suggestions_applied_count`
   - `context_sources_used_for_requirement_suggestions`
   - `enriched_business_context_included`
-  - `audit_findings_included_count`
+  - `raw_audit_findings_included_count`
+  - `raw_audit_findings_included`
+  - `raw_audit_findings_note`
 - media coverage:
   - `source_site_images_discovered_count`
   - `source_site_images_imported_count`
@@ -252,6 +257,7 @@ Current summary fields include:
 Interpretation:
 - this is bounded metadata for trust and debugging, not a full prompt dump
 - values represent context presence/counts and budget behavior, not guaranteed quality of source data
+- recommendations are the primary interpreted audit context in draft inputs; raw audit findings may be summarized or omitted in primary context to control request size
 - `ga4_signals_included` is derived from site-scoped GA4 configuration only and does not use global/default GA4 property fallback
 - missing GA4 does not block migration drafts; GA4-driven context is simply omitted/marked unavailable
 - in the primary workflow UI, this section is provenance-only:
@@ -324,7 +330,7 @@ Source-site media discovery:
   - `source_snapshot.discovered_images`
 - source image discovery now scans a bounded set of source pages (default max 8):
   - homepage always
-  - prioritized same-site navigation/pages such as `/projects`, `/project`, `/gallery`, `/work`, `/portfolio`, `/services`, `/about`
+  - prioritized same-site navigation/pages such as `/projects`, `/project`, `/gallery`, `/work`, `/portfolio`, `/services`, `/process`, `/about`
   - discovery does not crawl arbitrary external sites
 - each discovered candidate includes bounded source provenance:
   - `source_page_url`
@@ -487,6 +493,7 @@ Error contract highlights:
 
 Draft generation media contract:
 - only selected media metadata is included in AI context (`migration_context.media_assets.selected_assets`)
+- discovered-but-not-selected source images are summarized in counts/provenance only and are not expanded into full draft media context
 - selected media context is trimmed to a bounded count when necessary
 - raw image bytes/base64 are not sent to the AI provider
 - draft context uses effective metadata precedence:
@@ -515,7 +522,7 @@ Selected discovered-image import (feature-flagged, 2026-05):
 - feature flag: `SEO_MIGRATION_REMOTE_IMAGE_IMPORT_ENABLED`
   - default: `false` (disabled unless explicitly enabled in runtime config)
 - when disabled:
-  - discovered import endpoint returns per-asset `status=disabled` with reason `remote_image_import_disabled`
+  - discovered import endpoint returns per-asset `status=disabled` with reason `remote_import_disabled`
   - metadata suggestion for remote-only discovered assets still returns `image_not_imported`
 - imports are operator-selected only:
   - endpoint accepts discovered ids/URLs already present in `source_snapshot.discovered_images`
@@ -543,18 +550,20 @@ Import safety controls:
 - content-type mismatch is rejected
 
 Import reason codes:
-- `remote_image_import_disabled`
-- `remote_image_imported`
-- `image_not_found_in_source_snapshot`
-- `image_import_unsafe_url`
-- `image_import_private_address_blocked`
-- `unsupported_image_type`
-- `image_too_large`
-- `image_fetch_timeout`
-- `image_fetch_failed`
-- `image_content_type_mismatch`
-- `media_asset_not_authorized`
-- `media_import_count_limit_reached`
+- `remote_import_disabled`
+- `candidate_not_validated`
+- `blocked_private_network`
+- `unsupported_content_type`
+- `file_too_large`
+- `fetch_timeout`
+- `unsafe_redirect`
+- `storage_write_failed`
+
+Low-value override import semantics:
+- low-value candidates that pass safety and validation checks can be imported only through explicit operator override (`allow_quality_override=true`)
+- safety-rejected candidates remain non-importable
+- non-image routes/HTML responses (for example `/m`) remain non-importable even with override
+- import remains explicit operator action only (no auto-import and no auto-select)
 
 Media lifecycle action rules (coherence pass, 2026-05):
 - discovered remote source assets are not draft-usable by default (`import_status=discovered`)
@@ -564,7 +573,8 @@ Media lifecycle action rules (coherence pass, 2026-05):
 - uploaded/imported assets:
   - support `Select for Draft`, `Analyze image`, and `Apply suggestions` (when suggestion is completed and not already applied)
 - low-value/rejected discovered candidates:
-  - are excluded from draft selection and AI suggestion actions
+  - low-value safe candidates can be imported with explicit override and then follow the normal imported-asset lifecycle
+  - safety-rejected candidates are excluded from import, draft selection, and AI suggestion actions
   - remain visible via diagnostics/secondary controls only
   - are hidden/de-emphasized by default in UI, with explicit operator toggle to reveal them
 
@@ -590,6 +600,15 @@ Media lifecycle enforcement reason codes:
 - `tracking_pixel_detected`
 - `layout_asset_detected`
 - `non_image_candidate_detected`
+
+Migration operator flow (streamlined):
+1. Ingest source.
+2. Discover source images.
+3. Review useful and low-value/rejected candidates.
+4. Import safe source images (`Import anyway` is available only for safe low-value candidates).
+5. Select draft images.
+6. Generate draft with bounded context.
+7. Review, approve, publish, and deploy explicitly.
 
 ## Site SEO Workspace Grouping and Diagnostics (2026-05)
 Migration route grouping in the UI now explicitly separates:

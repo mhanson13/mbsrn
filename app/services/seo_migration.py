@@ -164,15 +164,22 @@ _MIGRATION_MEDIA_REASON_PROVIDER_RESPONSE_INVALID = "provider_response_invalid"
 _MIGRATION_MEDIA_REASON_ASSET_NOT_FOUND = "media_asset_not_found"
 _MIGRATION_MEDIA_REASON_ASSET_NOT_AUTHORIZED = "media_asset_not_authorized"
 _MIGRATION_MEDIA_REASON_BATCH_LIMIT_REACHED = "media_suggestion_batch_limit_reached"
-_MIGRATION_MEDIA_REASON_REMOTE_IMPORT_DISABLED = "remote_image_import_disabled"
+_MIGRATION_MEDIA_REASON_REMOTE_IMPORT_DISABLED = "remote_import_disabled"
 _MIGRATION_MEDIA_REASON_REMOTE_IMAGE_IMPORTED = "remote_image_imported"
 _MIGRATION_MEDIA_REASON_IMAGE_NOT_FOUND_IN_SOURCE_SNAPSHOT = "image_not_found_in_source_snapshot"
-_MIGRATION_MEDIA_REASON_IMAGE_IMPORT_UNSAFE_URL = "image_import_unsafe_url"
-_MIGRATION_MEDIA_REASON_IMAGE_IMPORT_PRIVATE_ADDRESS_BLOCKED = "image_import_private_address_blocked"
-_MIGRATION_MEDIA_REASON_IMAGE_FETCH_TIMEOUT = "image_fetch_timeout"
+_MIGRATION_MEDIA_REASON_CANDIDATE_NOT_VALIDATED = "candidate_not_validated"
+_MIGRATION_MEDIA_REASON_BLOCKED_PRIVATE_NETWORK = "blocked_private_network"
+_MIGRATION_MEDIA_REASON_FETCH_TIMEOUT = "fetch_timeout"
 _MIGRATION_MEDIA_REASON_IMAGE_FETCH_FAILED = "image_fetch_failed"
-_MIGRATION_MEDIA_REASON_IMAGE_CONTENT_TYPE_MISMATCH = "image_content_type_mismatch"
+_MIGRATION_MEDIA_REASON_UNSUPPORTED_CONTENT_TYPE = "unsupported_content_type"
+_MIGRATION_MEDIA_REASON_FILE_TOO_LARGE = "file_too_large"
+_MIGRATION_MEDIA_REASON_UNSAFE_REDIRECT = "unsafe_redirect"
+_MIGRATION_MEDIA_REASON_STORAGE_WRITE_FAILED = "storage_write_failed"
 _MIGRATION_MEDIA_REASON_IMPORT_COUNT_LIMIT_REACHED = "media_import_count_limit_reached"
+_MIGRATION_MEDIA_REASON_IMAGE_IMPORT_UNSAFE_URL = _MIGRATION_MEDIA_REASON_CANDIDATE_NOT_VALIDATED
+_MIGRATION_MEDIA_REASON_IMAGE_IMPORT_PRIVATE_ADDRESS_BLOCKED = _MIGRATION_MEDIA_REASON_BLOCKED_PRIVATE_NETWORK
+_MIGRATION_MEDIA_REASON_IMAGE_FETCH_TIMEOUT = _MIGRATION_MEDIA_REASON_FETCH_TIMEOUT
+_MIGRATION_MEDIA_REASON_IMAGE_CONTENT_TYPE_MISMATCH = _MIGRATION_MEDIA_REASON_UNSUPPORTED_CONTENT_TYPE
 _MIGRATION_MEDIA_REASON_ASSET_NOT_IMPORTED = "media_asset_not_imported"
 _MIGRATION_MEDIA_REASON_ASSET_NOT_AVAILABLE = "media_asset_not_available"
 _MIGRATION_MEDIA_REASON_ASSET_LOW_VALUE = "media_asset_low_value"
@@ -1613,6 +1620,7 @@ class SEOMigrationService:
         discovered_image_ids: list[str],
         normalized_urls: list[str],
         selected_for_draft: bool | None,
+        allow_quality_override: bool = False,
         principal_id: str | None,
     ) -> dict[str, object]:
         workspace = self.get_workspace(business_id=business_id, site_id=site_id)
@@ -1768,6 +1776,46 @@ class SEOMigrationService:
                 )
                 continue
 
+            candidate_quality = _normalize_media_candidate_quality(target_asset.get("candidate_quality"))
+            quality_reason = _normalize_media_quality_reason(target_asset.get("quality_reason"))
+            if candidate_quality == _MIGRATION_MEDIA_CANDIDATE_QUALITY_REJECTED:
+                failed_count += 1
+                results.append(
+                    {
+                        "asset_id": target_asset_id,
+                        "normalized_url": _normalize_discovered_media_lookup_url(target_asset.get("normalized_url")),
+                        "status": "failed",
+                        "reason_code": quality_reason or _MIGRATION_MEDIA_REASON_ASSET_REJECTED,
+                        "media_asset": None,
+                    }
+                )
+                continue
+            if candidate_quality == _MIGRATION_MEDIA_CANDIDATE_QUALITY_LOW_VALUE:
+                if not allow_quality_override:
+                    failed_count += 1
+                    results.append(
+                        {
+                            "asset_id": target_asset_id,
+                            "normalized_url": _normalize_discovered_media_lookup_url(target_asset.get("normalized_url")),
+                            "status": "failed",
+                            "reason_code": quality_reason or _MIGRATION_MEDIA_REASON_ASSET_LOW_VALUE,
+                            "media_asset": None,
+                        }
+                    )
+                    continue
+                if not _is_discovered_media_quality_override_allowed(target_asset):
+                    failed_count += 1
+                    results.append(
+                        {
+                            "asset_id": target_asset_id,
+                            "normalized_url": _normalize_discovered_media_lookup_url(target_asset.get("normalized_url")),
+                            "status": "failed",
+                            "reason_code": quality_reason or _MIGRATION_MEDIA_REASON_ASSET_REJECTED,
+                            "media_asset": None,
+                        }
+                    )
+                    continue
+
             if _is_discovered_media_asset_imported(target_asset):
                 selected_value = (
                     bool(selected_for_draft)
@@ -1785,6 +1833,19 @@ class SEOMigrationService:
                         "status": "skipped",
                         "reason_code": _MIGRATION_MEDIA_REASON_REMOTE_IMAGE_IMPORTED,
                         "media_asset": _sanitize_media_asset_for_read(target_asset),
+                    }
+                )
+                continue
+
+            if not _is_discovered_media_candidate_validated_for_import(target_asset):
+                failed_count += 1
+                results.append(
+                    {
+                        "asset_id": target_asset_id,
+                        "normalized_url": _normalize_discovered_media_lookup_url(target_asset.get("normalized_url")),
+                        "status": "failed",
+                        "reason_code": _MIGRATION_MEDIA_REASON_CANDIDATE_NOT_VALIDATED,
+                        "media_asset": None,
                     }
                 )
                 continue
@@ -1809,7 +1870,7 @@ class SEOMigrationService:
                     or ""
                 ),
             )
-            fetch_reason_code = _normalize_string(fetch_result.get("reason_code"), max_length=80)
+            fetch_reason_code = _normalize_import_reason_code(fetch_result.get("reason_code"))
             if fetch_reason_code != _MIGRATION_MEDIA_REASON_REMOTE_IMAGE_IMPORTED:
                 failed_count += 1
                 results.append(
@@ -1844,7 +1905,7 @@ class SEOMigrationService:
                         "asset_id": target_asset_id,
                         "normalized_url": _normalize_discovered_media_lookup_url(target_asset.get("normalized_url")),
                         "status": "failed",
-                        "reason_code": _MIGRATION_MEDIA_REASON_UNSUPPORTED_IMAGE_TYPE,
+                        "reason_code": _MIGRATION_MEDIA_REASON_UNSUPPORTED_CONTENT_TYPE,
                         "media_asset": None,
                     }
                 )
@@ -1857,11 +1918,24 @@ class SEOMigrationService:
                 asset_id=target_asset_id,
                 extension=extension,
             )
-            _write_workspace_media_file(
-                storage_root=self.media_storage_root,
-                storage_key=storage_key,
-                payload=payload,
-            )
+            try:
+                _write_workspace_media_file(
+                    storage_root=self.media_storage_root,
+                    storage_key=storage_key,
+                    payload=payload,
+                )
+            except OSError:
+                failed_count += 1
+                results.append(
+                    {
+                        "asset_id": target_asset_id,
+                        "normalized_url": _normalize_discovered_media_lookup_url(target_asset.get("normalized_url")),
+                        "status": "failed",
+                        "reason_code": _MIGRATION_MEDIA_REASON_STORAGE_WRITE_FAILED,
+                        "media_asset": None,
+                    }
+                )
+                continue
             width, height = _detect_image_dimensions(payload, detected_content_type)
             normalized_final_url = _normalize_discovered_media_lookup_url(fetch_result.get("final_url"))
             selected_value = (
@@ -1938,7 +2012,7 @@ class SEOMigrationService:
         current_url = _normalize_discovered_media_lookup_url(url) or ""
         if not current_url:
             return {
-                "reason_code": _MIGRATION_MEDIA_REASON_IMAGE_IMPORT_UNSAFE_URL,
+                "reason_code": _MIGRATION_MEDIA_REASON_CANDIDATE_NOT_VALIDATED,
             }
         opener = urllib.request.build_opener(_SEOMediaImportNoRedirectHandler())
         redirect_count = 0
@@ -1961,14 +2035,14 @@ class SEOMigrationService:
                     declared_content_type = _normalize_media_content_type(raw_declared_content_type)
                     if raw_declared_content_type and declared_content_type is None:
                         return {
-                            "reason_code": _MIGRATION_MEDIA_REASON_UNSUPPORTED_IMAGE_TYPE,
+                            "reason_code": _MIGRATION_MEDIA_REASON_UNSUPPORTED_CONTENT_TYPE,
                         }
                     if (
                         declared_content_type is not None
                         and declared_content_type not in _MIGRATION_MEDIA_UPLOAD_ALLOWED_CONTENT_TYPES
                     ):
                         return {
-                            "reason_code": _MIGRATION_MEDIA_REASON_UNSUPPORTED_IMAGE_TYPE,
+                            "reason_code": _MIGRATION_MEDIA_REASON_UNSUPPORTED_CONTENT_TYPE,
                         }
                     payload_chunks: list[bytes] = []
                     total_bytes = 0
@@ -1981,7 +2055,7 @@ class SEOMigrationService:
                         total_bytes += len(chunk)
                         if total_bytes > _MIGRATION_MEDIA_UPLOAD_MAX_BYTES:
                             return {
-                                "reason_code": _MIGRATION_MEDIA_REASON_IMAGE_TOO_LARGE,
+                                "reason_code": _MIGRATION_MEDIA_REASON_FILE_TOO_LARGE,
                             }
                         payload_chunks.append(chunk)
                     payload = b"".join(payload_chunks)
@@ -1992,11 +2066,11 @@ class SEOMigrationService:
                     detected_content_type = _detect_media_content_type(payload)
                     if detected_content_type not in _MIGRATION_MEDIA_UPLOAD_ALLOWED_CONTENT_TYPES:
                         return {
-                            "reason_code": _MIGRATION_MEDIA_REASON_UNSUPPORTED_IMAGE_TYPE,
+                            "reason_code": _MIGRATION_MEDIA_REASON_UNSUPPORTED_CONTENT_TYPE,
                         }
                     if declared_content_type is not None and declared_content_type != detected_content_type:
                         return {
-                            "reason_code": _MIGRATION_MEDIA_REASON_IMAGE_CONTENT_TYPE_MISMATCH,
+                            "reason_code": _MIGRATION_MEDIA_REASON_UNSUPPORTED_CONTENT_TYPE,
                         }
                     final_url = _normalize_discovered_media_lookup_url(getattr(response, "url", current_url))
                     return {
@@ -2009,12 +2083,12 @@ class SEOMigrationService:
                 if exc.code in {301, 302, 303, 307, 308}:
                     if redirect_count >= _MIGRATION_MEDIA_IMPORT_MAX_REDIRECTS:
                         return {
-                            "reason_code": _MIGRATION_MEDIA_REASON_IMAGE_FETCH_FAILED,
+                            "reason_code": _MIGRATION_MEDIA_REASON_UNSAFE_REDIRECT,
                         }
                     location = _normalize_string(exc.headers.get("Location") if exc.headers else None, max_length=2048)
                     if location is None:
                         return {
-                            "reason_code": _MIGRATION_MEDIA_REASON_IMAGE_FETCH_FAILED,
+                            "reason_code": _MIGRATION_MEDIA_REASON_UNSAFE_REDIRECT,
                         }
                     current_url = urllib.parse.urljoin(current_url, location)
                     redirect_count += 1
@@ -2024,13 +2098,13 @@ class SEOMigrationService:
                 }
             except TimeoutError:
                 return {
-                    "reason_code": _MIGRATION_MEDIA_REASON_IMAGE_FETCH_TIMEOUT,
+                    "reason_code": _MIGRATION_MEDIA_REASON_FETCH_TIMEOUT,
                 }
             except urllib.error.URLError as exc:
                 reason_text = str(getattr(exc, "reason", "")).lower()
                 if "timed out" in reason_text:
                     return {
-                        "reason_code": _MIGRATION_MEDIA_REASON_IMAGE_FETCH_TIMEOUT,
+                        "reason_code": _MIGRATION_MEDIA_REASON_FETCH_TIMEOUT,
                     }
                 return {
                     "reason_code": _MIGRATION_MEDIA_REASON_IMAGE_FETCH_FAILED,
@@ -12816,7 +12890,8 @@ class SEOMigrationService:
             sort_order="desc",
         )
         latest_recommendation = recommendation_page.items[0] if recommendation_page.items else None
-        recommendation_count = max(0, int(recommendation_page.total))
+        recommendation_available_count = max(0, int(recommendation_page.total))
+        recommendation_included_count = len(recommendation_page.items)
         recommendation_titles = _collect_recommendation_titles(
             recommendation_page.items,
             max_items=_MAX_DRAFT_INPUT_RECOMMENDATION_TITLES,
@@ -12839,7 +12914,7 @@ class SEOMigrationService:
             latest_audit_run=latest_audit_run,
             latest_completed_recommendation_run=latest_completed_recommendation_run,
             latest_recommendation_narrative=latest_recommendation_narrative,
-            recommendation_count=recommendation_count,
+            recommendation_count=recommendation_available_count,
             latest_recommendation_created_at=(
                 latest_recommendation.created_at if latest_recommendation is not None else None
             ),
@@ -12882,7 +12957,8 @@ class SEOMigrationService:
             workspace=workspace,
             context_json=context_json,
             context_summary=context_summary,
-            recommendation_count=recommendation_count,
+            recommendation_available_count=recommendation_available_count,
+            recommendation_included_count=recommendation_included_count,
             recommendation_titles=recommendation_titles,
             recommendation_categories=recommendation_categories,
             latest_audit_summary=latest_audit_summary,
@@ -13151,7 +13227,8 @@ class SEOMigrationService:
         workspace: SEOMigrationWorkspace,
         context_json: dict[str, object],
         context_summary: dict[str, object],
-        recommendation_count: int,
+        recommendation_available_count: int,
+        recommendation_included_count: int,
         recommendation_titles: list[str],
         recommendation_categories: list[str],
         latest_audit_summary: object | None,
@@ -13198,7 +13275,11 @@ class SEOMigrationService:
             media_assets_payload=media_assets_payload,
         )
         summary = {
-            "recommendations_included_count": max(0, int(recommendation_count)),
+            "recommendations_available_count": max(0, int(recommendation_available_count)),
+            "recommendations_included_count": max(0, int(recommendation_included_count)),
+            "recommendations_context_trimmed": max(0, int(recommendation_included_count))
+            < max(0, int(recommendation_available_count)),
+            "recommendations_context_basis": "interpreted_audit_context",
             "recommendation_categories_included": recommendation_categories,
             "top_recommendation_titles": recommendation_titles,
             "gsc_signals_included": gsc_signals_included,
@@ -13214,6 +13295,13 @@ class SEOMigrationService:
             "context_sources_used_for_requirement_suggestions": [],
             "enriched_business_context_included": bool(enriched_notes) or bool(business_facts),
             "audit_findings_included_count": max(0, int(audit_findings_count)),
+            "raw_audit_findings_included_count": max(0, int(audit_findings_count)),
+            "raw_audit_findings_included": max(0, int(audit_findings_count)) > 0,
+            "raw_audit_findings_note": (
+                None
+                if max(0, int(audit_findings_count)) > 0
+                else "Recommendations are used as interpreted audit context."
+            ),
             "source_site_images_discovered_count": max(
                 0,
                 int(media_assets_payload.get("source_discovered_count") or 0),
@@ -18607,14 +18695,55 @@ def _is_discovered_media_asset_imported(value: object) -> bool:
     return import_status in {"selected", "imported", "available"}
 
 
+def _normalize_import_reason_code(value: object) -> str | None:
+    normalized = _normalize_string(value, max_length=80)
+    if normalized is None:
+        return None
+    lowered = normalized.lower()
+    alias_map = {
+        "remote_image_import_disabled": _MIGRATION_MEDIA_REASON_REMOTE_IMPORT_DISABLED,
+        "image_import_unsafe_url": _MIGRATION_MEDIA_REASON_CANDIDATE_NOT_VALIDATED,
+        "image_import_private_address_blocked": _MIGRATION_MEDIA_REASON_BLOCKED_PRIVATE_NETWORK,
+        "image_fetch_timeout": _MIGRATION_MEDIA_REASON_FETCH_TIMEOUT,
+        "unsupported_image_type": _MIGRATION_MEDIA_REASON_UNSUPPORTED_CONTENT_TYPE,
+        "image_content_type_mismatch": _MIGRATION_MEDIA_REASON_UNSUPPORTED_CONTENT_TYPE,
+        "image_too_large": _MIGRATION_MEDIA_REASON_FILE_TOO_LARGE,
+        "storage_write_error": _MIGRATION_MEDIA_REASON_STORAGE_WRITE_FAILED,
+    }
+    return alias_map.get(lowered, lowered)
+
+
+def _is_discovered_media_candidate_validated_for_import(value: object) -> bool:
+    item = _normalize_json_dict(value)
+    content_type = _normalize_media_content_type(item.get("content_type"))
+    fetch_status = (_normalize_string(item.get("fetch_status"), max_length=40) or "").lower()
+    if content_type in _MIGRATION_MEDIA_UPLOAD_ALLOWED_CONTENT_TYPES:
+        return True
+    return fetch_status in {"validated_head", "validated_get", "validated_fetch"}
+
+
+def _is_discovered_media_quality_override_allowed(value: object) -> bool:
+    item = _normalize_json_dict(value)
+    candidate_quality = _normalize_media_candidate_quality(item.get("candidate_quality"))
+    quality_reason = _normalize_media_quality_reason(item.get("quality_reason"))
+    if candidate_quality != _MIGRATION_MEDIA_CANDIDATE_QUALITY_LOW_VALUE:
+        return False
+    if quality_reason in {
+        _MIGRATION_MEDIA_REASON_NON_IMAGE_CANDIDATE_DETECTED,
+        _MIGRATION_MEDIA_REASON_TRACKING_PIXEL_DETECTED,
+    }:
+        return False
+    return True
+
+
 def _validate_remote_image_import_url(value: object) -> str | None:
     normalized_url = _normalize_discovered_media_lookup_url(value)
     if normalized_url is None:
-        return _MIGRATION_MEDIA_REASON_IMAGE_IMPORT_UNSAFE_URL
+        return _MIGRATION_MEDIA_REASON_CANDIDATE_NOT_VALIDATED
     parsed = urllib.parse.urlsplit(normalized_url)
     host = (parsed.hostname or "").strip().lower().rstrip(".")
     if _is_disallowed_remote_media_import_host(host):
-        return _MIGRATION_MEDIA_REASON_IMAGE_IMPORT_PRIVATE_ADDRESS_BLOCKED
+        return _MIGRATION_MEDIA_REASON_BLOCKED_PRIVATE_NETWORK
     try:
         resolved = socket.getaddrinfo(
             host,
@@ -18622,9 +18751,9 @@ def _validate_remote_image_import_url(value: object) -> str | None:
             type=socket.SOCK_STREAM,
         )
     except OSError:
-        return _MIGRATION_MEDIA_REASON_IMAGE_FETCH_FAILED
+        return _MIGRATION_MEDIA_REASON_CANDIDATE_NOT_VALIDATED
     if not isinstance(resolved, list) or len(resolved) == 0:
-        return _MIGRATION_MEDIA_REASON_IMAGE_FETCH_FAILED
+        return _MIGRATION_MEDIA_REASON_CANDIDATE_NOT_VALIDATED
     for item in resolved:
         if not isinstance(item, tuple) or len(item) < 5:
             continue
@@ -18639,7 +18768,7 @@ def _validate_remote_image_import_url(value: object) -> str | None:
         except ValueError:
             continue
         if _is_disallowed_remote_media_import_ip(candidate_ip):
-            return _MIGRATION_MEDIA_REASON_IMAGE_IMPORT_PRIVATE_ADDRESS_BLOCKED
+            return _MIGRATION_MEDIA_REASON_BLOCKED_PRIVATE_NETWORK
     return None
 
 
@@ -18901,6 +19030,8 @@ def _sanitize_media_asset_for_read(value: object) -> dict[str, object]:
         "asset_id": _normalize_string(item.get("asset_id"), max_length=80),
         "display_filename": _normalize_string(item.get("display_filename") or item.get("filename"), max_length=160),
         "content_type": _normalize_media_content_type(item.get("content_type")),
+        "fetch_status": _normalize_string(item.get("fetch_status"), max_length=40),
+        "validation_checked_at": _normalize_string(item.get("validation_checked_at"), max_length=80),
         "size_bytes": _coerce_non_negative_int(item.get("size_bytes")),
         "width": _coerce_non_negative_int(item.get("width")),
         "height": _coerce_non_negative_int(item.get("height")),

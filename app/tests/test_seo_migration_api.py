@@ -3546,7 +3546,7 @@ def test_migration_media_import_endpoint_returns_disabled_reason_when_feature_fl
     results = payload.get("results") or []
     assert isinstance(results, list)
     assert results[0].get("status") == "disabled"
-    assert results[0].get("reason_code") == "remote_image_import_disabled"
+    assert results[0].get("reason_code") == "remote_import_disabled"
 
 
 def test_migration_media_import_endpoint_imports_discovered_assets_and_enables_suggestion(
@@ -3577,17 +3577,20 @@ def test_migration_media_import_endpoint_imports_discovered_assets_and_enables_s
     )
     workspace.imported_source_snapshot_json = {
         "discovered_images": [
-            {
-                "asset_id": "srcimg-import-me",
-                "normalized_url": "https://legacy.example/media/hero.jpg?token=abc",
-                "provenance": "source_site_import",
-                "import_status": "discovered",
-                "selected_for_draft": True,
-                "metadata_suggestion": {
-                    "suggestion_status": "not_available",
-                    "reason_code": "image_not_imported",
-                },
-            }
+                {
+                    "asset_id": "srcimg-import-me",
+                    "normalized_url": "https://legacy.example/media/hero.jpg?token=abc",
+                    "provenance": "source_site_import",
+                    "import_status": "discovered",
+                    "selected_for_draft": True,
+                    "candidate_quality": "useful",
+                    "fetch_status": "validated_head",
+                    "content_type": "image/png",
+                    "metadata_suggestion": {
+                        "suggestion_status": "not_available",
+                        "reason_code": "image_not_imported",
+                    },
+                }
         ]
     }
     db_session.add(workspace)
@@ -3759,15 +3762,18 @@ def test_migration_media_import_endpoint_blocks_private_source_hosts(
     )
     workspace.imported_source_snapshot_json = {
         "discovered_images": [
-            {
-                "asset_id": "srcimg-private-host",
-                "normalized_url": "http://127.0.0.1/blocked.png",
-                "provenance": "source_site_import",
-                "import_status": "discovered",
-                "selected_for_draft": True,
-            }
-        ]
-    }
+                {
+                    "asset_id": "srcimg-private-host",
+                    "normalized_url": "http://127.0.0.1/blocked.png",
+                    "provenance": "source_site_import",
+                    "import_status": "discovered",
+                    "selected_for_draft": True,
+                    "candidate_quality": "useful",
+                    "fetch_status": "validated_head",
+                    "content_type": "image/png",
+                }
+            ]
+        }
     db_session.add(workspace)
     db_session.commit()
 
@@ -3779,7 +3785,7 @@ def test_migration_media_import_endpoint_blocks_private_source_hosts(
     payload = import_response.json()
     assert payload.get("failed_count") == 1
     first_result = (payload.get("results") or [{}])[0]
-    assert first_result.get("reason_code") == "image_import_private_address_blocked"
+    assert first_result.get("reason_code") == "blocked_private_network"
 
 
 def test_migration_media_import_endpoint_blocks_redirect_escape_to_private_host(
@@ -3810,15 +3816,18 @@ def test_migration_media_import_endpoint_blocks_redirect_escape_to_private_host(
     )
     workspace.imported_source_snapshot_json = {
         "discovered_images": [
-            {
-                "asset_id": "srcimg-redirect",
-                "normalized_url": "https://legacy.example/media/redirect.jpg",
-                "provenance": "source_site_import",
-                "import_status": "discovered",
-                "selected_for_draft": True,
-            }
-        ]
-    }
+                {
+                    "asset_id": "srcimg-redirect",
+                    "normalized_url": "https://legacy.example/media/redirect.jpg",
+                    "provenance": "source_site_import",
+                    "import_status": "discovered",
+                    "selected_for_draft": True,
+                    "candidate_quality": "useful",
+                    "fetch_status": "validated_head",
+                    "content_type": "image/png",
+                }
+            ]
+        }
     db_session.add(workspace)
     db_session.commit()
 
@@ -3863,17 +3872,17 @@ def test_migration_media_import_endpoint_blocks_redirect_escape_to_private_host(
     assert payload.get("failed_count") == 1
     result_items = payload.get("results") or []
     assert isinstance(result_items, list)
-    assert result_items[0].get("reason_code") == "image_import_private_address_blocked"
+    assert result_items[0].get("reason_code") == "blocked_private_network"
 
 
 @pytest.mark.parametrize(
-    ("reason_code", "expected_status"),
+    ("reason_code", "expected_status", "expected_reason_code"),
     [
-        ("unsupported_image_type", "failed"),
-        ("image_too_large", "failed"),
-        ("image_fetch_timeout", "failed"),
-        ("image_fetch_failed", "failed"),
-        ("image_content_type_mismatch", "failed"),
+        ("unsupported_image_type", "failed", "unsupported_content_type"),
+        ("image_too_large", "failed", "file_too_large"),
+        ("image_fetch_timeout", "failed", "fetch_timeout"),
+        ("image_fetch_failed", "failed", "image_fetch_failed"),
+        ("image_content_type_mismatch", "failed", "unsupported_content_type"),
     ],
 )
 def test_migration_media_import_endpoint_surfaces_stable_fetch_reason_codes(
@@ -3881,6 +3890,7 @@ def test_migration_media_import_endpoint_surfaces_stable_fetch_reason_codes(
     monkeypatch: pytest.MonkeyPatch,
     reason_code: str,
     expected_status: str,
+    expected_reason_code: str,
 ) -> None:
     monkeypatch.setenv("SEO_MIGRATION_REMOTE_IMAGE_IMPORT_ENABLED", "true")
     get_settings.cache_clear()
@@ -3912,6 +3922,9 @@ def test_migration_media_import_endpoint_surfaces_stable_fetch_reason_codes(
                 "provenance": "source_site_import",
                 "import_status": "discovered",
                 "selected_for_draft": True,
+                "candidate_quality": "useful",
+                "fetch_status": "validated_head",
+                "content_type": "image/jpeg",
             }
         ]
     }
@@ -3934,7 +3947,7 @@ def test_migration_media_import_endpoint_surfaces_stable_fetch_reason_codes(
     result_items = payload.get("results") or []
     assert isinstance(result_items, list)
     assert result_items[0].get("status") == expected_status
-    assert result_items[0].get("reason_code") == reason_code
+    assert result_items[0].get("reason_code") == expected_reason_code
 
 
 def test_migration_media_import_endpoint_deduplicates_repeated_import_of_same_discovered_asset(
@@ -3965,15 +3978,18 @@ def test_migration_media_import_endpoint_deduplicates_repeated_import_of_same_di
     )
     workspace.imported_source_snapshot_json = {
         "discovered_images": [
-            {
-                "asset_id": "srcimg-repeat",
-                "normalized_url": "https://legacy.example/media/repeat.jpg",
-                "provenance": "source_site_import",
-                "import_status": "discovered",
-                "selected_for_draft": True,
-            }
-        ]
-    }
+                {
+                    "asset_id": "srcimg-repeat",
+                    "normalized_url": "https://legacy.example/media/repeat.jpg",
+                    "provenance": "source_site_import",
+                    "import_status": "discovered",
+                    "selected_for_draft": True,
+                    "candidate_quality": "useful",
+                    "fetch_status": "validated_head",
+                    "content_type": "image/png",
+                }
+            ]
+        }
     db_session.add(workspace)
     db_session.commit()
 

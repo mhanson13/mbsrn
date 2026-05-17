@@ -457,6 +457,8 @@ export interface MigrationMediaAsset {
   asset_id?: string | null;
   display_filename?: string | null;
   content_type?: string | null;
+  fetch_status?: string | null;
+  validation_checked_at?: string | null;
   size_bytes?: number | null;
   width?: number | null;
   height?: number | null;
@@ -540,6 +542,7 @@ export interface MigrationDiscoveredMediaImportRequest {
   discovered_image_ids?: string[];
   normalized_urls?: string[];
   selected_for_draft?: boolean | null;
+  allow_quality_override?: boolean;
 }
 
 export interface MigrationDiscoveredMediaImportResult {

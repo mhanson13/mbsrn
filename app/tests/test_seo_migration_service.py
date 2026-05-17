@@ -2399,11 +2399,11 @@ def test_selected_discovered_media_import_returns_disabled_reason_when_feature_f
     assert boundary_result.get("implemented") is False
     assert boundary_result.get("attempted_count") == 1
     assert boundary_result.get("imported_count") == 0
-    assert boundary_result.get("failure_reason_code") == "remote_image_import_disabled"
+    assert boundary_result.get("failure_reason_code") == "remote_import_disabled"
     failures = boundary_result.get("failures")
     assert isinstance(failures, list)
     assert failures[0].get("asset_id") == "srcimg-selected"
-    assert failures[0].get("reason_code") == "remote_image_import_disabled"
+    assert failures[0].get("reason_code") == "remote_import_disabled"
 
 
 def test_discovered_media_import_imports_selected_assets_when_feature_flag_enabled(
@@ -2421,17 +2421,20 @@ def test_discovered_media_import_imports_selected_assets_when_feature_flag_enabl
     workspace = service.get_workspace(business_id=business_id, site_id=site_id)
     workspace.imported_source_snapshot_json = {
         "discovered_images": [
-            {
-                "asset_id": "srcimg-selected",
-                "normalized_url": "https://legacy.example/media/hero.jpg?token=abc",
-                "selected_for_draft": True,
-                "provenance": "source_site_import",
-                "import_status": "discovered",
-                "metadata_suggestion": {
-                    "suggestion_status": "not_available",
-                    "reason_code": "image_not_imported",
-                },
-            }
+                {
+                    "asset_id": "srcimg-selected",
+                    "normalized_url": "https://legacy.example/media/hero.jpg?token=abc",
+                    "selected_for_draft": True,
+                    "provenance": "source_site_import",
+                    "import_status": "discovered",
+                    "candidate_quality": "useful",
+                    "fetch_status": "validated_head",
+                    "content_type": "image/png",
+                    "metadata_suggestion": {
+                        "suggestion_status": "not_available",
+                        "reason_code": "image_not_imported",
+                    },
+                }
         ]
     }
     service.seo_migration_repository.save_workspace(workspace)
@@ -2493,15 +2496,18 @@ def test_discovered_media_import_blocks_private_source_urls_without_fetch(
     workspace = service.get_workspace(business_id=business_id, site_id=site_id)
     workspace.imported_source_snapshot_json = {
         "discovered_images": [
-            {
-                "asset_id": "srcimg-private",
-                "normalized_url": "http://127.0.0.1/internal.png",
-                "selected_for_draft": True,
-                "provenance": "source_site_import",
-                "import_status": "discovered",
-            }
-        ]
-    }
+                {
+                    "asset_id": "srcimg-private",
+                    "normalized_url": "http://127.0.0.1/internal.png",
+                    "selected_for_draft": True,
+                    "provenance": "source_site_import",
+                    "import_status": "discovered",
+                    "candidate_quality": "useful",
+                    "fetch_status": "validated_head",
+                    "content_type": "image/png",
+                }
+            ]
+        }
     service.seo_migration_repository.save_workspace(workspace)
     service.session.commit()
 
@@ -2526,7 +2532,7 @@ def test_discovered_media_import_blocks_private_source_urls_without_fetch(
     results = result.get("results")
     assert isinstance(results, list)
     assert results[0].get("status") == "failed"
-    assert results[0].get("reason_code") == "image_import_private_address_blocked"
+    assert results[0].get("reason_code") == "blocked_private_network"
 
 
 def test_discovered_media_import_deduplicates_repeated_import_attempts(
@@ -2544,15 +2550,18 @@ def test_discovered_media_import_deduplicates_repeated_import_attempts(
     workspace = service.get_workspace(business_id=business_id, site_id=site_id)
     workspace.imported_source_snapshot_json = {
         "discovered_images": [
-            {
-                "asset_id": "srcimg-repeat",
-                "normalized_url": "https://legacy.example/media/repeat.jpg",
-                "selected_for_draft": True,
-                "provenance": "source_site_import",
-                "import_status": "discovered",
-            }
-        ]
-    }
+                {
+                    "asset_id": "srcimg-repeat",
+                    "normalized_url": "https://legacy.example/media/repeat.jpg",
+                    "selected_for_draft": True,
+                    "provenance": "source_site_import",
+                    "import_status": "discovered",
+                    "candidate_quality": "useful",
+                    "fetch_status": "validated_head",
+                    "content_type": "image/png",
+                }
+            ]
+        }
     service.seo_migration_repository.save_workspace(workspace)
     service.session.commit()
 

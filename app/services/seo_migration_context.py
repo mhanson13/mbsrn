@@ -9,6 +9,15 @@ from app.models.seo_recommendation_narrative import SEORecommendationNarrative
 from app.models.seo_site import SEOSite
 from app.services.seo_sites import build_location_context, build_site_business_context
 
+_SUMMARY_TEXT_MAX_LENGTH = 900
+_SUMMARY_LIST_MAX_ITEMS = 10
+_SUMMARY_LIST_TEXT_MAX_LENGTH = 240
+_SUMMARY_STRUCTURED_MAX_ITEMS = 12
+_SUMMARY_STRUCTURED_MAX_DEPTH = 3
+_SUMMARY_STRUCTURED_MAX_STRING_LENGTH = 320
+_SUMMARY_SECTION_MAX_ITEMS = 8
+_SUMMARY_SECTION_MAX_STRING_LENGTH = 800
+
 
 @dataclass(frozen=True)
 class SEOMigrationContextAssemblyResult:
@@ -157,10 +166,19 @@ def _audit_summary_payload(summary: SEOAuditSummary | None) -> dict[str, object]
     return {
         "id": summary.id,
         "status": summary.status,
-        "overall_health_summary": summary.overall_health_summary,
-        "plain_english_explanation": summary.plain_english_explanation,
-        "top_issues": summary.top_issues_json or [],
-        "top_priorities": summary.top_priorities_json or [],
+        "overall_health_summary": _normalize_optional_text(
+            summary.overall_health_summary,
+            max_length=_SUMMARY_TEXT_MAX_LENGTH,
+        ),
+        "plain_english_explanation": _normalize_optional_text(
+            summary.plain_english_explanation,
+            max_length=_SUMMARY_TEXT_MAX_LENGTH,
+        ),
+        "top_issues": _bounded_structured_list(summary.top_issues_json, max_items=_SUMMARY_STRUCTURED_MAX_ITEMS),
+        "top_priorities": _bounded_structured_list(
+            summary.top_priorities_json,
+            max_items=_SUMMARY_STRUCTURED_MAX_ITEMS,
+        ),
         "model_name": summary.model_name,
         "prompt_version": summary.prompt_version,
         "created_at": summary.created_at.isoformat(),
@@ -173,9 +191,12 @@ def _recommendation_summary_payload(narrative: SEORecommendationNarrative | None
     return {
         "id": narrative.id,
         "status": narrative.status,
-        "narrative_text": narrative.narrative_text,
-        "top_themes": narrative.top_themes_json or [],
-        "sections": narrative.sections_json or {},
+        "narrative_text": _normalize_optional_text(
+            narrative.narrative_text,
+            max_length=_SUMMARY_TEXT_MAX_LENGTH,
+        ),
+        "top_themes": _bounded_string_list(narrative.top_themes_json, max_items=_SUMMARY_LIST_MAX_ITEMS),
+        "sections": _bounded_sections_dict(narrative.sections_json),
         "model_name": narrative.model_name,
         "provider_name": narrative.provider_name,
         "prompt_version": narrative.prompt_version,
@@ -189,11 +210,99 @@ def _competitor_summary_payload(summary: SEOCompetitorComparisonSummary | None) 
     return {
         "id": summary.id,
         "status": summary.status,
-        "overall_gap_summary": summary.overall_gap_summary,
-        "plain_english_explanation": summary.plain_english_explanation,
-        "top_gaps": summary.top_gaps_json or [],
+        "overall_gap_summary": _normalize_optional_text(
+            summary.overall_gap_summary,
+            max_length=_SUMMARY_TEXT_MAX_LENGTH,
+        ),
+        "plain_english_explanation": _normalize_optional_text(
+            summary.plain_english_explanation,
+            max_length=_SUMMARY_TEXT_MAX_LENGTH,
+        ),
+        "top_gaps": _bounded_structured_list(summary.top_gaps_json, max_items=_SUMMARY_STRUCTURED_MAX_ITEMS),
         "provider_name": summary.provider_name,
         "model_name": summary.model_name,
         "prompt_version": summary.prompt_version,
         "created_at": summary.created_at.isoformat(),
     }
+
+
+def _bounded_string_list(value: object, *, max_items: int) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        text = _normalize_optional_text(item, max_length=_SUMMARY_LIST_TEXT_MAX_LENGTH)
+        if text is None:
+            continue
+        key = text.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        normalized.append(text)
+        if len(normalized) >= max(1, int(max_items)):
+            break
+    return normalized
+
+
+def _bounded_structured_list(value: object, *, max_items: int) -> list[object]:
+    if not isinstance(value, list):
+        return []
+    normalized: list[object] = []
+    for item in value[: max(1, int(max_items))]:
+        normalized_item = _sanitize_structured_value(item, depth=0)
+        if normalized_item is not None:
+            normalized.append(normalized_item)
+    return normalized
+
+
+def _bounded_sections_dict(value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        return {}
+    normalized: dict[str, object] = {}
+    for raw_key in list(value.keys())[:_SUMMARY_SECTION_MAX_ITEMS]:
+        key = _normalize_optional_text(raw_key, max_length=80)
+        if key is None:
+            continue
+        raw_item = value.get(raw_key)
+        if isinstance(raw_item, str):
+            section_text = _normalize_optional_text(raw_item, max_length=_SUMMARY_SECTION_MAX_STRING_LENGTH)
+            if section_text is not None:
+                normalized[key] = section_text
+            continue
+        if isinstance(raw_item, list):
+            normalized[key] = _bounded_string_list(raw_item, max_items=_SUMMARY_LIST_MAX_ITEMS)
+            continue
+        sanitized = _sanitize_structured_value(raw_item, depth=0)
+        if sanitized is not None:
+            normalized[key] = sanitized
+    return normalized
+
+
+def _sanitize_structured_value(value: object, *, depth: int) -> object | None:
+    if depth >= _SUMMARY_STRUCTURED_MAX_DEPTH:
+        return None
+    if value is None:
+        return None
+    if isinstance(value, (bool, int, float)):
+        return value
+    if isinstance(value, str):
+        return _normalize_optional_text(value, max_length=_SUMMARY_STRUCTURED_MAX_STRING_LENGTH)
+    if isinstance(value, list):
+        normalized: list[object] = []
+        for item in value[:_SUMMARY_STRUCTURED_MAX_ITEMS]:
+            cleaned = _sanitize_structured_value(item, depth=depth + 1)
+            if cleaned is not None:
+                normalized.append(cleaned)
+        return normalized
+    if isinstance(value, dict):
+        normalized_dict: dict[str, object] = {}
+        for raw_key in list(value.keys())[:_SUMMARY_SECTION_MAX_ITEMS]:
+            key = _normalize_optional_text(raw_key, max_length=80)
+            if key is None:
+                continue
+            cleaned = _sanitize_structured_value(value.get(raw_key), depth=depth + 1)
+            if cleaned is not None:
+                normalized_dict[key] = cleaned
+        return normalized_dict
+    return None
