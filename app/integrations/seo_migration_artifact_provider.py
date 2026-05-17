@@ -111,7 +111,7 @@ _MAX_TEXT_FIELD_LENGTH = 8000
 _RESPONSES_CONTRACT_TOP_LEVEL_KEYS = ("input", "model", "text")
 _RESPONSES_CONTRACT_TEXT_TOP_LEVEL_KEYS = ("format",)
 _RESPONSES_CONTRACT_TEXT_FORMAT_KEYS = ("name", "schema", "strict", "type")
-_MIGRATION_DRAFT_CONTEXT_BUDGET_CHARS = 24000
+_MIGRATION_DRAFT_CONTEXT_BUDGET_CHARS = 18000
 _MIGRATION_DRAFT_CONTEXT_REQUIRED_KEYS = ("site_snapshot", "migration_workspace")
 _MIGRATION_DRAFT_CONTEXT_OPTIONAL_TRIM_ORDER = (
     "existing_context_summaries",
@@ -123,7 +123,7 @@ _MIGRATION_DRAFT_CONTEXT_OPTIONAL_TRIM_ORDER = (
     "operator_requirements",
 )
 _MIGRATION_DRAFT_MAX_TOTAL_INPUT_SIZE = 120000
-_MIGRATION_DRAFT_MAX_TRIMMING_PASSES = 3
+_MIGRATION_DRAFT_MAX_TRIMMING_PASSES = 7
 
 logger = logging.getLogger(__name__)
 
@@ -1492,6 +1492,14 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
                     "trimmed_bytes": self._coerce_optional_non_negative_int(exc.trimmed_bytes),
                     "trimming_pass_count": self._coerce_optional_non_negative_int(exc.trimming_pass_count),
                     "difficulty_score": self._coerce_optional_non_negative_int(exc.difficulty_score),
+                    "context_budget": context_budget,
+                    "context_budget_size_chars": self._coerce_optional_non_negative_int(
+                        context_budget.get("budget_size_chars"),
+                    ),
+                    "largest_context_block": _clean_optional_value(context_budget.get("largest_retained_block")),
+                    "largest_context_block_size_chars": self._coerce_optional_non_negative_int(
+                        context_budget.get("largest_retained_block_size_chars"),
+                    ),
                     "budget_outcome": (
                         "retry_suppressed"
                         if exc.normalized_failure.reason == "request_too_large_or_complex"
@@ -2485,6 +2493,43 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
             if retained_key in retained:
                 budgeted_context[key] = retained[retained_key]
 
+        serialized_sizes: dict[str, int] = {}
+
+        def _serialized_size(value: object) -> int:
+            try:
+                return max(0, len(json.dumps(value, ensure_ascii=True, sort_keys=True, separators=(",", ":"))))
+            except (TypeError, ValueError):
+                return max(0, len(str(value)))
+
+        for key in required_keys:
+            serialized_sizes[str(key)] = _serialized_size(retained.get(str(key), migration_context.get(key)))
+        for key in optional_keys:
+            key_name = str(key)
+            if key_name in retained:
+                serialized_sizes[key_name] = _serialized_size(retained.get(key_name))
+
+        largest_retained_block = None
+        largest_retained_block_size_chars = None
+        if serialized_sizes:
+            largest_retained_block, largest_retained_block_size_chars = max(
+                serialized_sizes.items(),
+                key=lambda item: item[1],
+            )
+
+        largest_dropped_optional_block = None
+        largest_dropped_optional_block_size_chars = None
+        dropped_blocks = list(decision.result.dropped_optional_blocks)
+        if dropped_blocks:
+            dropped_size_pairs: list[tuple[str, int]] = []
+            for block_name in dropped_blocks:
+                if block_name in migration_context:
+                    dropped_size_pairs.append((block_name, _serialized_size(migration_context.get(block_name))))
+            if dropped_size_pairs:
+                largest_dropped_optional_block, largest_dropped_optional_block_size_chars = max(
+                    dropped_size_pairs,
+                    key=lambda item: item[1],
+                )
+
         budget_result = {
             "initial_size_chars": decision.result.initial_size_chars,
             "final_size_chars": decision.result.final_size_chars,
@@ -2498,6 +2543,10 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
             "dropped_duplicate_blocks": list(decision.result.dropped_duplicate_blocks),
             "required_blocks_retained": list(decision.result.required_blocks_retained),
             "optional_blocks_retained": list(decision.result.optional_blocks_retained),
+            "largest_retained_block": largest_retained_block,
+            "largest_retained_block_size_chars": largest_retained_block_size_chars,
+            "largest_dropped_optional_block": largest_dropped_optional_block,
+            "largest_dropped_optional_block_size_chars": largest_dropped_optional_block_size_chars,
             "overflow": bool(decision.result.overflow),
         }
         return budgeted_context, budget_result

@@ -3500,7 +3500,13 @@ def test_migration_media_batch_suggest_metadata_enforces_max_asset_count(db_sess
     assert detail.get("error_code") == "media_suggestion_batch_limit_reached"
 
 
-def test_migration_media_import_endpoint_returns_disabled_reason_when_feature_flag_off(db_session) -> None:
+def test_migration_media_import_endpoint_returns_disabled_reason_when_feature_flag_off(
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SEO_MIGRATION_REMOTE_IMAGE_IMPORT_ENABLED", "false")
+    get_settings.cache_clear()
+
     business_id = "11111111-1111-1111-1111-111111111111"
     site_id = "22222222-2222-2222-2222-222222222222"
     _seed_business_and_site(db_session, business_id=business_id, site_id=site_id)

@@ -84,6 +84,9 @@ _AI_DIAGNOSTICS_SUMMARY_KEYS = {
     "difficulty_bucket",
     "input_size_bucket",
     "degraded_state",
+    "context_budget_size_chars",
+    "largest_context_block",
+    "largest_context_block_size_chars",
 }
 
 

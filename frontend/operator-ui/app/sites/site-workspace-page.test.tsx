@@ -3826,7 +3826,7 @@ describe("site migration workflow route", () => {
     await waitFor(() =>
       expect(mockImportMigrationDiscoveredMediaAssets).toHaveBeenCalledWith("token-1", "biz-1", "site-1", {
         discovered_image_ids: ["srcimg-remote"],
-        selected_for_draft: true,
+        selected_for_draft: false,
       }),
     );
 

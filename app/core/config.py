@@ -481,7 +481,7 @@ def get_settings() -> Settings:
         ),
         seo_migration_remote_image_import_enabled=_env_bool(
             "SEO_MIGRATION_REMOTE_IMAGE_IMPORT_ENABLED",
-            False,
+            True,
         ),
         migration_github_api_base_url=(
             os.getenv("MIGRATION_GITHUB_API_BASE_URL", "https://api.github.com").strip() or "https://api.github.com"

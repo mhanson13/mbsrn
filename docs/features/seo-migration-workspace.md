@@ -518,9 +518,9 @@ Suggestion reason codes:
 - `media_asset_not_authorized`
 - `media_suggestion_batch_limit_reached`
 
-Selected discovered-image import (feature-flagged, 2026-05):
-- feature flag: `SEO_MIGRATION_REMOTE_IMAGE_IMPORT_ENABLED`
-  - default: `false` (disabled unless explicitly enabled in runtime config)
+Selected discovered-image import (runtime-gated, 2026-05):
+- runtime flag: `SEO_MIGRATION_REMOTE_IMAGE_IMPORT_ENABLED`
+  - default: `true` (enabled unless explicitly disabled in runtime config)
 - when disabled:
   - discovered import endpoint returns per-asset `status=disabled` with reason `remote_import_disabled`
   - metadata suggestion for remote-only discovered assets still returns `image_not_imported`
@@ -537,6 +537,10 @@ Selected discovered-image import (feature-flagged, 2026-05):
   - `status`: `imported|skipped|failed|disabled`
   - `reason_code`: deterministic import reason
   - optional sanitized `media_asset` (no storage key, no local path, no raw bytes/base64)
+- import controls are explicit and lifecycle-safe:
+  - per-card actions (`Import image`, `Import anyway`) provide pending/success/failure feedback
+  - bulk action imports marked candidates when selected, otherwise imports currently useful/import-eligible discovered candidates
+  - import does not auto-select assets for draft; operator must explicitly select imported assets
 
 Import safety controls:
 - only `http`/`https` schemes
@@ -609,6 +613,16 @@ Migration operator flow (streamlined):
 5. Select draft images.
 6. Generate draft with bounded context.
 7. Review, approve, publish, and deploy explicitly.
+
+Draft-context budget/operator diagnostics:
+- migration draft input summary shows bounded context coverage and trim behavior:
+  - recommendation included vs available counts
+  - recommendation basis (`interpreted_audit_context` when recommendations are used as the audit-derived layer)
+  - draft context trimmed state
+  - largest included block when available
+- selected media only:
+  - discovered-but-not-imported assets are summarized but not expanded into selected media context
+  - selected/imported asset metadata is included; raw media bytes are never included
 
 ## Site SEO Workspace Grouping and Diagnostics (2026-05)
 Migration route grouping in the UI now explicitly separates:

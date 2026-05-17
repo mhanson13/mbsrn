@@ -360,13 +360,17 @@ Media UX note:
   - `image_not_imported`
   - `unsupported_image_type`
   - `storage_preview_not_available`
-- selected discovered-image import is available behind feature flag `SEO_MIGRATION_REMOTE_IMAGE_IMPORT_ENABLED` (default disabled)
+- selected discovered-image import is controlled by runtime flag `SEO_MIGRATION_REMOTE_IMAGE_IMPORT_ENABLED` (default enabled)
 - when disabled, import action shows deterministic `remote_import_disabled` guidance
 - discovered remote-only images show import-required guidance before draft selection or AI suggestion can run
 - discovered remote-only lifecycle gating:
-  - primary action is import (`Import image` or marked `Import Selected Source Images`)
+  - primary action is import (`Import image`, `Import anyway`, or bulk `Import Useful Source Images` / `Import Selected Source Images`)
   - `Select for Draft`, `Analyze image`, and `Apply suggestions` are not active until import completes
   - edit action is labeled as discovery-notes editing while still unimported
+- import keeps explicit operator control:
+  - successful import marks asset as available/imported
+  - imported assets are not auto-selected for draft by default
+  - operator explicitly selects imported assets to include them in next draft context
 - no hotlink fallback is used for this workflow; images must be imported into workspace control before analysis/use
 - diagnostics should surface safe import rejection reason codes without exposing storage paths or raw bytes
 - AI suggestions are editable and are stored separately from operator-authored metadata until explicitly applied
@@ -400,6 +404,10 @@ Media UX note:
 - discovered-image import feedback is rendered with per-asset status/reason summaries:
   - `status` (`Imported`, `Skipped`, `Failed`, `Disabled`)
   - `imported_count`, `failed_count`, `skipped_count`, `disabled_count`
+- migration draft context summary includes bounded budget cues:
+  - recommendation included vs available counts
+  - recommendation basis (`interpreted_audit_context`)
+  - `Draft context trimmed` status and largest included block when available
 - draft generation still uses selected media metadata only; raw image bytes are not sent into text draft context
 
 Media suggestion reason-code cues in UI:

@@ -699,7 +699,7 @@ function toMediaSuggestionStatusLabel(value: string | null): string {
   if (normalized === "failed") {
     return "Suggestion failed";
   }
-  return "No suggestion";
+  return "Not analyzed yet";
 }
 
 function toMediaSuggestionReasonLabel(value: string | null): string | null {
@@ -3477,6 +3477,8 @@ export function MigrationWorkspacePanel({
   const [artifactVersions, setArtifactVersions] = useState<MigrationArtifactVersion[]>([]);
   const [publishHistory, setPublishHistory] = useState<Array<Record<string, unknown>>>([]);
   const [deployHistory, setDeployHistory] = useState<Array<Record<string, unknown>>>([]);
+  const [publishHistoryLoaded, setPublishHistoryLoaded] = useState(false);
+  const [deployHistoryLoaded, setDeployHistoryLoaded] = useState(false);
 
   const [sourceUrl, setSourceUrl] = useState("");
   const [businessObjectives, setBusinessObjectives] = useState("");
@@ -4943,6 +4945,15 @@ export function MigrationWorkspacePanel({
   const draftAIDifficultyBucket = asStringOrNull(draftAIDiagnosticsSummary.difficulty_bucket);
   const draftAIInputSizeBucket = asStringOrNull(draftAIDiagnosticsSummary.input_size_bucket);
   const draftAIDegradedState = asStringOrNull(draftAIDiagnosticsSummary.degraded_state);
+  const draftAIContextBudgetSizeChars =
+    typeof draftAIDiagnosticsSummary.context_budget_size_chars === "number"
+      ? Math.max(0, Math.round(draftAIDiagnosticsSummary.context_budget_size_chars))
+      : null;
+  const draftAILargestContextBlock = asStringOrNull(draftAIDiagnosticsSummary.largest_context_block);
+  const draftAILargestContextBlockSizeChars =
+    typeof draftAIDiagnosticsSummary.largest_context_block_size_chars === "number"
+      ? Math.max(0, Math.round(draftAIDiagnosticsSummary.largest_context_block_size_chars))
+      : null;
   const draftAuthIntegrationGuidance = toDraftAuthIntegrationGuidance(
     asStringOrNull(migrationDiagnostics.last_draft_failure_reason)
     || draftAIFailureReason
@@ -5279,30 +5290,16 @@ export function MigrationWorkspacePanel({
         if (ensureWorkspace) {
           await upsertMigrationWorkspace(token, businessId, siteId, {});
         }
-        const [workspaceSummary, versionList, publishHistoryResponse, deployHistoryResponse] = await Promise.all([
+        const [workspaceSummary, versionList] = await Promise.all([
           fetchMigrationWorkspaceSummary(token, businessId, siteId),
           fetchMigrationArtifactVersions(token, businessId, siteId),
-          fetchMigrationPublishHistory(token, businessId, siteId),
-          fetchMigrationDeployHistory(token, businessId, siteId),
         ]);
-        let mediaPayload: Record<string, unknown> | null = null;
-        try {
-          mediaPayload = asRecord(await fetchMigrationMediaAssets(token, businessId, siteId));
-        } catch {
-          mediaPayload = null;
-        }
-        let readinessPayload: Record<string, unknown> | null = null;
-        try {
-          readinessPayload = asRecord(await fetchMigrationDraftReadiness(token, businessId, siteId));
-        } catch {
-          readinessPayload = null;
-        }
         setSummary(workspaceSummary);
         setArtifactVersions(versionList.items || []);
-        setPublishHistory(publishHistoryResponse.items || workspaceSummary.publish_history || []);
-        setDeployHistory(deployHistoryResponse.items || workspaceSummary.deploy_history || []);
-        setMediaAssetsSnapshot(mediaPayload);
-        setDraftReadinessSnapshot(readinessPayload);
+        setPublishHistory(workspaceSummary.publish_history || []);
+        setDeployHistory(workspaceSummary.deploy_history || []);
+        setPublishHistoryLoaded(false);
+        setDeployHistoryLoaded(false);
         hydrateFromSummary(workspaceSummary);
         const versions = versionList.items || [];
         setSelectedArtifactVersionId((current) =>
@@ -5312,6 +5309,46 @@ export function MigrationWorkspacePanel({
             workspaceSummary,
           }),
         );
+        void (async () => {
+          const [mediaResult, readinessResult, publishHistoryResult, deployHistoryResult] = await Promise.allSettled([
+            fetchMigrationMediaAssets(token, businessId, siteId),
+            fetchMigrationDraftReadiness(token, businessId, siteId),
+            fetchMigrationPublishHistory(token, businessId, siteId),
+            fetchMigrationDeployHistory(token, businessId, siteId),
+          ]);
+          if (mediaResult.status === "fulfilled") {
+            setMediaAssetsSnapshot(asRecord(mediaResult.value));
+          } else {
+            setMediaAssetsSnapshot(null);
+          }
+          if (readinessResult.status === "fulfilled") {
+            setDraftReadinessSnapshot(asRecord(readinessResult.value));
+          } else {
+            setDraftReadinessSnapshot(null);
+          }
+          if (publishHistoryResult.status === "fulfilled") {
+            const latestPublishHistory = publishHistoryResult.value.items || [];
+            setPublishHistory(
+              latestPublishHistory.length > 0
+                ? latestPublishHistory
+                : workspaceSummary.publish_history || [],
+            );
+            setPublishHistoryLoaded(true);
+          } else {
+            setPublishHistoryLoaded(false);
+          }
+          if (deployHistoryResult.status === "fulfilled") {
+            const latestDeployHistory = deployHistoryResult.value.items || [];
+            setDeployHistory(
+              latestDeployHistory.length > 0
+                ? latestDeployHistory
+                : workspaceSummary.deploy_history || [],
+            );
+            setDeployHistoryLoaded(true);
+          } else {
+            setDeployHistoryLoaded(false);
+          }
+        })();
       } catch (error) {
         setErrorHint(null);
         setErrorMessage(toErrorMessage(error, "Failed to load migration workspace."));
@@ -5321,6 +5358,46 @@ export function MigrationWorkspacePanel({
     },
     [businessId, hydrateFromSummary, siteId, token],
   );
+
+  const loadPublishHistory = useCallback(async (): Promise<void> => {
+    if (publishHistoryLoaded || busyAction === "load") {
+      return;
+    }
+    try {
+      const response = await fetchMigrationPublishHistory(token, businessId, siteId);
+      setPublishHistory((current) => {
+        const next = response.items || [];
+        if (next.length === 0 && current.length > 0) {
+          return current;
+        }
+        return next;
+      });
+      setPublishHistoryLoaded(true);
+    } catch {
+      // Keep summary payload as fallback if on-demand history refresh fails.
+      setPublishHistoryLoaded(false);
+    }
+  }, [businessId, busyAction, publishHistoryLoaded, siteId, token]);
+
+  const loadDeployHistory = useCallback(async (): Promise<void> => {
+    if (deployHistoryLoaded || busyAction === "load") {
+      return;
+    }
+    try {
+      const response = await fetchMigrationDeployHistory(token, businessId, siteId);
+      setDeployHistory((current) => {
+        const next = response.items || [];
+        if (next.length === 0 && current.length > 0) {
+          return current;
+        }
+        return next;
+      });
+      setDeployHistoryLoaded(true);
+    } catch {
+      // Keep summary payload as fallback if on-demand history refresh fails.
+      setDeployHistoryLoaded(false);
+    }
+  }, [businessId, busyAction, deployHistoryLoaded, siteId, token]);
 
   useEffect(() => {
     void loadWorkspaceData(true);
@@ -5738,7 +5815,10 @@ export function MigrationWorkspacePanel({
     const importAssetIds = (() => {
       const provided = options?.assetIds || [];
       if (!Array.isArray(provided) || provided.length === 0) {
-        return selectedDiscoveredImportCandidateIds;
+        if (selectedDiscoveredImportCandidateIds.length > 0) {
+          return selectedDiscoveredImportCandidateIds;
+        }
+        return sourceDiscoveredImportEligibleIds;
       }
       const normalized: string[] = [];
       const seen = new Set<string>();
@@ -5759,7 +5839,7 @@ export function MigrationWorkspacePanel({
 
     if (importAssetIds.length === 0) {
       setErrorHint(null);
-      setErrorMessage("Select at least one discovered source image before importing.");
+      setErrorMessage("No importable discovered source images are currently available.");
       return;
     }
     setBusyAction("import_media");
@@ -5769,7 +5849,7 @@ export function MigrationWorkspacePanel({
     try {
       const batchResult = await importMigrationDiscoveredMediaAssets(token, businessId, siteId, {
         discovered_image_ids: importAssetIds,
-        selected_for_draft: true,
+        selected_for_draft: false,
         ...(options?.allowQualityOverride === true ? { allow_quality_override: true } : {}),
       });
       setMediaImportBatchSnapshot(asRecord(batchResult));
@@ -5781,9 +5861,27 @@ export function MigrationWorkspacePanel({
         const next = current.filter((item) => !importedSet.has(item.toLowerCase()));
         return next.length === current.length ? current : next;
       });
-      setStatusMessage(
-        `Discovered image import ${toMediaSuggestionBatchStatusLabel(batchResult.batch_status || null).toLowerCase()}: ${batchResult.imported_count} imported, ${batchResult.failed_count} failed, ${batchResult.skipped_count} skipped, ${batchResult.disabled_count} disabled.`,
-      );
+      const importedCount = Math.max(0, Number(batchResult.imported_count || 0));
+      const failedCount = Math.max(0, Number(batchResult.failed_count || 0));
+      const skippedCount = Math.max(0, Number(batchResult.skipped_count || 0));
+      const disabledCount = Math.max(0, Number(batchResult.disabled_count || 0));
+      const firstResultReason = (() => {
+        const firstResult = Array.isArray(batchResult.results) && batchResult.results.length > 0
+          ? asRecord(batchResult.results[0])
+          : null;
+        return firstResult ? toMediaSuggestionReasonLabel(asStringOrNull(firstResult.reason_code)) : null;
+      })();
+      if (importedCount > 0 || skippedCount > 0) {
+        setStatusMessage(
+          `Discovered image import ${toMediaSuggestionBatchStatusLabel(batchResult.batch_status || null).toLowerCase()}: ${importedCount} imported, ${failedCount} failed, ${skippedCount} skipped, ${disabledCount} disabled.`,
+        );
+      } else {
+        setStatusMessage(null);
+        setErrorMessage(
+          firstResultReason
+            || "No discovered images were imported. Review import result details and retry with valid candidates.",
+        );
+      }
       await loadWorkspaceData(false);
     } catch (error) {
       setErrorHint(null);
@@ -6539,9 +6637,13 @@ export function MigrationWorkspacePanel({
                 type="button"
                 className={discoveredImportRequiredCount > 0 ? "button button-primary" : "button button-tertiary"}
                 onClick={() => void handleImportSelectedDiscoveredMediaAssets()}
-                disabled={isActionInFlight || selectedDiscoveredImportCandidateIds.length === 0}
+                disabled={isActionInFlight || discoveredImportRequiredCount === 0}
               >
-                {busyAction === "import_media" ? "Importing Selected..." : "Import Selected Source Images"}
+                {busyAction === "import_media"
+                  ? "Importing..."
+                  : selectedDiscoveredImportCandidateIds.length > 0
+                    ? "Import Selected Source Images"
+                    : "Import Useful Source Images"}
               </button>
               <button
                 type="button"
@@ -6560,6 +6662,11 @@ export function MigrationWorkspacePanel({
                 {busyAction === "ingest" ? "Refreshing..." : "Discover / Refresh Source Images"}
               </button>
             </WorkspaceActionBar>
+            {selectedMediaAssetIds.length === 0 ? (
+              <span className="hint muted">
+                Analyze Selected Images becomes available after at least one imported usable image is selected for draft.
+              </span>
+            ) : null}
             <details className="workspace-details-shell" data-testid="migration-media-upload-disclosure">
               <summary>Upload images</summary>
               <div className="stack-tight">
@@ -6661,6 +6768,7 @@ export function MigrationWorkspacePanel({
             <span className="hint">Selected Images: {selectedMediaAssetsCount}</span>
             <span className="hint">Selected usable images: {selectedUsableMediaAssetsCount}</span>
             <span className="hint">Usable images in workspace: {usableMediaAssetsCount}</span>
+            <span className="hint">Import-ready discovered images: {discoveredImportRequiredCount}</span>
             <span className="hint">Selected discovered images awaiting import: {selectedDiscoveredImportCandidateIds.length}</span>
             <span className="hint">
               Image categories in workspace: {mediaAssetCategories.length > 0 ? mediaAssetCategories.join(", ") : "none"}
@@ -6682,6 +6790,11 @@ export function MigrationWorkspacePanel({
                   Imported: {mediaImportBatchImportedCount} | Failed: {mediaImportBatchFailedCount} | Skipped:{" "}
                   {mediaImportBatchSkippedCount} | Disabled: {mediaImportBatchDisabledCount}
                 </span>
+                {mediaImportBatchDisabledCount > 0 ? (
+                  <span className="hint warning">
+                    Remote import is disabled in this runtime. Set <code>SEO_MIGRATION_REMOTE_IMAGE_IMPORT_ENABLED=true</code> to enable safe source-image import.
+                  </span>
+                ) : null}
                 {mediaImportBatchResults.length > 0 ? (
                   <ul className="stack-tight">
                     {mediaImportBatchResults.slice(0, 8).map((result, index) => {
@@ -6775,7 +6888,7 @@ export function MigrationWorkspacePanel({
           ) : null}
           {mediaBrowserVisibleAssets.length > 0 ? (
             <div className="migration-media-browser-list migration-media-image-grid" data-testid="migration-media-image-grid">
-              {mediaBrowserVisibleAssets.slice(0, 30).map((item, index) => {
+              {mediaBrowserVisibleAssets.slice(0, 20).map((item, index) => {
                 const lifecycleTestId = `migration-media-lifecycle-${item.assetId}`;
                 const detailsOpen = openMediaDetailsAssetIds.some(
                   (assetId) => assetId.toLowerCase() === item.assetId.toLowerCase(),
@@ -6855,7 +6968,7 @@ export function MigrationWorkspacePanel({
                     </div>
                     <div className="row-wrap-tight migration-media-card-badges">
                       <span className="badge badge-muted">{item.sourceBadgeLabel}</span>
-                      {item.selected ? <span className="badge badge-success">Selected for Draft</span> : null}
+                      {item.selected ? <span className="badge badge-success">Included in next draft</span> : null}
                       {item.metadataStatusLabel ? (
                         <span className={item.metadataStatusLabel === "Analysis unavailable" ? "badge badge-warn" : "badge badge-success"}>
                           {item.metadataStatusLabel}
@@ -7408,9 +7521,20 @@ export function MigrationWorkspacePanel({
               <span className="migration-compact-kv-row">
                 <span className="migration-compact-kv-label">Raw audit findings included</span>
                 <span className="migration-compact-kv-value">
-                  {asNonNegativeInt(draftInputSummary.raw_audit_findings_included_count)
-                    ?? asNonNegativeInt(draftInputSummary.audit_findings_included_count)
-                    ?? 0}
+                  {(() => {
+                    const rawAuditCount =
+                      asNonNegativeInt(draftInputSummary.raw_audit_findings_included_count)
+                      ?? asNonNegativeInt(draftInputSummary.audit_findings_included_count)
+                      ?? 0;
+                    const recommendationBasis = (
+                      asStringOrNull(draftInputSummary.recommendations_context_basis)
+                      || "interpreted_audit_context"
+                    ).trim().toLowerCase();
+                    if (rawAuditCount === 0 && recommendationBasis === "interpreted_audit_context") {
+                      return "Not directly included";
+                    }
+                    return rawAuditCount;
+                  })()}
                 </span>
               </span>
             </div>
@@ -7484,9 +7608,34 @@ export function MigrationWorkspacePanel({
                   )}
                 </span>
               </span>
+              {draftAILargestContextBlock ? (
+                <span className="migration-compact-kv-row" data-testid="migration-draft-input-largest-block">
+                  <span className="migration-compact-kv-label">Largest included block</span>
+                  <span className="migration-compact-kv-value">
+                    {draftAILargestContextBlock.replace(/_/g, " ")}
+                    {typeof draftAILargestContextBlockSizeChars === "number"
+                      ? ` (${draftAILargestContextBlockSizeChars.toLocaleString()} chars)`
+                      : ""}
+                  </span>
+                </span>
+              ) : null}
+              {(draftAIHint === "Input too large" || draftAIBudgetOutcome === "precall_rejected") ? (
+                <span className="migration-compact-kv-row" data-testid="migration-draft-input-budget-blocked-reason">
+                  <span className="migration-compact-kv-label">Blocked because</span>
+                  <span className="migration-compact-kv-value">
+                    {draftAIContextBudgetSizeChars
+                      ? `context exceeded ${draftAIContextBudgetSizeChars.toLocaleString()} char budget`
+                      : "context exceeded runtime request budget"}
+                  </span>
+                </span>
+              ) : null}
             </div>
           </div>
         </div>
+        <span className="hint" data-testid="migration-selected-media-context-summary">
+          Included in next draft: {selectedUsableMediaAssetsCount} selected usable image
+          {selectedUsableMediaAssetsCount === 1 ? "" : "s"}.
+        </span>
         <span className="hint muted">
           Media counts/actions are managed in Section B. Provider execution metadata is available in Advanced Diagnostics.
         </span>
@@ -8323,7 +8472,15 @@ export function MigrationWorkspacePanel({
               </div>
             </details>
 
-            <details className="workspace-details-shell migration-diagnostics-shell" data-testid="migration-publish-history-shell">
+            <details
+              className="workspace-details-shell migration-diagnostics-shell"
+              data-testid="migration-publish-history-shell"
+              onToggle={(event) => {
+                if (event.currentTarget.open) {
+                  void loadPublishHistory();
+                }
+              }}
+            >
               <summary className="hint muted">Show publish history</summary>
               <div className="panel panel-compact stack migration-diagnostics-shell-panel" data-testid="migration-publish-history">
                 <strong>Publish History</strong>
@@ -8422,7 +8579,15 @@ export function MigrationWorkspacePanel({
               </div>
             </details>
 
-            <details className="workspace-details-shell migration-diagnostics-shell" data-testid="migration-deploy-history-shell">
+            <details
+              className="workspace-details-shell migration-diagnostics-shell"
+              data-testid="migration-deploy-history-shell"
+              onToggle={(event) => {
+                if (event.currentTarget.open) {
+                  void loadDeployHistory();
+                }
+              }}
+            >
               <summary className="hint muted">Show deploy history</summary>
               <div className="panel panel-compact stack migration-diagnostics-shell-panel" data-testid="migration-deploy-history">
                 <strong>Deploy History</strong>

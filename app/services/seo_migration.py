@@ -98,6 +98,11 @@ _MAX_DRAFT_INPUT_RECOMMENDATION_CATEGORIES = 6
 _MAX_MEDIA_ASSETS_PER_WORKSPACE = 120
 _MAX_SELECTED_MEDIA_FOR_CONTEXT = 24
 _MAX_MEDIA_CATEGORIES_FOR_SUMMARY = 8
+_MAX_SOURCE_SNAPSHOT_CONTEXT_HEADINGS = 10
+_MAX_SOURCE_SNAPSHOT_CONTEXT_SERVICE_BLOCKS = 12
+_MAX_SOURCE_SNAPSHOT_CONTEXT_CONTACT_SIGNALS = 10
+_MAX_SOURCE_SNAPSHOT_CONTEXT_PAGES = 8
+_MAX_SOURCE_SNAPSHOT_CONTEXT_WARNINGS = 12
 _MIGRATION_MEDIA_UPLOAD_MAX_BYTES = 8 * 1024 * 1024
 _MIGRATION_MEDIA_UPLOAD_MAX_COUNT = 80
 _MIGRATION_MEDIA_UPLOAD_ALLOWED_CONTENT_TYPES = {
@@ -751,6 +756,9 @@ class SEOMigrationDraftFailure:
     budget_outcome: str | None = None
     retry_suppressed: bool | None = None
     degraded_state: str | None = None
+    context_budget_size_chars: int | None = None
+    largest_context_block: str | None = None
+    largest_context_block_size_chars: int | None = None
 
 
 @dataclass(frozen=True)
@@ -805,7 +813,7 @@ class SEOMigrationService:
         deploy_secret_git_email: str | None = None,
         deploy_secret_git_token: str | None = None,
         managed_site_private_image_auth_enabled: bool = True,
-        remote_image_import_enabled: bool = False,
+        remote_image_import_enabled: bool = True,
     ) -> None:
         self.session = session
         self.business_repository = business_repository
@@ -11431,6 +11439,9 @@ class SEOMigrationService:
                 "last_failure_budget_outcome": None,
                 "last_failure_retry_suppressed": None,
                 "last_failure_degraded_state": None,
+                "last_failure_context_budget_size_chars": None,
+                "last_failure_largest_context_block": None,
+                "last_failure_largest_context_block_size_chars": None,
                 "last_draft_ai_diagnostics_summary": None,
                 "last_contract_status": None,
                 "last_contract_reason_codes": [],
@@ -11520,6 +11531,19 @@ class SEOMigrationService:
             else None
         )
         degraded_state = _normalize_string(diagnostics_payload.get("degraded_state"), max_length=120)
+        context_budget_size_chars_raw = diagnostics_payload.get("context_budget_size_chars")
+        context_budget_size_chars = (
+            max(1, int(context_budget_size_chars_raw))
+            if isinstance(context_budget_size_chars_raw, int)
+            else None
+        )
+        largest_context_block = _normalize_string(diagnostics_payload.get("largest_context_block"), max_length=80)
+        largest_context_block_size_chars_raw = diagnostics_payload.get("largest_context_block_size_chars")
+        largest_context_block_size_chars = (
+            max(0, int(largest_context_block_size_chars_raw))
+            if isinstance(largest_context_block_size_chars_raw, int)
+            else None
+        )
         contract_status = _normalize_string(contract_payload.get("evaluation_status"), max_length=40)
         contract_reason_codes = _normalize_string_list(
             contract_payload.get("reason_codes"), max_items=12, max_item_length=80
@@ -11591,6 +11615,9 @@ class SEOMigrationService:
             trimmed_bytes=trimmed_bytes,
             degraded_state=degraded_state,
         )
+        ai_diagnostics_summary["context_budget_size_chars"] = context_budget_size_chars
+        ai_diagnostics_summary["largest_context_block"] = largest_context_block
+        ai_diagnostics_summary["largest_context_block_size_chars"] = largest_context_block_size_chars
         if not any(value is not None for value in ai_diagnostics_summary.values()):
             ai_diagnostics_summary = None
         return {
@@ -11626,6 +11653,9 @@ class SEOMigrationService:
             "last_failure_budget_outcome": budget_outcome,
             "last_failure_retry_suppressed": retry_suppressed,
             "last_failure_degraded_state": degraded_state,
+            "last_failure_context_budget_size_chars": context_budget_size_chars,
+            "last_failure_largest_context_block": largest_context_block,
+            "last_failure_largest_context_block_size_chars": largest_context_block_size_chars,
             "last_draft_ai_diagnostics_summary": ai_diagnostics_summary,
             "last_contract_status": contract_status,
             "last_contract_reason_codes": contract_reason_codes,
@@ -12492,6 +12522,17 @@ class SEOMigrationService:
                 bool(failure.retry_suppressed) if isinstance(failure.retry_suppressed, bool) else None
             ),
             "degraded_state": _normalize_string(failure.degraded_state, max_length=120),
+            "context_budget_size_chars": (
+                max(1, int(failure.context_budget_size_chars))
+                if isinstance(failure.context_budget_size_chars, int)
+                else None
+            ),
+            "largest_context_block": _normalize_string(failure.largest_context_block, max_length=80),
+            "largest_context_block_size_chars": (
+                max(0, int(failure.largest_context_block_size_chars))
+                if isinstance(failure.largest_context_block_size_chars, int)
+                else None
+            ),
             "recorded_at": utc_now().isoformat(),
         }
         normalized_contract_diagnostics = _normalize_json_dict(draft_contract_diagnostics)
@@ -12640,6 +12681,29 @@ class SEOMigrationService:
         provider_name = _normalize_string(error.provider_name, max_length=64) or self.provider_name
         model_name = _normalize_string(error.model_name, max_length=128) or self.provider_model_name
         prompt_version = _normalize_string(error.prompt_version, max_length=64) or self.prompt_version
+        context_budget = _normalize_json_dict(details.get("context_budget"))
+        context_budget_size_chars = (
+            max(1, int(details.get("context_budget_size_chars")))
+            if isinstance(details.get("context_budget_size_chars"), int)
+            else (
+                max(1, int(context_budget.get("budget_size_chars")))
+                if isinstance(context_budget.get("budget_size_chars"), int)
+                else None
+            )
+        )
+        largest_context_block = (
+            _normalize_string(details.get("largest_context_block"), max_length=80)
+            or _normalize_string(context_budget.get("largest_retained_block"), max_length=80)
+        )
+        largest_context_block_size_chars = (
+            max(0, int(details.get("largest_context_block_size_chars")))
+            if isinstance(details.get("largest_context_block_size_chars"), int)
+            else (
+                max(0, int(context_budget.get("largest_retained_block_size_chars")))
+                if isinstance(context_budget.get("largest_retained_block_size_chars"), int)
+                else None
+            )
+        )
         return SEOMigrationDraftFailure(
             failure_category=category,
             failure_reason=reason,
@@ -12738,6 +12802,9 @@ class SEOMigrationService:
                 error.degraded_state or details.get("degraded_state"),
                 max_length=120,
             ),
+            context_budget_size_chars=context_budget_size_chars,
+            largest_context_block=largest_context_block,
+            largest_context_block_size_chars=largest_context_block_size_chars,
         )
 
     @staticmethod
@@ -12945,6 +13012,9 @@ class SEOMigrationService:
             if _media_asset_context_entry(item) is not None
         ]
         context_json = _normalize_json_dict(assembly.context_json)
+        context_json["source_snapshot"] = self._build_source_snapshot_context_payload(
+            source_snapshot=_normalize_json_dict(context_json.get("source_snapshot"))
+        )
         context_json["media_assets"] = {
             "selected_assets": selected_media_context_payload,
             "selected_assets_count": len(selected_media_context_payload),
@@ -13110,6 +13180,96 @@ class SEOMigrationService:
             fallback_message="migration_context_summary",
             level=logging.INFO,
         )
+
+    def _build_source_snapshot_context_payload(
+        self,
+        *,
+        source_snapshot: dict[str, object],
+    ) -> dict[str, object]:
+        discovered_images = _normalize_workspace_discovered_media_assets(source_snapshot.get("discovered_images"))
+        useful_count = 0
+        low_value_count = 0
+        rejected_count = 0
+        for item in discovered_images:
+            quality = _normalize_media_candidate_quality(item.get("candidate_quality"))
+            if quality == _MIGRATION_MEDIA_CANDIDATE_QUALITY_USEFUL:
+                useful_count += 1
+            elif quality == _MIGRATION_MEDIA_CANDIDATE_QUALITY_LOW_VALUE:
+                low_value_count += 1
+            elif quality == _MIGRATION_MEDIA_CANDIDATE_QUALITY_REJECTED:
+                rejected_count += 1
+
+        pages_scanned = _normalize_string_list(
+            source_snapshot.get("pages_scanned"),
+            max_items=_MAX_SOURCE_SNAPSHOT_CONTEXT_PAGES,
+            max_item_length=1024,
+        )
+        pages_scanned_count = _coerce_non_negative_int(source_snapshot.get("pages_scanned_count"))
+        if pages_scanned_count is None:
+            pages_scanned_count = len(pages_scanned)
+
+        headings = _normalize_string_list(
+            source_snapshot.get("headings"),
+            max_items=_MAX_SOURCE_SNAPSHOT_CONTEXT_HEADINGS,
+            max_item_length=180,
+        )
+        service_blocks = _normalize_string_list(
+            source_snapshot.get("service_blocks"),
+            max_items=_MAX_SOURCE_SNAPSHOT_CONTEXT_SERVICE_BLOCKS,
+            max_item_length=220,
+        )
+        contact_signals = _normalize_string_list(
+            source_snapshot.get("contact_signals"),
+            max_items=_MAX_SOURCE_SNAPSHOT_CONTEXT_CONTACT_SIGNALS,
+            max_item_length=160,
+        )
+        warnings = _normalize_string_list(
+            source_snapshot.get("warnings"),
+            max_items=_MAX_SOURCE_SNAPSHOT_CONTEXT_WARNINGS,
+            max_item_length=220,
+        )
+
+        internal_links = _normalize_string_list(
+            source_snapshot.get("internal_links"),
+            max_items=80,
+            max_item_length=1024,
+        )
+        cleaned_text_blocks = _normalize_string_list(
+            source_snapshot.get("cleaned_text_blocks"),
+            max_items=120,
+            max_item_length=5000,
+        )
+        asset_references_raw = _normalize_json_dict(source_snapshot.get("asset_references"))
+        asset_reference_count = 0
+        for value in asset_references_raw.values():
+            if isinstance(value, list):
+                asset_reference_count += len(value)
+
+        return {
+            "source_url": _normalize_discovered_media_lookup_url(source_snapshot.get("source_url"))
+            or _normalize_string(source_snapshot.get("source_url"), max_length=2048),
+            "final_url": _normalize_discovered_media_lookup_url(source_snapshot.get("final_url"))
+            or _normalize_string(source_snapshot.get("final_url"), max_length=2048),
+            "status_code": _coerce_non_negative_int(source_snapshot.get("status_code")),
+            "content_type": _normalize_string(source_snapshot.get("content_type"), max_length=120),
+            "title": _normalize_string(source_snapshot.get("title"), max_length=220),
+            "meta_description": _normalize_string(source_snapshot.get("meta_description"), max_length=320),
+            "canonical_url": _normalize_discovered_media_lookup_url(source_snapshot.get("canonical_url"))
+            or _normalize_string(source_snapshot.get("canonical_url"), max_length=2048),
+            "headings": headings,
+            "service_blocks": service_blocks,
+            "contact_signals": contact_signals,
+            "internal_links_count": len(internal_links),
+            "cleaned_text_blocks_count": len(cleaned_text_blocks),
+            "asset_reference_count": max(0, int(asset_reference_count)),
+            "pages_scanned_count": max(0, int(pages_scanned_count or 0)),
+            "pages_scanned": pages_scanned,
+            "discovered_images_count": len(discovered_images),
+            "useful_discovered_images_count": useful_count,
+            "low_value_discovered_images_count": low_value_count,
+            "rejected_discovered_images_count": rejected_count,
+            "warnings": warnings,
+        }
 
     def _collect_workspace_media_assets(
         self,
