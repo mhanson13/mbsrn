@@ -16,6 +16,7 @@ from datetime import datetime, timedelta, timezone
 
 import yaml
 
+from app.core.log_sanitizer import sanitize_log_payload
 from app.core.time import utc_now
 from app.core.runtime_metadata import get_runtime_build_metadata
 
@@ -44,6 +45,25 @@ _GITHUB_REASON_REPO_INITIALIZATION_FAILED = "github_repo_initialization_failed"
 _GITHUB_REASON_REPO_REQUIRES_MANUAL_INITIALIZATION = "github_repo_requires_manual_initialization"
 _GITHUB_REASON_MANAGED_WORKFLOW_TEMPLATE_INVALID = "managed_workflow_template_invalid"
 _MBSRN_REPO_MANAGEMENT_MARKER_PATH = "mbsrn.key"
+_MANAGED_IMAGE_PULL_SECRET_ACTION_VALUES = {"created", "updated", "unchanged", "skipped"}
+
+
+def _normalize_managed_image_pull_secret_action(
+    value: object,
+    *,
+    allow_dry_run: bool = False,
+) -> str:
+    normalized = (_coerce_string(value) or "").strip().lower()
+    allowed = set(_MANAGED_IMAGE_PULL_SECRET_ACTION_VALUES)
+    if allow_dry_run:
+        allowed.add("dry_run")
+    if normalized in allowed:
+        return normalized
+    raise SEOMigrationGitHubPublisherError(
+        code="image_pull_secret_provisioning_failed",
+        safe_message="Managed image pull secret provisioning returned an invalid action status.",
+        stage="image_pull_secret_provision",
+    )
 
 
 @dataclass(frozen=True)
@@ -2471,20 +2491,22 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 repo_name=repo_name,
                 namespace=normalized_namespace,
                 secret_name=_MBSRN_MANAGED_IMAGE_PULL_SECRET_NAME,
-                action="dry_run",
+                action=_normalize_managed_image_pull_secret_action("dry_run", allow_dry_run=True),
             )
 
         try:
-            action = _upsert_namespace_scoped_ghcr_pull_secret(
-                gcp_deploy_key=gcp_deploy_key,
-                project_id=project_id,
-                cluster_location=cluster_location,
-                cluster_name=cluster_name,
-                kubernetes_namespace=normalized_namespace,
-                git_userid=normalized_git_userid,
-                git_email=normalized_git_email,
-                git_token=normalized_git_token,
-                timeout_seconds=self.timeout_seconds,
+            action = _normalize_managed_image_pull_secret_action(
+                _upsert_namespace_scoped_ghcr_pull_secret(
+                    gcp_deploy_key=gcp_deploy_key,
+                    project_id=project_id,
+                    cluster_location=cluster_location,
+                    cluster_name=cluster_name,
+                    kubernetes_namespace=normalized_namespace,
+                    git_userid=normalized_git_userid,
+                    git_email=normalized_git_email,
+                    git_token=normalized_git_token,
+                    timeout_seconds=self.timeout_seconds,
+                )
             )
         except SEOMigrationGitHubPublisherError:
             _emit_structured_publisher_log(
@@ -6912,7 +6934,7 @@ def _upsert_namespace_scoped_ghcr_pull_secret(
             expected_statuses=(200,),
             error_stage="image_pull_secret_provision",
         )
-        return "updated"
+        return _normalize_managed_image_pull_secret_action("updated")
     _request_kubernetes_json(
         method="POST",
         endpoint=cluster_endpoint,
@@ -6924,7 +6946,7 @@ def _upsert_namespace_scoped_ghcr_pull_secret(
         expected_statuses=(200, 201),
         error_stage="image_pull_secret_provision",
     )
-    return "created"
+    return _normalize_managed_image_pull_secret_action("created")
 
 
 def _ensure_managed_site_global_static_ip(
@@ -11728,11 +11750,15 @@ def _emit_structured_publisher_log(
     if not isinstance(payload, dict):
         _LOGGER.log(level, fallback_message)
         return
+    safe_payload = sanitize_log_payload(payload)
+    if not isinstance(safe_payload, dict):
+        _LOGGER.log(level, fallback_message)
+        return
     try:
-        message = json.dumps(payload, ensure_ascii=True, sort_keys=True, default=str)
+        message = json.dumps(safe_payload, ensure_ascii=True, sort_keys=True, default=str)
     except TypeError:
         message = fallback_message
-    _LOGGER.log(level, message)
+    _LOGGER.log(level, message, extra={"json_fields": safe_payload})
 
 
 def _normalize_repo_management_id(value: object) -> str | None:

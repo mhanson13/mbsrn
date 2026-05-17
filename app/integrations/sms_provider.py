@@ -37,7 +37,8 @@ class DevSMSProvider:
     provider_name = "dev_sms"
 
     def send_sms(self, *, to_number: str, body: str) -> SMSDispatchResult:
-        print(f"[dev-sms] to={to_number} body={body}")
+        body_chars = len(str(body or ""))
+        print(f"[dev-sms] to={to_number} body_chars={body_chars}")
         return SMSDispatchResult(
             provider=self.provider_name,
             recipient=to_number,
@@ -73,8 +74,7 @@ class TwilioSMSProvider:
             with urlopen(request, timeout=self.timeout_seconds) as response:
                 raw = response.read().decode("utf-8")
         except HTTPError as exc:
-            error_body = exc.read().decode("utf-8", errors="ignore")
-            raise RuntimeError(f"Twilio HTTP error {exc.code}: {error_body}") from exc
+            raise RuntimeError(f"Twilio HTTP error {exc.code}") from exc
         except URLError as exc:
             raise RuntimeError(f"Twilio connection error: {exc.reason}") from exc
         except OSError as exc:

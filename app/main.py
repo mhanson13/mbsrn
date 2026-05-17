@@ -29,6 +29,7 @@ from app.api.routes import (
     seo_v1_router,
 )
 from app.core.config import get_settings
+from app.core.log_sanitizer import sanitize_log_payload
 from app.core.runtime_metadata import get_runtime_build_metadata
 from app.db.base import Base
 from app.db.session import engine, get_database_target
@@ -196,11 +197,15 @@ def _emit_structured_startup_log(
     fallback_message: str,
     level: int = logging.INFO,
 ) -> None:
+    safe_payload = sanitize_log_payload(payload)
+    if not isinstance(safe_payload, dict):
+        logger.log(level, fallback_message)
+        return
     try:
-        message = json.dumps(payload, ensure_ascii=True, sort_keys=True)
+        message = json.dumps(safe_payload, ensure_ascii=True, sort_keys=True)
     except (TypeError, ValueError):
         message = fallback_message
-    logger.log(level, message, extra={"json_fields": payload})
+    logger.log(level, message, extra={"json_fields": safe_payload})
 
 
 def _is_localhost_database_target() -> bool:

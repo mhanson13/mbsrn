@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import io
 import json
+import logging
 import socket
 import subprocess
 import urllib.error
@@ -12,6 +13,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+import app.integrations.seo_migration_github_publisher as github_publisher_module
 from app.core.time import utc_now
 from app.integrations.seo_migration_github_publisher import (
     GitHubSEOMigrationPublisher,
@@ -28,6 +30,7 @@ from app.integrations.seo_migration_github_publisher import (
     _derive_https_probe_error_summary_for_failure,
     _extract_resolve_live_url_state_from_log_text,
     _classify_rollout_blocker_hints_from_describe_outputs,
+    _emit_structured_publisher_log,
     _resolve_google_credential_principal,
     derive_site_kubernetes_namespace,
     derive_site_preview_certificate_name,
@@ -10040,3 +10043,73 @@ def test_check_deploy_target_readiness_flags_legacy_generic_runtime_images(
     details = readiness.managed_gke_config_details or {}
     assert details.get("site_runtime_image_legacy_generic_detected") is True
     assert details.get("site_runtime_image_reference_observed") == legacy_image_reference
+
+
+def test_emit_structured_publisher_log_redacts_sensitive_fields(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.INFO, logger="app.integrations.seo_migration_github_publisher")
+    _emit_structured_publisher_log(
+        payload={
+            "event": "seo_migration_managed_image_pull_secret_provisioning",
+            "operation_status": "completed",
+            "action": "updated",
+            "git_token": "ghp_FAKE_SUPER_SECRET_TOKEN_FOR_TEST",
+            "gcp_deploy_key": "FAKE_GCP_DEPLOY_KEY_FOR_TEST",
+            "authorization": "Bearer FAKE_BEARER_SECRET_FOR_TEST",
+            "cookie": "session=FAKE_COOKIE_SECRET_FOR_TEST",
+            "database_url": "postgresql://user:pass@localhost:5432/db",
+        },
+        fallback_message="seo_migration_managed_image_pull_secret_provisioning",
+    )
+
+    structured_records = [
+        record
+        for record in caplog.records
+        if isinstance(record.__dict__.get("json_fields"), dict)
+        and record.__dict__["json_fields"].get("event") == "seo_migration_managed_image_pull_secret_provisioning"
+    ]
+    assert structured_records
+    payload = structured_records[-1].__dict__["json_fields"]
+    serialized = structured_records[-1].getMessage()
+
+    assert payload.get("operation_status") == "completed"
+    assert payload.get("action") == "updated"
+    assert payload.get("git_token") == "<redacted>"
+    assert payload.get("gcp_deploy_key") == "<redacted>"
+    assert payload.get("authorization") == "<redacted>"
+    assert payload.get("cookie") == "<redacted>"
+    assert payload.get("database_url") == "<redacted>"
+    assert "ghp_FAKE_SUPER_SECRET_TOKEN_FOR_TEST" not in serialized
+    assert "FAKE_GCP_DEPLOY_KEY_FOR_TEST" not in serialized
+    assert "FAKE_BEARER_SECRET_FOR_TEST" not in serialized
+    assert "FAKE_COOKIE_SECRET_FOR_TEST" not in serialized
+
+
+def test_provision_managed_image_pull_secret_rejects_unexpected_action_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    monkeypatch.setattr(
+        github_publisher_module,
+        "_upsert_namespace_scoped_ghcr_pull_secret",
+        lambda **kwargs: "ghp_FAKE_SUPER_SECRET_TOKEN_FOR_TEST",
+    )
+
+    with pytest.raises(SEOMigrationGitHubPublisherError) as exc_info:
+        publisher.provision_managed_image_pull_secret(
+            repo_owner="mhanson13",
+            repo_name="tnmfire",
+            ref="main",
+            kubernetes_namespace="tnmfire",
+            managed_gke_config={
+                "cluster_name": "cluster-1",
+                "cluster_location": "us-central1",
+                "project_id": "project-1",
+            },
+            git_userid="ci-user",
+            git_email="ci@example.com",
+            git_token="ghp_valid_test_token",
+            gcp_deploy_key='{"type":"service_account","private_key":"FAKE_GCP_DEPLOY_KEY_FOR_TEST"}',
+            dry_run=False,
+        )
+
+    assert exc_info.value.code == "image_pull_secret_provisioning_failed"

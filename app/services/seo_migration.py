@@ -21,6 +21,7 @@ from uuid import uuid4
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.core.log_sanitizer import sanitize_log_payload
 from app.core.time import utc_now
 from app.core.runtime_metadata import get_runtime_build_metadata
 from app.integrations.ai_execution_core import (
@@ -13983,11 +13984,15 @@ class SEOMigrationService:
         fallback_message: str,
         level: int,
     ) -> None:
+        safe_payload = sanitize_log_payload(payload)
+        if not isinstance(safe_payload, dict):
+            logger.log(level, fallback_message)
+            return
         try:
-            message = json.dumps(payload, ensure_ascii=True, sort_keys=True)
+            message = json.dumps(safe_payload, ensure_ascii=True, sort_keys=True)
         except (TypeError, ValueError):
             message = fallback_message
-        logger.log(level, message, extra={"json_fields": payload})
+        logger.log(level, message, extra={"json_fields": safe_payload})
 
     def _log_control_plane_action(
         self,

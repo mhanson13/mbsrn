@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from sqlalchemy.orm import Session
 
+from app.core.log_sanitizer import sanitize_log_payload
 from app.core.time import utc_now
 from app.integrations.ai_execution_core import (
     build_ai_diagnostics_summary,
@@ -738,11 +739,15 @@ class SEORecommendationNarrativeService:
         fallback_message: str,
         level: int = logging.INFO,
     ) -> None:
+        safe_payload = sanitize_log_payload(payload)
+        if not isinstance(safe_payload, dict):
+            logger.log(level, fallback_message)
+            return
         try:
-            message = json.dumps(payload, ensure_ascii=True, sort_keys=True)
+            message = json.dumps(safe_payload, ensure_ascii=True, sort_keys=True)
         except (TypeError, ValueError):
             message = fallback_message
-        logger.log(level, message, extra={"json_fields": payload})
+        logger.log(level, message, extra={"json_fields": safe_payload})
 
     def _provider_prompt_text_recommendations(self) -> str:
         # Resolver fallback must use the immutable configured baseline captured in

@@ -8,6 +8,7 @@ import time
 import urllib.error
 import urllib.request
 
+from app.core.log_sanitizer import sanitize_log_payload
 
 _DEFAULT_MAX_ATTEMPTS = 1
 _DEFAULT_RETRY_BACKOFF_SECONDS = 0.0
@@ -873,6 +874,10 @@ def _log_core_event(*, level: int, event: str, payload: dict[str, object]) -> No
     data = {"event": event}
     data.update(payload)
     safe_payload = {key: value for key, value in data.items() if value is not None}
+    safe_payload = sanitize_log_payload(safe_payload)
+    if not isinstance(safe_payload, dict):
+        logger.log(level, event)
+        return
     try:
         serialized = json.dumps(safe_payload, ensure_ascii=True, sort_keys=True)
     except (TypeError, ValueError):

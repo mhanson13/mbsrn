@@ -112,3 +112,19 @@ Rotation requires:
 6. Remove old key version only after validation window.
 
 Detailed operator procedure: [Token Rotation Runbook](token-rotation.md)
+
+## Sensitive Logging Policy
+Structured runtime logging must be sanitized before emission.
+
+Required protections:
+- redact sensitive keys recursively (for example: `token`, `secret`, `password`, `authorization`, `cookie`,
+  `private_key`, `deploy_key`, `api_key`, `access_token`, `refresh_token`, `database_url`,
+  `cloud_sql_instance_connection_name`, `dockerconfigjson`, `gcp_deploy_key`, `git_token`)
+- redact secret-like values (for example GitHub PAT prefixes, Bearer/Basic auth values, credential URLs)
+- bound depth/list traversal to avoid unbounded serialization
+- never emit raw request/response bodies, raw provider payloads, raw prompts, or raw subprocess stdout/stderr
+
+GHCR pull-secret provisioning logging contract:
+- `seo_migration_managed_image_pull_secret_provisioning` logs only bounded operational fields
+- `action` is constrained to safe status values (`created`, `updated`, `unchanged`, `skipped`, or `dry_run`)
+- logs must not include deploy key material, Git token values, or `.dockerconfigjson` payloads

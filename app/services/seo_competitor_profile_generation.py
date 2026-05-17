@@ -13,6 +13,7 @@ from uuid import uuid4
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.core.log_sanitizer import sanitize_log_payload
 from app.core.runtime_metadata import get_runtime_build_metadata
 from app.core.time import utc_now
 from app.integrations.seo_competitor_profile_generation_provider import SEOCompetitorProfileProviderError
@@ -1283,11 +1284,15 @@ class SEOCompetitorProfileGenerationService:
         enriched_payload = dict(payload)
         enriched_payload.setdefault("app_version", self.runtime_app_version)
         enriched_payload.setdefault("build_sha", self.runtime_build_sha)
+        safe_payload = sanitize_log_payload(enriched_payload)
+        if not isinstance(safe_payload, dict):
+            logger.log(level, fallback_message)
+            return
         try:
-            message = json.dumps(enriched_payload, ensure_ascii=True, sort_keys=True)
+            message = json.dumps(safe_payload, ensure_ascii=True, sort_keys=True)
         except (TypeError, ValueError):
             message = fallback_message
-        logger.log(level, message, extra={"json_fields": enriched_payload})
+        logger.log(level, message, extra={"json_fields": safe_payload})
 
     def _emit_generation_run_terminal_update(
         self,
@@ -5306,11 +5311,15 @@ class SEOCompetitorProfileGenerationService:
             "recovery_path": normalized_recovery_path,
             "final_outcome": normalized_final_outcome,
         }
+        safe_payload = sanitize_log_payload(payload)
+        if not isinstance(safe_payload, dict):
+            logger.log(level, "competitor_timeout_outcome")
+            return
         try:
-            message = json.dumps(payload, ensure_ascii=True, sort_keys=True)
+            message = json.dumps(safe_payload, ensure_ascii=True, sort_keys=True)
         except (TypeError, ValueError):
             message = "competitor_timeout_outcome"
-        logger.log(level, message, extra={"json_fields": payload})
+        logger.log(level, message, extra={"json_fields": safe_payload})
 
     def _serialize_provider_attempts_for_debug(
         self,

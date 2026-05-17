@@ -11,6 +11,7 @@ import urllib.request
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
+from app.core.log_sanitizer import sanitize_log_payload
 from app.integrations.ai_execution_core import (
     AIContextBlock,
     AIExecutionError,
@@ -1322,6 +1323,10 @@ class OpenAISEOCompetitorProfileGenerationProvider:
         }
         structured_payload.update(payload)
         safe_payload = {key: value for key, value in structured_payload.items() if value is not None}
+        safe_payload = sanitize_log_payload(safe_payload)
+        if not isinstance(safe_payload, dict):
+            logger.log(level, event)
+            return
         try:
             serialized = json.dumps(safe_payload, ensure_ascii=True, sort_keys=True)
         except (TypeError, ValueError):
@@ -2219,6 +2224,10 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             "overflow": budget_result.get("overflow"),
         }
         safe_payload = {key: value for key, value in payload.items() if value is not None}
+        safe_payload = sanitize_log_payload(safe_payload)
+        if not isinstance(safe_payload, dict):
+            logger.info("competitor_request_budget")
+            return
         logger.info(
             json.dumps(safe_payload, ensure_ascii=True, sort_keys=True),
             extra={"json_fields": safe_payload},
