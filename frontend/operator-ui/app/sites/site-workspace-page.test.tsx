@@ -1992,27 +1992,31 @@ describe("site migration workflow route", () => {
     render(<SiteMigrationWorkflowPage />);
 
     await user.click(await screen.findByTestId("migration-preview-draft-button"));
-    const pageSelect = await screen.findByTestId("migration-draft-preview-page-select");
-    const previewFrame = screen.getByTestId("migration-draft-preview-iframe");
+    expect(screen.queryByTestId("migration-draft-preview-page-select")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("migration-draft-preview-iframe")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("migration-draft-preview-surface")).not.toBeInTheDocument();
+
+    const previewFrame = await screen.findByTestId("migration-file-preview-iframe");
     expect(previewFrame).toHaveAttribute("srcDoc", expect.stringContaining("Artifact One Home"));
     expect(previewFrame).toHaveAttribute("srcDoc", expect.stringContaining("data-preview-link-blocked=\"true\""));
     expect(screen.getByTestId("migration-draft-preview-auth-guidance")).toHaveTextContent(
       "Draft preview route requires operator session context.",
     );
 
-    await user.selectOptions(pageSelect, "about.html");
-    expect(screen.getByTestId("migration-draft-preview-iframe")).toHaveAttribute(
+    const previewRail = screen.getByTestId("migration-file-tree");
+    await user.click(within(previewRail).getByRole("button", { name: /Artifact One About/i }));
+    expect(screen.getByTestId("migration-file-preview-iframe")).toHaveAttribute(
       "srcDoc",
       expect.stringContaining("About Draft"),
     );
 
     await user.selectOptions(screen.getByLabelText("Artifact version"), artifactTwo.id);
     await waitFor(() =>
-      expect(screen.queryByTestId("migration-draft-preview-iframe")).not.toBeInTheDocument(),
+      expect(screen.queryByTestId("migration-file-preview-iframe")).not.toBeInTheDocument(),
     );
 
     await user.click(screen.getByTestId("migration-preview-draft-button"));
-    expect(await screen.findByTestId("migration-draft-preview-iframe")).toHaveAttribute(
+    expect(await screen.findByTestId("migration-file-preview-iframe")).toHaveAttribute(
       "srcDoc",
       expect.stringContaining("Artifact Two Home"),
     );
@@ -2055,10 +2059,12 @@ describe("site migration workflow route", () => {
     render(<SiteMigrationWorkflowPage />);
 
     const inspectionSurface = await screen.findByTestId("migration-draft-inspection-surface");
-    expect(within(inspectionSurface).getByText("Page & File Inspection")).toBeInTheDocument();
+    expect(within(inspectionSurface).getByText("Draft Preview")).toBeInTheDocument();
+
+    await user.click(screen.getByTestId("migration-preview-draft-button"));
     expect(within(inspectionSurface).getByTestId("migration-page-map-list")).toBeInTheDocument();
 
-    await user.click(within(inspectionSurface).getByRole("button", { name: "index.html" }));
+    await user.click(within(inspectionSurface).getByRole("button", { name: /index\.html/i }));
     expect(within(inspectionSurface).getByText("Selected file: index.html")).toBeInTheDocument();
     expect(within(inspectionSurface).getByTestId("migration-file-preview-iframe")).toBeInTheDocument();
   });

@@ -12,7 +12,6 @@ import {
   approveMigrationArtifactVersion,
   deleteMigrationArtifactVersion,
   deployMigrationArtifactVersion,
-  fetchMigrationArtifactFilePreview,
   fetchMigrationArtifactVersions,
   fetchMigrationDraftReadiness,
   fetchMigrationDeployHistory,
@@ -2417,20 +2416,6 @@ function toRequestContractStatusLabel(value: string | null): string | null {
   return null;
 }
 
-function parseGeneratedPaths(artifact: MigrationArtifactVersion | null): string[] {
-  if (!artifact || !Array.isArray(artifact.generated_files_json)) {
-    return [];
-  }
-  return artifact.generated_files_json
-    .map((item) => {
-      if (!item || typeof item !== "object") {
-        return "";
-      }
-      return String((item as Record<string, unknown>).path || "").trim();
-    })
-    .filter((path) => path.length > 0);
-}
-
 function parseArtifactQualitySummary(artifact: MigrationArtifactVersion | null): ArtifactQualitySummary | null {
   if (!artifact) {
     return null;
@@ -3522,11 +3507,7 @@ export function MigrationWorkspacePanel({
   const [deployDryRun, setDeployDryRun] = useState(true);
 
   const [selectedFilePath, setSelectedFilePath] = useState("");
-  const [filePreviewContent, setFilePreviewContent] = useState("");
-  const [filePreviewMediaType, setFilePreviewMediaType] = useState("");
-  const [filePreviewOpen, setFilePreviewOpen] = useState(false);
   const [draftPreviewOpen, setDraftPreviewOpen] = useState(false);
-  const [selectedDraftPreviewPath, setSelectedDraftPreviewPath] = useState("");
   const [selectedPublishHistoryIdentity, setSelectedPublishHistoryIdentity] = useState("");
   const [selectedDeployHistoryIdentity, setSelectedDeployHistoryIdentity] = useState("");
   const draftPreviewFrameRef = useRef<HTMLIFrameElement | null>(null);
@@ -5057,19 +5038,45 @@ export function MigrationWorkspacePanel({
   const competitorContextLastRun = formatContextTimestamp(competitorReusedContext.timestamp);
   const latestArtifactForSummary = selectedArtifact || summary?.latest_artifact || artifactVersions[0] || null;
   const draftPreview = useMemo(() => buildDraftPreviewEvaluation(selectedArtifact), [selectedArtifact]);
+  const previewTitleByPath = useMemo(() => {
+    const titleMap = new Map<string, string>();
+    const pageMap = Array.isArray(selectedArtifact?.page_map_json) ? selectedArtifact.page_map_json : [];
+    for (const entry of pageMap) {
+      const item = asRecord(entry);
+      const path = normalizeArtifactPathForPreview(asString(item.path));
+      if (!path) {
+        continue;
+      }
+      const title = asString(item.title).trim() || asString(item.name).trim();
+      if (!title || titleMap.has(path)) {
+        continue;
+      }
+      titleMap.set(path, title);
+    }
+    return titleMap;
+  }, [selectedArtifact]);
+  const previewEntries = useMemo(
+    () =>
+      draftPreview.pages.map((page) => ({
+        path: page.path,
+        title: previewTitleByPath.get(page.path) || page.title || page.path,
+      })),
+    [draftPreview.pages, previewTitleByPath],
+  );
   const activeDraftPreviewPage = useMemo(() => {
     if (!draftPreview.available || draftPreview.pages.length === 0) {
       return null;
     }
-    const selectedPath = selectedDraftPreviewPath.trim();
+    const selectedPath = selectedFilePath.trim();
     if (selectedPath) {
       const selectedPage = draftPreview.pages.find((page) => page.path === selectedPath);
       if (selectedPage) {
         return selectedPage;
       }
     }
-    return draftPreview.pages[0] || null;
-  }, [draftPreview, selectedDraftPreviewPath]);
+    const defaultPath = draftPreview.entryPath || draftPreview.pages[0]?.path || "";
+    return draftPreview.pages.find((page) => page.path === defaultPath) || draftPreview.pages[0] || null;
+  }, [draftPreview, selectedFilePath]);
   const latestArtifactQualitySummary = parseArtifactQualitySummary(latestArtifactForSummary);
   const latestDraftStatusLabel = latestArtifactForSummary
     ? `v${latestArtifactForSummary.version} (${latestArtifactForSummary.status})`
@@ -5393,19 +5400,15 @@ export function MigrationWorkspacePanel({
 
   useEffect(() => {
     setDraftPreviewOpen(false);
-    setSelectedDraftPreviewPath("");
-    setFilePreviewOpen(false);
     setSelectedFilePath("");
-    setFilePreviewContent("");
-    setFilePreviewMediaType("");
   }, [selectedArtifactVersionId]);
 
   useEffect(() => {
     if (!draftPreview.available || draftPreview.pages.length === 0) {
-      setSelectedDraftPreviewPath("");
+      setSelectedFilePath("");
       return;
     }
-    setSelectedDraftPreviewPath((current) => {
+    setSelectedFilePath((current) => {
       const normalizedCurrent = current.trim();
       if (normalizedCurrent && draftPreview.pages.some((page) => page.path === normalizedCurrent)) {
         return normalizedCurrent;
@@ -5442,7 +5445,7 @@ export function MigrationWorkspacePanel({
         if (!decodedPath || !knownPaths.has(decodedPath)) {
           return;
         }
-        setSelectedDraftPreviewPath((current) => (current === decodedPath ? current : decodedPath));
+        setSelectedFilePath((current) => (current === decodedPath ? current : decodedPath));
       } catch {
         return;
       }
@@ -6248,34 +6251,15 @@ export function MigrationWorkspacePanel({
     }
   };
 
-  const handleSelectArtifactFile = async (path: string): Promise<void> => {
+  const handleSelectArtifactFile = (path: string): void => {
     if (!selectedArtifactVersionId || !path) {
       return;
     }
     setSelectedFilePath(path);
     setErrorMessage(null);
     setErrorHint(null);
-    try {
-      const preview = await fetchMigrationArtifactFilePreview(
-        token,
-        businessId,
-        siteId,
-        selectedArtifactVersionId,
-        path,
-      );
-      setFilePreviewMediaType(preview.media_type);
-      setFilePreviewContent(preview.content);
-      setFilePreviewOpen(true);
-    } catch (error) {
-      setFilePreviewMediaType("text/plain");
-      setFilePreviewContent("");
-      setFilePreviewOpen(false);
-      setErrorHint(null);
-      setErrorMessage(toErrorMessage(error, "Failed to load artifact file preview."));
-    }
   };
 
-  const filePaths = useMemo(() => parseGeneratedPaths(selectedArtifact), [selectedArtifact]);
   const artifactQualitySummary = parseArtifactQualitySummary(selectedArtifact);
   const requiredMediaQualityIssue =
     artifactQualitySummary?.issues.find((issue) => issue.type === "required_media_missing") || null;
@@ -7241,7 +7225,6 @@ export function MigrationWorkspacePanel({
             onChange={(event) => {
               setSelectedArtifactVersionId(event.target.value);
               setSelectedFilePath("");
-              setFilePreviewContent("");
             }}
           >
             <option value="">Select...</option>
@@ -7262,7 +7245,7 @@ export function MigrationWorkspacePanel({
                 disabled={!draftPreview.available}
                 data-testid="migration-preview-draft-button"
               >
-                {draftPreviewOpen ? "Hide Draft Preview" : "Preview Draft"}
+                {draftPreviewOpen ? "Hide preview" : "Show preview"}
               </button>
               <button
                 type="button"
@@ -7342,42 +7325,6 @@ export function MigrationWorkspacePanel({
             {!canDeleteSelectedArtifact && selectedArtifact ? (
               <span className="hint muted">{selectedArtifactDeleteBlockedReason}</span>
             ) : null}
-            {draftPreviewOpen && draftPreview.available ? (
-              <div className="panel panel-compact stack-tight migration-draft-preview-surface" data-testid="migration-draft-preview-surface">
-                <strong>Draft Preview (Read-only)</strong>
-                <span className="hint muted">
-                  Entry file: {draftPreview.entryPath || "index.html"} | This preview is sandboxed and not live.
-                </span>
-                <span className="hint muted" data-testid="migration-draft-preview-auth-guidance">
-                  Draft preview route requires operator session context. External or app-auth links are blocked inside preview.
-                </span>
-                {draftPreview.pages.length > 1 ? (
-                  <label className="stack-tight">
-                    <span className="hint muted">Preview page</span>
-                    <select
-                      value={activeDraftPreviewPage?.path || ""}
-                      onChange={(event) => setSelectedDraftPreviewPath(event.target.value)}
-                      data-testid="migration-draft-preview-page-select"
-                    >
-                      {draftPreview.pages.map((page) => (
-                        <option key={`preview-page-${page.path}`} value={page.path}>
-                          {page.title}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                ) : null}
-                <iframe
-                  ref={draftPreviewFrameRef}
-                  title="Migration draft preview"
-                  className="migration-draft-preview-frame"
-                  sandbox=""
-                  srcDoc={activeDraftPreviewPage?.html || ""}
-                  referrerPolicy="no-referrer"
-                  data-testid="migration-draft-preview-iframe"
-                />
-              </div>
-            ) : null}
             <div className="panel panel-compact stack-tight">
               <strong>Strategy Summary</strong>
               <p>{selectedArtifact.strategy_summary || "No strategy summary provided."}</p>
@@ -7388,109 +7335,67 @@ export function MigrationWorkspacePanel({
               ) : null}
             </div>
             <div className="panel panel-compact stack-tight migration-draft-inspection-surface" data-testid="migration-draft-inspection-surface">
-              <strong>Page &amp; File Inspection</strong>
+              <strong>Draft Preview</strong>
               <span className="hint muted">
-                Inspect page-map structure and generated files from one surface. HTML previews are sandboxed and read-only.
+                One read-only preview surface. Choose a page/file in the left rail and review the sandboxed web output.
               </span>
-              <div className="grid grid-2 migration-artifact-review-grid">
-                <div className="panel panel-compact stack-tight migration-file-tree-panel" data-testid="migration-file-tree">
-                  <strong>Pages &amp; Generated Files</strong>
-                  {Array.isArray(selectedArtifact.page_map_json) && selectedArtifact.page_map_json.length > 0 ? (
-                    <ul className="stack-tight" data-testid="migration-page-map-list">
-                      {selectedArtifact.page_map_json.slice(0, 12).map((item, index) => {
-                        const row = asRecord(item);
-                        const path = asString(row.path) || "-";
-                        const title = asString(row.title) || asString(row.name) || "Untitled";
-                        const canPreviewPath = path !== "-" && filePaths.includes(path);
-                        return (
-                          <li key={`page-map-${index}`}>
-                            {canPreviewPath ? (
-                              <button
-                                type="button"
-                                className={path === selectedFilePath ? "button button-tertiary button-inline active" : "button button-tertiary button-inline"}
-                                onClick={() => void handleSelectArtifactFile(path)}
-                              >
-                                {path} - {title}
-                              </button>
-                            ) : (
-                              <span className="hint">{path} - {title}</span>
-                            )}
-                          </li>
-                        );
-                      })}
-                    </ul>
-                  ) : (
-                    <p className="hint muted">No page map entries.</p>
-                  )}
-                  <strong className="hint muted">Generated file paths</strong>
-                  {filePaths.length > 0 ? (
-                    filePaths.map((path) => (
-                      <button
-                        key={path}
-                        type="button"
-                        className={path === selectedFilePath ? "button button-tertiary button-inline active" : "button button-tertiary button-inline"}
-                        onClick={() => void handleSelectArtifactFile(path)}
-                      >
-                        {path}
-                      </button>
-                    ))
-                  ) : (
-                    <WorkspaceEmptyStateCard compact={true}>
-                      <p className="hint muted">No files available.</p>
-                    </WorkspaceEmptyStateCard>
-                  )}
-                </div>
-                <div className="panel panel-compact stack-tight migration-file-preview-panel" data-testid="migration-file-preview">
-                  <div className="workspace-section-header workspace-section-header-compact">
-                    <div className="workspace-section-header-main">
-                      <strong>Selected File Preview</strong>
-                    </div>
-                    <div className="workspace-section-actions">
-                      {filePreviewOpen ? (
-                        <button
-                          type="button"
-                          className="button button-tertiary button-inline"
-                          onClick={() => setFilePreviewOpen(false)}
-                          data-testid="migration-file-preview-hide"
-                        >
-                          Hide preview
-                        </button>
-                      ) : selectedFilePath ? (
-                        <button
-                          type="button"
-                          className="button button-tertiary button-inline"
-                          onClick={() => setFilePreviewOpen(true)}
-                          data-testid="migration-file-preview-show"
-                        >
-                          Show preview
-                        </button>
-                      ) : null}
-                    </div>
+              <span className="hint muted" data-testid="migration-draft-preview-auth-guidance">
+                Draft preview route requires operator session context. External or app-auth links are blocked inside preview.
+              </span>
+              {draftPreviewOpen && draftPreview.available ? (
+                <div className="migration-draft-preview-layout" data-testid="migration-draft-preview-layout">
+                  <div className="panel panel-compact stack-tight migration-draft-preview-rail" data-testid="migration-file-tree">
+                    <strong>Pages and files</strong>
+                    {previewEntries.length > 0 ? (
+                      <div className="migration-draft-preview-rail-list" data-testid="migration-page-map-list">
+                        {previewEntries.map((entry) => (
+                          <button
+                            key={entry.path}
+                            type="button"
+                            className={
+                              entry.path === (activeDraftPreviewPage?.path || "")
+                                ? "button button-tertiary migration-draft-preview-rail-item active"
+                                : "button button-tertiary migration-draft-preview-rail-item"
+                            }
+                            onClick={() => handleSelectArtifactFile(entry.path)}
+                            data-testid={`migration-preview-entry-${entry.path}`}
+                          >
+                            <span className="migration-draft-preview-entry-title">{entry.title}</span>
+                            <span className="migration-draft-preview-entry-path">{entry.path}</span>
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <WorkspaceEmptyStateCard compact={true}>
+                        <p className="hint muted">No previewable pages.</p>
+                      </WorkspaceEmptyStateCard>
+                    )}
                   </div>
-                  <span className="hint muted">
-                    {selectedFilePath ? `Selected file: ${selectedFilePath}` : "Select a generated file to inspect."}
-                  </span>
-                  <span className="hint muted">
-                    {filePreviewOpen
-                      ? filePreviewMediaType || "text/plain"
-                      : selectedFilePath
-                        ? `Preview hidden for ${selectedFilePath}.`
-                        : "Select a file to preview."}
-                  </span>
-                  {filePreviewOpen && filePreviewMediaType.toLowerCase().includes("html") ? (
-                    <iframe
-                      title="Migration generated file preview"
-                      className="migration-draft-preview-frame"
-                      sandbox=""
-                      srcDoc={filePreviewContent || ""}
-                      referrerPolicy="no-referrer"
-                      data-testid="migration-file-preview-iframe"
-                    />
-                  ) : filePreviewOpen ? (
-                    <pre className="migration-file-preview-content">{filePreviewContent || ""}</pre>
-                  ) : null}
+                  <div className="panel panel-compact stack-tight migration-draft-preview-pane" data-testid="migration-file-preview">
+                    <strong>Web Preview</strong>
+                    <span className="hint muted">
+                      {activeDraftPreviewPage ? `Selected file: ${activeDraftPreviewPage.path}` : "Select a page to preview."}
+                    </span>
+                    {activeDraftPreviewPage ? (
+                      <iframe
+                        ref={draftPreviewFrameRef}
+                        title="Migration generated file preview"
+                        className="migration-draft-preview-frame"
+                        sandbox=""
+                        srcDoc={activeDraftPreviewPage.html || ""}
+                        referrerPolicy="no-referrer"
+                        data-testid="migration-file-preview-iframe"
+                      />
+                    ) : (
+                      <WorkspaceEmptyStateCard compact={true}>
+                        <p className="hint muted">Preview unavailable for this artifact.</p>
+                      </WorkspaceEmptyStateCard>
+                    )}
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <span className="hint muted">Preview hidden. Click Show preview to inspect generated pages.</span>
+              )}
             </div>
           </>
         ) : (

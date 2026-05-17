@@ -203,12 +203,17 @@ Draft review and preview behavior:
 - Section D is a single `Draft Artifact Review` surface that groups artifact selection, draft actions, and quality review in one compact flow.
 - action ordering in Section D:
   - selected artifact version
-  - action row (`Preview Draft`, `Approve Selected Draft`, `Delete Selected Draft`)
+  - action row (`Show preview` / `Hide preview`, `Approve Selected Draft`, `Delete Selected Draft`)
   - `Artifact Quality Summary`
 - approval notes are not part of the primary Section D UI.
-- Section D owns preview + review actions (`Preview Draft`, `Approve Selected Draft`, `Delete Selected Draft`)
+- Section D owns preview + review actions (`Show preview` / `Hide preview`, `Approve Selected Draft`, `Delete Selected Draft`)
 - preview remains sandboxed and draft-only (`not published`, `not deployed`)
-- page map, generated files, and selected-file preview stay in a combined inspection surface
+- one unified draft preview surface is used (no duplicate preview iframe surfaces)
+- preview layout is two-column on desktop:
+  - left rail (`~15-20%`) for page/file selection
+  - right pane (`~80-85%`) for sandboxed web iframe preview
+- preview layout stacks on smaller screens:
+  - selector rail above preview pane
 - draft deletion eligibility and history-protection invariants are unchanged
 
 ## Draft Input Provenance and AI Context Summary (2026-05)
