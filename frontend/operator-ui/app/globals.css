@@ -1228,6 +1228,78 @@ main {
   gap: var(--space-1);
 }
 
+.admin-field-label-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+.admin-help-wrapper {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.admin-help-trigger {
+  appearance: none;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-subtle);
+  color: var(--muted);
+  width: 1rem;
+  height: 1rem;
+  display: inline-grid;
+  place-items: center;
+  padding: 0;
+  cursor: help;
+}
+
+.admin-help-trigger::before {
+  content: "i";
+  font-size: 0.7rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.admin-help-trigger::after {
+  content: attr(data-help-text);
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 0.35rem);
+  left: 0;
+  min-width: 14rem;
+  max-width: 20rem;
+  padding: 0.45rem 0.55rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  font-size: var(--type-xs);
+  font-weight: 400;
+  line-height: 1.35;
+  white-space: normal;
+  text-align: left;
+  box-shadow: 0 10px 20px -16px var(--workspace-summary-shadow);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-0.15rem);
+  transition: opacity 0.12s ease, transform 0.12s ease;
+}
+
+.admin-help-trigger:hover,
+.admin-help-trigger:focus-visible {
+  color: var(--text);
+  border-color: var(--accent);
+  outline: none;
+}
+
+.admin-help-wrapper:hover .admin-help-trigger::after,
+.admin-help-wrapper:focus-within .admin-help-trigger::after {
+  opacity: 1;
+  transform: translateY(0);
+}
+
 .migration-section-title {
   margin: 0.05rem 0 -0.15rem;
   font-size: var(--type-xs);

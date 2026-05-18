@@ -560,7 +560,7 @@ def test_patch_business_settings_rejects_migration_draft_timeout_out_of_range(db
 
     response = client.patch(
         f"/api/businesses/{seeded_business.id}/settings",
-        json={"migration_draft_timeout_seconds": 901},
+        json={"migration_draft_timeout_seconds": 601},
     )
 
     assert response.status_code == 422

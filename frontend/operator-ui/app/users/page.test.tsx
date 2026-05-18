@@ -801,7 +801,7 @@ describe("admin page compatibility route", () => {
     ).toBeInTheDocument();
   });
 
-  it("renders plain-English helper guidance for competitor candidate quality settings", async () => {
+  it("moves competitor candidate quality field guidance into help tooltips", async () => {
     mockFetchPrincipals.mockResolvedValueOnce(principalsResponse(true));
     mockFetchPrincipalIdentities.mockResolvedValueOnce(identitiesResponse());
     mockFetchBusinessSettings.mockResolvedValueOnce(buildBusinessSettings());
@@ -809,30 +809,34 @@ describe("admin page compatibility route", () => {
     render(<UsersCompatibilityPage />);
 
     await screen.findByText("operator-1");
+    expect(screen.getByTestId("admin-help-minimum-relevance-score")).toHaveAttribute("data-help-text");
+    expect(screen.getByTestId("admin-help-big-box-mismatch-penalty")).toHaveAttribute("data-help-text");
     expect(
-      screen.getByText(
+      screen.queryByText(
         "Controls how closely a competitor must match your business to be included. Higher values mean stricter, more relevant matches.",
       ),
-    ).toBeInTheDocument();
+    ).not.toBeInTheDocument();
     expect(
-      screen.getByText(
+      screen.queryByText(
         "Reduces the chance that large national or big-box companies appear as competitors. Increase this to focus more on businesses like yours.",
       ),
-    ).toBeInTheDocument();
+    ).not.toBeInTheDocument();
     expect(
-      screen.getByText(
+      screen.queryByText(
         "Reduces listings from directories or lead sites (like Yelp, Angi, etc.). Increase this to prioritize real business websites instead.",
       ),
-    ).toBeInTheDocument();
+    ).not.toBeInTheDocument();
     expect(
-      screen.getByText(
+      screen.queryByText(
         "Boosts competitors that are located in or serve your area. Increase this to focus more on nearby businesses.",
       ),
-    ).toBeInTheDocument();
-    expect(screen.getByText("Raise this if competitors feel unrelated. Lower it if you are getting too few results.")).toBeInTheDocument();
-    expect(screen.getByText("Raise this if large companies dominate your results.")).toBeInTheDocument();
-    expect(screen.getByText("Raise this if you see too many directory or listing sites.")).toBeInTheDocument();
-    expect(screen.getByText("Raise this if competitors are not local enough.")).toBeInTheDocument();
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Raise this if competitors feel unrelated. Lower it if you are getting too few results."),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("Raise this if large companies dominate your results.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Raise this if you see too many directory or listing sites.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Raise this if competitors are not local enough.")).not.toBeInTheDocument();
   });
 
   it("updates competitor candidate quality settings for admins", async () => {
@@ -868,7 +872,7 @@ describe("admin page compatibility route", () => {
     await screen.findByText("AI competitor candidate quality settings updated.");
   });
 
-  it("renders competitor timeout controls with allowed range guidance", async () => {
+  it("renders competitor timeout controls with bounds and tooltip guidance", async () => {
     mockFetchPrincipals.mockResolvedValueOnce(principalsResponse(true));
     mockFetchPrincipalIdentities.mockResolvedValueOnce(identitiesResponse());
     mockFetchBusinessSettings.mockResolvedValueOnce(
@@ -884,9 +888,21 @@ describe("admin page compatibility route", () => {
     expect(screen.getByLabelText("Competitor Primary Timeout Seconds")).toHaveValue(45);
     expect(screen.getByLabelText("Competitor Degraded Retry Timeout Seconds")).toHaveValue(25);
     expect(
-      screen.getByText(
+      screen.queryByText(
         `Allowed range: ${COMPETITOR_TIMEOUT_SECONDS_MIN}-${COMPETITOR_TIMEOUT_SECONDS_MAX} seconds.`,
       ),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByLabelText("Competitor Primary Timeout Seconds"),
+    ).toHaveAttribute("max", String(COMPETITOR_TIMEOUT_SECONDS_MAX));
+    expect(
+      screen.getByLabelText("Competitor Degraded Retry Timeout Seconds"),
+    ).toHaveAttribute("max", String(COMPETITOR_TIMEOUT_SECONDS_MAX));
+    expect(
+      screen.getByTestId("admin-help-competitor-primary-timeout-seconds"),
+    ).toHaveAttribute("data-help-text");
+    expect(
+      screen.getByTestId("admin-help-competitor-degraded-timeout-seconds"),
     ).toBeInTheDocument();
   });
 
@@ -1138,10 +1154,9 @@ describe("admin page compatibility route", () => {
         ai_prompt_text_competitor: "Prefer local and substitutable competitors.",
         ai_prompt_text_recommendations: "Prioritize specific next-step recommendations.",
         default_ai_model: null,
-        migration_draft_timeout_seconds: null,
       }),
     );
-    await screen.findByText("AI prompt/default model/timeout settings updated.");
+    await screen.findByText("AI prompt/default model settings updated.");
   });
 
   it("clears AI prompt overrides back to deployment/default fallback", async () => {

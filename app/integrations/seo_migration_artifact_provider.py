@@ -130,6 +130,10 @@ _MIGRATION_DRAFT_MAX_TRIMMING_PASSES = 7
 _MIGRATION_GENERATION_PREFLIGHT_TOO_LARGE = "migration_generation_preflight_too_large"
 _MIGRATION_PREFLIGHT_MODE_COMPACT_FALLBACK = "compact_fallback"
 _MIGRATION_PREFLIGHT_MODE_BLOCK_BEFORE_PROVIDER = "block_before_provider"
+# Synchronous migration generation timeout guardrail.
+# Keep request/response path bounded to 10 minutes (600s).
+_MIGRATION_SYNC_TIMEOUT_MIN_SECONDS = 60
+_MIGRATION_SYNC_TIMEOUT_MAX_SECONDS = 600
 
 logger = logging.getLogger(__name__)
 
@@ -225,7 +229,10 @@ class _MigrationGenerationSafetyProfile:
         }:
             normalized_mode = _MIGRATION_PREFLIGHT_MODE_COMPACT_FALLBACK
         return {
-            "migration_provider_timeout_seconds": max(60, min(300, int(self.provider_timeout_seconds))),
+            "migration_provider_timeout_seconds": max(
+                _MIGRATION_SYNC_TIMEOUT_MIN_SECONDS,
+                min(_MIGRATION_SYNC_TIMEOUT_MAX_SECONDS, int(self.provider_timeout_seconds)),
+            ),
             "migration_preflight_mode": normalized_mode,
             "migration_max_final_input_chars": max(3000, min(12000, int(self.max_final_input_chars))),
             "migration_max_difficulty_score": max(5, min(20, int(self.max_difficulty_score))),

@@ -535,6 +535,8 @@ Admin ownership groups:
 - Publish & Deployment Configuration: GitHub target, managed GKE target, and managed deploy secret controls.
 - Migration AI Budget: migration context/generation limits, depth profile, and variation controls.
 - Migration Generation Safety: provider timeout and preflight guardrails (`compact_fallback` vs `block_before_provider`) with hard backend caps.
+  - timeout source of truth is Migration Generation Safety provider timeout (`60-600` seconds, default `300`)
+  - `6000` seconds is intentionally unsupported for synchronous operator/API generation
 - Managed Namespace Policy: ResourceQuota, LimitRange, and NetworkPolicy defaults for managed site namespaces.
 - Site Registry Management: site records and destructive site delete controls.
 - Diagnostics & Logs: read-only Cloud Logging investigation.
@@ -545,6 +547,10 @@ Execution ownership remains on dedicated routes:
 - Recommendations: operator decisioning and queue execution.
 - Competitors: competitor generation/review workflow.
 - Site Workspace: command-center routing and compact state.
+
+Admin settings help UX:
+- Admin forms use compact info icons/tooltips for per-setting guidance.
+- Always-visible inline text is reserved for section summaries, high-risk warnings, destructive actions, and save/error states.
 
 ## Admin Competitor Timeout Controls
 

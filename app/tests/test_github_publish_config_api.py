@@ -427,7 +427,7 @@ def test_put_github_publish_config_rejects_invalid_migration_generation_safety_r
             "base_path": "/",
             "namespace_isolation_defaults": {
                 "migration_generation_safety": {
-                    "migration_provider_timeout_seconds": 500,
+                    "migration_provider_timeout_seconds": 601,
                     "migration_preflight_mode": "invalid_mode",
                 }
             },
@@ -438,6 +438,58 @@ def test_put_github_publish_config_rejects_invalid_migration_generation_safety_r
     assert response.status_code == 422
     detail = str(response.json().get("detail", ""))
     assert "migration_provider_timeout_seconds" in detail or "migration_preflight_mode" in detail
+
+
+def test_put_github_publish_config_accepts_max_migration_provider_timeout_seconds(
+    db_session,
+    seeded_business,
+) -> None:
+    client = _make_client(db_session, business_id=seeded_business.id)
+
+    response = client.put(
+        "/api/admin/github-publish-config",
+        json={
+            "owner": "mhanson13",
+            "default_branch": "main",
+            "base_path": "/",
+            "namespace_isolation_defaults": {
+                "migration_generation_safety": {
+                    "migration_provider_timeout_seconds": 600,
+                }
+            },
+            "enabled": True,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["namespace_isolation_defaults"]["migration_generation_safety"]["migration_provider_timeout_seconds"] == 600
+
+
+def test_put_github_publish_config_rejects_migration_provider_timeout_seconds_6000(
+    db_session,
+    seeded_business,
+) -> None:
+    client = _make_client(db_session, business_id=seeded_business.id)
+
+    response = client.put(
+        "/api/admin/github-publish-config",
+        json={
+            "owner": "mhanson13",
+            "default_branch": "main",
+            "base_path": "/",
+            "namespace_isolation_defaults": {
+                "migration_generation_safety": {
+                    "migration_provider_timeout_seconds": 6000,
+                }
+            },
+            "enabled": True,
+        },
+    )
+
+    assert response.status_code == 422
+    detail = str(response.json().get("detail", ""))
+    assert "migration_provider_timeout_seconds" in detail
 
 
 def test_put_github_publish_config_rejects_enabled_without_owner(db_session, seeded_business) -> None:

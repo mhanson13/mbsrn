@@ -315,9 +315,12 @@ _DRAFT_PROVIDER_COMPATIBILITY_LOG_EVENT = "seo_migration_provider_compatibility_
 _MIGRATION_RUNTIME_PUBLISHER_LOG_EVENT = "seo_migration_runtime_publisher_readiness"
 _MIGRATION_WORKFLOW_PROVISIONED_LOG_EVENT = "migration_workflow_provisioned"
 _MIGRATION_WORKFLOW_PROVISIONING_LOG_EVENT = "seo_migration_workflow_provisioning"
-_MIGRATION_DRAFT_TIMEOUT_DEFAULT_SECONDS = 120
+# Synchronous migration draft generation timeout guardrail.
+# 600 seconds (10 minutes) is the hard maximum for this request/response path.
+# Longer generations must run in async/background architecture.
+_MIGRATION_DRAFT_TIMEOUT_DEFAULT_SECONDS = 300
 _MIGRATION_DRAFT_TIMEOUT_MIN_SECONDS = 60
-_MIGRATION_DRAFT_TIMEOUT_MAX_SECONDS = 900
+_MIGRATION_DRAFT_TIMEOUT_MAX_SECONDS = 600
 _GITHUB_PUBLISHER_REASON_RUNTIME_CREDENTIAL_MISSING = "runtime_credential_missing"
 _GITHUB_PUBLISHER_REASON_RUNTIME_CONFIG_INVALID = "runtime_configuration_invalid"
 _GITHUB_PUBLISHER_REASON_RUNTIME_INTEGRATION_UNAVAILABLE = "runtime_integration_unavailable"
@@ -838,7 +841,10 @@ class SEOMigrationGenerationSafety:
         if preflight_mode not in {"compact_fallback", "block_before_provider"}:
             preflight_mode = "compact_fallback"
         return {
-            "migration_provider_timeout_seconds": max(60, min(300, int(self.provider_timeout_seconds))),
+            "migration_provider_timeout_seconds": max(
+                _MIGRATION_DRAFT_TIMEOUT_MIN_SECONDS,
+                min(_MIGRATION_DRAFT_TIMEOUT_MAX_SECONDS, int(self.provider_timeout_seconds)),
+            ),
             "migration_preflight_mode": preflight_mode,
             "migration_max_final_input_chars": max(3000, min(12000, int(self.max_final_input_chars))),
             "migration_max_difficulty_score": max(5, min(20, int(self.max_difficulty_score))),
@@ -13402,6 +13408,20 @@ class SEOMigrationService:
         generation_safety: SEOMigrationGenerationSafety | None = None,
         generation_safety_source: str | None = None,
     ) -> tuple[int, str]:
+        # Source of truth: migration generation safety timeout.
+        # Legacy business-level migration timeout remains as a compatibility fallback only.
+        resolved_generation_safety = generation_safety or self._resolved_migration_generation_safety
+        safety_payload = resolved_generation_safety.to_context_payload()
+        safety_timeout = _coerce_int(safety_payload.get("migration_provider_timeout_seconds"))
+        if (
+            safety_timeout is not None
+            and _MIGRATION_DRAFT_TIMEOUT_MIN_SECONDS <= safety_timeout <= _MIGRATION_DRAFT_TIMEOUT_MAX_SECONDS
+        ):
+            resolved_source = generation_safety_source or self._resolved_migration_generation_safety_source
+            if resolved_source not in {"admin", "default"}:
+                resolved_source = "default"
+            return safety_timeout, resolved_source
+
         configured_timeout = getattr(business, "migration_draft_timeout_seconds", None)
         try:
             parsed_timeout = int(configured_timeout) if configured_timeout is not None else None
@@ -13412,17 +13432,6 @@ class SEOMigrationService:
             and _MIGRATION_DRAFT_TIMEOUT_MIN_SECONDS <= parsed_timeout <= _MIGRATION_DRAFT_TIMEOUT_MAX_SECONDS
         ):
             return parsed_timeout, "admin"
-        resolved_generation_safety = generation_safety or self._resolved_migration_generation_safety
-        safety_payload = resolved_generation_safety.to_context_payload()
-        safety_timeout = _coerce_int(safety_payload.get("migration_provider_timeout_seconds"))
-        if (
-            safety_timeout is not None
-            and _MIGRATION_DRAFT_TIMEOUT_MIN_SECONDS <= safety_timeout <= 300
-        ):
-            resolved_source = generation_safety_source or self._resolved_migration_generation_safety_source
-            if resolved_source not in {"admin", "default"}:
-                resolved_source = "default"
-            return safety_timeout, resolved_source
         return _MIGRATION_DRAFT_TIMEOUT_DEFAULT_SECONDS, "default"
 
     def _apply_resolved_migration_model_settings(

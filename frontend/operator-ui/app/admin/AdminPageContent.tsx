@@ -70,9 +70,6 @@ import {
   CRAWL_PAGE_LIMIT_MIN,
   DEFAULT_COMPETITOR_TIMEOUT_SECONDS,
   DEFAULT_CRAWL_PAGE_LIMIT,
-  DEFAULT_MIGRATION_DRAFT_TIMEOUT_SECONDS,
-  MIGRATION_DRAFT_TIMEOUT_SECONDS_MAX,
-  MIGRATION_DRAFT_TIMEOUT_SECONDS_MIN,
   NOTIFICATION_EMAIL_REGEX,
   NOTIFICATION_PHONE_E164_REGEX,
 } from "../../lib/validation/constants";
@@ -124,7 +121,7 @@ const MIGRATION_SOURCE_PAGE_SUMMARY_LIMIT_BOUNDS = { min: 3, max: 16 } as const;
 const MIGRATION_MEDIA_ASSET_LIMIT_BOUNDS = { min: 4, max: 60 } as const;
 const MIGRATION_GENERATED_PAGE_LIMIT_BOUNDS = { min: 4, max: 24 } as const;
 const MIGRATION_GENERATED_FILE_LIMIT_BOUNDS = { min: 4, max: 12 } as const;
-const MIGRATION_PROVIDER_TIMEOUT_BOUNDS = { min: 60, max: 300 } as const;
+const MIGRATION_PROVIDER_TIMEOUT_BOUNDS = { min: 60, max: 600 } as const;
 const MIGRATION_MAX_FINAL_INPUT_CHARS_BOUNDS = { min: 3000, max: 12000 } as const;
 const MIGRATION_MAX_DIFFICULTY_SCORE_BOUNDS = { min: 5, max: 20 } as const;
 const MIGRATION_COMPACT_PAGE_LIMIT_BOUNDS = { min: 1, max: 8 } as const;
@@ -225,6 +222,43 @@ type CompetitorPromptContractWarningState = "none" | "legacy_alias" | "invalid";
 interface CompetitorPromptContractWarning {
   state: CompetitorPromptContractWarningState;
   message: string | null;
+}
+
+interface AdminHelpIconProps {
+  label: string;
+  helpText: string;
+  testId?: string;
+}
+
+function AdminHelpIcon({ label, helpText, testId }: AdminHelpIconProps): JSX.Element {
+  return (
+    <span className="admin-help-wrapper">
+      <span
+        className="admin-help-trigger"
+        role="button"
+        tabIndex={0}
+        aria-label="Setting help"
+        data-help-text={helpText}
+        data-testid={testId}
+      />
+    </span>
+  );
+}
+
+interface AdminLabelWithHelpProps {
+  label: string;
+  helpText?: string;
+  muted?: boolean;
+  testId?: string;
+}
+
+function AdminLabelWithHelp({ label, helpText, muted = false, testId }: AdminLabelWithHelpProps): JSX.Element {
+  return (
+    <span className="admin-field-label-row">
+      <span className={muted ? "hint muted" : undefined}>{label}</span>
+      {helpText ? <AdminHelpIcon label={label} helpText={helpText} testId={testId} /> : null}
+    </span>
+  );
 }
 
 function parseBoundedInteger(input: string, bounds: { min: number; max: number }): number | null {
@@ -616,12 +650,6 @@ function safePromptSettingsUpdateErrorMessage(error: unknown): string {
       return "Business settings were not found in this tenant scope.";
     }
     if (error.status === 422) {
-      if (apiErrorMessageContains(error, "migration_draft_timeout_seconds")) {
-        return (
-          "Migration draft timeout must be blank or an integer between " +
-          `${MIGRATION_DRAFT_TIMEOUT_SECONDS_MIN} and ${MIGRATION_DRAFT_TIMEOUT_SECONDS_MAX}.`
-        );
-      }
       return "Unable to save AI prompt overrides. Keep each prompt under 20,000 characters.";
     }
   }
@@ -1373,7 +1401,6 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
   const [competitorPromptOverrideInput, setCompetitorPromptOverrideInput] = useState("");
   const [recommendationsPromptOverrideInput, setRecommendationsPromptOverrideInput] = useState("");
   const [defaultAiModelInput, setDefaultAiModelInput] = useState("");
-  const [migrationDraftTimeoutInput, setMigrationDraftTimeoutInput] = useState("");
   const [promptOverrideSubmitting, setPromptOverrideSubmitting] = useState(false);
   const [promptOverrideMessage, setPromptOverrideMessage] = useState<string | null>(null);
   const [promptOverrideError, setPromptOverrideError] = useState<string | null>(null);
@@ -1604,7 +1631,6 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
           setCompetitorPromptOverrideInput(settings.ai_prompt_text_competitor || "");
           setRecommendationsPromptOverrideInput(settings.ai_prompt_text_recommendations || "");
           setDefaultAiModelInput(settings.default_ai_model || "");
-          setMigrationDraftTimeoutInput(timeoutSettingToInput(settings.migration_draft_timeout_seconds ?? null));
         } else {
           setBusinessSettingsLoadError(safeBusinessSettingsErrorMessage(settingsResult.reason));
         }
@@ -1939,34 +1965,18 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
     setCandidateQualityMessage(null);
     setCompetitorTimeoutMessage(null);
 
-    const migrationDraftTimeout = parseOptionalBoundedInteger(migrationDraftTimeoutInput, {
-      min: MIGRATION_DRAFT_TIMEOUT_SECONDS_MIN,
-      max: MIGRATION_DRAFT_TIMEOUT_SECONDS_MAX,
-    });
-    if (migrationDraftTimeout === "invalid") {
-      setPromptOverrideError(
-        (
-          "Migration draft timeout must be blank or an integer between " +
-          `${MIGRATION_DRAFT_TIMEOUT_SECONDS_MIN} and ${MIGRATION_DRAFT_TIMEOUT_SECONDS_MAX}.`
-        ),
-      );
-      return;
-    }
-
     setPromptOverrideSubmitting(true);
     try {
       const updated = await updateBusinessSettings(context.token, context.businessId, {
         ai_prompt_text_competitor: normalizePromptOverrideInput(competitorPromptOverrideInput),
         ai_prompt_text_recommendations: normalizePromptOverrideInput(recommendationsPromptOverrideInput),
         default_ai_model: normalizeDefaultModelInput(defaultAiModelInput),
-        migration_draft_timeout_seconds: migrationDraftTimeout,
       });
       setBusinessSettings(updated);
       setCompetitorPromptOverrideInput(updated.ai_prompt_text_competitor || "");
       setRecommendationsPromptOverrideInput(updated.ai_prompt_text_recommendations || "");
       setDefaultAiModelInput(updated.default_ai_model || "");
-      setMigrationDraftTimeoutInput(timeoutSettingToInput(updated.migration_draft_timeout_seconds ?? null));
-      setPromptOverrideMessage("AI prompt/default model/timeout settings updated.");
+      setPromptOverrideMessage("AI prompt/default model settings updated.");
     } catch (err) {
       setPromptOverrideError(safePromptSettingsUpdateErrorMessage(err));
     } finally {
@@ -1990,7 +2000,6 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
       setCompetitorPromptOverrideInput(updated.ai_prompt_text_competitor || "");
       setRecommendationsPromptOverrideInput(updated.ai_prompt_text_recommendations || "");
       setDefaultAiModelInput(updated.default_ai_model || "");
-      setMigrationDraftTimeoutInput(timeoutSettingToInput(updated.migration_draft_timeout_seconds ?? null));
       setPromptOverrideMessage("AI prompt overrides cleared. Deployment fallback/default is now active.");
     } catch (err) {
       setPromptOverrideError(safePromptSettingsUpdateErrorMessage(err));
@@ -2701,7 +2710,12 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                     Settings health: {settingsHealth.crawl.message}
                   </p>
                 ) : null}
-                <label htmlFor="seo-audit-crawl-max-pages">Crawl Page Limit</label>
+                <label htmlFor="seo-audit-crawl-max-pages">
+                  <AdminLabelWithHelp
+                    label="Crawl Page Limit"
+                    helpText={`Sets the per-audit crawl ceiling. Allowed range: ${CRAWL_PAGE_LIMIT_MIN}-${CRAWL_PAGE_LIMIT_MAX}.`}
+                  />
+                </label>
                 <input
                   id="seo-audit-crawl-max-pages"
                   type="number"
@@ -2713,10 +2727,6 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                   disabled={businessSettingsLoading || crawlPageLimitSubmitting}
                   required
                 />
-                <p className="hint muted">
-                  {`Allowed range: ${CRAWL_PAGE_LIMIT_MIN}-${CRAWL_PAGE_LIMIT_MAX}. Current value: `}
-                  <code>{businessSettings ? String(businessSettings.seo_audit_crawl_max_pages) : String(DEFAULT_CRAWL_PAGE_LIMIT)}</code>.
-                </p>
                 <div className="form-actions">
                   <button
                     className="button button-primary"
@@ -2751,7 +2761,13 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
           ) : null}
           <div className="admin-grid-two">
             <div className="stack-tight">
-              <label htmlFor="competitor-candidate-min-relevance-score">Minimum Relevance Score</label>
+              <label htmlFor="competitor-candidate-min-relevance-score">
+                <AdminLabelWithHelp
+                  label="Minimum Relevance Score"
+                  helpText="Controls how closely a competitor must match your business. Higher values are stricter; lower values increase recall."
+                  testId="admin-help-minimum-relevance-score"
+                />
+              </label>
               <input
                 id="competitor-candidate-min-relevance-score"
                 type="number"
@@ -2763,17 +2779,16 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                 disabled={businessSettingsLoading || candidateQualitySubmitting}
                 required
               />
-              <p className="hint muted">
-                Controls how closely a competitor must match your business to be included. Higher values mean stricter,
-                more relevant matches.
-              </p>
-              <p className="hint muted">
-                Raise this if competitors feel unrelated. Lower it if you are getting too few results.
-              </p>
             </div>
 
             <div className="stack-tight">
-              <label htmlFor="competitor-candidate-big-box-penalty">Big-Box Mismatch Penalty</label>
+              <label htmlFor="competitor-candidate-big-box-penalty">
+                <AdminLabelWithHelp
+                  label="Big-Box Mismatch Penalty"
+                  helpText="Reduces scoring for national big-box companies that do not match local SMB context."
+                  testId="admin-help-big-box-mismatch-penalty"
+                />
+              </label>
               <input
                 id="competitor-candidate-big-box-penalty"
                 type="number"
@@ -2785,15 +2800,15 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                 disabled={businessSettingsLoading || candidateQualitySubmitting}
                 required
               />
-              <p className="hint muted">
-                Reduces the chance that large national or big-box companies appear as competitors. Increase this to
-                focus more on businesses like yours.
-              </p>
-              <p className="hint muted">Raise this if large companies dominate your results.</p>
             </div>
 
             <div className="stack-tight">
-              <label htmlFor="competitor-candidate-directory-penalty">Directory/Aggregator Penalty</label>
+              <label htmlFor="competitor-candidate-directory-penalty">
+                <AdminLabelWithHelp
+                  label="Directory/Aggregator Penalty"
+                  helpText="Reduces scoring for directory/listing/aggregator sites so real business domains are prioritized."
+                />
+              </label>
               <input
                 id="competitor-candidate-directory-penalty"
                 type="number"
@@ -2805,15 +2820,15 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                 disabled={businessSettingsLoading || candidateQualitySubmitting}
                 required
               />
-              <p className="hint muted">
-                Reduces listings from directories or lead sites (like Yelp, Angi, etc.). Increase this to prioritize
-                real business websites instead.
-              </p>
-              <p className="hint muted">Raise this if you see too many directory or listing sites.</p>
             </div>
 
             <div className="stack-tight">
-              <label htmlFor="competitor-candidate-local-alignment-bonus">Local Alignment Bonus</label>
+              <label htmlFor="competitor-candidate-local-alignment-bonus">
+                <AdminLabelWithHelp
+                  label="Local Alignment Bonus"
+                  helpText="Boosts candidates that clearly serve the site market/location."
+                />
+              </label>
               <input
                 id="competitor-candidate-local-alignment-bonus"
                 type="number"
@@ -2825,20 +2840,8 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                 disabled={businessSettingsLoading || candidateQualitySubmitting}
                 required
               />
-              <p className="hint muted">
-                Boosts competitors that are located in or serve your area. Increase this to focus more on nearby
-                businesses.
-              </p>
-              <p className="hint muted">Raise this if competitors are not local enough.</p>
             </div>
           </div>
-
-          <p className="hint muted">
-            Minimum relevance score: {COMPETITOR_MIN_RELEVANCE_SCORE_MIN}-{COMPETITOR_MIN_RELEVANCE_SCORE_MAX}, big-box
-            mismatch penalty: {COMPETITOR_BIG_BOX_PENALTY_MIN}-{COMPETITOR_BIG_BOX_PENALTY_MAX}, directory/aggregator
-            penalty: {COMPETITOR_DIRECTORY_PENALTY_MIN}-{COMPETITOR_DIRECTORY_PENALTY_MAX}, local alignment bonus:{" "}
-            {COMPETITOR_LOCAL_ALIGNMENT_BONUS_MIN}-{COMPETITOR_LOCAL_ALIGNMENT_BONUS_MAX}.
-          </p>
             <div className="form-actions">
               <button
                 className="button button-primary"
@@ -2868,7 +2871,13 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
 
           <div className="admin-grid-two">
             <div className="stack-tight">
-              <label htmlFor="competitor-primary-timeout-seconds">Competitor Primary Timeout Seconds</label>
+              <label htmlFor="competitor-primary-timeout-seconds">
+                <AdminLabelWithHelp
+                  label="Competitor Primary Timeout Seconds"
+                  helpText={`Timeout for first full search-backed attempt. Leave blank for runtime default. Range: ${COMPETITOR_TIMEOUT_SECONDS_MIN}-${COMPETITOR_TIMEOUT_SECONDS_MAX}.`}
+                  testId="admin-help-competitor-primary-timeout-seconds"
+                />
+              </label>
               <input
                 id="competitor-primary-timeout-seconds"
                 type="number"
@@ -2880,13 +2889,16 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                 disabled={businessSettingsLoading || competitorTimeoutSubmitting}
                 placeholder={String(DEFAULT_COMPETITOR_TIMEOUT_SECONDS)}
               />
-              <p className="hint muted">
-                First full search-backed attempt timeout. Leave blank to use the deployment default.
-              </p>
             </div>
 
             <div className="stack-tight">
-              <label htmlFor="competitor-degraded-timeout-seconds">Competitor Degraded Retry Timeout Seconds</label>
+              <label htmlFor="competitor-degraded-timeout-seconds">
+                <AdminLabelWithHelp
+                  label="Competitor Degraded Retry Timeout Seconds"
+                  helpText={`Timeout for degraded reduced-context retry. Leave blank for runtime default. Range: ${COMPETITOR_TIMEOUT_SECONDS_MIN}-${COMPETITOR_TIMEOUT_SECONDS_MAX}.`}
+                  testId="admin-help-competitor-degraded-timeout-seconds"
+                />
+              </label>
               <input
                 id="competitor-degraded-timeout-seconds"
                 type="number"
@@ -2898,15 +2910,8 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                 disabled={businessSettingsLoading || competitorTimeoutSubmitting}
                 placeholder={String(DEFAULT_COMPETITOR_TIMEOUT_SECONDS)}
               />
-              <p className="hint muted">
-                Reduced-context degraded retry timeout. Leave blank to use the deployment default.
-              </p>
             </div>
           </div>
-
-            <p className="hint muted">
-              Allowed range: {COMPETITOR_TIMEOUT_SECONDS_MIN}-{COMPETITOR_TIMEOUT_SECONDS_MAX} seconds.
-            </p>
             <div className="form-actions">
               <button
                 className="button button-primary"
@@ -2935,6 +2940,9 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
           <FormContainer className="form-container-full-width" onSubmit={(event) => void handleSavePromptOverrides(event)} noValidate>
             <p className="hint muted">
               AI prompt/model changes affect generated recommendations, competitors, and migration drafts.
+            </p>
+            <p className="hint muted">
+              Migration draft provider timeout is managed in <strong>Migration Generation Safety</strong>.
             </p>
             {competitorPromptContractWarning.state === "legacy_alias" ? (
               <p className="hint warning" data-testid="competitor-prompt-override-warning">
@@ -2993,7 +3001,13 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
             </div>
             <div className="admin-grid-two">
               <div className="stack-tight">
-                <label htmlFor="default-ai-model">Default AI model</label>
+                <label htmlFor="default-ai-model">
+                  <AdminLabelWithHelp
+                    label="Default AI model"
+                    helpText="Used when no per-run model override is provided. Resolution order: explicit request, business admin default, deployment env default, provider fallback."
+                    testId="admin-help-default-ai-model"
+                  />
+                </label>
                 <input
                   id="default-ai-model"
                   type="text"
@@ -3003,38 +3017,12 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                   placeholder="gpt-4o-mini"
                 />
                 <p className="hint muted">
-                  Used when no per-run model override is provided. Resolution order: explicit request, business admin
-                  default, deployment env default, provider fallback.
-                </p>
-                <p className="hint muted">
                   Current source:{" "}
                   <strong>
                     {businessSettings?.default_ai_model
                       ? "Business admin override"
                       : "Deployment/default fallback"}
                   </strong>
-                </p>
-              </div>
-
-              <div className="stack-tight">
-                <label htmlFor="migration-draft-timeout-seconds">Migration Draft Timeout (seconds)</label>
-                <input
-                  id="migration-draft-timeout-seconds"
-                  type="number"
-                  min={MIGRATION_DRAFT_TIMEOUT_SECONDS_MIN}
-                  max={MIGRATION_DRAFT_TIMEOUT_SECONDS_MAX}
-                  step={1}
-                  value={migrationDraftTimeoutInput}
-                  onChange={(event) => setMigrationDraftTimeoutInput(event.target.value)}
-                  disabled={businessSettingsLoading || promptOverrideSubmitting}
-                  placeholder={String(DEFAULT_MIGRATION_DRAFT_TIMEOUT_SECONDS)}
-                />
-                <p className="hint muted">
-                  Maximum time allowed for AI draft generation. Larger drafts may take 60-120 seconds or more.
-                </p>
-                <p className="hint muted">
-                  Allowed range: {MIGRATION_DRAFT_TIMEOUT_SECONDS_MIN}-{MIGRATION_DRAFT_TIMEOUT_SECONDS_MAX} seconds.
-                  Leave blank to use the default ({DEFAULT_MIGRATION_DRAFT_TIMEOUT_SECONDS}s).
                 </p>
               </div>
             </div>
@@ -3090,7 +3078,12 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
 
             <div className="admin-grid-two">
               <div className="stack-tight">
-                <label htmlFor="github-publish-owner">GitHub account/owner</label>
+                <label htmlFor="github-publish-owner">
+                  <AdminLabelWithHelp
+                    label="GitHub account/owner"
+                    helpText="Admin-owned repository owner/account used for managed migration publish targets."
+                  />
+                </label>
                 <input
                   id="github-publish-owner"
                   type="text"
@@ -3105,7 +3098,12 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
               </div>
 
               <div className="stack-tight">
-                <label htmlFor="github-publish-default-branch">Default Branch</label>
+                <label htmlFor="github-publish-default-branch">
+                  <AdminLabelWithHelp
+                    label="Default Branch"
+                    helpText="Fallback branch used when workspace deploy/publish config does not override branch."
+                  />
+                </label>
                 <input
                   id="github-publish-default-branch"
                   type="text"
@@ -3120,7 +3118,12 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
               </div>
 
               <div className="stack-tight">
-                <label htmlFor="github-publish-base-path">Base Path</label>
+                <label htmlFor="github-publish-base-path">
+                  <AdminLabelWithHelp
+                    label="Base Path"
+                    helpText="Use / for repo root or a subpath such as /site."
+                  />
+                </label>
                 <input
                   id="github-publish-base-path"
                   type="text"
@@ -3129,9 +3132,6 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                   disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
                   placeholder="/"
                 />
-                <p className="hint muted">
-                  Use <code>/</code> for repository root or a subpath like <code>/site</code>.
-                </p>
                 {githubPublishValidation.basePathError ? (
                   <p className="hint error">{githubPublishValidation.basePathError}</p>
                 ) : null}
@@ -3141,7 +3141,12 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
               </div>
 
               <div className="stack-tight">
-                <label htmlFor="github-publish-deploy-workflow-mode">Deploy Workflow Mode</label>
+                <label htmlFor="github-publish-deploy-workflow-mode">
+                  <AdminLabelWithHelp
+                    label="Deploy Workflow Mode"
+                    helpText="Platform-managed workflow template mode used for per-site workflow generation."
+                  />
+                </label>
                 <select
                   id="github-publish-deploy-workflow-mode"
                   value={githubPublishDeployWorkflowModeInput}
@@ -3150,16 +3155,18 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                 >
                   <option value="site_repo_template_v1">site_repo_template_v1</option>
                 </select>
-                <p className="hint muted">
-                  Platform-managed template mode for per-site workflow generation in each target repository.
-                </p>
                 {githubPublishValidation.deployWorkflowModeError ? (
                   <p className="hint error">{githubPublishValidation.deployWorkflowModeError}</p>
                 ) : null}
               </div>
 
               <div className="stack-tight">
-                <label htmlFor="github-publish-target-environment-key">Target Environment Key</label>
+                <label htmlFor="github-publish-target-environment-key">
+                  <AdminLabelWithHelp
+                    label="Target Environment Key"
+                    helpText="Admin-owned environment mapping key consumed by managed workflow template generation."
+                  />
+                </label>
                 <input
                   id="github-publish-target-environment-key"
                   type="text"
@@ -3168,9 +3175,6 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                   disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
                   placeholder="gke_prod"
                 />
-                <p className="hint muted">
-                  Admin-owned deployment environment mapping key used by workflow template generation.
-                </p>
                 {githubPublishValidation.targetEnvironmentKeyError ? (
                   <p className="hint error">{githubPublishValidation.targetEnvironmentKeyError}</p>
                 ) : null}
@@ -3186,15 +3190,21 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                     disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
                   />
                   Enable managed repository auto-create for missing publish targets
+                  <AdminHelpIcon
+                    label="Enable managed repository auto-create for missing publish targets"
+                    helpText="When enabled, runtime GitHub token may create missing repositories under configured owner."
+                  />
                 </label>
-                <p className="hint muted">
-                  Admin-owned policy. When enabled, the runtime GitHub token can create missing repositories under the
-                  configured owner only.
-                </p>
               </div>
 
               <div className="stack-tight">
-                <label htmlFor="github-publish-managed-gke-cluster-name">Managed GKE Cluster Name</label>
+                <label htmlFor="github-publish-managed-gke-cluster-name">
+                  <AdminLabelWithHelp
+                    label="Managed GKE Cluster Name"
+                    helpText="Cluster name used for managed deploy diagnostics/contract targeting."
+                    testId="admin-help-managed-gke-cluster-name"
+                  />
+                </label>
                 <input
                   id="github-publish-managed-gke-cluster-name"
                   type="text"
@@ -3209,7 +3219,12 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
               </div>
 
               <div className="stack-tight">
-                <label htmlFor="github-publish-managed-gke-cluster-location">Managed GKE Cluster Location</label>
+                <label htmlFor="github-publish-managed-gke-cluster-location">
+                  <AdminLabelWithHelp
+                    label="Managed GKE Cluster Location"
+                    helpText="Region/zone for managed GKE target used by deploy diagnostics."
+                  />
+                </label>
                 <input
                   id="github-publish-managed-gke-cluster-location"
                   type="text"
@@ -3224,7 +3239,12 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
               </div>
 
               <div className="stack-tight">
-                <label htmlFor="github-publish-managed-gke-project-id">Managed GCP Project ID</label>
+                <label htmlFor="github-publish-managed-gke-project-id">
+                  <AdminLabelWithHelp
+                    label="Managed GCP Project ID"
+                    helpText="Project id for managed deploy/runtime contract checks."
+                  />
+                </label>
                 <input
                   id="github-publish-managed-gke-project-id"
                   type="text"
@@ -3543,8 +3563,18 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                   disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
                 />
                 Enable managed NetworkPolicy scaffold
+                <AdminHelpIcon
+                  label="Enable managed NetworkPolicy scaffold"
+                  helpText="Enable only after ingress/egress expectations are validated for this cluster/environment."
+                />
               </label>
-              <label htmlFor="github-publish-network-policy-mode">Policy mode</label>
+              <label htmlFor="github-publish-network-policy-mode">
+                <AdminLabelWithHelp
+                  label="Policy mode"
+                  helpText="NetworkPolicy scaffold mode for new managed namespaces."
+                  testId="admin-help-networkpolicy-mode"
+                />
+              </label>
               <select
                 id="github-publish-network-policy-mode"
                 value={githubNamespaceIsolationDefaults.network_policy.mode}
@@ -3553,20 +3583,22 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
               >
                 <option value="default_deny_ingress">default_deny_ingress</option>
               </select>
-              <p className="hint muted">
-                Keep disabled until cluster ingress/egress expectations are validated for this environment.
-              </p>
             </div>
 
             <div className="panel panel-compact stack-tight" data-testid="github-publish-migration-generation-budget">
               <strong>Migration AI Budget</strong>
               <p className="hint muted">
-                Larger budgets can improve depth/variety but increase latency, cost, and oversized-request risk.
-                Smaller budgets are faster and safer.
+                Tune generation depth/variety with bounded limits. Larger budgets can increase latency/cost and failure
+                risk.
               </p>
               <div className="admin-grid-two admin-grid-two-compact">
                 <label htmlFor="github-publish-migration-context-budget-chars" className="stack-tight">
-                  <span className="hint muted">Context budget (chars)</span>
+                  <AdminLabelWithHelp
+                    label="Context budget (chars)"
+                    helpText="Upper bound for context assembly before trimming. Higher values increase request size risk."
+                    muted
+                    testId="admin-help-migration-context-budget"
+                  />
                   <input
                     id="github-publish-migration-context-budget-chars"
                     type="number"
@@ -3588,7 +3620,11 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                   />
                 </label>
                 <label htmlFor="github-publish-migration-recommendation-limit" className="stack-tight">
-                  <span className="hint muted">Recommendation limit</span>
+                  <AdminLabelWithHelp
+                    label="Recommendation limit"
+                    helpText="Maximum recommendations included in migration context."
+                    muted
+                  />
                   <input
                     id="github-publish-migration-recommendation-limit"
                     type="number"
@@ -3610,7 +3646,11 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                   />
                 </label>
                 <label htmlFor="github-publish-migration-competitor-limit" className="stack-tight">
-                  <span className="hint muted">Competitor limit</span>
+                  <AdminLabelWithHelp
+                    label="Competitor limit"
+                    helpText="Maximum accepted/useful competitors included in migration context."
+                    muted
+                  />
                   <input
                     id="github-publish-migration-competitor-limit"
                     type="number"
@@ -3632,7 +3672,11 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                   />
                 </label>
                 <label htmlFor="github-publish-migration-source-page-summary-limit" className="stack-tight">
-                  <span className="hint muted">Source page summary limit</span>
+                  <AdminLabelWithHelp
+                    label="Source page summary limit"
+                    helpText="Maximum source pages summarized into generation context."
+                    muted
+                  />
                   <input
                     id="github-publish-migration-source-page-summary-limit"
                     type="number"
@@ -3654,7 +3698,11 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                   />
                 </label>
                 <label htmlFor="github-publish-migration-media-asset-limit" className="stack-tight">
-                  <span className="hint muted">Media asset context limit</span>
+                  <AdminLabelWithHelp
+                    label="Media asset context limit"
+                    helpText="Maximum media assets represented in migration context metadata."
+                    muted
+                  />
                   <input
                     id="github-publish-migration-media-asset-limit"
                     type="number"
@@ -3676,7 +3724,11 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                   />
                 </label>
                 <label htmlFor="github-publish-migration-generated-page-limit" className="stack-tight">
-                  <span className="hint muted">Generated page limit</span>
+                  <AdminLabelWithHelp
+                    label="Generated page limit"
+                    helpText="Target cap for generated pages in draft output contract."
+                    muted
+                  />
                   <input
                     id="github-publish-migration-generated-page-limit"
                     type="number"
@@ -3698,7 +3750,11 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                   />
                 </label>
                 <label htmlFor="github-publish-migration-generated-file-limit" className="stack-tight">
-                  <span className="hint muted">Generated file limit</span>
+                  <AdminLabelWithHelp
+                    label="Generated file limit"
+                    helpText="Target cap for generated files in draft output contract."
+                    muted
+                  />
                   <input
                     id="github-publish-migration-generated-file-limit"
                     type="number"
@@ -3720,7 +3776,11 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                   />
                 </label>
                 <label htmlFor="github-publish-migration-generation-depth" className="stack-tight">
-                  <span className="hint muted">Generation profile</span>
+                  <AdminLabelWithHelp
+                    label="Generation profile"
+                    helpText="Controls compact/standard/expanded generation depth."
+                    muted
+                  />
                   <select
                     id="github-publish-migration-generation-depth"
                     value={githubNamespaceIsolationDefaults.migration_generation_budget.migration_generation_depth}
@@ -3740,7 +3800,11 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                   </select>
                 </label>
                 <label htmlFor="github-publish-migration-variation-level" className="stack-tight">
-                  <span className="hint muted">Variation level</span>
+                  <AdminLabelWithHelp
+                    label="Variation level"
+                    helpText="Controls conservative/balanced/differentiated output variation."
+                    muted
+                  />
                   <select
                     id="github-publish-migration-variation-level"
                     value={githubNamespaceIsolationDefaults.migration_generation_budget.migration_variation_level}
@@ -3772,6 +3836,10 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                     disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
                   />
                   Require page variety
+                  <AdminHelpIcon
+                    label="Require page variety"
+                    helpText="Encourages broader page structure diversity in generated drafts."
+                  />
                 </label>
                 <label htmlFor="github-publish-migration-require-design-variation" className="checkbox-chip">
                   <input
@@ -3784,6 +3852,10 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                     disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
                   />
                   Require design variation
+                  <AdminHelpIcon
+                    label="Require design variation"
+                    helpText="Encourages layout and section variation instead of generic repeated skeletons."
+                  />
                 </label>
               </div>
             </div>
@@ -3793,12 +3865,15 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                 These settings control when migration draft generation is compacted or blocked before calling the
                 provider. Backend hard caps still apply even if Admin values are higher.
               </p>
-              <p className="hint muted">
-                Longer provider timeouts increase latency/cost and do not guarantee success.
-              </p>
+              <p className="hint muted">Maximum synchronous timeout is 600 seconds (10 minutes).</p>
               <div className="admin-grid-two admin-grid-two-compact">
                 <label htmlFor="github-publish-migration-provider-timeout-seconds" className="stack-tight">
-                  <span className="hint muted">Provider timeout seconds</span>
+                  <AdminLabelWithHelp
+                    label="Provider timeout seconds"
+                    helpText="Maximum synchronous timeout is 600 seconds / 10 minutes. Longer timeouts increase latency/cost and do not fix oversized or overly complex prompts."
+                    muted
+                    testId="admin-help-migration-provider-timeout-seconds"
+                  />
                   <input
                     id="github-publish-migration-provider-timeout-seconds"
                     type="number"
@@ -3820,7 +3895,12 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                   />
                 </label>
                 <label htmlFor="github-publish-migration-preflight-mode" className="stack-tight">
-                  <span className="hint muted">Preflight mode</span>
+                  <AdminLabelWithHelp
+                    label="Preflight mode"
+                    helpText="compact_fallback attempts a reduced context before provider call; block_before_provider blocks immediately when thresholds are exceeded."
+                    muted
+                    testId="admin-help-preflight-mode"
+                  />
                   <select
                     id="github-publish-migration-preflight-mode"
                     value={githubNamespaceIsolationDefaults.migration_generation_safety.migration_preflight_mode}
@@ -3840,7 +3920,11 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                   </select>
                 </label>
                 <label htmlFor="github-publish-migration-max-final-input-chars" className="stack-tight">
-                  <span className="hint muted">Max final input chars</span>
+                  <AdminLabelWithHelp
+                    label="Max final input chars"
+                    helpText="Final context size threshold used by preflight safety checks."
+                    muted
+                  />
                   <input
                     id="github-publish-migration-max-final-input-chars"
                     type="number"
@@ -3862,7 +3946,11 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                   />
                 </label>
                 <label htmlFor="github-publish-migration-max-difficulty-score" className="stack-tight">
-                  <span className="hint muted">Max difficulty score</span>
+                  <AdminLabelWithHelp
+                    label="Max difficulty score"
+                    helpText="Complexity threshold used by preflight safety checks."
+                    muted
+                  />
                   <input
                     id="github-publish-migration-max-difficulty-score"
                     type="number"
@@ -3884,7 +3972,11 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                   />
                 </label>
                 <label htmlFor="github-publish-migration-compact-page-limit" className="stack-tight">
-                  <span className="hint muted">Compact page limit</span>
+                  <AdminLabelWithHelp
+                    label="Compact page limit"
+                    helpText="Page cap applied when compact fallback mode is used."
+                    muted
+                  />
                   <input
                     id="github-publish-migration-compact-page-limit"
                     type="number"
@@ -3906,7 +3998,11 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                   />
                 </label>
                 <label htmlFor="github-publish-migration-compact-media-limit" className="stack-tight">
-                  <span className="hint muted">Compact media limit</span>
+                  <AdminLabelWithHelp
+                    label="Compact media limit"
+                    helpText="Media context cap applied when compact fallback mode is used."
+                    muted
+                  />
                   <input
                     id="github-publish-migration-compact-media-limit"
                     type="number"
@@ -3928,7 +4024,11 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                   />
                 </label>
                 <label htmlFor="github-publish-migration-compact-recommendation-limit" className="stack-tight">
-                  <span className="hint muted">Compact recommendation limit</span>
+                  <AdminLabelWithHelp
+                    label="Compact recommendation limit"
+                    helpText="Recommendation cap applied when compact fallback mode is used."
+                    muted
+                  />
                   <input
                     id="github-publish-migration-compact-recommendation-limit"
                     type="number"
@@ -3961,6 +4061,10 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                   disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
                 />
                 Compact fallback enabled
+                <AdminHelpIcon
+                  label="Compact fallback enabled"
+                  helpText="If enabled, preflight can retry once with compact limits before blocking."
+                />
               </label>
             </div>
             <div className="panel panel-compact stack-tight" data-testid="github-publish-effective-preview">

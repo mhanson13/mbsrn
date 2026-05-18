@@ -1041,7 +1041,7 @@ Success-path contract verification:
 ## Admin Migration Generation Safety
 Migration draft timeout and preflight risk controls are now governed by Admin namespace isolation settings:
 
-- `migration_provider_timeout_seconds` (range `60-300`, default `300`)
+- `migration_provider_timeout_seconds` (range `60-600`, default `300`)
 - `migration_preflight_mode` (`compact_fallback` or `block_before_provider`)
 - `migration_max_final_input_chars` (range `3000-12000`, default `9000`)
 - `migration_max_difficulty_score` (range `5-20`, default `12`)
@@ -1063,6 +1063,10 @@ Behavior:
 - If compact fallback still exceeds effective thresholds, generation is blocked before provider call with:
   - `reason_code=migration_generation_preflight_too_large`
   - `failure_source=local_preflight`
+- timeout source of truth is `migration_generation_safety.migration_provider_timeout_seconds`
+  - legacy business-level migration draft timeout settings are compatibility-only and not the primary control path
+- `6000` seconds is intentionally unsupported for synchronous migration generation
+  - requests that require longer execution should move to async/background architecture
 
 Timeout and preflight diagnostics are surfaced in bounded form:
 - `context_summary.migration_diagnostics.draft_timeout_seconds`
@@ -1081,6 +1085,7 @@ Timeout and preflight diagnostics are surfaced in bounded form:
 Operator troubleshooting cues:
 - remote timeout: provider was called and timed out (for example `failure_reason=timeout`)
 - local preflight block: provider was not called; reduce generation budget or keep compact fallback enabled
+- increasing timeout alone does not resolve oversized/overly-complex requests; use preflight/compact fallback and budget limits
 - all diagnostics remain sanitized (no raw prompts, request bodies, response bodies, HTML, or media bytes)
 
 ## Unified Draft Generation State

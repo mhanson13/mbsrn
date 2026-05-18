@@ -32,7 +32,9 @@ _COMPETITOR_CANDIDATE_LOCAL_ALIGNMENT_BONUS_MAX = 50
 _COMPETITOR_TIMEOUT_SECONDS_MIN = 10
 _COMPETITOR_TIMEOUT_SECONDS_MAX = 90
 _MIGRATION_DRAFT_TIMEOUT_SECONDS_MIN = 30
-_MIGRATION_DRAFT_TIMEOUT_SECONDS_MAX = 900
+# Legacy business-level migration timeout guardrail.
+# Keep aligned with synchronous migration timeout safety ceiling (600s / 10 minutes).
+_MIGRATION_DRAFT_TIMEOUT_SECONDS_MAX = 600
 _NOTIFICATION_SETTING_FIELDS = {
     "notification_phone",
     "notification_email",

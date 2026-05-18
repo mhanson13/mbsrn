@@ -3774,7 +3774,7 @@ def test_generate_artifacts_uses_default_migration_timeout_when_admin_setting_is
     assert ai_execution.get("timeout_source") == "default"
 
 
-def test_generate_artifacts_uses_admin_configured_migration_timeout(db_session) -> None:
+def test_generate_artifacts_legacy_business_timeout_does_not_override_generation_safety_timeout(db_session) -> None:
     provider = _TimeoutCaptureMigrationProvider(_build_publishable_output())
     service = _build_service(db_session, provider)
     business_id, site_id = _seed_business_and_site(db_session)
@@ -3791,15 +3791,15 @@ def test_generate_artifacts_uses_admin_configured_migration_timeout(db_session) 
     )
 
     assert artifact.status == "completed"
-    assert provider.observed_timeout_seconds == 180
-    assert provider.observed_timeout_source == "admin"
+    assert provider.observed_timeout_seconds == 300
+    assert provider.observed_timeout_source == "default"
     summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
     diagnostics = (summary.context_summary or {}).get("migration_diagnostics") or {}
-    assert diagnostics.get("draft_timeout_seconds") == 180
-    assert diagnostics.get("draft_timeout_source") == "admin"
+    assert diagnostics.get("draft_timeout_seconds") == 300
+    assert diagnostics.get("draft_timeout_source") == "default"
     ai_execution = (summary.context_summary or {}).get("ai_execution") or {}
-    assert ai_execution.get("timeout_seconds") == 180
-    assert ai_execution.get("timeout_source") == "admin"
+    assert ai_execution.get("timeout_seconds") == 300
+    assert ai_execution.get("timeout_source") == "default"
 
 
 def test_generate_artifacts_uses_admin_generation_safety_timeout_when_business_timeout_is_unset(db_session) -> None:
@@ -3842,6 +3842,43 @@ def test_generate_artifacts_uses_admin_generation_safety_timeout_when_business_t
     assert ai_execution.get("timeout_source") == "admin"
     draft_input_summary = (summary.context_summary or {}).get("draft_input_summary") or {}
     assert draft_input_summary.get("generation_provider_timeout_seconds") == 240
+
+
+def test_generate_artifacts_allows_generation_safety_timeout_up_to_600_seconds(db_session) -> None:
+    provider = _TimeoutCaptureMigrationProvider(_build_publishable_output())
+    service = _build_service(db_session, provider)
+    config = service.github_publish_config_service.get()
+    namespace_defaults = dict(config.namespace_isolation_defaults_json or {})
+    namespace_defaults["migration_generation_safety"] = {
+        "migration_provider_timeout_seconds": 600,
+        "migration_preflight_mode": "compact_fallback",
+        "migration_max_final_input_chars": 9000,
+        "migration_max_difficulty_score": 12,
+        "migration_compact_fallback_enabled": True,
+        "migration_compact_page_limit": 4,
+        "migration_compact_media_asset_limit": 3,
+        "migration_compact_recommendation_limit": 4,
+    }
+    config.namespace_isolation_defaults_json = namespace_defaults
+    service.github_publish_config_service.repository.save(config)
+    service.session.commit()
+
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+
+    assert artifact.status == "completed"
+    assert provider.observed_timeout_seconds == 600
+    assert provider.observed_timeout_source == "admin"
+    summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
+    diagnostics = (summary.context_summary or {}).get("migration_diagnostics") or {}
+    assert diagnostics.get("draft_timeout_seconds") == 600
+    assert diagnostics.get("draft_timeout_source") == "admin"
 
 
 def test_generate_artifacts_uses_default_timeout_when_admin_timeout_is_below_safe_floor(db_session) -> None:

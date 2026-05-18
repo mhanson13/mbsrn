@@ -342,7 +342,7 @@ describe("admin route", () => {
     expect(screen.queryByRole("button", { name: "Create User" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Create and Link Identity" })).not.toBeInTheDocument();
     expect(screen.getByLabelText("Default AI model")).toBeInTheDocument();
-    expect(screen.getByLabelText("Migration Draft Timeout (seconds)")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Migration Draft Timeout (seconds)")).not.toBeInTheDocument();
     expect(screen.getByLabelText("GitHub account/owner")).toBeInTheDocument();
     const publishEnabledToggle = screen.getByLabelText("Enable migration GitHub publish target");
     const publishOwnerField = screen.getByLabelText("GitHub account/owner");
@@ -354,13 +354,22 @@ describe("admin route", () => {
     expect(screen.getByLabelText("Enable LimitRange for managed site namespaces")).toBeInTheDocument();
     expect(screen.getByLabelText("Enable managed NetworkPolicy scaffold")).toBeInTheDocument();
     expect(screen.getByText("Migration AI Budget")).toBeInTheDocument();
+    expect(screen.getAllByText("Migration Generation Safety").length).toBeGreaterThan(0);
     expect(screen.getByLabelText("Context budget (chars)")).toBeInTheDocument();
     expect(screen.getByLabelText("Generation profile")).toBeInTheDocument();
     expect(screen.getByLabelText("Variation level")).toBeInTheDocument();
     expect(screen.getByText("Admin configures governance and platform defaults. Workflow execution remains on dedicated operational routes.")).toBeInTheDocument();
     expect(screen.getByText("AI prompt/model changes affect generated recommendations, competitors, and migration drafts.")).toBeInTheDocument();
+    expect(
+      screen.getByText(/Migration draft provider timeout is managed in/i),
+    ).toBeInTheDocument();
     expect(screen.getByText("Namespace policy controls managed site Kubernetes defaults for new managed site namespaces.")).toBeInTheDocument();
     expect(screen.getByText("Diagnostics is read-only log investigation for runtime troubleshooting.")).toBeInTheDocument();
+    expect(
+      screen.queryByText(
+        "Controls how closely a competitor must match your business to be included. Higher values mean stricter, more relevant matches.",
+      ),
+    ).not.toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "Search Console Property" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "Search Console Enabled" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "Permanent Delete (destructive)" })).toBeInTheDocument();
@@ -467,7 +476,46 @@ describe("admin route", () => {
     expect(await screen.findByTestId("competitor-prompt-override-warning")).toHaveTextContent("legacy aliases");
   });
 
-  it("loads and saves business default AI model and migration timeout in admin settings", async () => {
+  it("renders accessible help icons for key admin settings", async () => {
+    mockUseAuth.mockReturnValue({
+      principal: {
+        business_id: "biz-1",
+        principal_id: "admin-help-1",
+        display_name: "Admin Help",
+        role: "admin",
+        is_active: true,
+      },
+    });
+
+    render(<AdminPage />);
+
+    await waitFor(() => {
+      expect(mockFetchBusinessSettings).toHaveBeenCalled();
+    });
+
+    const minRelevanceHelp = screen.getByTestId("admin-help-minimum-relevance-score");
+    const bigBoxHelp = screen.getByTestId("admin-help-big-box-mismatch-penalty");
+    const defaultModelHelp = screen.getByTestId("admin-help-default-ai-model");
+    const timeoutHelp = screen.getByTestId("admin-help-migration-provider-timeout-seconds");
+    const contextBudgetHelp = screen.getByTestId("admin-help-migration-context-budget");
+    const preflightHelp = screen.getByTestId("admin-help-preflight-mode");
+    const managedClusterHelp = screen.getByTestId("admin-help-managed-gke-cluster-name");
+    const networkPolicyModeHelp = screen.getByTestId("admin-help-networkpolicy-mode");
+
+    [minRelevanceHelp, bigBoxHelp, defaultModelHelp, timeoutHelp, contextBudgetHelp, preflightHelp, managedClusterHelp, networkPolicyModeHelp].forEach(
+      (helpButton) => {
+        expect(helpButton).toHaveAttribute("aria-label");
+        expect(helpButton).toHaveAttribute("data-help-text");
+      },
+    );
+
+    expect(timeoutHelp).toHaveAttribute(
+      "data-help-text",
+      "Maximum synchronous timeout is 600 seconds / 10 minutes. Longer timeouts increase latency/cost and do not fix oversized or overly complex prompts.",
+    );
+  });
+
+  it("loads and saves business default AI model in admin settings", async () => {
     mockFetchBusinessSettings.mockResolvedValueOnce({
       id: "biz-1",
       name: "Biz",
@@ -532,22 +580,18 @@ describe("admin route", () => {
     await waitFor(() => {
       expect(defaultModelInput).toHaveValue("gpt-4.1-mini");
     });
-    const migrationTimeoutInput = screen.getByLabelText("Migration Draft Timeout (seconds)");
-    expect(migrationTimeoutInput).toHaveValue(180);
 
     fireEvent.change(defaultModelInput, { target: { value: "gpt-4o-mini" } });
-    fireEvent.change(migrationTimeoutInput, { target: { value: "240" } });
     fireEvent.click(screen.getByRole("button", { name: "Save Prompt Overrides" }));
 
     await waitFor(() => {
-      expect(mockUpdateBusinessSettings).toHaveBeenCalled();
+    expect(mockUpdateBusinessSettings).toHaveBeenCalled();
     });
     expect(mockUpdateBusinessSettings.mock.calls.at(-1)?.[2]).toMatchObject({
       default_ai_model: "gpt-4o-mini",
-      migration_draft_timeout_seconds: 240,
     });
     expect(await screen.findByLabelText("Default AI model")).toHaveValue("gpt-4o-mini");
-    expect(screen.getByLabelText("Migration Draft Timeout (seconds)")).toHaveValue(240);
+    expect(screen.queryByLabelText("Migration Draft Timeout (seconds)")).not.toBeInTheDocument();
   });
 
   it("loads and saves GitHub publish configuration in admin settings", async () => {
@@ -724,7 +768,9 @@ describe("admin route", () => {
     fireEvent.change(screen.getByLabelText("Variation level"), { target: { value: "differentiated" } });
     fireEvent.click(screen.getByLabelText("Require page variety"));
     expect(screen.getByTestId("github-publish-migration-generation-safety")).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("Provider timeout seconds"), { target: { value: "240" } });
+    const providerTimeoutInput = screen.getByLabelText("Provider timeout seconds");
+    expect(providerTimeoutInput).toHaveAttribute("max", "600");
+    fireEvent.change(providerTimeoutInput, { target: { value: "240" } });
     fireEvent.change(screen.getByLabelText("Preflight mode"), { target: { value: "block_before_provider" } });
     fireEvent.change(screen.getByLabelText("Max final input chars"), { target: { value: "8500" } });
     fireEvent.change(screen.getByLabelText("Max difficulty score"), { target: { value: "11" } });

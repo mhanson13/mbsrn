@@ -324,7 +324,10 @@ class MigrationGenerationBudgetDefaults(BaseModel):
 
 
 class MigrationGenerationSafetyDefaults(BaseModel):
-    migration_provider_timeout_seconds: int = Field(default=300, ge=60, le=300)
+    # Synchronous migration generation timeout guardrail.
+    # 600 seconds (10 minutes) is the hard maximum for this request/response path.
+    # Longer generation must move to async/background execution architecture.
+    migration_provider_timeout_seconds: int = Field(default=300, ge=60, le=600)
     migration_preflight_mode: str = "compact_fallback"
     migration_max_final_input_chars: int = Field(default=9000, ge=3000, le=12000)
     migration_max_difficulty_score: int = Field(default=12, ge=5, le=20)
