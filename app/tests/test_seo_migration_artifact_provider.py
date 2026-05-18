@@ -694,6 +694,152 @@ def test_openai_migration_provider_fails_early_when_required_context_exceeds_bud
     assert isinstance(latest_budget_event.get("trimming_pass_count"), int)
 
 
+def test_openai_migration_provider_blocks_before_provider_when_admin_preflight_mode_blocks(monkeypatch) -> None:
+    provider = OpenAISEOMigrationArtifactGenerationProvider(
+        api_key="test-key",
+        model_name="gpt-5.1",
+        timeout_seconds=5,
+    )
+    migration_context = _build_migration_context()
+    migration_context["existing_context_summaries"] = {"summary": "A" * 24000}
+    migration_context["generation_safety"] = {
+        "migration_preflight_mode": "block_before_provider",
+        "migration_max_final_input_chars": 3000,
+        "migration_max_difficulty_score": 5,
+        "migration_compact_fallback_enabled": True,
+    }
+
+    provider_called = False
+
+    def _fail_if_called(request, timeout):  # noqa: ANN001
+        del request, timeout
+        nonlocal provider_called
+        provider_called = True
+        raise AssertionError("provider call should be blocked by preflight")
+
+    monkeypatch.setattr(urllib.request, "urlopen", _fail_if_called)
+
+    with pytest.raises(SEOMigrationArtifactProviderError) as exc_info:
+        provider.generate_artifacts(migration_context=migration_context)
+
+    error = exc_info.value
+    assert provider_called is False
+    assert error.code == "migration_generation_preflight_too_large"
+    assert error.reason == "validation_failed"
+    assert error.normalized_failure_source == "local_validation"
+    details = error.internal_details or {}
+    safety = details.get("generation_safety") if isinstance(details.get("generation_safety"), dict) else {}
+    assert safety.get("migration_preflight_mode") == "block_before_provider"
+    assert safety.get("compact_fallback_attempted") is False
+    assert safety.get("preflight_blocked") is True
+
+
+def test_openai_migration_provider_compact_fallback_reduces_budget_and_continues(monkeypatch) -> None:
+    provider = OpenAISEOMigrationArtifactGenerationProvider(
+        api_key="test-key",
+        model_name="gpt-5.1",
+        timeout_seconds=5,
+    )
+    migration_context = _build_migration_context()
+    migration_context["existing_context_summaries"] = {"summary": "A" * 24000}
+    migration_context["generation_safety"] = {
+        "migration_preflight_mode": "compact_fallback",
+        "migration_max_final_input_chars": 8000,
+        "migration_max_difficulty_score": 20,
+        "migration_compact_fallback_enabled": True,
+        "migration_compact_page_limit": 3,
+        "migration_compact_media_asset_limit": 2,
+        "migration_compact_recommendation_limit": 3,
+    }
+
+    body = _build_responses_api_response(json_dumps(_build_success_assistant_payload()))
+
+    def _mock_urlopen(request, timeout):  # noqa: ANN001
+        del request, timeout
+        return _FakeResponse(body, headers={"x-request-id": "req-compact-fallback"})
+
+    monkeypatch.setattr(urllib.request, "urlopen", _mock_urlopen)
+    evaluation_results = [
+        {
+            "blocked": True,
+            "block_reason": "final_input_chars_exceeded",
+            "difficulty_score": 14,
+            "exceeds_final_input_chars": True,
+            "exceeds_difficulty_score": False,
+            "overflow": False,
+            "trimming_pass_limit_exceeded": False,
+            "max_final_input_chars": 8000,
+            "max_difficulty_score": 20,
+        },
+        {
+            "blocked": False,
+            "block_reason": None,
+            "difficulty_score": 7,
+            "exceeds_final_input_chars": False,
+            "exceeds_difficulty_score": False,
+            "overflow": False,
+            "trimming_pass_limit_exceeded": False,
+            "max_final_input_chars": 8000,
+            "max_difficulty_score": 20,
+        },
+    ]
+
+    def _mock_evaluate_generation_preflight(**kwargs):  # noqa: ANN001
+        del kwargs
+        return evaluation_results.pop(0)
+
+    monkeypatch.setattr(provider, "_evaluate_generation_preflight", _mock_evaluate_generation_preflight)
+
+    output = provider.generate_artifacts(migration_context=migration_context)
+    assert output.generated_files
+    safety = getattr(provider, "last_generation_safety", {})
+    assert isinstance(safety, dict)
+    assert safety.get("compact_fallback_attempted") is True
+    assert safety.get("budget_capped") is True
+    assert safety.get("preflight_blocked") is False
+
+
+def test_openai_migration_provider_compact_fallback_still_blocks_when_required_context_remains_too_large(
+    monkeypatch,
+) -> None:
+    provider = OpenAISEOMigrationArtifactGenerationProvider(
+        api_key="test-key",
+        model_name="gpt-5.1",
+        timeout_seconds=5,
+    )
+    migration_context = _build_migration_context()
+    site_snapshot = dict(migration_context.get("site_snapshot") or {})
+    site_snapshot["display_name"] = "X" * 180000
+    migration_context["site_snapshot"] = site_snapshot
+    migration_context["generation_safety"] = {
+        "migration_preflight_mode": "compact_fallback",
+        "migration_max_final_input_chars": 3000,
+        "migration_max_difficulty_score": 8,
+        "migration_compact_fallback_enabled": True,
+    }
+
+    provider_called = False
+
+    def _fail_if_called(request, timeout):  # noqa: ANN001
+        del request, timeout
+        nonlocal provider_called
+        provider_called = True
+        raise AssertionError("provider call should remain blocked when compact fallback cannot satisfy safety limits")
+
+    monkeypatch.setattr(urllib.request, "urlopen", _fail_if_called)
+
+    with pytest.raises(SEOMigrationArtifactProviderError) as exc_info:
+        provider.generate_artifacts(migration_context=migration_context)
+
+    error = exc_info.value
+    assert provider_called is False
+    assert error.code == "migration_generation_preflight_too_large"
+    details = error.internal_details or {}
+    safety = details.get("generation_safety") if isinstance(details.get("generation_safety"), dict) else {}
+    assert safety.get("compact_fallback_attempted") is True
+    assert safety.get("preflight_blocked") is True
+
+
 def test_openai_migration_provider_budget_trimming_preserves_required_context_blocks() -> None:
     provider = OpenAISEOMigrationArtifactGenerationProvider(
         api_key="test-key",

@@ -50,6 +50,17 @@ const DEFAULT_MIGRATION_GENERATION_BUDGET = {
   migration_require_design_variation: true,
 };
 
+const DEFAULT_MIGRATION_GENERATION_SAFETY = {
+  migration_provider_timeout_seconds: 300,
+  migration_preflight_mode: "compact_fallback",
+  migration_max_final_input_chars: 9000,
+  migration_max_difficulty_score: 12,
+  migration_compact_fallback_enabled: true,
+  migration_compact_page_limit: 4,
+  migration_compact_media_asset_limit: 3,
+  migration_compact_recommendation_limit: 4,
+};
+
 jest.mock("../../components/useOperatorContext", () => ({
   useOperatorContext: () => mockUseOperatorContext(),
 }));
@@ -166,6 +177,9 @@ describe("admin route", () => {
         migration_generation_budget: {
           ...DEFAULT_MIGRATION_GENERATION_BUDGET,
         },
+        migration_generation_safety: {
+          ...DEFAULT_MIGRATION_GENERATION_SAFETY,
+        },
       },
       enabled: false,
       created_at: "2026-01-01T00:00:00Z",
@@ -214,6 +228,9 @@ describe("admin route", () => {
         },
         migration_generation_budget: {
           ...DEFAULT_MIGRATION_GENERATION_BUDGET,
+        },
+        migration_generation_safety: {
+          ...DEFAULT_MIGRATION_GENERATION_SAFETY,
         },
       },
       enabled: true,
@@ -578,6 +595,9 @@ describe("admin route", () => {
         migration_generation_budget: {
           ...DEFAULT_MIGRATION_GENERATION_BUDGET,
         },
+        migration_generation_safety: {
+          ...DEFAULT_MIGRATION_GENERATION_SAFETY,
+        },
       },
       enabled: true,
       created_at: "2026-01-01T00:00:00Z",
@@ -626,6 +646,9 @@ describe("admin route", () => {
         },
         migration_generation_budget: {
           ...DEFAULT_MIGRATION_GENERATION_BUDGET,
+        },
+        migration_generation_safety: {
+          ...DEFAULT_MIGRATION_GENERATION_SAFETY,
         },
       },
       enabled: true,
@@ -700,6 +723,14 @@ describe("admin route", () => {
     fireEvent.change(screen.getByLabelText("Generation profile"), { target: { value: "expanded" } });
     fireEvent.change(screen.getByLabelText("Variation level"), { target: { value: "differentiated" } });
     fireEvent.click(screen.getByLabelText("Require page variety"));
+    expect(screen.getByTestId("github-publish-migration-generation-safety")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Provider timeout seconds"), { target: { value: "240" } });
+    fireEvent.change(screen.getByLabelText("Preflight mode"), { target: { value: "block_before_provider" } });
+    fireEvent.change(screen.getByLabelText("Max final input chars"), { target: { value: "8500" } });
+    fireEvent.change(screen.getByLabelText("Max difficulty score"), { target: { value: "11" } });
+    fireEvent.change(screen.getByLabelText("Compact page limit"), { target: { value: "3" } });
+    fireEvent.change(screen.getByLabelText("Compact media limit"), { target: { value: "2" } });
+    fireEvent.change(screen.getByLabelText("Compact recommendation limit"), { target: { value: "3" } });
     expect(screen.getByTestId("github-publish-effective-preview")).toHaveTextContent("/site/content");
     fireEvent.click(screen.getByRole("button", { name: "Save GitHub Publish Config" }));
 
@@ -751,6 +782,16 @@ describe("admin route", () => {
           migration_variation_level: "differentiated",
           migration_require_page_variety: false,
         },
+        migration_generation_safety: {
+          migration_provider_timeout_seconds: 240,
+          migration_preflight_mode: "block_before_provider",
+          migration_max_final_input_chars: 8500,
+          migration_max_difficulty_score: 11,
+          migration_compact_fallback_enabled: true,
+          migration_compact_page_limit: 3,
+          migration_compact_media_asset_limit: 2,
+          migration_compact_recommendation_limit: 3,
+        },
       },
       enabled: true,
     });
@@ -758,7 +799,7 @@ describe("admin route", () => {
     expect(screen.getByLabelText("Base Path")).toHaveValue("/site/content");
     expect(screen.getByTestId("github-publish-effective-preview")).toHaveTextContent("/site/content");
     expect(screen.queryByText("{\"secret\":\"write-only\"}")).not.toBeInTheDocument();
-  });
+  }, 15000);
 
   it("shows GitHub publish validation guidance and blocks save until issues are resolved", async () => {
     mockUseAuth.mockReturnValue({

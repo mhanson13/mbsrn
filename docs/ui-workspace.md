@@ -410,6 +410,8 @@ Media UX note:
   - recommendation basis (`interpreted_audit_context`)
   - `Draft context trimmed` status and largest included block when available
   - read-only effective generation budget (`profile`, `variation`, `context budget chars`, `page/file limits`)
+  - read-only effective generation safety (`provider timeout`, `preflight mode`, `max final chars`, `max difficulty`, `compact fallback`, `compact fallback attempted`, `budget capped`)
+  - blocked-before-provider state is explicit and actionable (`migration_generation_preflight_too_large`) without exposing raw prompt/payload data
 - draft generation still uses selected media metadata only; raw image bytes are not sent into text draft context
 
 Media suggestion reason-code cues in UI:
@@ -532,6 +534,7 @@ Admin ownership groups:
 - AI Provider & Prompt Governance: prompt/model defaults and migration draft timeout guardrails.
 - Publish & Deployment Configuration: GitHub target, managed GKE target, and managed deploy secret controls.
 - Migration AI Budget: migration context/generation limits, depth profile, and variation controls.
+- Migration Generation Safety: provider timeout and preflight guardrails (`compact_fallback` vs `block_before_provider`) with hard backend caps.
 - Managed Namespace Policy: ResourceQuota, LimitRange, and NetworkPolicy defaults for managed site namespaces.
 - Site Registry Management: site records and destructive site delete controls.
 - Diagnostics & Logs: read-only Cloud Logging investigation.

@@ -76,6 +76,7 @@ _DRAFT_REASON_CODE_SESSION_EXPIRED = "session_expired"
 _DRAFT_REASON_CODE_GOOGLE_RECONNECT_REQUIRED = "google_reconnect_required"
 _DRAFT_REASON_CODE_GOOGLE_INTEGRATION_UNAVAILABLE = "google_integration_unavailable"
 _DRAFT_REASON_CODE_CONTEXT_UNAVAILABLE = "draft_generation_context_unavailable"
+_DRAFT_REASON_CODE_PREFLIGHT_TOO_LARGE = "migration_generation_preflight_too_large"
 _DRAFT_REASON_CODE_DEFAULT = "draft_generation_failed"
 _GA4_OUTCOME_SESSIONS_DIRECTION_THRESHOLD_PERCENT = 5.0
 _GA4_OUTCOME_ORGANIC_DIRECTION_THRESHOLD_PERCENT = 5.0
@@ -388,6 +389,7 @@ def _normalize_draft_generation_reason_code(value: object) -> str | None:
         _DRAFT_REASON_CODE_GOOGLE_RECONNECT_REQUIRED,
         _DRAFT_REASON_CODE_GOOGLE_INTEGRATION_UNAVAILABLE,
         _DRAFT_REASON_CODE_CONTEXT_UNAVAILABLE,
+        _DRAFT_REASON_CODE_PREFLIGHT_TOO_LARGE,
     }:
         return normalized
     if normalized in {
@@ -536,6 +538,12 @@ def _draft_generation_operator_action(*, reason_code: str, retryable: bool) -> t
         return ("Review AI provider/model configuration for migration draft compatibility.", None)
     if normalized_reason == _DRAFT_REASON_CODE_CONTEXT_UNAVAILABLE:
         return ("Retry draft generation. If this persists, contact support with the correlation reference.", None)
+    if normalized_reason == _DRAFT_REASON_CODE_PREFLIGHT_TOO_LARGE:
+        return (
+            "Generation was blocked before provider call because input size/complexity exceeded Admin safety settings. "
+            "Reduce generation budget or use compact fallback.",
+            None,
+        )
     if retryable:
         return ("Retry draft generation. If this repeats, review diagnostics and contact support.", None)
     return ("Resolve the blocking draft-generation issue and retry.", None)

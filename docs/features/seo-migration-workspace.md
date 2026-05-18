@@ -262,6 +262,15 @@ Current summary fields include:
   - `ai_context_trimmed_bytes`
   - `provider_source`
   - `mocked_source`
+  - `generation_safety_profile`
+  - `generation_preflight_mode`
+  - `generation_max_final_input_chars`
+  - `generation_max_difficulty_score`
+  - `generation_compact_fallback_enabled`
+  - `generation_compact_fallback_attempted`
+  - `generation_budget_capped`
+  - `generation_preflight_blocked`
+  - `generation_preflight_block_reason`
 
 Interpretation:
 - this is bounded metadata for trust and debugging, not a full prompt dump
@@ -1029,36 +1038,50 @@ Success-path contract verification:
 - `request_contract_status=accepted` and `provider_execution_status=accepted` with `artifact_result=succeeded` indicates the request contract was allowed locally, accepted by provider, and completed successfully.
 - `request_contract_status=accepted_with_warnings` indicates partial/salvaged completion.
 
-## AI Draft Generation Timeout
-Migration draft generation timeout is admin-configurable through business settings:
-- setting key: `migration_draft_timeout_seconds`
-- runtime-safe range: 60-900 seconds
-- default fallback when unset: 120 seconds
+## Admin Migration Generation Safety
+Migration draft timeout and preflight risk controls are now governed by Admin namespace isolation settings:
 
-Operational guidance:
-- typical range: 60-300 seconds
-- larger draft payloads may require 300+ seconds
-- prefer reducing generated output size/verbosity when possible instead of only increasing timeout
-- values below the safe floor are treated as invalid at runtime and fall back to the default timeout (`120`).
+- `migration_provider_timeout_seconds` (range `60-300`, default `300`)
+- `migration_preflight_mode` (`compact_fallback` or `block_before_provider`)
+- `migration_max_final_input_chars` (range `3000-12000`, default `9000`)
+- `migration_max_difficulty_score` (range `5-20`, default `12`)
+- `migration_compact_fallback_enabled` (`true|false`, default `true`)
+- `migration_compact_page_limit` (range `1-8`, default `4`)
+- `migration_compact_media_asset_limit` (range `0-8`, default `3`)
+- `migration_compact_recommendation_limit` (range `0-10`, default `4`)
 
-Resolution precedence for timeout:
-1. business admin setting (`migration_draft_timeout_seconds`)
-2. migration default fallback (`120`)
+Behavior:
+- Backend preflight computes bounded request metrics before provider invocation:
+  - `original_input_size`
+  - `final_input_size`
+  - `difficulty_score`
+  - `trimming_pass_count`
+  - dropped optional blocks
+- If thresholds are exceeded:
+  - `compact_fallback` mode attempts one compact context build using compact limits.
+  - `block_before_provider` mode blocks without calling provider.
+- If compact fallback still exceeds effective thresholds, generation is blocked before provider call with:
+  - `reason_code=migration_generation_preflight_too_large`
+  - `failure_source=local_preflight`
 
-Diagnostics surfaces:
+Timeout and preflight diagnostics are surfaced in bounded form:
 - `context_summary.migration_diagnostics.draft_timeout_seconds`
 - `context_summary.migration_diagnostics.draft_timeout_source`
 - `context_summary.migration_diagnostics.last_draft_failure_timeout_seconds`
 - `context_summary.migration_diagnostics.last_draft_failure_timeout_source`
 - `context_summary.ai_execution.timeout_seconds`
 - `context_summary.ai_execution.timeout_source`
+- `context_summary.ai_execution.preflight_mode`
+- `context_summary.ai_execution.max_final_input_chars`
+- `context_summary.ai_execution.max_difficulty_score`
+- `context_summary.ai_execution.compact_fallback_attempted`
+- `context_summary.ai_execution.preflight_blocked`
+- `context_summary.ai_execution.preflight_block_reason`
 
-Timeout failure behavior:
-- category remains `config_missing` for draft-timeout contract compatibility
-- `failure_reason=timeout`
-- `last_draft_failure_source=remote_provider`
-- `retryable=true`
-- operator message remains sanitized (no raw provider payloads)
+Operator troubleshooting cues:
+- remote timeout: provider was called and timed out (for example `failure_reason=timeout`)
+- local preflight block: provider was not called; reduce generation budget or keep compact fallback enabled
+- all diagnostics remain sanitized (no raw prompts, request bodies, response bodies, HTML, or media bytes)
 
 ## Unified Draft Generation State
 Migration summary now includes a compact derived top-level state in `context_summary.draft_generation_state` so operator status remains coherent across reloads:

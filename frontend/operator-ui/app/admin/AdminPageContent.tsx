@@ -45,6 +45,7 @@ import type {
   GitHubPublishConfig,
   GitHubPublishConfigUpdateRequest,
   MigrationGenerationBudgetConfig,
+  MigrationGenerationSafetyConfig,
   GitHubNamespaceIsolationDefaults,
   GitHubNamespaceLimitRangeDefaults,
   GitHubNamespaceNetworkPolicyDefaults,
@@ -115,6 +116,7 @@ const GITHUB_NAMESPACE_COUNT_PATTERN = /^\d{1,6}$/;
 const GITHUB_NETWORK_POLICY_MODE_OPTIONS = ["default_deny_ingress"] as const;
 const MIGRATION_GENERATION_DEPTH_OPTIONS = ["compact", "standard", "expanded"] as const;
 const MIGRATION_VARIATION_LEVEL_OPTIONS = ["conservative", "balanced", "differentiated"] as const;
+const MIGRATION_PREFLIGHT_MODE_OPTIONS = ["compact_fallback", "block_before_provider"] as const;
 const MIGRATION_CONTEXT_BUDGET_BOUNDS = { min: 8000, max: 50000 } as const;
 const MIGRATION_RECOMMENDATION_LIMIT_BOUNDS = { min: 1, max: 24 } as const;
 const MIGRATION_COMPETITOR_LIMIT_BOUNDS = { min: 1, max: 24 } as const;
@@ -122,6 +124,12 @@ const MIGRATION_SOURCE_PAGE_SUMMARY_LIMIT_BOUNDS = { min: 3, max: 16 } as const;
 const MIGRATION_MEDIA_ASSET_LIMIT_BOUNDS = { min: 4, max: 60 } as const;
 const MIGRATION_GENERATED_PAGE_LIMIT_BOUNDS = { min: 4, max: 24 } as const;
 const MIGRATION_GENERATED_FILE_LIMIT_BOUNDS = { min: 4, max: 12 } as const;
+const MIGRATION_PROVIDER_TIMEOUT_BOUNDS = { min: 60, max: 300 } as const;
+const MIGRATION_MAX_FINAL_INPUT_CHARS_BOUNDS = { min: 3000, max: 12000 } as const;
+const MIGRATION_MAX_DIFFICULTY_SCORE_BOUNDS = { min: 5, max: 20 } as const;
+const MIGRATION_COMPACT_PAGE_LIMIT_BOUNDS = { min: 1, max: 8 } as const;
+const MIGRATION_COMPACT_MEDIA_LIMIT_BOUNDS = { min: 0, max: 8 } as const;
+const MIGRATION_COMPACT_RECOMMENDATION_LIMIT_BOUNDS = { min: 0, max: 10 } as const;
 const DEFAULT_MIGRATION_GENERATION_BUDGET: MigrationGenerationBudgetConfig = {
   migration_context_budget_chars: 18000,
   migration_recommendation_limit: 6,
@@ -134,6 +142,16 @@ const DEFAULT_MIGRATION_GENERATION_BUDGET: MigrationGenerationBudgetConfig = {
   migration_variation_level: "balanced",
   migration_require_page_variety: true,
   migration_require_design_variation: true,
+};
+const DEFAULT_MIGRATION_GENERATION_SAFETY: MigrationGenerationSafetyConfig = {
+  migration_provider_timeout_seconds: 300,
+  migration_preflight_mode: "compact_fallback",
+  migration_max_final_input_chars: 9000,
+  migration_max_difficulty_score: 12,
+  migration_compact_fallback_enabled: true,
+  migration_compact_page_limit: 4,
+  migration_compact_media_asset_limit: 3,
+  migration_compact_recommendation_limit: 4,
 };
 const DEFAULT_NAMESPACE_ISOLATION_DEFAULTS: GitHubNamespaceIsolationDefaults = {
   resource_quota: {
@@ -164,6 +182,7 @@ const DEFAULT_NAMESPACE_ISOLATION_DEFAULTS: GitHubNamespaceIsolationDefaults = {
     mode: "default_deny_ingress",
   },
   migration_generation_budget: DEFAULT_MIGRATION_GENERATION_BUDGET,
+  migration_generation_safety: DEFAULT_MIGRATION_GENERATION_SAFETY,
 };
 
 type AdminPageMode = "all" | "admin" | "userMgmt";
@@ -871,6 +890,46 @@ function normalizeNamespaceIsolationDefaults(
         defaults.migration_generation_budget.migration_require_design_variation,
       ),
     },
+    migration_generation_safety: {
+      migration_provider_timeout_seconds: normalizeMigrationBudgetCount(
+        source.migration_generation_safety?.migration_provider_timeout_seconds,
+        defaults.migration_generation_safety.migration_provider_timeout_seconds,
+        MIGRATION_PROVIDER_TIMEOUT_BOUNDS,
+      ),
+      migration_preflight_mode: (
+        source.migration_generation_safety?.migration_preflight_mode
+        || defaults.migration_generation_safety.migration_preflight_mode
+      ).trim().toLowerCase(),
+      migration_max_final_input_chars: normalizeMigrationBudgetCount(
+        source.migration_generation_safety?.migration_max_final_input_chars,
+        defaults.migration_generation_safety.migration_max_final_input_chars,
+        MIGRATION_MAX_FINAL_INPUT_CHARS_BOUNDS,
+      ),
+      migration_max_difficulty_score: normalizeMigrationBudgetCount(
+        source.migration_generation_safety?.migration_max_difficulty_score,
+        defaults.migration_generation_safety.migration_max_difficulty_score,
+        MIGRATION_MAX_DIFFICULTY_SCORE_BOUNDS,
+      ),
+      migration_compact_fallback_enabled: Boolean(
+        source.migration_generation_safety?.migration_compact_fallback_enabled ??
+        defaults.migration_generation_safety.migration_compact_fallback_enabled,
+      ),
+      migration_compact_page_limit: normalizeMigrationBudgetCount(
+        source.migration_generation_safety?.migration_compact_page_limit,
+        defaults.migration_generation_safety.migration_compact_page_limit,
+        MIGRATION_COMPACT_PAGE_LIMIT_BOUNDS,
+      ),
+      migration_compact_media_asset_limit: normalizeMigrationBudgetCount(
+        source.migration_generation_safety?.migration_compact_media_asset_limit,
+        defaults.migration_generation_safety.migration_compact_media_asset_limit,
+        MIGRATION_COMPACT_MEDIA_LIMIT_BOUNDS,
+      ),
+      migration_compact_recommendation_limit: normalizeMigrationBudgetCount(
+        source.migration_generation_safety?.migration_compact_recommendation_limit,
+        defaults.migration_generation_safety.migration_compact_recommendation_limit,
+        MIGRATION_COMPACT_RECOMMENDATION_LIMIT_BOUNDS,
+      ),
+    },
   };
 }
 
@@ -995,6 +1054,54 @@ function validateNamespaceIsolationDefaults(defaults: GitHubNamespaceIsolationDe
     )
   ) {
     errors.push("Migration variation level is invalid.");
+  }
+
+  const safety = normalized.migration_generation_safety;
+  const validateSafetyRange = (
+    label: string,
+    value: number,
+    bounds: { min: number; max: number },
+  ): void => {
+    if (!Number.isSafeInteger(value) || value < bounds.min || value > bounds.max) {
+      errors.push(`Migration safety ${label} must be between ${bounds.min} and ${bounds.max}.`);
+    }
+  };
+  validateSafetyRange(
+    "provider timeout seconds",
+    safety.migration_provider_timeout_seconds,
+    MIGRATION_PROVIDER_TIMEOUT_BOUNDS,
+  );
+  validateSafetyRange(
+    "max final input chars",
+    safety.migration_max_final_input_chars,
+    MIGRATION_MAX_FINAL_INPUT_CHARS_BOUNDS,
+  );
+  validateSafetyRange(
+    "max difficulty score",
+    safety.migration_max_difficulty_score,
+    MIGRATION_MAX_DIFFICULTY_SCORE_BOUNDS,
+  );
+  validateSafetyRange(
+    "compact page limit",
+    safety.migration_compact_page_limit,
+    MIGRATION_COMPACT_PAGE_LIMIT_BOUNDS,
+  );
+  validateSafetyRange(
+    "compact media limit",
+    safety.migration_compact_media_asset_limit,
+    MIGRATION_COMPACT_MEDIA_LIMIT_BOUNDS,
+  );
+  validateSafetyRange(
+    "compact recommendation limit",
+    safety.migration_compact_recommendation_limit,
+    MIGRATION_COMPACT_RECOMMENDATION_LIMIT_BOUNDS,
+  );
+  if (
+    !MIGRATION_PREFLIGHT_MODE_OPTIONS.includes(
+      safety.migration_preflight_mode as (typeof MIGRATION_PREFLIGHT_MODE_OPTIONS)[number],
+    )
+  ) {
+    errors.push("Migration safety preflight mode is invalid.");
   }
 
   return errors;
@@ -1939,6 +2046,19 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
       ...current,
       migration_generation_budget: {
         ...current.migration_generation_budget,
+        [key]: value,
+      },
+    }));
+  };
+
+  const updateMigrationGenerationSafety = <K extends keyof MigrationGenerationSafetyConfig>(
+    key: K,
+    value: MigrationGenerationSafetyConfig[K],
+  ) => {
+    setGitHubNamespaceIsolationDefaults((current) => ({
+      ...current,
+      migration_generation_safety: {
+        ...current.migration_generation_safety,
         [key]: value,
       },
     }));
@@ -3667,6 +3787,182 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                 </label>
               </div>
             </div>
+            <div className="panel panel-compact stack-tight" data-testid="github-publish-migration-generation-safety">
+              <strong>Migration Generation Safety</strong>
+              <p className="hint muted">
+                These settings control when migration draft generation is compacted or blocked before calling the
+                provider. Backend hard caps still apply even if Admin values are higher.
+              </p>
+              <p className="hint muted">
+                Longer provider timeouts increase latency/cost and do not guarantee success.
+              </p>
+              <div className="admin-grid-two admin-grid-two-compact">
+                <label htmlFor="github-publish-migration-provider-timeout-seconds" className="stack-tight">
+                  <span className="hint muted">Provider timeout seconds</span>
+                  <input
+                    id="github-publish-migration-provider-timeout-seconds"
+                    type="number"
+                    min={MIGRATION_PROVIDER_TIMEOUT_BOUNDS.min}
+                    max={MIGRATION_PROVIDER_TIMEOUT_BOUNDS.max}
+                    step={1}
+                    value={githubNamespaceIsolationDefaults.migration_generation_safety.migration_provider_timeout_seconds}
+                    onChange={(event) =>
+                      updateMigrationGenerationSafety(
+                        "migration_provider_timeout_seconds",
+                        normalizeMigrationBudgetCount(
+                          event.target.value,
+                          githubNamespaceIsolationDefaults.migration_generation_safety.migration_provider_timeout_seconds,
+                          MIGRATION_PROVIDER_TIMEOUT_BOUNDS,
+                        ),
+                      )
+                    }
+                    disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
+                  />
+                </label>
+                <label htmlFor="github-publish-migration-preflight-mode" className="stack-tight">
+                  <span className="hint muted">Preflight mode</span>
+                  <select
+                    id="github-publish-migration-preflight-mode"
+                    value={githubNamespaceIsolationDefaults.migration_generation_safety.migration_preflight_mode}
+                    onChange={(event) =>
+                      updateMigrationGenerationSafety(
+                        "migration_preflight_mode",
+                        event.target.value as MigrationGenerationSafetyConfig["migration_preflight_mode"],
+                      )
+                    }
+                    disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
+                  >
+                    {MIGRATION_PREFLIGHT_MODE_OPTIONS.map((value) => (
+                      <option key={value} value={value}>
+                        {value}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label htmlFor="github-publish-migration-max-final-input-chars" className="stack-tight">
+                  <span className="hint muted">Max final input chars</span>
+                  <input
+                    id="github-publish-migration-max-final-input-chars"
+                    type="number"
+                    min={MIGRATION_MAX_FINAL_INPUT_CHARS_BOUNDS.min}
+                    max={MIGRATION_MAX_FINAL_INPUT_CHARS_BOUNDS.max}
+                    step={100}
+                    value={githubNamespaceIsolationDefaults.migration_generation_safety.migration_max_final_input_chars}
+                    onChange={(event) =>
+                      updateMigrationGenerationSafety(
+                        "migration_max_final_input_chars",
+                        normalizeMigrationBudgetCount(
+                          event.target.value,
+                          githubNamespaceIsolationDefaults.migration_generation_safety.migration_max_final_input_chars,
+                          MIGRATION_MAX_FINAL_INPUT_CHARS_BOUNDS,
+                        ),
+                      )
+                    }
+                    disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
+                  />
+                </label>
+                <label htmlFor="github-publish-migration-max-difficulty-score" className="stack-tight">
+                  <span className="hint muted">Max difficulty score</span>
+                  <input
+                    id="github-publish-migration-max-difficulty-score"
+                    type="number"
+                    min={MIGRATION_MAX_DIFFICULTY_SCORE_BOUNDS.min}
+                    max={MIGRATION_MAX_DIFFICULTY_SCORE_BOUNDS.max}
+                    step={1}
+                    value={githubNamespaceIsolationDefaults.migration_generation_safety.migration_max_difficulty_score}
+                    onChange={(event) =>
+                      updateMigrationGenerationSafety(
+                        "migration_max_difficulty_score",
+                        normalizeMigrationBudgetCount(
+                          event.target.value,
+                          githubNamespaceIsolationDefaults.migration_generation_safety.migration_max_difficulty_score,
+                          MIGRATION_MAX_DIFFICULTY_SCORE_BOUNDS,
+                        ),
+                      )
+                    }
+                    disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
+                  />
+                </label>
+                <label htmlFor="github-publish-migration-compact-page-limit" className="stack-tight">
+                  <span className="hint muted">Compact page limit</span>
+                  <input
+                    id="github-publish-migration-compact-page-limit"
+                    type="number"
+                    min={MIGRATION_COMPACT_PAGE_LIMIT_BOUNDS.min}
+                    max={MIGRATION_COMPACT_PAGE_LIMIT_BOUNDS.max}
+                    step={1}
+                    value={githubNamespaceIsolationDefaults.migration_generation_safety.migration_compact_page_limit}
+                    onChange={(event) =>
+                      updateMigrationGenerationSafety(
+                        "migration_compact_page_limit",
+                        normalizeMigrationBudgetCount(
+                          event.target.value,
+                          githubNamespaceIsolationDefaults.migration_generation_safety.migration_compact_page_limit,
+                          MIGRATION_COMPACT_PAGE_LIMIT_BOUNDS,
+                        ),
+                      )
+                    }
+                    disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
+                  />
+                </label>
+                <label htmlFor="github-publish-migration-compact-media-limit" className="stack-tight">
+                  <span className="hint muted">Compact media limit</span>
+                  <input
+                    id="github-publish-migration-compact-media-limit"
+                    type="number"
+                    min={MIGRATION_COMPACT_MEDIA_LIMIT_BOUNDS.min}
+                    max={MIGRATION_COMPACT_MEDIA_LIMIT_BOUNDS.max}
+                    step={1}
+                    value={githubNamespaceIsolationDefaults.migration_generation_safety.migration_compact_media_asset_limit}
+                    onChange={(event) =>
+                      updateMigrationGenerationSafety(
+                        "migration_compact_media_asset_limit",
+                        normalizeMigrationBudgetCount(
+                          event.target.value,
+                          githubNamespaceIsolationDefaults.migration_generation_safety.migration_compact_media_asset_limit,
+                          MIGRATION_COMPACT_MEDIA_LIMIT_BOUNDS,
+                        ),
+                      )
+                    }
+                    disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
+                  />
+                </label>
+                <label htmlFor="github-publish-migration-compact-recommendation-limit" className="stack-tight">
+                  <span className="hint muted">Compact recommendation limit</span>
+                  <input
+                    id="github-publish-migration-compact-recommendation-limit"
+                    type="number"
+                    min={MIGRATION_COMPACT_RECOMMENDATION_LIMIT_BOUNDS.min}
+                    max={MIGRATION_COMPACT_RECOMMENDATION_LIMIT_BOUNDS.max}
+                    step={1}
+                    value={githubNamespaceIsolationDefaults.migration_generation_safety.migration_compact_recommendation_limit}
+                    onChange={(event) =>
+                      updateMigrationGenerationSafety(
+                        "migration_compact_recommendation_limit",
+                        normalizeMigrationBudgetCount(
+                          event.target.value,
+                          githubNamespaceIsolationDefaults.migration_generation_safety.migration_compact_recommendation_limit,
+                          MIGRATION_COMPACT_RECOMMENDATION_LIMIT_BOUNDS,
+                        ),
+                      )
+                    }
+                    disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
+                  />
+                </label>
+              </div>
+              <label htmlFor="github-publish-migration-compact-fallback-enabled" className="checkbox-chip">
+                <input
+                  id="github-publish-migration-compact-fallback-enabled"
+                  type="checkbox"
+                  checked={githubNamespaceIsolationDefaults.migration_generation_safety.migration_compact_fallback_enabled}
+                  onChange={(event) =>
+                    updateMigrationGenerationSafety("migration_compact_fallback_enabled", event.target.checked)
+                  }
+                  disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
+                />
+                Compact fallback enabled
+              </label>
+            </div>
             <div className="panel panel-compact stack-tight" data-testid="github-publish-effective-preview">
               <p className="hint muted">
                 <strong>Effective target preview</strong>
@@ -3725,6 +4021,15 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                 </WorkspaceMetadataItem>
                 <WorkspaceMetadataItem label="Migration context budget">
                   <code>{githubNamespaceIsolationDefaults.migration_generation_budget.migration_context_budget_chars}</code>
+                </WorkspaceMetadataItem>
+                <WorkspaceMetadataItem label="Migration timeout">
+                  <code>{githubNamespaceIsolationDefaults.migration_generation_safety.migration_provider_timeout_seconds}s</code>
+                </WorkspaceMetadataItem>
+                <WorkspaceMetadataItem label="Migration preflight mode">
+                  <code>{githubNamespaceIsolationDefaults.migration_generation_safety.migration_preflight_mode}</code>
+                </WorkspaceMetadataItem>
+                <WorkspaceMetadataItem label="Migration max input chars">
+                  <code>{githubNamespaceIsolationDefaults.migration_generation_safety.migration_max_final_input_chars}</code>
                 </WorkspaceMetadataItem>
                 <WorkspaceMetadataItem label="Enabled">
                   <span>{githubPublishEnabled ? "Yes" : "No"}</span>

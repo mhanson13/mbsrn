@@ -188,11 +188,23 @@ export interface MigrationGenerationBudgetConfig {
   migration_require_design_variation: boolean;
 }
 
+export interface MigrationGenerationSafetyConfig {
+  migration_provider_timeout_seconds: number;
+  migration_preflight_mode: "compact_fallback" | "block_before_provider" | string;
+  migration_max_final_input_chars: number;
+  migration_max_difficulty_score: number;
+  migration_compact_fallback_enabled: boolean;
+  migration_compact_page_limit: number;
+  migration_compact_media_asset_limit: number;
+  migration_compact_recommendation_limit: number;
+}
+
 export interface GitHubNamespaceIsolationDefaults {
   resource_quota: GitHubNamespaceResourceQuotaDefaults;
   limit_range: GitHubNamespaceLimitRangeDefaults;
   network_policy: GitHubNamespaceNetworkPolicyDefaults;
   migration_generation_budget: MigrationGenerationBudgetConfig;
+  migration_generation_safety: MigrationGenerationSafetyConfig;
 }
 
 export interface GitHubPublishConfigUpdateRequest {

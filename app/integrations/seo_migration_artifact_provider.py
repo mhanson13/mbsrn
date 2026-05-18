@@ -127,6 +127,9 @@ _MIGRATION_DRAFT_CONTEXT_OPTIONAL_TRIM_ORDER = (
 )
 _MIGRATION_DRAFT_MAX_TOTAL_INPUT_SIZE = 120000
 _MIGRATION_DRAFT_MAX_TRIMMING_PASSES = 7
+_MIGRATION_GENERATION_PREFLIGHT_TOO_LARGE = "migration_generation_preflight_too_large"
+_MIGRATION_PREFLIGHT_MODE_COMPACT_FALLBACK = "compact_fallback"
+_MIGRATION_PREFLIGHT_MODE_BLOCK_BEFORE_PROVIDER = "block_before_provider"
 
 logger = logging.getLogger(__name__)
 
@@ -201,6 +204,36 @@ class SEOMigrationProviderCompatibilityResult:
     degraded_mode: bool | None = None
     response_format_mode: str | None = None
     request_body_mode: str | None = None
+
+
+@dataclass(frozen=True)
+class _MigrationGenerationSafetyProfile:
+    provider_timeout_seconds: int = 300
+    preflight_mode: str = _MIGRATION_PREFLIGHT_MODE_COMPACT_FALLBACK
+    max_final_input_chars: int = 9000
+    max_difficulty_score: int = 12
+    compact_fallback_enabled: bool = True
+    compact_page_limit: int = 4
+    compact_media_asset_limit: int = 3
+    compact_recommendation_limit: int = 4
+
+    def to_payload(self) -> dict[str, object]:
+        normalized_mode = str(self.preflight_mode or "").strip().lower()
+        if normalized_mode not in {
+            _MIGRATION_PREFLIGHT_MODE_COMPACT_FALLBACK,
+            _MIGRATION_PREFLIGHT_MODE_BLOCK_BEFORE_PROVIDER,
+        }:
+            normalized_mode = _MIGRATION_PREFLIGHT_MODE_COMPACT_FALLBACK
+        return {
+            "migration_provider_timeout_seconds": max(60, min(300, int(self.provider_timeout_seconds))),
+            "migration_preflight_mode": normalized_mode,
+            "migration_max_final_input_chars": max(3000, min(12000, int(self.max_final_input_chars))),
+            "migration_max_difficulty_score": max(5, min(20, int(self.max_difficulty_score))),
+            "migration_compact_fallback_enabled": bool(self.compact_fallback_enabled),
+            "migration_compact_page_limit": max(1, min(8, int(self.compact_page_limit))),
+            "migration_compact_media_asset_limit": max(0, min(8, int(self.compact_media_asset_limit))),
+            "migration_compact_recommendation_limit": max(0, min(10, int(self.compact_recommendation_limit))),
+        }
 
 
 @dataclass(frozen=True)
@@ -1173,12 +1206,49 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
         return object_nodes_total, object_nodes_non_false, object_nodes_missing_required
 
     def generate_artifacts(self, *, migration_context: dict[str, object]) -> SEOMigrationArtifactGenerationOutput:
-        budgeted_context, budget_result = self._apply_migration_context_budget(migration_context)
         request_context = self._build_request_context(migration_context)
-        if bool(budget_result.get("overflow")) or (
-            isinstance(budget_result.get("trimming_pass_count"), int)
-            and int(budget_result.get("trimming_pass_count") or 0) > _MIGRATION_DRAFT_MAX_TRIMMING_PASSES
+        generation_safety = self._resolve_generation_safety_profile(migration_context)
+        request_context["generation_safety"] = generation_safety.to_payload()
+
+        compact_fallback_attempted = False
+        budget_capped = False
+        budgeted_context, budget_result = self._apply_migration_context_budget(migration_context)
+        budget_result = _normalize_json_dict(budget_result)
+        preflight_evaluation = self._evaluate_generation_preflight(
+            budget_result=budget_result,
+            generation_safety=generation_safety,
+        )
+
+        if (
+            preflight_evaluation.get("blocked") is True
+            and generation_safety.compact_fallback_enabled
+            and generation_safety.preflight_mode == _MIGRATION_PREFLIGHT_MODE_COMPACT_FALLBACK
         ):
+            compact_fallback_attempted = True
+            compact_context, budget_capped = self._build_compact_fallback_context(
+                migration_context=migration_context,
+                generation_safety=generation_safety,
+            )
+            budgeted_context, budget_result = self._apply_migration_context_budget(compact_context)
+            budget_result = _normalize_json_dict(budget_result)
+            preflight_evaluation = self._evaluate_generation_preflight(
+                budget_result=budget_result,
+                generation_safety=generation_safety,
+            )
+
+        generation_safety_payload = self._build_generation_safety_execution_payload(
+            generation_safety=generation_safety,
+            preflight_evaluation=preflight_evaluation,
+            compact_fallback_attempted=compact_fallback_attempted,
+            budget_capped=budget_capped,
+        )
+        budget_result["generation_safety"] = generation_safety_payload
+        try:
+            setattr(self, "last_generation_safety", generation_safety_payload)
+        except Exception:  # noqa: BLE001
+            pass
+
+        if preflight_evaluation.get("blocked") is True:
             self._log_request_budget(
                 request_context=request_context,
                 budget_result=budget_result,
@@ -1192,11 +1262,11 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
                 request_fingerprint={"context_budget": budget_result},
             )
             raise self._provider_error(
-                code=_DRAFT_REASON_VALIDATION_FAILED,
+                code=_MIGRATION_GENERATION_PREFLIGHT_TOO_LARGE,
                 reason=_DRAFT_REASON_VALIDATION_FAILED,
                 safe_message=(
-                    "Migration draft request is too large or complex for synchronous generation. "
-                    "Reduce optional context and try again."
+                    "Migration draft generation was blocked before provider call because preflight input size "
+                    "or complexity exceeded Admin safety settings."
                 ),
                 retryable=False,
                 internal_details={
@@ -1207,12 +1277,21 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
                     "normalized_retryable": False,
                     "attempt_count": 0,
                     "context_budget": budget_result,
+                    "generation_safety": generation_safety_payload,
+                    "preflight_block_reason": _clean_optional_value(preflight_evaluation.get("block_reason")),
                 },
                 normalized_failure_category="local_validation_failure",
                 normalized_failure_reason="request_too_large_or_complex",
                 normalized_failure_source="local_validation",
                 normalized_retryable=False,
                 attempt_count=0,
+                original_input_size=self._coerce_optional_non_negative_int(budget_result.get("initial_size_bytes")),
+                final_input_size=self._coerce_optional_non_negative_int(budget_result.get("final_size_bytes")),
+                trimmed_bytes=self._coerce_optional_non_negative_int(budget_result.get("trimmed_bytes")),
+                trimming_pass_count=self._coerce_optional_non_negative_int(budget_result.get("trimming_pass_count")),
+                difficulty_score=self._coerce_optional_non_negative_int(preflight_evaluation.get("difficulty_score")),
+                budget_outcome="precall_rejected",
+                retry_suppressed=True,
             )
         prompt = build_seo_migration_prompt(
             migration_context=budgeted_context,
@@ -2455,6 +2534,246 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
             )
         return _DRAFT_REASON_UNKNOWN, "Migration draft generation failed due to an unexpected AI provider error."
 
+    def _resolve_generation_safety_profile(
+        self,
+        migration_context: dict[str, object],
+    ) -> _MigrationGenerationSafetyProfile:
+        defaults = _MigrationGenerationSafetyProfile()
+        payload = defaults.to_payload()
+        raw = migration_context.get("generation_safety")
+        if isinstance(raw, dict):
+            for key in payload.keys():
+                if key in raw:
+                    payload[key] = raw.get(key)
+
+        preflight_mode = _clean_optional_value(payload.get("migration_preflight_mode")) or defaults.preflight_mode
+        preflight_mode = preflight_mode.lower()
+        if preflight_mode not in {
+            _MIGRATION_PREFLIGHT_MODE_COMPACT_FALLBACK,
+            _MIGRATION_PREFLIGHT_MODE_BLOCK_BEFORE_PROVIDER,
+        }:
+            preflight_mode = _MIGRATION_PREFLIGHT_MODE_COMPACT_FALLBACK
+
+        return _MigrationGenerationSafetyProfile(
+            provider_timeout_seconds=(
+                self._coerce_optional_non_negative_int(payload.get("migration_provider_timeout_seconds"))
+                or defaults.provider_timeout_seconds
+            ),
+            preflight_mode=preflight_mode,
+            max_final_input_chars=(
+                self._coerce_optional_non_negative_int(payload.get("migration_max_final_input_chars"))
+                or defaults.max_final_input_chars
+            ),
+            max_difficulty_score=(
+                self._coerce_optional_non_negative_int(payload.get("migration_max_difficulty_score"))
+                or defaults.max_difficulty_score
+            ),
+            compact_fallback_enabled=bool(payload.get("migration_compact_fallback_enabled", True)),
+            compact_page_limit=(
+                self._coerce_optional_non_negative_int(payload.get("migration_compact_page_limit"))
+                if payload.get("migration_compact_page_limit") is not None
+                else defaults.compact_page_limit
+            ),
+            compact_media_asset_limit=(
+                self._coerce_optional_non_negative_int(payload.get("migration_compact_media_asset_limit"))
+                if payload.get("migration_compact_media_asset_limit") is not None
+                else defaults.compact_media_asset_limit
+            ),
+            compact_recommendation_limit=(
+                self._coerce_optional_non_negative_int(payload.get("migration_compact_recommendation_limit"))
+                if payload.get("migration_compact_recommendation_limit") is not None
+                else defaults.compact_recommendation_limit
+            ),
+        )
+
+    def _derive_preflight_difficulty_score(
+        self,
+        *,
+        final_input_size: int,
+        section_count: int | None,
+        trimming_pass_count: int,
+    ) -> int:
+        normalized_size = max(0, int(final_input_size))
+        size_component = min(12, max(0, int((normalized_size + 1499) // 1500)))
+        sections_component = min(8, max(0, int(section_count or 0)))
+        trimming_component = min(8, max(0, int(trimming_pass_count)) * 2)
+        return min(100, max(0, size_component + sections_component + trimming_component))
+
+    def _evaluate_generation_preflight(
+        self,
+        *,
+        budget_result: dict[str, object],
+        generation_safety: _MigrationGenerationSafetyProfile,
+    ) -> dict[str, object]:
+        budget_payload = _normalize_json_dict(budget_result)
+        safety_payload = generation_safety.to_payload()
+        final_input_chars = self._coerce_optional_non_negative_int(budget_payload.get("final_size_chars")) or 0
+        final_input_bytes = self._coerce_optional_non_negative_int(budget_payload.get("final_size_bytes")) or 0
+        section_count = self._coerce_optional_non_negative_int(budget_payload.get("section_count"))
+        trimming_pass_count = self._coerce_optional_non_negative_int(budget_payload.get("trimming_pass_count")) or 0
+        overflow = bool(budget_payload.get("overflow"))
+        trimming_pass_limit_exceeded = trimming_pass_count > _MIGRATION_DRAFT_MAX_TRIMMING_PASSES
+        max_final_input_chars = (
+            self._coerce_optional_non_negative_int(safety_payload.get("migration_max_final_input_chars")) or 9000
+        )
+        max_difficulty_score = (
+            self._coerce_optional_non_negative_int(safety_payload.get("migration_max_difficulty_score")) or 12
+        )
+        difficulty_score = self._derive_preflight_difficulty_score(
+            final_input_size=final_input_bytes,
+            section_count=section_count,
+            trimming_pass_count=trimming_pass_count,
+        )
+        exceeds_final_input_chars = final_input_chars > max_final_input_chars
+        exceeds_difficulty_score = difficulty_score > max_difficulty_score
+        blocked = overflow or trimming_pass_limit_exceeded or exceeds_final_input_chars or exceeds_difficulty_score
+
+        block_reason = None
+        if blocked:
+            if overflow:
+                block_reason = "context_budget_overflow"
+            elif trimming_pass_limit_exceeded:
+                block_reason = "trimming_pass_limit_exceeded"
+            elif exceeds_final_input_chars and exceeds_difficulty_score:
+                block_reason = "final_input_and_difficulty_exceeded"
+            elif exceeds_final_input_chars:
+                block_reason = "final_input_chars_exceeded"
+            elif exceeds_difficulty_score:
+                block_reason = "difficulty_score_exceeded"
+
+        return {
+            "blocked": blocked,
+            "block_reason": block_reason,
+            "difficulty_score": difficulty_score,
+            "exceeds_final_input_chars": exceeds_final_input_chars,
+            "exceeds_difficulty_score": exceeds_difficulty_score,
+            "overflow": overflow,
+            "trimming_pass_limit_exceeded": trimming_pass_limit_exceeded,
+            "max_final_input_chars": max_final_input_chars,
+            "max_difficulty_score": max_difficulty_score,
+        }
+
+    def _build_compact_fallback_context(
+        self,
+        *,
+        migration_context: dict[str, object],
+        generation_safety: _MigrationGenerationSafetyProfile,
+    ) -> tuple[dict[str, object], bool]:
+        compact_context = _normalize_json_dict(migration_context)
+        budget_capped = False
+        generation_budget = _normalize_json_dict(compact_context.get("generation_budget"))
+
+        prior_context_budget = self._coerce_optional_non_negative_int(generation_budget.get("migration_context_budget_chars"))
+        compact_context_budget = max(
+            _MIGRATION_DRAFT_CONTEXT_BUDGET_MIN_CHARS,
+            min(_MIGRATION_DRAFT_CONTEXT_BUDGET_MAX_CHARS, int(generation_safety.max_final_input_chars)),
+        )
+        if prior_context_budget is None or compact_context_budget < prior_context_budget:
+            budget_capped = True
+        generation_budget["migration_context_budget_chars"] = compact_context_budget
+
+        prior_page_limit = self._coerce_optional_non_negative_int(generation_budget.get("migration_generated_page_limit"))
+        compact_page_limit = max(1, min(8, int(generation_safety.compact_page_limit)))
+        if prior_page_limit is None or compact_page_limit < prior_page_limit:
+            budget_capped = True
+        generation_budget["migration_generated_page_limit"] = compact_page_limit
+
+        prior_file_limit = self._coerce_optional_non_negative_int(generation_budget.get("migration_generated_file_limit"))
+        compact_file_limit = max(1, min(12, compact_page_limit))
+        if prior_file_limit is None or compact_file_limit < prior_file_limit:
+            budget_capped = True
+        generation_budget["migration_generated_file_limit"] = compact_file_limit
+
+        prior_media_limit = self._coerce_optional_non_negative_int(generation_budget.get("migration_media_asset_limit"))
+        compact_media_limit = max(0, min(8, int(generation_safety.compact_media_asset_limit)))
+        if prior_media_limit is None or compact_media_limit < prior_media_limit:
+            budget_capped = True
+        generation_budget["migration_media_asset_limit"] = compact_media_limit
+
+        prior_recommendation_limit = self._coerce_optional_non_negative_int(
+            generation_budget.get("migration_recommendation_limit")
+        )
+        compact_recommendation_limit = max(0, min(10, int(generation_safety.compact_recommendation_limit)))
+        if prior_recommendation_limit is None or compact_recommendation_limit < prior_recommendation_limit:
+            budget_capped = True
+        generation_budget["migration_recommendation_limit"] = compact_recommendation_limit
+        compact_context["generation_budget"] = generation_budget
+
+        source_snapshot = _normalize_json_dict(compact_context.get("source_snapshot"))
+        for key in ("pages", "page_summaries", "pages_scanned", "headings", "services", "warnings"):
+            raw = source_snapshot.get(key)
+            if isinstance(raw, list) and len(raw) > compact_page_limit:
+                source_snapshot[key] = raw[:compact_page_limit]
+                budget_capped = True
+        if source_snapshot:
+            compact_context["source_snapshot"] = source_snapshot
+
+        existing_context = _normalize_json_dict(compact_context.get("existing_context_summaries"))
+        recommendation_summary = _normalize_json_dict(existing_context.get("recommendation_summary"))
+        for key in ("top_recommendations", "recommendation_titles", "recommendation_categories"):
+            raw = recommendation_summary.get(key)
+            if isinstance(raw, list) and len(raw) > compact_recommendation_limit:
+                recommendation_summary[key] = raw[:compact_recommendation_limit]
+                budget_capped = True
+        if recommendation_summary:
+            existing_context["recommendation_summary"] = recommendation_summary
+        if existing_context:
+            compact_context["existing_context_summaries"] = existing_context
+
+        media_assets = _normalize_json_dict(compact_context.get("media_assets"))
+        selected_assets = media_assets.get("selected_assets")
+        if isinstance(selected_assets, list) and len(selected_assets) > compact_media_limit:
+            media_assets["selected_assets"] = selected_assets[:compact_media_limit]
+            media_assets["selected_assets_count"] = min(
+                int(media_assets.get("selected_assets_count") or len(selected_assets)),
+                compact_media_limit,
+            )
+            media_assets["context_trimmed"] = True
+            budget_capped = True
+        if media_assets:
+            compact_context["media_assets"] = media_assets
+
+        draft_input_summary = _normalize_json_dict(compact_context.get("draft_input_summary"))
+        for key in ("top_recommendation_titles", "recommendation_categories_included"):
+            raw = draft_input_summary.get(key)
+            if isinstance(raw, list) and len(raw) > compact_recommendation_limit:
+                draft_input_summary[key] = raw[:compact_recommendation_limit]
+                budget_capped = True
+        if compact_media_limit >= 0:
+            draft_input_summary["generation_compact_media_asset_limit"] = compact_media_limit
+        draft_input_summary["generation_compact_page_limit"] = compact_page_limit
+        draft_input_summary["generation_compact_recommendation_limit"] = compact_recommendation_limit
+        if draft_input_summary:
+            compact_context["draft_input_summary"] = draft_input_summary
+
+        return compact_context, budget_capped
+
+    def _build_generation_safety_execution_payload(
+        self,
+        *,
+        generation_safety: _MigrationGenerationSafetyProfile,
+        preflight_evaluation: dict[str, object],
+        compact_fallback_attempted: bool,
+        budget_capped: bool,
+    ) -> dict[str, object]:
+        payload = generation_safety.to_payload()
+        payload.update(
+            {
+                "compact_fallback_attempted": bool(compact_fallback_attempted),
+                "budget_capped": bool(budget_capped),
+                "preflight_blocked": bool(preflight_evaluation.get("blocked")),
+                "preflight_block_reason": _clean_optional_value(preflight_evaluation.get("block_reason")),
+                "difficulty_score": self._coerce_optional_non_negative_int(preflight_evaluation.get("difficulty_score")),
+                "max_final_input_chars": self._coerce_optional_non_negative_int(
+                    preflight_evaluation.get("max_final_input_chars")
+                ),
+                "max_difficulty_score": self._coerce_optional_non_negative_int(
+                    preflight_evaluation.get("max_difficulty_score")
+                ),
+            }
+        )
+        return payload
+
     def _apply_migration_context_budget(
         self,
         migration_context: dict[str, object],
@@ -3292,6 +3611,28 @@ def _build_migration_json_schema() -> dict[str, object]:
             },
         },
     }
+
+
+def _normalize_json_value(value: object) -> object:
+    if isinstance(value, dict):
+        return _normalize_json_dict(value)
+    if isinstance(value, list):
+        return [_normalize_json_value(item) for item in value]
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    return str(value)
+
+
+def _normalize_json_dict(value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        return {}
+    normalized: dict[str, object] = {}
+    for key, raw in value.items():
+        key_str = str(key).strip()
+        if not key_str:
+            continue
+        normalized[key_str] = _normalize_json_value(raw)
+    return normalized
 
 
 def _clean_optional_value(value: object) -> str | None:

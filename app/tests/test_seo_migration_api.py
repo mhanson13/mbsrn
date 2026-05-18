@@ -2498,7 +2498,7 @@ def test_generate_draft_timeout_returns_structured_error_and_persisted_diagnosti
     assert detail.get("provider_name") == "openai"
     assert detail.get("model_name") == "gpt-4o-mini"
     assert detail.get("prompt_version") == "seo-migration-v1"
-    assert detail.get("timeout_seconds") == 120
+    assert detail.get("timeout_seconds") == 300
     assert detail.get("timeout_source") == "default"
 
     versions_response = client.get(f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/artifact-versions")
@@ -2525,9 +2525,9 @@ def test_generate_draft_timeout_returns_structured_error_and_persisted_diagnosti
     assert diagnostics.get("last_draft_failure_model_requested") is None
     assert diagnostics.get("last_draft_failure_model_resolved") == "gpt-4o-mini"
     assert diagnostics.get("last_draft_failure_model_used") == "gpt-4o-mini"
-    assert diagnostics.get("last_draft_failure_timeout_seconds") == 120
+    assert diagnostics.get("last_draft_failure_timeout_seconds") == 300
     assert diagnostics.get("last_draft_failure_timeout_source") == "default"
-    assert diagnostics.get("draft_timeout_seconds") == 120
+    assert diagnostics.get("draft_timeout_seconds") == 300
     assert diagnostics.get("draft_timeout_source") == "default"
     ai_execution = summary_response.json().get("context_summary", {}).get("ai_execution") or {}
     assert ai_execution.get("model_requested") is None
@@ -2538,12 +2538,74 @@ def test_generate_draft_timeout_returns_structured_error_and_persisted_diagnosti
     assert ai_execution.get("artifact_status") == "failed"
     assert ai_execution.get("artifact_result") == "failed"
     assert isinstance(ai_execution.get("duration_ms"), int)
-    assert ai_execution.get("timeout_seconds") == 120
+    assert ai_execution.get("timeout_seconds") == 300
     assert ai_execution.get("timeout_source") == "default"
     assert "raw_output" not in ai_execution
     top_state = summary_response.json().get("context_summary", {}).get("draft_generation_state") or {}
     assert top_state.get("status") == "generation_failed"
     assert top_state.get("summary") == "Migration draft generation timed out while calling the AI provider."
+
+
+def test_generate_draft_preflight_block_returns_actionable_reason_code(db_session) -> None:
+    business_id = "11111111-1111-1111-1111-111111111111"
+    site_id = "22222222-2222-2222-2222-222222222222"
+    _seed_business_and_site(db_session, business_id=business_id, site_id=site_id)
+    client = _make_client(
+        db_session,
+        business_id=business_id,
+        artifact_provider=_RaisingMigrationArtifactProvider(
+            SEOMigrationArtifactProviderError(
+                code="migration_generation_preflight_too_large",
+                reason="validation_failed",
+                safe_message=(
+                    "Migration draft generation was blocked before provider call because preflight input size "
+                    "or complexity exceeded Admin safety settings."
+                ),
+                provider_name="openai",
+                model_name="gpt-4o-mini",
+                prompt_version="seo-migration-v1",
+                retryable=False,
+                normalized_failure_category="local_validation_failure",
+                normalized_failure_reason="request_too_large_or_complex",
+                normalized_failure_source="local_validation",
+                normalized_retryable=False,
+                attempt_count=0,
+                internal_details={
+                    "generation_safety": {
+                        "migration_preflight_mode": "block_before_provider",
+                        "migration_max_final_input_chars": 9000,
+                        "migration_max_difficulty_score": 12,
+                        "compact_fallback_attempted": False,
+                        "budget_capped": False,
+                        "preflight_blocked": True,
+                        "preflight_block_reason": "final_input_chars_exceeded",
+                    },
+                },
+            )
+        ),
+    )
+
+    workspace_response = client.put(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/workspace",
+        json={"source_url": "https://legacy.example"},
+    )
+    assert workspace_response.status_code == 200
+    _prepare_workspace_for_draft_generation(client, business_id=business_id, site_id=site_id)
+
+    generate_response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/generate-draft-artifacts",
+        json={"force_new_version": True},
+    )
+    assert generate_response.status_code == 422
+    detail = generate_response.json().get("detail") or {}
+    assert detail.get("reason_code") == "migration_generation_preflight_too_large"
+    assert "blocked before provider call" in str(detail.get("operator_action", "")).lower()
+
+    summary_response = client.get(f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/summary")
+    assert summary_response.status_code == 200
+    draft_input_summary = summary_response.json().get("context_summary", {}).get("draft_input_summary") or {}
+    assert draft_input_summary.get("generation_preflight_blocked") is True
+    assert draft_input_summary.get("generation_preflight_block_reason") == "final_input_chars_exceeded"
 
 
 def test_generate_draft_malformed_provider_output_returns_artifact_invalid(db_session) -> None:

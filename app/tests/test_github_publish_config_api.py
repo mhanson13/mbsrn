@@ -114,6 +114,16 @@ def test_get_github_publish_config_returns_defaults_when_unset(db_session, seede
             "migration_require_page_variety": True,
             "migration_require_design_variation": True,
         },
+        "migration_generation_safety": {
+            "migration_provider_timeout_seconds": 300,
+            "migration_preflight_mode": "compact_fallback",
+            "migration_max_final_input_chars": 9000,
+            "migration_max_difficulty_score": 12,
+            "migration_compact_fallback_enabled": True,
+            "migration_compact_page_limit": 4,
+            "migration_compact_media_asset_limit": 3,
+            "migration_compact_recommendation_limit": 4,
+        },
     }
     assert payload["enabled"] is False
 
@@ -161,6 +171,16 @@ def test_put_github_publish_config_persists_and_reads_back(db_session, seeded_bu
                     "enabled": True,
                     "mode": "default_deny_ingress",
                 },
+                "migration_generation_safety": {
+                    "migration_provider_timeout_seconds": 240,
+                    "migration_preflight_mode": "block_before_provider",
+                    "migration_max_final_input_chars": 8500,
+                    "migration_max_difficulty_score": 11,
+                    "migration_compact_fallback_enabled": True,
+                    "migration_compact_page_limit": 3,
+                    "migration_compact_media_asset_limit": 2,
+                    "migration_compact_recommendation_limit": 3,
+                },
             },
             "enabled": True,
         },
@@ -186,6 +206,16 @@ def test_put_github_publish_config_persists_and_reads_back(db_session, seeded_bu
     assert updated["namespace_isolation_defaults"]["network_policy"] == {
         "enabled": True,
         "mode": "default_deny_ingress",
+    }
+    assert updated["namespace_isolation_defaults"]["migration_generation_safety"] == {
+        "migration_provider_timeout_seconds": 240,
+        "migration_preflight_mode": "block_before_provider",
+        "migration_max_final_input_chars": 8500,
+        "migration_max_difficulty_score": 11,
+        "migration_compact_fallback_enabled": True,
+        "migration_compact_page_limit": 3,
+        "migration_compact_media_asset_limit": 2,
+        "migration_compact_recommendation_limit": 3,
     }
     assert updated["enabled"] is True
 
@@ -381,6 +411,33 @@ def test_put_github_publish_config_rejects_invalid_namespace_isolation_defaults(
     assert response.status_code == 422
     detail = str(response.json().get("detail", ""))
     assert "requests_cpu" in detail
+
+
+def test_put_github_publish_config_rejects_invalid_migration_generation_safety_ranges(
+    db_session,
+    seeded_business,
+) -> None:
+    client = _make_client(db_session, business_id=seeded_business.id)
+
+    response = client.put(
+        "/api/admin/github-publish-config",
+        json={
+            "owner": "mhanson13",
+            "default_branch": "main",
+            "base_path": "/",
+            "namespace_isolation_defaults": {
+                "migration_generation_safety": {
+                    "migration_provider_timeout_seconds": 500,
+                    "migration_preflight_mode": "invalid_mode",
+                }
+            },
+            "enabled": True,
+        },
+    )
+
+    assert response.status_code == 422
+    detail = str(response.json().get("detail", ""))
+    assert "migration_provider_timeout_seconds" in detail or "migration_preflight_mode" in detail
 
 
 def test_put_github_publish_config_rejects_enabled_without_owner(db_session, seeded_business) -> None:

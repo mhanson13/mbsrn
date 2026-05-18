@@ -190,6 +190,13 @@ interface DraftAIExecutionSummary {
   durationMs: number | null;
   timeoutSeconds: number | null;
   timeoutSource: "admin" | "default" | null;
+  preflightMode: string | null;
+  maxFinalInputChars: number | null;
+  maxDifficultyScore: number | null;
+  compactFallbackAttempted: boolean | null;
+  budgetCapped: boolean | null;
+  preflightBlocked: boolean | null;
+  preflightBlockReason: string | null;
 }
 
 type ArtifactQualityStatus = "high" | "medium" | "low";
@@ -625,6 +632,8 @@ function parseDraftGenerationFailure(error: unknown): {
     hint = "Google integration status is unavailable right now. Retry shortly, then reconnect Google if it persists.";
   } else if (reasonCode === "draft_generation_context_unavailable") {
     hint = "Draft context is currently unavailable. Retry and contact support if this keeps happening.";
+  } else if (reasonCode === "migration_generation_preflight_too_large") {
+    hint = "Generation was blocked before provider call because final input/difficulty exceeded Admin safety settings.";
   } else if (statusCode === 401) {
     hint = "Operator session appears expired. Re-authenticate to MBSRN. This is separate from Google integration reconnect.";
   } else if (statusCode === 403) {
@@ -2411,6 +2420,31 @@ function parseDraftAIExecutionSummary(
     asStringOrNull(migrationDiagnostics.last_draft_failure_timeout_source) ||
     asStringOrNull(migrationDiagnostics.draft_timeout_source);
   const timeoutSource = timeoutSourceRaw === "admin" || timeoutSourceRaw === "default" ? timeoutSourceRaw : null;
+  const generationSafetyRecord = asRecord(aiExecutionRecord.generation_safety);
+  const preflightMode = asStringOrNull(generationSafetyRecord.migration_preflight_mode);
+  const maxFinalInputChars =
+    typeof generationSafetyRecord.migration_max_final_input_chars === "number"
+      ? Math.max(0, Math.round(generationSafetyRecord.migration_max_final_input_chars))
+      : typeof generationSafetyRecord.max_final_input_chars === "number"
+        ? Math.max(0, Math.round(generationSafetyRecord.max_final_input_chars))
+        : null;
+  const maxDifficultyScore =
+    typeof generationSafetyRecord.migration_max_difficulty_score === "number"
+      ? Math.max(0, Math.round(generationSafetyRecord.migration_max_difficulty_score))
+      : typeof generationSafetyRecord.max_difficulty_score === "number"
+        ? Math.max(0, Math.round(generationSafetyRecord.max_difficulty_score))
+        : null;
+  const compactFallbackAttempted =
+    typeof generationSafetyRecord.compact_fallback_attempted === "boolean"
+      ? generationSafetyRecord.compact_fallback_attempted
+      : null;
+  const budgetCapped =
+    typeof generationSafetyRecord.budget_capped === "boolean" ? generationSafetyRecord.budget_capped : null;
+  const preflightBlocked =
+    typeof generationSafetyRecord.preflight_blocked === "boolean"
+      ? generationSafetyRecord.preflight_blocked
+      : null;
+  const preflightBlockReason = asStringOrNull(generationSafetyRecord.preflight_block_reason);
   return {
     modelRequested,
     modelResolved,
@@ -2426,6 +2460,13 @@ function parseDraftAIExecutionSummary(
     durationMs,
     timeoutSeconds,
     timeoutSource,
+    preflightMode,
+    maxFinalInputChars,
+    maxDifficultyScore,
+    compactFallbackAttempted,
+    budgetCapped,
+    preflightBlocked,
+    preflightBlockReason,
   };
 }
 
@@ -4933,6 +4974,42 @@ export function MigrationWorkspacePanel({
     migrationDiagnostics,
   });
   const draftAIExecution = parseDraftAIExecutionSummary(contextSummary, migrationDiagnostics);
+  const generationSafetyProfile =
+    asStringOrNull(draftInputSummary.generation_safety_profile)
+    || draftAIExecution.preflightMode
+    || asStringOrNull(draftInputSummary.generation_preflight_mode)
+    || "compact_fallback";
+  const generationProviderTimeoutSeconds =
+    asNonNegativeInt(draftInputSummary.generation_provider_timeout_seconds)
+    ?? draftAIExecution.timeoutSeconds
+    ?? null;
+  const generationPreflightMode =
+    asStringOrNull(draftInputSummary.generation_preflight_mode)
+    || draftAIExecution.preflightMode
+    || generationSafetyProfile;
+  const generationMaxFinalInputChars =
+    asNonNegativeInt(draftInputSummary.generation_max_final_input_chars)
+    ?? draftAIExecution.maxFinalInputChars
+    ?? null;
+  const generationMaxDifficultyScore =
+    asNonNegativeInt(draftInputSummary.generation_max_difficulty_score)
+    ?? draftAIExecution.maxDifficultyScore
+    ?? null;
+  const generationCompactFallbackEnabled =
+    asBooleanOrNull(draftInputSummary.generation_compact_fallback_enabled)
+    ?? true;
+  const generationCompactFallbackAttempted =
+    asBooleanOrNull(draftInputSummary.generation_compact_fallback_attempted)
+    ?? draftAIExecution.compactFallbackAttempted;
+  const generationBudgetCapped =
+    asBooleanOrNull(draftInputSummary.generation_budget_capped)
+    ?? draftAIExecution.budgetCapped;
+  const generationPreflightBlocked =
+    asBooleanOrNull(draftInputSummary.generation_preflight_blocked)
+    ?? draftAIExecution.preflightBlocked;
+  const generationPreflightBlockReason =
+    asStringOrNull(draftInputSummary.generation_preflight_block_reason)
+    || draftAIExecution.preflightBlockReason;
   const draftFailureSourceLabel = toDraftFailureSourceLabel(
     asStringOrNull(migrationDiagnostics.last_draft_failure_source) || draftAIExecution.failureSource,
   );
@@ -4944,6 +5021,17 @@ export function MigrationWorkspacePanel({
   const draftAIHint = asStringOrNull(draftAIDiagnosticsSummary.hint);
   const draftAIBudgetOutcome = asStringOrNull(draftAIDiagnosticsSummary.budget_outcome);
   const draftAIRetrySuppressed = asBooleanOrNull(draftAIDiagnosticsSummary.retry_suppressed);
+  const draftProviderTimedOut =
+    (asStringOrNull(migrationDiagnostics.last_draft_failure_reason) || draftAIFailureReason || "").trim().toLowerCase()
+    === "timeout";
+  const generationPreflightBlockedMessage = generationPreflightBlocked
+    ? "Generation was blocked before provider call because final input/difficulty exceeded Admin safety settings. Reduce budget or use compact fallback."
+    : null;
+  const providerTimeoutActionMessage = draftProviderTimedOut
+    ? `Provider timed out after ${
+      generationProviderTimeoutSeconds !== null ? `${generationProviderTimeoutSeconds} seconds` : "the configured timeout"
+    }. Next action: reduce Admin generation budget/safety thresholds or enable compact fallback.`
+    : null;
   const draftAITrimmingPassCount =
     typeof draftAIDiagnosticsSummary.trimming_pass_count === "number"
       ? Math.max(0, Math.round(draftAIDiagnosticsSummary.trimming_pass_count))
@@ -7313,6 +7401,60 @@ export function MigrationWorkspacePanel({
                   })()}
                 </span>
               </span>
+              <span className="migration-compact-kv-row" data-testid="migration-draft-input-generation-safety-profile">
+                <span className="migration-compact-kv-label">Generation safety profile</span>
+                <span className="migration-compact-kv-value">{generationSafetyProfile.replace(/_/g, " ")}</span>
+              </span>
+              <span className="migration-compact-kv-row" data-testid="migration-draft-input-generation-provider-timeout">
+                <span className="migration-compact-kv-label">Provider timeout</span>
+                <span className="migration-compact-kv-value">
+                  {generationProviderTimeoutSeconds !== null ? `${generationProviderTimeoutSeconds}s` : "default"}
+                </span>
+              </span>
+              <span className="migration-compact-kv-row" data-testid="migration-draft-input-generation-preflight-mode">
+                <span className="migration-compact-kv-label">Preflight mode</span>
+                <span className="migration-compact-kv-value">
+                  {(generationPreflightMode || "compact_fallback").replace(/_/g, " ")}
+                </span>
+              </span>
+              <span className="migration-compact-kv-row" data-testid="migration-draft-input-generation-max-final-input">
+                <span className="migration-compact-kv-label">Max final input chars</span>
+                <span className="migration-compact-kv-value">
+                  {generationMaxFinalInputChars !== null ? generationMaxFinalInputChars.toLocaleString() : "n/a"}
+                </span>
+              </span>
+              <span className="migration-compact-kv-row" data-testid="migration-draft-input-generation-max-difficulty">
+                <span className="migration-compact-kv-label">Max difficulty score</span>
+                <span className="migration-compact-kv-value">
+                  {generationMaxDifficultyScore !== null ? generationMaxDifficultyScore : "n/a"}
+                </span>
+              </span>
+              <span className="migration-compact-kv-row" data-testid="migration-draft-input-generation-compact-enabled">
+                <span className="migration-compact-kv-label">Compact fallback enabled</span>
+                <span className="migration-compact-kv-value">
+                  {formatBooleanStateLabel(generationCompactFallbackEnabled)}
+                </span>
+              </span>
+              <span className="migration-compact-kv-row" data-testid="migration-draft-input-generation-compact-attempted">
+                <span className="migration-compact-kv-label">Compact fallback attempted</span>
+                <span className="migration-compact-kv-value">
+                  {formatBooleanStateLabel(generationCompactFallbackAttempted)}
+                </span>
+              </span>
+              <span className="migration-compact-kv-row" data-testid="migration-draft-input-generation-budget-capped">
+                <span className="migration-compact-kv-label">Budget capped</span>
+                <span className="migration-compact-kv-value">
+                  {formatBooleanStateLabel(generationBudgetCapped)}
+                </span>
+              </span>
+              {generationPreflightBlocked ? (
+                <span className="migration-compact-kv-row" data-testid="migration-draft-input-generation-preflight-blocked">
+                  <span className="migration-compact-kv-label">Preflight blocked</span>
+                  <span className="migration-compact-kv-value">
+                    Yes{generationPreflightBlockReason ? ` (${generationPreflightBlockReason.replace(/_/g, " ")})` : ""}
+                  </span>
+                </span>
+              ) : null}
               {draftAILargestContextBlock ? (
                 <span className="migration-compact-kv-row" data-testid="migration-draft-input-largest-block">
                   <span className="migration-compact-kv-label">Largest included block</span>
@@ -7335,6 +7477,16 @@ export function MigrationWorkspacePanel({
                 </span>
               ) : null}
             </div>
+            {generationPreflightBlockedMessage ? (
+              <span className="hint warning" data-testid="migration-draft-input-generation-preflight-blocked-message">
+                {generationPreflightBlockedMessage}
+              </span>
+            ) : null}
+            {providerTimeoutActionMessage ? (
+              <span className="hint warning" data-testid="migration-draft-input-provider-timeout-message">
+                {providerTimeoutActionMessage}
+              </span>
+            ) : null}
           </div>
         </div>
         <span className="hint" data-testid="migration-selected-media-context-summary">

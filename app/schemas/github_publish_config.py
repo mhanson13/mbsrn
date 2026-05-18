@@ -284,6 +284,7 @@ class GitHubNamespaceNetworkPolicyDefaults(BaseModel):
 
 _MIGRATION_GENERATION_DEPTH_VALUES = {"compact", "standard", "expanded"}
 _MIGRATION_VARIATION_LEVEL_VALUES = {"conservative", "balanced", "differentiated"}
+_MIGRATION_PREFLIGHT_MODE_VALUES = {"compact_fallback", "block_before_provider"}
 
 
 class MigrationGenerationBudgetDefaults(BaseModel):
@@ -322,12 +323,37 @@ class MigrationGenerationBudgetDefaults(BaseModel):
         return lowered
 
 
+class MigrationGenerationSafetyDefaults(BaseModel):
+    migration_provider_timeout_seconds: int = Field(default=300, ge=60, le=300)
+    migration_preflight_mode: str = "compact_fallback"
+    migration_max_final_input_chars: int = Field(default=9000, ge=3000, le=12000)
+    migration_max_difficulty_score: int = Field(default=12, ge=5, le=20)
+    migration_compact_fallback_enabled: bool = True
+    migration_compact_page_limit: int = Field(default=4, ge=1, le=8)
+    migration_compact_media_asset_limit: int = Field(default=3, ge=0, le=8)
+    migration_compact_recommendation_limit: int = Field(default=4, ge=0, le=10)
+
+    @field_validator("migration_preflight_mode", mode="before")
+    @classmethod
+    def _normalize_preflight_mode(cls, value: object) -> str:
+        normalized = _normalize_optional_text(value, max_length=40) or "compact_fallback"
+        lowered = normalized.lower()
+        if lowered not in _MIGRATION_PREFLIGHT_MODE_VALUES:
+            raise ValueError(
+                "is invalid. Supported values: " + ", ".join(sorted(_MIGRATION_PREFLIGHT_MODE_VALUES)) + "."
+            )
+        return lowered
+
+
 class GitHubNamespaceIsolationDefaults(BaseModel):
     resource_quota: GitHubNamespaceResourceQuotaDefaults = Field(default_factory=GitHubNamespaceResourceQuotaDefaults)
     limit_range: GitHubNamespaceLimitRangeDefaults = Field(default_factory=GitHubNamespaceLimitRangeDefaults)
     network_policy: GitHubNamespaceNetworkPolicyDefaults = Field(default_factory=GitHubNamespaceNetworkPolicyDefaults)
     migration_generation_budget: MigrationGenerationBudgetDefaults = Field(
         default_factory=MigrationGenerationBudgetDefaults
+    )
+    migration_generation_safety: MigrationGenerationSafetyDefaults = Field(
+        default_factory=MigrationGenerationSafetyDefaults
     )
 
     model_config = ConfigDict(extra="forbid")

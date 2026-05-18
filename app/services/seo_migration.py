@@ -775,6 +775,7 @@ class SEOMigrationDraftFailure:
     context_budget_size_chars: int | None = None
     largest_context_block: str | None = None
     largest_context_block_size_chars: int | None = None
+    generation_safety: dict[str, object] | None = None
 
 
 @dataclass(frozen=True)
@@ -818,6 +819,33 @@ class SEOMigrationGenerationBudget:
             "migration_variation_level": self.variation_level,
             "migration_require_page_variety": bool(self.require_page_variety),
             "migration_require_design_variation": bool(self.require_design_variation),
+        }
+
+
+@dataclass(frozen=True)
+class SEOMigrationGenerationSafety:
+    provider_timeout_seconds: int = 300
+    preflight_mode: str = "compact_fallback"
+    max_final_input_chars: int = 9000
+    max_difficulty_score: int = 12
+    compact_fallback_enabled: bool = True
+    compact_page_limit: int = 4
+    compact_media_asset_limit: int = 3
+    compact_recommendation_limit: int = 4
+
+    def to_context_payload(self) -> dict[str, object]:
+        preflight_mode = str(self.preflight_mode or "").strip().lower()
+        if preflight_mode not in {"compact_fallback", "block_before_provider"}:
+            preflight_mode = "compact_fallback"
+        return {
+            "migration_provider_timeout_seconds": max(60, min(300, int(self.provider_timeout_seconds))),
+            "migration_preflight_mode": preflight_mode,
+            "migration_max_final_input_chars": max(3000, min(12000, int(self.max_final_input_chars))),
+            "migration_max_difficulty_score": max(5, min(20, int(self.max_difficulty_score))),
+            "migration_compact_fallback_enabled": bool(self.compact_fallback_enabled),
+            "migration_compact_page_limit": max(1, min(8, int(self.compact_page_limit))),
+            "migration_compact_media_asset_limit": max(0, min(8, int(self.compact_media_asset_limit))),
+            "migration_compact_recommendation_limit": max(0, min(10, int(self.compact_recommendation_limit))),
         }
 
 
@@ -924,6 +952,8 @@ class SEOMigrationService:
         self.runtime_build_metadata = get_runtime_build_metadata()
         self._resolved_migration_draft_timeout_seconds = _MIGRATION_DRAFT_TIMEOUT_DEFAULT_SECONDS
         self._resolved_migration_draft_timeout_source = "default"
+        self._resolved_migration_generation_safety = SEOMigrationGenerationSafety()
+        self._resolved_migration_generation_safety_source = "default"
         self.media_storage_root = _resolve_migration_media_storage_root()
 
     def create_or_update_workspace(
@@ -11203,6 +11233,9 @@ class SEOMigrationService:
         artifact_model_used = _normalize_string(provider_output.model_name, max_length=128) or model_resolved
         generation_duration_ms = self._duration_ms(started_at)
         draft_input_summary = _normalize_json_dict(context_json.get("draft_input_summary"))
+        provider_generation_safety = _normalize_json_dict(getattr(self.artifact_provider, "last_generation_safety", None))
+        if not provider_generation_safety:
+            provider_generation_safety = self._resolved_migration_generation_safety.to_context_payload()
         artifact_quality_evaluation = evaluate_migration_artifact_quality(
             {
                 "generated_files": normalized_files,
@@ -11250,6 +11283,7 @@ class SEOMigrationService:
             duration_ms=generation_duration_ms,
             timeout_seconds=draft_timeout_seconds,
             timeout_source=draft_timeout_source,
+            generation_safety=provider_generation_safety,
         )
         artifact = SEOMigrationArtifactVersion(
             id=str(uuid4()),
@@ -11606,6 +11640,44 @@ class SEOMigrationService:
             "last_failure_target_environment_key": latest_deploy_failure_detail.get("target_environment_key"),
             "last_failure_target_environment_source": latest_deploy_failure_detail.get("target_environment_source"),
         }
+        draft_input_summary_payload = (
+            context_summary.get("draft_input_summary")
+            if isinstance(context_summary.get("draft_input_summary"), dict)
+            else {}
+        )
+        draft_input_summary_payload = _normalize_json_dict(draft_input_summary_payload)
+        draft_input_summary_payload["generation_provider_timeout_seconds"] = max(
+            1, int(self._resolved_migration_draft_timeout_seconds)
+        )
+        draft_input_summary_payload["generation_preflight_mode"] = (
+            _normalize_string(ai_execution_summary.get("preflight_mode"), max_length=40)
+            or _normalize_string(
+                draft_input_summary_payload.get("generation_preflight_mode"),
+                max_length=40,
+            )
+            or "compact_fallback"
+        )
+        draft_input_summary_payload["generation_max_final_input_chars"] = (
+            _coerce_int(ai_execution_summary.get("max_final_input_chars"))
+            or _coerce_int(draft_input_summary_payload.get("generation_max_final_input_chars"))
+        )
+        draft_input_summary_payload["generation_max_difficulty_score"] = (
+            _coerce_int(ai_execution_summary.get("max_difficulty_score"))
+            or _coerce_int(draft_input_summary_payload.get("generation_max_difficulty_score"))
+        )
+        compact_fallback_attempted = ai_execution_summary.get("compact_fallback_attempted")
+        if isinstance(compact_fallback_attempted, bool):
+            draft_input_summary_payload["generation_compact_fallback_attempted"] = compact_fallback_attempted
+        budget_capped = ai_execution_summary.get("budget_capped")
+        if isinstance(budget_capped, bool):
+            draft_input_summary_payload["generation_budget_capped"] = budget_capped
+        preflight_blocked = ai_execution_summary.get("preflight_blocked")
+        if isinstance(preflight_blocked, bool):
+            draft_input_summary_payload["generation_preflight_blocked"] = preflight_blocked
+        preflight_block_reason = _normalize_string(ai_execution_summary.get("preflight_block_reason"), max_length=80)
+        if preflight_block_reason:
+            draft_input_summary_payload["generation_preflight_block_reason"] = preflight_block_reason
+
         context_summary = {
             **context_summary,
             "migration_diagnostics": {
@@ -11771,11 +11843,7 @@ class SEOMigrationService:
                 compatibility=draft_provider_compatibility,
             ),
             "draft_generation_state": draft_generation_state,
-            "draft_input_summary": (
-                context_summary.get("draft_input_summary")
-                if isinstance(context_summary.get("draft_input_summary"), dict)
-                else {}
-            ),
+            "draft_input_summary": draft_input_summary_payload,
             "media_assets": {
                 "source_discovered_count": media_assets_payload.get("source_discovered_count"),
                 "source_imported_count": media_assets_payload.get("source_imported_count"),
@@ -12229,6 +12297,26 @@ class SEOMigrationService:
                 if self._resolved_migration_draft_timeout_source in {"admin", "default"}
                 else "default"
             )
+        generation_safety_payload = _normalize_json_dict(execution_payload.get("generation_safety"))
+        preflight_mode = _normalize_string(
+            generation_safety_payload.get("migration_preflight_mode"),
+            max_length=40,
+        )
+        max_final_input_chars = _coerce_int(
+            generation_safety_payload.get("migration_max_final_input_chars")
+            or generation_safety_payload.get("max_final_input_chars")
+        )
+        max_difficulty_score = _coerce_int(
+            generation_safety_payload.get("migration_max_difficulty_score")
+            or generation_safety_payload.get("max_difficulty_score")
+        )
+        compact_fallback_attempted_raw = generation_safety_payload.get("compact_fallback_attempted")
+        budget_capped_raw = generation_safety_payload.get("budget_capped")
+        preflight_blocked_raw = generation_safety_payload.get("preflight_blocked")
+        preflight_block_reason = _normalize_string(
+            generation_safety_payload.get("preflight_block_reason"),
+            max_length=80,
+        )
         return {
             "model_requested": model_requested,
             "model_resolved": model_resolved,
@@ -12244,6 +12332,17 @@ class SEOMigrationService:
             "duration_ms": duration_ms,
             "timeout_seconds": timeout_seconds,
             "timeout_source": timeout_source,
+            "preflight_mode": preflight_mode,
+            "max_final_input_chars": max_final_input_chars,
+            "max_difficulty_score": max_difficulty_score,
+            "compact_fallback_attempted": (
+                bool(compact_fallback_attempted_raw)
+                if isinstance(compact_fallback_attempted_raw, bool)
+                else None
+            ),
+            "budget_capped": bool(budget_capped_raw) if isinstance(budget_capped_raw, bool) else None,
+            "preflight_blocked": bool(preflight_blocked_raw) if isinstance(preflight_blocked_raw, bool) else None,
+            "preflight_block_reason": preflight_block_reason,
         }
 
     def _build_draft_generation_readiness(
@@ -12894,6 +12993,7 @@ class SEOMigrationService:
             duration_ms=duration_ms,
             timeout_seconds=resolved_timeout_seconds,
             timeout_source=normalized_timeout_source,
+            generation_safety=(failure.generation_safety or self._resolved_migration_generation_safety.to_context_payload()),
         )
         payload["draft_generation_failure"] = {
             "failure_category": failure.failure_category,
@@ -12959,6 +13059,9 @@ class SEOMigrationService:
                 if isinstance(failure.largest_context_block_size_chars, int)
                 else None
             ),
+            "generation_safety": (
+                _normalize_json_dict(failure.generation_safety) if isinstance(failure.generation_safety, dict) else None
+            ),
             "recorded_at": utc_now().isoformat(),
         }
         normalized_contract_diagnostics = _normalize_json_dict(draft_contract_diagnostics)
@@ -12983,6 +13086,7 @@ class SEOMigrationService:
         duration_ms: int | None = None,
         timeout_seconds: int | None = None,
         timeout_source: str | None = None,
+        generation_safety: dict[str, object] | None = None,
     ) -> dict[str, object]:
         normalized_failure_source = _normalize_string(failure_source, max_length=40)
         if normalized_failure_source not in {"local_preflight", "remote_provider", "local_validation", "unknown"}:
@@ -12998,6 +13102,7 @@ class SEOMigrationService:
             normalized_timeout_source = None
         normalized_timeout_seconds = max(1, int(timeout_seconds)) if isinstance(timeout_seconds, int) else None
         normalized_duration_ms = max(0, int(duration_ms)) if isinstance(duration_ms, int) else None
+        generation_safety_payload = _normalize_json_dict(generation_safety)
         artifact_result = SEOMigrationService._artifact_result_from_status(normalized_artifact_status)
         request_contract_status = SEOMigrationService._derive_request_contract_status(
             compatibility_decision=normalized_compatibility_decision,
@@ -13027,6 +13132,7 @@ class SEOMigrationService:
             "duration_ms": normalized_duration_ms,
             "timeout_seconds": normalized_timeout_seconds,
             "timeout_source": normalized_timeout_source,
+            "generation_safety": generation_safety_payload or None,
             "recorded_at": utc_now().isoformat(),
         }
         return payload
@@ -13130,6 +13236,9 @@ class SEOMigrationService:
                 else None
             )
         )
+        generation_safety = _normalize_json_dict(details.get("generation_safety"))
+        if not generation_safety:
+            generation_safety = _normalize_json_dict(context_budget.get("generation_safety"))
         return SEOMigrationDraftFailure(
             failure_category=category,
             failure_reason=reason,
@@ -13231,6 +13340,7 @@ class SEOMigrationService:
             context_budget_size_chars=context_budget_size_chars,
             largest_context_block=largest_context_block,
             largest_context_block_size_chars=largest_context_block_size_chars,
+            generation_safety=generation_safety or None,
         )
 
     @staticmethod
@@ -13285,7 +13395,13 @@ class SEOMigrationService:
         )
         return resolved.model_name
 
-    def _resolve_migration_draft_timeout_seconds(self, business: Business) -> tuple[int, str]:
+    def _resolve_migration_draft_timeout_seconds(
+        self,
+        business: Business,
+        *,
+        generation_safety: SEOMigrationGenerationSafety | None = None,
+        generation_safety_source: str | None = None,
+    ) -> tuple[int, str]:
         configured_timeout = getattr(business, "migration_draft_timeout_seconds", None)
         try:
             parsed_timeout = int(configured_timeout) if configured_timeout is not None else None
@@ -13296,6 +13412,17 @@ class SEOMigrationService:
             and _MIGRATION_DRAFT_TIMEOUT_MIN_SECONDS <= parsed_timeout <= _MIGRATION_DRAFT_TIMEOUT_MAX_SECONDS
         ):
             return parsed_timeout, "admin"
+        resolved_generation_safety = generation_safety or self._resolved_migration_generation_safety
+        safety_payload = resolved_generation_safety.to_context_payload()
+        safety_timeout = _coerce_int(safety_payload.get("migration_provider_timeout_seconds"))
+        if (
+            safety_timeout is not None
+            and _MIGRATION_DRAFT_TIMEOUT_MIN_SECONDS <= safety_timeout <= 300
+        ):
+            resolved_source = generation_safety_source or self._resolved_migration_generation_safety_source
+            if resolved_source not in {"admin", "default"}:
+                resolved_source = "default"
+            return safety_timeout, resolved_source
         return _MIGRATION_DRAFT_TIMEOUT_DEFAULT_SECONDS, "default"
 
     def _apply_resolved_migration_model_settings(
@@ -13308,7 +13435,16 @@ class SEOMigrationService:
         self.provider_model_name = model_name
         if hasattr(self.artifact_provider, "model_name"):
             setattr(self.artifact_provider, "model_name", model_name)
-        timeout_seconds, timeout_source = self._resolve_migration_draft_timeout_seconds(business)
+        generation_safety, generation_safety_source = self._resolve_effective_migration_generation_safety()
+        self._resolved_migration_generation_safety = generation_safety
+        self._resolved_migration_generation_safety_source = (
+            generation_safety_source if generation_safety_source in {"admin", "default"} else "default"
+        )
+        timeout_seconds, timeout_source = self._resolve_migration_draft_timeout_seconds(
+            business,
+            generation_safety=generation_safety,
+            generation_safety_source=self._resolved_migration_generation_safety_source,
+        )
         self._resolved_migration_draft_timeout_seconds = timeout_seconds
         self._resolved_migration_draft_timeout_source = timeout_source
         if hasattr(self.artifact_provider, "timeout_seconds"):
@@ -13318,6 +13454,10 @@ class SEOMigrationService:
                 setattr(self.artifact_provider, "timeout_seconds", _MIGRATION_DRAFT_TIMEOUT_DEFAULT_SECONDS)
         try:
             setattr(self.artifact_provider, "timeout_source", timeout_source)
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            setattr(self.artifact_provider, "generation_safety_source", self._resolved_migration_generation_safety_source)
         except Exception:  # noqa: BLE001
             pass
         return model_name
@@ -13344,6 +13484,7 @@ class SEOMigrationService:
     ) -> tuple[dict[str, object], dict[str, object]]:
         budget = self._resolve_effective_migration_generation_budget()
         budget_payload = budget.to_context_payload()
+        generation_safety_payload = self._resolved_migration_generation_safety.to_context_payload()
         recommendation_limit = max(
             1,
             min(24, _coerce_int(budget_payload.get("migration_recommendation_limit")) or budget.recommendation_limit),
@@ -13466,6 +13607,7 @@ class SEOMigrationService:
             source_page_limit=source_page_limit,
         )
         context_json["generation_budget"] = budget_payload
+        context_json["generation_safety"] = generation_safety_payload
         context_json["media_assets"] = {
             "selected_assets": selected_media_context_payload,
             "selected_assets_count": len(selected_media_context_payload),
@@ -13486,6 +13628,8 @@ class SEOMigrationService:
             active_competitor_domain_count=len(active_competitor_domains_included),
             media_assets_payload=media_assets_payload,
             generation_budget=budget_payload,
+            generation_safety=generation_safety_payload,
+            generation_safety_source=self._resolved_migration_generation_safety_source,
         )
         context_json["draft_input_summary"] = draft_input_summary
         context_summary["draft_input_summary"] = draft_input_summary
@@ -13884,6 +14028,8 @@ class SEOMigrationService:
         active_competitor_domain_count: int,
         media_assets_payload: dict[str, object],
         generation_budget: dict[str, object] | None = None,
+        generation_safety: dict[str, object] | None = None,
+        generation_safety_source: str | None = None,
     ) -> dict[str, object]:
         existing_context_summaries = _normalize_json_dict(context_json.get("existing_context_summaries"))
         recommendation_summary_payload = _normalize_json_dict(existing_context_summaries.get("recommendation_summary"))
@@ -13936,6 +14082,23 @@ class SEOMigrationService:
         context_budget_size_chars = _coerce_int(generation_budget_payload.get("migration_context_budget_chars"))
         generated_page_limit = _coerce_int(generation_budget_payload.get("migration_generated_page_limit"))
         generated_file_limit = _coerce_int(generation_budget_payload.get("migration_generated_file_limit"))
+        generation_safety_payload = _normalize_json_dict(generation_safety)
+        generation_safety_profile = (
+            _normalize_string(generation_safety_payload.get("migration_preflight_mode"), max_length=40)
+            or "compact_fallback"
+        )
+        generation_safety_timeout_seconds = _coerce_int(
+            generation_safety_payload.get("migration_provider_timeout_seconds")
+        )
+        generation_safety_max_final_input_chars = _coerce_int(
+            generation_safety_payload.get("migration_max_final_input_chars")
+        )
+        generation_safety_max_difficulty_score = _coerce_int(
+            generation_safety_payload.get("migration_max_difficulty_score")
+        )
+        generation_safety_source_value = _normalize_string(generation_safety_source, max_length=20)
+        if generation_safety_source_value not in {"admin", "default"}:
+            generation_safety_source_value = "default"
         summary = {
             "recommendations_available_count": max(0, int(recommendation_available_count)),
             "recommendations_included_count": max(0, int(recommendation_included_count)),
@@ -14048,6 +14211,38 @@ class SEOMigrationService:
             "generation_require_design_variation": bool(
                 generation_budget_payload.get("migration_require_design_variation", True)
             ),
+            "generation_safety_profile": generation_safety_profile,
+            "generation_safety_source": generation_safety_source_value,
+            "generation_provider_timeout_seconds": (
+                max(1, int(generation_safety_timeout_seconds))
+                if isinstance(generation_safety_timeout_seconds, int)
+                else None
+            ),
+            "generation_preflight_mode": generation_safety_profile,
+            "generation_max_final_input_chars": (
+                max(0, int(generation_safety_max_final_input_chars))
+                if isinstance(generation_safety_max_final_input_chars, int)
+                else None
+            ),
+            "generation_max_difficulty_score": (
+                max(0, int(generation_safety_max_difficulty_score))
+                if isinstance(generation_safety_max_difficulty_score, int)
+                else None
+            ),
+            "generation_compact_fallback_enabled": bool(
+                generation_safety_payload.get("migration_compact_fallback_enabled", True)
+            ),
+            "generation_compact_page_limit": _coerce_int(generation_safety_payload.get("migration_compact_page_limit")),
+            "generation_compact_media_asset_limit": _coerce_int(
+                generation_safety_payload.get("migration_compact_media_asset_limit")
+            ),
+            "generation_compact_recommendation_limit": _coerce_int(
+                generation_safety_payload.get("migration_compact_recommendation_limit")
+            ),
+            "generation_compact_fallback_attempted": False,
+            "generation_budget_capped": False,
+            "generation_preflight_blocked": False,
+            "generation_preflight_block_reason": None,
         }
         return summary
 
@@ -15237,6 +15432,63 @@ class SEOMigrationService:
             variation_level=variation_level,
             require_page_variety=bool(getattr(raw_budget, "migration_require_page_variety", True)),
             require_design_variation=bool(getattr(raw_budget, "migration_require_design_variation", True)),
+        )
+
+    def _resolve_effective_migration_generation_safety(self) -> tuple[SEOMigrationGenerationSafety, str]:
+        defaults = SEOMigrationGenerationSafety()
+        if self.github_publish_config_service is None:
+            return defaults, "default"
+        try:
+            admin_config = self.github_publish_config_service.get()
+        except Exception:  # noqa: BLE001
+            return defaults, "default"
+        source = "default"
+        raw_namespace_defaults = _normalize_json_dict(getattr(admin_config, "namespace_isolation_defaults_json", None))
+        if isinstance(raw_namespace_defaults.get("migration_generation_safety"), dict):
+            source = "admin"
+        try:
+            namespace_defaults = normalize_namespace_isolation_defaults(
+                getattr(admin_config, "namespace_isolation_defaults_json", None)
+            )
+        except Exception:  # noqa: BLE001
+            return defaults, source
+        raw_safety = getattr(namespace_defaults, "migration_generation_safety", None)
+        if raw_safety is None:
+            return defaults, source
+        preflight_mode = (
+            _normalize_string(getattr(raw_safety, "migration_preflight_mode", None), max_length=40)
+            or defaults.preflight_mode
+        ).lower()
+        if preflight_mode not in {"compact_fallback", "block_before_provider"}:
+            preflight_mode = defaults.preflight_mode
+        return (
+            SEOMigrationGenerationSafety(
+                provider_timeout_seconds=_coerce_int(
+                    getattr(raw_safety, "migration_provider_timeout_seconds", None)
+                )
+                or defaults.provider_timeout_seconds,
+                preflight_mode=preflight_mode,
+                max_final_input_chars=_coerce_int(getattr(raw_safety, "migration_max_final_input_chars", None))
+                or defaults.max_final_input_chars,
+                max_difficulty_score=_coerce_int(getattr(raw_safety, "migration_max_difficulty_score", None))
+                or defaults.max_difficulty_score,
+                compact_fallback_enabled=bool(
+                    getattr(raw_safety, "migration_compact_fallback_enabled", defaults.compact_fallback_enabled)
+                ),
+                compact_page_limit=_coerce_int(getattr(raw_safety, "migration_compact_page_limit", None))
+                or defaults.compact_page_limit,
+                compact_media_asset_limit=_coerce_int(
+                    getattr(raw_safety, "migration_compact_media_asset_limit", None)
+                )
+                if getattr(raw_safety, "migration_compact_media_asset_limit", None) is not None
+                else defaults.compact_media_asset_limit,
+                compact_recommendation_limit=_coerce_int(
+                    getattr(raw_safety, "migration_compact_recommendation_limit", None)
+                )
+                if getattr(raw_safety, "migration_compact_recommendation_limit", None) is not None
+                else defaults.compact_recommendation_limit,
+            ),
+            source,
         )
 
     def _resolve_admin_deploy_template_metadata(self) -> dict[str, object]:

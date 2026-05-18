@@ -2880,6 +2880,14 @@ describe("site migration workflow route", () => {
           operator_uploaded_images_count: 1,
           selected_media_assets_count: 1,
           media_context_included: true,
+          generation_safety_profile: "compact_fallback",
+          generation_provider_timeout_seconds: 240,
+          generation_preflight_mode: "compact_fallback",
+          generation_max_final_input_chars: 9000,
+          generation_max_difficulty_score: 12,
+          generation_compact_fallback_enabled: true,
+          generation_compact_fallback_attempted: false,
+          generation_budget_capped: false,
           provider_source: "mock",
           mocked_source: true,
         },
@@ -2940,6 +2948,15 @@ describe("site migration workflow route", () => {
     expect(within(draftInputSummary).queryByText("Source-site images discovered:")).not.toBeInTheDocument();
     expect(within(draftInputSummary).queryByText("Operator uploaded images:")).not.toBeInTheDocument();
     expect(within(draftInputSummary).queryByText(/Provider source:/i)).not.toBeInTheDocument();
+    expect(within(draftInputSummary).getByTestId("migration-draft-input-generation-safety-profile")).toHaveTextContent(
+      "compact fallback",
+    );
+    expect(within(draftInputSummary).getByTestId("migration-draft-input-generation-provider-timeout")).toHaveTextContent(
+      "240s",
+    );
+    expect(within(draftInputSummary).getByTestId("migration-draft-input-generation-max-final-input")).toHaveTextContent(
+      "9,000",
+    );
 
     const mediaSection = await screen.findByTestId("migration-media-section");
     expect(within(mediaSection).getByText("Images")).toBeInTheDocument();
@@ -2962,6 +2979,39 @@ describe("site migration workflow route", () => {
     expect(within(sourceDetails).getByText("URL: https://legacy.example/images/front.jpg")).not.toBeVisible();
     await user.click(within(sourceDetails).getByText("Image details"));
     expect(within(sourceDetails).getByText("URL: https://legacy.example/images/front.jpg")).toBeInTheDocument();
+  });
+
+  it("renders actionable generation safety guidance when preflight blocks before provider call", async () => {
+    const summary = buildMigrationWorkspaceSummary({
+      context_summary: {
+        ...buildMigrationWorkspaceSummary().context_summary,
+        draft_input_summary: {
+          recommendations_included_count: 2,
+          recommendations_available_count: 8,
+          generation_safety_profile: "block_before_provider",
+          generation_provider_timeout_seconds: 240,
+          generation_preflight_mode: "block_before_provider",
+          generation_max_final_input_chars: 8500,
+          generation_max_difficulty_score: 11,
+          generation_compact_fallback_enabled: true,
+          generation_compact_fallback_attempted: false,
+          generation_budget_capped: true,
+          generation_preflight_blocked: true,
+          generation_preflight_block_reason: "final_input_chars_exceeded",
+        },
+      },
+    });
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(summary);
+
+    render(<SiteMigrationWorkflowPage />);
+
+    const draftInputSummary = await screen.findByTestId("migration-draft-input-summary");
+    expect(
+      within(draftInputSummary).getByTestId("migration-draft-input-generation-preflight-blocked"),
+    ).toHaveTextContent("final input chars exceeded");
+    expect(
+      within(draftInputSummary).getByTestId("migration-draft-input-generation-preflight-blocked-message"),
+    ).toHaveTextContent("blocked before provider call");
   });
 
   it("groups repeated publish/deploy failures and limits history summaries by default", async () => {
