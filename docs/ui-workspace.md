@@ -219,6 +219,7 @@ The dedicated migration route (`/sites/[site_id]/migration`) keeps primary opera
   - one consolidated preview surface only:
     - left page/file selector rail (`~15-20%` width on desktop)
     - right sandboxed web preview iframe (`~80-85%` width on desktop)
+    - selector entries use title-first text with compact muted filename/path secondary text
     - mobile/tablet stack: selector above iframe
 - E. Approval / Publish / Deploy:
   - compact two-surface layout for publish + deploy
@@ -356,6 +357,7 @@ Media UX note:
   - mobile: 1 column
 - card defaults are compact (thumbnail/preview placeholder, short name, source/status badges, one primary action)
 - verbose metadata (full URL, provenance detail, suggestion/candidate diagnostics) is behind per-image native `Image details` disclosure
+- uploaded/imported assets use authenticated preview URLs on same-origin media routes when local storage preview is available
 - selected discovered-image import is controlled by runtime flag `SEO_MIGRATION_REMOTE_IMAGE_IMPORT_ENABLED` (default enabled)
 - when disabled, import action shows deterministic `remote_import_disabled` guidance
 - image acquisition controls stay visible at top of Media / Images:
@@ -391,6 +393,10 @@ Media UX note:
   - `Not Available` / `Rejected`
 - low-value safe candidates can use explicit override action (`Use in draft anyway`) when validation/safety checks pass
 - safety-rejected candidates remain non-importable and show bounded reason diagnostics only
+- lifecycle actions are explicit:
+  - discovered/not-imported candidates: `Ignore`
+  - uploaded/imported candidates: `Remove image` / `Remove from workspace`
+  - lifecycle actions clear `Included in draft` when removal/ignore is applied
 - non-image routes discovered during crawl-like extraction (for example `/m` or other HTML routes) are classified as rejected and are not shown as normal importable candidates
 - lightweight local media filters are available (`All usable images`, `Discovered`, `Uploaded/imported`, `Unsafe rejected`)
 - batch suggestion feedback is rendered with per-asset status/reason summaries:
@@ -403,6 +409,7 @@ Media UX note:
   - recommendation included vs available counts
   - recommendation basis (`interpreted_audit_context`)
   - `Draft context trimmed` status and largest included block when available
+  - read-only effective generation budget (`profile`, `variation`, `context budget chars`, `page/file limits`)
 - draft generation still uses selected media metadata only; raw image bytes are not sent into text draft context
 
 Media suggestion reason-code cues in UI:
@@ -524,6 +531,7 @@ Admin ownership groups:
 - Competitor Generation Settings: deterministic candidate quality and generation timeout tuning.
 - AI Provider & Prompt Governance: prompt/model defaults and migration draft timeout guardrails.
 - Publish & Deployment Configuration: GitHub target, managed GKE target, and managed deploy secret controls.
+- Migration AI Budget: migration context/generation limits, depth profile, and variation controls.
 - Managed Namespace Policy: ResourceQuota, LimitRange, and NetworkPolicy defaults for managed site namespaces.
 - Site Registry Management: site records and destructive site delete controls.
 - Diagnostics & Logs: read-only Cloud Logging investigation.

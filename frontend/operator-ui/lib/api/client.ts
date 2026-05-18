@@ -41,6 +41,8 @@ import type {
   MigrationMediaMetadataSuggestionBatchRequest,
   MigrationMediaMetadataSuggestionBatchResponse,
   MigrationMediaAssetUpdateRequest,
+  MigrationMediaAssetLifecycleRequest,
+  MigrationMediaAssetLifecycleResponse,
   MigrationPublishActionResponse,
   MigrationRepositoryAdoptActionResponse,
   MigrationPublishConfigUpdateRequest,
@@ -544,6 +546,23 @@ export async function importMigrationDiscoveredMediaAssets(
           ...(payload.allow_quality_override === true ? { allow_quality_override: true } : {}),
         },
       ),
+    },
+  );
+}
+
+export async function updateMigrationMediaAssetLifecycle(
+  token: string,
+  businessId: string,
+  siteId: string,
+  assetId: string,
+  payload: MigrationMediaAssetLifecycleRequest,
+): Promise<MigrationMediaAssetLifecycleResponse> {
+  return apiRequest<MigrationMediaAssetLifecycleResponse>(
+    `/api/businesses/${businessId}/seo/sites/${siteId}/migration/media/assets/${assetId}/lifecycle`,
+    {
+      method: "POST",
+      token,
+      body: JSON.stringify(payload),
     },
   );
 }

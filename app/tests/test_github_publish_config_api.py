@@ -101,6 +101,19 @@ def test_get_github_publish_config_returns_defaults_when_unset(db_session, seede
             "enabled": False,
             "mode": "default_deny_ingress",
         },
+        "migration_generation_budget": {
+            "migration_context_budget_chars": 18000,
+            "migration_recommendation_limit": 6,
+            "migration_competitor_limit": 8,
+            "migration_source_page_summary_limit": 8,
+            "migration_media_asset_limit": 24,
+            "migration_generated_page_limit": 12,
+            "migration_generated_file_limit": 12,
+            "migration_generation_depth": "standard",
+            "migration_variation_level": "balanced",
+            "migration_require_page_variety": True,
+            "migration_require_design_variation": True,
+        },
     }
     assert payload["enabled"] is False
 

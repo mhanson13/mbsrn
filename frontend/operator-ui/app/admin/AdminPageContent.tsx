@@ -44,6 +44,7 @@ import type {
   GCPLogEntry,
   GitHubPublishConfig,
   GitHubPublishConfigUpdateRequest,
+  MigrationGenerationBudgetConfig,
   GitHubNamespaceIsolationDefaults,
   GitHubNamespaceLimitRangeDefaults,
   GitHubNamespaceNetworkPolicyDefaults,
@@ -112,6 +113,28 @@ const GITHUB_NAMESPACE_CPU_PATTERN = /^(?:[1-9]\d*m|[1-9]\d*(?:\.\d+)?)$/;
 const GITHUB_NAMESPACE_MEMORY_PATTERN = /^(?:[1-9]\d*(?:Ei|Pi|Ti|Gi|Mi|Ki)|[1-9]\d*(?:\.\d+)?(?:E|P|T|G|M|K)i?)$/;
 const GITHUB_NAMESPACE_COUNT_PATTERN = /^\d{1,6}$/;
 const GITHUB_NETWORK_POLICY_MODE_OPTIONS = ["default_deny_ingress"] as const;
+const MIGRATION_GENERATION_DEPTH_OPTIONS = ["compact", "standard", "expanded"] as const;
+const MIGRATION_VARIATION_LEVEL_OPTIONS = ["conservative", "balanced", "differentiated"] as const;
+const MIGRATION_CONTEXT_BUDGET_BOUNDS = { min: 8000, max: 50000 } as const;
+const MIGRATION_RECOMMENDATION_LIMIT_BOUNDS = { min: 1, max: 24 } as const;
+const MIGRATION_COMPETITOR_LIMIT_BOUNDS = { min: 1, max: 24 } as const;
+const MIGRATION_SOURCE_PAGE_SUMMARY_LIMIT_BOUNDS = { min: 3, max: 16 } as const;
+const MIGRATION_MEDIA_ASSET_LIMIT_BOUNDS = { min: 4, max: 60 } as const;
+const MIGRATION_GENERATED_PAGE_LIMIT_BOUNDS = { min: 4, max: 24 } as const;
+const MIGRATION_GENERATED_FILE_LIMIT_BOUNDS = { min: 4, max: 12 } as const;
+const DEFAULT_MIGRATION_GENERATION_BUDGET: MigrationGenerationBudgetConfig = {
+  migration_context_budget_chars: 18000,
+  migration_recommendation_limit: 6,
+  migration_competitor_limit: 8,
+  migration_source_page_summary_limit: 8,
+  migration_media_asset_limit: 24,
+  migration_generated_page_limit: 12,
+  migration_generated_file_limit: 12,
+  migration_generation_depth: "standard",
+  migration_variation_level: "balanced",
+  migration_require_page_variety: true,
+  migration_require_design_variation: true,
+};
 const DEFAULT_NAMESPACE_ISOLATION_DEFAULTS: GitHubNamespaceIsolationDefaults = {
   resource_quota: {
     enabled: false,
@@ -140,6 +163,7 @@ const DEFAULT_NAMESPACE_ISOLATION_DEFAULTS: GitHubNamespaceIsolationDefaults = {
     enabled: false,
     mode: "default_deny_ingress",
   },
+  migration_generation_budget: DEFAULT_MIGRATION_GENERATION_BUDGET,
 };
 
 type AdminPageMode = "all" | "admin" | "userMgmt";
@@ -736,6 +760,21 @@ function normalizeNamespaceCount(value: unknown, fallback: number): number {
   return fallback;
 }
 
+function normalizeMigrationBudgetCount(
+  value: unknown,
+  fallback: number,
+  bounds: { min: number; max: number },
+): number {
+  const parsed =
+    typeof value === "number" && Number.isSafeInteger(value)
+      ? value
+      : Number.parseInt(String(value ?? "").trim(), 10);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  return Math.min(bounds.max, Math.max(bounds.min, parsed));
+}
+
 function normalizeNamespaceIsolationDefaults(
   value: GitHubNamespaceIsolationDefaults | null | undefined,
 ): GitHubNamespaceIsolationDefaults {
@@ -778,6 +817,59 @@ function normalizeNamespaceIsolationDefaults(
         source.network_policy?.mode ||
         defaults.network_policy.mode
       ).trim().toLowerCase(),
+    },
+    migration_generation_budget: {
+      migration_context_budget_chars: normalizeMigrationBudgetCount(
+        source.migration_generation_budget?.migration_context_budget_chars,
+        defaults.migration_generation_budget.migration_context_budget_chars,
+        MIGRATION_CONTEXT_BUDGET_BOUNDS,
+      ),
+      migration_recommendation_limit: normalizeMigrationBudgetCount(
+        source.migration_generation_budget?.migration_recommendation_limit,
+        defaults.migration_generation_budget.migration_recommendation_limit,
+        MIGRATION_RECOMMENDATION_LIMIT_BOUNDS,
+      ),
+      migration_competitor_limit: normalizeMigrationBudgetCount(
+        source.migration_generation_budget?.migration_competitor_limit,
+        defaults.migration_generation_budget.migration_competitor_limit,
+        MIGRATION_COMPETITOR_LIMIT_BOUNDS,
+      ),
+      migration_source_page_summary_limit: normalizeMigrationBudgetCount(
+        source.migration_generation_budget?.migration_source_page_summary_limit,
+        defaults.migration_generation_budget.migration_source_page_summary_limit,
+        MIGRATION_SOURCE_PAGE_SUMMARY_LIMIT_BOUNDS,
+      ),
+      migration_media_asset_limit: normalizeMigrationBudgetCount(
+        source.migration_generation_budget?.migration_media_asset_limit,
+        defaults.migration_generation_budget.migration_media_asset_limit,
+        MIGRATION_MEDIA_ASSET_LIMIT_BOUNDS,
+      ),
+      migration_generated_page_limit: normalizeMigrationBudgetCount(
+        source.migration_generation_budget?.migration_generated_page_limit,
+        defaults.migration_generation_budget.migration_generated_page_limit,
+        MIGRATION_GENERATED_PAGE_LIMIT_BOUNDS,
+      ),
+      migration_generated_file_limit: normalizeMigrationBudgetCount(
+        source.migration_generation_budget?.migration_generated_file_limit,
+        defaults.migration_generation_budget.migration_generated_file_limit,
+        MIGRATION_GENERATED_FILE_LIMIT_BOUNDS,
+      ),
+      migration_generation_depth: (
+        source.migration_generation_budget?.migration_generation_depth ||
+        defaults.migration_generation_budget.migration_generation_depth
+      ).trim().toLowerCase(),
+      migration_variation_level: (
+        source.migration_generation_budget?.migration_variation_level ||
+        defaults.migration_generation_budget.migration_variation_level
+      ).trim().toLowerCase(),
+      migration_require_page_variety: Boolean(
+        source.migration_generation_budget?.migration_require_page_variety ??
+        defaults.migration_generation_budget.migration_require_page_variety,
+      ),
+      migration_require_design_variation: Boolean(
+        source.migration_generation_budget?.migration_require_design_variation ??
+        defaults.migration_generation_budget.migration_require_design_variation,
+      ),
     },
   };
 }
@@ -843,6 +935,66 @@ function validateNamespaceIsolationDefaults(defaults: GitHubNamespaceIsolationDe
     ) {
       errors.push("NetworkPolicy mode is invalid for platform-managed defaults.");
     }
+  }
+
+  const budget = normalized.migration_generation_budget;
+  const validateBudgetRange = (
+    label: string,
+    value: number,
+    bounds: { min: number; max: number },
+  ): void => {
+    if (!Number.isSafeInteger(value) || value < bounds.min || value > bounds.max) {
+      errors.push(`Migration budget ${label} must be between ${bounds.min} and ${bounds.max}.`);
+    }
+  };
+  validateBudgetRange(
+    "context budget chars",
+    budget.migration_context_budget_chars,
+    MIGRATION_CONTEXT_BUDGET_BOUNDS,
+  );
+  validateBudgetRange(
+    "recommendation limit",
+    budget.migration_recommendation_limit,
+    MIGRATION_RECOMMENDATION_LIMIT_BOUNDS,
+  );
+  validateBudgetRange(
+    "competitor limit",
+    budget.migration_competitor_limit,
+    MIGRATION_COMPETITOR_LIMIT_BOUNDS,
+  );
+  validateBudgetRange(
+    "source page summary limit",
+    budget.migration_source_page_summary_limit,
+    MIGRATION_SOURCE_PAGE_SUMMARY_LIMIT_BOUNDS,
+  );
+  validateBudgetRange(
+    "media asset limit",
+    budget.migration_media_asset_limit,
+    MIGRATION_MEDIA_ASSET_LIMIT_BOUNDS,
+  );
+  validateBudgetRange(
+    "generated page limit",
+    budget.migration_generated_page_limit,
+    MIGRATION_GENERATED_PAGE_LIMIT_BOUNDS,
+  );
+  validateBudgetRange(
+    "generated file limit",
+    budget.migration_generated_file_limit,
+    MIGRATION_GENERATED_FILE_LIMIT_BOUNDS,
+  );
+  if (
+    !MIGRATION_GENERATION_DEPTH_OPTIONS.includes(
+      budget.migration_generation_depth as (typeof MIGRATION_GENERATION_DEPTH_OPTIONS)[number],
+    )
+  ) {
+    errors.push("Migration generation depth is invalid.");
+  }
+  if (
+    !MIGRATION_VARIATION_LEVEL_OPTIONS.includes(
+      budget.migration_variation_level as (typeof MIGRATION_VARIATION_LEVEL_OPTIONS)[number],
+    )
+  ) {
+    errors.push("Migration variation level is invalid.");
   }
 
   return errors;
@@ -1774,6 +1926,19 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
       ...current,
       network_policy: {
         ...current.network_policy,
+        [key]: value,
+      },
+    }));
+  };
+
+  const updateMigrationGenerationBudget = <K extends keyof MigrationGenerationBudgetConfig>(
+    key: K,
+    value: MigrationGenerationBudgetConfig[K],
+  ) => {
+    setGitHubNamespaceIsolationDefaults((current) => ({
+      ...current,
+      migration_generation_budget: {
+        ...current.migration_generation_budget,
         [key]: value,
       },
     }));
@@ -3272,6 +3437,236 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                 Keep disabled until cluster ingress/egress expectations are validated for this environment.
               </p>
             </div>
+
+            <div className="panel panel-compact stack-tight" data-testid="github-publish-migration-generation-budget">
+              <strong>Migration AI Budget</strong>
+              <p className="hint muted">
+                Larger budgets can improve depth/variety but increase latency, cost, and oversized-request risk.
+                Smaller budgets are faster and safer.
+              </p>
+              <div className="admin-grid-two admin-grid-two-compact">
+                <label htmlFor="github-publish-migration-context-budget-chars" className="stack-tight">
+                  <span className="hint muted">Context budget (chars)</span>
+                  <input
+                    id="github-publish-migration-context-budget-chars"
+                    type="number"
+                    min={MIGRATION_CONTEXT_BUDGET_BOUNDS.min}
+                    max={MIGRATION_CONTEXT_BUDGET_BOUNDS.max}
+                    step={100}
+                    value={githubNamespaceIsolationDefaults.migration_generation_budget.migration_context_budget_chars}
+                    onChange={(event) =>
+                      updateMigrationGenerationBudget(
+                        "migration_context_budget_chars",
+                        normalizeMigrationBudgetCount(
+                          event.target.value,
+                          githubNamespaceIsolationDefaults.migration_generation_budget.migration_context_budget_chars,
+                          MIGRATION_CONTEXT_BUDGET_BOUNDS,
+                        ),
+                      )
+                    }
+                    disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
+                  />
+                </label>
+                <label htmlFor="github-publish-migration-recommendation-limit" className="stack-tight">
+                  <span className="hint muted">Recommendation limit</span>
+                  <input
+                    id="github-publish-migration-recommendation-limit"
+                    type="number"
+                    min={MIGRATION_RECOMMENDATION_LIMIT_BOUNDS.min}
+                    max={MIGRATION_RECOMMENDATION_LIMIT_BOUNDS.max}
+                    step={1}
+                    value={githubNamespaceIsolationDefaults.migration_generation_budget.migration_recommendation_limit}
+                    onChange={(event) =>
+                      updateMigrationGenerationBudget(
+                        "migration_recommendation_limit",
+                        normalizeMigrationBudgetCount(
+                          event.target.value,
+                          githubNamespaceIsolationDefaults.migration_generation_budget.migration_recommendation_limit,
+                          MIGRATION_RECOMMENDATION_LIMIT_BOUNDS,
+                        ),
+                      )
+                    }
+                    disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
+                  />
+                </label>
+                <label htmlFor="github-publish-migration-competitor-limit" className="stack-tight">
+                  <span className="hint muted">Competitor limit</span>
+                  <input
+                    id="github-publish-migration-competitor-limit"
+                    type="number"
+                    min={MIGRATION_COMPETITOR_LIMIT_BOUNDS.min}
+                    max={MIGRATION_COMPETITOR_LIMIT_BOUNDS.max}
+                    step={1}
+                    value={githubNamespaceIsolationDefaults.migration_generation_budget.migration_competitor_limit}
+                    onChange={(event) =>
+                      updateMigrationGenerationBudget(
+                        "migration_competitor_limit",
+                        normalizeMigrationBudgetCount(
+                          event.target.value,
+                          githubNamespaceIsolationDefaults.migration_generation_budget.migration_competitor_limit,
+                          MIGRATION_COMPETITOR_LIMIT_BOUNDS,
+                        ),
+                      )
+                    }
+                    disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
+                  />
+                </label>
+                <label htmlFor="github-publish-migration-source-page-summary-limit" className="stack-tight">
+                  <span className="hint muted">Source page summary limit</span>
+                  <input
+                    id="github-publish-migration-source-page-summary-limit"
+                    type="number"
+                    min={MIGRATION_SOURCE_PAGE_SUMMARY_LIMIT_BOUNDS.min}
+                    max={MIGRATION_SOURCE_PAGE_SUMMARY_LIMIT_BOUNDS.max}
+                    step={1}
+                    value={githubNamespaceIsolationDefaults.migration_generation_budget.migration_source_page_summary_limit}
+                    onChange={(event) =>
+                      updateMigrationGenerationBudget(
+                        "migration_source_page_summary_limit",
+                        normalizeMigrationBudgetCount(
+                          event.target.value,
+                          githubNamespaceIsolationDefaults.migration_generation_budget.migration_source_page_summary_limit,
+                          MIGRATION_SOURCE_PAGE_SUMMARY_LIMIT_BOUNDS,
+                        ),
+                      )
+                    }
+                    disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
+                  />
+                </label>
+                <label htmlFor="github-publish-migration-media-asset-limit" className="stack-tight">
+                  <span className="hint muted">Media asset context limit</span>
+                  <input
+                    id="github-publish-migration-media-asset-limit"
+                    type="number"
+                    min={MIGRATION_MEDIA_ASSET_LIMIT_BOUNDS.min}
+                    max={MIGRATION_MEDIA_ASSET_LIMIT_BOUNDS.max}
+                    step={1}
+                    value={githubNamespaceIsolationDefaults.migration_generation_budget.migration_media_asset_limit}
+                    onChange={(event) =>
+                      updateMigrationGenerationBudget(
+                        "migration_media_asset_limit",
+                        normalizeMigrationBudgetCount(
+                          event.target.value,
+                          githubNamespaceIsolationDefaults.migration_generation_budget.migration_media_asset_limit,
+                          MIGRATION_MEDIA_ASSET_LIMIT_BOUNDS,
+                        ),
+                      )
+                    }
+                    disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
+                  />
+                </label>
+                <label htmlFor="github-publish-migration-generated-page-limit" className="stack-tight">
+                  <span className="hint muted">Generated page limit</span>
+                  <input
+                    id="github-publish-migration-generated-page-limit"
+                    type="number"
+                    min={MIGRATION_GENERATED_PAGE_LIMIT_BOUNDS.min}
+                    max={MIGRATION_GENERATED_PAGE_LIMIT_BOUNDS.max}
+                    step={1}
+                    value={githubNamespaceIsolationDefaults.migration_generation_budget.migration_generated_page_limit}
+                    onChange={(event) =>
+                      updateMigrationGenerationBudget(
+                        "migration_generated_page_limit",
+                        normalizeMigrationBudgetCount(
+                          event.target.value,
+                          githubNamespaceIsolationDefaults.migration_generation_budget.migration_generated_page_limit,
+                          MIGRATION_GENERATED_PAGE_LIMIT_BOUNDS,
+                        ),
+                      )
+                    }
+                    disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
+                  />
+                </label>
+                <label htmlFor="github-publish-migration-generated-file-limit" className="stack-tight">
+                  <span className="hint muted">Generated file limit</span>
+                  <input
+                    id="github-publish-migration-generated-file-limit"
+                    type="number"
+                    min={MIGRATION_GENERATED_FILE_LIMIT_BOUNDS.min}
+                    max={MIGRATION_GENERATED_FILE_LIMIT_BOUNDS.max}
+                    step={1}
+                    value={githubNamespaceIsolationDefaults.migration_generation_budget.migration_generated_file_limit}
+                    onChange={(event) =>
+                      updateMigrationGenerationBudget(
+                        "migration_generated_file_limit",
+                        normalizeMigrationBudgetCount(
+                          event.target.value,
+                          githubNamespaceIsolationDefaults.migration_generation_budget.migration_generated_file_limit,
+                          MIGRATION_GENERATED_FILE_LIMIT_BOUNDS,
+                        ),
+                      )
+                    }
+                    disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
+                  />
+                </label>
+                <label htmlFor="github-publish-migration-generation-depth" className="stack-tight">
+                  <span className="hint muted">Generation profile</span>
+                  <select
+                    id="github-publish-migration-generation-depth"
+                    value={githubNamespaceIsolationDefaults.migration_generation_budget.migration_generation_depth}
+                    onChange={(event) =>
+                      updateMigrationGenerationBudget(
+                        "migration_generation_depth",
+                        event.target.value as MigrationGenerationBudgetConfig["migration_generation_depth"],
+                      )
+                    }
+                    disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
+                  >
+                    {MIGRATION_GENERATION_DEPTH_OPTIONS.map((value) => (
+                      <option key={value} value={value}>
+                        {value}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label htmlFor="github-publish-migration-variation-level" className="stack-tight">
+                  <span className="hint muted">Variation level</span>
+                  <select
+                    id="github-publish-migration-variation-level"
+                    value={githubNamespaceIsolationDefaults.migration_generation_budget.migration_variation_level}
+                    onChange={(event) =>
+                      updateMigrationGenerationBudget(
+                        "migration_variation_level",
+                        event.target.value as MigrationGenerationBudgetConfig["migration_variation_level"],
+                      )
+                    }
+                    disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
+                  >
+                    {MIGRATION_VARIATION_LEVEL_OPTIONS.map((value) => (
+                      <option key={value} value={value}>
+                        {value}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <div className="admin-grid-two admin-grid-two-compact">
+                <label htmlFor="github-publish-migration-require-page-variety" className="checkbox-chip">
+                  <input
+                    id="github-publish-migration-require-page-variety"
+                    type="checkbox"
+                    checked={githubNamespaceIsolationDefaults.migration_generation_budget.migration_require_page_variety}
+                    onChange={(event) =>
+                      updateMigrationGenerationBudget("migration_require_page_variety", event.target.checked)
+                    }
+                    disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
+                  />
+                  Require page variety
+                </label>
+                <label htmlFor="github-publish-migration-require-design-variation" className="checkbox-chip">
+                  <input
+                    id="github-publish-migration-require-design-variation"
+                    type="checkbox"
+                    checked={githubNamespaceIsolationDefaults.migration_generation_budget.migration_require_design_variation}
+                    onChange={(event) =>
+                      updateMigrationGenerationBudget("migration_require_design_variation", event.target.checked)
+                    }
+                    disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
+                  />
+                  Require design variation
+                </label>
+              </div>
+            </div>
             <div className="panel panel-compact stack-tight" data-testid="github-publish-effective-preview">
               <p className="hint muted">
                 <strong>Effective target preview</strong>
@@ -3321,6 +3716,15 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                 </WorkspaceMetadataItem>
                 <WorkspaceMetadataItem label="NetworkPolicy mode">
                   <code>{githubNamespaceIsolationDefaults.network_policy.mode}</code>
+                </WorkspaceMetadataItem>
+                <WorkspaceMetadataItem label="Migration profile">
+                  <code>{githubNamespaceIsolationDefaults.migration_generation_budget.migration_generation_depth}</code>
+                </WorkspaceMetadataItem>
+                <WorkspaceMetadataItem label="Migration variation">
+                  <code>{githubNamespaceIsolationDefaults.migration_generation_budget.migration_variation_level}</code>
+                </WorkspaceMetadataItem>
+                <WorkspaceMetadataItem label="Migration context budget">
+                  <code>{githubNamespaceIsolationDefaults.migration_generation_budget.migration_context_budget_chars}</code>
                 </WorkspaceMetadataItem>
                 <WorkspaceMetadataItem label="Enabled">
                   <span>{githubPublishEnabled ? "Yes" : "No"}</span>

@@ -3101,6 +3101,18 @@ def test_migration_media_routes_scope_assets_and_sanitize_payloads(db_session) -
     asset_id = str(uploaded.get("asset_id") or "")
     assert asset_id
 
+    preview_response = client.get(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/media/assets/{asset_id}/preview"
+    )
+    assert preview_response.status_code == 200
+    assert (preview_response.headers.get("content-type") or "").startswith("image/png")
+    assert preview_response.content == _tiny_png_payload()
+
+    cross_site_preview_response = client.get(
+        f"/api/businesses/{business_id}/seo/sites/{other_site_id}/migration/media/assets/{asset_id}/preview"
+    )
+    assert cross_site_preview_response.status_code == 404
+
     update_response = client.patch(
         f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/media/assets/{asset_id}",
         json={
@@ -3178,6 +3190,52 @@ def test_migration_media_routes_scope_assets_and_sanitize_payloads(db_session) -
         json={"apply_suggested_metadata": True},
     )
     assert cross_site_update_response.status_code == 404
+
+    workspace = (
+        db_session.query(SEOMigrationWorkspace)
+        .filter(
+            SEOMigrationWorkspace.business_id == business_id,
+            SEOMigrationWorkspace.site_id == site_id,
+        )
+        .one()
+    )
+    workspace.imported_source_snapshot_json = {
+        "discovered_images": [
+            {
+                "asset_id": "srcimg-ignore",
+                "normalized_url": "https://legacy.example/images/ignore.jpg",
+                "provenance": "source_site_import",
+                "import_status": "discovered",
+                "selected_for_draft": False,
+                "candidate_quality": "useful",
+                "fetch_status": "validated_head",
+                "content_type": "image/jpeg",
+            }
+        ]
+    }
+    db_session.add(workspace)
+    db_session.commit()
+
+    ignore_response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/media/assets/srcimg-ignore/lifecycle",
+        json={"action": "ignore"},
+    )
+    assert ignore_response.status_code == 200
+    ignore_payload = ignore_response.json()
+    assert ignore_payload.get("status") == "ignored"
+    ignored_asset = ignore_payload.get("media_asset") or {}
+    assert ignored_asset.get("workspace_status") == "ignored"
+
+    remove_response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/media/assets/{asset_id}/lifecycle",
+        json={"action": "remove"},
+    )
+    assert remove_response.status_code == 200
+    remove_payload = remove_response.json()
+    assert remove_payload.get("status") == "removed"
+    removed_asset = remove_payload.get("media_asset") or {}
+    assert removed_asset.get("workspace_status") == "removed"
+    assert removed_asset.get("selected_for_draft") is False
 
 
 def test_migration_media_suggest_metadata_returns_image_not_imported_for_remote_discovered_assets(db_session) -> None:

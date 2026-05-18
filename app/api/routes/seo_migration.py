@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 
 from app.api.deps import (
     TenantContext,
@@ -37,6 +37,8 @@ from app.schemas.seo_migration import (
     SEOMigrationHistoryListRead,
     SEOMigrationMediaAssetListRead,
     SEOMigrationMediaAssetRead,
+    SEOMigrationMediaAssetLifecycleActionRead,
+    SEOMigrationMediaAssetLifecycleRequest,
     SEOMigrationMediaSuggestionBatchRead,
     SEOMigrationMediaSuggestionBatchRequest,
     SEOMigrationMediaAssetUpdateRequest,
@@ -674,6 +676,40 @@ def list_seo_migration_media_assets(
     )
 
 
+@router.get("/sites/{site_id}/migration/media/assets/{asset_id}/preview")
+def preview_seo_migration_media_asset(
+    business_id: str,
+    site_id: str,
+    asset_id: str,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    migration_service: SEOMigrationService = Depends(get_seo_migration_service),
+) -> Response:
+    scoped_business_id = resolve_tenant_business_id(
+        tenant_context=tenant_context,
+        requested_business_id=business_id,
+    )
+    try:
+        content_type, payload = migration_service.preview_workspace_media_asset(
+            business_id=scoped_business_id,
+            site_id=site_id,
+            asset_id=asset_id,
+        )
+    except SEOMigrationNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except SEOMigrationValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=_validation_error_detail(exc)
+        ) from exc
+    return Response(
+        content=payload,
+        media_type=content_type,
+        headers={
+            "Cache-Control": "private, max-age=60",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
 @router.post(
     "/sites/{site_id}/migration/media/upload",
     response_model=SEOMigrationMediaAssetRead,
@@ -757,6 +793,39 @@ def update_seo_migration_media_asset(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=_validation_error_detail(exc)
         ) from exc
     return SEOMigrationMediaAssetRead.model_validate(media_asset)
+
+
+@router.post(
+    "/sites/{site_id}/migration/media/assets/{asset_id}/lifecycle",
+    response_model=SEOMigrationMediaAssetLifecycleActionRead,
+)
+def update_seo_migration_media_asset_lifecycle(
+    business_id: str,
+    site_id: str,
+    asset_id: str,
+    payload: SEOMigrationMediaAssetLifecycleRequest,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    migration_service: SEOMigrationService = Depends(get_seo_migration_service),
+) -> SEOMigrationMediaAssetLifecycleActionRead:
+    scoped_business_id = resolve_tenant_business_id(
+        tenant_context=tenant_context,
+        requested_business_id=business_id,
+    )
+    try:
+        result = migration_service.update_workspace_media_asset_lifecycle(
+            business_id=scoped_business_id,
+            site_id=site_id,
+            asset_id=asset_id,
+            action=payload.action,
+            principal_id=tenant_context.principal_id,
+        )
+    except SEOMigrationNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except SEOMigrationValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=_validation_error_detail(exc)
+        ) from exc
+    return SEOMigrationMediaAssetLifecycleActionRead.model_validate(result)
 
 
 @router.post(

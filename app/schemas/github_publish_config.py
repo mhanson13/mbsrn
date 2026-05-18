@@ -282,10 +282,53 @@ class GitHubNamespaceNetworkPolicyDefaults(BaseModel):
         return normalized
 
 
+_MIGRATION_GENERATION_DEPTH_VALUES = {"compact", "standard", "expanded"}
+_MIGRATION_VARIATION_LEVEL_VALUES = {"conservative", "balanced", "differentiated"}
+
+
+class MigrationGenerationBudgetDefaults(BaseModel):
+    migration_context_budget_chars: int = Field(default=18000, ge=8000, le=50000)
+    migration_recommendation_limit: int = Field(default=6, ge=1, le=24)
+    migration_competitor_limit: int = Field(default=8, ge=1, le=24)
+    migration_source_page_summary_limit: int = Field(default=8, ge=3, le=16)
+    migration_media_asset_limit: int = Field(default=24, ge=4, le=60)
+    migration_generated_page_limit: int = Field(default=12, ge=4, le=24)
+    migration_generated_file_limit: int = Field(default=12, ge=4, le=12)
+    migration_generation_depth: str = "standard"
+    migration_variation_level: str = "balanced"
+    migration_require_page_variety: bool = True
+    migration_require_design_variation: bool = True
+
+    @field_validator("migration_generation_depth", mode="before")
+    @classmethod
+    def _normalize_generation_depth(cls, value: object) -> str:
+        normalized = _normalize_optional_text(value, max_length=32) or "standard"
+        lowered = normalized.lower()
+        if lowered not in _MIGRATION_GENERATION_DEPTH_VALUES:
+            raise ValueError(
+                "is invalid. Supported values: " + ", ".join(sorted(_MIGRATION_GENERATION_DEPTH_VALUES)) + "."
+            )
+        return lowered
+
+    @field_validator("migration_variation_level", mode="before")
+    @classmethod
+    def _normalize_variation_level(cls, value: object) -> str:
+        normalized = _normalize_optional_text(value, max_length=32) or "balanced"
+        lowered = normalized.lower()
+        if lowered not in _MIGRATION_VARIATION_LEVEL_VALUES:
+            raise ValueError(
+                "is invalid. Supported values: " + ", ".join(sorted(_MIGRATION_VARIATION_LEVEL_VALUES)) + "."
+            )
+        return lowered
+
+
 class GitHubNamespaceIsolationDefaults(BaseModel):
     resource_quota: GitHubNamespaceResourceQuotaDefaults = Field(default_factory=GitHubNamespaceResourceQuotaDefaults)
     limit_range: GitHubNamespaceLimitRangeDefaults = Field(default_factory=GitHubNamespaceLimitRangeDefaults)
     network_policy: GitHubNamespaceNetworkPolicyDefaults = Field(default_factory=GitHubNamespaceNetworkPolicyDefaults)
+    migration_generation_budget: MigrationGenerationBudgetDefaults = Field(
+        default_factory=MigrationGenerationBudgetDefaults
+    )
 
     model_config = ConfigDict(extra="forbid")
 

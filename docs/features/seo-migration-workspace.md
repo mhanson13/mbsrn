@@ -212,6 +212,10 @@ Draft review and preview behavior:
 - preview layout is two-column on desktop:
   - left rail (`~15-20%`) for page/file selection
   - right pane (`~80-85%`) for sandboxed web iframe preview
+- selector rail display uses:
+  - page title as primary text when available
+  - filename/path as secondary muted text on a separate line
+  - compact typography so long lists stay scannable
 - preview layout stacks on smaller screens:
   - selector rail above preview pane
 - draft deletion eligibility and history-protection invariants are unchanged
@@ -363,8 +367,10 @@ Source-site media discovery:
 
 Workspace media APIs:
 - `GET /api/businesses/{business_id}/seo/sites/{site_id}/migration/media/assets`
+- `GET /api/businesses/{business_id}/seo/sites/{site_id}/migration/media/assets/{asset_id}/preview`
 - `POST /api/businesses/{business_id}/seo/sites/{site_id}/migration/media/upload`
 - `PATCH /api/businesses/{business_id}/seo/sites/{site_id}/migration/media/assets/{asset_id}`
+- `POST /api/businesses/{business_id}/seo/sites/{site_id}/migration/media/assets/{asset_id}/lifecycle`
 - `POST /api/businesses/{business_id}/seo/sites/{site_id}/migration/media/assets/{asset_id}/suggest-metadata`
 - `POST /api/businesses/{business_id}/seo/sites/{site_id}/migration/media/assets/suggest-metadata`
 - `POST /api/businesses/{business_id}/seo/sites/{site_id}/migration/media/discovered/import`
@@ -430,6 +436,11 @@ Operator uploads:
   - max upload count per workspace (`80`)
 - uploaded media metadata is bounded and includes safe fields (id, filename, type, size, dimensions, category, alt/description/usage, page assignment, provenance)
 - local/internal storage keys are not returned in operator-facing API payloads
+- uploaded/imported preview behavior:
+  - active workspace assets with local storage receive a bounded same-origin authenticated `preview_url`
+  - preview bytes are served only through `GET .../migration/media/assets/{asset_id}/preview`
+  - preview route enforces site/workspace authorization, image content-type validation, max preview size, and safe storage-root path checks
+  - preview failures return bounded reasons (`storage_preview_not_available`, `unsupported_content_type`, `file_too_large`)
 
 AI-assisted media metadata suggestions (2026-05):
 - suggestion fields are stored separately from operator-authored fields under `metadata_suggestion`:
@@ -563,6 +574,24 @@ Media lifecycle action rules (coherence pass, 2026-05):
   - safety-rejected candidates are excluded from import, draft selection, and AI suggestion actions
   - remain visible for diagnostics under `Unsafe rejected` filter with blocked status
 
+Media remove/ignore semantics:
+- discovered (not imported):
+  - `Ignore` hides candidate from default usable workflows and clears draft inclusion
+  - source discovery evidence is preserved in workspace diagnostics/history
+- imported source assets:
+  - `Remove from workspace` clears draft inclusion and marks workspace lifecycle as removed
+  - does not delete the original source-site URL
+- uploaded assets:
+  - `Remove image` clears draft inclusion and marks/removes the workspace asset safely
+- lifecycle result reasons are bounded:
+  - `removed`
+  - `ignored`
+  - `already_removed`
+  - `not_found`
+  - `not_authorized`
+  - `unsafe_delete_blocked`
+  - `storage_delete_failed`
+
 Low-value discovered-image classification (bounded heuristic, no remote fetch):
 - classifier emits:
   - `candidate_quality`: `useful|low_value|rejected`
@@ -603,6 +632,26 @@ Draft-context budget/operator diagnostics:
 - selected media only:
   - discovered-but-not-imported assets are summarized but not expanded into selected media context
   - selected/imported asset metadata is included; raw media bytes are never included
+
+Admin-configured migration generation budget:
+- migration generation limits are admin-governed via:
+  - `namespace_isolation_defaults.migration_generation_budget`
+- supported controls:
+  - `migration_context_budget_chars`
+  - `migration_recommendation_limit`
+  - `migration_competitor_limit`
+  - `migration_source_page_summary_limit`
+  - `migration_media_asset_limit`
+  - `migration_generated_page_limit`
+  - `migration_generated_file_limit`
+  - `migration_generation_depth` (`compact|standard|expanded`)
+  - `migration_variation_level` (`conservative|balanced|differentiated`)
+  - `migration_require_page_variety`
+  - `migration_require_design_variation`
+- safe defaults preserve prior behavior when admin config is absent.
+- server-side validation enforces bounded min/max ranges.
+- effective values flow into context shaping/trimming and provider request budget enforcement.
+- migration workspace exposes read-only effective budget summary in Draft Inputs / AI Context (profile, variation, context chars, page/file limits); editing remains admin-only.
 
 ## Site SEO Workspace Grouping and Diagnostics (2026-05)
 Migration route grouping in the UI now explicitly separates:

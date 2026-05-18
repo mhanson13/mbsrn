@@ -174,10 +174,25 @@ export interface GitHubNamespaceNetworkPolicyDefaults {
   mode: string;
 }
 
+export interface MigrationGenerationBudgetConfig {
+  migration_context_budget_chars: number;
+  migration_recommendation_limit: number;
+  migration_competitor_limit: number;
+  migration_source_page_summary_limit: number;
+  migration_media_asset_limit: number;
+  migration_generated_page_limit: number;
+  migration_generated_file_limit: number;
+  migration_generation_depth: "compact" | "standard" | "expanded" | string;
+  migration_variation_level: "conservative" | "balanced" | "differentiated" | string;
+  migration_require_page_variety: boolean;
+  migration_require_design_variation: boolean;
+}
+
 export interface GitHubNamespaceIsolationDefaults {
   resource_quota: GitHubNamespaceResourceQuotaDefaults;
   limit_range: GitHubNamespaceLimitRangeDefaults;
   network_policy: GitHubNamespaceNetworkPolicyDefaults;
+  migration_generation_budget: MigrationGenerationBudgetConfig;
 }
 
 export interface GitHubPublishConfigUpdateRequest {
@@ -472,7 +487,9 @@ export interface MigrationMediaAsset {
   page_assignment?: string | null;
   normalized_url?: string | null;
   source_page_url?: string | null;
+  preview_url?: string | null;
   created_at?: string | null;
+  workspace_status?: "active" | "ignored" | "removed" | string | null;
   metadata_suggestion?: MigrationMediaMetadataSuggestion | null;
   metadata_suggestion_applied?: boolean;
   metadata_suggestion_applied_at?: string | null;
@@ -560,6 +577,17 @@ export interface MigrationDiscoveredMediaImportResponse {
   failed_count: number;
   skipped_count: number;
   disabled_count: number;
+}
+
+export interface MigrationMediaAssetLifecycleRequest {
+  action: "remove" | "ignore";
+}
+
+export interface MigrationMediaAssetLifecycleResponse {
+  asset_id?: string | null;
+  status: string;
+  reason_code?: string | null;
+  media_asset?: MigrationMediaAsset | null;
 }
 
 export interface MigrationArtifactFile {

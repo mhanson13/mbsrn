@@ -137,6 +137,7 @@ const mockFetchMigrationMediaAssets = jest.fn<Promise<Record<string, unknown>>, 
 const mockUploadMigrationMediaAsset = jest.fn<Promise<Record<string, unknown>>, unknown[]>();
 const mockImportMigrationDiscoveredMediaAssets = jest.fn<Promise<Record<string, unknown>>, unknown[]>();
 const mockUpdateMigrationMediaAsset = jest.fn<Promise<Record<string, unknown>>, unknown[]>();
+const mockUpdateMigrationMediaAssetLifecycle = jest.fn<Promise<Record<string, unknown>>, unknown[]>();
 const mockSuggestMigrationMediaAssetMetadata = jest.fn<Promise<Record<string, unknown>>, unknown[]>();
 const mockSuggestMigrationMediaAssetsMetadataBatch = jest.fn<Promise<Record<string, unknown>>, unknown[]>();
 
@@ -214,6 +215,7 @@ jest.mock("../../lib/api/client", () => {
     uploadMigrationMediaAsset: (...args: unknown[]) => mockUploadMigrationMediaAsset(...args),
     importMigrationDiscoveredMediaAssets: (...args: unknown[]) => mockImportMigrationDiscoveredMediaAssets(...args),
     updateMigrationMediaAsset: (...args: unknown[]) => mockUpdateMigrationMediaAsset(...args),
+    updateMigrationMediaAssetLifecycle: (...args: unknown[]) => mockUpdateMigrationMediaAssetLifecycle(...args),
     suggestMigrationMediaAssetMetadata: (...args: unknown[]) => mockSuggestMigrationMediaAssetMetadata(...args),
     suggestMigrationMediaAssetsMetadataBatch: (...args: unknown[]) =>
       mockSuggestMigrationMediaAssetsMetadataBatch(...args),
@@ -3346,11 +3348,12 @@ describe("site migration workflow route", () => {
           ],
           operator_uploaded: [
             {
-              asset_id: "uploaded-missing",
+              asset_id: "uploaded-preview",
               display_filename: "crew.jpg",
               provenance: "operator_upload",
               import_status: "uploaded",
               selected_for_draft: true,
+              preview_url: "/api/businesses/biz-1/seo/sites/site-1/migration/media/assets/uploaded-preview/preview",
             },
           ],
           selected_assets: [
@@ -3362,6 +3365,71 @@ describe("site migration workflow route", () => {
               alt_text: "Safe hero image",
               selected_for_draft: true,
             },
+            {
+              asset_id: "uploaded-preview",
+              display_filename: "crew.jpg",
+              provenance: "operator_upload",
+              import_status: "uploaded",
+              selected_for_draft: true,
+              preview_url: "/api/businesses/biz-1/seo/sites/site-1/migration/media/assets/uploaded-preview/preview",
+            },
+          ],
+        },
+      },
+    });
+    const mediaAssetsPayload = (summary.context_summary as Record<string, unknown>).media_assets as Record<
+      string,
+      unknown
+    >;
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(summary);
+    mockFetchMigrationMediaAssets.mockResolvedValue(mediaAssetsPayload);
+
+    render(<SiteMigrationWorkflowPage />);
+
+    const mediaSection = await screen.findByTestId("migration-media-section");
+    const sourceList = within(mediaSection).getByTestId("migration-media-source-list");
+    const uploadedPreview = within(sourceList).getByRole("img", { name: "crew.jpg" });
+    expect(uploadedPreview.getAttribute("src")).toBe(
+      "/api/businesses/biz-1/seo/sites/site-1/migration/media/assets/uploaded-preview/preview",
+    );
+
+    const previewImage = within(sourceList).getByRole("img", { name: "Safe hero image" });
+    expect(previewImage).toHaveAttribute("alt", "Safe hero image");
+    const previewSrc = previewImage.getAttribute("src") || "";
+    expect(previewSrc).toContain("https://legacy.example/images/hero.jpg");
+    expect(previewSrc).not.toContain("token=");
+    expect(previewSrc).not.toContain("C:\\");
+    expect(previewSrc).not.toContain("base64");
+
+    await user.click(within(sourceList).getByTestId("migration-media-filter-unsafe_rejected"));
+    expect(within(sourceList).getByTestId("migration-media-preview-unavailable-blocked-1")).toHaveTextContent(
+      "preview_url_unsafe",
+    );
+  });
+
+  it("shows bounded fallback when uploaded image preview URL is unavailable", async () => {
+    const summary = buildMigrationWorkspaceSummary({
+      context_summary: {
+        ...buildMigrationWorkspaceSummary().context_summary,
+        media_assets: {
+          source_discovered_count: 0,
+          source_imported_count: 0,
+          operator_uploaded_count: 1,
+          selected_assets_count: 1,
+          media_asset_categories: ["project_gallery"],
+          selected_assets_trimmed: false,
+          diagnostics: [],
+          source_discovered: [],
+          operator_uploaded: [
+            {
+              asset_id: "uploaded-missing",
+              display_filename: "crew.jpg",
+              provenance: "operator_upload",
+              import_status: "uploaded",
+              selected_for_draft: true,
+            },
+          ],
+          selected_assets: [
             {
               asset_id: "uploaded-missing",
               display_filename: "crew.jpg",
@@ -3386,19 +3454,6 @@ describe("site migration workflow route", () => {
     const sourceList = within(mediaSection).getByTestId("migration-media-source-list");
     expect(within(sourceList).getByTestId("migration-media-preview-unavailable-uploaded-missing")).toHaveTextContent(
       "storage_preview_not_available",
-    );
-
-    const previewImage = within(sourceList).getByRole("img", { name: "Safe hero image" });
-    expect(previewImage).toHaveAttribute("alt", "Safe hero image");
-    const previewSrc = previewImage.getAttribute("src") || "";
-    expect(previewSrc).toContain("https://legacy.example/images/hero.jpg");
-    expect(previewSrc).not.toContain("token=");
-    expect(previewSrc).not.toContain("C:\\");
-    expect(previewSrc).not.toContain("base64");
-
-    await user.click(within(sourceList).getByTestId("migration-media-filter-unsafe_rejected"));
-    expect(within(sourceList).getByTestId("migration-media-preview-unavailable-blocked-1")).toHaveTextContent(
-      "preview_url_unsafe",
     );
   });
 
@@ -3835,6 +3890,113 @@ describe("site migration workflow route", () => {
     const importFeedback = within(mediaSection).getByTestId("migration-media-import-feedback");
     expect(importFeedback).toHaveTextContent("Status: Completed");
     expect(importFeedback).toHaveTextContent("Imported: 1 | Failed: 0 | Skipped: 0 | Disabled: 0");
+  });
+
+  it("renders remove/ignore lifecycle actions and calls lifecycle API with confirmation", async () => {
+    const user = userEvent.setup();
+    const confirmSpy = jest.spyOn(window, "confirm").mockReturnValue(true);
+    mockUpdateMigrationMediaAssetLifecycle
+      .mockResolvedValueOnce({ asset_id: "srcimg-ignore", status: "ignored", reason_code: "ignored" })
+      .mockResolvedValueOnce({ asset_id: "upl-remove", status: "removed", reason_code: "removed" });
+    const summary = buildMigrationWorkspaceSummary({
+      context_summary: {
+        ...buildMigrationWorkspaceSummary().context_summary,
+        media_assets: {
+          source_discovered_count: 2,
+          source_imported_count: 1,
+          operator_uploaded_count: 1,
+          selected_assets_count: 1,
+          media_asset_categories: ["project_gallery"],
+          selected_assets_trimmed: false,
+          diagnostics: [],
+          source_discovered: [
+            {
+              asset_id: "srcimg-ignore",
+              normalized_url: "https://legacy.example/images/ignore.jpg",
+              provenance: "source_site_import",
+              import_status: "discovered",
+              selected_for_draft: false,
+              candidate_quality: "useful",
+              fetch_status: "validated_head",
+              content_type: "image/jpeg",
+            },
+            {
+              asset_id: "srcimg-imported",
+              normalized_url: "https://legacy.example/images/imported.jpg",
+              provenance: "source_site_import",
+              import_status: "imported",
+              selected_for_draft: true,
+              candidate_quality: "useful",
+              fetch_status: "validated_head",
+              content_type: "image/jpeg",
+              preview_url: "/api/businesses/biz-1/seo/sites/site-1/migration/media/assets/srcimg-imported/preview",
+            },
+          ],
+          operator_uploaded: [
+            {
+              asset_id: "upl-remove",
+              display_filename: "crew-remove.jpg",
+              provenance: "operator_upload",
+              import_status: "uploaded",
+              selected_for_draft: true,
+              preview_url: "/api/businesses/biz-1/seo/sites/site-1/migration/media/assets/upl-remove/preview",
+            },
+          ],
+          selected_assets: [
+            {
+              asset_id: "upl-remove",
+              display_filename: "crew-remove.jpg",
+              provenance: "operator_upload",
+              import_status: "uploaded",
+              selected_for_draft: true,
+              preview_url: "/api/businesses/biz-1/seo/sites/site-1/migration/media/assets/upl-remove/preview",
+            },
+          ],
+        },
+      },
+    });
+    const mediaAssetsPayload = (summary.context_summary as Record<string, unknown>).media_assets as Record<
+      string,
+      unknown
+    >;
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(summary);
+    mockFetchMigrationMediaAssets.mockResolvedValue(mediaAssetsPayload);
+
+    render(<SiteMigrationWorkflowPage />);
+
+    const mediaSection = await screen.findByTestId("migration-media-section");
+    const sourceList = within(mediaSection).getByTestId("migration-media-source-list");
+    expect(within(sourceList).getByTestId("migration-media-lifecycle-action-srcimg-ignore")).toHaveTextContent(
+      "Ignore",
+    );
+    expect(within(sourceList).getByTestId("migration-media-lifecycle-action-srcimg-imported")).toHaveTextContent(
+      "Remove from workspace",
+    );
+    expect(within(sourceList).getByTestId("migration-media-lifecycle-action-upl-remove")).toHaveTextContent(
+      "Remove image",
+    );
+
+    await user.click(within(sourceList).getByTestId("migration-media-lifecycle-action-srcimg-ignore"));
+    await waitFor(() =>
+      expect(mockUpdateMigrationMediaAssetLifecycle).toHaveBeenCalledWith(
+        "token-1",
+        "biz-1",
+        "site-1",
+        "srcimg-ignore",
+        { action: "ignore" },
+      ),
+    );
+    await user.click(within(sourceList).getByTestId("migration-media-lifecycle-action-upl-remove"));
+    await waitFor(() =>
+      expect(mockUpdateMigrationMediaAssetLifecycle).toHaveBeenCalledWith(
+        "token-1",
+        "biz-1",
+        "site-1",
+        "upl-remove",
+        { action: "remove" },
+      ),
+    );
+    confirmSpy.mockRestore();
   });
 
   it("renders disabled discovered-image import guidance when feature flag is off", async () => {
@@ -5109,6 +5271,7 @@ function seedCompetitorProfileGenerationDefaults(): void {
   mockUploadMigrationMediaAsset.mockReset();
   mockImportMigrationDiscoveredMediaAssets.mockReset();
   mockUpdateMigrationMediaAsset.mockReset();
+  mockUpdateMigrationMediaAssetLifecycle.mockReset();
   mockSuggestMigrationMediaAssetMetadata.mockReset();
   mockSuggestMigrationMediaAssetsMetadataBatch.mockReset();
   mockUpsertMigrationWorkspace.mockResolvedValue(defaultMigrationWorkspace);
@@ -5154,6 +5317,11 @@ function seedCompetitorProfileGenerationDefaults(): void {
         retryable: false,
       },
     ],
+  });
+  mockUpdateMigrationMediaAssetLifecycle.mockResolvedValue({
+    asset_id: "upl-1",
+    status: "removed",
+    reason_code: "removed",
   });
   mockIngestMigrationSource.mockResolvedValue({
     ...defaultMigrationWorkspace,

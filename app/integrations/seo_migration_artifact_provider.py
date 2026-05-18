@@ -113,6 +113,8 @@ _RESPONSES_CONTRACT_TOP_LEVEL_KEYS = ("input", "model", "text")
 _RESPONSES_CONTRACT_TEXT_TOP_LEVEL_KEYS = ("format",)
 _RESPONSES_CONTRACT_TEXT_FORMAT_KEYS = ("name", "schema", "strict", "type")
 _MIGRATION_DRAFT_CONTEXT_BUDGET_CHARS = 18000
+_MIGRATION_DRAFT_CONTEXT_BUDGET_MIN_CHARS = 8000
+_MIGRATION_DRAFT_CONTEXT_BUDGET_MAX_CHARS = 50000
 _MIGRATION_DRAFT_CONTEXT_REQUIRED_KEYS = ("site_snapshot", "migration_workspace")
 _MIGRATION_DRAFT_CONTEXT_OPTIONAL_TRIM_ORDER = (
     "existing_context_summaries",
@@ -2457,6 +2459,16 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
         self,
         migration_context: dict[str, object],
     ) -> tuple[dict[str, object], dict[str, object]]:
+        budget_size_chars = _MIGRATION_DRAFT_CONTEXT_BUDGET_CHARS
+        generation_budget = migration_context.get("generation_budget")
+        if isinstance(generation_budget, dict):
+            configured_budget = generation_budget.get("migration_context_budget_chars")
+            if isinstance(configured_budget, int):
+                budget_size_chars = max(
+                    _MIGRATION_DRAFT_CONTEXT_BUDGET_MIN_CHARS,
+                    min(_MIGRATION_DRAFT_CONTEXT_BUDGET_MAX_CHARS, configured_budget),
+                )
+
         required_keys = [key for key in _MIGRATION_DRAFT_CONTEXT_REQUIRED_KEYS if key in migration_context]
         optional_keys: list[object] = [
             key
@@ -2483,7 +2495,7 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
 
         decision = apply_request_budget(
             blocks=blocks,
-            budget_size_chars=_MIGRATION_DRAFT_CONTEXT_BUDGET_CHARS,
+            budget_size_chars=budget_size_chars,
         )
         retained = dict(decision.retained_blocks)
         budgeted_context: dict[str, object] = {}

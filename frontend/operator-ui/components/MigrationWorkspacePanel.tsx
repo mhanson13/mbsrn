@@ -26,6 +26,7 @@ import {
   suggestMigrationRequirementField,
   suggestMigrationMediaAssetsMetadataBatch,
   updateMigrationMediaAsset,
+  updateMigrationMediaAssetLifecycle,
   updateMigrationPublishConfig,
   updateMigrationDeployConfig,
   updateMigrationRequirements,
@@ -813,6 +814,27 @@ function toMediaSuggestionReasonLabel(value: string | null): string | null {
   if (normalized === "media_import_count_limit_reached") {
     return "Source image import limit was reached for this workspace/request.";
   }
+  if (normalized === "removed") {
+    return "Image was removed from this migration workspace.";
+  }
+  if (normalized === "ignored") {
+    return "Discovered image was ignored and hidden from the default list.";
+  }
+  if (normalized === "already_removed") {
+    return "Image was already removed or ignored.";
+  }
+  if (normalized === "not_found") {
+    return "Image was not found in this migration workspace.";
+  }
+  if (normalized === "not_authorized") {
+    return "Image is not authorized for this migration workspace.";
+  }
+  if (normalized === "unsafe_delete_blocked") {
+    return "This image cannot be removed in the current lifecycle state.";
+  }
+  if (normalized === "storage_delete_failed") {
+    return "Image metadata was updated, but local storage cleanup failed.";
+  }
   return `Suggestion reason: ${normalized}`;
 }
 
@@ -920,6 +942,7 @@ function toMediaLifecycleBadgeClass(label: string): string {
 }
 
 type MediaPrimaryAction = "use_in_draft" | "use_in_draft_anyway" | "none";
+type MediaLifecycleAction = "remove" | "ignore" | "none";
 
 type MediaBrowserFilter =
   | "all_usable"
@@ -1002,12 +1025,36 @@ function isPrivateOrBlockedHostname(hostname: string): boolean {
   return false;
 }
 
+const MIGRATION_MEDIA_PREVIEW_PATH_PATTERN =
+  /^\/api\/businesses\/[^/]+\/seo\/sites\/[^/]+\/migration\/media\/assets\/[^/]+\/preview$/i;
+
 function resolveSafeMediaPreviewUrl(rawUrl: string | null): string | null {
   if (!rawUrl) {
     return null;
   }
+  const trimmed = rawUrl.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const isRelativePath = trimmed.startsWith("/");
   try {
-    const parsed = new URL(rawUrl);
+    if (isRelativePath) {
+      if (typeof window === "undefined" || !window.location?.origin) {
+        return null;
+      }
+      const parsed = new URL(trimmed, window.location.origin);
+      if (parsed.origin !== window.location.origin) {
+        return null;
+      }
+      if (!MIGRATION_MEDIA_PREVIEW_PATH_PATTERN.test(parsed.pathname)) {
+        return null;
+      }
+      parsed.search = "";
+      parsed.hash = "";
+      return parsed.pathname;
+    }
+
+    const parsed = new URL(trimmed);
     const protocol = parsed.protocol.trim().toLowerCase();
     if (protocol !== "https:" && protocol !== "http:") {
       return null;
@@ -3868,6 +3915,24 @@ export function MigrationWorkspacePanel({
         if (!isBlocked) {
           primaryAction = candidateQuality === "low_value" ? "use_in_draft_anyway" : "use_in_draft";
         }
+        const lifecycleAction: MediaLifecycleAction = (() => {
+          if (provenance === "source_site_import" && remoteImportRequired) {
+            return "ignore";
+          }
+          if (isImportedOrUploaded) {
+            return "remove";
+          }
+          return "none";
+        })();
+        const lifecycleActionLabel = (() => {
+          if (lifecycleAction === "ignore") {
+            return "Ignore";
+          }
+          if (lifecycleAction === "remove") {
+            return provenance === "source_site_import" ? "Remove from workspace" : "Remove image";
+          }
+          return null;
+        })();
         const compactReasonLabel =
           isBlocked
             ? toMediaSuggestionReasonLabel(blockedReasonCode) || unavailableReason || "Blocked for safety reasons."
@@ -3911,6 +3976,8 @@ export function MigrationWorkspacePanel({
           normalizedUrl: asStringOrNull(asset.normalized_url),
           qualityReason: asStringOrNull(asset.quality_reason),
           sourcePageUrl: asStringOrNull(asset.source_page_url),
+          lifecycleAction,
+          lifecycleActionLabel,
           imageReferenceSlugBase: toImageReferenceSlug(toMediaAssetDisplayName(asset, assetId), assetId),
         };
       })
@@ -5924,6 +5991,78 @@ export function MigrationWorkspacePanel({
     }
   };
 
+  const handleMediaLifecycleAction = async (
+    assetId: string,
+    action: Extract<MediaLifecycleAction, "remove" | "ignore">,
+  ): Promise<void> => {
+    const targetAsset = mediaBrowserAssetLookup.get(assetId.toLowerCase());
+    if (!targetAsset) {
+      setErrorHint(null);
+      setErrorMessage("No matching image asset was found for this action.");
+      return;
+    }
+    const actionLabel = action === "ignore" ? "Ignore" : "Remove image";
+    const confirmationMessage =
+      action === "ignore"
+        ? "Ignore this discovered image from the default list?"
+        : "Remove this image from the migration workspace?";
+    if (!window.confirm(confirmationMessage)) {
+      return;
+    }
+
+    setBusyAction("update_media");
+    setErrorMessage(null);
+    setErrorHint(null);
+    setStatusMessage(null);
+    try {
+      const result = await updateMigrationMediaAssetLifecycle(token, businessId, siteId, assetId, {
+        action,
+      });
+      const normalizedStatus = (asStringOrNull(result.status) || "").trim().toLowerCase();
+      const reasonLabel = toMediaSuggestionReasonLabel(asStringOrNull(result.reason_code));
+
+      if (normalizedStatus === "removed" || normalizedStatus === "ignored") {
+        setCheckedMediaAssetIds((current) => current.filter((item) => item.toLowerCase() !== assetId.toLowerCase()));
+      }
+
+      await loadWorkspaceData(false);
+
+      if (normalizedStatus === "removed") {
+        setStatusMessage("Image removed from migration workspace.");
+        return;
+      }
+      if (normalizedStatus === "ignored") {
+        setStatusMessage("Image ignored from the default discovered list.");
+        return;
+      }
+      if (normalizedStatus === "already_removed") {
+        setStatusMessage("Image was already removed or ignored.");
+        return;
+      }
+      if (normalizedStatus === "not_found") {
+        setErrorHint(null);
+        setErrorMessage("Image was not found in this migration workspace.");
+        return;
+      }
+      if (normalizedStatus === "not_authorized") {
+        setErrorHint(null);
+        setErrorMessage("Image is not authorized for this migration workspace.");
+        return;
+      }
+      if (normalizedStatus === "unsafe_delete_blocked") {
+        setErrorHint(null);
+        setErrorMessage(reasonLabel || `${actionLabel} is not allowed for this image lifecycle state.`);
+        return;
+      }
+      setStatusMessage(`${actionLabel} result recorded.${reasonLabel ? ` ${reasonLabel}` : ""}`);
+    } catch (error) {
+      setErrorHint(null);
+      setErrorMessage(toErrorMessage(error, `${actionLabel} failed.`));
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
   const handleSavePublishConfig = async (): Promise<void> => {
     const payload: MigrationPublishConfig = {
       ...EMPTY_PUBLISH_CONFIG,
@@ -6695,17 +6834,35 @@ export function MigrationWorkspacePanel({
                       />
                       <span>Use in draft</span>
                     </label>
-                    {!item.isBlocked ? (
-                      <button
-                        type="button"
-                        className={item.primaryAction === "use_in_draft_anyway" ? "button button-secondary" : "button button-primary"}
-                        data-testid={`migration-media-primary-action-${item.assetId}`}
-                        onClick={() => void handleUseMediaAssetsInDraft({ assetIds: [item.assetId] })}
-                        disabled={isActionInFlight}
-                      >
-                        {item.primaryAction === "use_in_draft_anyway" ? "Use in draft anyway" : "Use in draft"}
-                      </button>
-                    ) : null}
+                    <div className="row-wrap-tight">
+                      {!item.isBlocked ? (
+                        <button
+                          type="button"
+                          className={item.primaryAction === "use_in_draft_anyway" ? "button button-secondary" : "button button-primary"}
+                          data-testid={`migration-media-primary-action-${item.assetId}`}
+                          onClick={() => void handleUseMediaAssetsInDraft({ assetIds: [item.assetId] })}
+                          disabled={isActionInFlight}
+                        >
+                          {item.primaryAction === "use_in_draft_anyway" ? "Use in draft anyway" : "Use in draft"}
+                        </button>
+                      ) : null}
+                      {item.lifecycleAction !== "none" && item.lifecycleActionLabel ? (
+                        <button
+                          type="button"
+                          className="button button-tertiary"
+                          data-testid={`migration-media-lifecycle-action-${item.assetId}`}
+                          onClick={() =>
+                            void handleMediaLifecycleAction(
+                              item.assetId,
+                              item.lifecycleAction as Extract<MediaLifecycleAction, "remove" | "ignore">,
+                            )
+                          }
+                          disabled={isActionInFlight}
+                        >
+                          {item.lifecycleActionLabel}
+                        </button>
+                      ) : null}
+                    </div>
                     <details className="migration-media-details" data-testid={`migration-media-details-${item.assetId}`}>
                       <summary>Image details</summary>
                       <div className="stack-tight">
@@ -7122,6 +7279,40 @@ export function MigrationWorkspacePanel({
                   )}
                 </span>
               </span>
+              <span className="migration-compact-kv-row" data-testid="migration-draft-input-generation-budget-profile">
+                <span className="migration-compact-kv-label">Generation budget</span>
+                <span className="migration-compact-kv-value">
+                  {asStringOrNull(draftInputSummary.generation_budget_profile) || "standard"}
+                </span>
+              </span>
+              <span className="migration-compact-kv-row" data-testid="migration-draft-input-variation-level">
+                <span className="migration-compact-kv-label">Variation level</span>
+                <span className="migration-compact-kv-value">
+                  {asStringOrNull(draftInputSummary.generation_variation_level) || "balanced"}
+                </span>
+              </span>
+              <span className="migration-compact-kv-row" data-testid="migration-draft-input-generation-context-budget">
+                <span className="migration-compact-kv-label">Context budget</span>
+                <span className="migration-compact-kv-value">
+                  {(() => {
+                    const value = asNonNegativeInt(draftInputSummary.generation_context_budget_chars);
+                    return value && value > 0 ? `${value.toLocaleString()} chars` : "default";
+                  })()}
+                </span>
+              </span>
+              <span className="migration-compact-kv-row" data-testid="migration-draft-input-page-file-limit">
+                <span className="migration-compact-kv-label">Page/file limit</span>
+                <span className="migration-compact-kv-value">
+                  {(() => {
+                    const pageLimit = asNonNegativeInt(draftInputSummary.generation_page_limit);
+                    const fileLimit = asNonNegativeInt(draftInputSummary.generation_file_limit);
+                    if ((pageLimit || 0) > 0 || (fileLimit || 0) > 0) {
+                      return `${pageLimit || 0}/${fileLimit || 0}`;
+                    }
+                    return "default";
+                  })()}
+                </span>
+              </span>
               {draftAILargestContextBlock ? (
                 <span className="migration-compact-kv-row" data-testid="migration-draft-input-largest-block">
                   <span className="migration-compact-kv-label">Largest included block</span>
@@ -7349,6 +7540,14 @@ export function MigrationWorkspacePanel({
                     {previewEntries.length > 0 ? (
                       <div className="migration-draft-preview-rail-list" data-testid="migration-page-map-list">
                         {previewEntries.map((entry) => (
+                          (() => {
+                            const normalizedTitle = entry.title.trim();
+                            const normalizedPath = entry.path.trim();
+                            const hasSecondaryPath =
+                              normalizedTitle.length > 0
+                              && normalizedPath.length > 0
+                              && normalizedTitle.toLowerCase() !== normalizedPath.toLowerCase();
+                            return (
                           <button
                             key={entry.path}
                             type="button"
@@ -7360,9 +7559,15 @@ export function MigrationWorkspacePanel({
                             onClick={() => handleSelectArtifactFile(entry.path)}
                             data-testid={`migration-preview-entry-${entry.path}`}
                           >
-                            <span className="migration-draft-preview-entry-title">{entry.title}</span>
-                            <span className="migration-draft-preview-entry-path">{entry.path}</span>
+                            <span className="migration-draft-preview-entry-title">
+                              {normalizedTitle || normalizedPath}
+                            </span>
+                            {hasSecondaryPath ? (
+                              <span className="migration-draft-preview-entry-path">{normalizedPath}</span>
+                            ) : null}
                           </button>
+                            );
+                          })()
                         ))}
                       </div>
                     ) : (

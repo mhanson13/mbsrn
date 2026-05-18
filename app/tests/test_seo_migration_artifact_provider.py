@@ -717,6 +717,24 @@ def test_openai_migration_provider_budget_trimming_preserves_required_context_bl
     assert isinstance(budget_result.get("trimmed_bytes"), int)
 
 
+def test_openai_migration_provider_uses_generation_budget_context_chars_with_safety_bounds() -> None:
+    provider = OpenAISEOMigrationArtifactGenerationProvider(
+        api_key="test-key",
+        model_name="gpt-5.1",
+        timeout_seconds=5,
+    )
+    migration_context = _build_migration_context()
+    migration_context["generation_budget"] = {"migration_context_budget_chars": 9000}
+    migration_context["existing_context_summaries"] = {"summary": "A" * 15000}
+
+    _, budget_result = provider._apply_migration_context_budget(migration_context)
+    assert budget_result.get("budget_size_chars") == 9000
+
+    migration_context["generation_budget"] = {"migration_context_budget_chars": 1000000}
+    _, capped_budget_result = provider._apply_migration_context_budget(migration_context)
+    assert capped_budget_result.get("budget_size_chars") == 50000
+
+
 def test_openai_migration_provider_auth_failure_maps_to_non_retryable_auth_reason(monkeypatch) -> None:
     provider = OpenAISEOMigrationArtifactGenerationProvider(
         api_key="test-key",

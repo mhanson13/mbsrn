@@ -1687,16 +1687,24 @@ main {
   justify-content: flex-start;
   display: grid;
   gap: 0.1rem;
+  font-size: 0.9rem;
 }
 
 .migration-draft-preview-entry-title {
   font-weight: 600;
   line-height: 1.25;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
 }
 
 .migration-draft-preview-entry-path {
-  font-size: var(--type-xs);
+  font-size: 0.72rem;
+  line-height: 1.25;
   color: var(--text-muted);
+  opacity: 0.9;
   overflow-wrap: anywhere;
 }
 

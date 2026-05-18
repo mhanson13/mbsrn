@@ -36,6 +36,20 @@ const mockUpdateBusinessSettings = jest.fn();
 const mockFetchGitHubPublishConfig = jest.fn();
 const mockUpdateGitHubPublishConfig = jest.fn();
 
+const DEFAULT_MIGRATION_GENERATION_BUDGET = {
+  migration_context_budget_chars: 18000,
+  migration_recommendation_limit: 6,
+  migration_competitor_limit: 8,
+  migration_source_page_summary_limit: 8,
+  migration_media_asset_limit: 24,
+  migration_generated_page_limit: 12,
+  migration_generated_file_limit: 12,
+  migration_generation_depth: "standard",
+  migration_variation_level: "balanced",
+  migration_require_page_variety: true,
+  migration_require_design_variation: true,
+};
+
 jest.mock("../../components/useOperatorContext", () => ({
   useOperatorContext: () => mockUseOperatorContext(),
 }));
@@ -149,6 +163,9 @@ describe("admin route", () => {
           enabled: false,
           mode: "default_deny_ingress",
         },
+        migration_generation_budget: {
+          ...DEFAULT_MIGRATION_GENERATION_BUDGET,
+        },
       },
       enabled: false,
       created_at: "2026-01-01T00:00:00Z",
@@ -194,6 +211,9 @@ describe("admin route", () => {
         network_policy: {
           enabled: false,
           mode: "default_deny_ingress",
+        },
+        migration_generation_budget: {
+          ...DEFAULT_MIGRATION_GENERATION_BUDGET,
         },
       },
       enabled: true,
@@ -316,6 +336,10 @@ describe("admin route", () => {
     expect(screen.getByLabelText("Enable ResourceQuota for managed site namespaces")).toBeInTheDocument();
     expect(screen.getByLabelText("Enable LimitRange for managed site namespaces")).toBeInTheDocument();
     expect(screen.getByLabelText("Enable managed NetworkPolicy scaffold")).toBeInTheDocument();
+    expect(screen.getByText("Migration AI Budget")).toBeInTheDocument();
+    expect(screen.getByLabelText("Context budget (chars)")).toBeInTheDocument();
+    expect(screen.getByLabelText("Generation profile")).toBeInTheDocument();
+    expect(screen.getByLabelText("Variation level")).toBeInTheDocument();
     expect(screen.getByText("Admin configures governance and platform defaults. Workflow execution remains on dedicated operational routes.")).toBeInTheDocument();
     expect(screen.getByText("AI prompt/model changes affect generated recommendations, competitors, and migration drafts.")).toBeInTheDocument();
     expect(screen.getByText("Namespace policy controls managed site Kubernetes defaults for new managed site namespaces.")).toBeInTheDocument();
@@ -551,6 +575,9 @@ describe("admin route", () => {
           enabled: false,
           mode: "default_deny_ingress",
         },
+        migration_generation_budget: {
+          ...DEFAULT_MIGRATION_GENERATION_BUDGET,
+        },
       },
       enabled: true,
       created_at: "2026-01-01T00:00:00Z",
@@ -596,6 +623,9 @@ describe("admin route", () => {
         network_policy: {
           enabled: false,
           mode: "default_deny_ingress",
+        },
+        migration_generation_budget: {
+          ...DEFAULT_MIGRATION_GENERATION_BUDGET,
         },
       },
       enabled: true,
@@ -665,6 +695,11 @@ describe("admin route", () => {
     fireEvent.change(screen.getByLabelText("ConfigMaps"), { target: { value: "50" } });
     fireEvent.change(screen.getByLabelText("Secrets"), { target: { value: "50" } });
     fireEvent.change(screen.getByLabelText("PersistentVolumeClaims"), { target: { value: "15" } });
+    fireEvent.change(screen.getByLabelText("Context budget (chars)"), { target: { value: "22000" } });
+    fireEvent.change(screen.getByLabelText("Recommendation limit"), { target: { value: "10" } });
+    fireEvent.change(screen.getByLabelText("Generation profile"), { target: { value: "expanded" } });
+    fireEvent.change(screen.getByLabelText("Variation level"), { target: { value: "differentiated" } });
+    fireEvent.click(screen.getByLabelText("Require page variety"));
     expect(screen.getByTestId("github-publish-effective-preview")).toHaveTextContent("/site/content");
     fireEvent.click(screen.getByRole("button", { name: "Save GitHub Publish Config" }));
 
@@ -708,6 +743,13 @@ describe("admin route", () => {
         network_policy: {
           enabled: false,
           mode: "default_deny_ingress",
+        },
+        migration_generation_budget: {
+          migration_context_budget_chars: 22000,
+          migration_recommendation_limit: 10,
+          migration_generation_depth: "expanded",
+          migration_variation_level: "differentiated",
+          migration_require_page_variety: false,
         },
       },
       enabled: true,

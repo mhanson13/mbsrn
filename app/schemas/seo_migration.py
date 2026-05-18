@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 import re
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -358,6 +359,10 @@ class SEOMigrationMediaAssetUpdateRequest(BaseModel):
         return _normalize_optional_text(value, max_length=800)
 
 
+class SEOMigrationMediaAssetLifecycleRequest(BaseModel):
+    action: Literal["remove", "ignore"]
+
+
 class SEOMigrationMediaSuggestionBatchRequest(BaseModel):
     asset_ids: list[str] = Field(default_factory=list)
     force_refresh: bool = False
@@ -523,7 +528,9 @@ class SEOMigrationMediaAssetRead(BaseModel):
     page_assignment: str | None = None
     normalized_url: str | None = None
     source_page_url: str | None = None
+    preview_url: str | None = None
     created_at: str | None = None
+    workspace_status: str | None = None
     metadata_suggestion: SEOMigrationMediaMetadataSuggestionRead | None = None
     metadata_suggestion_applied: bool = False
     metadata_suggestion_applied_at: str | None = None
@@ -576,6 +583,13 @@ class SEOMigrationDiscoveredMediaImportRead(BaseModel):
     failed_count: int = Field(default=0, ge=0)
     skipped_count: int = Field(default=0, ge=0)
     disabled_count: int = Field(default=0, ge=0)
+
+
+class SEOMigrationMediaAssetLifecycleActionRead(BaseModel):
+    asset_id: str | None = None
+    status: str
+    reason_code: str | None = None
+    media_asset: SEOMigrationMediaAssetRead | None = None
 
 
 class SEOMigrationArtifactVersionRead(BaseModel):

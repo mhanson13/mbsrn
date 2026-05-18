@@ -1887,6 +1887,147 @@ def test_workspace_media_upload_update_and_listing_are_bounded_and_workspace_sco
     assert {item.get("asset_id") for item in selected_assets if isinstance(item, dict)} == {uploaded.get("asset_id")}
 
 
+def test_workspace_media_preview_returns_uploaded_image_payload_for_authorized_workspace(
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("MIGRATION_MEDIA_STORAGE_ROOT", str(tmp_path))
+    service = _build_service(db_session, _StaticMigrationProvider(_build_publishable_output()))
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+
+    uploaded = service.upload_workspace_media_asset(
+        business_id=business_id,
+        site_id=site_id,
+        filename="preview-target.png",
+        content_type="image/png",
+        payload=_tiny_png_payload(),
+        selected_for_draft=False,
+        category="project_gallery",
+        alt_text="Preview target",
+        description=None,
+        usage_note=None,
+        page_assignment=None,
+        principal_id="principal-1",
+    )
+    uploaded_asset_id = str(uploaded.get("asset_id") or "")
+    assert uploaded_asset_id
+    assert isinstance(uploaded.get("preview_url"), str)
+    assert uploaded.get("preview_url", "").endswith(f"/media/assets/{uploaded_asset_id}/preview")
+
+    media_type, payload = service.preview_workspace_media_asset(
+        business_id=business_id,
+        site_id=site_id,
+        asset_id=uploaded_asset_id,
+    )
+
+    assert media_type == "image/png"
+    assert payload == _tiny_png_payload()
+
+
+def test_workspace_media_lifecycle_supports_ignore_for_discovered_and_remove_for_imported_or_uploaded(
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("MIGRATION_MEDIA_STORAGE_ROOT", str(tmp_path))
+    service = _build_service(db_session, _StaticMigrationProvider(_build_publishable_output()))
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+
+    uploaded = service.upload_workspace_media_asset(
+        business_id=business_id,
+        site_id=site_id,
+        filename="remove-target.png",
+        content_type="image/png",
+        payload=_tiny_png_payload(),
+        selected_for_draft=True,
+        category=None,
+        alt_text=None,
+        description=None,
+        usage_note=None,
+        page_assignment=None,
+        principal_id="principal-1",
+    )
+    uploaded_asset_id = str(uploaded.get("asset_id") or "")
+    assert uploaded_asset_id
+
+    workspace = service.get_workspace(business_id=business_id, site_id=site_id)
+    workspace.imported_source_snapshot_json = {
+        "discovered_images": [
+            {
+                "asset_id": "srcimg-ignore",
+                "normalized_url": "https://legacy.example/media/ignore.jpg",
+                "provenance": "source_site_import",
+                "import_status": "discovered",
+                "selected_for_draft": False,
+                "candidate_quality": "useful",
+                "fetch_status": "validated_head",
+                "content_type": "image/jpeg",
+            },
+            {
+                "asset_id": "srcimg-imported",
+                "normalized_url": "https://legacy.example/media/imported.jpg",
+                "provenance": "source_site_import",
+                "import_status": "selected",
+                "selected_for_draft": True,
+                "candidate_quality": "useful",
+                "fetch_status": "validated_head",
+                "content_type": "image/png",
+                "storage_key": f"{business_id}/{site_id}/srcimg-imported.png",
+            },
+        ]
+    }
+    service.seo_migration_repository.save_workspace(workspace)
+    service.session.commit()
+
+    blocked_remove = service.update_workspace_media_asset_lifecycle(
+        business_id=business_id,
+        site_id=site_id,
+        asset_id="srcimg-ignore",
+        action="remove",
+        principal_id="principal-1",
+    )
+    assert blocked_remove.get("status") == "unsafe_delete_blocked"
+
+    ignored_result = service.update_workspace_media_asset_lifecycle(
+        business_id=business_id,
+        site_id=site_id,
+        asset_id="srcimg-ignore",
+        action="ignore",
+        principal_id="principal-1",
+    )
+    assert ignored_result.get("status") == "ignored"
+    ignored_asset = ignored_result.get("media_asset") or {}
+    assert ignored_asset.get("workspace_status") == "ignored"
+    assert ignored_asset.get("selected_for_draft") is False
+
+    removed_uploaded = service.update_workspace_media_asset_lifecycle(
+        business_id=business_id,
+        site_id=site_id,
+        asset_id=uploaded_asset_id,
+        action="remove",
+        principal_id="principal-1",
+    )
+    assert removed_uploaded.get("status") == "removed"
+    uploaded_asset = removed_uploaded.get("media_asset") or {}
+    assert uploaded_asset.get("workspace_status") == "removed"
+    assert uploaded_asset.get("selected_for_draft") is False
+
+    removed_imported = service.update_workspace_media_asset_lifecycle(
+        business_id=business_id,
+        site_id=site_id,
+        asset_id="srcimg-imported",
+        action="remove",
+        principal_id="principal-1",
+    )
+    assert removed_imported.get("status") == "removed"
+    imported_asset = removed_imported.get("media_asset") or {}
+    assert imported_asset.get("workspace_status") == "removed"
+    assert imported_asset.get("selected_for_draft") is False
+
+
 def test_workspace_media_metadata_suggestions_are_stored_separately_and_apply_only_on_explicit_action(
     db_session,
     monkeypatch: pytest.MonkeyPatch,
