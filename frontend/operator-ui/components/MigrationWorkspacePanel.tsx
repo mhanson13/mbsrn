@@ -4995,6 +4995,15 @@ export function MigrationWorkspacePanel({
     asNonNegativeInt(draftInputSummary.generation_max_difficulty_score)
     ?? draftAIExecution.maxDifficultyScore
     ?? null;
+  const generationCompactPageLimit =
+    asNonNegativeInt(draftInputSummary.generation_compact_page_limit)
+    ?? null;
+  const generationCompactMediaAssetLimit =
+    asNonNegativeInt(draftInputSummary.generation_compact_media_asset_limit)
+    ?? null;
+  const generationCompactRecommendationLimit =
+    asNonNegativeInt(draftInputSummary.generation_compact_recommendation_limit)
+    ?? null;
   const generationCompactFallbackEnabled =
     asBooleanOrNull(draftInputSummary.generation_compact_fallback_enabled)
     ?? true;
@@ -5010,6 +5019,9 @@ export function MigrationWorkspacePanel({
   const generationPreflightBlockReason =
     asStringOrNull(draftInputSummary.generation_preflight_block_reason)
     || draftAIExecution.preflightBlockReason;
+  const generationBudgetCapReason =
+    asStringOrNull(draftInputSummary.generation_budget_cap_reason)
+    || generationPreflightBlockReason;
   const draftFailureSourceLabel = toDraftFailureSourceLabel(
     asStringOrNull(migrationDiagnostics.last_draft_failure_source) || draftAIExecution.failureSource,
   );
@@ -7429,6 +7441,16 @@ export function MigrationWorkspacePanel({
                   {generationMaxDifficultyScore !== null ? generationMaxDifficultyScore : "n/a"}
                 </span>
               </span>
+              <span className="migration-compact-kv-row" data-testid="migration-draft-input-generation-compact-limits">
+                <span className="migration-compact-kv-label">Compact limits (pages/media/reco)</span>
+                <span className="migration-compact-kv-value">
+                  {generationCompactPageLimit !== null ||
+                  generationCompactMediaAssetLimit !== null ||
+                  generationCompactRecommendationLimit !== null
+                    ? `${generationCompactPageLimit ?? 0}/${generationCompactMediaAssetLimit ?? 0}/${generationCompactRecommendationLimit ?? 0}`
+                    : "default"}
+                </span>
+              </span>
               <span className="migration-compact-kv-row" data-testid="migration-draft-input-generation-compact-enabled">
                 <span className="migration-compact-kv-label">Compact fallback enabled</span>
                 <span className="migration-compact-kv-value">
@@ -7447,6 +7469,16 @@ export function MigrationWorkspacePanel({
                   {formatBooleanStateLabel(generationBudgetCapped)}
                 </span>
               </span>
+              {(generationBudgetCapped || generationBudgetCapReason) ? (
+                <span className="migration-compact-kv-row" data-testid="migration-draft-input-generation-cap-reason">
+                  <span className="migration-compact-kv-label">Cap reason</span>
+                  <span className="migration-compact-kv-value">
+                    {generationBudgetCapReason
+                      ? generationBudgetCapReason.replace(/_/g, " ")
+                      : "backend cap applied"}
+                  </span>
+                </span>
+              ) : null}
               {generationPreflightBlocked ? (
                 <span className="migration-compact-kv-row" data-testid="migration-draft-input-generation-preflight-blocked">
                   <span className="migration-compact-kv-label">Preflight blocked</span>

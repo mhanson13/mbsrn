@@ -1050,6 +1050,15 @@ Migration draft timeout and preflight risk controls are now governed by Admin na
 - `migration_compact_media_asset_limit` (range `0-8`, default `3`)
 - `migration_compact_recommendation_limit` (range `0-10`, default `4`)
 
+Admin configurability behavior:
+- Admin UI accepts requested numeric values for migration budget/safety without silent frontend clamping.
+- Backend schema validation remains the source of truth for allowed ranges/hard caps.
+- Save outcomes are explicit:
+  - valid value within cap: persisted
+  - invalid/out-of-range value: rejected with field-specific backend validation feedback
+  - backend-adjusted value (if policy applies): effective value is shown after save
+- Admin effective preview shows requested vs effective values and capped/rejected signals for migration generation controls.
+
 Behavior:
 - Backend preflight computes bounded request metrics before provider invocation:
   - `original_input_size`

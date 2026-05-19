@@ -1300,6 +1300,12 @@ main {
   transform: translateY(0);
 }
 
+.admin-action-help-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
 .migration-section-title {
   margin: 0.05rem 0 -0.15rem;
   font-size: var(--type-xs);

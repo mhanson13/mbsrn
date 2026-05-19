@@ -127,6 +127,37 @@ const MIGRATION_MAX_DIFFICULTY_SCORE_BOUNDS = { min: 5, max: 20 } as const;
 const MIGRATION_COMPACT_PAGE_LIMIT_BOUNDS = { min: 1, max: 8 } as const;
 const MIGRATION_COMPACT_MEDIA_LIMIT_BOUNDS = { min: 0, max: 8 } as const;
 const MIGRATION_COMPACT_RECOMMENDATION_LIMIT_BOUNDS = { min: 0, max: 10 } as const;
+const MIGRATION_CONTEXT_BUDGET_RECOMMENDED = { min: 8000, max: 22000 } as const;
+const MIGRATION_RECOMMENDATION_LIMIT_RECOMMENDED = { min: 4, max: 10 } as const;
+const MIGRATION_COMPETITOR_LIMIT_RECOMMENDED = { min: 4, max: 12 } as const;
+const MIGRATION_MAX_FINAL_INPUT_CHARS_RECOMMENDED = { min: 8000, max: 10000 } as const;
+const MIGRATION_MAX_DIFFICULTY_SCORE_RECOMMENDED = { min: 8, max: 12 } as const;
+const MIGRATION_COMPACT_PAGE_LIMIT_RECOMMENDED = { min: 3, max: 5 } as const;
+const MIGRATION_COMPACT_MEDIA_LIMIT_RECOMMENDED = { min: 2, max: 4 } as const;
+const MIGRATION_COMPACT_RECOMMENDATION_LIMIT_RECOMMENDED = { min: 3, max: 5 } as const;
+
+type MigrationGenerationBudgetNumericField =
+  | "migration_context_budget_chars"
+  | "migration_recommendation_limit"
+  | "migration_competitor_limit"
+  | "migration_source_page_summary_limit"
+  | "migration_media_asset_limit"
+  | "migration_generated_page_limit"
+  | "migration_generated_file_limit";
+
+type MigrationGenerationSafetyNumericField =
+  | "migration_provider_timeout_seconds"
+  | "migration_max_final_input_chars"
+  | "migration_max_difficulty_score"
+  | "migration_compact_page_limit"
+  | "migration_compact_media_asset_limit"
+  | "migration_compact_recommendation_limit";
+
+type MigrationGenerationSettingField =
+  | MigrationGenerationBudgetNumericField
+  | MigrationGenerationSafetyNumericField;
+
+type MigrationGenerationFieldErrorMap = Partial<Record<MigrationGenerationSettingField, string>>;
 const DEFAULT_MIGRATION_GENERATION_BUDGET: MigrationGenerationBudgetConfig = {
   migration_context_budget_chars: 18000,
   migration_recommendation_limit: 6,
@@ -810,16 +841,93 @@ function normalizeNamespaceCount(value: unknown, fallback: number): number {
 function normalizeMigrationBudgetCount(
   value: unknown,
   fallback: number,
-  bounds: { min: number; max: number },
+  _bounds?: { min: number; max: number },
 ): number {
   const parsed =
     typeof value === "number" && Number.isSafeInteger(value)
       ? value
       : Number.parseInt(String(value ?? "").trim(), 10);
-  if (!Number.isFinite(parsed)) {
+  if (!Number.isFinite(parsed) || !Number.isSafeInteger(parsed)) {
     return fallback;
   }
-  return Math.min(bounds.max, Math.max(bounds.min, parsed));
+  return parsed;
+}
+
+function migrationSettingBoundsForField(field: MigrationGenerationSettingField): { min: number; max: number } {
+  switch (field) {
+    case "migration_context_budget_chars":
+      return MIGRATION_CONTEXT_BUDGET_BOUNDS;
+    case "migration_recommendation_limit":
+      return MIGRATION_RECOMMENDATION_LIMIT_BOUNDS;
+    case "migration_competitor_limit":
+      return MIGRATION_COMPETITOR_LIMIT_BOUNDS;
+    case "migration_source_page_summary_limit":
+      return MIGRATION_SOURCE_PAGE_SUMMARY_LIMIT_BOUNDS;
+    case "migration_media_asset_limit":
+      return MIGRATION_MEDIA_ASSET_LIMIT_BOUNDS;
+    case "migration_generated_page_limit":
+      return MIGRATION_GENERATED_PAGE_LIMIT_BOUNDS;
+    case "migration_generated_file_limit":
+      return MIGRATION_GENERATED_FILE_LIMIT_BOUNDS;
+    case "migration_provider_timeout_seconds":
+      return MIGRATION_PROVIDER_TIMEOUT_BOUNDS;
+    case "migration_max_final_input_chars":
+      return MIGRATION_MAX_FINAL_INPUT_CHARS_BOUNDS;
+    case "migration_max_difficulty_score":
+      return MIGRATION_MAX_DIFFICULTY_SCORE_BOUNDS;
+    case "migration_compact_page_limit":
+      return MIGRATION_COMPACT_PAGE_LIMIT_BOUNDS;
+    case "migration_compact_media_asset_limit":
+      return MIGRATION_COMPACT_MEDIA_LIMIT_BOUNDS;
+    case "migration_compact_recommendation_limit":
+      return MIGRATION_COMPACT_RECOMMENDATION_LIMIT_BOUNDS;
+    default:
+      return { min: 0, max: 0 };
+  }
+}
+
+function migrationSettingLabel(field: MigrationGenerationSettingField): string {
+  switch (field) {
+    case "migration_context_budget_chars":
+      return "Context budget (chars)";
+    case "migration_recommendation_limit":
+      return "Recommendation limit";
+    case "migration_competitor_limit":
+      return "Competitor limit";
+    case "migration_source_page_summary_limit":
+      return "Source page summary limit";
+    case "migration_media_asset_limit":
+      return "Media asset context limit";
+    case "migration_generated_page_limit":
+      return "Generated page limit";
+    case "migration_generated_file_limit":
+      return "Generated file limit";
+    case "migration_provider_timeout_seconds":
+      return "Provider timeout seconds";
+    case "migration_max_final_input_chars":
+      return "Max final input chars";
+    case "migration_max_difficulty_score":
+      return "Max difficulty score";
+    case "migration_compact_page_limit":
+      return "Compact page limit";
+    case "migration_compact_media_asset_limit":
+      return "Compact media limit";
+    case "migration_compact_recommendation_limit":
+      return "Compact recommendation limit";
+    default:
+      return field;
+  }
+}
+
+function migrationSettingValidationMessage(
+  field: MigrationGenerationSettingField,
+  attemptedValue: number,
+): string {
+  const bounds = migrationSettingBoundsForField(field);
+  return (
+    `${migrationSettingLabel(field)} attempted value ${attemptedValue} is outside the backend-allowed range ` +
+    `${bounds.min}-${bounds.max}. Save was rejected by backend validation.`
+  );
 }
 
 function normalizeNamespaceIsolationDefaults(
@@ -1024,51 +1132,9 @@ function validateNamespaceIsolationDefaults(defaults: GitHubNamespaceIsolationDe
     }
   }
 
+  // Migration generation budget/safety field ranges are validated by backend schema
+  // and returned as field-specific API errors. Frontend should not block submits here.
   const budget = normalized.migration_generation_budget;
-  const validateBudgetRange = (
-    label: string,
-    value: number,
-    bounds: { min: number; max: number },
-  ): void => {
-    if (!Number.isSafeInteger(value) || value < bounds.min || value > bounds.max) {
-      errors.push(`Migration budget ${label} must be between ${bounds.min} and ${bounds.max}.`);
-    }
-  };
-  validateBudgetRange(
-    "context budget chars",
-    budget.migration_context_budget_chars,
-    MIGRATION_CONTEXT_BUDGET_BOUNDS,
-  );
-  validateBudgetRange(
-    "recommendation limit",
-    budget.migration_recommendation_limit,
-    MIGRATION_RECOMMENDATION_LIMIT_BOUNDS,
-  );
-  validateBudgetRange(
-    "competitor limit",
-    budget.migration_competitor_limit,
-    MIGRATION_COMPETITOR_LIMIT_BOUNDS,
-  );
-  validateBudgetRange(
-    "source page summary limit",
-    budget.migration_source_page_summary_limit,
-    MIGRATION_SOURCE_PAGE_SUMMARY_LIMIT_BOUNDS,
-  );
-  validateBudgetRange(
-    "media asset limit",
-    budget.migration_media_asset_limit,
-    MIGRATION_MEDIA_ASSET_LIMIT_BOUNDS,
-  );
-  validateBudgetRange(
-    "generated page limit",
-    budget.migration_generated_page_limit,
-    MIGRATION_GENERATED_PAGE_LIMIT_BOUNDS,
-  );
-  validateBudgetRange(
-    "generated file limit",
-    budget.migration_generated_file_limit,
-    MIGRATION_GENERATED_FILE_LIMIT_BOUNDS,
-  );
   if (
     !MIGRATION_GENERATION_DEPTH_OPTIONS.includes(
       budget.migration_generation_depth as (typeof MIGRATION_GENERATION_DEPTH_OPTIONS)[number],
@@ -1083,47 +1149,7 @@ function validateNamespaceIsolationDefaults(defaults: GitHubNamespaceIsolationDe
   ) {
     errors.push("Migration variation level is invalid.");
   }
-
   const safety = normalized.migration_generation_safety;
-  const validateSafetyRange = (
-    label: string,
-    value: number,
-    bounds: { min: number; max: number },
-  ): void => {
-    if (!Number.isSafeInteger(value) || value < bounds.min || value > bounds.max) {
-      errors.push(`Migration safety ${label} must be between ${bounds.min} and ${bounds.max}.`);
-    }
-  };
-  validateSafetyRange(
-    "provider timeout seconds",
-    safety.migration_provider_timeout_seconds,
-    MIGRATION_PROVIDER_TIMEOUT_BOUNDS,
-  );
-  validateSafetyRange(
-    "max final input chars",
-    safety.migration_max_final_input_chars,
-    MIGRATION_MAX_FINAL_INPUT_CHARS_BOUNDS,
-  );
-  validateSafetyRange(
-    "max difficulty score",
-    safety.migration_max_difficulty_score,
-    MIGRATION_MAX_DIFFICULTY_SCORE_BOUNDS,
-  );
-  validateSafetyRange(
-    "compact page limit",
-    safety.migration_compact_page_limit,
-    MIGRATION_COMPACT_PAGE_LIMIT_BOUNDS,
-  );
-  validateSafetyRange(
-    "compact media limit",
-    safety.migration_compact_media_asset_limit,
-    MIGRATION_COMPACT_MEDIA_LIMIT_BOUNDS,
-  );
-  validateSafetyRange(
-    "compact recommendation limit",
-    safety.migration_compact_recommendation_limit,
-    MIGRATION_COMPACT_RECOMMENDATION_LIMIT_BOUNDS,
-  );
   if (
     !MIGRATION_PREFLIGHT_MODE_OPTIONS.includes(
       safety.migration_preflight_mode as (typeof MIGRATION_PREFLIGHT_MODE_OPTIONS)[number],
@@ -1292,6 +1318,41 @@ function safeGitHubPublishConfigUpdateErrorMessage(error: unknown): string {
   return "Failed to save GitHub publish configuration.";
 }
 
+function extractMigrationFieldErrorsFromMessage(
+  message: string,
+  requestedDefaults: GitHubNamespaceIsolationDefaults,
+): MigrationGenerationFieldErrorMap {
+  const lowered = message.toLowerCase();
+  const requestedBudget = requestedDefaults.migration_generation_budget;
+  const requestedSafety = requestedDefaults.migration_generation_safety;
+  const result: MigrationGenerationFieldErrorMap = {};
+
+  const registerField = (field: MigrationGenerationSettingField, attemptedValue: number) => {
+    if (lowered.includes(field)) {
+      result[field] = migrationSettingValidationMessage(field, attemptedValue);
+    }
+  };
+
+  registerField("migration_context_budget_chars", requestedBudget.migration_context_budget_chars);
+  registerField("migration_recommendation_limit", requestedBudget.migration_recommendation_limit);
+  registerField("migration_competitor_limit", requestedBudget.migration_competitor_limit);
+  registerField("migration_source_page_summary_limit", requestedBudget.migration_source_page_summary_limit);
+  registerField("migration_media_asset_limit", requestedBudget.migration_media_asset_limit);
+  registerField("migration_generated_page_limit", requestedBudget.migration_generated_page_limit);
+  registerField("migration_generated_file_limit", requestedBudget.migration_generated_file_limit);
+  registerField("migration_provider_timeout_seconds", requestedSafety.migration_provider_timeout_seconds);
+  registerField("migration_max_final_input_chars", requestedSafety.migration_max_final_input_chars);
+  registerField("migration_max_difficulty_score", requestedSafety.migration_max_difficulty_score);
+  registerField("migration_compact_page_limit", requestedSafety.migration_compact_page_limit);
+  registerField("migration_compact_media_asset_limit", requestedSafety.migration_compact_media_asset_limit);
+  registerField(
+    "migration_compact_recommendation_limit",
+    requestedSafety.migration_compact_recommendation_limit,
+  );
+
+  return result;
+}
+
 function applyGitHubPublishConfigInputs(
   config: GitHubPublishConfig,
   setters: {
@@ -1309,6 +1370,7 @@ function applyGitHubPublishConfigInputs(
     clearManagedDeployKeyInput: () => void;
     setManagedDeployKeyClear: (value: boolean) => void;
     setNamespaceIsolationDefaults: (value: GitHubNamespaceIsolationDefaults) => void;
+    setPersistedNamespaceIsolationDefaults: (value: GitHubNamespaceIsolationDefaults) => void;
     setEnabled: (value: boolean) => void;
   },
 ): void {
@@ -1325,7 +1387,9 @@ function applyGitHubPublishConfigInputs(
   setters.setManagedDeployKeyUpdatedAt(config.managed_gcp_deploy_key_updated_at || null);
   setters.clearManagedDeployKeyInput();
   setters.setManagedDeployKeyClear(false);
-  setters.setNamespaceIsolationDefaults(normalizeNamespaceIsolationDefaults(config.namespace_isolation_defaults));
+  const normalizedNamespaceIsolationDefaults = normalizeNamespaceIsolationDefaults(config.namespace_isolation_defaults);
+  setters.setNamespaceIsolationDefaults(normalizedNamespaceIsolationDefaults);
+  setters.setPersistedNamespaceIsolationDefaults(normalizedNamespaceIsolationDefaults);
   setters.setEnabled(Boolean(config.enabled));
 }
 
@@ -1431,6 +1495,10 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
   const [githubNamespaceIsolationDefaults, setGitHubNamespaceIsolationDefaults] = useState<GitHubNamespaceIsolationDefaults>(
     DEFAULT_NAMESPACE_ISOLATION_DEFAULTS,
   );
+  const [githubPersistedNamespaceIsolationDefaults, setGitHubPersistedNamespaceIsolationDefaults] =
+    useState<GitHubNamespaceIsolationDefaults>(DEFAULT_NAMESPACE_ISOLATION_DEFAULTS);
+  const [githubMigrationFieldErrors, setGitHubMigrationFieldErrors] = useState<MigrationGenerationFieldErrorMap>({});
+  const [githubMigrationAdjustmentReason, setGitHubMigrationAdjustmentReason] = useState<string | null>(null);
   const [githubPublishEnabled, setGitHubPublishEnabled] = useState(false);
   const [githubPublishConfigLoading, setGitHubPublishConfigLoading] = useState(false);
   const [githubPublishConfigSubmitting, setGitHubPublishConfigSubmitting] = useState(false);
@@ -1487,6 +1555,32 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
       ],
     );
   const githubPublishPreviewOwner = githubPublishValidation.owner || "Not configured";
+  const requestedMigrationBudget = githubNamespaceIsolationDefaults.migration_generation_budget;
+  const requestedMigrationSafety = githubNamespaceIsolationDefaults.migration_generation_safety;
+  const effectiveMigrationBudget = githubPersistedNamespaceIsolationDefaults.migration_generation_budget;
+  const effectiveMigrationSafety = githubPersistedNamespaceIsolationDefaults.migration_generation_safety;
+
+  const migrationRequestedVsEffectiveDiffCount = useMemo(() => {
+    const pairs: Array<[number, number]> = [
+      [requestedMigrationSafety.migration_provider_timeout_seconds, effectiveMigrationSafety.migration_provider_timeout_seconds],
+      [requestedMigrationSafety.migration_max_final_input_chars, effectiveMigrationSafety.migration_max_final_input_chars],
+      [requestedMigrationSafety.migration_max_difficulty_score, effectiveMigrationSafety.migration_max_difficulty_score],
+      [requestedMigrationSafety.migration_compact_page_limit, effectiveMigrationSafety.migration_compact_page_limit],
+      [requestedMigrationSafety.migration_compact_media_asset_limit, effectiveMigrationSafety.migration_compact_media_asset_limit],
+      [
+        requestedMigrationSafety.migration_compact_recommendation_limit,
+        effectiveMigrationSafety.migration_compact_recommendation_limit,
+      ],
+      [requestedMigrationBudget.migration_context_budget_chars, effectiveMigrationBudget.migration_context_budget_chars],
+      [requestedMigrationBudget.migration_recommendation_limit, effectiveMigrationBudget.migration_recommendation_limit],
+      [requestedMigrationBudget.migration_competitor_limit, effectiveMigrationBudget.migration_competitor_limit],
+      [requestedMigrationBudget.migration_source_page_summary_limit, effectiveMigrationBudget.migration_source_page_summary_limit],
+      [requestedMigrationBudget.migration_media_asset_limit, effectiveMigrationBudget.migration_media_asset_limit],
+      [requestedMigrationBudget.migration_generated_page_limit, effectiveMigrationBudget.migration_generated_page_limit],
+      [requestedMigrationBudget.migration_generated_file_limit, effectiveMigrationBudget.migration_generated_file_limit],
+    ];
+    return pairs.filter(([requested, effective]) => requested !== effective).length;
+  }, [effectiveMigrationBudget, effectiveMigrationSafety, requestedMigrationBudget, requestedMigrationSafety]);
 
   const loadUsersData = useCallback(async (): Promise<AdminPageLoadResult> => {
     const principalResponse = await fetchPrincipals(context.token, context.businessId);
@@ -1651,8 +1745,11 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
             clearManagedDeployKeyInput: () => setGitHubPublishManagedDeployKeyInput(""),
             setManagedDeployKeyClear: setGitHubPublishManagedDeployKeyClear,
             setNamespaceIsolationDefaults: setGitHubNamespaceIsolationDefaults,
+            setPersistedNamespaceIsolationDefaults: setGitHubPersistedNamespaceIsolationDefaults,
             setEnabled: setGitHubPublishEnabled,
           });
+          setGitHubMigrationFieldErrors({});
+          setGitHubMigrationAdjustmentReason(null);
         } else {
           setGitHubPublishConfigError(safeGitHubPublishConfigLoadErrorMessage(githubResult.reason));
         }
@@ -2058,6 +2155,18 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
         [key]: value,
       },
     }));
+    if (typeof key === "string") {
+      const migrationKey = key as MigrationGenerationSettingField;
+      setGitHubMigrationFieldErrors((current) => {
+        if (!current[migrationKey]) {
+          return current;
+        }
+        const next = { ...current };
+        delete next[migrationKey];
+        return next;
+      });
+    }
+    setGitHubMigrationAdjustmentReason(null);
   };
 
   const updateMigrationGenerationSafety = <K extends keyof MigrationGenerationSafetyConfig>(
@@ -2071,12 +2180,26 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
         [key]: value,
       },
     }));
+    if (typeof key === "string") {
+      const migrationKey = key as MigrationGenerationSettingField;
+      setGitHubMigrationFieldErrors((current) => {
+        if (!current[migrationKey]) {
+          return current;
+        }
+        const next = { ...current };
+        delete next[migrationKey];
+        return next;
+      });
+    }
+    setGitHubMigrationAdjustmentReason(null);
   };
 
   const handleSaveGitHubPublishConfig = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setGitHubPublishConfigMessage(null);
     setGitHubPublishConfigError(null);
+    setGitHubMigrationFieldErrors({});
+    setGitHubMigrationAdjustmentReason(null);
 
     const validation = validateGitHubPublishConfigInputs({
       ownerInput: githubPublishOwnerInput,
@@ -2096,6 +2219,7 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
     }
 
     setGitHubPublishConfigSubmitting(true);
+    const requestedNamespaceDefaults = normalizeNamespaceIsolationDefaults(githubNamespaceIsolationDefaults);
     try {
       const managedDeployKeyValue = githubPublishManagedDeployKeyInput.trim();
       const payload: GitHubPublishConfigUpdateRequest = {
@@ -2108,7 +2232,7 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
         managed_gke_cluster_name: validation.managedGkeClusterName,
         managed_gke_cluster_location: validation.managedGkeClusterLocation,
         managed_gke_project_id: validation.managedGkeProjectId,
-        namespace_isolation_defaults: normalizeNamespaceIsolationDefaults(githubNamespaceIsolationDefaults),
+        namespace_isolation_defaults: requestedNamespaceDefaults,
         enabled: githubPublishEnabled,
       };
       if (managedDeployKeyValue) {
@@ -2118,6 +2242,27 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
         payload.managed_gcp_deploy_key_clear = true;
       }
       const updated = await updateGitHubPublishConfig(context.token, payload);
+      const effectiveNamespaceDefaults = normalizeNamespaceIsolationDefaults(updated.namespace_isolation_defaults);
+      const requestedSafety = requestedNamespaceDefaults.migration_generation_safety;
+      const effectiveSafety = effectiveNamespaceDefaults.migration_generation_safety;
+      const requestedBudget = requestedNamespaceDefaults.migration_generation_budget;
+      const effectiveBudget = effectiveNamespaceDefaults.migration_generation_budget;
+      const migrationAdjusted =
+        requestedSafety.migration_provider_timeout_seconds !== effectiveSafety.migration_provider_timeout_seconds ||
+        requestedSafety.migration_max_final_input_chars !== effectiveSafety.migration_max_final_input_chars ||
+        requestedSafety.migration_max_difficulty_score !== effectiveSafety.migration_max_difficulty_score ||
+        requestedSafety.migration_compact_page_limit !== effectiveSafety.migration_compact_page_limit ||
+        requestedSafety.migration_compact_media_asset_limit !== effectiveSafety.migration_compact_media_asset_limit ||
+        requestedSafety.migration_compact_recommendation_limit !==
+          effectiveSafety.migration_compact_recommendation_limit ||
+        requestedBudget.migration_context_budget_chars !== effectiveBudget.migration_context_budget_chars ||
+        requestedBudget.migration_recommendation_limit !== effectiveBudget.migration_recommendation_limit ||
+        requestedBudget.migration_competitor_limit !== effectiveBudget.migration_competitor_limit ||
+        requestedBudget.migration_source_page_summary_limit !==
+          effectiveBudget.migration_source_page_summary_limit ||
+        requestedBudget.migration_media_asset_limit !== effectiveBudget.migration_media_asset_limit ||
+        requestedBudget.migration_generated_page_limit !== effectiveBudget.migration_generated_page_limit ||
+        requestedBudget.migration_generated_file_limit !== effectiveBudget.migration_generated_file_limit;
       applyGitHubPublishConfigInputs(updated, {
         setOwner: setGitHubPublishOwnerInput,
         setDefaultBranch: setGitHubPublishDefaultBranchInput,
@@ -2133,11 +2278,26 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
         clearManagedDeployKeyInput: () => setGitHubPublishManagedDeployKeyInput(""),
         setManagedDeployKeyClear: setGitHubPublishManagedDeployKeyClear,
         setNamespaceIsolationDefaults: setGitHubNamespaceIsolationDefaults,
+        setPersistedNamespaceIsolationDefaults: setGitHubPersistedNamespaceIsolationDefaults,
         setEnabled: setGitHubPublishEnabled,
       });
+      setGitHubMigrationAdjustmentReason(migrationAdjusted ? "backend_adjusted_values" : null);
       setGitHubPublishConfigMessage("GitHub publish configuration updated.");
     } catch (err) {
-      setGitHubPublishConfigError(safeGitHubPublishConfigUpdateErrorMessage(err));
+      if (err instanceof ApiRequestError && err.status === 422) {
+        const fieldErrors = extractMigrationFieldErrorsFromMessage(err.message, requestedNamespaceDefaults);
+        setGitHubMigrationFieldErrors(fieldErrors);
+        if (Object.keys(fieldErrors).length > 0) {
+          setGitHubMigrationAdjustmentReason("backend_validation_rejected");
+          setGitHubPublishConfigError(
+            "Backend validation rejected one or more migration generation settings. Review highlighted fields and try again.",
+          );
+        } else {
+          setGitHubPublishConfigError(safeGitHubPublishConfigUpdateErrorMessage(err));
+        }
+      } else {
+        setGitHubPublishConfigError(safeGitHubPublishConfigUpdateErrorMessage(err));
+      }
     } finally {
       setGitHubPublishConfigSubmitting(false);
     }
@@ -2874,7 +3034,7 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
               <label htmlFor="competitor-primary-timeout-seconds">
                 <AdminLabelWithHelp
                   label="Competitor Primary Timeout Seconds"
-                  helpText={`Timeout for first full search-backed attempt. Leave blank for runtime default. Range: ${COMPETITOR_TIMEOUT_SECONDS_MIN}-${COMPETITOR_TIMEOUT_SECONDS_MAX}.`}
+                  helpText={`Controls how long the first full competitor generation attempt may run. Raising it gives provider/search more time but increases operator wait; lowering it fails faster and relies more on degraded retry. Allowed range: ${COMPETITOR_TIMEOUT_SECONDS_MIN}-${COMPETITOR_TIMEOUT_SECONDS_MAX} seconds.`}
                   testId="admin-help-competitor-primary-timeout-seconds"
                 />
               </label>
@@ -2895,7 +3055,7 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
               <label htmlFor="competitor-degraded-timeout-seconds">
                 <AdminLabelWithHelp
                   label="Competitor Degraded Retry Timeout Seconds"
-                  helpText={`Timeout for degraded reduced-context retry. Leave blank for runtime default. Range: ${COMPETITOR_TIMEOUT_SECONDS_MIN}-${COMPETITOR_TIMEOUT_SECONDS_MAX}.`}
+                  helpText={`Controls the shorter fallback retry after primary generation struggles. Raising it may recover more candidates but increases wait time; lowering it returns faster with fewer candidates. Allowed range: ${COMPETITOR_TIMEOUT_SECONDS_MIN}-${COMPETITOR_TIMEOUT_SECONDS_MAX} seconds.`}
                   testId="admin-help-competitor-degraded-timeout-seconds"
                 />
               </label>
@@ -2930,81 +3090,27 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
 
         {showAdminSettings ? (
         <AiPromptGovernanceSection>
-        <SectionCard variant="summary" className="role-surface-support">
+        <SectionCard
+          variant="summary"
+          className="role-surface-support"
+          data-testid="admin-card-ai-provider-governance"
+        >
           <SectionHeader
-            title="AI Prompt Overrides"
-            subtitle="Override competitor and recommendation prompts for this business scope."
+            title="AI Provider & Prompt Governance"
+            subtitle="Control the default model and governance behavior used when an AI run does not provide an explicit model."
             headingLevel={2}
             variant="support"
           />
-          <FormContainer className="form-container-full-width" onSubmit={(event) => void handleSavePromptOverrides(event)} noValidate>
+          <div className="panel panel-compact stack-tight">
             <p className="hint muted">
-              AI prompt/model changes affect generated recommendations, competitors, and migration drafts.
+              Default model governance applies across AI-backed workflows unless a run explicitly specifies a model.
             </p>
-            <p className="hint muted">
-              Migration draft provider timeout is managed in <strong>Migration Generation Safety</strong>.
-            </p>
-            {competitorPromptContractWarning.state === "legacy_alias" ? (
-              <p className="hint warning" data-testid="competitor-prompt-override-warning">
-                {competitorPromptContractWarning.message}
-              </p>
-            ) : null}
-            {competitorPromptContractWarning.state === "invalid" ? (
-              <p className="hint error" data-testid="competitor-prompt-override-warning">
-                {competitorPromptContractWarning.message}
-              </p>
-            ) : null}
-            <div className="panel panel-compact stack-tight">
-              <strong>Prompt Overrides (high-impact)</strong>
-              <p className="hint muted">
-                Keep prompt changes bounded and review output quality after each save.
-              </p>
-              <div className="admin-grid-two">
-                <div className="stack-tight">
-                  <label htmlFor="ai-prompt-text-competitor">Competitor Prompt</label>
-                  <textarea
-                    id="ai-prompt-text-competitor"
-                    rows={7}
-                    value={competitorPromptOverrideInput}
-                    onChange={(event) => setCompetitorPromptOverrideInput(event.target.value)}
-                    disabled={businessSettingsLoading || promptOverrideSubmitting}
-                  />
-                  <p className="hint muted">
-                    Current source:{" "}
-                    <strong>
-                      {businessSettings?.ai_prompt_text_competitor
-                        ? "Business admin override"
-                        : "Deployment/default fallback"}
-                    </strong>
-                  </p>
-                </div>
-
-                <div className="stack-tight">
-                  <label htmlFor="ai-prompt-text-recommendations">Recommendations Prompt</label>
-                  <textarea
-                    id="ai-prompt-text-recommendations"
-                    rows={7}
-                    value={recommendationsPromptOverrideInput}
-                    onChange={(event) => setRecommendationsPromptOverrideInput(event.target.value)}
-                    disabled={businessSettingsLoading || promptOverrideSubmitting}
-                  />
-                  <p className="hint muted">
-                    Current source:{" "}
-                    <strong>
-                      {businessSettings?.ai_prompt_text_recommendations
-                        ? "Business admin override"
-                        : "Deployment/default fallback"}
-                    </strong>
-                  </p>
-                </div>
-              </div>
-            </div>
             <div className="admin-grid-two">
               <div className="stack-tight">
                 <label htmlFor="default-ai-model">
                   <AdminLabelWithHelp
                     label="Default AI model"
-                    helpText="Used when no per-run model override is provided. Resolution order: explicit request, business admin default, deployment env default, provider fallback."
+                    helpText="Controls fallback model selection when no run-specific model is provided. Resolution order: explicit request, business admin default, deployment default, provider fallback. Changing this may affect cost, latency, output style, and compatibility."
                     testId="admin-help-default-ai-model"
                   />
                 </label>
@@ -3026,6 +3132,90 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                 </p>
               </div>
             </div>
+          </div>
+        </SectionCard>
+        <SectionCard
+          variant="summary"
+          className="role-surface-support"
+          data-testid="admin-card-ai-prompt-overrides"
+        >
+          <SectionHeader
+            title="AI Prompt Overrides"
+            subtitle="Override competitor and recommendation prompts for this business scope."
+            headingLevel={2}
+            variant="support"
+          />
+          <FormContainer className="form-container-full-width" onSubmit={(event) => void handleSavePromptOverrides(event)} noValidate>
+            <p className="hint muted">
+              Prompt overrides affect future generated recommendations and competitor suggestions. Keep overrides bounded and contract-compatible.
+            </p>
+            <p className="hint muted">
+              Migration draft provider timeout is managed in <strong>Migration Generation Safety</strong>.
+            </p>
+            {competitorPromptContractWarning.state === "legacy_alias" ? (
+              <p className="hint warning" data-testid="competitor-prompt-override-warning">
+                {competitorPromptContractWarning.message}
+              </p>
+            ) : null}
+            {competitorPromptContractWarning.state === "invalid" ? (
+              <p className="hint error" data-testid="competitor-prompt-override-warning">
+                {competitorPromptContractWarning.message}
+              </p>
+            ) : null}
+            <div className="panel panel-compact stack-tight">
+              <strong>Prompt Overrides (high-impact)</strong>
+              <div className="admin-grid-two">
+                <div className="stack-tight">
+                  <label htmlFor="ai-prompt-text-competitor">
+                    <AdminLabelWithHelp
+                      label="Competitor Prompt"
+                      helpText="Controls how AI proposes competitor candidates. Changes affect future competitor generation only. Prompt output must preserve the strict JSON output contract; malformed prompt changes can break parsing or reduce candidate quality."
+                      testId="admin-help-competitor-prompt"
+                    />
+                  </label>
+                  <textarea
+                    id="ai-prompt-text-competitor"
+                    rows={7}
+                    value={competitorPromptOverrideInput}
+                    onChange={(event) => setCompetitorPromptOverrideInput(event.target.value)}
+                    disabled={businessSettingsLoading || promptOverrideSubmitting}
+                  />
+                  <p className="hint muted">
+                    Current source:{" "}
+                    <strong>
+                      {businessSettings?.ai_prompt_text_competitor
+                        ? "Business admin override"
+                        : "Deployment/default fallback"}
+                    </strong>
+                  </p>
+                </div>
+
+                <div className="stack-tight">
+                  <label htmlFor="ai-prompt-text-recommendations">
+                    <AdminLabelWithHelp
+                      label="Recommendations Prompt"
+                      helpText="Controls AI recommendation generation. Use this to tune tone, prioritization, and evidence framing while preserving required JSON/schema fields consumed by the UI. Malformed prompt changes can return invalid recommendations."
+                      testId="admin-help-recommendations-prompt"
+                    />
+                  </label>
+                  <textarea
+                    id="ai-prompt-text-recommendations"
+                    rows={7}
+                    value={recommendationsPromptOverrideInput}
+                    onChange={(event) => setRecommendationsPromptOverrideInput(event.target.value)}
+                    disabled={businessSettingsLoading || promptOverrideSubmitting}
+                  />
+                  <p className="hint muted">
+                    Current source:{" "}
+                    <strong>
+                      {businessSettings?.ai_prompt_text_recommendations
+                        ? "Business admin override"
+                        : "Deployment/default fallback"}
+                    </strong>
+                  </p>
+                </div>
+              </div>
+            </div>
 
             <div className="form-actions">
               <button
@@ -3035,14 +3225,21 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
               >
                 {promptOverrideSubmitting ? "Saving..." : "Save Prompt Overrides"}
               </button>
-              <button
-                className="button button-tertiary"
-                type="button"
-                onClick={() => void handleClearPromptOverrides()}
-                disabled={businessSettingsLoading || promptOverrideSubmitting}
-              >
-                Use Deployment Fallbacks
-              </button>
+              <span className="admin-action-help-inline">
+                <button
+                  className="button button-tertiary"
+                  type="button"
+                  onClick={() => void handleClearPromptOverrides()}
+                  disabled={businessSettingsLoading || promptOverrideSubmitting}
+                >
+                  Use Deployment Fallbacks
+                </button>
+                <AdminHelpIcon
+                  label="Use Deployment Fallbacks"
+                  helpText="Clears business-level prompt and default-model overrides so deployment defaults are used. This does not delete deployment configuration."
+                  testId="admin-help-use-deployment-fallbacks"
+                />
+              </span>
             </div>
             {promptOverrideMessage ? <p className="hint">{promptOverrideMessage}</p> : null}
             {promptOverrideError ? <p className="hint error">{promptOverrideError}</p> : null}
@@ -3591,6 +3788,20 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                 Tune generation depth/variety with bounded limits. Larger budgets can increase latency/cost and failure
                 risk.
               </p>
+              <p className="hint muted" data-testid="admin-migration-budget-range-summary">
+                Recommended: context {MIGRATION_CONTEXT_BUDGET_RECOMMENDED.min.toLocaleString()}-
+                {MIGRATION_CONTEXT_BUDGET_RECOMMENDED.max.toLocaleString()} chars, recommendations{" "}
+                {MIGRATION_RECOMMENDATION_LIMIT_RECOMMENDED.min}-{MIGRATION_RECOMMENDATION_LIMIT_RECOMMENDED.max},
+                competitors {MIGRATION_COMPETITOR_LIMIT_RECOMMENDED.min}-{MIGRATION_COMPETITOR_LIMIT_RECOMMENDED.max}.
+                Backend hard caps: context {MIGRATION_CONTEXT_BUDGET_BOUNDS.min.toLocaleString()}-
+                {MIGRATION_CONTEXT_BUDGET_BOUNDS.max.toLocaleString()}, recommendations{" "}
+                {MIGRATION_RECOMMENDATION_LIMIT_BOUNDS.min}-{MIGRATION_RECOMMENDATION_LIMIT_BOUNDS.max}, competitors{" "}
+                {MIGRATION_COMPETITOR_LIMIT_BOUNDS.min}-{MIGRATION_COMPETITOR_LIMIT_BOUNDS.max}, source pages{" "}
+                {MIGRATION_SOURCE_PAGE_SUMMARY_LIMIT_BOUNDS.min}-{MIGRATION_SOURCE_PAGE_SUMMARY_LIMIT_BOUNDS.max},
+                media {MIGRATION_MEDIA_ASSET_LIMIT_BOUNDS.min}-{MIGRATION_MEDIA_ASSET_LIMIT_BOUNDS.max}, generated
+                pages {MIGRATION_GENERATED_PAGE_LIMIT_BOUNDS.min}-{MIGRATION_GENERATED_PAGE_LIMIT_BOUNDS.max}, files{" "}
+                {MIGRATION_GENERATED_FILE_LIMIT_BOUNDS.min}-{MIGRATION_GENERATED_FILE_LIMIT_BOUNDS.max}.
+              </p>
               <div className="admin-grid-two admin-grid-two-compact">
                 <label htmlFor="github-publish-migration-context-budget-chars" className="stack-tight">
                   <AdminLabelWithHelp
@@ -3602,8 +3813,6 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                   <input
                     id="github-publish-migration-context-budget-chars"
                     type="number"
-                    min={MIGRATION_CONTEXT_BUDGET_BOUNDS.min}
-                    max={MIGRATION_CONTEXT_BUDGET_BOUNDS.max}
                     step={100}
                     value={githubNamespaceIsolationDefaults.migration_generation_budget.migration_context_budget_chars}
                     onChange={(event) =>
@@ -3618,6 +3827,9 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                     }
                     disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
                   />
+                  {githubMigrationFieldErrors.migration_context_budget_chars ? (
+                    <p className="hint error">{githubMigrationFieldErrors.migration_context_budget_chars}</p>
+                  ) : null}
                 </label>
                 <label htmlFor="github-publish-migration-recommendation-limit" className="stack-tight">
                   <AdminLabelWithHelp
@@ -3628,8 +3840,6 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                   <input
                     id="github-publish-migration-recommendation-limit"
                     type="number"
-                    min={MIGRATION_RECOMMENDATION_LIMIT_BOUNDS.min}
-                    max={MIGRATION_RECOMMENDATION_LIMIT_BOUNDS.max}
                     step={1}
                     value={githubNamespaceIsolationDefaults.migration_generation_budget.migration_recommendation_limit}
                     onChange={(event) =>
@@ -3644,6 +3854,9 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                     }
                     disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
                   />
+                  {githubMigrationFieldErrors.migration_recommendation_limit ? (
+                    <p className="hint error">{githubMigrationFieldErrors.migration_recommendation_limit}</p>
+                  ) : null}
                 </label>
                 <label htmlFor="github-publish-migration-competitor-limit" className="stack-tight">
                   <AdminLabelWithHelp
@@ -3654,8 +3867,6 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                   <input
                     id="github-publish-migration-competitor-limit"
                     type="number"
-                    min={MIGRATION_COMPETITOR_LIMIT_BOUNDS.min}
-                    max={MIGRATION_COMPETITOR_LIMIT_BOUNDS.max}
                     step={1}
                     value={githubNamespaceIsolationDefaults.migration_generation_budget.migration_competitor_limit}
                     onChange={(event) =>
@@ -3670,6 +3881,9 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                     }
                     disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
                   />
+                  {githubMigrationFieldErrors.migration_competitor_limit ? (
+                    <p className="hint error">{githubMigrationFieldErrors.migration_competitor_limit}</p>
+                  ) : null}
                 </label>
                 <label htmlFor="github-publish-migration-source-page-summary-limit" className="stack-tight">
                   <AdminLabelWithHelp
@@ -3680,8 +3894,6 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                   <input
                     id="github-publish-migration-source-page-summary-limit"
                     type="number"
-                    min={MIGRATION_SOURCE_PAGE_SUMMARY_LIMIT_BOUNDS.min}
-                    max={MIGRATION_SOURCE_PAGE_SUMMARY_LIMIT_BOUNDS.max}
                     step={1}
                     value={githubNamespaceIsolationDefaults.migration_generation_budget.migration_source_page_summary_limit}
                     onChange={(event) =>
@@ -3696,6 +3908,9 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                     }
                     disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
                   />
+                  {githubMigrationFieldErrors.migration_source_page_summary_limit ? (
+                    <p className="hint error">{githubMigrationFieldErrors.migration_source_page_summary_limit}</p>
+                  ) : null}
                 </label>
                 <label htmlFor="github-publish-migration-media-asset-limit" className="stack-tight">
                   <AdminLabelWithHelp
@@ -3706,8 +3921,6 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                   <input
                     id="github-publish-migration-media-asset-limit"
                     type="number"
-                    min={MIGRATION_MEDIA_ASSET_LIMIT_BOUNDS.min}
-                    max={MIGRATION_MEDIA_ASSET_LIMIT_BOUNDS.max}
                     step={1}
                     value={githubNamespaceIsolationDefaults.migration_generation_budget.migration_media_asset_limit}
                     onChange={(event) =>
@@ -3722,6 +3935,9 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                     }
                     disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
                   />
+                  {githubMigrationFieldErrors.migration_media_asset_limit ? (
+                    <p className="hint error">{githubMigrationFieldErrors.migration_media_asset_limit}</p>
+                  ) : null}
                 </label>
                 <label htmlFor="github-publish-migration-generated-page-limit" className="stack-tight">
                   <AdminLabelWithHelp
@@ -3732,8 +3948,6 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                   <input
                     id="github-publish-migration-generated-page-limit"
                     type="number"
-                    min={MIGRATION_GENERATED_PAGE_LIMIT_BOUNDS.min}
-                    max={MIGRATION_GENERATED_PAGE_LIMIT_BOUNDS.max}
                     step={1}
                     value={githubNamespaceIsolationDefaults.migration_generation_budget.migration_generated_page_limit}
                     onChange={(event) =>
@@ -3748,6 +3962,9 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                     }
                     disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
                   />
+                  {githubMigrationFieldErrors.migration_generated_page_limit ? (
+                    <p className="hint error">{githubMigrationFieldErrors.migration_generated_page_limit}</p>
+                  ) : null}
                 </label>
                 <label htmlFor="github-publish-migration-generated-file-limit" className="stack-tight">
                   <AdminLabelWithHelp
@@ -3758,8 +3975,6 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                   <input
                     id="github-publish-migration-generated-file-limit"
                     type="number"
-                    min={MIGRATION_GENERATED_FILE_LIMIT_BOUNDS.min}
-                    max={MIGRATION_GENERATED_FILE_LIMIT_BOUNDS.max}
                     step={1}
                     value={githubNamespaceIsolationDefaults.migration_generation_budget.migration_generated_file_limit}
                     onChange={(event) =>
@@ -3774,6 +3989,9 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                     }
                     disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
                   />
+                  {githubMigrationFieldErrors.migration_generated_file_limit ? (
+                    <p className="hint error">{githubMigrationFieldErrors.migration_generated_file_limit}</p>
+                  ) : null}
                 </label>
                 <label htmlFor="github-publish-migration-generation-depth" className="stack-tight">
                   <AdminLabelWithHelp
@@ -3866,6 +4084,28 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                 provider. Backend hard caps still apply even if Admin values are higher.
               </p>
               <p className="hint muted">Maximum synchronous timeout is 600 seconds (10 minutes).</p>
+              <p className="hint muted" data-testid="admin-migration-safety-range-summary">
+                Recommended: max final input {MIGRATION_MAX_FINAL_INPUT_CHARS_RECOMMENDED.min.toLocaleString()}-
+                {MIGRATION_MAX_FINAL_INPUT_CHARS_RECOMMENDED.max.toLocaleString()} chars, difficulty{" "}
+                {MIGRATION_MAX_DIFFICULTY_SCORE_RECOMMENDED.min}-{MIGRATION_MAX_DIFFICULTY_SCORE_RECOMMENDED.max},
+                compact pages {MIGRATION_COMPACT_PAGE_LIMIT_RECOMMENDED.min}-
+                {MIGRATION_COMPACT_PAGE_LIMIT_RECOMMENDED.max}, compact media{" "}
+                {MIGRATION_COMPACT_MEDIA_LIMIT_RECOMMENDED.min}-{MIGRATION_COMPACT_MEDIA_LIMIT_RECOMMENDED.max},
+                compact recommendations {MIGRATION_COMPACT_RECOMMENDATION_LIMIT_RECOMMENDED.min}-
+                {MIGRATION_COMPACT_RECOMMENDATION_LIMIT_RECOMMENDED.max}. Backend hard caps: timeout{" "}
+                {MIGRATION_PROVIDER_TIMEOUT_BOUNDS.min}-{MIGRATION_PROVIDER_TIMEOUT_BOUNDS.max}s, max final input{" "}
+                {MIGRATION_MAX_FINAL_INPUT_CHARS_BOUNDS.min.toLocaleString()}-
+                {MIGRATION_MAX_FINAL_INPUT_CHARS_BOUNDS.max.toLocaleString()}, difficulty{" "}
+                {MIGRATION_MAX_DIFFICULTY_SCORE_BOUNDS.min}-{MIGRATION_MAX_DIFFICULTY_SCORE_BOUNDS.max}, compact
+                pages {MIGRATION_COMPACT_PAGE_LIMIT_BOUNDS.min}-{MIGRATION_COMPACT_PAGE_LIMIT_BOUNDS.max}, compact
+                media {MIGRATION_COMPACT_MEDIA_LIMIT_BOUNDS.min}-{MIGRATION_COMPACT_MEDIA_LIMIT_BOUNDS.max}, compact
+                recommendations {MIGRATION_COMPACT_RECOMMENDATION_LIMIT_BOUNDS.min}-
+                {MIGRATION_COMPACT_RECOMMENDATION_LIMIT_BOUNDS.max}.
+              </p>
+              <p className="hint muted">
+                If requested values exceed backend caps, save is rejected or adjusted by backend policy and effective
+                values are shown in preview.
+              </p>
               <div className="admin-grid-two admin-grid-two-compact">
                 <label htmlFor="github-publish-migration-provider-timeout-seconds" className="stack-tight">
                   <AdminLabelWithHelp
@@ -3877,8 +4117,6 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                   <input
                     id="github-publish-migration-provider-timeout-seconds"
                     type="number"
-                    min={MIGRATION_PROVIDER_TIMEOUT_BOUNDS.min}
-                    max={MIGRATION_PROVIDER_TIMEOUT_BOUNDS.max}
                     step={1}
                     value={githubNamespaceIsolationDefaults.migration_generation_safety.migration_provider_timeout_seconds}
                     onChange={(event) =>
@@ -3893,6 +4131,9 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                     }
                     disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
                   />
+                  {githubMigrationFieldErrors.migration_provider_timeout_seconds ? (
+                    <p className="hint error">{githubMigrationFieldErrors.migration_provider_timeout_seconds}</p>
+                  ) : null}
                 </label>
                 <label htmlFor="github-publish-migration-preflight-mode" className="stack-tight">
                   <AdminLabelWithHelp
@@ -3928,8 +4169,6 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                   <input
                     id="github-publish-migration-max-final-input-chars"
                     type="number"
-                    min={MIGRATION_MAX_FINAL_INPUT_CHARS_BOUNDS.min}
-                    max={MIGRATION_MAX_FINAL_INPUT_CHARS_BOUNDS.max}
                     step={100}
                     value={githubNamespaceIsolationDefaults.migration_generation_safety.migration_max_final_input_chars}
                     onChange={(event) =>
@@ -3944,6 +4183,9 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                     }
                     disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
                   />
+                  {githubMigrationFieldErrors.migration_max_final_input_chars ? (
+                    <p className="hint error">{githubMigrationFieldErrors.migration_max_final_input_chars}</p>
+                  ) : null}
                 </label>
                 <label htmlFor="github-publish-migration-max-difficulty-score" className="stack-tight">
                   <AdminLabelWithHelp
@@ -3954,8 +4196,6 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                   <input
                     id="github-publish-migration-max-difficulty-score"
                     type="number"
-                    min={MIGRATION_MAX_DIFFICULTY_SCORE_BOUNDS.min}
-                    max={MIGRATION_MAX_DIFFICULTY_SCORE_BOUNDS.max}
                     step={1}
                     value={githubNamespaceIsolationDefaults.migration_generation_safety.migration_max_difficulty_score}
                     onChange={(event) =>
@@ -3970,6 +4210,9 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                     }
                     disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
                   />
+                  {githubMigrationFieldErrors.migration_max_difficulty_score ? (
+                    <p className="hint error">{githubMigrationFieldErrors.migration_max_difficulty_score}</p>
+                  ) : null}
                 </label>
                 <label htmlFor="github-publish-migration-compact-page-limit" className="stack-tight">
                   <AdminLabelWithHelp
@@ -3980,8 +4223,6 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                   <input
                     id="github-publish-migration-compact-page-limit"
                     type="number"
-                    min={MIGRATION_COMPACT_PAGE_LIMIT_BOUNDS.min}
-                    max={MIGRATION_COMPACT_PAGE_LIMIT_BOUNDS.max}
                     step={1}
                     value={githubNamespaceIsolationDefaults.migration_generation_safety.migration_compact_page_limit}
                     onChange={(event) =>
@@ -3996,6 +4237,9 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                     }
                     disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
                   />
+                  {githubMigrationFieldErrors.migration_compact_page_limit ? (
+                    <p className="hint error">{githubMigrationFieldErrors.migration_compact_page_limit}</p>
+                  ) : null}
                 </label>
                 <label htmlFor="github-publish-migration-compact-media-limit" className="stack-tight">
                   <AdminLabelWithHelp
@@ -4006,8 +4250,6 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                   <input
                     id="github-publish-migration-compact-media-limit"
                     type="number"
-                    min={MIGRATION_COMPACT_MEDIA_LIMIT_BOUNDS.min}
-                    max={MIGRATION_COMPACT_MEDIA_LIMIT_BOUNDS.max}
                     step={1}
                     value={githubNamespaceIsolationDefaults.migration_generation_safety.migration_compact_media_asset_limit}
                     onChange={(event) =>
@@ -4022,6 +4264,9 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                     }
                     disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
                   />
+                  {githubMigrationFieldErrors.migration_compact_media_asset_limit ? (
+                    <p className="hint error">{githubMigrationFieldErrors.migration_compact_media_asset_limit}</p>
+                  ) : null}
                 </label>
                 <label htmlFor="github-publish-migration-compact-recommendation-limit" className="stack-tight">
                   <AdminLabelWithHelp
@@ -4032,8 +4277,6 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                   <input
                     id="github-publish-migration-compact-recommendation-limit"
                     type="number"
-                    min={MIGRATION_COMPACT_RECOMMENDATION_LIMIT_BOUNDS.min}
-                    max={MIGRATION_COMPACT_RECOMMENDATION_LIMIT_BOUNDS.max}
                     step={1}
                     value={githubNamespaceIsolationDefaults.migration_generation_safety.migration_compact_recommendation_limit}
                     onChange={(event) =>
@@ -4048,6 +4291,9 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                     }
                     disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
                   />
+                  {githubMigrationFieldErrors.migration_compact_recommendation_limit ? (
+                    <p className="hint error">{githubMigrationFieldErrors.migration_compact_recommendation_limit}</p>
+                  ) : null}
                 </label>
               </div>
               <label htmlFor="github-publish-migration-compact-fallback-enabled" className="checkbox-chip">
@@ -4123,17 +4369,87 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                 <WorkspaceMetadataItem label="Migration variation">
                   <code>{githubNamespaceIsolationDefaults.migration_generation_budget.migration_variation_level}</code>
                 </WorkspaceMetadataItem>
-                <WorkspaceMetadataItem label="Migration context budget">
-                  <code>{githubNamespaceIsolationDefaults.migration_generation_budget.migration_context_budget_chars}</code>
+                <WorkspaceMetadataItem label="Migration context budget (requested / effective / capped)">
+                  <code>
+                    {requestedMigrationBudget.migration_context_budget_chars} /{" "}
+                    {effectiveMigrationBudget.migration_context_budget_chars} /{" "}
+                    {requestedMigrationBudget.migration_context_budget_chars !==
+                    effectiveMigrationBudget.migration_context_budget_chars
+                      ? "Yes"
+                      : "No"}
+                  </code>
                 </WorkspaceMetadataItem>
-                <WorkspaceMetadataItem label="Migration timeout">
-                  <code>{githubNamespaceIsolationDefaults.migration_generation_safety.migration_provider_timeout_seconds}s</code>
+                <WorkspaceMetadataItem label="Migration recommendation limit (requested / effective / capped)">
+                  <code>
+                    {requestedMigrationBudget.migration_recommendation_limit} /{" "}
+                    {effectiveMigrationBudget.migration_recommendation_limit} /{" "}
+                    {requestedMigrationBudget.migration_recommendation_limit !==
+                    effectiveMigrationBudget.migration_recommendation_limit
+                      ? "Yes"
+                      : "No"}
+                  </code>
+                </WorkspaceMetadataItem>
+                <WorkspaceMetadataItem label="Migration timeout (requested / effective / capped)">
+                  <code>
+                    {requestedMigrationSafety.migration_provider_timeout_seconds}s /{" "}
+                    {effectiveMigrationSafety.migration_provider_timeout_seconds}s /{" "}
+                    {requestedMigrationSafety.migration_provider_timeout_seconds !==
+                    effectiveMigrationSafety.migration_provider_timeout_seconds
+                      ? "Yes"
+                      : "No"}
+                  </code>
                 </WorkspaceMetadataItem>
                 <WorkspaceMetadataItem label="Migration preflight mode">
-                  <code>{githubNamespaceIsolationDefaults.migration_generation_safety.migration_preflight_mode}</code>
+                  <code>{requestedMigrationSafety.migration_preflight_mode}</code>
                 </WorkspaceMetadataItem>
-                <WorkspaceMetadataItem label="Migration max input chars">
-                  <code>{githubNamespaceIsolationDefaults.migration_generation_safety.migration_max_final_input_chars}</code>
+                <WorkspaceMetadataItem label="Migration max input chars (requested / effective / capped)">
+                  <code>
+                    {requestedMigrationSafety.migration_max_final_input_chars} /{" "}
+                    {effectiveMigrationSafety.migration_max_final_input_chars} /{" "}
+                    {requestedMigrationSafety.migration_max_final_input_chars !==
+                    effectiveMigrationSafety.migration_max_final_input_chars
+                      ? "Yes"
+                      : "No"}
+                  </code>
+                </WorkspaceMetadataItem>
+                <WorkspaceMetadataItem label="Migration max difficulty (requested / effective / capped)">
+                  <code>
+                    {requestedMigrationSafety.migration_max_difficulty_score} /{" "}
+                    {effectiveMigrationSafety.migration_max_difficulty_score} /{" "}
+                    {requestedMigrationSafety.migration_max_difficulty_score !==
+                    effectiveMigrationSafety.migration_max_difficulty_score
+                      ? "Yes"
+                      : "No"}
+                  </code>
+                </WorkspaceMetadataItem>
+                <WorkspaceMetadataItem label="Migration compact limits (pages/media/reco)">
+                  <code>
+                    {requestedMigrationSafety.migration_compact_page_limit}/
+                    {requestedMigrationSafety.migration_compact_media_asset_limit}/
+                    {requestedMigrationSafety.migration_compact_recommendation_limit} requested
+                    {" -> "}
+                    {effectiveMigrationSafety.migration_compact_page_limit}/
+                    {effectiveMigrationSafety.migration_compact_media_asset_limit}/
+                    {effectiveMigrationSafety.migration_compact_recommendation_limit} effective
+                  </code>
+                </WorkspaceMetadataItem>
+                <WorkspaceMetadataItem label="Migration settings differ (requested vs effective)">
+                  <span>{migrationRequestedVsEffectiveDiffCount > 0 ? "Yes" : "No"}</span>
+                </WorkspaceMetadataItem>
+                <WorkspaceMetadataItem label="Migration cap reason">
+                  <span>
+                    {githubMigrationAdjustmentReason === "backend_adjusted_values"
+                      ? "Backend validation/cap policy adjusted one or more requested values."
+                      : githubMigrationAdjustmentReason === "backend_validation_rejected"
+                        ? "Last save was rejected by backend validation; requested values were not applied."
+                        : "None"}
+                  </span>
+                </WorkspaceMetadataItem>
+                <WorkspaceMetadataItem label="Migration requested/effective note">
+                  <span className="hint muted">
+                    Differences before save indicate pending edits. Differences after save indicate backend-adjusted
+                    effective values.
+                  </span>
                 </WorkspaceMetadataItem>
                 <WorkspaceMetadataItem label="Enabled">
                   <span>{githubPublishEnabled ? "Yes" : "No"}</span>

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 import AdminPage from "./page";
 import UsersCompatibilityPage from "../users/page";
@@ -341,7 +341,12 @@ describe("admin route", () => {
     expect(screen.queryByRole("heading", { name: "User ID Management" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Create User" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Create and Link Identity" })).not.toBeInTheDocument();
-    expect(screen.getByLabelText("Default AI model")).toBeInTheDocument();
+    const providerGovernanceCard = screen.getByTestId("admin-card-ai-provider-governance");
+    const promptOverridesCard = screen.getByTestId("admin-card-ai-prompt-overrides");
+    expect(within(providerGovernanceCard).getByLabelText("Default AI model")).toBeInTheDocument();
+    expect(within(promptOverridesCard).queryByLabelText("Default AI model")).not.toBeInTheDocument();
+    expect(within(promptOverridesCard).getByLabelText("Competitor Prompt")).toBeInTheDocument();
+    expect(within(promptOverridesCard).getByLabelText("Recommendations Prompt")).toBeInTheDocument();
     expect(screen.queryByLabelText("Migration Draft Timeout (seconds)")).not.toBeInTheDocument();
     expect(screen.getByLabelText("GitHub account/owner")).toBeInTheDocument();
     const publishEnabledToggle = screen.getByLabelText("Enable migration GitHub publish target");
@@ -359,7 +364,11 @@ describe("admin route", () => {
     expect(screen.getByLabelText("Generation profile")).toBeInTheDocument();
     expect(screen.getByLabelText("Variation level")).toBeInTheDocument();
     expect(screen.getByText("Admin configures governance and platform defaults. Workflow execution remains on dedicated operational routes.")).toBeInTheDocument();
-    expect(screen.getByText("AI prompt/model changes affect generated recommendations, competitors, and migration drafts.")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Prompt overrides affect future generated recommendations and competitor suggestions. Keep overrides bounded and contract-compatible.",
+      ),
+    ).toBeInTheDocument();
     expect(
       screen.getByText(/Migration draft provider timeout is managed in/i),
     ).toBeInTheDocument();
@@ -495,23 +504,50 @@ describe("admin route", () => {
 
     const minRelevanceHelp = screen.getByTestId("admin-help-minimum-relevance-score");
     const bigBoxHelp = screen.getByTestId("admin-help-big-box-mismatch-penalty");
+    const primaryCompetitorTimeoutHelp = screen.getByTestId("admin-help-competitor-primary-timeout-seconds");
+    const degradedCompetitorTimeoutHelp = screen.getByTestId("admin-help-competitor-degraded-timeout-seconds");
+    const competitorPromptHelp = screen.getByTestId("admin-help-competitor-prompt");
+    const recommendationsPromptHelp = screen.getByTestId("admin-help-recommendations-prompt");
     const defaultModelHelp = screen.getByTestId("admin-help-default-ai-model");
+    const fallbackHelp = screen.getByTestId("admin-help-use-deployment-fallbacks");
     const timeoutHelp = screen.getByTestId("admin-help-migration-provider-timeout-seconds");
     const contextBudgetHelp = screen.getByTestId("admin-help-migration-context-budget");
     const preflightHelp = screen.getByTestId("admin-help-preflight-mode");
     const managedClusterHelp = screen.getByTestId("admin-help-managed-gke-cluster-name");
     const networkPolicyModeHelp = screen.getByTestId("admin-help-networkpolicy-mode");
 
-    [minRelevanceHelp, bigBoxHelp, defaultModelHelp, timeoutHelp, contextBudgetHelp, preflightHelp, managedClusterHelp, networkPolicyModeHelp].forEach(
-      (helpButton) => {
-        expect(helpButton).toHaveAttribute("aria-label");
-        expect(helpButton).toHaveAttribute("data-help-text");
-      },
-    );
+    [
+      minRelevanceHelp,
+      bigBoxHelp,
+      primaryCompetitorTimeoutHelp,
+      degradedCompetitorTimeoutHelp,
+      competitorPromptHelp,
+      recommendationsPromptHelp,
+      defaultModelHelp,
+      fallbackHelp,
+      timeoutHelp,
+      contextBudgetHelp,
+      preflightHelp,
+      managedClusterHelp,
+      networkPolicyModeHelp,
+    ].forEach((helpButton) => {
+      expect(helpButton).toHaveAttribute("aria-label");
+      expect(helpButton).toHaveAttribute("data-help-text");
+    });
 
     expect(timeoutHelp).toHaveAttribute(
       "data-help-text",
       "Maximum synchronous timeout is 600 seconds / 10 minutes. Longer timeouts increase latency/cost and do not fix oversized or overly complex prompts.",
+    );
+    expect(primaryCompetitorTimeoutHelp).toHaveAttribute("data-help-text", expect.stringContaining("first full competitor generation attempt"));
+    expect(degradedCompetitorTimeoutHelp).toHaveAttribute("data-help-text", expect.stringContaining("shorter fallback retry"));
+    expect(competitorPromptHelp).toHaveAttribute("data-help-text", expect.stringContaining("strict JSON output contract"));
+    expect(recommendationsPromptHelp).toHaveAttribute("data-help-text", expect.stringContaining("required JSON/schema fields"));
+    expect(defaultModelHelp).toHaveAttribute("data-help-text", expect.stringContaining("Resolution order: explicit request"));
+    expect(defaultModelHelp).toHaveAttribute("data-help-text", expect.stringContaining("cost, latency, output style, and compatibility"));
+    expect(fallbackHelp).toHaveAttribute(
+      "data-help-text",
+      "Clears business-level prompt and default-model overrides so deployment defaults are used. This does not delete deployment configuration.",
     );
   });
 
@@ -576,7 +612,10 @@ describe("admin route", () => {
 
     render(<AdminPage />);
 
-    const defaultModelInput = await screen.findByLabelText("Default AI model");
+    const providerGovernanceCard = await screen.findByTestId("admin-card-ai-provider-governance");
+    const promptOverridesCard = await screen.findByTestId("admin-card-ai-prompt-overrides");
+    const defaultModelInput = within(providerGovernanceCard).getByLabelText("Default AI model");
+    expect(within(promptOverridesCard).queryByLabelText("Default AI model")).not.toBeInTheDocument();
     await waitFor(() => {
       expect(defaultModelInput).toHaveValue("gpt-4.1-mini");
     });
@@ -769,7 +808,7 @@ describe("admin route", () => {
     fireEvent.click(screen.getByLabelText("Require page variety"));
     expect(screen.getByTestId("github-publish-migration-generation-safety")).toBeInTheDocument();
     const providerTimeoutInput = screen.getByLabelText("Provider timeout seconds");
-    expect(providerTimeoutInput).toHaveAttribute("max", "600");
+    expect(providerTimeoutInput).not.toHaveAttribute("max");
     fireEvent.change(providerTimeoutInput, { target: { value: "240" } });
     fireEvent.change(screen.getByLabelText("Preflight mode"), { target: { value: "block_before_provider" } });
     fireEvent.change(screen.getByLabelText("Max final input chars"), { target: { value: "8500" } });
@@ -882,6 +921,102 @@ describe("admin route", () => {
     expect(screen.getByText("Resolve validation issues above before saving.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Save GitHub Publish Config" })).toBeDisabled();
     expect(mockUpdateGitHubPublishConfig).not.toHaveBeenCalled();
+  });
+
+  it("allows migration safety inputs beyond prior UI caps and surfaces backend field validation errors", async () => {
+    const { ApiRequestError } = jest.requireMock("../../lib/api/client") as {
+      ApiRequestError: new (message: string, status?: number) => Error;
+    };
+    mockUpdateGitHubPublishConfig.mockRejectedValueOnce(
+      new ApiRequestError(
+        JSON.stringify([
+          {
+            loc: [
+              "body",
+              "namespace_isolation_defaults",
+              "migration_generation_safety",
+              "migration_provider_timeout_seconds",
+            ],
+            msg: "Input should be less than or equal to 600",
+            input: 6000,
+          },
+        ]),
+        422,
+      ),
+    );
+    mockUseAuth.mockReturnValue({
+      principal: {
+        business_id: "biz-1",
+        principal_id: "admin-migration-ranges",
+        display_name: "Admin Migration Ranges",
+        role: "admin",
+        is_active: true,
+      },
+    });
+
+    render(<AdminPage />);
+
+    await screen.findByLabelText("GitHub account/owner");
+    const providerTimeoutInput = screen.getByLabelText("Provider timeout seconds");
+    const maxFinalInput = screen.getByLabelText("Max final input chars");
+    const maxDifficultyInput = screen.getByLabelText("Max difficulty score");
+    expect(providerTimeoutInput).not.toHaveAttribute("max");
+    expect(maxFinalInput).not.toHaveAttribute("max");
+    expect(maxDifficultyInput).not.toHaveAttribute("max");
+
+    fireEvent.change(providerTimeoutInput, { target: { value: "6000" } });
+    fireEvent.change(maxFinalInput, { target: { value: "22000" } });
+    fireEvent.change(maxDifficultyInput, { target: { value: "25" } });
+    expect(providerTimeoutInput).toHaveValue(6000);
+    expect(maxFinalInput).toHaveValue(22000);
+    expect(maxDifficultyInput).toHaveValue(25);
+
+    fireEvent.click(screen.getByRole("button", { name: "Save GitHub Publish Config" }));
+
+    await waitFor(() => {
+      expect(mockUpdateGitHubPublishConfig).toHaveBeenCalled();
+    });
+    const payload = mockUpdateGitHubPublishConfig.mock.calls.at(-1)?.[1];
+    expect(payload.namespace_isolation_defaults.migration_generation_safety.migration_provider_timeout_seconds).toBe(
+      6000,
+    );
+    expect(payload.namespace_isolation_defaults.migration_generation_safety.migration_max_final_input_chars).toBe(
+      22000,
+    );
+    expect(payload.namespace_isolation_defaults.migration_generation_safety.migration_max_difficulty_score).toBe(25);
+
+    expect(
+      await screen.findByText(
+        "Backend validation rejected one or more migration generation settings. Review highlighted fields and try again.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Provider timeout seconds attempted value 6000 is outside the backend-allowed range 60-600. Save was rejected by backend validation.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("shows requested/effective/capped migration preview values", async () => {
+    mockUseAuth.mockReturnValue({
+      principal: {
+        business_id: "biz-1",
+        principal_id: "admin-migration-preview",
+        display_name: "Admin Migration Preview",
+        role: "admin",
+        is_active: true,
+      },
+    });
+
+    render(<AdminPage />);
+
+    await screen.findByLabelText("GitHub account/owner");
+    const preview = screen.getByTestId("github-publish-effective-preview");
+    expect(preview).toHaveTextContent("300s / 300s / No");
+
+    fireEvent.change(screen.getByLabelText("Provider timeout seconds"), { target: { value: "420" } });
+    expect(preview).toHaveTextContent("420s / 300s / Yes");
+    expect(preview).toHaveTextContent("Differences before save indicate pending edits.");
   });
 
   it("keeps /users as a compatibility route", async () => {

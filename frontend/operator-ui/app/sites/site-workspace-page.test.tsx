@@ -2957,6 +2957,9 @@ describe("site migration workflow route", () => {
     expect(within(draftInputSummary).getByTestId("migration-draft-input-generation-max-final-input")).toHaveTextContent(
       "9,000",
     );
+    expect(within(draftInputSummary).getByTestId("migration-draft-input-generation-compact-limits")).toHaveTextContent(
+      "default",
+    );
 
     const mediaSection = await screen.findByTestId("migration-media-section");
     expect(within(mediaSection).getByText("Images")).toBeInTheDocument();
@@ -3012,6 +3015,9 @@ describe("site migration workflow route", () => {
     expect(
       within(draftInputSummary).getByTestId("migration-draft-input-generation-preflight-blocked-message"),
     ).toHaveTextContent("blocked before provider call");
+    expect(
+      within(draftInputSummary).getByTestId("migration-draft-input-generation-cap-reason"),
+    ).toHaveTextContent("final input chars exceeded");
   });
 
   it("groups repeated publish/deploy failures and limits history summaries by default", async () => {

@@ -531,12 +531,15 @@ Admin ownership groups:
 - Overview: business-level admin posture and configuration navigation.
 - Audit & Crawl Settings: crawl depth and audit evidence collection defaults.
 - Competitor Generation Settings: deterministic candidate quality and generation timeout tuning.
-- AI Provider & Prompt Governance: prompt/model defaults and migration draft timeout guardrails.
+- AI Provider & Prompt Governance: default AI model governance used when runs do not provide explicit model overrides.
+- AI Prompt Overrides: business-scoped competitor/recommendation prompt overrides and fallback controls.
 - Publish & Deployment Configuration: GitHub target, managed GKE target, and managed deploy secret controls.
 - Migration AI Budget: migration context/generation limits, depth profile, and variation controls.
 - Migration Generation Safety: provider timeout and preflight guardrails (`compact_fallback` vs `block_before_provider`) with hard backend caps.
   - timeout source of truth is Migration Generation Safety provider timeout (`60-600` seconds, default `300`)
   - `6000` seconds is intentionally unsupported for synchronous operator/API generation
+  - Admin UI no longer silently clamps migration safety/budget numeric fields before submit; backend validation is authoritative.
+  - Admin preview shows requested vs effective values (and capped/rejected signals) for migration generation controls.
 - Managed Namespace Policy: ResourceQuota, LimitRange, and NetworkPolicy defaults for managed site namespaces.
 - Site Registry Management: site records and destructive site delete controls.
 - Diagnostics & Logs: read-only Cloud Logging investigation.
@@ -550,6 +553,11 @@ Execution ownership remains on dedicated routes:
 
 Admin settings help UX:
 - Admin forms use compact info icons/tooltips for per-setting guidance.
+- Tooltip guidance standard:
+  - what the setting controls
+  - what changing it does
+  - key tradeoff/risk (for example latency/cost/quality/contract compatibility)
+- Migration generation safety/budget settings surface both recommended ranges and backend hard-cap ranges.
 - Always-visible inline text is reserved for section summaries, high-risk warnings, destructive actions, and save/error states.
 
 ## Admin Competitor Timeout Controls

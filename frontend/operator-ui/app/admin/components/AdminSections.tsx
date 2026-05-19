@@ -122,14 +122,9 @@ export function CompetitorGenerationSettingsSection({ children }: AdminSectionWi
 
 export function AiPromptGovernanceSection({ children }: AdminSectionWithChildrenProps) {
   return (
-    <>
-      <AdminGroupHeading
-        id="admin-group-ai-governance"
-        title="AI Provider & Prompt Governance"
-        description="AI prompt and model changes affect generated recommendations, competitors, and migration drafts."
-      />
+    <div id="admin-group-ai-governance" className="stack">
       {children}
-    </>
+    </div>
   );
 }
 
