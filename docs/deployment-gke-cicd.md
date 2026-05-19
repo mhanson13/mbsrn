@@ -177,6 +177,41 @@ Defense-in-depth follow-up (not changed by this pass):
   - keeps `app.mbsrn.com` operator deployment path isolated
   - `frontend/www` runs Next.js standalone mode; production image optimization requires `sharp` in runtime dependencies
 
+- `deploy-datadog.yml`
+  - workflow-dispatch only path for Datadog observability resources
+  - authenticates with existing GCP Workload Identity and fetches GKE credentials
+  - ensures namespace `datadog`
+  - creates/updates Kubernetes secret `datadog-secret` in `datadog` namespace from GitHub secret `DATADOG_API_KEY`
+    - secret key name: `api-key`
+  - applies `k8s/datadog/datadog-agent.yaml`
+
+### Datadog Observability Baseline
+
+Datadog secret flow:
+
+`GitHub secret DATADOG_API_KEY` -> `deploy-datadog.yml` -> Kubernetes secret `datadog-secret` (`api-key`) -> DatadogAgent `datadog` in namespace `datadog`.
+
+DatadogAgent settings (authoritative manifest: `k8s/datadog/datadog-agent.yaml`):
+- cluster name: `mbsrn-prod`
+- Datadog site: `us3.datadoghq.com`
+- secret reference only (`datadog-secret` / `api-key`)
+- registry: `gcr.io/datadoghq`
+- tag: `env:prod`
+- features enabled:
+  - cluster checks
+  - orchestrator explorer
+  - log collection (`containerCollectAll: true`)
+
+Rotation procedure:
+1. Update GitHub secret `DATADOG_API_KEY`.
+2. Re-run workflow `deploy-datadog`.
+3. Confirm `datadog-secret` and DatadogAgent reconcile in namespace `datadog`.
+
+Secret handling policy:
+- never commit Datadog API key values
+- never print Datadog API key values in workflow logs
+- never commit generated Kubernetes Secret manifests with real values
+
 ### Deployment Path Precedence
 - Production-authoritative path:
   - `.github/workflows/deploy-prod.yml` + `k8s/*`
