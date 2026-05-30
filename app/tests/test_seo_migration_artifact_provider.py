@@ -847,9 +847,9 @@ def test_openai_migration_provider_budget_trimming_preserves_required_context_bl
         timeout_seconds=5,
     )
     migration_context = _build_migration_context()
-    migration_context["existing_context_summaries"] = {"summary": "A" * 22000}
-    migration_context["brand_business_facts_snapshot"] = {"facts": "B" * 22000}
-    migration_context["enriched_content_notes"] = {"notes": "C" * 22000}
+    migration_context["existing_context_summaries"] = {"summary": "A" * 52000}
+    migration_context["brand_business_facts_snapshot"] = {"facts": "B" * 52000}
+    migration_context["enriched_content_notes"] = {"notes": "C" * 52000}
 
     budgeted_context, budget_result = provider._apply_migration_context_budget(migration_context)
 
@@ -878,7 +878,68 @@ def test_openai_migration_provider_uses_generation_budget_context_chars_with_saf
 
     migration_context["generation_budget"] = {"migration_context_budget_chars": 1000000}
     _, capped_budget_result = provider._apply_migration_context_budget(migration_context)
-    assert capped_budget_result.get("budget_size_chars") == 50000
+    assert capped_budget_result.get("budget_size_chars") == 150000
+
+
+def test_openai_migration_provider_allows_realistic_operator_requirements_under_new_default_cap() -> None:
+    provider = OpenAISEOMigrationArtifactGenerationProvider(
+        api_key="test-key",
+        model_name="gpt-5.1",
+        timeout_seconds=5,
+    )
+    migration_context = _build_migration_context()
+    migration_context["operator_requirements"] = {"website_requirements": "R" * 5000}
+    migration_context["existing_context_summaries"] = {"summary": "S" * 9000}
+
+    _, budget_result = provider._apply_migration_context_budget(migration_context)
+    preflight = provider._evaluate_generation_preflight(
+        budget_result=budget_result,
+        generation_safety=provider._resolve_generation_safety_profile(migration_context),
+    )
+
+    assert int(budget_result.get("final_size_chars") or 0) > 12000
+    assert preflight.get("blocked") is False
+
+
+def test_openai_migration_provider_clamps_hard_preflight_caps_and_skips_provider_call(monkeypatch) -> None:
+    provider = OpenAISEOMigrationArtifactGenerationProvider(
+        api_key="test-key",
+        model_name="gpt-5.1",
+        timeout_seconds=5,
+    )
+    migration_context = _build_migration_context()
+    site_snapshot = dict(migration_context.get("site_snapshot") or {})
+    site_snapshot["display_name"] = "X" * 220000
+    migration_context["site_snapshot"] = site_snapshot
+    migration_context["generation_safety"] = {
+        "migration_preflight_mode": "block_before_provider",
+        "migration_max_final_input_chars": 999999,
+        "migration_max_difficulty_score": 999,
+        "migration_compact_fallback_enabled": False,
+    }
+
+    provider_called = False
+
+    def _fail_if_called(request, timeout):  # noqa: ANN001
+        del request, timeout
+        nonlocal provider_called
+        provider_called = True
+        raise AssertionError("provider call should be skipped when preflight blocks")
+
+    monkeypatch.setattr(urllib.request, "urlopen", _fail_if_called)
+
+    with pytest.raises(SEOMigrationArtifactProviderError) as exc_info:
+        provider.generate_artifacts(migration_context=migration_context)
+
+    error = exc_info.value
+    assert provider_called is False
+    assert error.code == "migration_generation_preflight_too_large"
+    assert "provider call skipped: yes" in error.safe_message.lower()
+    details = error.internal_details or {}
+    safety = details.get("generation_safety") if isinstance(details.get("generation_safety"), dict) else {}
+    assert safety.get("migration_max_final_input_chars") == 64000
+    assert safety.get("migration_max_difficulty_score") == 24
+    assert details.get("provider_call_skipped") is True
 
 
 def test_openai_migration_provider_auth_failure_maps_to_non_retryable_auth_reason(monkeypatch) -> None:

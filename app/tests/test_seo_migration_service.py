@@ -2932,8 +2932,8 @@ def test_generate_draft_artifacts_includes_bounded_draft_input_summary_and_media
     assert draft_input_summary.get("provider_source") == "mock"
     assert draft_input_summary.get("mocked_source") is True
     assert draft_input_summary.get("generation_preflight_mode") == "compact_fallback"
-    assert draft_input_summary.get("generation_max_final_input_chars") == 9000
-    assert draft_input_summary.get("generation_max_difficulty_score") == 12
+    assert draft_input_summary.get("generation_max_final_input_chars") == 32000
+    assert draft_input_summary.get("generation_max_difficulty_score") == 18
     assert draft_input_summary.get("generation_compact_fallback_enabled") is True
     assert draft_input_summary.get("generation_compact_fallback_attempted") is False
     assert draft_input_summary.get("generation_budget_capped") is False
@@ -3879,6 +3879,66 @@ def test_generate_artifacts_allows_generation_safety_timeout_up_to_600_seconds(d
     diagnostics = (summary.context_summary or {}).get("migration_diagnostics") or {}
     assert diagnostics.get("draft_timeout_seconds") == 600
     assert diagnostics.get("draft_timeout_source") == "admin"
+
+
+def test_migration_generation_budget_and_safety_defaults_are_elevated(db_session) -> None:
+    service = _build_service(db_session, _StaticMigrationProvider(_build_publishable_output()))
+
+    budget_payload = service._resolve_effective_migration_generation_budget().to_context_payload()
+    safety_payload, source = service._resolve_effective_migration_generation_safety()
+    safety_context_payload = safety_payload.to_context_payload()
+
+    assert source in {"default", "admin"}
+    assert budget_payload["migration_context_budget_chars"] == 90000
+    assert budget_payload["migration_generated_page_limit"] == 20
+    assert budget_payload["migration_generated_file_limit"] == 16
+    assert budget_payload["migration_media_asset_limit"] == 16
+    assert safety_context_payload["migration_max_final_input_chars"] == 32000
+    assert safety_context_payload["migration_max_difficulty_score"] == 18
+    assert safety_context_payload["migration_compact_page_limit"] == 6
+    assert safety_context_payload["migration_compact_media_asset_limit"] == 5
+    assert safety_context_payload["migration_compact_recommendation_limit"] == 8
+
+
+def test_migration_generation_env_overrides_are_applied_with_safe_clamping(db_session, monkeypatch) -> None:
+    monkeypatch.setenv("MIGRATION_AI_CONTEXT_BUDGET_CHARS", "300000")
+    monkeypatch.setenv("MIGRATION_AI_PAGE_LIMIT", "99")
+    monkeypatch.setenv("MIGRATION_AI_MEDIA_LIMIT", "999")
+    monkeypatch.setenv("MIGRATION_AI_MAX_FINAL_INPUT_CHARS", "999999")
+    monkeypatch.setenv("MIGRATION_AI_MAX_DIFFICULTY_SCORE", "999")
+    monkeypatch.setenv("MIGRATION_AI_COMPACT_PAGE_LIMIT", "99")
+    monkeypatch.setenv("MIGRATION_AI_COMPACT_MEDIA_LIMIT", "99")
+    monkeypatch.setenv("MIGRATION_AI_COMPACT_RECOMMENDATION_LIMIT", "99")
+    service = _build_service(db_session, _StaticMigrationProvider(_build_publishable_output()))
+
+    budget_payload = service._resolve_effective_migration_generation_budget().to_context_payload()
+    safety_payload, _ = service._resolve_effective_migration_generation_safety()
+    safety_context_payload = safety_payload.to_context_payload()
+
+    assert budget_payload["migration_context_budget_chars"] == 150000
+    assert budget_payload["migration_generated_page_limit"] == 30
+    assert budget_payload["migration_generated_file_limit"] == 24
+    assert budget_payload["migration_media_asset_limit"] == 24
+    assert safety_context_payload["migration_max_final_input_chars"] == 64000
+    assert safety_context_payload["migration_max_difficulty_score"] == 24
+    assert safety_context_payload["migration_compact_page_limit"] == 10
+    assert safety_context_payload["migration_compact_media_asset_limit"] == 8
+    assert safety_context_payload["migration_compact_recommendation_limit"] == 12
+
+
+def test_migration_generation_invalid_env_overrides_are_ignored_safely(db_session, monkeypatch) -> None:
+    monkeypatch.setenv("MIGRATION_AI_CONTEXT_BUDGET_CHARS", "not-an-int")
+    monkeypatch.setenv("MIGRATION_AI_MAX_FINAL_INPUT_CHARS", "")
+    monkeypatch.setenv("MIGRATION_AI_MAX_DIFFICULTY_SCORE", "NaN")
+    service = _build_service(db_session, _StaticMigrationProvider(_build_publishable_output()))
+
+    budget_payload = service._resolve_effective_migration_generation_budget().to_context_payload()
+    safety_payload, _ = service._resolve_effective_migration_generation_safety()
+    safety_context_payload = safety_payload.to_context_payload()
+
+    assert budget_payload["migration_context_budget_chars"] == 90000
+    assert safety_context_payload["migration_max_final_input_chars"] == 32000
+    assert safety_context_payload["migration_max_difficulty_score"] == 18
 
 
 def test_generate_artifacts_uses_default_timeout_when_admin_timeout_is_below_safe_floor(db_session) -> None:

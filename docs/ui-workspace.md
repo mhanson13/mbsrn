@@ -537,6 +537,8 @@ Admin ownership groups:
 - Migration AI Budget: migration context/generation limits, depth profile, and variation controls.
 - Migration Generation Safety: provider timeout and preflight guardrails (`compact_fallback` vs `block_before_provider`) with hard backend caps.
   - timeout source of truth is Migration Generation Safety provider timeout (`60-600` seconds, default `300`)
+  - default bounded safety/budget profile: `max_final_input_chars=32000`, `max_difficulty_score=18`, `context_budget_chars=90000`, generated page/file `20/16`, compact limits `6/5/8`
+  - hard caps remain bounded: `max_final_input_chars<=64000`, `max_difficulty_score<=24`, `context_budget_chars<=150000`, generated pages/files `<=30/24`
   - `6000` seconds is intentionally unsupported for synchronous operator/API generation
   - Admin UI no longer silently clamps migration safety/budget numeric fields before submit; backend validation is authoritative.
   - Admin preview shows requested vs effective values (and capped/rejected signals) for migration generation controls.

@@ -197,6 +197,10 @@ interface DraftAIExecutionSummary {
   budgetCapped: boolean | null;
   preflightBlocked: boolean | null;
   preflightBlockReason: string | null;
+  preflightBlockedSetting: string | null;
+  preflightBlockedSettingActual: number | null;
+  preflightBlockedSettingCap: number | null;
+  providerCallSkipped: boolean | null;
 }
 
 type ArtifactQualityStatus = "high" | "medium" | "low";
@@ -633,7 +637,8 @@ function parseDraftGenerationFailure(error: unknown): {
   } else if (reasonCode === "draft_generation_context_unavailable") {
     hint = "Draft context is currently unavailable. Retry and contact support if this keeps happening.";
   } else if (reasonCode === "migration_generation_preflight_too_large") {
-    hint = "Generation was blocked before provider call because final input/difficulty exceeded Admin safety settings.";
+    hint =
+      "Generation was blocked before provider call by preflight safety settings. Reduce requirements/selected context or ask Admin to increase bounded migration AI budget.";
   } else if (statusCode === 401) {
     hint = "Operator session appears expired. Re-authenticate to MBSRN. This is separate from Google integration reconnect.";
   } else if (statusCode === 403) {
@@ -2445,6 +2450,19 @@ function parseDraftAIExecutionSummary(
       ? generationSafetyRecord.preflight_blocked
       : null;
   const preflightBlockReason = asStringOrNull(generationSafetyRecord.preflight_block_reason);
+  const preflightBlockedSetting = asStringOrNull(generationSafetyRecord.preflight_blocked_setting);
+  const preflightBlockedSettingActual =
+    typeof generationSafetyRecord.preflight_blocked_setting_actual === "number"
+      ? Math.max(0, Math.round(generationSafetyRecord.preflight_blocked_setting_actual))
+      : null;
+  const preflightBlockedSettingCap =
+    typeof generationSafetyRecord.preflight_blocked_setting_cap === "number"
+      ? Math.max(0, Math.round(generationSafetyRecord.preflight_blocked_setting_cap))
+      : null;
+  const providerCallSkipped =
+    typeof generationSafetyRecord.provider_call_skipped === "boolean"
+      ? generationSafetyRecord.provider_call_skipped
+      : null;
   return {
     modelRequested,
     modelResolved,
@@ -2467,6 +2485,10 @@ function parseDraftAIExecutionSummary(
     budgetCapped,
     preflightBlocked,
     preflightBlockReason,
+    preflightBlockedSetting,
+    preflightBlockedSettingActual,
+    preflightBlockedSettingCap,
+    providerCallSkipped,
   };
 }
 
@@ -5019,6 +5041,21 @@ export function MigrationWorkspacePanel({
   const generationPreflightBlockReason =
     asStringOrNull(draftInputSummary.generation_preflight_block_reason)
     || draftAIExecution.preflightBlockReason;
+  const generationPreflightBlockedSetting =
+    asStringOrNull(draftInputSummary.generation_preflight_blocked_setting)
+    || draftAIExecution.preflightBlockedSetting;
+  const generationPreflightBlockedSettingActual =
+    asNonNegativeInt(draftInputSummary.generation_preflight_blocked_setting_actual)
+    ?? draftAIExecution.preflightBlockedSettingActual
+    ?? null;
+  const generationPreflightBlockedSettingCap =
+    asNonNegativeInt(draftInputSummary.generation_preflight_blocked_setting_cap)
+    ?? draftAIExecution.preflightBlockedSettingCap
+    ?? null;
+  const generationProviderCallSkipped =
+    asBooleanOrNull(draftInputSummary.generation_provider_call_skipped)
+    ?? draftAIExecution.providerCallSkipped
+    ?? null;
   const generationBudgetCapReason =
     asStringOrNull(draftInputSummary.generation_budget_cap_reason)
     || generationPreflightBlockReason;
@@ -5036,9 +5073,6 @@ export function MigrationWorkspacePanel({
   const draftProviderTimedOut =
     (asStringOrNull(migrationDiagnostics.last_draft_failure_reason) || draftAIFailureReason || "").trim().toLowerCase()
     === "timeout";
-  const generationPreflightBlockedMessage = generationPreflightBlocked
-    ? "Generation was blocked before provider call because final input/difficulty exceeded Admin safety settings. Reduce budget or use compact fallback."
-    : null;
   const providerTimeoutActionMessage = draftProviderTimedOut
     ? `Provider timed out after ${
       generationProviderTimeoutSeconds !== null ? `${generationProviderTimeoutSeconds} seconds` : "the configured timeout"
@@ -5060,6 +5094,19 @@ export function MigrationWorkspacePanel({
     typeof draftAIDiagnosticsSummary.largest_context_block_size_chars === "number"
       ? Math.max(0, Math.round(draftAIDiagnosticsSummary.largest_context_block_size_chars))
       : null;
+  const generationPreflightBlockedMessage = generationPreflightBlocked
+    ? `Generation was blocked before provider call.${generationPreflightBlockedSetting
+      ? ` Blocked setting: ${generationPreflightBlockedSetting}${generationPreflightBlockedSettingActual !== null
+        ? ` (${generationPreflightBlockedSettingActual}`
+        : ""}${generationPreflightBlockedSettingCap !== null
+          ? `${generationPreflightBlockedSettingActual !== null ? " / cap " : " cap "}${generationPreflightBlockedSettingCap}`
+          : ""}${generationPreflightBlockedSettingActual !== null ? ")" : ""}.`
+      : ""} ${generationMaxFinalInputChars !== null ? `Final input cap: ${generationMaxFinalInputChars}. ` : ""}${
+        draftAILargestContextBlock
+          ? `Largest included block: ${draftAILargestContextBlock}${draftAILargestContextBlockSizeChars !== null ? ` (${draftAILargestContextBlockSizeChars} chars)` : ""}. `
+          : ""
+      }Compact fallback attempted: ${generationCompactFallbackAttempted === true ? "Yes" : "No"}. Provider call skipped: ${generationProviderCallSkipped === false ? "No" : "Yes"}. Next action: reduce requirements or selected context, or ask Admin to increase bounded migration AI budget.`
+    : null;
   const draftAuthIntegrationGuidance = toDraftAuthIntegrationGuidance(
     asStringOrNull(migrationDiagnostics.last_draft_failure_reason)
     || draftAIFailureReason

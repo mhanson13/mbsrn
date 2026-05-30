@@ -288,13 +288,13 @@ _MIGRATION_PREFLIGHT_MODE_VALUES = {"compact_fallback", "block_before_provider"}
 
 
 class MigrationGenerationBudgetDefaults(BaseModel):
-    migration_context_budget_chars: int = Field(default=18000, ge=8000, le=50000)
+    migration_context_budget_chars: int = Field(default=90000, ge=8000, le=150000)
     migration_recommendation_limit: int = Field(default=6, ge=1, le=24)
     migration_competitor_limit: int = Field(default=8, ge=1, le=24)
     migration_source_page_summary_limit: int = Field(default=8, ge=3, le=16)
-    migration_media_asset_limit: int = Field(default=24, ge=4, le=60)
-    migration_generated_page_limit: int = Field(default=12, ge=4, le=24)
-    migration_generated_file_limit: int = Field(default=12, ge=4, le=12)
+    migration_media_asset_limit: int = Field(default=16, ge=4, le=24)
+    migration_generated_page_limit: int = Field(default=20, ge=4, le=30)
+    migration_generated_file_limit: int = Field(default=16, ge=4, le=24)
     migration_generation_depth: str = "standard"
     migration_variation_level: str = "balanced"
     migration_require_page_variety: bool = True
@@ -329,12 +329,12 @@ class MigrationGenerationSafetyDefaults(BaseModel):
     # Longer generation must move to async/background execution architecture.
     migration_provider_timeout_seconds: int = Field(default=300, ge=60, le=600)
     migration_preflight_mode: str = "compact_fallback"
-    migration_max_final_input_chars: int = Field(default=9000, ge=3000, le=12000)
-    migration_max_difficulty_score: int = Field(default=12, ge=5, le=20)
+    migration_max_final_input_chars: int = Field(default=32000, ge=3000, le=64000)
+    migration_max_difficulty_score: int = Field(default=18, ge=5, le=24)
     migration_compact_fallback_enabled: bool = True
-    migration_compact_page_limit: int = Field(default=4, ge=1, le=8)
-    migration_compact_media_asset_limit: int = Field(default=3, ge=0, le=8)
-    migration_compact_recommendation_limit: int = Field(default=4, ge=0, le=10)
+    migration_compact_page_limit: int = Field(default=6, ge=1, le=10)
+    migration_compact_media_asset_limit: int = Field(default=5, ge=0, le=8)
+    migration_compact_recommendation_limit: int = Field(default=8, ge=0, le=12)
 
     @field_validator("migration_preflight_mode", mode="before")
     @classmethod

@@ -321,6 +321,50 @@ _MIGRATION_WORKFLOW_PROVISIONING_LOG_EVENT = "seo_migration_workflow_provisionin
 _MIGRATION_DRAFT_TIMEOUT_DEFAULT_SECONDS = 300
 _MIGRATION_DRAFT_TIMEOUT_MIN_SECONDS = 60
 _MIGRATION_DRAFT_TIMEOUT_MAX_SECONDS = 600
+_MIGRATION_CONTEXT_BUDGET_DEFAULT_CHARS = 90000
+_MIGRATION_CONTEXT_BUDGET_MIN_CHARS = 8000
+_MIGRATION_CONTEXT_BUDGET_MAX_CHARS = 150000
+_MIGRATION_RECOMMENDATION_LIMIT_DEFAULT = 6
+_MIGRATION_RECOMMENDATION_LIMIT_MIN = 1
+_MIGRATION_RECOMMENDATION_LIMIT_MAX = 24
+_MIGRATION_COMPETITOR_LIMIT_DEFAULT = 8
+_MIGRATION_COMPETITOR_LIMIT_MIN = 1
+_MIGRATION_COMPETITOR_LIMIT_MAX = 24
+_MIGRATION_SOURCE_PAGE_SUMMARY_LIMIT_DEFAULT = 8
+_MIGRATION_SOURCE_PAGE_SUMMARY_LIMIT_MIN = 3
+_MIGRATION_SOURCE_PAGE_SUMMARY_LIMIT_MAX = 16
+_MIGRATION_MEDIA_ASSET_LIMIT_DEFAULT = 16
+_MIGRATION_MEDIA_ASSET_LIMIT_MIN = 4
+_MIGRATION_MEDIA_ASSET_LIMIT_MAX = 24
+_MIGRATION_GENERATED_PAGE_LIMIT_DEFAULT = 20
+_MIGRATION_GENERATED_PAGE_LIMIT_MIN = 4
+_MIGRATION_GENERATED_PAGE_LIMIT_MAX = 30
+_MIGRATION_GENERATED_FILE_LIMIT_DEFAULT = 16
+_MIGRATION_GENERATED_FILE_LIMIT_MIN = 4
+_MIGRATION_GENERATED_FILE_LIMIT_MAX = 24
+_MIGRATION_MAX_FINAL_INPUT_DEFAULT_CHARS = 32000
+_MIGRATION_MAX_FINAL_INPUT_MIN_CHARS = 3000
+_MIGRATION_MAX_FINAL_INPUT_MAX_CHARS = 64000
+_MIGRATION_MAX_DIFFICULTY_DEFAULT_SCORE = 18
+_MIGRATION_MAX_DIFFICULTY_MIN_SCORE = 5
+_MIGRATION_MAX_DIFFICULTY_MAX_SCORE = 24
+_MIGRATION_COMPACT_PAGE_LIMIT_DEFAULT = 6
+_MIGRATION_COMPACT_PAGE_LIMIT_MIN = 1
+_MIGRATION_COMPACT_PAGE_LIMIT_MAX = 10
+_MIGRATION_COMPACT_MEDIA_LIMIT_DEFAULT = 5
+_MIGRATION_COMPACT_MEDIA_LIMIT_MIN = 0
+_MIGRATION_COMPACT_MEDIA_LIMIT_MAX = 8
+_MIGRATION_COMPACT_RECOMMENDATION_LIMIT_DEFAULT = 8
+_MIGRATION_COMPACT_RECOMMENDATION_LIMIT_MIN = 0
+_MIGRATION_COMPACT_RECOMMENDATION_LIMIT_MAX = 12
+_MIGRATION_AI_MAX_FINAL_INPUT_CHARS_ENV = "MIGRATION_AI_MAX_FINAL_INPUT_CHARS"
+_MIGRATION_AI_CONTEXT_BUDGET_CHARS_ENV = "MIGRATION_AI_CONTEXT_BUDGET_CHARS"
+_MIGRATION_AI_PAGE_LIMIT_ENV = "MIGRATION_AI_PAGE_LIMIT"
+_MIGRATION_AI_MEDIA_LIMIT_ENV = "MIGRATION_AI_MEDIA_LIMIT"
+_MIGRATION_AI_COMPACT_PAGE_LIMIT_ENV = "MIGRATION_AI_COMPACT_PAGE_LIMIT"
+_MIGRATION_AI_COMPACT_MEDIA_LIMIT_ENV = "MIGRATION_AI_COMPACT_MEDIA_LIMIT"
+_MIGRATION_AI_COMPACT_RECOMMENDATION_LIMIT_ENV = "MIGRATION_AI_COMPACT_RECOMMENDATION_LIMIT"
+_MIGRATION_AI_MAX_DIFFICULTY_SCORE_ENV = "MIGRATION_AI_MAX_DIFFICULTY_SCORE"
 _GITHUB_PUBLISHER_REASON_RUNTIME_CREDENTIAL_MISSING = "runtime_credential_missing"
 _GITHUB_PUBLISHER_REASON_RUNTIME_CONFIG_INVALID = "runtime_configuration_invalid"
 _GITHUB_PUBLISHER_REASON_RUNTIME_INTEGRATION_UNAVAILABLE = "runtime_integration_unavailable"
@@ -797,13 +841,13 @@ class SEOMigrationDraftReadinessReason:
 
 @dataclass(frozen=True)
 class SEOMigrationGenerationBudget:
-    context_budget_chars: int = 18000
-    recommendation_limit: int = 6
-    competitor_limit: int = 8
-    source_page_summary_limit: int = 8
-    media_asset_limit: int = 24
-    generated_page_limit: int = 12
-    generated_file_limit: int = 12
+    context_budget_chars: int = _MIGRATION_CONTEXT_BUDGET_DEFAULT_CHARS
+    recommendation_limit: int = _MIGRATION_RECOMMENDATION_LIMIT_DEFAULT
+    competitor_limit: int = _MIGRATION_COMPETITOR_LIMIT_DEFAULT
+    source_page_summary_limit: int = _MIGRATION_SOURCE_PAGE_SUMMARY_LIMIT_DEFAULT
+    media_asset_limit: int = _MIGRATION_MEDIA_ASSET_LIMIT_DEFAULT
+    generated_page_limit: int = _MIGRATION_GENERATED_PAGE_LIMIT_DEFAULT
+    generated_file_limit: int = _MIGRATION_GENERATED_FILE_LIMIT_DEFAULT
     generation_depth: str = "standard"
     variation_level: str = "balanced"
     require_page_variety: bool = True
@@ -811,13 +855,34 @@ class SEOMigrationGenerationBudget:
 
     def to_context_payload(self) -> dict[str, object]:
         return {
-            "migration_context_budget_chars": max(8000, min(50000, int(self.context_budget_chars))),
-            "migration_recommendation_limit": max(1, min(24, int(self.recommendation_limit))),
-            "migration_competitor_limit": max(1, min(24, int(self.competitor_limit))),
-            "migration_source_page_summary_limit": max(3, min(16, int(self.source_page_summary_limit))),
-            "migration_media_asset_limit": max(4, min(60, int(self.media_asset_limit))),
-            "migration_generated_page_limit": max(4, min(24, int(self.generated_page_limit))),
-            "migration_generated_file_limit": max(4, min(12, int(self.generated_file_limit))),
+            "migration_context_budget_chars": max(
+                _MIGRATION_CONTEXT_BUDGET_MIN_CHARS,
+                min(_MIGRATION_CONTEXT_BUDGET_MAX_CHARS, int(self.context_budget_chars)),
+            ),
+            "migration_recommendation_limit": max(
+                _MIGRATION_RECOMMENDATION_LIMIT_MIN,
+                min(_MIGRATION_RECOMMENDATION_LIMIT_MAX, int(self.recommendation_limit)),
+            ),
+            "migration_competitor_limit": max(
+                _MIGRATION_COMPETITOR_LIMIT_MIN,
+                min(_MIGRATION_COMPETITOR_LIMIT_MAX, int(self.competitor_limit)),
+            ),
+            "migration_source_page_summary_limit": max(
+                _MIGRATION_SOURCE_PAGE_SUMMARY_LIMIT_MIN,
+                min(_MIGRATION_SOURCE_PAGE_SUMMARY_LIMIT_MAX, int(self.source_page_summary_limit)),
+            ),
+            "migration_media_asset_limit": max(
+                _MIGRATION_MEDIA_ASSET_LIMIT_MIN,
+                min(_MIGRATION_MEDIA_ASSET_LIMIT_MAX, int(self.media_asset_limit)),
+            ),
+            "migration_generated_page_limit": max(
+                _MIGRATION_GENERATED_PAGE_LIMIT_MIN,
+                min(_MIGRATION_GENERATED_PAGE_LIMIT_MAX, int(self.generated_page_limit)),
+            ),
+            "migration_generated_file_limit": max(
+                _MIGRATION_GENERATED_FILE_LIMIT_MIN,
+                min(_MIGRATION_GENERATED_FILE_LIMIT_MAX, int(self.generated_file_limit)),
+            ),
             "migration_generation_depth": self.generation_depth,
             "migration_variation_level": self.variation_level,
             "migration_require_page_variety": bool(self.require_page_variety),
@@ -829,12 +894,12 @@ class SEOMigrationGenerationBudget:
 class SEOMigrationGenerationSafety:
     provider_timeout_seconds: int = 300
     preflight_mode: str = "compact_fallback"
-    max_final_input_chars: int = 9000
-    max_difficulty_score: int = 12
+    max_final_input_chars: int = _MIGRATION_MAX_FINAL_INPUT_DEFAULT_CHARS
+    max_difficulty_score: int = _MIGRATION_MAX_DIFFICULTY_DEFAULT_SCORE
     compact_fallback_enabled: bool = True
-    compact_page_limit: int = 4
-    compact_media_asset_limit: int = 3
-    compact_recommendation_limit: int = 4
+    compact_page_limit: int = _MIGRATION_COMPACT_PAGE_LIMIT_DEFAULT
+    compact_media_asset_limit: int = _MIGRATION_COMPACT_MEDIA_LIMIT_DEFAULT
+    compact_recommendation_limit: int = _MIGRATION_COMPACT_RECOMMENDATION_LIMIT_DEFAULT
 
     def to_context_payload(self) -> dict[str, object]:
         preflight_mode = str(self.preflight_mode or "").strip().lower()
@@ -846,12 +911,27 @@ class SEOMigrationGenerationSafety:
                 min(_MIGRATION_DRAFT_TIMEOUT_MAX_SECONDS, int(self.provider_timeout_seconds)),
             ),
             "migration_preflight_mode": preflight_mode,
-            "migration_max_final_input_chars": max(3000, min(12000, int(self.max_final_input_chars))),
-            "migration_max_difficulty_score": max(5, min(20, int(self.max_difficulty_score))),
+            "migration_max_final_input_chars": max(
+                _MIGRATION_MAX_FINAL_INPUT_MIN_CHARS,
+                min(_MIGRATION_MAX_FINAL_INPUT_MAX_CHARS, int(self.max_final_input_chars)),
+            ),
+            "migration_max_difficulty_score": max(
+                _MIGRATION_MAX_DIFFICULTY_MIN_SCORE,
+                min(_MIGRATION_MAX_DIFFICULTY_MAX_SCORE, int(self.max_difficulty_score)),
+            ),
             "migration_compact_fallback_enabled": bool(self.compact_fallback_enabled),
-            "migration_compact_page_limit": max(1, min(8, int(self.compact_page_limit))),
-            "migration_compact_media_asset_limit": max(0, min(8, int(self.compact_media_asset_limit))),
-            "migration_compact_recommendation_limit": max(0, min(10, int(self.compact_recommendation_limit))),
+            "migration_compact_page_limit": max(
+                _MIGRATION_COMPACT_PAGE_LIMIT_MIN,
+                min(_MIGRATION_COMPACT_PAGE_LIMIT_MAX, int(self.compact_page_limit)),
+            ),
+            "migration_compact_media_asset_limit": max(
+                _MIGRATION_COMPACT_MEDIA_LIMIT_MIN,
+                min(_MIGRATION_COMPACT_MEDIA_LIMIT_MAX, int(self.compact_media_asset_limit)),
+            ),
+            "migration_compact_recommendation_limit": max(
+                _MIGRATION_COMPACT_RECOMMENDATION_LIMIT_MIN,
+                min(_MIGRATION_COMPACT_RECOMMENDATION_LIMIT_MAX, int(self.compact_recommendation_limit)),
+            ),
         }
 
 
@@ -11683,6 +11763,27 @@ class SEOMigrationService:
         preflight_block_reason = _normalize_string(ai_execution_summary.get("preflight_block_reason"), max_length=80)
         if preflight_block_reason:
             draft_input_summary_payload["generation_preflight_block_reason"] = preflight_block_reason
+        preflight_blocked_setting = _normalize_string(
+            ai_execution_summary.get("preflight_blocked_setting"),
+            max_length=120,
+        )
+        if preflight_blocked_setting:
+            draft_input_summary_payload["generation_preflight_blocked_setting"] = preflight_blocked_setting
+        preflight_blocked_setting_actual = _coerce_int(ai_execution_summary.get("preflight_blocked_setting_actual"))
+        if isinstance(preflight_blocked_setting_actual, int):
+            draft_input_summary_payload["generation_preflight_blocked_setting_actual"] = max(
+                0,
+                int(preflight_blocked_setting_actual),
+            )
+        preflight_blocked_setting_cap = _coerce_int(ai_execution_summary.get("preflight_blocked_setting_cap"))
+        if isinstance(preflight_blocked_setting_cap, int):
+            draft_input_summary_payload["generation_preflight_blocked_setting_cap"] = max(
+                0,
+                int(preflight_blocked_setting_cap),
+            )
+        provider_call_skipped = ai_execution_summary.get("provider_call_skipped")
+        if isinstance(provider_call_skipped, bool):
+            draft_input_summary_payload["generation_provider_call_skipped"] = provider_call_skipped
 
         context_summary = {
             **context_summary,
@@ -12323,6 +12424,17 @@ class SEOMigrationService:
             generation_safety_payload.get("preflight_block_reason"),
             max_length=80,
         )
+        preflight_blocked_setting = _normalize_string(
+            generation_safety_payload.get("preflight_blocked_setting"),
+            max_length=120,
+        )
+        preflight_blocked_setting_actual = _coerce_int(
+            generation_safety_payload.get("preflight_blocked_setting_actual")
+        )
+        preflight_blocked_setting_cap = _coerce_int(
+            generation_safety_payload.get("preflight_blocked_setting_cap")
+        )
+        provider_call_skipped_raw = generation_safety_payload.get("provider_call_skipped")
         return {
             "model_requested": model_requested,
             "model_resolved": model_resolved,
@@ -12349,6 +12461,12 @@ class SEOMigrationService:
             "budget_capped": bool(budget_capped_raw) if isinstance(budget_capped_raw, bool) else None,
             "preflight_blocked": bool(preflight_blocked_raw) if isinstance(preflight_blocked_raw, bool) else None,
             "preflight_block_reason": preflight_block_reason,
+            "preflight_blocked_setting": preflight_blocked_setting,
+            "preflight_blocked_setting_actual": preflight_blocked_setting_actual,
+            "preflight_blocked_setting_cap": preflight_blocked_setting_cap,
+            "provider_call_skipped": (
+                bool(provider_call_skipped_raw) if isinstance(provider_call_skipped_raw, bool) else None
+            ),
         }
 
     def _build_draft_generation_readiness(
@@ -13495,21 +13613,30 @@ class SEOMigrationService:
         budget_payload = budget.to_context_payload()
         generation_safety_payload = self._resolved_migration_generation_safety.to_context_payload()
         recommendation_limit = max(
-            1,
-            min(24, _coerce_int(budget_payload.get("migration_recommendation_limit")) or budget.recommendation_limit),
+            _MIGRATION_RECOMMENDATION_LIMIT_MIN,
+            min(
+                _MIGRATION_RECOMMENDATION_LIMIT_MAX,
+                _coerce_int(budget_payload.get("migration_recommendation_limit")) or budget.recommendation_limit,
+            ),
         )
         competitor_limit = max(
-            1,
-            min(24, _coerce_int(budget_payload.get("migration_competitor_limit")) or budget.competitor_limit),
+            _MIGRATION_COMPETITOR_LIMIT_MIN,
+            min(
+                _MIGRATION_COMPETITOR_LIMIT_MAX,
+                _coerce_int(budget_payload.get("migration_competitor_limit")) or budget.competitor_limit,
+            ),
         )
         selected_media_limit = max(
-            4,
-            min(60, _coerce_int(budget_payload.get("migration_media_asset_limit")) or budget.media_asset_limit),
+            _MIGRATION_MEDIA_ASSET_LIMIT_MIN,
+            min(
+                _MIGRATION_MEDIA_ASSET_LIMIT_MAX,
+                _coerce_int(budget_payload.get("migration_media_asset_limit")) or budget.media_asset_limit,
+            ),
         )
         source_page_limit = max(
-            3,
+            _MIGRATION_SOURCE_PAGE_SUMMARY_LIMIT_MIN,
             min(
-                16,
+                _MIGRATION_SOURCE_PAGE_SUMMARY_LIMIT_MAX,
                 _coerce_int(budget_payload.get("migration_source_page_summary_limit"))
                 or budget.source_page_summary_limit,
             ),
@@ -15393,64 +15520,181 @@ class SEOMigrationService:
             normalized = normalized.split("/", 1)[0].strip()
         return normalized
 
+    @staticmethod
+    def _resolve_migration_generation_env_override(
+        *,
+        env_name: str,
+        min_value: int,
+        max_value: int,
+    ) -> int | None:
+        raw_value = os.getenv(env_name)
+        parsed = _coerce_int(raw_value)
+        if parsed is None:
+            return None
+        return max(min_value, min(max_value, int(parsed)))
+
+    def _apply_migration_generation_budget_env_overrides(
+        self,
+        *,
+        budget: SEOMigrationGenerationBudget,
+    ) -> SEOMigrationGenerationBudget:
+        context_budget_override = self._resolve_migration_generation_env_override(
+            env_name=_MIGRATION_AI_CONTEXT_BUDGET_CHARS_ENV,
+            min_value=_MIGRATION_CONTEXT_BUDGET_MIN_CHARS,
+            max_value=_MIGRATION_CONTEXT_BUDGET_MAX_CHARS,
+        )
+        page_limit_override = self._resolve_migration_generation_env_override(
+            env_name=_MIGRATION_AI_PAGE_LIMIT_ENV,
+            min_value=_MIGRATION_GENERATED_PAGE_LIMIT_MIN,
+            max_value=_MIGRATION_GENERATED_PAGE_LIMIT_MAX,
+        )
+        media_limit_override = self._resolve_migration_generation_env_override(
+            env_name=_MIGRATION_AI_MEDIA_LIMIT_ENV,
+            min_value=_MIGRATION_MEDIA_ASSET_LIMIT_MIN,
+            max_value=_MIGRATION_MEDIA_ASSET_LIMIT_MAX,
+        )
+        if (
+            context_budget_override is None
+            and page_limit_override is None
+            and media_limit_override is None
+        ):
+            return budget
+        return SEOMigrationGenerationBudget(
+            context_budget_chars=(
+                context_budget_override if context_budget_override is not None else budget.context_budget_chars
+            ),
+            recommendation_limit=budget.recommendation_limit,
+            competitor_limit=budget.competitor_limit,
+            source_page_summary_limit=budget.source_page_summary_limit,
+            media_asset_limit=media_limit_override if media_limit_override is not None else budget.media_asset_limit,
+            generated_page_limit=page_limit_override if page_limit_override is not None else budget.generated_page_limit,
+            generated_file_limit=media_limit_override if media_limit_override is not None else budget.generated_file_limit,
+            generation_depth=budget.generation_depth,
+            variation_level=budget.variation_level,
+            require_page_variety=budget.require_page_variety,
+            require_design_variation=budget.require_design_variation,
+        )
+
+    def _apply_migration_generation_safety_env_overrides(
+        self,
+        *,
+        safety: SEOMigrationGenerationSafety,
+    ) -> SEOMigrationGenerationSafety:
+        max_final_input_override = self._resolve_migration_generation_env_override(
+            env_name=_MIGRATION_AI_MAX_FINAL_INPUT_CHARS_ENV,
+            min_value=_MIGRATION_MAX_FINAL_INPUT_MIN_CHARS,
+            max_value=_MIGRATION_MAX_FINAL_INPUT_MAX_CHARS,
+        )
+        max_difficulty_override = self._resolve_migration_generation_env_override(
+            env_name=_MIGRATION_AI_MAX_DIFFICULTY_SCORE_ENV,
+            min_value=_MIGRATION_MAX_DIFFICULTY_MIN_SCORE,
+            max_value=_MIGRATION_MAX_DIFFICULTY_MAX_SCORE,
+        )
+        compact_page_override = self._resolve_migration_generation_env_override(
+            env_name=_MIGRATION_AI_COMPACT_PAGE_LIMIT_ENV,
+            min_value=_MIGRATION_COMPACT_PAGE_LIMIT_MIN,
+            max_value=_MIGRATION_COMPACT_PAGE_LIMIT_MAX,
+        )
+        compact_media_override = self._resolve_migration_generation_env_override(
+            env_name=_MIGRATION_AI_COMPACT_MEDIA_LIMIT_ENV,
+            min_value=_MIGRATION_COMPACT_MEDIA_LIMIT_MIN,
+            max_value=_MIGRATION_COMPACT_MEDIA_LIMIT_MAX,
+        )
+        compact_recommendation_override = self._resolve_migration_generation_env_override(
+            env_name=_MIGRATION_AI_COMPACT_RECOMMENDATION_LIMIT_ENV,
+            min_value=_MIGRATION_COMPACT_RECOMMENDATION_LIMIT_MIN,
+            max_value=_MIGRATION_COMPACT_RECOMMENDATION_LIMIT_MAX,
+        )
+        if (
+            max_final_input_override is None
+            and max_difficulty_override is None
+            and compact_page_override is None
+            and compact_media_override is None
+            and compact_recommendation_override is None
+        ):
+            return safety
+        return SEOMigrationGenerationSafety(
+            provider_timeout_seconds=safety.provider_timeout_seconds,
+            preflight_mode=safety.preflight_mode,
+            max_final_input_chars=(
+                max_final_input_override if max_final_input_override is not None else safety.max_final_input_chars
+            ),
+            max_difficulty_score=(
+                max_difficulty_override if max_difficulty_override is not None else safety.max_difficulty_score
+            ),
+            compact_fallback_enabled=safety.compact_fallback_enabled,
+            compact_page_limit=(
+                compact_page_override if compact_page_override is not None else safety.compact_page_limit
+            ),
+            compact_media_asset_limit=(
+                compact_media_override if compact_media_override is not None else safety.compact_media_asset_limit
+            ),
+            compact_recommendation_limit=(
+                compact_recommendation_override
+                if compact_recommendation_override is not None
+                else safety.compact_recommendation_limit
+            ),
+        )
+
     def _resolve_effective_migration_generation_budget(self) -> SEOMigrationGenerationBudget:
         defaults = SEOMigrationGenerationBudget()
+        resolved_budget = defaults
         if self.github_publish_config_service is None:
-            return defaults
+            return self._apply_migration_generation_budget_env_overrides(budget=resolved_budget)
         try:
             admin_config = self.github_publish_config_service.get()
         except Exception:  # noqa: BLE001
-            return defaults
+            return self._apply_migration_generation_budget_env_overrides(budget=resolved_budget)
         try:
             namespace_defaults = normalize_namespace_isolation_defaults(
                 getattr(admin_config, "namespace_isolation_defaults_json", None)
             )
         except Exception:  # noqa: BLE001
-            return defaults
+            return self._apply_migration_generation_budget_env_overrides(budget=resolved_budget)
         raw_budget = getattr(namespace_defaults, "migration_generation_budget", None)
-        if raw_budget is None:
-            return defaults
+        if raw_budget is not None:
+            generation_depth = (
+                _normalize_string(getattr(raw_budget, "migration_generation_depth", None), max_length=32) or "standard"
+            ).lower()
+            if generation_depth not in {"compact", "standard", "expanded"}:
+                generation_depth = "standard"
+            variation_level = (
+                _normalize_string(getattr(raw_budget, "migration_variation_level", None), max_length=32) or "balanced"
+            ).lower()
+            if variation_level not in {"conservative", "balanced", "differentiated"}:
+                variation_level = "balanced"
 
-        generation_depth = (
-            _normalize_string(getattr(raw_budget, "migration_generation_depth", None), max_length=32) or "standard"
-        ).lower()
-        if generation_depth not in {"compact", "standard", "expanded"}:
-            generation_depth = "standard"
-        variation_level = (
-            _normalize_string(getattr(raw_budget, "migration_variation_level", None), max_length=32) or "balanced"
-        ).lower()
-        if variation_level not in {"conservative", "balanced", "differentiated"}:
-            variation_level = "balanced"
-
-        return SEOMigrationGenerationBudget(
-            context_budget_chars=_coerce_int(getattr(raw_budget, "migration_context_budget_chars", None))
-            or defaults.context_budget_chars,
-            recommendation_limit=_coerce_int(getattr(raw_budget, "migration_recommendation_limit", None))
-            or defaults.recommendation_limit,
-            competitor_limit=_coerce_int(getattr(raw_budget, "migration_competitor_limit", None))
-            or defaults.competitor_limit,
-            source_page_summary_limit=_coerce_int(getattr(raw_budget, "migration_source_page_summary_limit", None))
-            or defaults.source_page_summary_limit,
-            media_asset_limit=_coerce_int(getattr(raw_budget, "migration_media_asset_limit", None))
-            or defaults.media_asset_limit,
-            generated_page_limit=_coerce_int(getattr(raw_budget, "migration_generated_page_limit", None))
-            or defaults.generated_page_limit,
-            generated_file_limit=_coerce_int(getattr(raw_budget, "migration_generated_file_limit", None))
-            or defaults.generated_file_limit,
-            generation_depth=generation_depth,
-            variation_level=variation_level,
-            require_page_variety=bool(getattr(raw_budget, "migration_require_page_variety", True)),
-            require_design_variation=bool(getattr(raw_budget, "migration_require_design_variation", True)),
-        )
+            resolved_budget = SEOMigrationGenerationBudget(
+                context_budget_chars=_coerce_int(getattr(raw_budget, "migration_context_budget_chars", None))
+                or defaults.context_budget_chars,
+                recommendation_limit=_coerce_int(getattr(raw_budget, "migration_recommendation_limit", None))
+                or defaults.recommendation_limit,
+                competitor_limit=_coerce_int(getattr(raw_budget, "migration_competitor_limit", None))
+                or defaults.competitor_limit,
+                source_page_summary_limit=_coerce_int(getattr(raw_budget, "migration_source_page_summary_limit", None))
+                or defaults.source_page_summary_limit,
+                media_asset_limit=_coerce_int(getattr(raw_budget, "migration_media_asset_limit", None))
+                or defaults.media_asset_limit,
+                generated_page_limit=_coerce_int(getattr(raw_budget, "migration_generated_page_limit", None))
+                or defaults.generated_page_limit,
+                generated_file_limit=_coerce_int(getattr(raw_budget, "migration_generated_file_limit", None))
+                or defaults.generated_file_limit,
+                generation_depth=generation_depth,
+                variation_level=variation_level,
+                require_page_variety=bool(getattr(raw_budget, "migration_require_page_variety", True)),
+                require_design_variation=bool(getattr(raw_budget, "migration_require_design_variation", True)),
+            )
+        return self._apply_migration_generation_budget_env_overrides(budget=resolved_budget)
 
     def _resolve_effective_migration_generation_safety(self) -> tuple[SEOMigrationGenerationSafety, str]:
         defaults = SEOMigrationGenerationSafety()
+        resolved_safety = defaults
         if self.github_publish_config_service is None:
-            return defaults, "default"
+            return self._apply_migration_generation_safety_env_overrides(safety=resolved_safety), "default"
         try:
             admin_config = self.github_publish_config_service.get()
         except Exception:  # noqa: BLE001
-            return defaults, "default"
+            return self._apply_migration_generation_safety_env_overrides(safety=resolved_safety), "default"
         source = "default"
         raw_namespace_defaults = _normalize_json_dict(getattr(admin_config, "namespace_isolation_defaults_json", None))
         if isinstance(raw_namespace_defaults.get("migration_generation_safety"), dict):
@@ -15460,18 +15704,16 @@ class SEOMigrationService:
                 getattr(admin_config, "namespace_isolation_defaults_json", None)
             )
         except Exception:  # noqa: BLE001
-            return defaults, source
+            return self._apply_migration_generation_safety_env_overrides(safety=resolved_safety), source
         raw_safety = getattr(namespace_defaults, "migration_generation_safety", None)
-        if raw_safety is None:
-            return defaults, source
-        preflight_mode = (
-            _normalize_string(getattr(raw_safety, "migration_preflight_mode", None), max_length=40)
-            or defaults.preflight_mode
-        ).lower()
-        if preflight_mode not in {"compact_fallback", "block_before_provider"}:
-            preflight_mode = defaults.preflight_mode
-        return (
-            SEOMigrationGenerationSafety(
+        if raw_safety is not None:
+            preflight_mode = (
+                _normalize_string(getattr(raw_safety, "migration_preflight_mode", None), max_length=40)
+                or defaults.preflight_mode
+            ).lower()
+            if preflight_mode not in {"compact_fallback", "block_before_provider"}:
+                preflight_mode = defaults.preflight_mode
+            resolved_safety = SEOMigrationGenerationSafety(
                 provider_timeout_seconds=_coerce_int(
                     getattr(raw_safety, "migration_provider_timeout_seconds", None)
                 )
@@ -15496,9 +15738,9 @@ class SEOMigrationService:
                 )
                 if getattr(raw_safety, "migration_compact_recommendation_limit", None) is not None
                 else defaults.compact_recommendation_limit,
-            ),
-            source,
-        )
+            )
+        resolved_safety = self._apply_migration_generation_safety_env_overrides(safety=resolved_safety)
+        return resolved_safety, source
 
     def _resolve_admin_deploy_template_metadata(self) -> dict[str, object]:
         deploy_workflow_mode = _DEPLOY_WORKFLOW_MODE_SITE_REPO_TEMPLATE_V1

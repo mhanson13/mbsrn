@@ -540,8 +540,8 @@ def _draft_generation_operator_action(*, reason_code: str, retryable: bool) -> t
         return ("Retry draft generation. If this persists, contact support with the correlation reference.", None)
     if normalized_reason == _DRAFT_REASON_CODE_PREFLIGHT_TOO_LARGE:
         return (
-            "Generation was blocked before provider call because input size/complexity exceeded Admin safety settings. "
-            "Reduce generation budget or use compact fallback.",
+            "Generation was blocked before provider call by migration preflight safety limits. "
+            "Reduce requirements or selected context, or ask Admin to increase bounded migration AI budget.",
             None,
         )
     if retryable:

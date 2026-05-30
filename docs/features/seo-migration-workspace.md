@@ -657,10 +657,24 @@ Admin-configured migration generation budget:
   - `migration_variation_level` (`conservative|balanced|differentiated`)
   - `migration_require_page_variety`
   - `migration_require_design_variation`
-- safe defaults preserve prior behavior when admin config is absent.
+- default bounded values when admin config is absent:
+  - `migration_context_budget_chars=90000`
+  - `migration_generated_page_limit=20`
+  - `migration_generated_file_limit=16`
+  - `migration_media_asset_limit=16`
 - server-side validation enforces bounded min/max ranges.
 - effective values flow into context shaping/trimming and provider request budget enforcement.
 - migration workspace exposes read-only effective budget summary in Draft Inputs / AI Context (profile, variation, context chars, page/file limits); editing remains admin-only.
+- optional runtime overrides are supported for controlled operations:
+  - `MIGRATION_AI_CONTEXT_BUDGET_CHARS`
+  - `MIGRATION_AI_PAGE_LIMIT`
+  - `MIGRATION_AI_MEDIA_LIMIT`
+  - `MIGRATION_AI_MAX_FINAL_INPUT_CHARS`
+  - `MIGRATION_AI_MAX_DIFFICULTY_SCORE`
+  - `MIGRATION_AI_COMPACT_PAGE_LIMIT`
+  - `MIGRATION_AI_COMPACT_MEDIA_LIMIT`
+  - `MIGRATION_AI_COMPACT_RECOMMENDATION_LIMIT`
+  - values are always clamped to backend hard caps.
 
 ## Site SEO Workspace Grouping and Diagnostics (2026-05)
 Migration route grouping in the UI now explicitly separates:
@@ -1043,12 +1057,17 @@ Migration draft timeout and preflight risk controls are now governed by Admin na
 
 - `migration_provider_timeout_seconds` (range `60-600`, default `300`)
 - `migration_preflight_mode` (`compact_fallback` or `block_before_provider`)
-- `migration_max_final_input_chars` (range `3000-12000`, default `9000`)
-- `migration_max_difficulty_score` (range `5-20`, default `12`)
+- `migration_max_final_input_chars` (range `3000-64000`, default `32000`)
+- `migration_max_difficulty_score` (range `5-24`, default `18`)
 - `migration_compact_fallback_enabled` (`true|false`, default `true`)
-- `migration_compact_page_limit` (range `1-8`, default `4`)
-- `migration_compact_media_asset_limit` (range `0-8`, default `3`)
-- `migration_compact_recommendation_limit` (range `0-10`, default `4`)
+- `migration_compact_page_limit` (range `1-10`, default `6`)
+- `migration_compact_media_asset_limit` (range `0-8`, default `5`)
+- `migration_compact_recommendation_limit` (range `0-12`, default `8`)
+- generation-budget hard caps used by backend preflight:
+  - `migration_context_budget_chars <= 150000`
+  - `migration_generated_page_limit <= 30`
+  - `migration_generated_file_limit <= 24`
+  - `migration_media_asset_limit <= 24`
 
 Admin configurability behavior:
 - Admin UI accepts requested numeric values for migration budget/safety without silent frontend clamping.
@@ -1094,6 +1113,7 @@ Timeout and preflight diagnostics are surfaced in bounded form:
 Operator troubleshooting cues:
 - remote timeout: provider was called and timed out (for example `failure_reason=timeout`)
 - local preflight block: provider was not called; reduce generation budget or keep compact fallback enabled
+- preflight block diagnostics now include blocked setting, actual final input chars, configured cap, largest included block, compact fallback attempted, and explicit provider-call skipped state
 - increasing timeout alone does not resolve oversized/overly-complex requests; use preflight/compact fallback and budget limits
 - all diagnostics remain sanitized (no raw prompts, request bodies, response bodies, HTML, or media bytes)
 

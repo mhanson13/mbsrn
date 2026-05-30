@@ -114,27 +114,27 @@ const GITHUB_NETWORK_POLICY_MODE_OPTIONS = ["default_deny_ingress"] as const;
 const MIGRATION_GENERATION_DEPTH_OPTIONS = ["compact", "standard", "expanded"] as const;
 const MIGRATION_VARIATION_LEVEL_OPTIONS = ["conservative", "balanced", "differentiated"] as const;
 const MIGRATION_PREFLIGHT_MODE_OPTIONS = ["compact_fallback", "block_before_provider"] as const;
-const MIGRATION_CONTEXT_BUDGET_BOUNDS = { min: 8000, max: 50000 } as const;
+const MIGRATION_CONTEXT_BUDGET_BOUNDS = { min: 8000, max: 150000 } as const;
 const MIGRATION_RECOMMENDATION_LIMIT_BOUNDS = { min: 1, max: 24 } as const;
 const MIGRATION_COMPETITOR_LIMIT_BOUNDS = { min: 1, max: 24 } as const;
 const MIGRATION_SOURCE_PAGE_SUMMARY_LIMIT_BOUNDS = { min: 3, max: 16 } as const;
-const MIGRATION_MEDIA_ASSET_LIMIT_BOUNDS = { min: 4, max: 60 } as const;
-const MIGRATION_GENERATED_PAGE_LIMIT_BOUNDS = { min: 4, max: 24 } as const;
-const MIGRATION_GENERATED_FILE_LIMIT_BOUNDS = { min: 4, max: 12 } as const;
+const MIGRATION_MEDIA_ASSET_LIMIT_BOUNDS = { min: 4, max: 24 } as const;
+const MIGRATION_GENERATED_PAGE_LIMIT_BOUNDS = { min: 4, max: 30 } as const;
+const MIGRATION_GENERATED_FILE_LIMIT_BOUNDS = { min: 4, max: 24 } as const;
 const MIGRATION_PROVIDER_TIMEOUT_BOUNDS = { min: 60, max: 600 } as const;
-const MIGRATION_MAX_FINAL_INPUT_CHARS_BOUNDS = { min: 3000, max: 12000 } as const;
-const MIGRATION_MAX_DIFFICULTY_SCORE_BOUNDS = { min: 5, max: 20 } as const;
-const MIGRATION_COMPACT_PAGE_LIMIT_BOUNDS = { min: 1, max: 8 } as const;
+const MIGRATION_MAX_FINAL_INPUT_CHARS_BOUNDS = { min: 3000, max: 64000 } as const;
+const MIGRATION_MAX_DIFFICULTY_SCORE_BOUNDS = { min: 5, max: 24 } as const;
+const MIGRATION_COMPACT_PAGE_LIMIT_BOUNDS = { min: 1, max: 10 } as const;
 const MIGRATION_COMPACT_MEDIA_LIMIT_BOUNDS = { min: 0, max: 8 } as const;
-const MIGRATION_COMPACT_RECOMMENDATION_LIMIT_BOUNDS = { min: 0, max: 10 } as const;
-const MIGRATION_CONTEXT_BUDGET_RECOMMENDED = { min: 8000, max: 22000 } as const;
-const MIGRATION_RECOMMENDATION_LIMIT_RECOMMENDED = { min: 4, max: 10 } as const;
-const MIGRATION_COMPETITOR_LIMIT_RECOMMENDED = { min: 4, max: 12 } as const;
-const MIGRATION_MAX_FINAL_INPUT_CHARS_RECOMMENDED = { min: 8000, max: 10000 } as const;
-const MIGRATION_MAX_DIFFICULTY_SCORE_RECOMMENDED = { min: 8, max: 12 } as const;
-const MIGRATION_COMPACT_PAGE_LIMIT_RECOMMENDED = { min: 3, max: 5 } as const;
-const MIGRATION_COMPACT_MEDIA_LIMIT_RECOMMENDED = { min: 2, max: 4 } as const;
-const MIGRATION_COMPACT_RECOMMENDATION_LIMIT_RECOMMENDED = { min: 3, max: 5 } as const;
+const MIGRATION_COMPACT_RECOMMENDATION_LIMIT_BOUNDS = { min: 0, max: 12 } as const;
+const MIGRATION_CONTEXT_BUDGET_RECOMMENDED = { min: 45000, max: 100000 } as const;
+const MIGRATION_RECOMMENDATION_LIMIT_RECOMMENDED = { min: 6, max: 12 } as const;
+const MIGRATION_COMPETITOR_LIMIT_RECOMMENDED = { min: 6, max: 14 } as const;
+const MIGRATION_MAX_FINAL_INPUT_CHARS_RECOMMENDED = { min: 16000, max: 32000 } as const;
+const MIGRATION_MAX_DIFFICULTY_SCORE_RECOMMENDED = { min: 10, max: 18 } as const;
+const MIGRATION_COMPACT_PAGE_LIMIT_RECOMMENDED = { min: 4, max: 7 } as const;
+const MIGRATION_COMPACT_MEDIA_LIMIT_RECOMMENDED = { min: 3, max: 6 } as const;
+const MIGRATION_COMPACT_RECOMMENDATION_LIMIT_RECOMMENDED = { min: 5, max: 8 } as const;
 
 type MigrationGenerationBudgetNumericField =
   | "migration_context_budget_chars"
@@ -159,13 +159,13 @@ type MigrationGenerationSettingField =
 
 type MigrationGenerationFieldErrorMap = Partial<Record<MigrationGenerationSettingField, string>>;
 const DEFAULT_MIGRATION_GENERATION_BUDGET: MigrationGenerationBudgetConfig = {
-  migration_context_budget_chars: 18000,
+  migration_context_budget_chars: 90000,
   migration_recommendation_limit: 6,
   migration_competitor_limit: 8,
   migration_source_page_summary_limit: 8,
-  migration_media_asset_limit: 24,
-  migration_generated_page_limit: 12,
-  migration_generated_file_limit: 12,
+  migration_media_asset_limit: 16,
+  migration_generated_page_limit: 20,
+  migration_generated_file_limit: 16,
   migration_generation_depth: "standard",
   migration_variation_level: "balanced",
   migration_require_page_variety: true,
@@ -174,12 +174,12 @@ const DEFAULT_MIGRATION_GENERATION_BUDGET: MigrationGenerationBudgetConfig = {
 const DEFAULT_MIGRATION_GENERATION_SAFETY: MigrationGenerationSafetyConfig = {
   migration_provider_timeout_seconds: 300,
   migration_preflight_mode: "compact_fallback",
-  migration_max_final_input_chars: 9000,
-  migration_max_difficulty_score: 12,
+  migration_max_final_input_chars: 32000,
+  migration_max_difficulty_score: 18,
   migration_compact_fallback_enabled: true,
-  migration_compact_page_limit: 4,
-  migration_compact_media_asset_limit: 3,
-  migration_compact_recommendation_limit: 4,
+  migration_compact_page_limit: 6,
+  migration_compact_media_asset_limit: 5,
+  migration_compact_recommendation_limit: 8,
 };
 const DEFAULT_NAMESPACE_ISOLATION_DEFAULTS: GitHubNamespaceIsolationDefaults = {
   resource_quota: {

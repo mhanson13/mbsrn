@@ -103,7 +103,7 @@ _MALFORMED_OUTPUT_ALLOWED_REASONS = {
     _MALFORMED_OUTPUT_REASON_EMPTY,
 }
 
-_MAX_FILE_COUNT = 12
+_MAX_FILE_COUNT = 24
 _MAX_FILE_PATH_LENGTH = 140
 _MAX_FILE_CONTENT_LENGTH = 120000
 _MAX_PAGE_MAP_ITEMS = 20
@@ -112,9 +112,9 @@ _MAX_TEXT_FIELD_LENGTH = 8000
 _RESPONSES_CONTRACT_TOP_LEVEL_KEYS = ("input", "model", "text")
 _RESPONSES_CONTRACT_TEXT_TOP_LEVEL_KEYS = ("format",)
 _RESPONSES_CONTRACT_TEXT_FORMAT_KEYS = ("name", "schema", "strict", "type")
-_MIGRATION_DRAFT_CONTEXT_BUDGET_CHARS = 18000
+_MIGRATION_DRAFT_CONTEXT_BUDGET_CHARS = 90000
 _MIGRATION_DRAFT_CONTEXT_BUDGET_MIN_CHARS = 8000
-_MIGRATION_DRAFT_CONTEXT_BUDGET_MAX_CHARS = 50000
+_MIGRATION_DRAFT_CONTEXT_BUDGET_MAX_CHARS = 150000
 _MIGRATION_DRAFT_CONTEXT_REQUIRED_KEYS = ("site_snapshot", "migration_workspace")
 _MIGRATION_DRAFT_CONTEXT_OPTIONAL_TRIM_ORDER = (
     "existing_context_summaries",
@@ -214,12 +214,12 @@ class SEOMigrationProviderCompatibilityResult:
 class _MigrationGenerationSafetyProfile:
     provider_timeout_seconds: int = 300
     preflight_mode: str = _MIGRATION_PREFLIGHT_MODE_COMPACT_FALLBACK
-    max_final_input_chars: int = 9000
-    max_difficulty_score: int = 12
+    max_final_input_chars: int = 32000
+    max_difficulty_score: int = 18
     compact_fallback_enabled: bool = True
-    compact_page_limit: int = 4
-    compact_media_asset_limit: int = 3
-    compact_recommendation_limit: int = 4
+    compact_page_limit: int = 6
+    compact_media_asset_limit: int = 5
+    compact_recommendation_limit: int = 8
 
     def to_payload(self) -> dict[str, object]:
         normalized_mode = str(self.preflight_mode or "").strip().lower()
@@ -234,12 +234,12 @@ class _MigrationGenerationSafetyProfile:
                 min(_MIGRATION_SYNC_TIMEOUT_MAX_SECONDS, int(self.provider_timeout_seconds)),
             ),
             "migration_preflight_mode": normalized_mode,
-            "migration_max_final_input_chars": max(3000, min(12000, int(self.max_final_input_chars))),
-            "migration_max_difficulty_score": max(5, min(20, int(self.max_difficulty_score))),
+            "migration_max_final_input_chars": max(3000, min(64000, int(self.max_final_input_chars))),
+            "migration_max_difficulty_score": max(5, min(24, int(self.max_difficulty_score))),
             "migration_compact_fallback_enabled": bool(self.compact_fallback_enabled),
-            "migration_compact_page_limit": max(1, min(8, int(self.compact_page_limit))),
+            "migration_compact_page_limit": max(1, min(10, int(self.compact_page_limit))),
             "migration_compact_media_asset_limit": max(0, min(8, int(self.compact_media_asset_limit))),
-            "migration_compact_recommendation_limit": max(0, min(10, int(self.compact_recommendation_limit))),
+            "migration_compact_recommendation_limit": max(0, min(12, int(self.compact_recommendation_limit))),
         }
 
 
@@ -1256,6 +1256,31 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
             pass
 
         if preflight_evaluation.get("blocked") is True:
+            final_input_chars = self._coerce_optional_non_negative_int(budget_result.get("final_size_chars")) or 0
+            configured_final_input_cap = (
+                self._coerce_optional_non_negative_int(preflight_evaluation.get("max_final_input_chars")) or 0
+            )
+            largest_context_block = _clean_optional_value(budget_result.get("largest_retained_block"))
+            largest_context_block_size_chars = self._coerce_optional_non_negative_int(
+                budget_result.get("largest_retained_block_size_chars")
+            )
+            blocked_setting = _clean_optional_value(preflight_evaluation.get("blocked_setting")) or "preflight_rule"
+            blocked_setting_actual = self._coerce_optional_non_negative_int(
+                preflight_evaluation.get("blocked_setting_actual")
+            )
+            blocked_setting_cap = self._coerce_optional_non_negative_int(preflight_evaluation.get("blocked_setting_cap"))
+            blocked_setting_summary = blocked_setting
+            if blocked_setting_actual is not None and blocked_setting_cap is not None:
+                blocked_setting_summary = (
+                    f"{blocked_setting} actual {blocked_setting_actual} cap {blocked_setting_cap}"
+                )
+            elif blocked_setting_cap is not None:
+                blocked_setting_summary = f"{blocked_setting} cap {blocked_setting_cap}"
+            largest_block_summary = "unknown"
+            if largest_context_block and largest_context_block_size_chars is not None:
+                largest_block_summary = f"{largest_context_block} ({largest_context_block_size_chars} chars)"
+            elif largest_context_block:
+                largest_block_summary = largest_context_block
             self._log_request_budget(
                 request_context=request_context,
                 budget_result=budget_result,
@@ -1272,8 +1297,14 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
                 code=_MIGRATION_GENERATION_PREFLIGHT_TOO_LARGE,
                 reason=_DRAFT_REASON_VALIDATION_FAILED,
                 safe_message=(
-                    "Migration draft generation was blocked before provider call because preflight input size "
-                    "or complexity exceeded Admin safety settings."
+                    "Generation was blocked before provider call. "
+                    f"Blocked setting: {blocked_setting_summary}. "
+                    f"Final input chars: {final_input_chars} (cap {configured_final_input_cap}). "
+                    f"Largest included block: {largest_block_summary}. "
+                    f"Compact fallback attempted: {'yes' if compact_fallback_attempted else 'no'}. "
+                    "Provider call skipped: yes. "
+                    "Next action: reduce operator requirements or selected context, or ask Admin to increase bounded "
+                    "migration AI budget."
                 ),
                 retryable=False,
                 internal_details={
@@ -1286,6 +1317,13 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
                     "context_budget": budget_result,
                     "generation_safety": generation_safety_payload,
                     "preflight_block_reason": _clean_optional_value(preflight_evaluation.get("block_reason")),
+                    "blocked_setting": blocked_setting,
+                    "blocked_setting_actual": blocked_setting_actual,
+                    "blocked_setting_cap": blocked_setting_cap,
+                    "largest_context_block": largest_context_block,
+                    "largest_context_block_size_chars": largest_context_block_size_chars,
+                    "compact_fallback_attempted": bool(compact_fallback_attempted),
+                    "provider_call_skipped": True,
                 },
                 normalized_failure_category="local_validation_failure",
                 normalized_failure_reason="request_too_large_or_complex",
@@ -2621,10 +2659,10 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
         overflow = bool(budget_payload.get("overflow"))
         trimming_pass_limit_exceeded = trimming_pass_count > _MIGRATION_DRAFT_MAX_TRIMMING_PASSES
         max_final_input_chars = (
-            self._coerce_optional_non_negative_int(safety_payload.get("migration_max_final_input_chars")) or 9000
+            self._coerce_optional_non_negative_int(safety_payload.get("migration_max_final_input_chars")) or 32000
         )
         max_difficulty_score = (
-            self._coerce_optional_non_negative_int(safety_payload.get("migration_max_difficulty_score")) or 12
+            self._coerce_optional_non_negative_int(safety_payload.get("migration_max_difficulty_score")) or 18
         )
         difficulty_score = self._derive_preflight_difficulty_score(
             final_input_size=final_input_bytes,
@@ -2636,21 +2674,42 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
         blocked = overflow or trimming_pass_limit_exceeded or exceeds_final_input_chars or exceeds_difficulty_score
 
         block_reason = None
+        blocked_setting = None
+        blocked_setting_actual = None
+        blocked_setting_cap = None
         if blocked:
             if overflow:
                 block_reason = "context_budget_overflow"
+                blocked_setting = "migration_context_budget_chars"
+                blocked_setting_actual = final_input_chars
+                blocked_setting_cap = self._coerce_optional_non_negative_int(budget_payload.get("budget_size_chars"))
             elif trimming_pass_limit_exceeded:
                 block_reason = "trimming_pass_limit_exceeded"
+                blocked_setting = "trimming_pass_count"
+                blocked_setting_actual = trimming_pass_count
+                blocked_setting_cap = _MIGRATION_DRAFT_MAX_TRIMMING_PASSES
             elif exceeds_final_input_chars and exceeds_difficulty_score:
                 block_reason = "final_input_and_difficulty_exceeded"
+                blocked_setting = "migration_max_final_input_chars,migration_max_difficulty_score"
+                blocked_setting_actual = final_input_chars
+                blocked_setting_cap = max_final_input_chars
             elif exceeds_final_input_chars:
                 block_reason = "final_input_chars_exceeded"
+                blocked_setting = "migration_max_final_input_chars"
+                blocked_setting_actual = final_input_chars
+                blocked_setting_cap = max_final_input_chars
             elif exceeds_difficulty_score:
                 block_reason = "difficulty_score_exceeded"
+                blocked_setting = "migration_max_difficulty_score"
+                blocked_setting_actual = difficulty_score
+                blocked_setting_cap = max_difficulty_score
 
         return {
             "blocked": blocked,
             "block_reason": block_reason,
+            "blocked_setting": blocked_setting,
+            "blocked_setting_actual": blocked_setting_actual,
+            "blocked_setting_cap": blocked_setting_cap,
             "difficulty_score": difficulty_score,
             "exceeds_final_input_chars": exceeds_final_input_chars,
             "exceeds_difficulty_score": exceeds_difficulty_score,
@@ -2680,13 +2739,13 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
         generation_budget["migration_context_budget_chars"] = compact_context_budget
 
         prior_page_limit = self._coerce_optional_non_negative_int(generation_budget.get("migration_generated_page_limit"))
-        compact_page_limit = max(1, min(8, int(generation_safety.compact_page_limit)))
+        compact_page_limit = max(1, min(10, int(generation_safety.compact_page_limit)))
         if prior_page_limit is None or compact_page_limit < prior_page_limit:
             budget_capped = True
         generation_budget["migration_generated_page_limit"] = compact_page_limit
 
         prior_file_limit = self._coerce_optional_non_negative_int(generation_budget.get("migration_generated_file_limit"))
-        compact_file_limit = max(1, min(12, compact_page_limit))
+        compact_file_limit = max(1, min(24, compact_page_limit))
         if prior_file_limit is None or compact_file_limit < prior_file_limit:
             budget_capped = True
         generation_budget["migration_generated_file_limit"] = compact_file_limit
@@ -2700,7 +2759,7 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
         prior_recommendation_limit = self._coerce_optional_non_negative_int(
             generation_budget.get("migration_recommendation_limit")
         )
-        compact_recommendation_limit = max(0, min(10, int(generation_safety.compact_recommendation_limit)))
+        compact_recommendation_limit = max(0, min(12, int(generation_safety.compact_recommendation_limit)))
         if prior_recommendation_limit is None or compact_recommendation_limit < prior_recommendation_limit:
             budget_capped = True
         generation_budget["migration_recommendation_limit"] = compact_recommendation_limit
@@ -2770,6 +2829,14 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
                 "budget_capped": bool(budget_capped),
                 "preflight_blocked": bool(preflight_evaluation.get("blocked")),
                 "preflight_block_reason": _clean_optional_value(preflight_evaluation.get("block_reason")),
+                "preflight_blocked_setting": _clean_optional_value(preflight_evaluation.get("blocked_setting")),
+                "preflight_blocked_setting_actual": self._coerce_optional_non_negative_int(
+                    preflight_evaluation.get("blocked_setting_actual")
+                ),
+                "preflight_blocked_setting_cap": self._coerce_optional_non_negative_int(
+                    preflight_evaluation.get("blocked_setting_cap")
+                ),
+                "provider_call_skipped": bool(preflight_evaluation.get("blocked")),
                 "difficulty_score": self._coerce_optional_non_negative_int(preflight_evaluation.get("difficulty_score")),
                 "max_final_input_chars": self._coerce_optional_non_negative_int(
                     preflight_evaluation.get("max_final_input_chars")
