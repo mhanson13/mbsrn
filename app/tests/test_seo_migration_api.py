@@ -907,6 +907,35 @@ def _tiny_png_payload() -> bytes:
     )
 
 
+def _build_migration_artifact_output(*, index_content: str | None = None) -> SEOMigrationArtifactGenerationOutput:
+    return SEOMigrationArtifactGenerationOutput(
+        strategy_summary="Draft strategy",
+        page_map=[{"path": "/", "title": "Home"}],
+        homepage_structure=[],
+        service_page_suggestions=[],
+        cta_contact_structure={},
+        seo_meta_suggestions={},
+        redirect_suggestions=[],
+        analytics_placeholders=[],
+        generated_files=[
+            SEOMigrationGeneratedFileOutput(
+                path="index.html",
+                media_type="text/html",
+                content=index_content
+                or "<html><head><!-- ANALYTICS_PLACEHOLDER --></head><body><h1>Draft Home</h1></body></html>",
+            ),
+            SEOMigrationGeneratedFileOutput(
+                path="styles.css",
+                media_type="text/css",
+                content="body { color: #111; }",
+            ),
+        ],
+        provider_name="mock",
+        model_name="mock-seo-migration-v1",
+        prompt_version="seo-migration-v1",
+    )
+
+
 def _prepare_workspace_for_draft_generation(client: TestClient, *, business_id: str, site_id: str) -> None:
     ingest_response = client.post(
         f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/source-ingest",
@@ -1288,6 +1317,76 @@ def test_adopt_publish_repository_endpoint_writes_management_marker(db_session) 
     assert payload["result"]["marker_written"] is True
     assert payload["result"]["adoption_outcome"] == "marker_written"
     assert len(publisher.adopt_repository_calls) == 1
+
+
+def test_artifact_file_stream_route_serves_materialized_media_without_exposing_base64_in_version_payload(
+    db_session,
+) -> None:
+    business_id = "11111111-1111-1111-1111-111111111111"
+    site_id = "22222222-2222-2222-2222-222222222222"
+    _seed_business_and_site(db_session, business_id=business_id, site_id=site_id)
+    provider = _StaticMigrationArtifactProvider(_build_migration_artifact_output())
+    client = _make_client(db_session, business_id=business_id, artifact_provider=provider)
+
+    workspace_response = client.put(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/workspace",
+        json={"source_url": "https://legacy.example"},
+    )
+    assert workspace_response.status_code == 200
+    _prepare_workspace_for_draft_generation(client, business_id=business_id, site_id=site_id)
+
+    upload_response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/media/upload",
+        params={"filename": "hero.png", "selected_for_draft": "true"},
+        headers={"Content-Type": "image/png"},
+        content=_tiny_png_payload(),
+    )
+    assert upload_response.status_code == 201
+    uploaded_asset_id = str(upload_response.json().get("asset_id") or "")
+    assert uploaded_asset_id.startswith("upl-")
+
+    provider.output = _build_migration_artifact_output(
+        index_content=(
+            "<html><head><!-- ANALYTICS_PLACEHOLDER --></head><body>"
+            f"<img src=\"{uploaded_asset_id}\" alt=\"hero\"/>"
+            "</body></html>"
+        )
+    )
+
+    generate_response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/generate-draft-artifacts",
+        json={"force_new_version": True},
+    )
+    assert generate_response.status_code == 201
+    artifact_payload = generate_response.json()
+    artifact_id = str(artifact_payload.get("id") or "")
+    assert artifact_id
+
+    artifact_version_response = client.get(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/artifact-versions/{artifact_id}"
+    )
+    assert artifact_version_response.status_code == 200
+    generated_files = artifact_version_response.json().get("generated_files_json") or []
+    assert isinstance(generated_files, list)
+    index_file = next(item for item in generated_files if isinstance(item, dict) and item.get("path") == "index.html")
+    image_file = next(
+        item
+        for item in generated_files
+        if isinstance(item, dict) and str(item.get("path") or "").startswith("assets/images/")
+    )
+    index_content = str(index_file.get("content") or "")
+    assert uploaded_asset_id not in index_content
+    assert "assets/images/" in index_content
+    assert image_file.get("content_base64") is None
+    assert image_file.get("content_encoding") is None
+
+    image_path = str(image_file.get("path") or "")
+    image_stream_response = client.get(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/artifact-versions/{artifact_id}/files/{image_path}"
+    )
+    assert image_stream_response.status_code == 200
+    assert image_stream_response.headers.get("content-type", "").startswith("image/png")
+    assert image_stream_response.content == _tiny_png_payload()
 
 
 def test_adopt_publish_repository_endpoint_returns_validation_error_on_failure(db_session) -> None:

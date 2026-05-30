@@ -356,8 +356,40 @@ def _to_workspace_read(workspace) -> SEOMigrationWorkspaceRead:  # noqa: ANN001
     return SEOMigrationWorkspaceRead.model_validate(workspace)
 
 
+def _sanitize_generated_files_for_read(
+    generated_files: object,
+) -> list[dict[str, object]] | None:
+    if not isinstance(generated_files, list):
+        return None
+    sanitized: list[dict[str, object]] = []
+    for item in generated_files[:120]:
+        if not isinstance(item, dict):
+            continue
+        path = str(item.get("path") or "").strip()
+        if not path:
+            continue
+        payload: dict[str, object] = {
+            "path": path,
+            "media_type": str(item.get("media_type") or "text/plain").strip().lower(),
+        }
+        size_bytes_raw = item.get("size_bytes")
+        try:
+            size_bytes_value = int(size_bytes_raw) if size_bytes_raw is not None else None
+        except (TypeError, ValueError):
+            size_bytes_value = None
+        if isinstance(size_bytes_value, int) and size_bytes_value >= 0:
+            payload["size_bytes"] = size_bytes_value
+        content = item.get("content")
+        if isinstance(content, str):
+            payload["content"] = content
+        sanitized.append(payload)
+    return sanitized
+
+
 def _to_artifact_read(artifact) -> SEOMigrationArtifactVersionRead:  # noqa: ANN001
-    return SEOMigrationArtifactVersionRead.model_validate(artifact)
+    artifact_read = SEOMigrationArtifactVersionRead.model_validate(artifact)
+    artifact_read.generated_files_json = _sanitize_generated_files_for_read(artifact.generated_files_json)
+    return artifact_read
 
 
 def _validation_error_detail(exc: SEOMigrationValidationError) -> str | dict[str, object]:
@@ -1558,4 +1590,38 @@ def preview_seo_migration_artifact_file(
         path=path,
         media_type=media_type,
         content=content,
+    )
+
+
+@router.get("/sites/{site_id}/migration/artifact-versions/{artifact_version_id}/files/{file_path:path}")
+def stream_seo_migration_artifact_file(
+    business_id: str,
+    site_id: str,
+    artifact_version_id: str,
+    file_path: str,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    migration_service: SEOMigrationService = Depends(get_seo_migration_service),
+) -> Response:
+    scoped_business_id = resolve_tenant_business_id(
+        tenant_context=tenant_context,
+        requested_business_id=business_id,
+    )
+    try:
+        media_type, payload = migration_service.read_artifact_file_content(
+            business_id=scoped_business_id,
+            site_id=site_id,
+            artifact_version_id=artifact_version_id,
+            path=file_path,
+        )
+    except SEOMigrationNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except SEOMigrationValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
+    return Response(
+        content=payload,
+        media_type=media_type,
+        headers={
+            "Cache-Control": "private, max-age=60",
+            "X-Content-Type-Options": "nosniff",
+        },
     )

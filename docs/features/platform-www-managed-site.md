@@ -38,6 +38,14 @@ Publish/deploy semantics are unchanged:
 - deploy is explicit and separate
 - publish does not equal production cutover
 
+## Media Artifact Requirement
+For `mhanson13/mbsrn-www`, selected migration media must ship with the generated artifact package:
+- generated HTML must use deployable static image paths (for example `assets/images/...`)
+- internal media IDs/placeholders (such as `upl-...` or unresolved `@image(...)`) are not cutover-ready
+- publish output must contain both page files and referenced image files
+
+Cutover/readiness remains blocked when media is unresolved or missing from artifact files, even if draft text generation otherwise succeeds.
+
 ## DNS Cutover
 DNS changes are manual and out of scope for this pass.
 

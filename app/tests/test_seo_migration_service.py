@@ -681,7 +681,12 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
             branch=target.branch,
             artifact_root=target.artifact_root,
             files_published=len(files),
-            total_bytes=sum(len(item.content.encode("utf-8")) for item in files),
+            total_bytes=sum(
+                len(item.content_bytes)
+                if isinstance(item.content_bytes, (bytes, bytearray))
+                else len((item.content or "").encode("utf-8"))
+                for item in files
+            ),
             commit_shas=() if dry_run else ("abc123",),
             committed_paths=tuple(item.path for item in files),
             published_at="2026-04-07T12:00:00+00:00",
@@ -4472,6 +4477,177 @@ def test_generate_artifacts_root_path_normalization_keeps_forbidden_and_traversa
     assert any("invalid path" in warning for warning in warnings)
     assert any("forbidden generated path" in warning for warning in warnings)
 
+
+def test_generate_artifacts_materializes_selected_media_and_rewrites_internal_image_refs(db_session) -> None:
+    publisher = _RecordingGitHubPublisher()
+    provider = _StaticMigrationProvider(_build_publishable_output())
+    service = _build_service(
+        db_session,
+        provider,
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    uploaded = service.upload_workspace_media_asset(
+        business_id=business_id,
+        site_id=site_id,
+        filename="Crew Hero.PNG",
+        content_type="image/png",
+        payload=_tiny_png_payload(),
+        selected_for_draft=True,
+        category="hero",
+        alt_text="Crew member cleaning carpet",
+        description=None,
+        usage_note=None,
+        page_assignment=None,
+        principal_id="principal-1",
+    )
+    asset_id = str(uploaded.get("asset_id") or "").strip()
+    assert asset_id.startswith("upl-")
+
+    provider.output = _build_publishable_output(
+        index_content=(
+            "<html><head><!-- ANALYTICS_PLACEHOLDER --></head><body>"
+            f"<img src=\"{asset_id}\" alt=\"crew\" />"
+            "</body></html>"
+        )
+    )
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    generated_files = [item for item in (artifact.generated_files_json or []) if isinstance(item, dict)]
+    index_file = next(item for item in generated_files if str(item.get("path")) == "index.html")
+    assert asset_id not in str(index_file.get("content") or "")
+    assert "assets/images/" in str(index_file.get("content") or "")
+
+    image_files = [item for item in generated_files if str(item.get("path") or "").startswith("assets/images/")]
+    assert len(image_files) == 1
+    assert image_files[0].get("content_encoding") == "base64"
+    assert isinstance(image_files[0].get("content_base64"), str)
+    assert not image_files[0].get("content")
+
+    context_json = artifact.context_json if isinstance(artifact.context_json, dict) else {}
+    media_diagnostics = context_json.get("artifact_media_diagnostics")
+    assert isinstance(media_diagnostics, dict)
+    assert media_diagnostics.get("ready") is True
+    assert media_diagnostics.get("materialized_assets_count") == 1
+    assert media_diagnostics.get("unresolved_internal_media_ids_count") == 0
+
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes=None,
+        principal_id="principal-1",
+    )
+    service.publish_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=True,
+        commit_message=None,
+        analytics_measurement_id=None,
+        principal_id="principal-1",
+    )
+    assert publisher.publish_calls
+    _, publish_files, _, _ = publisher.publish_calls[-1]
+    publish_paths = [item.path for item in publish_files]
+    assert "index.html" in publish_paths
+    materialized_publish = next(item for item in publish_files if item.path.startswith("assets/images/"))
+    assert isinstance(materialized_publish.content_bytes, (bytes, bytearray))
+    assert materialized_publish.content is None
+    html_publish = next(item for item in publish_files if item.path == "index.html")
+    assert "assets/images/" in str(html_publish.content or "")
+
+
+def test_publish_and_deploy_readiness_block_when_artifact_media_references_are_unresolved(db_session) -> None:
+    provider = _StaticMigrationProvider(
+        _build_publishable_output(
+            index_content=(
+                "<html><head><!-- ANALYTICS_PLACEHOLDER --></head><body>"
+                "<img src=\"upl-missing-media\" alt=\"missing\" />"
+                "<img src=\"@image(project-hero)\" alt=\"token\" />"
+                "</body></html>"
+            )
+        )
+    )
+    service = _build_service(db_session, provider)
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+    _configure_deploy_target(service, business_id=business_id, site_id=site_id)
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes=None,
+        principal_id="principal-1",
+    )
+    summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
+    publish_readiness = summary.publish_readiness if isinstance(summary.publish_readiness, dict) else {}
+    deploy_readiness = summary.deploy_readiness if isinstance(summary.deploy_readiness, dict) else {}
+    publish_media = publish_readiness.get("artifact_media_readiness")
+    deploy_media = deploy_readiness.get("artifact_media_readiness")
+    assert isinstance(publish_media, dict)
+    assert publish_media.get("ready") is False
+    assert "artifact_internal_media_ids_unresolved" in list(publish_media.get("blocker_codes") or [])
+    assert "artifact_image_tokens_unresolved" in list(publish_media.get("blocker_codes") or [])
+    assert "publish_artifact_media_invalid" in list(publish_readiness.get("blocker_codes") or [])
+    assert isinstance(deploy_media, dict)
+    assert deploy_media.get("ready") is False
+    assert "deploy_artifact_media_invalid" in list(deploy_readiness.get("blocker_codes") or [])
+
+
+def test_generate_artifacts_flags_selected_media_not_materialized_when_storage_bytes_missing(db_session) -> None:
+    provider = _StaticMigrationProvider(
+        _build_publishable_output(
+            index_content=(
+                "<html><head><!-- ANALYTICS_PLACEHOLDER --></head><body>"
+                "<img src=\"upl-selected-missing\" alt=\"missing\" />"
+                "</body></html>"
+            )
+        )
+    )
+    service = _build_service(db_session, provider)
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    workspace = service.get_workspace(business_id=business_id, site_id=site_id)
+    enriched_notes = dict(workspace.enriched_content_notes_json or {})
+    enriched_notes["workspace_media_assets"] = [
+        {
+            "asset_id": "upl-selected-missing",
+            "display_filename": "missing-image.png",
+            "content_type": "image/png",
+            "provenance": "operator_upload",
+            "import_status": "selected",
+            "selected_for_draft": True,
+            "workspace_status": "active",
+            "storage_key": "missing/not-found.png",
+        }
+    ]
+    workspace.enriched_content_notes_json = enriched_notes
+    service.seo_migration_repository.save_workspace(workspace)
+    service.session.commit()
+
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    context_json = artifact.context_json if isinstance(artifact.context_json, dict) else {}
+    media_diagnostics = context_json.get("artifact_media_diagnostics")
+    assert isinstance(media_diagnostics, dict)
+    assert media_diagnostics.get("selected_not_materialized_count") == 1
+    assert "selected_media_not_materialized" in list(media_diagnostics.get("blocker_codes") or [])
+    assert media_diagnostics.get("ready") is False
 
 def test_generate_artifacts_rejection_emits_contract_diagnostics(db_session, caplog) -> None:
     output = SEOMigrationArtifactGenerationOutput(

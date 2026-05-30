@@ -2637,6 +2637,32 @@ Rollback pattern:
 - no automatic rollback orchestration is performed in this phase
 - DNS/A-record cutover remains an external operator task and is not automated by this feature
 
+## Artifact Media Materialization Contract (2026-05)
+Selected media is only deploy-ready when it is materialized into artifact files and referenced by deployable static paths.
+
+Required behavior:
+- selected/imported/uploaded media used by a generated draft is exported into artifact output under stable relative paths (for example `assets/images/...`)
+- generated HTML must reference deployable artifact paths, not internal media IDs (`upl-...`) and not unresolved `@image(...)` placeholders
+- publish payloads include both generated HTML/CSS and the materialized image files
+- artifact read payloads remain bounded and do not expose raw base64 media blobs directly in API JSON responses
+
+Readiness/cutover blockers now include:
+- unresolved internal media references remain in generated HTML (`src=\"upl-...\"`)
+- unresolved `@image(...)` references remain in generated HTML
+- selected media marked included but not materialized into artifact files
+- generated HTML references image paths that are missing from artifact files
+- generated HTML references internal/private media routes or unsafe paths
+
+Warnings (non-blocking):
+- selected media exists but is unused by generated pages
+- weak/missing alt text coverage
+
+Operator expectation before publish/deploy/cutover:
+1. `Images included in draft` count is non-zero when real media is required.
+2. Artifact media readiness reports no blockers.
+3. Preview renders referenced images from artifact-relative paths.
+4. Published repository contains matching HTML and `assets/images/*` files.
+
 ## Known Limitations
 - bounded ingest scope (homepage-first, shallow extraction)
 - no background worker pipeline introduced

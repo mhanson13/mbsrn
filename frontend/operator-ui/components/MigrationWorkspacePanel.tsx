@@ -3459,6 +3459,25 @@ function normalizeArtifactPathForPreview(path: string): string {
   return path.replace(/\\/g, "/").replace(/^\/+/, "").trim();
 }
 
+function buildArtifactPreviewFileUrl(
+  businessId: string,
+  siteId: string,
+  artifactVersionId: string,
+  path: string,
+): string | null {
+  const normalizedPath = normalizeArtifactPathForPreview(path);
+  if (!normalizedPath) {
+    return null;
+  }
+  const encodedPath = normalizedPath
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+  return `/api/businesses/${encodeURIComponent(businessId)}/seo/sites/${encodeURIComponent(
+    siteId,
+  )}/migration/artifact-versions/${encodeURIComponent(artifactVersionId)}/files/${encodedPath}`;
+}
+
 function resolveArtifactRelativePath(entryPath: string, href: string): string | null {
   const normalizedHref = href.trim();
   if (!normalizedHref || normalizedHref.startsWith("#")) {
@@ -3498,7 +3517,10 @@ function extractPreviewPageTitle(path: string, html: string): string {
   return path;
 }
 
-function buildDraftPreviewEvaluation(artifact: MigrationArtifactVersion | null): DraftPreviewEvaluation {
+function buildDraftPreviewEvaluation(
+  artifact: MigrationArtifactVersion | null,
+  options: { businessId: string; siteId: string },
+): DraftPreviewEvaluation {
   if (!artifact || !Array.isArray(artifact.generated_files_json)) {
     return {
       available: false,
@@ -3511,11 +3533,11 @@ function buildDraftPreviewEvaluation(artifact: MigrationArtifactVersion | null):
     .map((item) => asRecord(item))
     .map((item) => ({
       path: normalizeArtifactPathForPreview(asString(item.path)),
-      content: asString(item.content),
+      content: asStringOrNull(item.content),
       mediaType: asString(item.media_type).trim().toLowerCase(),
     }))
-    .filter((item) => item.path.length > 0 && item.content.length > 0);
-  const htmlFiles = normalizedFiles.filter((item) => item.path.endsWith(".html"));
+    .filter((item) => item.path.length > 0);
+  const htmlFiles = normalizedFiles.filter((item) => item.path.endsWith(".html") && Boolean(item.content));
   if (htmlFiles.length === 0) {
     return {
       available: false,
@@ -3525,7 +3547,7 @@ function buildDraftPreviewEvaluation(artifact: MigrationArtifactVersion | null):
     };
   }
 
-  const fileMap = new Map<string, { content: string; mediaType: string }>();
+  const fileMap = new Map<string, { content: string | null; mediaType: string }>();
   normalizedFiles.forEach((item) => {
     fileMap.set(item.path, {
       content: item.content,
@@ -3536,12 +3558,13 @@ function buildDraftPreviewEvaluation(artifact: MigrationArtifactVersion | null):
   const entry = htmlFiles.find((item) => item.path.toLowerCase() === "index.html") || htmlFiles[0];
   const cssContentByPath = new Map<string, string>();
   normalizedFiles.forEach((item) => {
-    if (item.path.endsWith(".css")) {
+    if (item.path.endsWith(".css") && item.content) {
       cssContentByPath.set(item.path, item.content);
     }
   });
   const linkStylesheetRegex =
     /<link\b(?=[^>]*\brel=["'][^"']*stylesheet[^"']*["'])(?=[^>]*\bhref=["'][^"']+["'])[^>]*\bhref=["']([^"']+)["'][^>]*>/gi;
+  const imageSrcRegex = /(<(?:img|source)\b[^>]*?\bsrc=)(["'])([^"']+)(\2)/gi;
 
   const buildPreviewHtmlForPage = (path: string, content: string): string => {
     let html = content.replace(linkStylesheetRegex, (full, hrefValue: string) => {
@@ -3555,6 +3578,39 @@ function buildDraftPreviewEvaluation(artifact: MigrationArtifactVersion | null):
       }
       return `<style data-preview-inline-source="${resolvedPath}">\n${cssContent}\n</style>`;
     });
+    html = html.replace(
+      imageSrcRegex,
+      (full, prefix: string, quoteChar: string, srcValue: string) => {
+        const resolvedPath = resolveArtifactRelativePath(path, srcValue);
+        if (!resolvedPath) {
+          return full;
+        }
+        const resolvedEntry = fileMap.get(resolvedPath);
+        if (!resolvedEntry) {
+          return full;
+        }
+        const isImageAsset =
+          resolvedEntry.mediaType.startsWith("image/")
+          || resolvedPath.endsWith(".png")
+          || resolvedPath.endsWith(".jpg")
+          || resolvedPath.endsWith(".jpeg")
+          || resolvedPath.endsWith(".webp")
+          || resolvedPath.endsWith(".gif");
+        if (!isImageAsset) {
+          return full;
+        }
+        const assetUrl = buildArtifactPreviewFileUrl(
+          options.businessId,
+          options.siteId,
+          artifact.id,
+          resolvedPath,
+        );
+        if (!assetUrl) {
+          return full;
+        }
+        return `${prefix}${quoteChar}${assetUrl}${quoteChar}`;
+      },
+    );
     html = html.replace(
       /<a\b([^>]*)\bhref=["']([^"']+)["']([^>]*)>/gi,
       (full, prefix: string, hrefValue: string, suffix: string) => {
@@ -3583,8 +3639,8 @@ function buildDraftPreviewEvaluation(artifact: MigrationArtifactVersion | null):
     .sort((left, right) => left.path.localeCompare(right.path))
     .map((page) => ({
       path: page.path,
-      html: buildPreviewHtmlForPage(page.path, page.content),
-      title: extractPreviewPageTitle(page.path, page.content),
+      html: buildPreviewHtmlForPage(page.path, page.content || ""),
+      title: extractPreviewPageTitle(page.path, page.content || ""),
     }));
 
   return {
@@ -3967,6 +4023,28 @@ export function MigrationWorkspacePanel({
     asNonNegativeInt(draftReadinessPreflight.selected_usable_media_assets_count)
     ?? asNonNegativeInt(draftInputSummary.selected_usable_media_assets_count)
     ?? selectedMediaAssetsCount;
+  const artifactMediaSelectedAssetsCount =
+    asNonNegativeInt(draftInputSummary.artifact_media_selected_assets_count)
+    ?? selectedUsableMediaAssetsCount;
+  const artifactMediaMaterializedAssetsCount =
+    asNonNegativeInt(draftInputSummary.artifact_media_materialized_assets_count)
+    ?? 0;
+  const artifactMediaReferencedPathsCount =
+    asNonNegativeInt(draftInputSummary.artifact_media_referenced_paths_count)
+    ?? 0;
+  const artifactMediaUnresolvedReferencesCount =
+    asNonNegativeInt(draftInputSummary.artifact_media_unresolved_references_count)
+    ?? 0;
+  const artifactMediaSelectedNotMaterializedCount =
+    asNonNegativeInt(draftInputSummary.artifact_media_selected_not_materialized_count)
+    ?? 0;
+  const artifactMediaUnreferencedMaterializedCount =
+    asNonNegativeInt(draftInputSummary.artifact_media_unreferenced_materialized_count)
+    ?? 0;
+  const artifactMediaReadyForPublishDeploy = asBooleanOrNull(
+    draftInputSummary.artifact_media_ready_for_publish_deploy,
+  );
+  const artifactMediaBlockerCodes = asStringList(draftInputSummary.artifact_media_blocker_codes);
   const mediaRequirementSatisfied =
     asBooleanOrNull(draftReadinessPreflight.media_requirement_satisfied)
     ?? asBooleanOrNull(draftInputSummary.media_requirement_satisfied)
@@ -5475,7 +5553,14 @@ export function MigrationWorkspacePanel({
   const recommendationContextLastRun = formatContextTimestamp(recommendationReusedContext.timestamp);
   const competitorContextLastRun = formatContextTimestamp(competitorReusedContext.timestamp);
   const latestArtifactForSummary = selectedArtifact || summary?.latest_artifact || artifactVersions[0] || null;
-  const draftPreview = useMemo(() => buildDraftPreviewEvaluation(selectedArtifact), [selectedArtifact]);
+  const draftPreview = useMemo(
+    () =>
+      buildDraftPreviewEvaluation(selectedArtifact, {
+        businessId,
+        siteId,
+      }),
+    [businessId, siteId, selectedArtifact],
+  );
   const previewTitleByPath = useMemo(() => {
     const titleMap = new Map<string, string>();
     const pageMap = Array.isArray(selectedArtifact?.page_map_json) ? selectedArtifact.page_map_json : [];
@@ -7860,6 +7945,35 @@ export function MigrationWorkspacePanel({
           Included in next draft: {selectedUsableMediaAssetsCount} selected usable image
           {selectedUsableMediaAssetsCount === 1 ? "" : "s"}.
         </span>
+        <span className="hint" data-testid="migration-artifact-media-materialization-summary">
+          Materialized into artifact files: {artifactMediaMaterializedAssetsCount} of {artifactMediaSelectedAssetsCount}
+          {" "}selected image{artifactMediaSelectedAssetsCount === 1 ? "" : "s"}.
+        </span>
+        <span className="hint" data-testid="migration-artifact-media-reference-summary">
+          Referenced by generated pages: {artifactMediaReferencedPathsCount}. Unresolved references: {artifactMediaUnresolvedReferencesCount}.
+        </span>
+        {artifactMediaSelectedNotMaterializedCount > 0 ? (
+          <span className="hint warning" data-testid="migration-artifact-media-not-materialized-warning">
+            {artifactMediaSelectedNotMaterializedCount} selected image
+            {artifactMediaSelectedNotMaterializedCount === 1 ? "" : "s"} were not materialized into artifact assets.
+          </span>
+        ) : null}
+        {artifactMediaUnresolvedReferencesCount > 0 ? (
+          <span className="hint warning" data-testid="migration-artifact-media-unresolved-warning">
+            Generated HTML still contains unresolved image references. Publish/deploy remains blocked until resolved.
+          </span>
+        ) : null}
+        {artifactMediaUnreferencedMaterializedCount > 0 ? (
+          <span className="hint muted" data-testid="migration-artifact-media-unreferenced-note">
+            {artifactMediaUnreferencedMaterializedCount} materialized image asset
+            {artifactMediaUnreferencedMaterializedCount === 1 ? "" : "s"} are currently unused by generated pages.
+          </span>
+        ) : null}
+        {artifactMediaReadyForPublishDeploy === false && artifactMediaBlockerCodes.length > 0 ? (
+          <span className="hint warning" data-testid="migration-artifact-media-readiness-blockers">
+            Media readiness blockers: {artifactMediaBlockerCodes.slice(0, 4).join(", ").replace(/_/g, " ")}.
+          </span>
+        ) : null}
         <span className="hint muted">
           Media counts/actions are managed in Section B. Provider execution metadata is available in Advanced Diagnostics.
         </span>

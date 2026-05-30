@@ -2070,7 +2070,7 @@ describe("site migration workflow route", () => {
           path: "index.html",
           media_type: "text/html",
           content:
-            "<html><head><title>Artifact One Home</title></head><body><a href=\"about.html\">About</a><a href=\"/sites/site-1\">Workspace</a></body></html>",
+            "<html><head><title>Artifact One Home</title></head><body><img src=\"assets/images/hero.png\" alt=\"hero\" /><a href=\"about.html\">About</a><a href=\"/sites/site-1\">Workspace</a></body></html>",
           size_bytes: 100,
         },
         {
@@ -2078,6 +2078,11 @@ describe("site migration workflow route", () => {
           media_type: "text/html",
           content: "<html><head><title>Artifact One About</title></head><body>About Draft</body></html>",
           size_bytes: 80,
+        },
+        {
+          path: "assets/images/hero.png",
+          media_type: "image/png",
+          size_bytes: 68,
         },
       ],
     });
@@ -2117,6 +2122,12 @@ describe("site migration workflow route", () => {
     const previewFrame = await screen.findByTestId("migration-file-preview-iframe");
     expect(previewFrame).toHaveAttribute("srcDoc", expect.stringContaining("Artifact One Home"));
     expect(previewFrame).toHaveAttribute("srcDoc", expect.stringContaining("data-preview-link-blocked=\"true\""));
+    expect(previewFrame).toHaveAttribute(
+      "srcDoc",
+      expect.stringContaining(
+        "/api/businesses/biz-1/seo/sites/site-1/migration/artifact-versions/artifact-preview-1/files/assets/images/hero.png",
+      ),
+    );
     expect(screen.getByTestId("migration-draft-preview-auth-guidance")).toHaveTextContent(
       "Draft preview route requires operator session context.",
     );
@@ -2137,6 +2148,47 @@ describe("site migration workflow route", () => {
     expect(await screen.findByTestId("migration-file-preview-iframe")).toHaveAttribute(
       "srcDoc",
       expect.stringContaining("Artifact Two Home"),
+    );
+  });
+
+  it("shows artifact media materialization and unresolved blockers in draft input summary", async () => {
+    const summary = buildMigrationWorkspaceSummary();
+    summary.context_summary = {
+      ...summary.context_summary,
+      draft_input_summary: {
+        artifact_media_selected_assets_count: 8,
+        artifact_media_materialized_assets_count: 5,
+        artifact_media_referenced_paths_count: 4,
+        artifact_media_unresolved_references_count: 3,
+        artifact_media_selected_not_materialized_count: 3,
+        artifact_media_unreferenced_materialized_count: 1,
+        artifact_media_ready_for_publish_deploy: false,
+        artifact_media_blocker_codes: [
+          "selected_media_not_materialized",
+          "artifact_internal_media_ids_unresolved",
+        ],
+      },
+    };
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(summary);
+    mockFetchMigrationArtifactVersions.mockResolvedValueOnce({
+      items: [summary.latest_artifact as MigrationArtifactVersion],
+      total: 1,
+    });
+
+    render(<SiteMigrationWorkflowPage />);
+
+    expect(await screen.findByTestId("migration-artifact-media-materialization-summary")).toHaveTextContent(
+      "Materialized into artifact files: 5 of 8 selected images.",
+    );
+    expect(screen.getByTestId("migration-artifact-media-reference-summary")).toHaveTextContent(
+      "Referenced by generated pages: 4. Unresolved references: 3.",
+    );
+    expect(screen.getByTestId("migration-artifact-media-not-materialized-warning")).toHaveTextContent(
+      "3 selected images were not materialized into artifact assets.",
+    );
+    expect(screen.getByTestId("migration-artifact-media-unresolved-warning")).toBeInTheDocument();
+    expect(screen.getByTestId("migration-artifact-media-readiness-blockers")).toHaveTextContent(
+      "Media readiness blockers:",
     );
   });
 

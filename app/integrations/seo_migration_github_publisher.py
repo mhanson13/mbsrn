@@ -79,8 +79,9 @@ class SEOMigrationGitHubPublishTarget:
 @dataclass(frozen=True)
 class SEOMigrationGitHubPublishFile:
     path: str
-    content: str
-    media_type: str
+    content: str | None = None
+    media_type: str = "text/plain"
+    content_bytes: bytes | None = None
 
 
 @dataclass(frozen=True)
@@ -2056,10 +2057,17 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         commit_message: str,
         dry_run: bool,
     ) -> SEOMigrationGitHubPublishResult:
+        def _payload_bytes(file_item: SEOMigrationGitHubPublishFile) -> bytes:
+            if isinstance(file_item.content_bytes, (bytes, bytearray)):
+                return bytes(file_item.content_bytes)
+            if isinstance(file_item.content, str):
+                return file_item.content.encode("utf-8")
+            return b""
+
         published_at = utc_now().isoformat()
         committed_paths: list[str] = []
         if dry_run:
-            total_bytes = sum(len(item.content.encode("utf-8")) for item in files)
+            total_bytes = sum(len(_payload_bytes(item)) for item in files)
             return SEOMigrationGitHubPublishResult(
                 dry_run=True,
                 repo_owner=target.repo_owner,
@@ -2151,7 +2159,8 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         commit_shas: list[str] = []
         total_bytes = 0
         for file_item in files:
-            total_bytes += len(file_item.content.encode("utf-8"))
+            payload_bytes = _payload_bytes(file_item)
+            total_bytes += len(payload_bytes)
             final_path = _join_repo_path(target.artifact_root, file_item.path)
             try:
                 existing_payload = self._request_json(
@@ -2179,7 +2188,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                     raise self._classify_publish_request_failed(exc=exc) from exc
                 raise
             existing_sha = _coerce_string(existing_payload.get("sha")) if isinstance(existing_payload, dict) else None
-            encoded_content = base64.b64encode(file_item.content.encode("utf-8")).decode("ascii")
+            encoded_content = base64.b64encode(payload_bytes).decode("ascii")
             payload: dict[str, object] = {
                 "message": commit_message,
                 "content": encoded_content,
