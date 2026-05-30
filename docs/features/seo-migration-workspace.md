@@ -1071,12 +1071,12 @@ Migration draft timeout and preflight risk controls are now governed by Admin na
 
 Admin configurability behavior:
 - Admin UI accepts requested numeric values for migration budget/safety without silent frontend clamping.
-- Backend schema validation remains the source of truth for allowed ranges/hard caps.
+- Backend policy remains the source of truth for effective hard caps used at runtime.
 - Save outcomes are explicit:
   - valid value within cap: persisted
-  - invalid/out-of-range value: rejected with field-specific backend validation feedback
-  - backend-adjusted value (if policy applies): effective value is shown after save
-- Admin effective preview shows requested vs effective values and capped/rejected signals for migration generation controls.
+  - above-cap or below-floor numeric value: persisted as requested and surfaced with effective bounded value + cap reason
+  - invalid/non-numeric structure: rejected with field-specific backend validation feedback
+- Admin effective preview shows requested vs effective values and cap reasons for migration generation controls.
 
 Behavior:
 - Backend preflight computes bounded request metrics before provider invocation:
@@ -1095,7 +1095,8 @@ Behavior:
   - `failure_source=local_preflight`
 - timeout source of truth is `migration_generation_safety.migration_provider_timeout_seconds`
   - legacy business-level migration draft timeout settings are compatibility-only and not the primary control path
-- `6000` seconds is intentionally unsupported for synchronous migration generation
+- synchronous runtime timeout remains hard-capped at `600` seconds effective
+  - higher requested values are preserved for operator/admin intent but clamped to effective `600` at runtime
   - requests that require longer execution should move to async/background architecture
 
 Timeout and preflight diagnostics are surfaced in bounded form:

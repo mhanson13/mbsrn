@@ -15688,21 +15688,34 @@ class SEOMigrationService:
             if variation_level not in {"conservative", "balanced", "differentiated"}:
                 variation_level = "balanced"
 
+            context_budget_chars = _coerce_int(getattr(raw_budget, "migration_context_budget_chars", None))
+            recommendation_limit = _coerce_int(getattr(raw_budget, "migration_recommendation_limit", None))
+            competitor_limit = _coerce_int(getattr(raw_budget, "migration_competitor_limit", None))
+            source_page_summary_limit = _coerce_int(getattr(raw_budget, "migration_source_page_summary_limit", None))
+            media_asset_limit = _coerce_int(getattr(raw_budget, "migration_media_asset_limit", None))
+            generated_page_limit = _coerce_int(getattr(raw_budget, "migration_generated_page_limit", None))
+            generated_file_limit = _coerce_int(getattr(raw_budget, "migration_generated_file_limit", None))
+
             resolved_budget = SEOMigrationGenerationBudget(
-                context_budget_chars=_coerce_int(getattr(raw_budget, "migration_context_budget_chars", None))
-                or defaults.context_budget_chars,
-                recommendation_limit=_coerce_int(getattr(raw_budget, "migration_recommendation_limit", None))
-                or defaults.recommendation_limit,
-                competitor_limit=_coerce_int(getattr(raw_budget, "migration_competitor_limit", None))
-                or defaults.competitor_limit,
-                source_page_summary_limit=_coerce_int(getattr(raw_budget, "migration_source_page_summary_limit", None))
-                or defaults.source_page_summary_limit,
-                media_asset_limit=_coerce_int(getattr(raw_budget, "migration_media_asset_limit", None))
-                or defaults.media_asset_limit,
-                generated_page_limit=_coerce_int(getattr(raw_budget, "migration_generated_page_limit", None))
-                or defaults.generated_page_limit,
-                generated_file_limit=_coerce_int(getattr(raw_budget, "migration_generated_file_limit", None))
-                or defaults.generated_file_limit,
+                context_budget_chars=(
+                    context_budget_chars if context_budget_chars is not None else defaults.context_budget_chars
+                ),
+                recommendation_limit=(
+                    recommendation_limit if recommendation_limit is not None else defaults.recommendation_limit
+                ),
+                competitor_limit=(competitor_limit if competitor_limit is not None else defaults.competitor_limit),
+                source_page_summary_limit=(
+                    source_page_summary_limit
+                    if source_page_summary_limit is not None
+                    else defaults.source_page_summary_limit
+                ),
+                media_asset_limit=(media_asset_limit if media_asset_limit is not None else defaults.media_asset_limit),
+                generated_page_limit=(
+                    generated_page_limit if generated_page_limit is not None else defaults.generated_page_limit
+                ),
+                generated_file_limit=(
+                    generated_file_limit if generated_file_limit is not None else defaults.generated_file_limit
+                ),
                 generation_depth=generation_depth,
                 variation_level=variation_level,
                 require_page_variety=bool(getattr(raw_budget, "migration_require_page_variety", True)),
@@ -15737,31 +15750,47 @@ class SEOMigrationService:
             ).lower()
             if preflight_mode not in {"compact_fallback", "block_before_provider"}:
                 preflight_mode = defaults.preflight_mode
+            provider_timeout_seconds = _coerce_int(
+                getattr(raw_safety, "migration_provider_timeout_seconds", None)
+            )
+            max_final_input_chars = _coerce_int(getattr(raw_safety, "migration_max_final_input_chars", None))
+            max_difficulty_score = _coerce_int(getattr(raw_safety, "migration_max_difficulty_score", None))
+            compact_page_limit = _coerce_int(getattr(raw_safety, "migration_compact_page_limit", None))
+            compact_media_asset_limit = _coerce_int(
+                getattr(raw_safety, "migration_compact_media_asset_limit", None)
+            )
+            compact_recommendation_limit = _coerce_int(
+                getattr(raw_safety, "migration_compact_recommendation_limit", None)
+            )
             resolved_safety = SEOMigrationGenerationSafety(
-                provider_timeout_seconds=_coerce_int(
-                    getattr(raw_safety, "migration_provider_timeout_seconds", None)
-                )
-                or defaults.provider_timeout_seconds,
+                provider_timeout_seconds=(
+                    provider_timeout_seconds
+                    if provider_timeout_seconds is not None
+                    else defaults.provider_timeout_seconds
+                ),
                 preflight_mode=preflight_mode,
-                max_final_input_chars=_coerce_int(getattr(raw_safety, "migration_max_final_input_chars", None))
-                or defaults.max_final_input_chars,
-                max_difficulty_score=_coerce_int(getattr(raw_safety, "migration_max_difficulty_score", None))
-                or defaults.max_difficulty_score,
+                max_final_input_chars=(
+                    max_final_input_chars if max_final_input_chars is not None else defaults.max_final_input_chars
+                ),
+                max_difficulty_score=(
+                    max_difficulty_score if max_difficulty_score is not None else defaults.max_difficulty_score
+                ),
                 compact_fallback_enabled=bool(
                     getattr(raw_safety, "migration_compact_fallback_enabled", defaults.compact_fallback_enabled)
                 ),
-                compact_page_limit=_coerce_int(getattr(raw_safety, "migration_compact_page_limit", None))
-                or defaults.compact_page_limit,
-                compact_media_asset_limit=_coerce_int(
-                    getattr(raw_safety, "migration_compact_media_asset_limit", None)
-                )
-                if getattr(raw_safety, "migration_compact_media_asset_limit", None) is not None
-                else defaults.compact_media_asset_limit,
-                compact_recommendation_limit=_coerce_int(
-                    getattr(raw_safety, "migration_compact_recommendation_limit", None)
-                )
-                if getattr(raw_safety, "migration_compact_recommendation_limit", None) is not None
-                else defaults.compact_recommendation_limit,
+                compact_page_limit=(
+                    compact_page_limit if compact_page_limit is not None else defaults.compact_page_limit
+                ),
+                compact_media_asset_limit=(
+                    compact_media_asset_limit
+                    if compact_media_asset_limit is not None
+                    else defaults.compact_media_asset_limit
+                ),
+                compact_recommendation_limit=(
+                    compact_recommendation_limit
+                    if compact_recommendation_limit is not None
+                    else defaults.compact_recommendation_limit
+                ),
             )
         resolved_safety = self._apply_migration_generation_safety_env_overrides(safety=resolved_safety)
         return resolved_safety, source

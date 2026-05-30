@@ -46,6 +46,8 @@ class GitHubPublishConfigRead(BaseModel):
     managed_gcp_deploy_key_configured: bool = False
     managed_gcp_deploy_key_updated_at: datetime | None = None
     namespace_isolation_defaults: "GitHubNamespaceIsolationDefaults"
+    namespace_isolation_effective_defaults: "GitHubNamespaceIsolationDefaults | None" = None
+    namespace_isolation_cap_reasons: dict[str, str] = Field(default_factory=dict)
     enabled: bool = False
     created_at: datetime | None = None
     updated_at: datetime | None = None
@@ -286,15 +288,41 @@ _MIGRATION_GENERATION_DEPTH_VALUES = {"compact", "standard", "expanded"}
 _MIGRATION_VARIATION_LEVEL_VALUES = {"conservative", "balanced", "differentiated"}
 _MIGRATION_PREFLIGHT_MODE_VALUES = {"compact_fallback", "block_before_provider"}
 
+_MIGRATION_REQUEST_MAX_CONTEXT_BUDGET_CHARS = 1_000_000
+_MIGRATION_REQUEST_MAX_LIST_LIMIT = 1_000
+_MIGRATION_REQUEST_MAX_TIMEOUT_SECONDS = 10_000
+_MIGRATION_REQUEST_MAX_FINAL_INPUT_CHARS = 1_000_000
+_MIGRATION_REQUEST_MAX_DIFFICULTY_SCORE = 100
+_MIGRATION_REQUEST_MAX_COMPACT_LIMIT = 100
+
+_MIGRATION_EFFECTIVE_BUDGET_LIMITS: dict[str, tuple[int, int]] = {
+    "migration_context_budget_chars": (8000, 150000),
+    "migration_recommendation_limit": (1, 24),
+    "migration_competitor_limit": (1, 24),
+    "migration_source_page_summary_limit": (3, 16),
+    "migration_media_asset_limit": (4, 24),
+    "migration_generated_page_limit": (4, 30),
+    "migration_generated_file_limit": (4, 24),
+}
+
+_MIGRATION_EFFECTIVE_SAFETY_LIMITS: dict[str, tuple[int, int]] = {
+    "migration_provider_timeout_seconds": (60, 600),
+    "migration_max_final_input_chars": (3000, 64000),
+    "migration_max_difficulty_score": (5, 24),
+    "migration_compact_page_limit": (1, 10),
+    "migration_compact_media_asset_limit": (0, 8),
+    "migration_compact_recommendation_limit": (0, 12),
+}
+
 
 class MigrationGenerationBudgetDefaults(BaseModel):
-    migration_context_budget_chars: int = Field(default=90000, ge=8000, le=150000)
-    migration_recommendation_limit: int = Field(default=6, ge=1, le=24)
-    migration_competitor_limit: int = Field(default=8, ge=1, le=24)
-    migration_source_page_summary_limit: int = Field(default=8, ge=3, le=16)
-    migration_media_asset_limit: int = Field(default=16, ge=4, le=24)
-    migration_generated_page_limit: int = Field(default=20, ge=4, le=30)
-    migration_generated_file_limit: int = Field(default=16, ge=4, le=24)
+    migration_context_budget_chars: int = Field(default=90000, ge=1, le=_MIGRATION_REQUEST_MAX_CONTEXT_BUDGET_CHARS)
+    migration_recommendation_limit: int = Field(default=6, ge=0, le=_MIGRATION_REQUEST_MAX_LIST_LIMIT)
+    migration_competitor_limit: int = Field(default=8, ge=0, le=_MIGRATION_REQUEST_MAX_LIST_LIMIT)
+    migration_source_page_summary_limit: int = Field(default=8, ge=0, le=_MIGRATION_REQUEST_MAX_LIST_LIMIT)
+    migration_media_asset_limit: int = Field(default=16, ge=0, le=_MIGRATION_REQUEST_MAX_LIST_LIMIT)
+    migration_generated_page_limit: int = Field(default=20, ge=0, le=_MIGRATION_REQUEST_MAX_LIST_LIMIT)
+    migration_generated_file_limit: int = Field(default=16, ge=0, le=_MIGRATION_REQUEST_MAX_LIST_LIMIT)
     migration_generation_depth: str = "standard"
     migration_variation_level: str = "balanced"
     migration_require_page_variety: bool = True
@@ -327,14 +355,14 @@ class MigrationGenerationSafetyDefaults(BaseModel):
     # Synchronous migration generation timeout guardrail.
     # 600 seconds (10 minutes) is the hard maximum for this request/response path.
     # Longer generation must move to async/background execution architecture.
-    migration_provider_timeout_seconds: int = Field(default=300, ge=60, le=600)
+    migration_provider_timeout_seconds: int = Field(default=300, ge=1, le=_MIGRATION_REQUEST_MAX_TIMEOUT_SECONDS)
     migration_preflight_mode: str = "compact_fallback"
-    migration_max_final_input_chars: int = Field(default=32000, ge=3000, le=64000)
-    migration_max_difficulty_score: int = Field(default=18, ge=5, le=24)
+    migration_max_final_input_chars: int = Field(default=32000, ge=1, le=_MIGRATION_REQUEST_MAX_FINAL_INPUT_CHARS)
+    migration_max_difficulty_score: int = Field(default=18, ge=1, le=_MIGRATION_REQUEST_MAX_DIFFICULTY_SCORE)
     migration_compact_fallback_enabled: bool = True
-    migration_compact_page_limit: int = Field(default=6, ge=1, le=10)
-    migration_compact_media_asset_limit: int = Field(default=5, ge=0, le=8)
-    migration_compact_recommendation_limit: int = Field(default=8, ge=0, le=12)
+    migration_compact_page_limit: int = Field(default=6, ge=0, le=_MIGRATION_REQUEST_MAX_COMPACT_LIMIT)
+    migration_compact_media_asset_limit: int = Field(default=5, ge=0, le=_MIGRATION_REQUEST_MAX_COMPACT_LIMIT)
+    migration_compact_recommendation_limit: int = Field(default=8, ge=0, le=_MIGRATION_REQUEST_MAX_COMPACT_LIMIT)
 
     @field_validator("migration_preflight_mode", mode="before")
     @classmethod
@@ -382,6 +410,70 @@ def normalize_namespace_isolation_defaults(
             }
         ],
     )
+
+
+def _clamp_migration_setting(
+    *,
+    setting_path: str,
+    requested_value: int,
+    min_value: int,
+    max_value: int,
+) -> tuple[int, str | None]:
+    if requested_value < min_value:
+        return (
+            min_value,
+            f"{setting_path} requested {requested_value} is below hard minimum {min_value}; effective value {min_value} is used.",
+        )
+    if requested_value > max_value:
+        return (
+            max_value,
+            f"{setting_path} requested {requested_value} exceeds hard cap {max_value}; effective value {max_value} is used.",
+        )
+    return requested_value, None
+
+
+def resolve_effective_namespace_isolation_defaults(
+    value: object | None,
+) -> tuple[GitHubNamespaceIsolationDefaults, dict[str, str]]:
+    requested = normalize_namespace_isolation_defaults(value)
+    effective_payload = requested.model_dump(mode="python")
+    cap_reasons: dict[str, str] = {}
+
+    budget_payload = effective_payload.get("migration_generation_budget")
+    if isinstance(budget_payload, dict):
+        for field_name, (min_value, max_value) in _MIGRATION_EFFECTIVE_BUDGET_LIMITS.items():
+            requested_value_raw = budget_payload.get(field_name)
+            if not isinstance(requested_value_raw, int):
+                continue
+            setting_path = f"migration_generation_budget.{field_name}"
+            effective_value, reason = _clamp_migration_setting(
+                setting_path=setting_path,
+                requested_value=int(requested_value_raw),
+                min_value=min_value,
+                max_value=max_value,
+            )
+            budget_payload[field_name] = effective_value
+            if reason:
+                cap_reasons[setting_path] = reason
+
+    safety_payload = effective_payload.get("migration_generation_safety")
+    if isinstance(safety_payload, dict):
+        for field_name, (min_value, max_value) in _MIGRATION_EFFECTIVE_SAFETY_LIMITS.items():
+            requested_value_raw = safety_payload.get(field_name)
+            if not isinstance(requested_value_raw, int):
+                continue
+            setting_path = f"migration_generation_safety.{field_name}"
+            effective_value, reason = _clamp_migration_setting(
+                setting_path=setting_path,
+                requested_value=int(requested_value_raw),
+                min_value=min_value,
+                max_value=max_value,
+            )
+            safety_payload[field_name] = effective_value
+            if reason:
+                cap_reasons[setting_path] = reason
+
+    return GitHubNamespaceIsolationDefaults.model_validate(effective_payload), cap_reasons
 
 
 GitHubPublishConfigRead.model_rebuild()

@@ -16,6 +16,7 @@ from pydantic import ValidationError
 from app.schemas.github_publish_config import (
     GitHubPublishConfigUpdateRequest,
     normalize_namespace_isolation_defaults,
+    resolve_effective_namespace_isolation_defaults,
 )
 
 _VALID_OWNER_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{0,38}$")
@@ -187,9 +188,7 @@ class GitHubPublishConfigService:
         if raw_namespace_defaults is None and existing is not None:
             raw_namespace_defaults = existing.namespace_isolation_defaults_json
         try:
-            namespace_isolation_defaults = normalize_namespace_isolation_defaults(raw_namespace_defaults).model_dump(
-                mode="json"
-            )
+            requested_namespace_defaults = normalize_namespace_isolation_defaults(raw_namespace_defaults)
         except ValidationError as exc:
             first_error = exc.errors()[0] if exc.errors() else {}
             location = ".".join(str(item) for item in first_error.get("loc", ()))
@@ -199,6 +198,11 @@ class GitHubPublishConfigService:
                     f"Namespace isolation defaults are invalid at '{location}': {detail}"
                 ) from exc
             raise GitHubPublishConfigValidationError(f"Namespace isolation defaults are invalid: {detail}") from exc
+
+        namespace_isolation_defaults = requested_namespace_defaults.model_dump(mode="json")
+        effective_namespace_defaults, cap_reasons = resolve_effective_namespace_isolation_defaults(
+            requested_namespace_defaults
+        )
 
         if enabled and not owner:
             raise GitHubPublishConfigValidationError("GitHub owner is required when GitHub publishing is enabled.")
@@ -410,6 +414,8 @@ class GitHubPublishConfigService:
                     "namespace_isolation_defaults": normalize_namespace_isolation_defaults(
                         existing.namespace_isolation_defaults_json
                     ).model_dump(mode="json"),
+                    "namespace_isolation_effective_defaults": effective_namespace_defaults.model_dump(mode="json"),
+                    "namespace_isolation_cap_reasons": cap_reasons,
                     "enabled": bool(existing.enabled),
                 },
             },

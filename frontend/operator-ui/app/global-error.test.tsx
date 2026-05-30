@@ -95,7 +95,7 @@ describe("app global error boundary", () => {
     );
     expect(errorSpy).not.toHaveBeenCalled();
     expect(
-      screen.getByText("This tab is out of date after a deployment. Refresh and retry this action."),
+      screen.getByText("The app was updated. Refresh and retry."),
     ).toBeInTheDocument();
 
     errorSpy.mockRestore();

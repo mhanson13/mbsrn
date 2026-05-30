@@ -14,6 +14,7 @@ from app.schemas.github_publish_config import (
     GitHubPublishConfigRead,
     GitHubPublishConfigUpdateRequest,
     normalize_namespace_isolation_defaults,
+    resolve_effective_namespace_isolation_defaults,
 )
 from app.services.github_publish_config import (
     GitHubPublishConfigService,
@@ -26,6 +27,12 @@ router = APIRouter(prefix="/api/admin", tags=["admin"])
 def _to_github_publish_config_read(config) -> GitHubPublishConfigRead:  # noqa: ANN001
     repository_value = getattr(config, "repository", None) or ""
     owner_value = repository_value.split("/", 1)[0].strip() if repository_value else ""
+    requested_namespace_defaults = normalize_namespace_isolation_defaults(
+        getattr(config, "namespace_isolation_defaults_json", None)
+    )
+    effective_namespace_defaults, cap_reasons = resolve_effective_namespace_isolation_defaults(
+        requested_namespace_defaults
+    )
     return GitHubPublishConfigRead(
         id=getattr(config, "id", None),
         owner=owner_value,
@@ -46,9 +53,9 @@ def _to_github_publish_config_read(config) -> GitHubPublishConfigRead:  # noqa: 
             and str(getattr(config, "managed_gcp_deploy_key_key_version", "") or "").strip()
         ),
         managed_gcp_deploy_key_updated_at=getattr(config, "managed_gcp_deploy_key_updated_at", None),
-        namespace_isolation_defaults=normalize_namespace_isolation_defaults(
-            getattr(config, "namespace_isolation_defaults_json", None)
-        ),
+        namespace_isolation_defaults=requested_namespace_defaults,
+        namespace_isolation_effective_defaults=effective_namespace_defaults,
+        namespace_isolation_cap_reasons=cap_reasons,
         enabled=bool(getattr(config, "enabled", False)),
         created_at=getattr(config, "created_at", None),
         updated_at=getattr(config, "updated_at", None),

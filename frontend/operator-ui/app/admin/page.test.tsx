@@ -1102,27 +1102,110 @@ describe("admin route", () => {
     expect(mockUpdateGitHubPublishConfig).not.toHaveBeenCalled();
   });
 
-  it("allows migration safety inputs beyond prior UI caps and surfaces backend field validation errors", async () => {
-    const { ApiRequestError } = jest.requireMock("../../lib/api/client") as {
-      ApiRequestError: new (message: string, status?: number) => Error;
-    };
-    mockUpdateGitHubPublishConfig.mockRejectedValueOnce(
-      new ApiRequestError(
-        JSON.stringify([
-          {
-            loc: [
-              "body",
-              "namespace_isolation_defaults",
-              "migration_generation_safety",
-              "migration_provider_timeout_seconds",
-            ],
-            msg: "Input should be less than or equal to 600",
-            input: 6000,
-          },
-        ]),
-        422,
-      ),
-    );
+  it("allows above-cap requested migration values and shows backend effective capped values", async () => {
+    mockUpdateGitHubPublishConfig.mockResolvedValueOnce({
+      id: 1,
+      owner: "mhanson13",
+      repository: "mhanson13",
+      default_branch: "main",
+      base_path: "/site",
+      deploy_workflow_mode: "site_repo_template_v1",
+      target_environment_key: "gke_prod",
+      target_environment_source: "admin_config",
+      github_repository_auto_create_enabled: true,
+      managed_gke_cluster_name: "mbsrn-cluster",
+      managed_gke_cluster_location: "us-central1",
+      managed_gke_project_id: "mbsrn-prod",
+      namespace_isolation_defaults: {
+        resource_quota: {
+          enabled: false,
+          requests_cpu: "1000m",
+          requests_memory: "1Gi",
+          limits_cpu: "2000m",
+          limits_memory: "2Gi",
+          pods: 20,
+          services: 10,
+          configmaps: 40,
+          secrets: 40,
+          persistentvolumeclaims: 10,
+        },
+        limit_range: {
+          enabled: false,
+          default_cpu: "500m",
+          default_memory: "512Mi",
+          default_request_cpu: "250m",
+          default_request_memory: "256Mi",
+          min_cpu: "100m",
+          min_memory: "128Mi",
+          max_cpu: "2000m",
+          max_memory: "2Gi",
+        },
+        network_policy: {
+          enabled: false,
+          mode: "default_deny_ingress",
+        },
+        migration_generation_budget: {
+          ...DEFAULT_MIGRATION_GENERATION_BUDGET,
+          migration_media_asset_limit: 30,
+        },
+        migration_generation_safety: {
+          ...DEFAULT_MIGRATION_GENERATION_SAFETY,
+          migration_provider_timeout_seconds: 6000,
+          migration_max_final_input_chars: 22000,
+          migration_max_difficulty_score: 25,
+        },
+      },
+      namespace_isolation_effective_defaults: {
+        resource_quota: {
+          enabled: false,
+          requests_cpu: "1000m",
+          requests_memory: "1Gi",
+          limits_cpu: "2000m",
+          limits_memory: "2Gi",
+          pods: 20,
+          services: 10,
+          configmaps: 40,
+          secrets: 40,
+          persistentvolumeclaims: 10,
+        },
+        limit_range: {
+          enabled: false,
+          default_cpu: "500m",
+          default_memory: "512Mi",
+          default_request_cpu: "250m",
+          default_request_memory: "256Mi",
+          min_cpu: "100m",
+          min_memory: "128Mi",
+          max_cpu: "2000m",
+          max_memory: "2Gi",
+        },
+        network_policy: {
+          enabled: false,
+          mode: "default_deny_ingress",
+        },
+        migration_generation_budget: {
+          ...DEFAULT_MIGRATION_GENERATION_BUDGET,
+          migration_media_asset_limit: 24,
+        },
+        migration_generation_safety: {
+          ...DEFAULT_MIGRATION_GENERATION_SAFETY,
+          migration_provider_timeout_seconds: 600,
+          migration_max_final_input_chars: 22000,
+          migration_max_difficulty_score: 24,
+        },
+      },
+      namespace_isolation_cap_reasons: {
+        "migration_generation_budget.migration_media_asset_limit":
+          "migration_generation_budget.migration_media_asset_limit requested 30 exceeds hard cap 24; effective value 24 is used.",
+        "migration_generation_safety.migration_provider_timeout_seconds":
+          "migration_generation_safety.migration_provider_timeout_seconds requested 6000 exceeds hard cap 600; effective value 600 is used.",
+        "migration_generation_safety.migration_max_difficulty_score":
+          "migration_generation_safety.migration_max_difficulty_score requested 25 exceeds hard cap 24; effective value 24 is used.",
+      },
+      enabled: true,
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+    });
     mockUseAuth.mockReturnValue({
       principal: {
         business_id: "biz-1",
@@ -1163,17 +1246,12 @@ describe("admin route", () => {
       22000,
     );
     expect(payload.namespace_isolation_defaults.migration_generation_safety.migration_max_difficulty_score).toBe(25);
-
-    expect(
-      await screen.findByText(
-        "Backend validation rejected one or more migration generation settings. Review highlighted fields and try again.",
-      ),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        "Provider timeout seconds attempted value 6000 is outside the backend-allowed range 60-600. Save was rejected by backend validation.",
-      ),
-    ).toBeInTheDocument();
+    expect(await screen.findByText("GitHub publish configuration saved.")).toBeInTheDocument();
+    expect(screen.queryByText("Failed to save GitHub publish configuration.")).not.toBeInTheDocument();
+    const preview = screen.getByTestId("github-publish-effective-preview");
+    expect(preview).toHaveTextContent("6000s / 600s / Yes");
+    expect(preview).toHaveTextContent("25 / 24 / Yes");
+    expect(preview).toHaveTextContent("migration_generation_safety.migration_provider_timeout_seconds requested 6000 exceeds hard cap 600");
   });
 
   it("shows requested/effective/capped migration preview values", async () => {

@@ -89,7 +89,7 @@ export default function GlobalError({
               <h1 className="operator-page-title">Workspace unavailable</h1>
               <p className="operator-page-subtitle">
                 {safeClassification === "stale_server_action_build_mismatch"
-                  ? "This tab is out of date after a deployment. Refresh and retry this action."
+                  ? "The app was updated. Refresh and retry."
                   : "We hit a rendering problem at the app boundary. Refresh, then try again."}
               </p>
             </header>

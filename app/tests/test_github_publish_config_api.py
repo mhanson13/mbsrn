@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 from app.api.deps import TenantContext, get_db, get_tenant_context
 from app.api.routes.admin_github_publish_config import router as admin_github_publish_config_router
 from app.core.config import get_settings
+from app.models.github_publish_config import GitHubPublishConfig
 from app.models.principal import Principal, PrincipalRole
 
 
@@ -125,6 +126,8 @@ def test_get_github_publish_config_returns_defaults_when_unset(db_session, seede
             "migration_compact_recommendation_limit": 8,
         },
     }
+    assert payload["namespace_isolation_effective_defaults"] == payload["namespace_isolation_defaults"]
+    assert payload["namespace_isolation_cap_reasons"] == {}
     assert payload["enabled"] is False
 
 
@@ -217,6 +220,8 @@ def test_put_github_publish_config_persists_and_reads_back(db_session, seeded_bu
         "migration_compact_media_asset_limit": 2,
         "migration_compact_recommendation_limit": 3,
     }
+    assert updated["namespace_isolation_effective_defaults"] == updated["namespace_isolation_defaults"]
+    assert updated["namespace_isolation_cap_reasons"] == {}
     assert updated["enabled"] is True
 
     get_response = client.get("/api/admin/github-publish-config")
@@ -236,6 +241,8 @@ def test_put_github_publish_config_persists_and_reads_back(db_session, seeded_bu
     assert fetched["managed_gcp_deploy_key_configured"] is False
     assert fetched["managed_gcp_deploy_key_updated_at"] is None
     assert fetched["namespace_isolation_defaults"] == updated["namespace_isolation_defaults"]
+    assert fetched["namespace_isolation_effective_defaults"] == fetched["namespace_isolation_defaults"]
+    assert fetched["namespace_isolation_cap_reasons"] == {}
     assert fetched["enabled"] is True
 
 
@@ -466,7 +473,7 @@ def test_put_github_publish_config_accepts_max_migration_provider_timeout_second
     assert payload["namespace_isolation_defaults"]["migration_generation_safety"]["migration_provider_timeout_seconds"] == 600
 
 
-def test_put_github_publish_config_rejects_migration_provider_timeout_seconds_6000(
+def test_put_github_publish_config_caps_migration_provider_timeout_seconds_6000_without_failing(
     db_session,
     seeded_business,
 ) -> None:
@@ -487,9 +494,70 @@ def test_put_github_publish_config_rejects_migration_provider_timeout_seconds_60
         },
     )
 
-    assert response.status_code == 422
-    detail = str(response.json().get("detail", ""))
-    assert "migration_provider_timeout_seconds" in detail
+    assert response.status_code == 200
+    payload = response.json()
+    assert (
+        payload["namespace_isolation_defaults"]["migration_generation_safety"]["migration_provider_timeout_seconds"]
+        == 6000
+    )
+    assert (
+        payload["namespace_isolation_effective_defaults"]["migration_generation_safety"][
+            "migration_provider_timeout_seconds"
+        ]
+        == 600
+    )
+    assert payload["namespace_isolation_cap_reasons"].get(
+        "migration_generation_safety.migration_provider_timeout_seconds"
+    )
+
+
+def test_get_github_publish_config_with_above_cap_migration_values_returns_requested_and_effective_without_500(
+    db_session,
+    seeded_business,
+) -> None:
+    db_session.add(
+        GitHubPublishConfig(
+            repository="mhanson13",
+            default_branch="main",
+            base_path="/",
+            deploy_workflow_mode="site_repo_template_v1",
+            target_environment_key="gke_prod",
+            target_environment_source="admin_config",
+            github_repository_auto_create_enabled=False,
+            namespace_isolation_defaults_json={
+                "migration_generation_budget": {
+                    "migration_media_asset_limit": 30,
+                },
+                "migration_generation_safety": {
+                    "migration_max_difficulty_score": 25,
+                    "migration_max_final_input_chars": 128000,
+                },
+            },
+            enabled=True,
+        )
+    )
+    db_session.commit()
+
+    client = _make_client(db_session, business_id=seeded_business.id)
+    response = client.get("/api/admin/github-publish-config")
+
+    assert response.status_code == 200
+    payload = response.json()
+    requested_budget = payload["namespace_isolation_defaults"]["migration_generation_budget"]
+    effective_budget = payload["namespace_isolation_effective_defaults"]["migration_generation_budget"]
+    requested_safety = payload["namespace_isolation_defaults"]["migration_generation_safety"]
+    effective_safety = payload["namespace_isolation_effective_defaults"]["migration_generation_safety"]
+    cap_reasons = payload["namespace_isolation_cap_reasons"]
+
+    assert requested_budget["migration_media_asset_limit"] == 30
+    assert effective_budget["migration_media_asset_limit"] == 24
+    assert requested_safety["migration_max_difficulty_score"] == 25
+    assert effective_safety["migration_max_difficulty_score"] == 24
+    assert requested_safety["migration_max_final_input_chars"] == 128000
+    assert effective_safety["migration_max_final_input_chars"] == 64000
+    assert "migration_generation_budget.migration_media_asset_limit" in cap_reasons
+    assert "migration_generation_safety.migration_max_difficulty_score" in cap_reasons
+    assert "migration_generation_safety.migration_max_final_input_chars" in cap_reasons
 
 
 def test_put_github_publish_config_rejects_enabled_without_owner(db_session, seeded_business) -> None:

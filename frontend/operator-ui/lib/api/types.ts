@@ -139,6 +139,8 @@ export interface GitHubPublishConfig {
   managed_gcp_deploy_key_configured?: boolean;
   managed_gcp_deploy_key_updated_at?: string | null;
   namespace_isolation_defaults: GitHubNamespaceIsolationDefaults;
+  namespace_isolation_effective_defaults?: GitHubNamespaceIsolationDefaults | null;
+  namespace_isolation_cap_reasons?: Record<string, string> | null;
   enabled: boolean;
   created_at?: string | null;
   updated_at?: string | null;

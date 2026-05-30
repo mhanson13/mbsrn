@@ -2551,8 +2551,22 @@ function formatGenerationBlockedReason(params: {
 
   const normalizedSetting = (preflightBlockedSetting || "").trim().toLowerCase();
   const normalizedReason = (preflightBlockReason || "").trim().toLowerCase();
+  const settingIncludes = (needle: string): boolean =>
+    normalizedSetting === needle
+    || normalizedSetting.startsWith(`${needle} `)
+    || normalizedSetting.includes(`,${needle}`)
+    || normalizedSetting.includes(`${needle},`);
   if (
-    normalizedSetting === "migration_max_difficulty_score"
+    (settingIncludes("migration_max_final_input_chars") && settingIncludes("migration_max_difficulty_score"))
+    || normalizedReason === "final_input_and_difficulty_exceeded"
+  ) {
+    if (typeof preflightBlockedSettingActual === "number" && typeof preflightBlockedSettingCap === "number") {
+      return `final input chars ${preflightBlockedSettingActual.toLocaleString()} exceeded cap ${preflightBlockedSettingCap.toLocaleString()} and difficulty score exceeded configured cap`;
+    }
+    return "final input chars and difficulty score exceeded configured caps";
+  }
+  if (
+    settingIncludes("migration_max_difficulty_score")
     || normalizedReason === "difficulty_score_exceeded"
   ) {
     if (typeof preflightBlockedSettingActual === "number" && typeof preflightBlockedSettingCap === "number") {
@@ -2564,7 +2578,7 @@ function formatGenerationBlockedReason(params: {
     return "difficulty score exceeded the configured cap";
   }
   if (
-    normalizedSetting === "migration_max_final_input_chars"
+    settingIncludes("migration_max_final_input_chars")
     || normalizedReason === "final_input_chars_exceeded"
   ) {
     if (typeof preflightBlockedSettingActual === "number" && typeof preflightBlockedSettingCap === "number") {
@@ -2576,16 +2590,7 @@ function formatGenerationBlockedReason(params: {
     return "final input chars exceeded configured cap";
   }
   if (
-    normalizedSetting === "migration_max_final_input_chars,migration_max_difficulty_score"
-    || normalizedReason === "final_input_and_difficulty_exceeded"
-  ) {
-    if (typeof preflightBlockedSettingActual === "number" && typeof preflightBlockedSettingCap === "number") {
-      return `final input chars ${preflightBlockedSettingActual.toLocaleString()} exceeded cap ${preflightBlockedSettingCap.toLocaleString()} and difficulty score exceeded configured cap`;
-    }
-    return "final input chars and difficulty score exceeded configured caps";
-  }
-  if (
-    normalizedSetting === "migration_context_budget_chars"
+    settingIncludes("migration_context_budget_chars")
     || normalizedReason === "context_budget_overflow"
   ) {
     if (typeof preflightBlockedSettingCap === "number") {

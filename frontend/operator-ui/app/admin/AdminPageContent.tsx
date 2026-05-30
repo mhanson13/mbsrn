@@ -1371,6 +1371,7 @@ function applyGitHubPublishConfigInputs(
     setManagedDeployKeyClear: (value: boolean) => void;
     setNamespaceIsolationDefaults: (value: GitHubNamespaceIsolationDefaults) => void;
     setPersistedNamespaceIsolationDefaults: (value: GitHubNamespaceIsolationDefaults) => void;
+    setMigrationCapReasons: (value: Record<string, string>) => void;
     setEnabled: (value: boolean) => void;
   },
 ): void {
@@ -1388,8 +1389,24 @@ function applyGitHubPublishConfigInputs(
   setters.clearManagedDeployKeyInput();
   setters.setManagedDeployKeyClear(false);
   const normalizedNamespaceIsolationDefaults = normalizeNamespaceIsolationDefaults(config.namespace_isolation_defaults);
+  const normalizedEffectiveNamespaceIsolationDefaults = normalizeNamespaceIsolationDefaults(
+    config.namespace_isolation_effective_defaults ?? config.namespace_isolation_defaults,
+  );
   setters.setNamespaceIsolationDefaults(normalizedNamespaceIsolationDefaults);
-  setters.setPersistedNamespaceIsolationDefaults(normalizedNamespaceIsolationDefaults);
+  setters.setPersistedNamespaceIsolationDefaults(normalizedEffectiveNamespaceIsolationDefaults);
+  const normalizedCapReasons: Record<string, string> = {};
+  const capReasonsSource = config.namespace_isolation_cap_reasons;
+  if (capReasonsSource && typeof capReasonsSource === "object") {
+    for (const [key, value] of Object.entries(capReasonsSource)) {
+      const normalizedKey = key.trim();
+      const normalizedValue = String(value ?? "").trim();
+      if (!normalizedKey || !normalizedValue) {
+        continue;
+      }
+      normalizedCapReasons[normalizedKey] = normalizedValue;
+    }
+  }
+  setters.setMigrationCapReasons(normalizedCapReasons);
   setters.setEnabled(Boolean(config.enabled));
 }
 
@@ -1497,6 +1514,7 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
   );
   const [githubPersistedNamespaceIsolationDefaults, setGitHubPersistedNamespaceIsolationDefaults] =
     useState<GitHubNamespaceIsolationDefaults>(DEFAULT_NAMESPACE_ISOLATION_DEFAULTS);
+  const [githubMigrationCapReasons, setGitHubMigrationCapReasons] = useState<Record<string, string>>({});
   const [githubMigrationFieldErrors, setGitHubMigrationFieldErrors] = useState<MigrationGenerationFieldErrorMap>({});
   const [githubMigrationAdjustmentReason, setGitHubMigrationAdjustmentReason] = useState<string | null>(null);
   const [githubPublishEnabled, setGitHubPublishEnabled] = useState(false);
@@ -1746,10 +1764,15 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
             setManagedDeployKeyClear: setGitHubPublishManagedDeployKeyClear,
             setNamespaceIsolationDefaults: setGitHubNamespaceIsolationDefaults,
             setPersistedNamespaceIsolationDefaults: setGitHubPersistedNamespaceIsolationDefaults,
+            setMigrationCapReasons: setGitHubMigrationCapReasons,
             setEnabled: setGitHubPublishEnabled,
           });
           setGitHubMigrationFieldErrors({});
-          setGitHubMigrationAdjustmentReason(null);
+          setGitHubMigrationAdjustmentReason(
+            Object.keys(githubResult.value.namespace_isolation_cap_reasons || {}).length > 0
+              ? "backend_adjusted_values"
+              : null,
+          );
         } else {
           setGitHubPublishConfigError(safeGitHubPublishConfigLoadErrorMessage(githubResult.reason));
         }
@@ -2167,6 +2190,7 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
       });
     }
     setGitHubMigrationAdjustmentReason(null);
+    setGitHubMigrationCapReasons({});
   };
 
   const updateMigrationGenerationSafety = <K extends keyof MigrationGenerationSafetyConfig>(
@@ -2192,6 +2216,7 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
       });
     }
     setGitHubMigrationAdjustmentReason(null);
+    setGitHubMigrationCapReasons({});
   };
 
   const handleSaveGitHubPublishConfig = async (event: FormEvent<HTMLFormElement>) => {
@@ -2200,6 +2225,7 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
     setGitHubPublishConfigError(null);
     setGitHubMigrationFieldErrors({});
     setGitHubMigrationAdjustmentReason(null);
+    setGitHubMigrationCapReasons({});
 
     const validation = validateGitHubPublishConfigInputs({
       ownerInput: githubPublishOwnerInput,
@@ -2246,11 +2272,14 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
       setGitHubPublishConfigError(null);
 
       try {
-        const effectiveNamespaceDefaults = normalizeNamespaceIsolationDefaults(updated.namespace_isolation_defaults);
+        const effectiveNamespaceDefaults = normalizeNamespaceIsolationDefaults(
+          updated.namespace_isolation_effective_defaults ?? updated.namespace_isolation_defaults,
+        );
         const requestedSafety = requestedNamespaceDefaults.migration_generation_safety;
         const effectiveSafety = effectiveNamespaceDefaults.migration_generation_safety;
         const requestedBudget = requestedNamespaceDefaults.migration_generation_budget;
         const effectiveBudget = effectiveNamespaceDefaults.migration_generation_budget;
+        const capReasonsCount = Object.keys(updated.namespace_isolation_cap_reasons || {}).length;
         const migrationAdjusted =
           requestedSafety.migration_provider_timeout_seconds !== effectiveSafety.migration_provider_timeout_seconds ||
           requestedSafety.migration_max_final_input_chars !== effectiveSafety.migration_max_final_input_chars ||
@@ -2283,11 +2312,15 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
           setManagedDeployKeyClear: setGitHubPublishManagedDeployKeyClear,
           setNamespaceIsolationDefaults: setGitHubNamespaceIsolationDefaults,
           setPersistedNamespaceIsolationDefaults: setGitHubPersistedNamespaceIsolationDefaults,
+          setMigrationCapReasons: setGitHubMigrationCapReasons,
           setEnabled: setGitHubPublishEnabled,
         });
-        setGitHubMigrationAdjustmentReason(migrationAdjusted ? "backend_adjusted_values" : null);
+        setGitHubMigrationAdjustmentReason(
+          migrationAdjusted || capReasonsCount > 0 ? "backend_adjusted_values" : null,
+        );
       } catch {
         setGitHubMigrationAdjustmentReason(null);
+        setGitHubMigrationCapReasons({});
       }
       setGitHubPublishConfigMessage("GitHub publish configuration saved.");
     } catch (err) {
@@ -4110,8 +4143,8 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                 {MIGRATION_COMPACT_RECOMMENDATION_LIMIT_BOUNDS.max}.
               </p>
               <p className="hint muted">
-                If requested values exceed backend caps, save is rejected or adjusted by backend policy and effective
-                values are shown in preview.
+                Requested values are persisted for admin intent, while backend policy computes effective bounded
+                values used at runtime. Out-of-range values are shown as capped in the preview.
               </p>
               <div className="admin-grid-two admin-grid-two-compact">
                 <label htmlFor="github-publish-migration-provider-timeout-seconds" className="stack-tight">
@@ -4446,7 +4479,11 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                 <WorkspaceMetadataItem label="Migration cap reason">
                   <span>
                     {githubMigrationAdjustmentReason === "backend_adjusted_values"
-                      ? "Backend validation/cap policy adjusted one or more requested values."
+                      ? (
+                        Object.keys(githubMigrationCapReasons).length > 0
+                          ? Object.values(githubMigrationCapReasons).join(" | ")
+                          : "Backend cap policy adjusted one or more requested values."
+                      )
                       : githubMigrationAdjustmentReason === "backend_validation_rejected"
                         ? "Last save was rejected by backend validation; requested values were not applied."
                         : "None"}
