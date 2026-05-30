@@ -1517,6 +1517,71 @@ describe("site migration workflow route", () => {
     );
   });
 
+  it("classifies tls provisioning wait-state when static ip and ingress are already aligned", async () => {
+    const user = userEvent.setup();
+    const summary = buildMigrationWorkspaceSummary({
+      deploy_readiness: {
+        ready: false,
+        reasons: ["ManagedCertificate provisioning is still in progress for expected hostname."],
+        dispatch_service_reason_code: "tls_certificate_provisioning",
+        dns_record_matches_ingress: true,
+        dns_expected_ip: "8.233.146.106",
+        dns_observed_ip: "8.233.146.106",
+        expected_static_ip_address: "8.233.146.106",
+        static_ip_status: "IN_USE",
+        ingress_status_ip: "8.233.146.106",
+        ingress_status_ip_matches_static_ip: true,
+        static_ip_bound_to_expected_forwarding_rule: true,
+        ingress_conflict_detected: false,
+        tls_certificate_status: "PROVISIONING",
+        tls_domain_status: "PROVISIONING",
+        observed_managed_certificate_domains: "mbsrn-www.site.mbsrn.com",
+        observed_managed_certificate_status: "PROVISIONING",
+        observed_managed_certificate_domain_status: "PROVISIONING",
+        deploy_https_ready: false,
+        preview_probe_attempt: 10,
+        preview_probe_elapsed_seconds: 300,
+        target: {
+          enabled: true,
+          repo_owner: "mhanson13",
+          repo_name: "mbsrn-www",
+          workflow_id: "deploy-mbsrn-www-prod.yml",
+          ref: "main",
+        },
+      },
+    });
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(summary);
+    mockFetchMigrationPublishHistory.mockResolvedValueOnce({ items: [], total: 0 });
+    mockFetchMigrationDeployHistory.mockResolvedValueOnce({ items: [], total: 0 });
+
+    render(<SiteMigrationWorkflowPage />);
+    await user.click(await screen.findByText("Show detailed migration failure diagnostics"));
+
+    const diagnostics = screen.getByTestId("migration-deploy-diagnostics");
+    expect(diagnostics).toHaveTextContent(/tls is still provisioning/i);
+    expect(diagnostics).toHaveTextContent(/wait for managedcertificate to become active/i);
+
+    const consistency = screen.getByTestId("migration-deploy-consistency");
+    expect(within(consistency).getByTestId("migration-deploy-consistency-gate-ingress_conflict")).toHaveTextContent(
+      "Pass",
+    );
+    expect(
+      within(consistency).getByTestId("migration-deploy-consistency-gate-managed_certificate_active"),
+    ).toHaveTextContent("Pending");
+    expect(within(consistency).getByTestId("migration-deploy-consistency-gate-https_probe")).toHaveTextContent(
+      "Pending",
+    );
+
+    const rawConsistencyDetails = within(consistency).getByTestId("migration-deploy-consistency-raw-details");
+    await user.click(within(rawConsistencyDetails).getByText("Show raw deploy consistency fields"));
+    expect(
+      within(rawConsistencyDetails).getByTestId("migration-deploy-consistency-ingress-status-ip-matches-static-ip"),
+    ).toHaveTextContent("ingress_status_ip_matches_static_ip: Yes");
+    expect(
+      within(rawConsistencyDetails).getByTestId("migration-deploy-consistency-observed-managed-certificate-status"),
+    ).toHaveTextContent("observed_managed_certificate_status: PROVISIONING");
+  });
+
   it("renders workflow integrity mismatch as warning with remediation guidance", async () => {
     const user = userEvent.setup();
     const summary = buildMigrationWorkspaceSummary({

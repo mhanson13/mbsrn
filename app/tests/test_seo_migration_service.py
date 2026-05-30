@@ -7118,6 +7118,73 @@ def test_refresh_deploy_status_https_probe_not_attempted_surfaces_reason_and_hin
     assert "not attempted" in str(refresh_result.result.get("workflow_run_failure_hint") or "").lower()
 
 
+def test_refresh_deploy_status_tls_provisioning_with_static_ip_alignment_maps_to_tls_wait_state(db_session) -> None:
+    publisher = _RecordingGitHubPublisher(
+        deploy_workflow_run_id=910140,
+        deploy_workflow_run_status="in_progress",
+        refresh_workflow_run_id=910140,
+        refresh_workflow_run_status="completed",
+        refresh_workflow_run_conclusion="failure",
+        refresh_workflow_run_failure_reason_code="https_probe_failed_after_control_plane_ready",
+        refresh_workflow_run_failure_stage="ingress_evidence",
+        refresh_workflow_run_failure_step="Resolve live URL from ingress status",
+        refresh_workflow_output={
+            "dns_record_matches_ingress": "true",
+            "dns_expected_ip": "8.233.146.106",
+            "dns_observed_ip": "8.233.146.106",
+            "expected_static_ip_address": "8.233.146.106",
+            "static_ip_status": "IN_USE",
+            "static_ip_users": (
+                "https://www.googleapis.com/compute/v1/projects/example/global/forwardingRules/"
+                "k8s2-fr-abc-mbsrn-www-site-web"
+            ),
+            "ingress_ip": "8.233.146.106",
+            "ingress_status_ip": "8.233.146.106",
+            "ingress_status_ip_matches_static_ip": "true",
+            "static_ip_bound_to_expected_forwarding_rule": "true",
+            "tls_certificate_status": "PROVISIONING",
+            "tls_domain_status": "PROVISIONING",
+            "observed_managed_certificate_domains": "mbsrn-www.site.mbsrn.com",
+            "observed_managed_certificate_status": "PROVISIONING",
+            "observed_managed_certificate_domain_status": "PROVISIONING",
+            "host_reachable": "true",
+            "host_reachability_scheme": "https",
+            "deploy_https_ready": "false",
+            "preview_probe_attempt": "10",
+            "preview_probe_elapsed_seconds": "300",
+            "https_probe_error_summary": (
+                "reason=https_probe_failed;detail=probe_attempted_without_error_summary;http_fallback_attempted=true"
+            ),
+        },
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    artifact = _prepare_and_request_deploy(service, business_id=business_id, site_id=site_id)
+
+    refresh_result = service.refresh_deploy_run_status(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        principal_id="principal-1",
+    )
+    assert refresh_result.result.get("workflow_run_failure_reason_code") == "https_probe_failed_after_control_plane_ready"
+    assert refresh_result.result.get("deploy_https_ready") is False
+
+    summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
+    deploy_readiness = summary.deploy_readiness or {}
+    assert deploy_readiness.get("static_ip_status") == "IN_USE"
+    assert deploy_readiness.get("ingress_status_ip_matches_static_ip") is True
+    assert deploy_readiness.get("static_ip_bound_to_expected_forwarding_rule") is True
+    assert deploy_readiness.get("tls_certificate_status") == "PROVISIONING"
+    assert deploy_readiness.get("tls_domain_status") == "PROVISIONING"
+    assert "reason=managed_certificate_provisioning" in str(deploy_readiness.get("https_probe_error_summary") or "")
+
+
 def test_refresh_deploy_status_ingress_502_surfaces_runtime_probe_diagnostics(db_session) -> None:
     publisher = _RecordingGitHubPublisher(
         deploy_workflow_run_id=910103,

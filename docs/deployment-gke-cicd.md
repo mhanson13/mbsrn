@@ -336,6 +336,7 @@ Important state:
   - static IP ensure/describe uses bounded re-describe before classifying `managed_site_static_ip_address_missing`
   - stale selected-attempt static-IP-missing failures remain historical context and must not override healthy current live HTTPS evidence
 - Expected reason-code families include:
+  - `managed_certificate_provisioning` / `tls_certificate_provisioning` (static IP + ingress can be healthy while TLS still converges)
   - `https_probe_failed_after_control_plane_ready`
   - `https_probe_timeout`
   - `https_probe_empty_reply`
@@ -347,6 +348,12 @@ Typical causes:
 - BackendConfig health checks do not match runtime behavior
 - site runtime is not yet serving `/` successfully
 - external load balancer convergence lag
+
+`managed_certificate_provisioning` / `tls_certificate_provisioning` interpretation:
+- static IP can be `IN_USE` and ingress IP can already match the reserved address while certificate remains `PROVISIONING`.
+- in this state, HTTPS probe failures are usually a downstream symptom of TLS convergence and should not be classified as backend 502 or app runtime failure.
+- deploy still fails bounded readiness (non-zero) until preview HTTPS is healthy.
+- next action: wait for ManagedCertificate to reach `ACTIVE`, then refresh/rerun deploy.
 
 `ingress_backend_502` interpretation:
 - deploy success still requires preview HTTPS to return non-5xx; backend health alone is not sufficient.
@@ -378,6 +385,9 @@ kubectl -n <namespace> get rs -l app.kubernetes.io/name=site-web -o wide
 kubectl -n <namespace> get events --sort-by=.lastTimestamp
 kubectl -n <namespace> describe ingress site-web
 kubectl -n <namespace> describe backendconfig site-web-backend-config-<site>
+kubectl -n mbsrn-www describe managedcertificate site-web-preview-cert-mbsrn-www
+kubectl -n mbsrn-www describe ingress site-web
+gcloud compute addresses describe site-web-preview-ip-mbsrn-www --global
 curl -Iv https://<preview-host>/
 ```
 

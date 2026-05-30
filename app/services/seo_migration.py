@@ -9467,9 +9467,18 @@ class SEOMigrationService:
             "dns_record_matches_ingress",
             "dns_expected_ip",
             "dns_observed_ip",
+            "expected_static_ip_address",
+            "static_ip_status",
+            "static_ip_users",
             "tls_certificate_status",
             "tls_domain_status",
+            "observed_managed_certificate_domains",
+            "observed_managed_certificate_status",
+            "observed_managed_certificate_domain_status",
             "ingress_ip",
+            "ingress_status_ip",
+            "ingress_status_ip_matches_static_ip",
+            "static_ip_bound_to_expected_forwarding_rule",
             "ingress_conflict_detected",
             "cert_identity_valid",
             "host_reachable",
@@ -9867,9 +9876,38 @@ class SEOMigrationService:
             ),
             "dns_expected_ip": _normalize_string(next_item.get("dns_expected_ip"), max_length=64),
             "dns_observed_ip": _normalize_string(next_item.get("dns_observed_ip"), max_length=64),
+            "expected_static_ip_address": _normalize_string(
+                next_item.get("expected_static_ip_address"),
+                max_length=64,
+            ),
+            "static_ip_status": _normalize_string(next_item.get("static_ip_status"), max_length=32),
+            "static_ip_users": _normalize_string(next_item.get("static_ip_users"), max_length=400),
             "tls_certificate_status": _normalize_string(next_item.get("tls_certificate_status"), max_length=64),
             "tls_domain_status": _normalize_string(next_item.get("tls_domain_status"), max_length=64),
+            "observed_managed_certificate_domains": _normalize_string(
+                next_item.get("observed_managed_certificate_domains"),
+                max_length=255,
+            ),
+            "observed_managed_certificate_status": _normalize_string(
+                next_item.get("observed_managed_certificate_status"),
+                max_length=64,
+            ),
+            "observed_managed_certificate_domain_status": _normalize_string(
+                next_item.get("observed_managed_certificate_domain_status"),
+                max_length=64,
+            ),
             "ingress_ip": _normalize_string(next_item.get("ingress_ip"), max_length=64),
+            "ingress_status_ip": _normalize_string(next_item.get("ingress_status_ip"), max_length=64),
+            "ingress_status_ip_matches_static_ip": (
+                bool(next_item.get("ingress_status_ip_matches_static_ip"))
+                if isinstance(next_item.get("ingress_status_ip_matches_static_ip"), bool)
+                else None
+            ),
+            "static_ip_bound_to_expected_forwarding_rule": (
+                bool(next_item.get("static_ip_bound_to_expected_forwarding_rule"))
+                if isinstance(next_item.get("static_ip_bound_to_expected_forwarding_rule"), bool)
+                else None
+            ),
             "ingress_conflict_detected": (
                 bool(next_item.get("ingress_conflict_detected"))
                 if isinstance(next_item.get("ingress_conflict_detected"), bool)
@@ -10357,9 +10395,38 @@ class SEOMigrationService:
             ),
             "dns_expected_ip": _normalize_string(history_item.get("dns_expected_ip"), max_length=64),
             "dns_observed_ip": _normalize_string(history_item.get("dns_observed_ip"), max_length=64),
+            "expected_static_ip_address": _normalize_string(
+                history_item.get("expected_static_ip_address"),
+                max_length=64,
+            ),
+            "static_ip_status": _normalize_string(history_item.get("static_ip_status"), max_length=32),
+            "static_ip_users": _normalize_string(history_item.get("static_ip_users"), max_length=400),
             "tls_certificate_status": _normalize_string(history_item.get("tls_certificate_status"), max_length=64),
             "tls_domain_status": _normalize_string(history_item.get("tls_domain_status"), max_length=64),
+            "observed_managed_certificate_domains": _normalize_string(
+                history_item.get("observed_managed_certificate_domains"),
+                max_length=255,
+            ),
+            "observed_managed_certificate_status": _normalize_string(
+                history_item.get("observed_managed_certificate_status"),
+                max_length=64,
+            ),
+            "observed_managed_certificate_domain_status": _normalize_string(
+                history_item.get("observed_managed_certificate_domain_status"),
+                max_length=64,
+            ),
             "ingress_ip": _normalize_string(history_item.get("ingress_ip"), max_length=64),
+            "ingress_status_ip": _normalize_string(history_item.get("ingress_status_ip"), max_length=64),
+            "ingress_status_ip_matches_static_ip": (
+                bool(history_item.get("ingress_status_ip_matches_static_ip"))
+                if isinstance(history_item.get("ingress_status_ip_matches_static_ip"), bool)
+                else None
+            ),
+            "static_ip_bound_to_expected_forwarding_rule": (
+                bool(history_item.get("static_ip_bound_to_expected_forwarding_rule"))
+                if isinstance(history_item.get("static_ip_bound_to_expected_forwarding_rule"), bool)
+                else None
+            ),
             "ingress_conflict_detected": (
                 bool(history_item.get("ingress_conflict_detected"))
                 if isinstance(history_item.get("ingress_conflict_detected"), bool)
@@ -16855,12 +16922,43 @@ class SEOMigrationService:
             ),
             "dns_expected_ip": _normalize_string(workflow_output_payload.get("dns_expected_ip"), max_length=64),
             "dns_observed_ip": _normalize_string(workflow_output_payload.get("dns_observed_ip"), max_length=64),
+            "expected_static_ip_address": _normalize_string(
+                workflow_output_payload.get("expected_static_ip_address"),
+                max_length=64,
+            ),
+            "static_ip_status": _normalize_string(
+                workflow_output_payload.get("static_ip_status"),
+                max_length=32,
+            ),
+            "static_ip_users": _normalize_string(
+                workflow_output_payload.get("static_ip_users"),
+                max_length=400,
+            ),
             "tls_certificate_status": _normalize_string(
                 workflow_output_payload.get("tls_certificate_status"),
                 max_length=64,
             ),
             "tls_domain_status": _normalize_string(workflow_output_payload.get("tls_domain_status"), max_length=64),
+            "observed_managed_certificate_domains": _normalize_string(
+                workflow_output_payload.get("observed_managed_certificate_domains"),
+                max_length=255,
+            ),
+            "observed_managed_certificate_status": _normalize_string(
+                workflow_output_payload.get("observed_managed_certificate_status"),
+                max_length=64,
+            ),
+            "observed_managed_certificate_domain_status": _normalize_string(
+                workflow_output_payload.get("observed_managed_certificate_domain_status"),
+                max_length=64,
+            ),
             "ingress_ip": _normalize_string(workflow_output_payload.get("ingress_ip"), max_length=64),
+            "ingress_status_ip": _normalize_string(workflow_output_payload.get("ingress_status_ip"), max_length=64),
+            "ingress_status_ip_matches_static_ip": _coerce_optional_bool(
+                workflow_output_payload.get("ingress_status_ip_matches_static_ip")
+            ),
+            "static_ip_bound_to_expected_forwarding_rule": _coerce_optional_bool(
+                workflow_output_payload.get("static_ip_bound_to_expected_forwarding_rule")
+            ),
             "ingress_conflict_detected": _coerce_optional_bool(
                 workflow_output_payload.get("ingress_conflict_detected")
             ),
@@ -17826,9 +17924,34 @@ class SEOMigrationService:
                 ),
                 "dns_expected_ip": _normalize_string(item.get("dns_expected_ip"), max_length=64),
                 "dns_observed_ip": _normalize_string(item.get("dns_observed_ip"), max_length=64),
+                "expected_static_ip_address": _normalize_string(
+                    item.get("expected_static_ip_address"),
+                    max_length=64,
+                ),
+                "static_ip_status": _normalize_string(item.get("static_ip_status"), max_length=32),
+                "static_ip_users": _normalize_string(item.get("static_ip_users"), max_length=400),
                 "tls_certificate_status": _normalize_string(item.get("tls_certificate_status"), max_length=64),
                 "tls_domain_status": _normalize_string(item.get("tls_domain_status"), max_length=64),
+                "observed_managed_certificate_domains": _normalize_string(
+                    item.get("observed_managed_certificate_domains"),
+                    max_length=255,
+                ),
+                "observed_managed_certificate_status": _normalize_string(
+                    item.get("observed_managed_certificate_status"),
+                    max_length=64,
+                ),
+                "observed_managed_certificate_domain_status": _normalize_string(
+                    item.get("observed_managed_certificate_domain_status"),
+                    max_length=64,
+                ),
                 "ingress_ip": _normalize_string(item.get("ingress_ip"), max_length=64),
+                "ingress_status_ip": _normalize_string(item.get("ingress_status_ip"), max_length=64),
+                "ingress_status_ip_matches_static_ip": _coerce_optional_bool(
+                    item.get("ingress_status_ip_matches_static_ip")
+                ),
+                "static_ip_bound_to_expected_forwarding_rule": _coerce_optional_bool(
+                    item.get("static_ip_bound_to_expected_forwarding_rule")
+                ),
                 "ingress_conflict_detected": (
                     bool(item.get("ingress_conflict_detected"))
                     if isinstance(item.get("ingress_conflict_detected"), bool)
@@ -19062,6 +19185,73 @@ class SEOMigrationService:
             target_summary.get("ingress_ip"),
             max_length=64,
         )
+        ingress_status_ip = _normalize_string(
+            latest_traceability.get("ingress_status_ip"),
+            max_length=64,
+        ) or _normalize_string(
+            target_summary.get("ingress_status_ip"),
+            max_length=64,
+        )
+        expected_static_ip_address = _normalize_string(
+            latest_traceability.get("expected_static_ip_address"),
+            max_length=64,
+        ) or _normalize_string(
+            target_summary.get("expected_static_ip_address"),
+            max_length=64,
+        )
+        static_ip_status = _normalize_string(
+            latest_traceability.get("static_ip_status"),
+            max_length=32,
+        ) or _normalize_string(
+            target_summary.get("static_ip_status"),
+            max_length=32,
+        )
+        static_ip_users = _normalize_string(
+            latest_traceability.get("static_ip_users"),
+            max_length=400,
+        ) or _normalize_string(
+            target_summary.get("static_ip_users"),
+            max_length=400,
+        )
+        ingress_status_ip_matches_static_ip = (
+            bool(latest_traceability.get("ingress_status_ip_matches_static_ip"))
+            if isinstance(latest_traceability.get("ingress_status_ip_matches_static_ip"), bool)
+            else (
+                bool(target_summary.get("ingress_status_ip_matches_static_ip"))
+                if isinstance(target_summary.get("ingress_status_ip_matches_static_ip"), bool)
+                else None
+            )
+        )
+        static_ip_bound_to_expected_forwarding_rule = (
+            bool(latest_traceability.get("static_ip_bound_to_expected_forwarding_rule"))
+            if isinstance(latest_traceability.get("static_ip_bound_to_expected_forwarding_rule"), bool)
+            else (
+                bool(target_summary.get("static_ip_bound_to_expected_forwarding_rule"))
+                if isinstance(target_summary.get("static_ip_bound_to_expected_forwarding_rule"), bool)
+                else None
+            )
+        )
+        observed_managed_certificate_domains = _normalize_string(
+            latest_traceability.get("observed_managed_certificate_domains"),
+            max_length=255,
+        ) or _normalize_string(
+            target_summary.get("observed_managed_certificate_domains"),
+            max_length=255,
+        )
+        observed_managed_certificate_status = _normalize_string(
+            latest_traceability.get("observed_managed_certificate_status"),
+            max_length=64,
+        ) or _normalize_string(
+            target_summary.get("observed_managed_certificate_status"),
+            max_length=64,
+        )
+        observed_managed_certificate_domain_status = _normalize_string(
+            latest_traceability.get("observed_managed_certificate_domain_status"),
+            max_length=64,
+        ) or _normalize_string(
+            target_summary.get("observed_managed_certificate_domain_status"),
+            max_length=64,
+        )
         ingress_conflict_detected = (
             bool(latest_traceability.get("ingress_conflict_detected"))
             if isinstance(latest_traceability.get("ingress_conflict_detected"), bool)
@@ -19383,6 +19573,53 @@ class SEOMigrationService:
                 tls_domain_status = "FAILED_NOT_VISIBLE"
             elif deploy_https_ready:
                 tls_domain_status = "ACTIVE"
+        normalized_tls_status = (tls_certificate_status or "").strip().upper()
+        normalized_tls_domain_status = (tls_domain_status or "").strip().upper()
+        tls_provisioning_evidence = normalized_tls_status == "PROVISIONING" or normalized_tls_domain_status == "PROVISIONING"
+        static_ip_alignment_evidence = (
+            (static_ip_status or "").strip().upper() == "IN_USE"
+            and (
+                ingress_status_ip_matches_static_ip is True
+                or static_ip_bound_to_expected_forwarding_rule is True
+            )
+        )
+        if deploy_https_ready is False and tls_provisioning_evidence:
+            if (
+                not https_probe_error_summary
+                or "probe_attempted_without_error_summary" in https_probe_error_summary
+            ):
+                https_probe_error_summary = _compose_https_probe_error_summary(
+                    "managed_certificate_provisioning",
+                    detail="managed certificate/domain status still PROVISIONING",
+                )
+            if current_deploy_https_ready is False and (
+                not current_https_probe_error_summary
+                or "probe_attempted_without_error_summary" in current_https_probe_error_summary
+            ):
+                current_https_probe_error_summary = _compose_https_probe_error_summary(
+                    "managed_certificate_provisioning",
+                    detail="managed certificate/domain status still PROVISIONING",
+                )
+        if deploy_https_ready is False and tls_provisioning_evidence and static_ip_alignment_evidence:
+            if dispatch_service_reason_code in {
+                None,
+                _DEPLOY_DISPATCH_SERVICE_REASON_AVAILABLE,
+                _DEPLOY_RUN_FAILURE_REASON_HTTPS_PROBE_FAILED_AFTER_CONTROL_PLANE_READY,
+                _DEPLOY_RUN_FAILURE_REASON_HTTPS_PROBE_NOT_ATTEMPTED,
+                _DEPLOY_RUN_FAILURE_REASON_INGRESS_EVIDENCE,
+                _DEPLOY_RUN_FAILURE_REASON_INGRESS_VERIFY,
+            }:
+                dispatch_service_reason_code = _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_PROVISIONING
+            if selected_workflow_failure_reason in {
+                None,
+                _DEPLOY_RUN_FAILURE_REASON_HTTPS_PROBE_FAILED_AFTER_CONTROL_PLANE_READY,
+                _DEPLOY_RUN_FAILURE_REASON_HTTPS_PROBE_NOT_ATTEMPTED,
+                _DEPLOY_RUN_FAILURE_REASON_INGRESS_EVIDENCE,
+                _DEPLOY_RUN_FAILURE_REASON_INGRESS_VERIFY,
+            }:
+                selected_workflow_failure_reason = _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_PROVISIONING
+                if selected_workflow_failure_stage is None:
+                    selected_workflow_failure_stage = _DEPLOY_RUN_FAILURE_STAGE_INGRESS_EVIDENCE
 
         return {
             "ready": not reasons,
@@ -19405,9 +19642,18 @@ class SEOMigrationService:
             "dns_record_matches_ingress": dns_record_matches_ingress,
             "dns_expected_ip": dns_expected_ip,
             "dns_observed_ip": dns_observed_ip,
+            "expected_static_ip_address": expected_static_ip_address,
+            "static_ip_status": static_ip_status,
+            "static_ip_users": static_ip_users,
             "tls_certificate_status": tls_certificate_status,
             "tls_domain_status": tls_domain_status,
+            "observed_managed_certificate_domains": observed_managed_certificate_domains,
+            "observed_managed_certificate_status": observed_managed_certificate_status,
+            "observed_managed_certificate_domain_status": observed_managed_certificate_domain_status,
             "ingress_ip": ingress_ip,
+            "ingress_status_ip": ingress_status_ip,
+            "ingress_status_ip_matches_static_ip": ingress_status_ip_matches_static_ip,
+            "static_ip_bound_to_expected_forwarding_rule": static_ip_bound_to_expected_forwarding_rule,
             "ingress_conflict_detected": ingress_conflict_detected,
             "cert_identity_valid": cert_identity_valid,
             "host_reachable": host_reachable,

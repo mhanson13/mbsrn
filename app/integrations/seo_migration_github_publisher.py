@@ -9602,7 +9602,10 @@ def _render_managed_deploy_workflow_yaml(
         '            fallback_detail=""\n'
         "            normalized_cert_status_local=\"$(echo \"${tls_certificate_status:-}\" | tr '[:lower:]' '[:upper:]' | tr -d '[:space:]')\"\n"
         "            normalized_domain_status_local=\"$(echo \"${tls_domain_status:-}\" | tr '[:lower:]' '[:upper:]' | tr -d '[:space:]')\"\n"
-        '            if [ "${https_probe_attempted:-false}" = "true" ]; then\n'
+        '            if [ "$normalized_domain_status_local" = "PROVISIONING" ] || [ "$normalized_cert_status_local" = "PROVISIONING" ]; then\n'
+        '              fallback_reason="managed_certificate_provisioning"\n'
+        '              fallback_detail="managed certificate/domain status still PROVISIONING"\n'
+        '            elif [ "${https_probe_attempted:-false}" = "true" ]; then\n'
         '              if [ "${control_plane_ready:-false}" = "true" ]; then\n'
         '                fallback_reason="https_probe_failed_after_control_plane_ready"\n'
         '                fallback_detail="probe_attempted_without_error_summary"\n'
@@ -10520,18 +10523,24 @@ def _render_managed_deploy_workflow_yaml(
         "            exit 1\n"
         "          fi\n"
         '          if [ "$managed_certificate_metadata_available" = "true" ] && ( [ "$normalized_domain_status" = "PROVISIONING" ] || [ "$normalized_cert_status" = "PROVISIONING" ] ); then\n'
+        '            set_https_probe_error_summary "managed_certificate_provisioning" "" "" ""\n'
+        '            echo "deploy_runtime_reason_code=managed_certificate_provisioning"\n'
         '            echo "deploy_runtime_reason_code=managed_certificate_pending"\n'
         '            echo "deploy_runtime_reason_code=tls_certificate_provisioning"\n'
-        '            echo "deploy_runtime_reason_message=ManagedCertificate provisioning is still in progress for expected hostname."\n'
+        '            echo "deploy_runtime_reason_message=Deploy reached the load balancer, but ManagedCertificate/TLS is still provisioning for expected hostname. Wait for ACTIVE status, then refresh or rerun deploy."\n'
         "            exit 1\n"
         "          fi\n"
         '          if [ "$managed_certificate_metadata_available" = "true" ] && [ "$normalized_domain_status" != "ACTIVE" ]; then\n'
+        '            set_https_probe_error_summary "managed_certificate_provisioning" "" "" ""\n'
+        '            echo "deploy_runtime_reason_code=managed_certificate_provisioning"\n'
         '            echo "deploy_runtime_reason_code=managed_certificate_pending"\n'
         '            echo "deploy_runtime_reason_code=tls_certificate_provisioning"\n'
         '            echo "deploy_runtime_reason_message=ManagedCertificate domain status is not ACTIVE for expected hostname."\n'
         "            exit 1\n"
         "          fi\n"
         '          if [ "$managed_certificate_metadata_available" = "true" ] && [ -n "$normalized_cert_status" ] && [ "$normalized_cert_status" != "ACTIVE" ]; then\n'
+        '            set_https_probe_error_summary "managed_certificate_provisioning" "" "" ""\n'
+        '            echo "deploy_runtime_reason_code=managed_certificate_provisioning"\n'
         '            echo "deploy_runtime_reason_code=managed_certificate_pending"\n'
         '            echo "deploy_runtime_reason_code=tls_certificate_provisioning"\n'
         '            echo "deploy_runtime_reason_message=ManagedCertificate status is not ACTIVE yet."\n'
@@ -10582,6 +10591,11 @@ def _render_managed_deploy_workflow_yaml(
         '              if [ -z "$ingress_status_ip" ] && [ -z "$expected_static_ip_address" ] && [ "$host_reachable" != "true" ]; then\n'
         '                set_https_probe_error_summary "ingress_address_pending" "$https_verify_exit" "" "$https_verify_output"\n'
         '                echo "deploy_runtime_reason_code=ingress_address_pending"\n'
+        '              elif [ "$normalized_domain_status" = "PROVISIONING" ] || [ "$normalized_cert_status" = "PROVISIONING" ]; then\n'
+        '                set_https_probe_error_summary "managed_certificate_provisioning" "$https_verify_exit" "" "$https_verify_output"\n'
+        '                echo "deploy_runtime_reason_code=managed_certificate_provisioning"\n'
+        '                echo "deploy_runtime_reason_code=tls_certificate_provisioning"\n'
+        '                echo "deploy_runtime_reason_message=Deploy reached the load balancer, but ManagedCertificate/TLS is still provisioning for expected hostname. Wait for ACTIVE status, then refresh or rerun deploy."\n'
         '              elif [ "$control_plane_ready" = "true" ]; then\n'
         '                set_https_probe_error_summary "https_probe_failed_after_control_plane_ready" "$https_verify_exit" "" "$https_verify_output"\n'
         '                echo "deploy_runtime_reason_code=https_probe_failed_after_control_plane_ready"\n'
@@ -11471,6 +11485,8 @@ def _classify_cloudsql_proxy_failure_from_log_text(
         return _DEPLOY_RUNTIME_REASON_BACKENDCONFIG_HEALTH_CHECK_MISMATCH, "rollout_verify"
     if "deploy_runtime_reason_code=ingress_backend_unhealthy" in normalized:
         return _DEPLOY_RUNTIME_REASON_INGRESS_BACKEND_UNHEALTHY, "rollout_verify"
+    if "deploy_runtime_reason_code=managed_certificate_provisioning" in normalized:
+        return _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_PROVISIONING, "ingress_evidence"
     if "deploy_runtime_reason_code=ingress_backend_502" in normalized:
         return _DEPLOY_RUNTIME_REASON_INGRESS_BACKEND_502, "rollout_verify"
     if "deploy_runtime_reason_code=service_has_no_ready_endpoints" in normalized:
@@ -11666,7 +11682,7 @@ def _derive_https_probe_error_summary_for_failure(
         _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_BOUND_TO_WRONG_SITE: "cert_not_ready",
         _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_CERTIFICATE_ANNOTATION_MISMATCH: "cert_not_ready",
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_IDENTITY_MISMATCH: "cert_not_ready",
-        _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_PROVISIONING: "cert_not_ready",
+        _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_PROVISIONING: "managed_certificate_provisioning",
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_FAILED_NOT_VISIBLE: "cert_not_ready",
         _DEPLOY_DISPATCH_SERVICE_REASON_DNS_RECORD_MISMATCH: "dns_not_ready",
         _DEPLOY_DISPATCH_SERVICE_REASON_DNS_POINTS_TO_OLD_INGRESS_IP: "dns_not_ready",
@@ -11689,6 +11705,8 @@ def _derive_https_probe_error_summary_for_failure(
         detail = "dns_record_not_aligned_with_expected_ingress_target"
     elif summary_reason == "cert_not_ready":
         detail = "certificate_identity_or_status_not_ready"
+    elif summary_reason == "managed_certificate_provisioning":
+        detail = "managed certificate/domain status still PROVISIONING"
     elif summary_reason == "host_resolution_pending":
         detail = "ingress_hostname_or_endpoint_not_ready"
     elif summary_reason == "https_probe_not_attempted":

@@ -6017,6 +6017,15 @@ def test_classify_cloudsql_proxy_failure_maps_tls_provisioning_reason() -> None:
     assert failure_stage == "ingress_evidence"
 
 
+def test_classify_cloudsql_proxy_failure_maps_managed_certificate_provisioning_to_tls_provisioning() -> None:
+    reason_code, failure_stage = _classify_cloudsql_proxy_failure_from_log_text(
+        "deploy_runtime_reason_code=managed_certificate_provisioning"
+    )
+
+    assert reason_code == "tls_certificate_provisioning"
+    assert failure_stage == "ingress_evidence"
+
+
 def test_classify_cloudsql_proxy_failure_maps_managed_certificate_pending_to_tls_provisioning() -> None:
     reason_code, failure_stage = _classify_cloudsql_proxy_failure_from_log_text(
         "\n".join(
@@ -6118,6 +6127,18 @@ def test_derive_https_probe_error_summary_for_failure_maps_timeout_reason() -> N
     )
 
     assert summary == "reason=https_probe_timeout;detail=https_probe_timed_out"
+
+
+def test_derive_https_probe_error_summary_for_failure_maps_tls_provisioning_reason() -> None:
+    summary = _derive_https_probe_error_summary_for_failure(
+        reason_code="tls_certificate_provisioning",
+        failure_stage="ingress_evidence",
+    )
+
+    assert (
+        summary
+        == "reason=managed_certificate_provisioning;detail=managed certificate/domain status still PROVISIONING"
+    )
 
 
 def test_derive_https_probe_error_summary_for_failure_falls_back_for_ingress_stage_unknown_reason() -> None:
@@ -7587,6 +7608,7 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "deploy_runtime_reason_code=dns_record_mismatch" in workflow_yaml
     assert "deploy_runtime_reason_code=dns_points_to_old_ingress_ip" in workflow_yaml
     assert "deploy_runtime_reason_code=ingress_ip_assigned_but_dns_not_updated" in workflow_yaml
+    assert "deploy_runtime_reason_code=managed_certificate_provisioning" in workflow_yaml
     assert "deploy_runtime_reason_code=tls_certificate_provisioning" in workflow_yaml
     assert "deploy_runtime_reason_code=managed_certificate_domain_drift_repaired" in workflow_yaml
     assert "deploy_runtime_reason_code=managed_certificate_domain_drift_repair_failed" in workflow_yaml

@@ -1592,6 +1592,9 @@ function toManagedGkeConfigGuidance(value: string | null): string | null {
   if (normalized === "managed_certificate_failed_not_visible") {
     return "ManagedCertificate is not visible for this hostname yet. Verify DNS/ingress exposure and certificate visibility before retry.";
   }
+  if (normalized === "tls_certificate_provisioning" || normalized === "managed_certificate_provisioning") {
+    return "Deploy reached the load balancer, but TLS is still provisioning for the preview hostname. Wait for ManagedCertificate to become ACTIVE, then refresh and retry deploy.";
+  }
   if (normalized === "backendconfig_health_check_mismatch") {
     return "BackendConfig health check path/port does not match the running site-web application health endpoint.";
   }
@@ -3141,9 +3144,13 @@ function groupDeployConsistency(params: {
       status: params.httpsStatus,
       reason:
         params.httpsStatus === "blocked"
-          ? "HTTPS verification has not passed."
+          ? params.tlsProvisioning
+            ? "Waiting on TLS provisioning before HTTPS can pass."
+            : "HTTPS verification has not passed."
           : params.httpsStatus === "pending"
-            ? "Waiting for DNS/TLS/backend convergence."
+            ? params.tlsProvisioning
+              ? "Waiting on TLS provisioning before HTTPS can pass."
+              : "Waiting for DNS/TLS/backend convergence."
             : null,
     },
     {
@@ -4842,15 +4849,65 @@ export function MigrationWorkspacePanel({
   const dnsObservedIpFromSelected = asStringOrNull(selectedDeployHistoryRecord.dns_observed_ip);
   const dnsObservedIpFromSummary = asStringOrNull(deployReadiness.dns_observed_ip);
   const dnsObservedIp = dnsObservedIpFromSelected || dnsObservedIpFromSummary;
+  const expectedStaticIpAddressFromSelected = asStringOrNull(selectedDeployHistoryRecord.expected_static_ip_address);
+  const expectedStaticIpAddressFromSummary = asStringOrNull(deployReadiness.expected_static_ip_address);
+  const expectedStaticIpAddress = expectedStaticIpAddressFromSelected || expectedStaticIpAddressFromSummary;
+  const staticIpStatusFromSelected = asStringOrNull(selectedDeployHistoryRecord.static_ip_status);
+  const staticIpStatusFromSummary = asStringOrNull(deployReadiness.static_ip_status);
+  const staticIpStatus = staticIpStatusFromSelected || staticIpStatusFromSummary;
+  const staticIpUsersFromSelected = asStringOrNull(selectedDeployHistoryRecord.static_ip_users);
+  const staticIpUsersFromSummary = asStringOrNull(deployReadiness.static_ip_users);
+  const staticIpUsers = staticIpUsersFromSelected || staticIpUsersFromSummary;
   const tlsCertificateStatusFromSelected = asStringOrNull(selectedDeployHistoryRecord.tls_certificate_status);
   const tlsCertificateStatusFromSummary = asStringOrNull(deployReadiness.tls_certificate_status);
   const tlsCertificateStatus = tlsCertificateStatusFromSelected || tlsCertificateStatusFromSummary;
   const tlsDomainStatusFromSelected = asStringOrNull(selectedDeployHistoryRecord.tls_domain_status);
   const tlsDomainStatusFromSummary = asStringOrNull(deployReadiness.tls_domain_status);
   const tlsDomainStatus = tlsDomainStatusFromSelected || tlsDomainStatusFromSummary;
+  const observedManagedCertificateDomainsFromSelected = asStringOrNull(
+    selectedDeployHistoryRecord.observed_managed_certificate_domains,
+  );
+  const observedManagedCertificateDomainsFromSummary = asStringOrNull(
+    deployReadiness.observed_managed_certificate_domains,
+  );
+  const observedManagedCertificateDomains =
+    observedManagedCertificateDomainsFromSelected || observedManagedCertificateDomainsFromSummary;
+  const observedManagedCertificateStatusFromSelected = asStringOrNull(
+    selectedDeployHistoryRecord.observed_managed_certificate_status,
+  );
+  const observedManagedCertificateStatusFromSummary = asStringOrNull(
+    deployReadiness.observed_managed_certificate_status,
+  );
+  const observedManagedCertificateStatus =
+    observedManagedCertificateStatusFromSelected || observedManagedCertificateStatusFromSummary;
+  const observedManagedCertificateDomainStatusFromSelected = asStringOrNull(
+    selectedDeployHistoryRecord.observed_managed_certificate_domain_status,
+  );
+  const observedManagedCertificateDomainStatusFromSummary = asStringOrNull(
+    deployReadiness.observed_managed_certificate_domain_status,
+  );
+  const observedManagedCertificateDomainStatus =
+    observedManagedCertificateDomainStatusFromSelected || observedManagedCertificateDomainStatusFromSummary;
   const ingressIpFromSelected = asStringOrNull(selectedDeployHistoryRecord.ingress_ip);
   const ingressIpFromSummary = asStringOrNull(deployReadiness.ingress_ip);
   const ingressIp = ingressIpFromSelected || ingressIpFromSummary;
+  const ingressStatusIpFromSelected = asStringOrNull(selectedDeployHistoryRecord.ingress_status_ip);
+  const ingressStatusIpFromSummary = asStringOrNull(deployReadiness.ingress_status_ip);
+  const ingressStatusIp = ingressStatusIpFromSelected || ingressStatusIpFromSummary;
+  const ingressStatusIpMatchesStaticIpFromSelected = asBooleanOrNull(
+    selectedDeployHistoryRecord.ingress_status_ip_matches_static_ip,
+  );
+  const ingressStatusIpMatchesStaticIpFromSummary = asBooleanOrNull(deployReadiness.ingress_status_ip_matches_static_ip);
+  const ingressStatusIpMatchesStaticIp =
+    ingressStatusIpMatchesStaticIpFromSelected ?? ingressStatusIpMatchesStaticIpFromSummary;
+  const staticIpBoundToExpectedForwardingRuleFromSelected = asBooleanOrNull(
+    selectedDeployHistoryRecord.static_ip_bound_to_expected_forwarding_rule,
+  );
+  const staticIpBoundToExpectedForwardingRuleFromSummary = asBooleanOrNull(
+    deployReadiness.static_ip_bound_to_expected_forwarding_rule,
+  );
+  const staticIpBoundToExpectedForwardingRule =
+    staticIpBoundToExpectedForwardingRuleFromSelected ?? staticIpBoundToExpectedForwardingRuleFromSummary;
   const ingressConflictDetectedFromSelected = asBooleanOrNull(selectedDeployHistoryRecord.ingress_conflict_detected);
   const ingressConflictDetectedFromSummary = asBooleanOrNull(deployReadiness.ingress_conflict_detected);
   const ingressConflictDetected = ingressConflictDetectedFromSelected ?? ingressConflictDetectedFromSummary;
@@ -5049,6 +5106,9 @@ export function MigrationWorkspacePanel({
       return "pass";
     }
     if (deployHttpsReady === false) {
+      if (tlsProvisioning) {
+        return "pending";
+      }
       return "blocked";
     }
     if (deployWorkflowConvergencePending || tlsProvisioning || dnsMatchesIngressGateStatus === "pending") {
@@ -5075,6 +5135,9 @@ export function MigrationWorkspacePanel({
     }
     if (tlsFailedNotVisible) {
       hints.add("FAILED_NOT_VISIBLE: DNS is not visible to Google certificate validation yet.");
+    }
+    if (tlsProvisioning && httpsProbeGateStatus !== "pass") {
+      hints.add("TLS provisioning pending: wait for ManagedCertificate status ACTIVE, then refresh/retry deploy.");
     }
     if (certificateIdentityGateStatus === "blocked" && hasCertIdentityMismatchReason) {
       hints.add("Cert bound to wrong site: certificate identity mismatch or stale binding detected.");
@@ -5573,6 +5636,50 @@ export function MigrationWorkspacePanel({
       }
       if (runtimeProbeStatus) {
         parts.push(`Runtime classification: ${runtimeProbeStatus}.`);
+      }
+      return parts.join(" ");
+    })(),
+    (() => {
+      const reasonCodes = new Set(
+        [normalizedDispatchServiceReasonCode, normalizedDeployFailureReasonCode, normalizedDeployRunFailureReasonCode]
+          .map((value) => value.trim())
+          .filter((value) => value.length > 0),
+      );
+      const hasTlsProvisioningReason =
+        reasonCodes.has("tls_certificate_provisioning") || reasonCodes.has("managed_certificate_provisioning");
+      if (!hasTlsProvisioningReason && !tlsProvisioning) {
+        return null;
+      }
+      if (deployHttpsReady === true) {
+        return null;
+      }
+      const hostname =
+        destinationSummary.deployPreviewHostname ||
+        extractHostnameFromUrl(destinationSummary.deployResolvedLiveUrl) ||
+        extractHostnameFromUrl(currentLiveUrl);
+      const parts: string[] = [
+        hostname
+          ? `Deploy reached the load balancer, but TLS is still provisioning for ${hostname}.`
+          : "Deploy reached the load balancer, but TLS is still provisioning for the preview hostname.",
+        "Wait for ManagedCertificate to become ACTIVE, then refresh or rerun deploy.",
+      ];
+      if (staticIpStatus) {
+        parts.push(`Static IP status: ${staticIpStatus}.`);
+      }
+      if (ingressStatusIp) {
+        parts.push(`Ingress status IP: ${ingressStatusIp}.`);
+      }
+      if (ingressStatusIpMatchesStaticIp === true) {
+        parts.push("Ingress status IP matches the reserved static IP.");
+      }
+      if (staticIpBoundToExpectedForwardingRule === true) {
+        parts.push("Reserved static IP is bound to the expected forwarding rule.");
+      }
+      if (tlsCertificateStatus) {
+        parts.push(`ManagedCertificate status: ${tlsCertificateStatus}.`);
+      }
+      if (tlsDomainStatus) {
+        parts.push(`ManagedCertificate domain status: ${tlsDomainStatus}.`);
       }
       return parts.join(" ");
     })(),
@@ -9112,11 +9219,37 @@ export function MigrationWorkspacePanel({
                         <span className="hint" data-testid="migration-deploy-consistency-dns-observed-ip">
                           dns_observed_ip: {dnsObservedIp || "Not available"}
                         </span>
+                        <span className="hint" data-testid="migration-deploy-consistency-expected-static-ip-address">
+                          expected_static_ip_address: {expectedStaticIpAddress || "Not available"}
+                        </span>
+                        <span className="hint" data-testid="migration-deploy-consistency-static-ip-status">
+                          static_ip_status: {staticIpStatus || "Not available"}
+                        </span>
+                        <span className="hint" data-testid="migration-deploy-consistency-ingress-status-ip">
+                          ingress_status_ip: {ingressStatusIp || "Not available"}
+                        </span>
+                        <span className="hint" data-testid="migration-deploy-consistency-ingress-status-ip-matches-static-ip">
+                          ingress_status_ip_matches_static_ip: {formatBooleanStateLabel(ingressStatusIpMatchesStaticIp)}
+                        </span>
+                        <span className="hint" data-testid="migration-deploy-consistency-static-ip-forwarding-rule-bound">
+                          static_ip_bound_to_expected_forwarding_rule:{" "}
+                          {formatBooleanStateLabel(staticIpBoundToExpectedForwardingRule)}
+                        </span>
                         <span className="hint" data-testid="migration-deploy-consistency-tls-certificate-status">
                           tls_certificate_status: {tlsCertificateStatus || "Not available"}
                         </span>
                         <span className="hint" data-testid="migration-deploy-consistency-tls-domain-status">
                           tls_domain_status: {tlsDomainStatus || "Not available"}
+                        </span>
+                        <span className="hint" data-testid="migration-deploy-consistency-observed-managed-certificate-status">
+                          observed_managed_certificate_status: {observedManagedCertificateStatus || "Not available"}
+                        </span>
+                        <span className="hint" data-testid="migration-deploy-consistency-observed-managed-certificate-domain-status">
+                          observed_managed_certificate_domain_status:{" "}
+                          {observedManagedCertificateDomainStatus || "Not available"}
+                        </span>
+                        <span className="hint" data-testid="migration-deploy-consistency-observed-managed-certificate-domains">
+                          observed_managed_certificate_domains: {observedManagedCertificateDomains || "Not available"}
                         </span>
                         <span className="hint" data-testid="migration-deploy-consistency-ingress-ip">
                           ingress_ip: {ingressIp || "Not available"}
@@ -9308,6 +9441,26 @@ export function MigrationWorkspacePanel({
                     <span className="hint">
                       preview_probe_elapsed_seconds:{" "}
                       {previewProbeElapsedSeconds !== null ? String(previewProbeElapsedSeconds) : "Not available"}
+                    </span>
+                    <span className="hint">expected_static_ip_address: {expectedStaticIpAddress || "Not available"}</span>
+                    <span className="hint">static_ip_status: {staticIpStatus || "Not available"}</span>
+                    <span className="hint">ingress_status_ip: {ingressStatusIp || "Not available"}</span>
+                    <span className="hint">
+                      ingress_status_ip_matches_static_ip: {formatBooleanStateLabel(ingressStatusIpMatchesStaticIp)}
+                    </span>
+                    <span className="hint">
+                      static_ip_bound_to_expected_forwarding_rule:{" "}
+                      {formatBooleanStateLabel(staticIpBoundToExpectedForwardingRule)}
+                    </span>
+                    <span className="hint">
+                      observed_managed_certificate_status: {observedManagedCertificateStatus || "Not available"}
+                    </span>
+                    <span className="hint">
+                      observed_managed_certificate_domain_status:{" "}
+                      {observedManagedCertificateDomainStatus || "Not available"}
+                    </span>
+                    <span className="hint">
+                      observed_managed_certificate_domains: {observedManagedCertificateDomains || "Not available"}
                     </span>
                     <span className="hint">
                       gce_backend_health_status: {gceBackendHealthStatus || "Not available"}

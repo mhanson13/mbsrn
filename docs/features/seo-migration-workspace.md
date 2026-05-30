@@ -2387,6 +2387,7 @@ Resolve-live-url failure diagnostics are evidence-first:
 - when `deploy_https_ready=false`, probe evidence is expected to remain populated via bounded `https_probe_error_summary` unless no probe was attempted (`https_probe_not_attempted`).
 - `deploy_https_ready=false` with blank `https_probe_error_summary` is treated as a diagnostics regression.
 - control-plane-ready but host-unreachable states are explicitly classified:
+  - `managed_certificate_provisioning` / `tls_certificate_provisioning` when static IP + ingress binding are aligned but ManagedCertificate is still `PROVISIONING`
   - `https_probe_failed_after_control_plane_ready`
   - `https_probe_timeout`
   - `https_probe_empty_reply`
@@ -2401,6 +2402,9 @@ Operator verification commands for control-plane-ready / HTTPS-not-ready:
 - `kubectl -n <namespace> get endpoints site-web`
 - `kubectl -n <namespace> get pods -l app=site-web`
 - `kubectl -n <namespace> describe ingress site-web`
+- `kubectl -n mbsrn-www describe managedcertificate site-web-preview-cert-mbsrn-www`
+- `kubectl -n mbsrn-www describe ingress site-web`
+- `gcloud compute addresses describe site-web-preview-ip-mbsrn-www --global`
 - `kubectl -n <namespace> describe backendconfig site-web-backend-config-<site>`
 - `curl -Iv https://<preview-host>/`
 
@@ -2412,6 +2416,7 @@ Blocking reason-code examples:
   - `ingress_status_ip_stale_or_mismatched` (advisory/non-blocking when DNS already matches reserved static IP)
   - after control-plane DNS ensure, these typically indicate propagation delay, resolver visibility lag, or out-of-band DNS mutation
 - TLS/certificate:
+  - `managed_certificate_provisioning` (explicit wait-state classification when certificate/domain status is still `PROVISIONING`)
   - `tls_certificate_provisioning`
   - `managed_certificate_failed_not_visible` (usually DNS/LB visibility mismatch)
   - `managed_certificate_metadata_unavailable` (advisory: cluster metadata read failed/empty; if ingress annotation, DNS, and HTTPS cert identity checks pass, this alone does not block success)
