@@ -4319,6 +4319,12 @@ export function MigrationWorkspacePanel({
     effectivePublishArtifactRoot,
     currentSiteUrl,
   });
+  const currentSiteHost = extractHostnameFromUrl(destinationSummary.currentSiteUrl);
+  const isPlatformPublicWebsiteSite = currentSiteHost === "www.mbsrn.com" || currentSiteHost === "mbsrn.com";
+  const isPlatformPublicWebsiteTargetRepository =
+    (effectivePublishRepoOwner || "").trim().toLowerCase() === "mhanson13"
+    && (effectivePublishRepoName || "").trim().toLowerCase() === "mbsrn-www";
+  const showPlatformPublicWebsiteBoundaryNote = isPlatformPublicWebsiteSite || isPlatformPublicWebsiteTargetRepository;
   const publishReadinessReasons = asStringList(publishReadiness.reasons);
   const deployReadinessReasons = asStringList(deployReadiness.reasons);
   const publishPrimaryBlockerMessage = !Boolean(publishReadiness.ready)
@@ -8049,6 +8055,12 @@ export function MigrationWorkspacePanel({
                       {publishPrimaryBlockerMessage}
                     </span>
                   ) : null}
+                  {showPlatformPublicWebsiteBoundaryNote ? (
+                    <span className="hint muted" data-testid="migration-destination-platform-www-boundary">
+                      Platform boundary: `mhanson13/mbsrn` remains app/control-plane source for `app.mbsrn.com`.
+                      `mhanson13/mbsrn-www` is public-site artifacts only for `www.mbsrn.com`.
+                    </span>
+                  ) : null}
                 </div>
                 <span className="hint muted">
                   Full destination/runtime/config evidence is available under Advanced Diagnostics.
@@ -8079,6 +8091,12 @@ export function MigrationWorkspacePanel({
                 <span className="hint muted" data-testid="migration-publish-target-admin-boundary">
                   Admin controls GitHub account/owner. Operators control repository name and optional branch override.
                 </span>
+                {showPlatformPublicWebsiteBoundaryNote ? (
+                  <span className="hint muted" data-testid="migration-publish-target-platform-www-boundary">
+                    For the platform public website, use repository `mbsrn-www`. This does not move app/control-plane
+                    code from `mhanson13/mbsrn`.
+                  </span>
+                ) : null}
                 <span className="hint">{adminPublishReadyLabel}</span>
                 <label className="stack-tight">
                   <span className="hint muted">Repository name (Operator-owned)</span>

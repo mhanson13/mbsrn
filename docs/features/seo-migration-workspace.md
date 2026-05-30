@@ -1342,6 +1342,12 @@ Effective publish target is merged at action/readiness time:
 - repository + optional branch override from workspace config
 - branch falls back to Admin `default_branch` when override is blank
 
+Platform-owned public website target:
+- control-plane source remains `mhanson13/mbsrn` (`app.mbsrn.com`)
+- for the public marketing site target (`www.mbsrn.com`), workspace repo name should be `mbsrn-www`
+- effective target resolves to `mhanson13/mbsrn-www` when Admin owner is `mhanson13`
+- this does not move operator/admin/control-plane source code into the public artifact repo
+
 Publish behavior:
 - explicit operator-triggered action only
 - approved artifact required

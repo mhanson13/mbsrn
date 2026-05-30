@@ -1489,6 +1489,47 @@ def test_operator_can_toggle_deploy_enabled_without_changing_admin_owned_fields(
     assert deploy_config_json.get("ref") == "main"
 
 
+def test_workspace_publish_target_supports_platform_public_site_repo_name(db_session) -> None:
+    business_id = "11111111-1111-1111-1111-111111111111"
+    site_id = "22222222-2222-2222-2222-222222222222"
+    _seed_business_and_site(db_session, business_id=business_id, site_id=site_id)
+    admin_publish_config = db_session.query(GitHubPublishConfig).one()
+    admin_publish_config.repository = "mhanson13"
+    admin_publish_config.default_branch = "main"
+    db_session.add(admin_publish_config)
+    db_session.commit()
+
+    client = _make_client(db_session, business_id=business_id)
+    workspace_response = client.put(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/workspace",
+        json={
+            "source_url": "https://www.mbsrn.com/",
+            "publish_config": {
+                "enabled": True,
+                "repo_owner": "should-not-override-admin-owner",
+                "repo_name": "mbsrn-www",
+                "branch": "main",
+            },
+        },
+    )
+    assert workspace_response.status_code == 200
+    workspace_payload = workspace_response.json()
+    publish_config_json = workspace_payload.get("publish_config_json") or {}
+    assert publish_config_json.get("repo_name") == "mbsrn-www"
+    assert publish_config_json.get("repo_owner") in {"", None}
+
+    summary_response = client.get(f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/summary")
+    assert summary_response.status_code == 200
+    publish_readiness = summary_response.json().get("publish_readiness") or {}
+    publish_target = publish_readiness.get("target") or {}
+    assert publish_target.get("repo_owner") == "mhanson13"
+    assert publish_target.get("repo_name") == "mbsrn-www"
+    assert publish_target.get("branch") == "main"
+    config_prereqs = publish_readiness.get("config_prerequisites") or {}
+    assert config_prereqs.get("admin_publish_configured") is True
+    assert config_prereqs.get("operator_repository_configured") is True
+
+
 def test_refresh_migration_deploy_status_updates_run_metadata_and_confirms_live_url(db_session) -> None:
     business_id = "11111111-1111-1111-1111-111111111111"
     site_id = "22222222-2222-2222-2222-222222222222"

@@ -2327,6 +2327,48 @@ describe("site migration workflow route", () => {
     expect(destinationSummary).not.toHaveTextContent("Operator-set");
   });
 
+  it("shows platform public website boundary guidance when targeting mhanson13/mbsrn-www", async () => {
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(
+      buildMigrationWorkspaceSummary({
+        workspace: buildMigrationWorkspace({
+          source_url: "https://www.mbsrn.com/",
+          publish_config_json: {
+            enabled: true,
+            repo_owner: null,
+            repo_name: "mbsrn-www",
+            branch: "main",
+            artifact_root: "/",
+          },
+        }),
+        publish_readiness: {
+          ready: true,
+          reasons: [],
+          target: {
+            enabled: true,
+            repo_owner: "mhanson13",
+            repo_name: "mbsrn-www",
+            branch: "main",
+            artifact_root: "/",
+          },
+        },
+      }),
+    );
+
+    render(<SiteMigrationWorkflowPage />);
+
+    const destinationSummary = await screen.findByTestId("migration-destination-summary");
+    const boundaryCopy = within(destinationSummary).getByTestId("migration-destination-platform-www-boundary");
+    expect(boundaryCopy).toHaveTextContent(/mhanson13\/mbsrn/i);
+    expect(boundaryCopy).toHaveTextContent(/app\.mbsrn\.com/i);
+    expect(boundaryCopy).toHaveTextContent(/mhanson13\/mbsrn-www/i);
+    expect(boundaryCopy).toHaveTextContent(/www\.mbsrn\.com/i);
+
+    const publishTargetSummary = screen.getByTestId("migration-publish-target-summary");
+    expect(within(publishTargetSummary).getByTestId("migration-publish-target-platform-www-boundary")).toHaveTextContent(
+      "repository `mbsrn-www`",
+    );
+  });
+
   it("prioritizes current live runtime evidence over selected workflow failure for current deploy state", async () => {
     const user = userEvent.setup();
     mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(

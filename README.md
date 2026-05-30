@@ -111,6 +111,7 @@ Website copy sources:
 ## Public Website Deployment Separation
 - Operator app (`app.mbsrn.com`) remains deployed via `.github/workflows/deploy-prod.yml`.
 - Public website (`www.mbsrn.com`) deploys via `.github/workflows/deploy-www-prod.yml`.
+- Control-plane source remains in `mhanson13/mbsrn`; public-site artifacts can be managed in `mhanson13/mbsrn-www` through migration publish/deploy workflows.
 - Website Kubernetes resources are isolated under `k8s/www-*`.
 - Rollout + smoke-test checklist: `docs/frontend/public-website.md`.
 - Final DNS + TLS + OAuth cutover runbook: `docs/runbooks/dns-tls-oauth-cutover.md`.

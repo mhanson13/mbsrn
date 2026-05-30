@@ -300,6 +300,24 @@ For migration-driven site repos, MBSRN acts as a control-plane orchestrator:
 Operational implication:
 - a repo can contain published artifact files but is not considered deploy-ready until workflow provisioning/verification succeeds on the target ref.
 
+### Platform-Owned Public Website Target (`www.mbsrn.com`)
+
+Repository/domain boundary:
+- control plane source repo remains `mhanson13/mbsrn`
+- authenticated control plane host remains `app.mbsrn.com`
+- platform-owned public artifacts target repo is `mhanson13/mbsrn-www`
+- public marketing host target is `www.mbsrn.com`
+
+Managed-site implications:
+- use existing migration per-site publish-target configuration (owner/account from Admin baseline, repo name from workspace target)
+- for the platform-owned public site target, repository name should be `mbsrn-www` on owner `mhanson13`
+- preview validation continues on managed preview hostname (`*.site.mbsrn.com`) before DNS cutover
+- DNS cutover for `www.mbsrn.com` is manual and out of scope for migration publish/deploy actions
+
+Safety reminder:
+- publishing artifacts to `mhanson13/mbsrn-www` does not move control-plane source/ownership out of `mhanson13/mbsrn`
+- public artifact output must not contain control-plane routes, internal diagnostics, or secret-bearing content
+
 ### Managed Site HTTPS Readiness Diagnostics
 
 Managed site deploy readiness requires successful HTTPS reachability, not just control-plane alignment.

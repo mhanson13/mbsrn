@@ -233,6 +233,12 @@ The dedicated migration route (`/sites/[site_id]/migration`) keeps primary opera
     - no attribution claims and no scoring/order changes
   - deploy evidence state can show `Confirmed Live` when current live HTTPS probe evidence is healthy
   - `Refresh Deploy Status` is scoped to the route site id; when selected artifact history is missing it can still refresh current-live evidence from the latest deploy record for that site
+
+Platform-owned public site boundary cues:
+- migration destination/publish cards can show explicit boundary copy for platform public-site targets
+- `mhanson13/mbsrn` remains the authenticated control-plane source (`app.mbsrn.com`)
+- `mhanson13/mbsrn-www` is public-site artifacts only (`www.mbsrn.com`)
+- workspace guidance for the platform public site recommends repository `mbsrn-www` without changing control-plane source ownership
 - F. Advanced Diagnostics & History:
   - draft/provider execution metadata
   - media diagnostics
