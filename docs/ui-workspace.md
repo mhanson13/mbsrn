@@ -414,6 +414,8 @@ Media UX note:
   - read-only effective generation budget (`profile`, `variation`, `context budget chars`, `page/file limits`)
   - read-only effective generation safety (`provider timeout`, `preflight mode`, `max final chars`, `max difficulty`, `compact fallback`, `compact fallback attempted`, `budget capped`)
   - blocked-before-provider state is explicit and actionable (`migration_generation_preflight_too_large`) without exposing raw prompt/payload data
+  - blocked reason text aligns to the active blocker (`difficulty score`, `final input chars`, or both) instead of always defaulting to context-budget overflow wording
+  - local preflight/provider-skipped failures are labeled as blocked before request; provider-rejection wording is reserved for real remote-provider rejections
 - draft generation still uses selected media metadata only; raw image bytes are not sent into text draft context
 
 Media suggestion reason-code cues in UI:
@@ -563,6 +565,10 @@ Admin settings help UX:
   - key tradeoff/risk (for example latency/cost/quality/contract compatibility)
 - Migration generation safety/budget settings surface both recommended ranges and backend hard-cap ranges.
 - Always-visible inline text is reserved for section summaries, high-risk warnings, destructive actions, and save/error states.
+- GitHub publish config save status semantics:
+  - successful save clears prior failed-save UI errors
+  - successful save can still show independent settings-health warnings when saved values need review
+  - only true request/save failures should show `Failed to save GitHub publish configuration.`
 
 ## Admin Competitor Timeout Controls
 

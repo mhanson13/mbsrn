@@ -2634,14 +2634,17 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
     def _derive_preflight_difficulty_score(
         self,
         *,
-        final_input_size: int,
+        final_input_chars: int,
         section_count: int | None,
         trimming_pass_count: int,
     ) -> int:
-        normalized_size = max(0, int(final_input_size))
-        size_component = min(12, max(0, int((normalized_size + 1499) // 1500)))
-        sections_component = min(8, max(0, int(section_count or 0)))
-        trimming_component = min(8, max(0, int(trimming_pass_count)) * 2)
+        # Difficulty must reflect the compacted payload that would be submitted, not raw pre-trim context.
+        normalized_chars = max(0, int(final_input_chars))
+        size_component = min(12, max(0, int((normalized_chars + 1999) // 2000)))
+        # Treat section count as a light complexity signal so media-rich payloads are not over-penalized.
+        sections_component = min(6, max(0, int((max(0, int(section_count or 0)) + 1) // 2)))
+        # Trimming pressure is informative, but should not dominate difficulty on its own.
+        trimming_component = min(5, max(0, int(trimming_pass_count) - 1))
         return min(100, max(0, size_component + sections_component + trimming_component))
 
     def _evaluate_generation_preflight(
@@ -2665,7 +2668,7 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
             self._coerce_optional_non_negative_int(safety_payload.get("migration_max_difficulty_score")) or 18
         )
         difficulty_score = self._derive_preflight_difficulty_score(
-            final_input_size=final_input_bytes,
+            final_input_chars=final_input_chars if final_input_chars > 0 else final_input_bytes,
             section_count=section_count,
             trimming_pass_count=trimming_pass_count,
         )

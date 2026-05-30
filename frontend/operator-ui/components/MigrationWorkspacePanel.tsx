@@ -2492,8 +2492,23 @@ function parseDraftAIExecutionSummary(
   };
 }
 
-function toDraftFailureSourceLabel(value: string | null): string | null {
+function toDraftFailureSourceLabel(
+  value: string | null,
+  options?: {
+    providerCallSkipped?: boolean | null;
+    preflightBlocked?: boolean | null;
+  },
+): string | null {
   const normalized = (value || "").trim().toLowerCase();
+  const providerCallSkipped = options?.providerCallSkipped === true;
+  const preflightBlocked = options?.preflightBlocked === true;
+  if (
+    (providerCallSkipped || preflightBlocked)
+    && normalized !== "unknown"
+    && normalized !== "local_preflight"
+  ) {
+    return "Provider call skipped before request";
+  }
   if (normalized === "local_preflight") {
     return "Blocked before provider call";
   }
@@ -2507,6 +2522,90 @@ function toDraftFailureSourceLabel(value: string | null): string | null {
     return "Unexpected execution failure";
   }
   return null;
+}
+
+function formatGenerationBlockedReason(params: {
+  preflightBlocked: boolean | null;
+  preflightBlockedSetting: string | null;
+  preflightBlockedSettingActual: number | null;
+  preflightBlockedSettingCap: number | null;
+  preflightBlockReason: string | null;
+  budgetOutcome: string | null;
+  contextBudgetSizeChars: number | null;
+  hint: string | null;
+}): string | null {
+  const {
+    preflightBlocked,
+    preflightBlockedSetting,
+    preflightBlockedSettingActual,
+    preflightBlockedSettingCap,
+    preflightBlockReason,
+    budgetOutcome,
+    contextBudgetSizeChars,
+    hint,
+  } = params;
+  const blocked = preflightBlocked === true || budgetOutcome === "precall_rejected";
+  if (!blocked && hint !== "Input too large") {
+    return null;
+  }
+
+  const normalizedSetting = (preflightBlockedSetting || "").trim().toLowerCase();
+  const normalizedReason = (preflightBlockReason || "").trim().toLowerCase();
+  if (
+    normalizedSetting === "migration_max_difficulty_score"
+    || normalizedReason === "difficulty_score_exceeded"
+  ) {
+    if (typeof preflightBlockedSettingActual === "number" && typeof preflightBlockedSettingCap === "number") {
+      return `difficulty score ${preflightBlockedSettingActual} exceeded cap ${preflightBlockedSettingCap}`;
+    }
+    if (typeof preflightBlockedSettingCap === "number") {
+      return `difficulty score exceeded cap ${preflightBlockedSettingCap}`;
+    }
+    return "difficulty score exceeded the configured cap";
+  }
+  if (
+    normalizedSetting === "migration_max_final_input_chars"
+    || normalizedReason === "final_input_chars_exceeded"
+  ) {
+    if (typeof preflightBlockedSettingActual === "number" && typeof preflightBlockedSettingCap === "number") {
+      return `final input chars ${preflightBlockedSettingActual.toLocaleString()} exceeded cap ${preflightBlockedSettingCap.toLocaleString()}`;
+    }
+    if (typeof preflightBlockedSettingCap === "number") {
+      return `final input chars exceeded cap ${preflightBlockedSettingCap.toLocaleString()}`;
+    }
+    return "final input chars exceeded configured cap";
+  }
+  if (
+    normalizedSetting === "migration_max_final_input_chars,migration_max_difficulty_score"
+    || normalizedReason === "final_input_and_difficulty_exceeded"
+  ) {
+    if (typeof preflightBlockedSettingActual === "number" && typeof preflightBlockedSettingCap === "number") {
+      return `final input chars ${preflightBlockedSettingActual.toLocaleString()} exceeded cap ${preflightBlockedSettingCap.toLocaleString()} and difficulty score exceeded configured cap`;
+    }
+    return "final input chars and difficulty score exceeded configured caps";
+  }
+  if (
+    normalizedSetting === "migration_context_budget_chars"
+    || normalizedReason === "context_budget_overflow"
+  ) {
+    if (typeof preflightBlockedSettingCap === "number") {
+      return `context exceeded ${preflightBlockedSettingCap.toLocaleString()} char budget`;
+    }
+    if (typeof contextBudgetSizeChars === "number") {
+      return `context exceeded ${contextBudgetSizeChars.toLocaleString()} char budget`;
+    }
+    return "context exceeded runtime request budget";
+  }
+  if (normalizedSetting === "trimming_pass_count" || normalizedReason === "trimming_pass_limit_exceeded") {
+    if (typeof preflightBlockedSettingActual === "number" && typeof preflightBlockedSettingCap === "number") {
+      return `trimming passes ${preflightBlockedSettingActual} exceeded cap ${preflightBlockedSettingCap}`;
+    }
+    return "trimming pass limit exceeded";
+  }
+  if (typeof contextBudgetSizeChars === "number") {
+    return `context exceeded ${contextBudgetSizeChars.toLocaleString()} char budget`;
+  }
+  return "runtime preflight safety threshold was exceeded";
 }
 
 function toRequestContractStatusLabel(value: string | null): string | null {
@@ -5061,6 +5160,16 @@ export function MigrationWorkspacePanel({
     || generationPreflightBlockReason;
   const draftFailureSourceLabel = toDraftFailureSourceLabel(
     asStringOrNull(migrationDiagnostics.last_draft_failure_source) || draftAIExecution.failureSource,
+    {
+      providerCallSkipped: (
+        asBooleanOrNull(draftInputSummary.generation_provider_call_skipped)
+        ?? draftAIExecution.providerCallSkipped
+      ),
+      preflightBlocked: (
+        asBooleanOrNull(draftInputSummary.generation_preflight_blocked)
+        ?? draftAIExecution.preflightBlocked
+      ),
+    },
   );
   const draftAIDiagnosticsSummary = asRecord(migrationDiagnostics.last_draft_ai_diagnostics_summary);
   const draftAIFailureCategory = asStringOrNull(draftAIDiagnosticsSummary.failure_category);
@@ -5094,6 +5203,16 @@ export function MigrationWorkspacePanel({
     typeof draftAIDiagnosticsSummary.largest_context_block_size_chars === "number"
       ? Math.max(0, Math.round(draftAIDiagnosticsSummary.largest_context_block_size_chars))
       : null;
+  const generationBlockedReasonSummary = formatGenerationBlockedReason({
+    preflightBlocked: generationPreflightBlocked,
+    preflightBlockedSetting: generationPreflightBlockedSetting,
+    preflightBlockedSettingActual: generationPreflightBlockedSettingActual,
+    preflightBlockedSettingCap: generationPreflightBlockedSettingCap,
+    preflightBlockReason: generationPreflightBlockReason,
+    budgetOutcome: draftAIBudgetOutcome,
+    contextBudgetSizeChars: draftAIContextBudgetSizeChars,
+    hint: draftAIHint,
+  });
   const generationPreflightBlockedMessage = generationPreflightBlocked
     ? `Generation was blocked before provider call.${generationPreflightBlockedSetting
       ? ` Blocked setting: ${generationPreflightBlockedSetting}${generationPreflightBlockedSettingActual !== null
@@ -7545,14 +7664,10 @@ export function MigrationWorkspacePanel({
                   </span>
                 </span>
               ) : null}
-              {(draftAIHint === "Input too large" || draftAIBudgetOutcome === "precall_rejected") ? (
+              {generationBlockedReasonSummary ? (
                 <span className="migration-compact-kv-row" data-testid="migration-draft-input-budget-blocked-reason">
                   <span className="migration-compact-kv-label">Blocked because</span>
-                  <span className="migration-compact-kv-value">
-                    {draftAIContextBudgetSizeChars
-                      ? `context exceeded ${draftAIContextBudgetSizeChars.toLocaleString()} char budget`
-                      : "context exceeded runtime request budget"}
-                  </span>
+                  <span className="migration-compact-kv-value">{generationBlockedReasonSummary}</span>
                 </span>
               ) : null}
             </div>

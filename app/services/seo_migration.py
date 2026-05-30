@@ -11085,6 +11085,21 @@ class SEOMigrationService:
             provider_output = self.artifact_provider.generate_artifacts(migration_context=context_json)
         except SEOMigrationArtifactProviderError as exc:
             draft_failure = self._classify_draft_provider_failure(exc)
+            failure_generation_safety = _normalize_json_dict(draft_failure.generation_safety)
+            provider_call_skipped = (
+                bool(failure_generation_safety.get("provider_call_skipped"))
+                if isinstance(failure_generation_safety.get("provider_call_skipped"), bool)
+                else False
+            )
+            preflight_blocked = (
+                bool(failure_generation_safety.get("preflight_blocked"))
+                if isinstance(failure_generation_safety.get("preflight_blocked"), bool)
+                else False
+            )
+            draft_failure_source = "local_preflight" if (provider_call_skipped or preflight_blocked) else "remote_provider"
+            draft_compatibility_decision = (
+                "blocked_local_preflight" if draft_failure_source == "local_preflight" else "allowed"
+            )
             salvaged_output = self._salvage_provider_error_output(exc)
             if salvaged_output is None:
                 failed_artifact = self._record_failed_draft_generation(
@@ -11097,7 +11112,7 @@ class SEOMigrationService:
                     model_requested=model_requested,
                     model_resolved=model_resolved,
                     model_used=draft_failure.model_name,
-                    failure_source="remote_provider",
+                    failure_source=draft_failure_source,
                     duration_ms=self._duration_ms(started_at),
                     timeout_seconds=draft_timeout_seconds,
                     timeout_source=draft_timeout_source,
@@ -11125,8 +11140,8 @@ class SEOMigrationService:
                     execution_mode=draft_failure.execution_mode,
                     response_format_mode=draft_failure.response_format_mode,
                     request_body_mode=draft_failure.request_body_mode,
-                    compatibility_decision="allowed",
-                    failure_source="remote_provider",
+                    compatibility_decision=draft_compatibility_decision,
+                    failure_source=draft_failure_source,
                     timeout_seconds=draft_timeout_seconds,
                     timeout_source=draft_timeout_source,
                 )
@@ -13119,6 +13134,15 @@ class SEOMigrationService:
             timeout_source=normalized_timeout_source,
             generation_safety=(failure.generation_safety or self._resolved_migration_generation_safety.to_context_payload()),
         )
+        if normalized_failure_source == "local_preflight":
+            execution_payload = _normalize_json_dict(payload.get("draft_generation_execution"))
+            generation_safety_payload = _normalize_json_dict(execution_payload.get("generation_safety"))
+            if not isinstance(generation_safety_payload.get("preflight_blocked"), bool):
+                generation_safety_payload["preflight_blocked"] = True
+            if not isinstance(generation_safety_payload.get("provider_call_skipped"), bool):
+                generation_safety_payload["provider_call_skipped"] = True
+            execution_payload["generation_safety"] = generation_safety_payload
+            payload["draft_generation_execution"] = execution_payload
         payload["draft_generation_failure"] = {
             "failure_category": failure.failure_category,
             "failure_reason": failure.failure_reason,

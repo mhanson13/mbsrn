@@ -2603,9 +2603,16 @@ def test_generate_draft_preflight_block_returns_actionable_reason_code(db_sessio
 
     summary_response = client.get(f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/summary")
     assert summary_response.status_code == 200
+    context_summary = summary_response.json().get("context_summary", {})
+    diagnostics = context_summary.get("migration_diagnostics") or {}
+    assert diagnostics.get("last_draft_failure_source") == "local_preflight"
+    ai_execution = context_summary.get("ai_execution") or {}
+    assert ai_execution.get("provider_execution_status") == "not_called"
+    assert ai_execution.get("failure_source") == "local_preflight"
     draft_input_summary = summary_response.json().get("context_summary", {}).get("draft_input_summary") or {}
     assert draft_input_summary.get("generation_preflight_blocked") is True
     assert draft_input_summary.get("generation_preflight_block_reason") == "final_input_chars_exceeded"
+    assert draft_input_summary.get("generation_provider_call_skipped") is True
 
 
 def test_generate_draft_malformed_provider_output_returns_artifact_invalid(db_session) -> None:

@@ -886,6 +886,185 @@ describe("admin route", () => {
     expect(screen.queryByText("{\"secret\":\"write-only\"}")).not.toBeInTheDocument();
   }, 15000);
 
+  it("clears a prior GitHub publish save failure after a later successful save", async () => {
+    const failedSaveMessage = "Failed to save GitHub publish configuration.";
+    let resolveSecondSave!: (value: unknown) => void;
+    const secondSavePromise = new Promise<unknown>((resolve) => {
+      resolveSecondSave = resolve;
+    });
+    mockUpdateGitHubPublishConfig.mockReset();
+    mockUpdateGitHubPublishConfig.mockRejectedValueOnce(new Error("temporary failure"));
+    mockUpdateGitHubPublishConfig.mockImplementationOnce(() => secondSavePromise as Promise<unknown>);
+    mockUseAuth.mockReturnValue({
+      principal: {
+        business_id: "biz-1",
+        principal_id: "admin-gh-retry",
+        display_name: "Admin GH Retry",
+        role: "admin",
+        is_active: true,
+      },
+    });
+
+    render(<AdminPage />);
+
+    await screen.findByLabelText("GitHub account/owner");
+    expect(screen.getByLabelText("Context budget (chars)")).toBeInTheDocument();
+    expect(screen.getByTestId("github-publish-effective-preview")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Save GitHub Publish Config" })).toBeEnabled();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Save GitHub Publish Config" }));
+    await waitFor(() => {
+      expect(mockUpdateGitHubPublishConfig).toHaveBeenCalledTimes(1);
+    });
+    expect(await screen.findByText(failedSaveMessage)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Save GitHub Publish Config" }));
+    await waitFor(() => {
+      expect(mockUpdateGitHubPublishConfig).toHaveBeenCalledTimes(2);
+    });
+    await waitFor(() => {
+      expect(screen.queryByText(failedSaveMessage)).not.toBeInTheDocument();
+    });
+
+    resolveSecondSave({
+      id: 1,
+      owner: "mhanson13",
+      repository: "mhanson13",
+      default_branch: "main",
+      base_path: "/site",
+      deploy_workflow_mode: "site_repo_template_v1",
+      target_environment_key: "gke_prod",
+      target_environment_source: "admin_config",
+      github_repository_auto_create_enabled: true,
+      managed_gke_cluster_name: "mbsrn-cluster",
+      managed_gke_cluster_location: "us-central1",
+      managed_gke_project_id: "mbsrn-prod",
+      namespace_isolation_defaults: {
+        resource_quota: {
+          enabled: false,
+          requests_cpu: "1000m",
+          requests_memory: "1Gi",
+          limits_cpu: "2000m",
+          limits_memory: "2Gi",
+          pods: 20,
+          services: 10,
+          configmaps: 40,
+          secrets: 40,
+          persistentvolumeclaims: 10,
+        },
+        limit_range: {
+          enabled: false,
+          default_cpu: "500m",
+          default_memory: "512Mi",
+          default_request_cpu: "250m",
+          default_request_memory: "256Mi",
+          min_cpu: "100m",
+          min_memory: "128Mi",
+          max_cpu: "2000m",
+          max_memory: "2Gi",
+        },
+        network_policy: {
+          enabled: false,
+          mode: "default_deny_ingress",
+        },
+        migration_generation_budget: {
+          ...DEFAULT_MIGRATION_GENERATION_BUDGET,
+        },
+        migration_generation_safety: {
+          ...DEFAULT_MIGRATION_GENERATION_SAFETY,
+        },
+      },
+      enabled: true,
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+    });
+
+    expect(await screen.findByText("GitHub publish configuration saved.")).toBeInTheDocument();
+    expect(screen.queryByText(failedSaveMessage)).not.toBeInTheDocument();
+  });
+
+  it("shows save success plus notification health warning without displaying generic failed-save copy", async () => {
+    mockFetchBusinessSettings.mockResolvedValueOnce({
+      id: "biz-1",
+      name: "Biz",
+      notification_phone: null,
+      notification_email: null,
+      sms_enabled: false,
+      email_enabled: true,
+      customer_auto_ack_enabled: false,
+      contractor_alerts_enabled: false,
+      seo_audit_crawl_max_pages: 200,
+      competitor_candidate_min_relevance_score: 30,
+      competitor_candidate_big_box_penalty: 20,
+      competitor_candidate_directory_penalty: 20,
+      competitor_candidate_local_alignment_bonus: 10,
+      competitor_primary_timeout_seconds: null,
+      competitor_degraded_timeout_seconds: null,
+      migration_draft_timeout_seconds: null,
+      ai_prompt_text_competitor: null,
+      ai_prompt_text_recommendations: null,
+      default_ai_model: null,
+      timezone: "UTC",
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+    });
+    mockUseAuth.mockReturnValue({
+      principal: {
+        business_id: "biz-1",
+        principal_id: "admin-gh-health-warning",
+        display_name: "Admin GH Health Warning",
+        role: "admin",
+        is_active: true,
+      },
+    });
+
+    render(<AdminPage />);
+
+    await screen.findByLabelText("GitHub account/owner");
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Save GitHub Publish Config" })).toBeEnabled();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save GitHub Publish Config" }));
+    await waitFor(() => {
+      expect(mockUpdateGitHubPublishConfig).toHaveBeenCalled();
+    });
+
+    expect(await screen.findByText("GitHub publish configuration saved.")).toBeInTheDocument();
+    expect(
+      screen.getByText("Notification settings health: One or more saved values need review."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Failed to save GitHub publish configuration.")).not.toBeInTheDocument();
+  });
+
+  it("shows a failed-save message when GitHub publish config save request fails", async () => {
+    mockUpdateGitHubPublishConfig.mockRejectedValueOnce(new Error("save failed"));
+    mockUseAuth.mockReturnValue({
+      principal: {
+        business_id: "biz-1",
+        principal_id: "admin-gh-failed-save",
+        display_name: "Admin GH Failed Save",
+        role: "admin",
+        is_active: true,
+      },
+    });
+
+    render(<AdminPage />);
+
+    await screen.findByLabelText("GitHub account/owner");
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Save GitHub Publish Config" })).toBeEnabled();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save GitHub Publish Config" }));
+    await waitFor(() => {
+      expect(mockUpdateGitHubPublishConfig).toHaveBeenCalled();
+    });
+
+    expect(await screen.findByText("Failed to save GitHub publish configuration.")).toBeInTheDocument();
+    expect(screen.queryByText("GitHub publish configuration saved.")).not.toBeInTheDocument();
+  });
+
   it("shows GitHub publish validation guidance and blocks save until issues are resolved", async () => {
     mockUseAuth.mockReturnValue({
       principal: {

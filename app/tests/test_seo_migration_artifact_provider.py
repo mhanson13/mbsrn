@@ -901,6 +901,112 @@ def test_openai_migration_provider_allows_realistic_operator_requirements_under_
     assert preflight.get("blocked") is False
 
 
+def test_openai_migration_provider_preflight_allows_compacted_media_heavy_context_under_difficulty_cap() -> None:
+    provider = OpenAISEOMigrationArtifactGenerationProvider(
+        api_key="test-key",
+        model_name="gpt-5.1",
+        timeout_seconds=5,
+    )
+    migration_context = _build_migration_context()
+    migration_context["generation_safety"] = {
+        "migration_preflight_mode": "compact_fallback",
+        "migration_max_final_input_chars": 32000,
+        "migration_max_difficulty_score": 18,
+        "migration_compact_fallback_enabled": True,
+        "migration_compact_page_limit": 6,
+        "migration_compact_media_asset_limit": 5,
+        "migration_compact_recommendation_limit": 8,
+    }
+
+    generation_safety = provider._resolve_generation_safety_profile(migration_context)
+    preflight = provider._evaluate_generation_preflight(
+        budget_result={
+            "initial_size_chars": 69509,
+            "initial_size_bytes": 69509,
+            "final_size_chars": 13485,
+            "final_size_bytes": 13485,
+            "trimmed_bytes": 57065,
+            "trimming_pass_count": 6,
+            "section_count": 8,
+            "budget_size_chars": 90000,
+            "largest_retained_block": "media_assets",
+            "largest_retained_block_size_chars": 5175,
+            "overflow": False,
+        },
+        generation_safety=generation_safety,
+    )
+
+    assert preflight.get("difficulty_score") <= 18
+    assert preflight.get("blocked") is False
+    assert preflight.get("blocked_setting") is None
+
+
+def test_openai_migration_provider_preflight_blocks_when_difficulty_still_exceeds_cap() -> None:
+    provider = OpenAISEOMigrationArtifactGenerationProvider(
+        api_key="test-key",
+        model_name="gpt-5.1",
+        timeout_seconds=5,
+    )
+    migration_context = _build_migration_context()
+    migration_context["generation_safety"] = {
+        "migration_preflight_mode": "block_before_provider",
+        "migration_max_final_input_chars": 32000,
+        "migration_max_difficulty_score": 18,
+        "migration_compact_fallback_enabled": False,
+    }
+
+    generation_safety = provider._resolve_generation_safety_profile(migration_context)
+    preflight = provider._evaluate_generation_preflight(
+        budget_result={
+            "final_size_chars": 28000,
+            "final_size_bytes": 28000,
+            "trimming_pass_count": 7,
+            "section_count": 14,
+            "budget_size_chars": 90000,
+            "overflow": False,
+        },
+        generation_safety=generation_safety,
+    )
+
+    assert preflight.get("blocked") is True
+    assert preflight.get("block_reason") == "difficulty_score_exceeded"
+    assert preflight.get("blocked_setting") == "migration_max_difficulty_score"
+    assert preflight.get("difficulty_score") > 18
+
+
+def test_openai_migration_provider_preflight_reports_both_input_and_difficulty_blockers() -> None:
+    provider = OpenAISEOMigrationArtifactGenerationProvider(
+        api_key="test-key",
+        model_name="gpt-5.1",
+        timeout_seconds=5,
+    )
+    generation_safety = provider._resolve_generation_safety_profile(
+        {
+            "generation_safety": {
+                "migration_preflight_mode": "block_before_provider",
+                "migration_max_final_input_chars": 12000,
+                "migration_max_difficulty_score": 10,
+                "migration_compact_fallback_enabled": False,
+            },
+        },
+    )
+    preflight = provider._evaluate_generation_preflight(
+        budget_result={
+            "final_size_chars": 18000,
+            "final_size_bytes": 18000,
+            "trimming_pass_count": 6,
+            "section_count": 12,
+            "budget_size_chars": 90000,
+            "overflow": False,
+        },
+        generation_safety=generation_safety,
+    )
+
+    assert preflight.get("blocked") is True
+    assert preflight.get("block_reason") == "final_input_and_difficulty_exceeded"
+    assert preflight.get("blocked_setting") == "migration_max_final_input_chars,migration_max_difficulty_score"
+
+
 def test_openai_migration_provider_clamps_hard_preflight_caps_and_skips_provider_call(monkeypatch) -> None:
     provider = OpenAISEOMigrationArtifactGenerationProvider(
         api_key="test-key",

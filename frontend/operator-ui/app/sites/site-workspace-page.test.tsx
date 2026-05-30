@@ -3001,6 +3001,9 @@ describe("site migration workflow route", () => {
           generation_budget_capped: true,
           generation_preflight_blocked: true,
           generation_preflight_block_reason: "final_input_chars_exceeded",
+          generation_preflight_blocked_setting: "migration_max_final_input_chars",
+          generation_preflight_blocked_setting_actual: 9200,
+          generation_preflight_blocked_setting_cap: 8500,
         },
       },
     });
@@ -3018,6 +3021,87 @@ describe("site migration workflow route", () => {
     expect(
       within(draftInputSummary).getByTestId("migration-draft-input-generation-cap-reason"),
     ).toHaveTextContent("final input chars exceeded");
+    expect(
+      within(draftInputSummary).getByTestId("migration-draft-input-budget-blocked-reason"),
+    ).toHaveTextContent("final input chars 9,200 exceeded cap 8,500");
+  });
+
+  it("renders difficulty blocker messaging when preflight fails on difficulty under input cap", async () => {
+    const baseSummary = buildMigrationWorkspaceSummary();
+    const baseContextSummary = baseSummary.context_summary as Record<string, unknown>;
+    const baseDiagnostics = (baseContextSummary.migration_diagnostics || {}) as Record<string, unknown>;
+    const summary = buildMigrationWorkspaceSummary({
+      context_summary: {
+        ...baseContextSummary,
+        draft_input_summary: {
+          recommendations_included_count: 6,
+          recommendations_available_count: 81,
+          generation_safety_profile: "compact_fallback",
+          generation_provider_timeout_seconds: 300,
+          generation_preflight_mode: "compact_fallback",
+          generation_max_final_input_chars: 32000,
+          generation_max_difficulty_score: 18,
+          generation_compact_fallback_enabled: true,
+          generation_compact_fallback_attempted: true,
+          generation_budget_capped: true,
+          generation_preflight_blocked: true,
+          generation_preflight_block_reason: "difficulty_score_exceeded",
+          generation_preflight_blocked_setting: "migration_max_difficulty_score",
+          generation_preflight_blocked_setting_actual: 25,
+          generation_preflight_blocked_setting_cap: 18,
+          generation_provider_call_skipped: true,
+        },
+        migration_diagnostics: {
+          ...baseDiagnostics,
+          last_draft_failure_source: "local_preflight",
+          last_draft_ai_diagnostics_summary: {
+            failure_reason: "request_too_large_or_complex",
+            failure_source: "local_validation",
+            hint: "Input too large",
+            budget_outcome: "precall_rejected",
+            context_budget_size_chars: 32000,
+            largest_context_block: "media_assets",
+            largest_context_block_size_chars: 5175,
+          },
+        },
+      },
+    });
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(summary);
+
+    render(<SiteMigrationWorkflowPage />);
+
+    const draftInputSummary = await screen.findByTestId("migration-draft-input-summary");
+    expect(
+      within(draftInputSummary).getByTestId("migration-draft-input-budget-blocked-reason"),
+    ).toHaveTextContent("difficulty score 25 exceeded cap 18");
+    expect(
+      within(draftInputSummary).getByTestId("migration-draft-input-generation-preflight-blocked-message"),
+    ).toHaveTextContent("Blocked setting: migration_max_difficulty_score (25 / cap 18).");
+  });
+
+  it("renders combined blocker message when both final input and difficulty exceed preflight caps", async () => {
+    const summary = buildMigrationWorkspaceSummary({
+      context_summary: {
+        ...buildMigrationWorkspaceSummary().context_summary,
+        draft_input_summary: {
+          generation_preflight_blocked: true,
+          generation_preflight_block_reason: "final_input_and_difficulty_exceeded",
+          generation_preflight_blocked_setting: "migration_max_final_input_chars,migration_max_difficulty_score",
+          generation_preflight_blocked_setting_actual: 35000,
+          generation_preflight_blocked_setting_cap: 32000,
+        },
+      },
+    });
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(summary);
+
+    render(<SiteMigrationWorkflowPage />);
+
+    const draftInputSummary = await screen.findByTestId("migration-draft-input-summary");
+    expect(
+      within(draftInputSummary).getByTestId("migration-draft-input-budget-blocked-reason"),
+    ).toHaveTextContent(
+      "final input chars 35,000 exceeded cap 32,000 and difficulty score exceeded configured cap",
+    );
   });
 
   it("groups repeated publish/deploy failures and limits history summaries by default", async () => {

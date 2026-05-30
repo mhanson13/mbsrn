@@ -2241,48 +2241,55 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
       if (githubPublishManagedDeployKeyClear) {
         payload.managed_gcp_deploy_key_clear = true;
       }
+
       const updated = await updateGitHubPublishConfig(context.token, payload);
-      const effectiveNamespaceDefaults = normalizeNamespaceIsolationDefaults(updated.namespace_isolation_defaults);
-      const requestedSafety = requestedNamespaceDefaults.migration_generation_safety;
-      const effectiveSafety = effectiveNamespaceDefaults.migration_generation_safety;
-      const requestedBudget = requestedNamespaceDefaults.migration_generation_budget;
-      const effectiveBudget = effectiveNamespaceDefaults.migration_generation_budget;
-      const migrationAdjusted =
-        requestedSafety.migration_provider_timeout_seconds !== effectiveSafety.migration_provider_timeout_seconds ||
-        requestedSafety.migration_max_final_input_chars !== effectiveSafety.migration_max_final_input_chars ||
-        requestedSafety.migration_max_difficulty_score !== effectiveSafety.migration_max_difficulty_score ||
-        requestedSafety.migration_compact_page_limit !== effectiveSafety.migration_compact_page_limit ||
-        requestedSafety.migration_compact_media_asset_limit !== effectiveSafety.migration_compact_media_asset_limit ||
-        requestedSafety.migration_compact_recommendation_limit !==
-          effectiveSafety.migration_compact_recommendation_limit ||
-        requestedBudget.migration_context_budget_chars !== effectiveBudget.migration_context_budget_chars ||
-        requestedBudget.migration_recommendation_limit !== effectiveBudget.migration_recommendation_limit ||
-        requestedBudget.migration_competitor_limit !== effectiveBudget.migration_competitor_limit ||
-        requestedBudget.migration_source_page_summary_limit !==
-          effectiveBudget.migration_source_page_summary_limit ||
-        requestedBudget.migration_media_asset_limit !== effectiveBudget.migration_media_asset_limit ||
-        requestedBudget.migration_generated_page_limit !== effectiveBudget.migration_generated_page_limit ||
-        requestedBudget.migration_generated_file_limit !== effectiveBudget.migration_generated_file_limit;
-      applyGitHubPublishConfigInputs(updated, {
-        setOwner: setGitHubPublishOwnerInput,
-        setDefaultBranch: setGitHubPublishDefaultBranchInput,
-        setBasePath: setGitHubPublishBasePathInput,
-        setDeployWorkflowMode: setGitHubPublishDeployWorkflowModeInput,
-        setTargetEnvironmentKey: setGitHubPublishTargetEnvironmentKeyInput,
-        setManagedGkeClusterName: setGitHubPublishManagedGkeClusterNameInput,
-        setManagedGkeClusterLocation: setGitHubPublishManagedGkeClusterLocationInput,
-        setManagedGkeProjectId: setGitHubPublishManagedGkeProjectIdInput,
-        setRepositoryAutoCreateEnabled: setGitHubRepositoryAutoCreateEnabled,
-        setManagedDeployKeyConfigured: setGitHubPublishManagedDeployKeyConfigured,
-        setManagedDeployKeyUpdatedAt: setGitHubPublishManagedDeployKeyUpdatedAt,
-        clearManagedDeployKeyInput: () => setGitHubPublishManagedDeployKeyInput(""),
-        setManagedDeployKeyClear: setGitHubPublishManagedDeployKeyClear,
-        setNamespaceIsolationDefaults: setGitHubNamespaceIsolationDefaults,
-        setPersistedNamespaceIsolationDefaults: setGitHubPersistedNamespaceIsolationDefaults,
-        setEnabled: setGitHubPublishEnabled,
-      });
-      setGitHubMigrationAdjustmentReason(migrationAdjusted ? "backend_adjusted_values" : null);
-      setGitHubPublishConfigMessage("GitHub publish configuration updated.");
+      setGitHubPublishConfigError(null);
+
+      try {
+        const effectiveNamespaceDefaults = normalizeNamespaceIsolationDefaults(updated.namespace_isolation_defaults);
+        const requestedSafety = requestedNamespaceDefaults.migration_generation_safety;
+        const effectiveSafety = effectiveNamespaceDefaults.migration_generation_safety;
+        const requestedBudget = requestedNamespaceDefaults.migration_generation_budget;
+        const effectiveBudget = effectiveNamespaceDefaults.migration_generation_budget;
+        const migrationAdjusted =
+          requestedSafety.migration_provider_timeout_seconds !== effectiveSafety.migration_provider_timeout_seconds ||
+          requestedSafety.migration_max_final_input_chars !== effectiveSafety.migration_max_final_input_chars ||
+          requestedSafety.migration_max_difficulty_score !== effectiveSafety.migration_max_difficulty_score ||
+          requestedSafety.migration_compact_page_limit !== effectiveSafety.migration_compact_page_limit ||
+          requestedSafety.migration_compact_media_asset_limit !== effectiveSafety.migration_compact_media_asset_limit ||
+          requestedSafety.migration_compact_recommendation_limit !==
+            effectiveSafety.migration_compact_recommendation_limit ||
+          requestedBudget.migration_context_budget_chars !== effectiveBudget.migration_context_budget_chars ||
+          requestedBudget.migration_recommendation_limit !== effectiveBudget.migration_recommendation_limit ||
+          requestedBudget.migration_competitor_limit !== effectiveBudget.migration_competitor_limit ||
+          requestedBudget.migration_source_page_summary_limit !==
+            effectiveBudget.migration_source_page_summary_limit ||
+          requestedBudget.migration_media_asset_limit !== effectiveBudget.migration_media_asset_limit ||
+          requestedBudget.migration_generated_page_limit !== effectiveBudget.migration_generated_page_limit ||
+          requestedBudget.migration_generated_file_limit !== effectiveBudget.migration_generated_file_limit;
+        applyGitHubPublishConfigInputs(updated, {
+          setOwner: setGitHubPublishOwnerInput,
+          setDefaultBranch: setGitHubPublishDefaultBranchInput,
+          setBasePath: setGitHubPublishBasePathInput,
+          setDeployWorkflowMode: setGitHubPublishDeployWorkflowModeInput,
+          setTargetEnvironmentKey: setGitHubPublishTargetEnvironmentKeyInput,
+          setManagedGkeClusterName: setGitHubPublishManagedGkeClusterNameInput,
+          setManagedGkeClusterLocation: setGitHubPublishManagedGkeClusterLocationInput,
+          setManagedGkeProjectId: setGitHubPublishManagedGkeProjectIdInput,
+          setRepositoryAutoCreateEnabled: setGitHubRepositoryAutoCreateEnabled,
+          setManagedDeployKeyConfigured: setGitHubPublishManagedDeployKeyConfigured,
+          setManagedDeployKeyUpdatedAt: setGitHubPublishManagedDeployKeyUpdatedAt,
+          clearManagedDeployKeyInput: () => setGitHubPublishManagedDeployKeyInput(""),
+          setManagedDeployKeyClear: setGitHubPublishManagedDeployKeyClear,
+          setNamespaceIsolationDefaults: setGitHubNamespaceIsolationDefaults,
+          setPersistedNamespaceIsolationDefaults: setGitHubPersistedNamespaceIsolationDefaults,
+          setEnabled: setGitHubPublishEnabled,
+        });
+        setGitHubMigrationAdjustmentReason(migrationAdjusted ? "backend_adjusted_values" : null);
+      } catch {
+        setGitHubMigrationAdjustmentReason(null);
+      }
+      setGitHubPublishConfigMessage("GitHub publish configuration saved.");
     } catch (err) {
       if (err instanceof ApiRequestError && err.status === 422) {
         const fieldErrors = extractMigrationFieldErrorsFromMessage(err.message, requestedNamespaceDefaults);

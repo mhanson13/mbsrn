@@ -1085,6 +1085,8 @@ Behavior:
   - `difficulty_score`
   - `trimming_pass_count`
   - dropped optional blocks
+- difficulty scoring is derived from final/compacted payload characteristics rather than stale raw pre-trim context
+- selected media metadata remains bounded and should not, by itself, block normal drafts when final input stays within configured caps
 - If thresholds are exceeded:
   - `compact_fallback` mode attempts one compact context build using compact limits.
   - `block_before_provider` mode blocks without calling provider.
@@ -1114,6 +1116,7 @@ Operator troubleshooting cues:
 - remote timeout: provider was called and timed out (for example `failure_reason=timeout`)
 - local preflight block: provider was not called; reduce generation budget or keep compact fallback enabled
 - preflight block diagnostics now include blocked setting, actual final input chars, configured cap, largest included block, compact fallback attempted, and explicit provider-call skipped state
+- blocked diagnostics copy maps to the true blocker (`migration_max_difficulty_score`, `migration_max_final_input_chars`, or both) instead of always reporting context-budget overflow
 - increasing timeout alone does not resolve oversized/overly-complex requests; use preflight/compact fallback and budget limits
 - all diagnostics remain sanitized (no raw prompts, request bodies, response bodies, HTML, or media bytes)
 
@@ -1535,6 +1538,10 @@ Operational behavior:
   - deploy workflow mode
   - target environment key
   - target environment source
+- admin save feedback semantics:
+  - successful save shows `GitHub publish configuration saved.` and clears prior failed-save messages
+  - notification health warnings can still appear after a successful save when saved notification values need review
+  - generic failed-save copy is reserved for true save request failures
 - admin UI help text explicitly warns that enabling repository auto-create allows the runtime GitHub token to create missing repositories under the configured owner boundary only
 - migration publish/deploy readiness includes admin config prerequisites (`admin_publish_config_*`)
 - publish/deploy readiness reasons now call out the required actor/action more explicitly:
