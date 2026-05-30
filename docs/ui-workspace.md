@@ -263,6 +263,8 @@ Advanced diagnostics normalization defaults:
   - optional helper text directly under heading
   - bordered/rounded subsection shell
   - consistent disclosure/content spacing
+- Operator/admin surfaces use vendor-neutral observability language only (for example `runtime diagnostics`, `deployment telemetry`, `platform logs`).
+- Observability vendor implementation details are infrastructure-scoped and are not exposed as product labels in workspace/admin UX.
 - Publish Diagnostics and Deploy Diagnostics render normalized compact cards by default:
   - status
   - selected-attempt/latest-summary context

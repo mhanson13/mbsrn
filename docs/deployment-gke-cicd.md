@@ -202,6 +202,10 @@ DatadogAgent settings (authoritative manifest: `k8s/datadog/datadog-agent.yaml`)
   - orchestrator explorer
   - log collection (`containerCollectAll: true`)
 
+Application surface boundary:
+- Datadog remains an infrastructure-only implementation detail.
+- Operator/admin/product UI should use neutral diagnostics labels (for example `runtime diagnostics`, `deployment telemetry`, `platform logs`) and should not expose Datadog-specific branding or status blocks.
+
 Rotation procedure:
 1. Update GitHub secret `DATADOG_API_KEY`.
 2. Re-run workflow `deploy-datadog`.
