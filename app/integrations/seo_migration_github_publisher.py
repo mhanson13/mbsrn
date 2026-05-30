@@ -9506,6 +9506,7 @@ def _render_managed_deploy_workflow_yaml(
         "          max_attempts=40\n"
         "          sleep_seconds=15\n"
         "          wait_seconds=$((max_attempts * sleep_seconds))\n"
+        '          resolve_started_at="$(date +%s)"\n'
         '          echo "Waiting up to ${wait_seconds}s for ingress external address assignment in namespace $K8S_NAMESPACE."\n'
         '          ingress_host=""\n'
         '          ingress_ip=""\n'
@@ -9537,11 +9538,39 @@ def _render_managed_deploy_workflow_yaml(
         "          http_fallback_attempted=false\n"
         "          control_plane_ready=false\n"
         '          live_url=""\n'
+        '          preview_https_status=""\n'
+        '          preview_http_status=""\n'
+        "          preview_probe_attempt=0\n"
+        "          preview_probe_elapsed_seconds=0\n"
+        '          gce_backend_health_status=""\n'
+        '          k8s_endpoint_ready=""\n'
+        '          service_probe_status=""\n'
+        '          in_cluster_service_status_code=""\n'
+        '          endpoint_probe_status=""\n'
+        '          endpoint_probe_status_code=""\n'
+        '          runtime_probe_status=""\n'
+        "          pod_restart_detected=false\n"
+        "          redact_sensitive_stream() {\n"
+        "            sed -E \\\n"
+        "              -e 's/(Authorization:).*/\\1 [REDACTED]/Ig' \\\n"
+        "              -e 's/(Proxy-Authorization:).*/\\1 [REDACTED]/Ig' \\\n"
+        "              -e 's/(Cookie:).*/\\1 [REDACTED]/Ig' \\\n"
+        "              -e 's/(Set-Cookie:).*/\\1 [REDACTED]/Ig' \\\n"
+        "              -e 's/(Bearer )[A-Za-z0-9._~+\\/=:-]+/\\1[REDACTED]/g' \\\n"
+        "              -e 's/(Basic )[A-Za-z0-9._~+\\/=:-]+/\\1[REDACTED]/g' \\\n"
+        "              -e 's/([A-Za-z0-9_]*(token|secret|password|api[_-]?key)[A-Za-z0-9_]*[=:][[:space:]]*)[^[:space:]]+/\\1[REDACTED]/Ig'\n"
+        "          }\n"
+        "          print_redacted_file() {\n"
+        '            local file_path="$1"\n'
+        "            if [ -f \"$file_path\" ]; then\n"
+        '              cat "$file_path" | redact_sensitive_stream\n'
+        "            fi\n"
+        "          }\n"
         "          set_https_probe_error_summary() {\n"
-        '            local probe_reason="$1"\n'
-        '            local probe_exit_code="${2:-}"\n'
-        '            local probe_status_code="${3:-}"\n'
-        '            local probe_output_path="${4:-}"\n'
+            '            local probe_reason="$1"\n'
+            '            local probe_exit_code="${2:-}"\n'
+            '            local probe_status_code="${3:-}"\n'
+            '            local probe_output_path="${4:-}"\n'
         '            local probe_detail=""\n'
         '            if [ -n "$probe_output_path" ] && [ -f "$probe_output_path" ]; then\n'
         "              probe_detail=\"$(head -n 1 \"$probe_output_path\" | tr -d '\\r' | tr '\\t' ' ' | sed 's/[[:space:]]\\+/ /g' | cut -c1-160)\"\n"
@@ -9603,10 +9632,10 @@ def _render_managed_deploy_workflow_yaml(
         '            https_probe_error_summary="$(echo "$https_probe_error_summary" | tr -d \'\\r\' | cut -c1-240)"\n'
         "          }\n"
         "          emit_resolve_live_url_state() {\n"
-        "            ensure_https_probe_error_summary\n"
-        '            echo "resolve_live_url_state_host_reachable=$host_reachable"\n'
-        '            echo "resolve_live_url_state_host_reachability_scheme=$host_reachability_scheme"\n'
-        '            echo "resolve_live_url_state_live_url=$live_url"\n'
+            "            ensure_https_probe_error_summary\n"
+            '            echo "resolve_live_url_state_host_reachable=$host_reachable"\n'
+            '            echo "resolve_live_url_state_host_reachability_scheme=$host_reachability_scheme"\n'
+            '            echo "resolve_live_url_state_live_url=$live_url"\n'
         '            echo "resolve_live_url_state_dns_record_matches_ingress=$dns_record_matches_ingress"\n'
         '            echo "resolve_live_url_state_dns_expected_ip=$dns_expected_ip"\n'
         '            echo "resolve_live_url_state_dns_observed_ip=$dns_observed_ip"\n'
@@ -9621,9 +9650,130 @@ def _render_managed_deploy_workflow_yaml(
         '            echo "resolve_live_url_state_observed_managed_certificate_domains=$observed_managed_certificate_domains"\n'
         '            echo "resolve_live_url_state_observed_managed_certificate_status=$observed_managed_certificate_status"\n'
         '            echo "resolve_live_url_state_observed_managed_certificate_domain_status=$observed_managed_certificate_domain_status"\n'
-        '            echo "resolve_live_url_state_https_probe_error_summary=$https_probe_error_summary"\n'
-        '            echo "resolve_live_url_state_cert_identity_valid=$cert_identity_valid"\n'
-        '            echo "resolve_live_url_state_deploy_https_ready=$deploy_https_ready"\n'
+            '            echo "resolve_live_url_state_https_probe_error_summary=$https_probe_error_summary"\n'
+            '            echo "resolve_live_url_state_cert_identity_valid=$cert_identity_valid"\n'
+            '            echo "resolve_live_url_state_deploy_https_ready=$deploy_https_ready"\n'
+            '            echo "resolve_live_url_state_preview_https_status=$preview_https_status"\n'
+            '            echo "resolve_live_url_state_preview_http_status=$preview_http_status"\n'
+            '            echo "resolve_live_url_state_preview_probe_attempt=$preview_probe_attempt"\n'
+            '            echo "resolve_live_url_state_preview_probe_elapsed_seconds=$preview_probe_elapsed_seconds"\n'
+            '            echo "resolve_live_url_state_gce_backend_health_status=$gce_backend_health_status"\n'
+            '            echo "resolve_live_url_state_k8s_endpoint_ready=$k8s_endpoint_ready"\n'
+            '            echo "resolve_live_url_state_service_probe_status=$service_probe_status"\n'
+            '            echo "resolve_live_url_state_in_cluster_service_status_code=$in_cluster_service_status_code"\n'
+            '            echo "resolve_live_url_state_endpoint_probe_status=$endpoint_probe_status"\n'
+            '            echo "resolve_live_url_state_endpoint_probe_status_code=$endpoint_probe_status_code"\n'
+            '            echo "resolve_live_url_state_runtime_probe_status=$runtime_probe_status"\n'
+            '            echo "resolve_live_url_state_pod_restart_detected=$pod_restart_detected"\n'
+        "          }\n"
+        "          collect_ingress_502_runtime_diagnostics() {\n"
+        "            preview_probe_elapsed_seconds=$(( $(date +%s) - resolve_started_at ))\n"
+        "            if [ \"$preview_probe_elapsed_seconds\" -lt 0 ]; then\n"
+        "              preview_probe_elapsed_seconds=0\n"
+        "            fi\n"
+        '            echo "Collecting ingress-502 runtime diagnostics for namespace $K8S_NAMESPACE (preview host: $preview_host)."\n'
+        '            kubectl -n "$K8S_NAMESPACE" get pods -l app.kubernetes.io/name=site-web -o wide || true\n'
+        '            pods_describe_output="$(mktemp)"\n'
+        '            kubectl -n "$K8S_NAMESPACE" describe pods -l app.kubernetes.io/name=site-web > "$pods_describe_output" 2>&1 || true\n'
+        '            print_redacted_file "$pods_describe_output"\n'
+        "            if grep -qiE 'Restart Count:[[:space:]]*[1-9]|CrashLoopBackOff|Back-off restarting failed container|OOMKilled|Reason:[[:space:]]+Error' \"$pods_describe_output\"; then\n"
+        "              pod_restart_detected=true\n"
+        "            fi\n"
+        '            rm -f "$pods_describe_output"\n'
+        '            site_web_logs_output="$(mktemp)"\n'
+        '            kubectl -n "$K8S_NAMESPACE" logs -l app.kubernetes.io/name=site-web --tail=200 --all-containers=true > "$site_web_logs_output" 2>&1 || true\n'
+        '            print_redacted_file "$site_web_logs_output"\n'
+        '            rm -f "$site_web_logs_output"\n'
+        '            site_web_logs_previous_output="$(mktemp)"\n'
+        '            kubectl -n "$K8S_NAMESPACE" logs -l app.kubernetes.io/name=site-web --previous --tail=100 --all-containers=true > "$site_web_logs_previous_output" 2>&1 || true\n'
+        '            print_redacted_file "$site_web_logs_previous_output"\n'
+        '            rm -f "$site_web_logs_previous_output"\n'
+        '            deploy_yaml_output="$(mktemp)"\n'
+        '            kubectl -n "$K8S_NAMESPACE" get deploy site-web -o yaml > "$deploy_yaml_output" 2>&1 || true\n'
+        '            print_redacted_file "$deploy_yaml_output"\n'
+        '            rm -f "$deploy_yaml_output"\n'
+        '            kubectl -n "$K8S_NAMESPACE" get rs -l app.kubernetes.io/name=site-web -o wide || true\n'
+        '            kubectl -n "$K8S_NAMESPACE" get events --sort-by=.lastTimestamp || true\n'
+        '            ingress_describe_output_502="$(mktemp)"\n'
+        '            kubectl -n "$K8S_NAMESPACE" describe ingress site-web > "$ingress_describe_output_502" 2>&1 || true\n'
+        '            print_redacted_file "$ingress_describe_output_502"\n'
+        "            if grep -qiE 'HEALTHY' \"$ingress_describe_output_502\"; then\n"
+        '              gce_backend_health_status="HEALTHY"\n'
+        "            elif grep -qiE 'UNHEALTHY|DEGRADED' \"$ingress_describe_output_502\"; then\n"
+        '              gce_backend_health_status="UNHEALTHY"\n'
+        "            else\n"
+        '              gce_backend_health_status="UNKNOWN"\n'
+        "            fi\n"
+        '            rm -f "$ingress_describe_output_502"\n'
+        '            endpoint_ip="$(kubectl -n "$K8S_NAMESPACE" get endpoints site-web -o jsonpath=\'{.subsets[0].addresses[0].ip}\' 2>/dev/null || true)"\n'
+        '            if [ -n "$endpoint_ip" ]; then\n'
+        '              k8s_endpoint_ready="true"\n'
+        "            else\n"
+        '              k8s_endpoint_ready="false"\n'
+        "            fi\n"
+        '            if [ -n "$preview_host" ]; then\n'
+        '              preview_headers_output="$(mktemp)"\n'
+        '              preview_body_output="$(mktemp)"\n'
+        '              preview_https_status="$(curl --silent --show-error --connect-timeout 5 --max-time 15 -D "$preview_headers_output" -o "$preview_body_output" --write-out \'%{http_code}\' "https://$preview_host" 2>/dev/null || true)"\n'
+        '              echo "Preview HTTPS diagnostics status: ${preview_https_status:-unknown}"\n'
+        '              echo "--- preview HTTPS response headers (redacted) ---"\n'
+        '              head -n 40 "$preview_headers_output" | redact_sensitive_stream || true\n'
+        '              echo "--- preview HTTPS response snippet (redacted) ---"\n'
+        '              head -c 300 "$preview_body_output" | tr -d \'\\r\' | redact_sensitive_stream || true\n'
+        '              echo\n'
+        '              rm -f "$preview_headers_output" "$preview_body_output"\n'
+        "            fi\n"
+        '            probe_pod="site-web-runtime-probe-${GITHUB_RUN_ID:-run}-${GITHUB_RUN_ATTEMPT:-1}"\n'
+        "            probe_pod=\"$(echo \"$probe_pod\" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9-' | cut -c1-63)\"\n"
+        '            kubectl -n "$K8S_NAMESPACE" delete pod "$probe_pod" --ignore-not-found >/dev/null 2>&1 || true\n'
+        '            service_probe_output="$(mktemp)"\n'
+        '            if kubectl -n "$K8S_NAMESPACE" run "$probe_pod" --image=curlimages/curl:8.10.1 --restart=Never --attach --command -- sh -c "curl -sS --connect-timeout 5 --max-time 15 --output /tmp/body --write-out \'%{http_code}\' http://site-web.${K8S_NAMESPACE}.svc.cluster.local:80/" >"$service_probe_output" 2>&1; then\n'
+        '              in_cluster_service_status_code="$(tr -cd \'0-9\' < "$service_probe_output" | tail -c 4)"\n'
+        "              if [ \"$in_cluster_service_status_code\" = \"502\" ]; then\n"
+        '                service_probe_status="http_502"\n'
+        "              elif echo \"$in_cluster_service_status_code\" | grep -Eq '^[1-5][0-9][0-9]$'; then\n"
+        '                service_probe_status="ok"\n'
+        "              else\n"
+        '                service_probe_status="unknown_status"\n'
+        "              fi\n"
+        "            else\n"
+        '              service_probe_status="failed"\n'
+        '              print_redacted_file "$service_probe_output"\n'
+        "            fi\n"
+        '            rm -f "$service_probe_output"\n'
+        '            kubectl -n "$K8S_NAMESPACE" delete pod "$probe_pod" --ignore-not-found >/dev/null 2>&1 || true\n'
+        '            if [ -n "$endpoint_ip" ]; then\n'
+        '              endpoint_probe_output="$(mktemp)"\n'
+        '              if kubectl -n "$K8S_NAMESPACE" run "$probe_pod" --image=curlimages/curl:8.10.1 --restart=Never --attach --command -- sh -c "curl -sS --connect-timeout 5 --max-time 15 --output /tmp/body --write-out \'%{http_code}\' http://${endpoint_ip}:8080/" >"$endpoint_probe_output" 2>&1; then\n'
+        '                endpoint_probe_status_code="$(tr -cd \'0-9\' < "$endpoint_probe_output" | tail -c 4)"\n'
+        "                if [ \"$endpoint_probe_status_code\" = \"502\" ]; then\n"
+        '                  endpoint_probe_status="http_502"\n'
+        "                elif echo \"$endpoint_probe_status_code\" | grep -Eq '^[1-5][0-9][0-9]$'; then\n"
+        '                  endpoint_probe_status="ok"\n'
+        "                else\n"
+        '                  endpoint_probe_status="unknown_status"\n'
+        "                fi\n"
+        "              else\n"
+        '                endpoint_probe_status="failed"\n'
+        '                print_redacted_file "$endpoint_probe_output"\n'
+        "              fi\n"
+        '              rm -f "$endpoint_probe_output"\n'
+        "            else\n"
+        '              endpoint_probe_status="endpoint_missing"\n'
+        "            fi\n"
+        '            kubectl -n "$K8S_NAMESPACE" delete pod "$probe_pod" --ignore-not-found >/dev/null 2>&1 || true\n'
+        '            runtime_probe_status="unknown"\n'
+        '            if [ "$pod_restart_detected" = true ]; then\n'
+        '              runtime_probe_status="pod_runtime_failure"\n'
+        '            elif [ "$service_probe_status" = "http_502" ] || [ "$endpoint_probe_status" = "http_502" ]; then\n'
+        '              runtime_probe_status="app_runtime_response_502"\n'
+        '            elif [ "$service_probe_status" = "ok" ] && [ "$endpoint_probe_status" = "ok" ] \\\n'
+        '              && [ "$preview_https_status" = "502" ] && [ "$gce_backend_health_status" = "HEALTHY" ]; then\n'
+        '              runtime_probe_status="ingress_or_edge_convergence"\n'
+        '            elif [ "$service_probe_status" = "failed" ] || [ "$endpoint_probe_status" = "failed" ]; then\n'
+        '              runtime_probe_status="service_probe_failed"\n'
+        "            fi\n"
+        '            echo "deploy_runtime_reason_context=gce_backend_health=${gce_backend_health_status:-UNKNOWN};k8s_endpoint_ready=${k8s_endpoint_ready:-unknown};preview_https_status=${preview_https_status:-unknown};service_probe_status=${service_probe_status:-unknown};endpoint_probe_status=${endpoint_probe_status:-unknown};runtime_probe_status=${runtime_probe_status:-unknown}"\n'
         "          }\n"
         "          trap 'resolve_live_url_exit_code=$?; if [ \"$resolve_live_url_exit_code\" -ne 0 ]; then emit_resolve_live_url_state; fi' EXIT\n"
         "          collect_resolve_live_url_evidence() {\n"
@@ -9791,6 +9941,7 @@ def _render_managed_deploy_workflow_yaml(
         "            fi\n"
         "          }\n"
         '          for attempt in $(seq 1 "$max_attempts"); do\n'
+        '            preview_probe_attempt="$attempt"\n'
         '            ingress_host="$(kubectl get ingress site-web --namespace "$K8S_NAMESPACE" -o jsonpath=\'{.status.loadBalancer.ingress[0].hostname}\' 2>/dev/null || true)"\n'
         '            ingress_ip="$(kubectl get ingress site-web --namespace "$K8S_NAMESPACE" -o jsonpath=\'{.status.loadBalancer.ingress[0].ip}\' 2>/dev/null || true)"\n'
         '            ingress_spec_host="$(kubectl get ingress site-web --namespace "$K8S_NAMESPACE" -o jsonpath=\'{.spec.rules[0].host}\' 2>/dev/null || true)"\n'
@@ -9802,6 +9953,7 @@ def _render_managed_deploy_workflow_yaml(
         "              https_probe_attempted=true\n"
         '              if https_code="$(curl --silent --show-error --connect-timeout 5 --max-time 10 --output /dev/null --write-out \'%{http_code}\' "https://$preview_host" 2>"$https_probe_output")"; then\n'
         "                if echo \"$https_code\" | grep -Eq '^[1-5][0-9][0-9]$'; then\n"
+        '                  preview_https_status="$https_code"\n'
         '                  if [ "$https_code" = "502" ]; then\n'
         "                    backend_502_detected=true\n"
         '                    set_https_probe_error_summary "ingress_backend_502" "" "$https_code" "$https_probe_output"\n'
@@ -9832,6 +9984,7 @@ def _render_managed_deploy_workflow_yaml(
         "              http_fallback_attempted=true\n"
         '              http_code="$(curl --silent --show-error --connect-timeout 5 --max-time 10 --output /dev/null --write-out \'%{http_code}\' "http://$preview_host" 2>/dev/null || true)"\n'
         "              if echo \"$http_code\" | grep -Eq '^[1-5][0-9][0-9]$'; then\n"
+        '                preview_http_status="$http_code"\n'
         '                if [ "$http_code" = "502" ]; then\n'
         "                  backend_502_detected=true\n"
         '                  set_https_probe_error_summary "ingress_backend_502" "" "$http_code" ""\n'
@@ -9880,7 +10033,16 @@ def _render_managed_deploy_workflow_yaml(
         '            if [ -z "$https_probe_error_summary" ]; then\n'
         '              set_https_probe_error_summary "ingress_backend_502" "" "502" ""\n'
         "            fi\n"
-        '            echo "deploy_runtime_reason_message=Ingress hostname is reachable but backend returned 5xx."\n'
+        "            collect_ingress_502_runtime_diagnostics\n"
+        '            if [ "$gce_backend_health_status" = "HEALTHY" ] && [ "$service_probe_status" = "ok" ] && [ "$preview_https_status" = "502" ]; then\n'
+        '              echo "deploy_runtime_reason_message=Preview hostname is reachable but returns HTTP 502 while GCE backend reports HEALTHY and in-cluster probes succeed. Likely ingress/LB edge convergence or stale backend path."\n'
+        '            elif [ "$service_probe_status" = "http_502" ] || [ "$endpoint_probe_status" = "http_502" ]; then\n'
+        '              echo "deploy_runtime_reason_message=Preview hostname is reachable but returns HTTP 502 and in-cluster service/endpoint probes also return 502. Likely app runtime response failure."\n'
+        '            elif [ "$pod_restart_detected" = true ]; then\n'
+        '              echo "deploy_runtime_reason_message=Preview hostname is reachable but returns HTTP 502 with pod restart/crash evidence. Likely pod runtime instability."\n'
+        "            else\n"
+        '              echo "deploy_runtime_reason_message=Ingress hostname is reachable but backend returned 5xx. Review pod logs, in-cluster service probe status, endpoint probe status, and backend health evidence."\n'
+        "            fi\n"
         '            kubectl get service site-web --namespace "$K8S_NAMESPACE" -o wide || true\n'
         '            kubectl describe service site-web --namespace "$K8S_NAMESPACE" || true\n'
         '            kubectl get endpoints site-web --namespace "$K8S_NAMESPACE" -o wide || true\n'
@@ -10434,6 +10596,7 @@ def _render_managed_deploy_workflow_yaml(
         "            exit 1\n"
         "          fi\n"
         '          rm -f "$https_verify_output"\n'
+        '          preview_https_status="$https_verify_code"\n'
         "          if ! echo \"$https_verify_code\" | grep -Eq '^[1-5][0-9][0-9]$'; then\n"
         '            if [ "$control_plane_ready" = "true" ]; then\n'
         '              set_https_probe_error_summary "https_probe_failed_after_control_plane_ready" "" "$https_verify_code" ""\n'
@@ -10447,9 +10610,19 @@ def _render_managed_deploy_workflow_yaml(
         "            exit 1\n"
         "          fi\n"
         '          if [ "$https_verify_code" = "502" ]; then\n'
+        "            backend_502_detected=true\n"
         '            set_https_probe_error_summary "ingress_backend_502" "" "$https_verify_code" ""\n'
         '            echo "deploy_runtime_reason_code=ingress_backend_502"\n'
-        '            echo "deploy_runtime_reason_message=HTTPS probe reached ingress but backend returned 502."\n'
+        "            collect_ingress_502_runtime_diagnostics\n"
+        '            if [ "$gce_backend_health_status" = "HEALTHY" ] && [ "$service_probe_status" = "ok" ] && [ "$preview_https_status" = "502" ]; then\n'
+        '              echo "deploy_runtime_reason_message=Preview hostname is reachable but returns HTTP 502 while GCE backend reports HEALTHY and in-cluster probes succeed. Likely ingress/LB edge convergence or stale backend path."\n'
+        '            elif [ "$service_probe_status" = "http_502" ] || [ "$endpoint_probe_status" = "http_502" ]; then\n'
+        '              echo "deploy_runtime_reason_message=Preview hostname is reachable but returns HTTP 502 and in-cluster service/endpoint probes also return 502. Likely app runtime response failure."\n'
+        '            elif [ "$pod_restart_detected" = true ]; then\n'
+        '              echo "deploy_runtime_reason_message=Preview hostname is reachable but returns HTTP 502 with pod restart/crash evidence. Likely pod runtime instability."\n'
+        "            else\n"
+        '              echo "deploy_runtime_reason_message=HTTPS probe reached ingress but backend returned 502. Review pod logs, in-cluster service probe status, endpoint probe status, and backend health evidence."\n'
+        "            fi\n"
         "            exit 1\n"
         "          fi\n"
         "          if echo \"$https_verify_code\" | grep -Eq '^5[0-9][0-9]$'; then\n"
@@ -10478,9 +10651,9 @@ def _render_managed_deploy_workflow_yaml(
         "          deploy_https_ready=true\n"
         '          live_url="https://$preview_host"\n'
         "          {\n"
-        '            echo "live_url=$live_url"\n'
-        '            echo "resolved_live_url=$live_url"\n'
-        '            echo "deployed_url=$live_url"\n'
+            '            echo "live_url=$live_url"\n'
+            '            echo "resolved_live_url=$live_url"\n'
+            '            echo "deployed_url=$live_url"\n'
         '            echo "dns_record_matches_ingress=$dns_record_matches_ingress"\n'
         '            echo "dns_expected_ip=$dns_expected_ip"\n'
         '            echo "dns_observed_ip=$dns_observed_ip"\n'
@@ -10501,8 +10674,20 @@ def _render_managed_deploy_workflow_yaml(
         '            echo "cert_identity_valid=$cert_identity_valid"\n'
         '            echo "host_reachable=$host_reachable"\n'
         '            echo "host_reachability_scheme=$host_reachability_scheme"\n'
-        '            echo "https_probe_error_summary=$https_probe_error_summary"\n'
-        '            echo "deploy_https_ready=$deploy_https_ready"\n'
+            '            echo "https_probe_error_summary=$https_probe_error_summary"\n'
+            '            echo "deploy_https_ready=$deploy_https_ready"\n'
+            '            echo "preview_https_status=$preview_https_status"\n'
+            '            echo "preview_http_status=$preview_http_status"\n'
+            '            echo "preview_probe_attempt=$preview_probe_attempt"\n'
+            '            echo "preview_probe_elapsed_seconds=$preview_probe_elapsed_seconds"\n'
+            '            echo "gce_backend_health_status=$gce_backend_health_status"\n'
+            '            echo "k8s_endpoint_ready=$k8s_endpoint_ready"\n'
+            '            echo "service_probe_status=$service_probe_status"\n'
+            '            echo "in_cluster_service_status_code=$in_cluster_service_status_code"\n'
+            '            echo "endpoint_probe_status=$endpoint_probe_status"\n'
+            '            echo "endpoint_probe_status_code=$endpoint_probe_status_code"\n'
+            '            echo "runtime_probe_status=$runtime_probe_status"\n'
+            '            echo "pod_restart_detected=$pod_restart_detected"\n'
         '          } >> "$GITHUB_OUTPUT"\n'
         "      - name: Emit managed deployment metadata\n"
         "        run: |\n"
@@ -11418,6 +11603,18 @@ def _extract_resolve_live_url_state_from_log_text(log_text: str | None) -> dict[
         "https_probe_error_summary": 240,
         "cert_identity_valid": 8,
         "deploy_https_ready": 8,
+        "preview_https_status": 16,
+        "preview_http_status": 16,
+        "preview_probe_attempt": 8,
+        "preview_probe_elapsed_seconds": 12,
+        "gce_backend_health_status": 32,
+        "k8s_endpoint_ready": 8,
+        "service_probe_status": 40,
+        "in_cluster_service_status_code": 16,
+        "endpoint_probe_status": 40,
+        "endpoint_probe_status_code": 16,
+        "runtime_probe_status": 48,
+        "pod_restart_detected": 8,
     }
     output: dict[str, str] = {}
     ansi_escape = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")

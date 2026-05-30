@@ -7118,6 +7118,59 @@ def test_refresh_deploy_status_https_probe_not_attempted_surfaces_reason_and_hin
     assert "not attempted" in str(refresh_result.result.get("workflow_run_failure_hint") or "").lower()
 
 
+def test_refresh_deploy_status_ingress_502_surfaces_runtime_probe_diagnostics(db_session) -> None:
+    publisher = _RecordingGitHubPublisher(
+        deploy_workflow_run_id=910103,
+        deploy_workflow_run_status="in_progress",
+        refresh_workflow_run_id=910103,
+        refresh_workflow_run_status="completed",
+        refresh_workflow_run_conclusion="failure",
+        refresh_workflow_run_failure_reason_code="ingress_backend_502",
+        refresh_workflow_run_failure_stage="ingress_evidence",
+        refresh_workflow_run_failure_step="Resolve live URL from ingress status",
+        refresh_workflow_output={
+            "host_reachable": "true",
+            "host_reachability_scheme": "https",
+            "deploy_https_ready": "false",
+            "preview_https_status": "502",
+            "gce_backend_health_status": "HEALTHY",
+            "k8s_endpoint_ready": "true",
+            "service_probe_status": "ok",
+            "in_cluster_service_status_code": "200",
+            "endpoint_probe_status": "ok",
+            "endpoint_probe_status_code": "200",
+            "runtime_probe_status": "ingress_or_edge_convergence",
+            "pod_restart_detected": "false",
+        },
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    artifact = _prepare_and_request_deploy(service, business_id=business_id, site_id=site_id)
+
+    refresh_result = service.refresh_deploy_run_status(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        principal_id="principal-1",
+    )
+    assert refresh_result.result.get("workflow_run_failure_reason_code") == "ingress_backend_502"
+    assert refresh_result.result.get("deploy_https_ready") is False
+
+    summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
+    deploy_readiness = summary.deploy_readiness or {}
+    assert deploy_readiness.get("preview_https_status") == 502
+    assert deploy_readiness.get("gce_backend_health_status") == "HEALTHY"
+    assert deploy_readiness.get("gce_backend_healthy") is True
+    assert deploy_readiness.get("service_has_ready_endpoints") is True
+    assert deploy_readiness.get("service_probe_status") == "ok"
+    assert deploy_readiness.get("runtime_probe_status") == "ingress_or_edge_convergence"
+
+
 def test_refresh_deploy_status_certificate_domain_mismatch_blocks_https_ready(db_session) -> None:
     publisher = _RecordingGitHubPublisher(
         deploy_workflow_run_id=910002,

@@ -231,16 +231,24 @@ Secret handling policy:
 
 This section distinguishes declared (repo/workflow) resource values from admitted (live cluster) values in GKE Autopilot.
 
-Declared/rendered source of truth for production UI/WWW CPU:
+Declared/rendered source of truth for production CPU:
 - `.github/workflows/deploy-prod.yml`:
   - `UI_CPU_REQUEST=100m`
   - `UI_CPU_LIMIT=500m`
+  - `API_CPU_REQUEST=300m` (conservative FinOps right-size)
+  - `API_CPU_LIMIT=750m` (conservative FinOps right-size)
 - `.github/workflows/deploy-www-prod.yml`:
   - `WWW_CPU_REQUEST=100m`
   - `WWW_CPU_LIMIT=500m`
 - Templates are rendered into:
   - `k8s/ui-deployment.yaml` (`__UI_CPU_REQUEST__`, `__UI_CPU_LIMIT__`)
   - `k8s/www-deployment.yaml` (`__WWW_CPU_REQUEST__`, `__WWW_CPU_LIMIT__`)
+
+API FinOps note (May 30, 2026):
+- Prior production API CPU request baseline was `1000m`.
+- Google FinOps recommendation suggested `7m` request/limit for `mbsrn-api`.
+- The raw `7m` value is intentionally not applied for production API runtime safety.
+- Production deploy now uses a conservative right-size target of `300m` request / `750m` limit for `mbsrn-api`.
 
 Observed production evidence (May 4, 2026):
 - Workloads: `mbsrn-ui`, `mbsrn-www`
@@ -262,10 +270,13 @@ Post-deploy verification commands (declared vs admitted):
 ```bash
 kubectl -n mbsrn get deployment mbsrn-ui -o jsonpath='{.spec.template.spec.containers[0].resources}{"\n"}'
 kubectl -n mbsrn get deployment mbsrn-www -o jsonpath='{.spec.template.spec.containers[0].resources}{"\n"}'
+kubectl -n mbsrn get deployment mbsrn-api -o jsonpath='{.spec.template.spec.containers[0].resources}{"\n"}'
 kubectl -n mbsrn rollout status deployment/mbsrn-ui
 kubectl -n mbsrn rollout status deployment/mbsrn-www
+kubectl -n mbsrn rollout status deployment/mbsrn-api
 kubectl -n mbsrn get pods -l app=mbsrn-ui
 kubectl -n mbsrn get pods -l app=mbsrn-www
+kubectl -n mbsrn get pods -l app=mbsrn-api
 kubectl -n mbsrn get events --sort-by=.lastTimestamp | grep -i -E "autopilot|resource|cpu|memory|mbsrn-ui|mbsrn-www|mbsrn-api" | tail -50
 ```
 
@@ -273,7 +284,7 @@ Future tuning note:
 - Do not reduce memory blindly.
 - Review Cloud Monitoring memory working set and CPU throttling over 24-72 hours before changing memory.
 - If memory usage remains comfortably below `2Gi`, consider a separate conservative change to reduce memory request/limit (for example toward `1Gi`), then re-check admitted CPU after rollout.
-- `mbsrn-api` `FailedScheduling`/HPA warnings should be tracked as a separate follow-up review and are out of scope for this UI/WWW tuning pass.
+- After API CPU right-size deployment, monitor: API latency, 5xx rate, pod restarts, CPU throttling, and migration/admin workflow response times.
 
 ### SEO Migration Managed Target Repo Contract
 
@@ -319,13 +330,34 @@ Typical causes:
 - site runtime is not yet serving `/` successfully
 - external load balancer convergence lag
 
+`ingress_backend_502` interpretation:
+- deploy success still requires preview HTTPS to return non-5xx; backend health alone is not sufficient.
+- runtime diagnostics include bounded 502 context fields:
+  - `gce_backend_health_status` (`HEALTHY|UNHEALTHY|UNKNOWN`)
+  - `k8s_endpoint_ready` (`true|false`)
+  - `preview_https_status` + probe attempt/elapsed wait
+  - `service_probe_status` + `in_cluster_service_status_code`
+  - `endpoint_probe_status` + `endpoint_probe_status_code`
+  - `runtime_probe_status` (`ingress_or_edge_convergence|app_runtime_response_502|pod_runtime_failure|service_probe_failed|unknown`)
+- split guidance:
+  - service/endpoint probes `ok` + preview HTTPS `502` + backend `HEALTHY` => ingress/LB edge convergence or stale backend path.
+  - service/endpoint probes `http_502` => app runtime also returning 502.
+  - pod restart/crash evidence => pod runtime instability.
+
 Safe verification commands:
 
 ```bash
 kubectl -n <namespace> get ingress
 kubectl -n <namespace> get service site-web -o wide
 kubectl -n <namespace> get endpoints site-web
-kubectl -n <namespace> get pods -l app=site-web
+kubectl -n <namespace> get endpointslice -l kubernetes.io/service-name=site-web -o wide
+kubectl -n <namespace> get pods -l app.kubernetes.io/name=site-web -o wide
+kubectl -n <namespace> describe pods -l app.kubernetes.io/name=site-web
+kubectl -n <namespace> logs -l app.kubernetes.io/name=site-web --tail=200 --all-containers=true
+kubectl -n <namespace> logs -l app.kubernetes.io/name=site-web --previous --tail=100 --all-containers=true
+kubectl -n <namespace> get deploy site-web -o yaml
+kubectl -n <namespace> get rs -l app.kubernetes.io/name=site-web -o wide
+kubectl -n <namespace> get events --sort-by=.lastTimestamp
 kubectl -n <namespace> describe ingress site-web
 kubectl -n <namespace> describe backendconfig site-web-backend-config-<site>
 curl -Iv https://<preview-host>/

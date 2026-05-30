@@ -1896,7 +1896,10 @@ Post-fix rollout for existing managed sites:
   - workflow URL resolution now short-circuits when the expected preview hostname is already reachable even if ingress status address lags:
     - `ingress_address_pending_but_hostname_reachable` indicates address propagation lag while host is reachable
     - `reachable_but_tls_certificate_mismatch` indicates the host responds but serves the wrong certificate identity
-    - `ingress_backend_502` indicates ingress path is reachable but backend service is unhealthy
+    - `ingress_backend_502` indicates preview hostname is reachable but returns HTTP 502; diagnostics now distinguish:
+      - ingress/LB edge convergence (`gce_backend_health_status=HEALTHY`, service/endpoint probes `ok`, preview still `502`)
+      - app runtime response failure (service/endpoint probes also `502`)
+      - pod runtime instability (`pod_restart_detected=true` with restart/crash evidence)
   - in-cluster service probing now classifies cluster-local connectivity independently of external ingress/LB convergence:
     - first probe failures emit `service_probe_waiting_for_convergence`
     - cluster-local probe timeouts emit:
@@ -2383,6 +2386,8 @@ Resolve-live-url failure diagnostics are evidence-first:
   - `https_probe_empty_reply`
   - `https_probe_not_attempted`
 - `ingress_backend_502` remains a distinct classification when HTTPS reaches ingress and backend returns 502.
+  - deploy does not pass on backend health alone; preview HTTPS must return non-5xx.
+  - advanced deploy diagnostics expose bounded fields: preview status, backend health status, k8s endpoint readiness, in-cluster service/endpoint probe results, and runtime probe classification.
 
 Operator verification commands for control-plane-ready / HTTPS-not-ready:
 - `kubectl -n <namespace> get ingress`

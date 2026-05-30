@@ -7346,6 +7346,19 @@ class SEOMigrationService:
         host_reachability_scheme = runtime_network_readiness.get("host_reachability_scheme")
         https_probe_error_summary = runtime_network_readiness.get("https_probe_error_summary")
         deploy_https_ready = runtime_network_readiness.get("deploy_https_ready")
+        preview_https_status = runtime_network_readiness.get("preview_https_status")
+        preview_http_status = runtime_network_readiness.get("preview_http_status")
+        preview_probe_attempt = runtime_network_readiness.get("preview_probe_attempt")
+        preview_probe_elapsed_seconds = runtime_network_readiness.get("preview_probe_elapsed_seconds")
+        gce_backend_health_status = runtime_network_readiness.get("gce_backend_health_status")
+        gce_backend_healthy = runtime_network_readiness.get("gce_backend_healthy")
+        k8s_endpoint_ready = runtime_network_readiness.get("k8s_endpoint_ready")
+        service_probe_status = runtime_network_readiness.get("service_probe_status")
+        in_cluster_service_status_code = runtime_network_readiness.get("in_cluster_service_status_code")
+        endpoint_probe_status = runtime_network_readiness.get("endpoint_probe_status")
+        endpoint_probe_status_code = runtime_network_readiness.get("endpoint_probe_status_code")
+        runtime_probe_status = runtime_network_readiness.get("runtime_probe_status")
+        pod_restart_detected = runtime_network_readiness.get("pod_restart_detected")
         workflow_integrity_status = None
         workflow_integrity_reason_code = None
         if target_readiness is not None:
@@ -7872,6 +7885,21 @@ class SEOMigrationService:
             "host_reachability_scheme": host_reachability_scheme,
             "https_probe_error_summary": https_probe_error_summary,
             "deploy_https_ready": deploy_https_ready,
+            "preview_https_status": preview_https_status,
+            "preview_http_status": preview_http_status,
+            "preview_probe_attempt": preview_probe_attempt,
+            "preview_probe_elapsed_seconds": preview_probe_elapsed_seconds,
+            "gce_backend_health_status": gce_backend_health_status,
+            "gce_backend_healthy": gce_backend_healthy,
+            "k8s_endpoint_ready": k8s_endpoint_ready,
+            "service_has_ready_endpoints": k8s_endpoint_ready,
+            "service_ready_endpoints": k8s_endpoint_ready,
+            "service_probe_status": service_probe_status,
+            "in_cluster_service_status_code": in_cluster_service_status_code,
+            "endpoint_probe_status": endpoint_probe_status,
+            "endpoint_probe_status_code": endpoint_probe_status_code,
+            "runtime_probe_status": runtime_probe_status,
+            "pod_restart_detected": pod_restart_detected,
             "expected_static_ip_name": expected_static_ip_name,
             "expected_static_ip_address": expected_static_ip_address,
             "static_ip_created": static_ip_created,
@@ -9448,6 +9476,21 @@ class SEOMigrationService:
             "host_reachability_scheme",
             "https_probe_error_summary",
             "deploy_https_ready",
+            "preview_https_status",
+            "preview_http_status",
+            "preview_probe_attempt",
+            "preview_probe_elapsed_seconds",
+            "gce_backend_health_status",
+            "gce_backend_healthy",
+            "k8s_endpoint_ready",
+            "service_has_ready_endpoints",
+            "service_ready_endpoints",
+            "service_probe_status",
+            "in_cluster_service_status_code",
+            "endpoint_probe_status",
+            "endpoint_probe_status_code",
+            "runtime_probe_status",
+            "pod_restart_detected",
             "workflow_integrity_status",
             "workflow_integrity_reason_code",
         ):
@@ -16788,6 +16831,24 @@ class SEOMigrationService:
             current_https_probe_status_code = _coerce_int(workflow_output_payload.get("https_probe_status_code"))
         if current_https_probe_status_code is not None and current_https_probe_status_code <= 0:
             current_https_probe_status_code = None
+        preview_https_status_code: int | None = _coerce_int(workflow_output_payload.get("preview_https_status"))
+        if preview_https_status_code is not None and preview_https_status_code <= 0:
+            preview_https_status_code = None
+        preview_http_status_code: int | None = _coerce_int(workflow_output_payload.get("preview_http_status"))
+        if preview_http_status_code is not None and preview_http_status_code <= 0:
+            preview_http_status_code = None
+        preview_probe_attempt: int | None = _coerce_int(workflow_output_payload.get("preview_probe_attempt"))
+        if preview_probe_attempt is not None and preview_probe_attempt < 0:
+            preview_probe_attempt = None
+        preview_probe_elapsed_seconds: int | None = _coerce_int(
+            workflow_output_payload.get("preview_probe_elapsed_seconds")
+        )
+        if preview_probe_elapsed_seconds is not None and preview_probe_elapsed_seconds < 0:
+            preview_probe_elapsed_seconds = None
+        normalized_backend_health_status = _normalize_string(
+            workflow_output_payload.get("gce_backend_health_status"),
+            max_length=32,
+        )
         return {
             "dns_record_matches_ingress": _coerce_optional_bool(
                 workflow_output_payload.get("dns_record_matches_ingress")
@@ -16814,6 +16875,40 @@ class SEOMigrationService:
                 max_length=240,
             ),
             "deploy_https_ready": _coerce_optional_bool(workflow_output_payload.get("deploy_https_ready")),
+            "preview_https_status": preview_https_status_code,
+            "preview_http_status": preview_http_status_code,
+            "preview_probe_attempt": preview_probe_attempt,
+            "preview_probe_elapsed_seconds": preview_probe_elapsed_seconds,
+            "gce_backend_health_status": normalized_backend_health_status,
+            "gce_backend_healthy": (
+                True
+                if normalized_backend_health_status == "HEALTHY"
+                else (
+                    False
+                    if normalized_backend_health_status in {"UNHEALTHY", "DEGRADED"}
+                    else None
+                )
+            ),
+            "k8s_endpoint_ready": _coerce_optional_bool(workflow_output_payload.get("k8s_endpoint_ready")),
+            "service_has_ready_endpoints": _coerce_optional_bool(workflow_output_payload.get("k8s_endpoint_ready")),
+            "service_ready_endpoints": _coerce_optional_bool(workflow_output_payload.get("k8s_endpoint_ready")),
+            "service_probe_status": _normalize_string(
+                workflow_output_payload.get("service_probe_status"),
+                max_length=40,
+            ),
+            "in_cluster_service_status_code": _coerce_int(
+                workflow_output_payload.get("in_cluster_service_status_code")
+            ),
+            "endpoint_probe_status": _normalize_string(
+                workflow_output_payload.get("endpoint_probe_status"),
+                max_length=40,
+            ),
+            "endpoint_probe_status_code": _coerce_int(workflow_output_payload.get("endpoint_probe_status_code")),
+            "runtime_probe_status": _normalize_string(
+                workflow_output_payload.get("runtime_probe_status"),
+                max_length=48,
+            ),
+            "pod_restart_detected": _coerce_optional_bool(workflow_output_payload.get("pod_restart_detected")),
             "current_live_url": _normalize_url_candidate(workflow_output_payload.get("current_live_url"))
             or _normalize_url_candidate(workflow_output_payload.get("live_url")),
             "current_host_reachable": (
@@ -17756,6 +17851,33 @@ class SEOMigrationService:
                 "deploy_https_ready": (
                     bool(item.get("deploy_https_ready")) if isinstance(item.get("deploy_https_ready"), bool) else None
                 ),
+                "preview_https_status": _coerce_int(item.get("preview_https_status")),
+                "preview_http_status": _coerce_int(item.get("preview_http_status")),
+                "preview_probe_attempt": _coerce_int(item.get("preview_probe_attempt")),
+                "preview_probe_elapsed_seconds": _coerce_int(item.get("preview_probe_elapsed_seconds")),
+                "gce_backend_health_status": _normalize_string(
+                    item.get("gce_backend_health_status"),
+                    max_length=40,
+                ),
+                "gce_backend_healthy": _coerce_optional_bool(item.get("gce_backend_healthy")),
+                "k8s_endpoint_ready": _coerce_optional_bool(item.get("k8s_endpoint_ready")),
+                "service_has_ready_endpoints": _coerce_optional_bool(item.get("service_has_ready_endpoints")),
+                "service_ready_endpoints": _coerce_optional_bool(item.get("service_ready_endpoints")),
+                "service_probe_status": _normalize_string(
+                    item.get("service_probe_status"),
+                    max_length=40,
+                ),
+                "in_cluster_service_status_code": _coerce_int(item.get("in_cluster_service_status_code")),
+                "endpoint_probe_status": _normalize_string(
+                    item.get("endpoint_probe_status"),
+                    max_length=40,
+                ),
+                "endpoint_probe_status_code": _coerce_int(item.get("endpoint_probe_status_code")),
+                "runtime_probe_status": _normalize_string(
+                    item.get("runtime_probe_status"),
+                    max_length=80,
+                ),
+                "pod_restart_detected": _coerce_optional_bool(item.get("pod_restart_detected")),
                 "current_live_url": _normalize_url_candidate(item.get("current_live_url")),
                 "current_host_reachable": (
                     bool(item.get("current_host_reachable"))
@@ -18990,6 +19112,91 @@ class SEOMigrationService:
                 else None
             )
         )
+        preview_https_status = _coerce_int(latest_traceability.get("preview_https_status"))
+        if preview_https_status is None:
+            preview_https_status = _coerce_int(target_summary.get("preview_https_status"))
+        if preview_https_status is not None and preview_https_status <= 0:
+            preview_https_status = None
+        preview_http_status = _coerce_int(latest_traceability.get("preview_http_status"))
+        if preview_http_status is None:
+            preview_http_status = _coerce_int(target_summary.get("preview_http_status"))
+        if preview_http_status is not None and preview_http_status <= 0:
+            preview_http_status = None
+        preview_probe_attempt = _coerce_int(latest_traceability.get("preview_probe_attempt"))
+        if preview_probe_attempt is None:
+            preview_probe_attempt = _coerce_int(target_summary.get("preview_probe_attempt"))
+        if preview_probe_attempt is not None and preview_probe_attempt < 0:
+            preview_probe_attempt = None
+        preview_probe_elapsed_seconds = _coerce_int(latest_traceability.get("preview_probe_elapsed_seconds"))
+        if preview_probe_elapsed_seconds is None:
+            preview_probe_elapsed_seconds = _coerce_int(target_summary.get("preview_probe_elapsed_seconds"))
+        if preview_probe_elapsed_seconds is not None and preview_probe_elapsed_seconds < 0:
+            preview_probe_elapsed_seconds = None
+        gce_backend_health_status = _normalize_string(
+            latest_traceability.get("gce_backend_health_status"),
+            max_length=32,
+        ) or _normalize_string(
+            target_summary.get("gce_backend_health_status"),
+            max_length=32,
+        )
+        gce_backend_healthy = (
+            bool(latest_traceability.get("gce_backend_healthy"))
+            if isinstance(latest_traceability.get("gce_backend_healthy"), bool)
+            else (
+                bool(target_summary.get("gce_backend_healthy"))
+                if isinstance(target_summary.get("gce_backend_healthy"), bool)
+                else (
+                    True
+                    if gce_backend_health_status == "HEALTHY"
+                    else False if gce_backend_health_status in {"UNHEALTHY", "DEGRADED"} else None
+                )
+            )
+        )
+        k8s_endpoint_ready = (
+            bool(latest_traceability.get("k8s_endpoint_ready"))
+            if isinstance(latest_traceability.get("k8s_endpoint_ready"), bool)
+            else (
+                bool(target_summary.get("k8s_endpoint_ready"))
+                if isinstance(target_summary.get("k8s_endpoint_ready"), bool)
+                else None
+            )
+        )
+        service_probe_status = _normalize_string(
+            latest_traceability.get("service_probe_status"),
+            max_length=40,
+        ) or _normalize_string(
+            target_summary.get("service_probe_status"),
+            max_length=40,
+        )
+        in_cluster_service_status_code = _coerce_int(latest_traceability.get("in_cluster_service_status_code"))
+        if in_cluster_service_status_code is None:
+            in_cluster_service_status_code = _coerce_int(target_summary.get("in_cluster_service_status_code"))
+        endpoint_probe_status = _normalize_string(
+            latest_traceability.get("endpoint_probe_status"),
+            max_length=40,
+        ) or _normalize_string(
+            target_summary.get("endpoint_probe_status"),
+            max_length=40,
+        )
+        endpoint_probe_status_code = _coerce_int(latest_traceability.get("endpoint_probe_status_code"))
+        if endpoint_probe_status_code is None:
+            endpoint_probe_status_code = _coerce_int(target_summary.get("endpoint_probe_status_code"))
+        runtime_probe_status = _normalize_string(
+            latest_traceability.get("runtime_probe_status"),
+            max_length=48,
+        ) or _normalize_string(
+            target_summary.get("runtime_probe_status"),
+            max_length=48,
+        )
+        pod_restart_detected = (
+            bool(latest_traceability.get("pod_restart_detected"))
+            if isinstance(latest_traceability.get("pod_restart_detected"), bool)
+            else (
+                bool(target_summary.get("pod_restart_detected"))
+                if isinstance(target_summary.get("pod_restart_detected"), bool)
+                else None
+            )
+        )
         workflow_integrity_status = _normalize_workflow_integrity_status(
             latest_traceability.get("workflow_integrity_status")
         ) or _normalize_workflow_integrity_status(target_summary.get("workflow_integrity_status"))
@@ -19207,6 +19414,21 @@ class SEOMigrationService:
             "host_reachability_scheme": host_reachability_scheme,
             "https_probe_error_summary": https_probe_error_summary,
             "deploy_https_ready": deploy_https_ready,
+            "preview_https_status": preview_https_status,
+            "preview_http_status": preview_http_status,
+            "preview_probe_attempt": preview_probe_attempt,
+            "preview_probe_elapsed_seconds": preview_probe_elapsed_seconds,
+            "gce_backend_health_status": gce_backend_health_status,
+            "gce_backend_healthy": gce_backend_healthy,
+            "k8s_endpoint_ready": k8s_endpoint_ready,
+            "service_has_ready_endpoints": k8s_endpoint_ready,
+            "service_ready_endpoints": k8s_endpoint_ready,
+            "service_probe_status": service_probe_status,
+            "in_cluster_service_status_code": in_cluster_service_status_code,
+            "endpoint_probe_status": endpoint_probe_status,
+            "endpoint_probe_status_code": endpoint_probe_status_code,
+            "runtime_probe_status": runtime_probe_status,
+            "pod_restart_detected": pod_restart_detected,
             "selected_workflow_attempt_status": selected_workflow_attempt_status,
             "selected_workflow_attempt_conclusion": selected_workflow_attempt_conclusion,
             "selected_workflow_failed_step": selected_workflow_failed_step,
@@ -19333,6 +19555,21 @@ class SEOMigrationService:
                 "host_reachability_scheme": host_reachability_scheme,
                 "https_probe_error_summary": https_probe_error_summary,
                 "deploy_https_ready": deploy_https_ready,
+                "preview_https_status": preview_https_status,
+                "preview_http_status": preview_http_status,
+                "preview_probe_attempt": preview_probe_attempt,
+                "preview_probe_elapsed_seconds": preview_probe_elapsed_seconds,
+                "gce_backend_health_status": gce_backend_health_status,
+                "gce_backend_healthy": gce_backend_healthy,
+                "k8s_endpoint_ready": k8s_endpoint_ready,
+                "service_has_ready_endpoints": k8s_endpoint_ready,
+                "service_ready_endpoints": k8s_endpoint_ready,
+                "service_probe_status": service_probe_status,
+                "in_cluster_service_status_code": in_cluster_service_status_code,
+                "endpoint_probe_status": endpoint_probe_status,
+                "endpoint_probe_status_code": endpoint_probe_status_code,
+                "runtime_probe_status": runtime_probe_status,
+                "pod_restart_detected": pod_restart_detected,
                 "current_live_url": current_live_url,
                 "current_host_reachable": current_host_reachable,
                 "current_host_reachability_scheme": current_host_reachability_scheme,

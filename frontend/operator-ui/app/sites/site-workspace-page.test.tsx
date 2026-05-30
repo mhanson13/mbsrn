@@ -1421,6 +1421,57 @@ describe("site migration workflow route", () => {
     );
   });
 
+  it("surfaces ingress 502 runtime probe diagnostics when backend health is healthy", async () => {
+    const user = userEvent.setup();
+    const summary = buildMigrationWorkspaceSummary({
+      deploy_readiness: {
+        ready: false,
+        reasons: ["Preview hostname is reachable but returned HTTP 502."],
+        last_workflow_run_failure_reason_code: "ingress_backend_502",
+        service_has_ready_endpoints: true,
+        preview_https_status: 502,
+        gce_backend_health_status: "HEALTHY",
+        service_probe_status: "ok",
+        endpoint_probe_status: "ok",
+        runtime_probe_status: "ingress_or_edge_convergence",
+        target: {
+          enabled: true,
+          repo_owner: "mhanson13",
+          repo_name: "sc-mechanical",
+          workflow_id: "deploy-sc-mechanical-www-prod.yml",
+          ref: "main",
+        },
+      },
+    });
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(summary);
+    mockFetchMigrationPublishHistory.mockResolvedValueOnce({ items: [], total: 0 });
+    mockFetchMigrationDeployHistory.mockResolvedValueOnce({ items: [], total: 0 });
+
+    render(<SiteMigrationWorkflowPage />);
+    await user.click(await screen.findByText("Show detailed migration failure diagnostics"));
+
+    const diagnostics = screen.getByTestId("migration-deploy-diagnostics");
+    expect(diagnostics).toHaveTextContent("Preview hostname returned HTTP 502.");
+    expect(diagnostics).toHaveTextContent("GCE backend health: HEALTHY.");
+    expect(diagnostics).toHaveTextContent("Service probe: ok.");
+    expect(diagnostics).toHaveTextContent("Endpoint probe: ok.");
+    expect(diagnostics).toHaveTextContent("Runtime classification: ingress_or_edge_convergence.");
+
+    const consistency = screen.getByTestId("migration-deploy-consistency");
+    expect(within(consistency).getByTestId("migration-deploy-consistency-gce-backend-health-status")).toHaveTextContent(
+      "gce_backend_health_status: HEALTHY",
+    );
+    expect(within(consistency).getByTestId("migration-deploy-consistency-preview-https-status")).toHaveTextContent(
+      "preview_https_status: 502",
+    );
+    expect(within(consistency).getByTestId("migration-deploy-consistency-service-probe-status")).toHaveTextContent(
+      "service_probe_status: ok",
+    );
+    expect(within(consistency).getByTestId("migration-deploy-consistency-runtime-probe-status")).toHaveTextContent(
+      "runtime_probe_status: ingress_or_edge_convergence",
+    );
+  });
+
   it("renders FAILED_NOT_VISIBLE with DNS/TLS context in deploy consistency diagnostics", async () => {
     const user = userEvent.setup();
     const summary = buildMigrationWorkspaceSummary({

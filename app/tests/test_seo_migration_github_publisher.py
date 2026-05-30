@@ -6079,6 +6079,12 @@ def test_extract_resolve_live_url_state_from_log_text_parses_sanitized_probe_det
                     "detail=connection timed out while waiting for headers"
                 ),
                 "resolve_live_url_state_deploy_https_ready=false",
+                "resolve_live_url_state_preview_https_status=502",
+                "resolve_live_url_state_gce_backend_health_status=HEALTHY",
+                "resolve_live_url_state_service_probe_status=ok",
+                "resolve_live_url_state_endpoint_probe_status=ok",
+                "resolve_live_url_state_runtime_probe_status=ingress_or_edge_convergence",
+                "resolve_live_url_state_pod_restart_detected=false",
             ]
         )
     )
@@ -6086,6 +6092,12 @@ def test_extract_resolve_live_url_state_from_log_text_parses_sanitized_probe_det
     assert state.get("host_reachable") == "false"
     assert state.get("host_reachability_scheme") == "https"
     assert state.get("deploy_https_ready") == "false"
+    assert state.get("preview_https_status") == "502"
+    assert state.get("gce_backend_health_status") == "HEALTHY"
+    assert state.get("service_probe_status") == "ok"
+    assert state.get("endpoint_probe_status") == "ok"
+    assert state.get("runtime_probe_status") == "ingress_or_edge_convergence"
+    assert state.get("pod_restart_detected") == "false"
     assert "https_probe_timeout" in str(state.get("https_probe_error_summary") or "")
     assert len(str(state.get("https_probe_error_summary") or "")) <= 240
 
@@ -7784,8 +7796,25 @@ def test_rendered_managed_workflow_yaml_parses_embedded_certificate_evaluation_s
     assert "resolve_live_url_state_ingress_status_ip" in run_script
     assert "resolve_live_url_state_observed_managed_certificate_domains" in run_script
     assert "resolve_live_url_state_https_probe_error_summary" in run_script
+    assert "resolve_live_url_state_preview_https_status" in run_script
+    assert "resolve_live_url_state_gce_backend_health_status" in run_script
+    assert "resolve_live_url_state_service_probe_status" in run_script
+    assert "resolve_live_url_state_endpoint_probe_status" in run_script
+    assert "resolve_live_url_state_runtime_probe_status" in run_script
     assert "set_https_probe_error_summary() {" in run_script
     assert "ensure_https_probe_error_summary() {" in run_script
+    assert "collect_ingress_502_runtime_diagnostics() {" in run_script
+    assert "kubectl -n \"$K8S_NAMESPACE\" get pods -l app.kubernetes.io/name=site-web -o wide || true" in run_script
+    assert "kubectl -n \"$K8S_NAMESPACE\" logs -l app.kubernetes.io/name=site-web --tail=200 --all-containers=true" in run_script
+    assert (
+        "kubectl -n \"$K8S_NAMESPACE\" logs -l app.kubernetes.io/name=site-web --previous --tail=100 --all-containers=true"
+        in run_script
+    )
+    assert "kubectl -n \"$K8S_NAMESPACE\" get deploy site-web -o yaml" in run_script
+    assert "kubectl -n \"$K8S_NAMESPACE\" get rs -l app.kubernetes.io/name=site-web -o wide || true" in run_script
+    assert "kubectl -n \"$K8S_NAMESPACE\" get events --sort-by=.lastTimestamp || true" in run_script
+    assert "http://site-web.${K8S_NAMESPACE}.svc.cluster.local:80/" in run_script
+    assert 'runtime_probe_status="ingress_or_edge_convergence"' in run_script
     assert 'fallback_reason="dns_not_ready"' in run_script
     assert 'fallback_reason="cert_not_ready"' in run_script
     assert 'fallback_reason="host_resolution_pending"' in run_script

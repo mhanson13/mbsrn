@@ -1599,7 +1599,7 @@ function toManagedGkeConfigGuidance(value: string | null): string | null {
     return "Ingress backend is unhealthy even though pods may be running. Verify BackendConfig, service endpoints, and load balancer backend health.";
   }
   if (normalized === "ingress_backend_502") {
-    return "Ingress is returning 502 for this site. Verify service endpoints, EndpointSlices, BackendConfig, and load balancer backend health.";
+    return "Preview hostname is reachable but returned HTTP 502. Backend health can still report healthy; review in-cluster service/endpoint probe status, pod runtime logs, and ingress/backend convergence diagnostics.";
   }
   if (normalized === "service_has_no_ready_endpoints") {
     return "Service has no ready endpoints for site-web. Verify pod readiness, service selectors, and endpoint population.";
@@ -4760,6 +4760,37 @@ export function MigrationWorkspacePanel({
   const backendHealthHealthyFromSummary =
     asBooleanOrNull(deployReadiness.gce_backend_healthy) ?? asBooleanOrNull(deployReadiness.backend_healthy);
   const backendHealthHealthy = backendHealthHealthyFromSelected ?? backendHealthHealthyFromSummary;
+  const gceBackendHealthStatus =
+    asStringOrNull(selectedDeployHistoryRecord.gce_backend_health_status) ||
+    asStringOrNull(deployReadiness.gce_backend_health_status);
+  const previewHttpsStatus =
+    asNumberOrNull(selectedDeployHistoryRecord.preview_https_status) ?? asNumberOrNull(deployReadiness.preview_https_status);
+  const previewHttpStatus =
+    asNumberOrNull(selectedDeployHistoryRecord.preview_http_status) ?? asNumberOrNull(deployReadiness.preview_http_status);
+  const previewProbeAttempt =
+    asNumberOrNull(selectedDeployHistoryRecord.preview_probe_attempt) ??
+    asNumberOrNull(deployReadiness.preview_probe_attempt);
+  const previewProbeElapsedSeconds =
+    asNumberOrNull(selectedDeployHistoryRecord.preview_probe_elapsed_seconds) ??
+    asNumberOrNull(deployReadiness.preview_probe_elapsed_seconds);
+  const serviceProbeStatus =
+    asStringOrNull(selectedDeployHistoryRecord.service_probe_status) ||
+    asStringOrNull(deployReadiness.service_probe_status);
+  const endpointProbeStatus =
+    asStringOrNull(selectedDeployHistoryRecord.endpoint_probe_status) ||
+    asStringOrNull(deployReadiness.endpoint_probe_status);
+  const runtimeProbeStatus =
+    asStringOrNull(selectedDeployHistoryRecord.runtime_probe_status) ||
+    asStringOrNull(deployReadiness.runtime_probe_status);
+  const inClusterServiceStatusCode =
+    asNumberOrNull(selectedDeployHistoryRecord.in_cluster_service_status_code) ??
+    asNumberOrNull(deployReadiness.in_cluster_service_status_code);
+  const endpointProbeStatusCode =
+    asNumberOrNull(selectedDeployHistoryRecord.endpoint_probe_status_code) ??
+    asNumberOrNull(deployReadiness.endpoint_probe_status_code);
+  const podRestartDetected =
+    asBooleanOrNull(selectedDeployHistoryRecord.pod_restart_detected) ??
+    asBooleanOrNull(deployReadiness.pod_restart_detected);
   const currentLiveUrl = asStringOrNull(deployReadiness.current_live_url);
   const currentHostReachable = asBooleanOrNull(deployReadiness.current_host_reachable);
   const currentHostReachabilityScheme = asStringOrNull(deployReadiness.current_host_reachability_scheme);
@@ -5515,6 +5546,30 @@ export function MigrationWorkspacePanel({
   const deployDiagnosticsReasonSummary = summarizeDiagnosticReason(
     currentLiveHealthySelectedWorkflowFailureNote,
     currentLiveEvidenceHealthy ? "Current runtime evidence: HTTPS probe succeeded." : null,
+    (() => {
+      const reasonCodes = new Set(
+        [normalizedDispatchServiceReasonCode, normalizedDeployFailureReasonCode, normalizedDeployRunFailureReasonCode]
+          .map((value) => value.trim())
+          .filter((value) => value.length > 0),
+      );
+      if (!reasonCodes.has("ingress_backend_502")) {
+        return null;
+      }
+      const parts: string[] = ["Preview hostname returned HTTP 502."];
+      if (gceBackendHealthStatus) {
+        parts.push(`GCE backend health: ${gceBackendHealthStatus}.`);
+      }
+      if (serviceProbeStatus) {
+        parts.push(`Service probe: ${serviceProbeStatus}.`);
+      }
+      if (endpointProbeStatus) {
+        parts.push(`Endpoint probe: ${endpointProbeStatus}.`);
+      }
+      if (runtimeProbeStatus) {
+        parts.push(`Runtime classification: ${runtimeProbeStatus}.`);
+      }
+      return parts.join(" ");
+    })(),
     managedGkeConfigGuidance,
     deployFailureMessage,
     deployFailureReasonCode ? `Reason: ${formatReasonCodeLabel(deployFailureReasonCode)}` : null,
@@ -9057,6 +9112,24 @@ export function MigrationWorkspacePanel({
                         <span className="hint" data-testid="migration-deploy-consistency-https-ready">
                           deploy_https_ready: {formatBooleanStateLabel(deployHttpsReady)}
                         </span>
+                        <span className="hint" data-testid="migration-deploy-consistency-gce-backend-health-status">
+                          gce_backend_health_status: {gceBackendHealthStatus || "Not available"}
+                        </span>
+                        <span className="hint" data-testid="migration-deploy-consistency-preview-https-status">
+                          preview_https_status: {previewHttpsStatus !== null ? String(previewHttpsStatus) : "Not available"}
+                        </span>
+                        <span className="hint" data-testid="migration-deploy-consistency-preview-http-status">
+                          preview_http_status: {previewHttpStatus !== null ? String(previewHttpStatus) : "Not available"}
+                        </span>
+                        <span className="hint" data-testid="migration-deploy-consistency-service-probe-status">
+                          service_probe_status: {serviceProbeStatus || "Not available"}
+                        </span>
+                        <span className="hint" data-testid="migration-deploy-consistency-endpoint-probe-status">
+                          endpoint_probe_status: {endpointProbeStatus || "Not available"}
+                        </span>
+                        <span className="hint" data-testid="migration-deploy-consistency-runtime-probe-status">
+                          runtime_probe_status: {runtimeProbeStatus || "Not available"}
+                        </span>
                         <span className="hint" data-testid="migration-deploy-consistency-current-live-url">
                           current_live_url: {currentLiveUrl || "Not available"}
                         </span>
@@ -9205,6 +9278,34 @@ export function MigrationWorkspacePanel({
                     <span className="hint">
                       current_https_probe_error_summary: {currentHttpsProbeErrorSummary || "Not available"}
                     </span>
+                    <span className="hint">
+                      preview_https_status: {previewHttpsStatus !== null ? String(previewHttpsStatus) : "Not available"}
+                    </span>
+                    <span className="hint">
+                      preview_http_status: {previewHttpStatus !== null ? String(previewHttpStatus) : "Not available"}
+                    </span>
+                    <span className="hint">
+                      preview_probe_attempt: {previewProbeAttempt !== null ? String(previewProbeAttempt) : "Not available"}
+                    </span>
+                    <span className="hint">
+                      preview_probe_elapsed_seconds:{" "}
+                      {previewProbeElapsedSeconds !== null ? String(previewProbeElapsedSeconds) : "Not available"}
+                    </span>
+                    <span className="hint">
+                      gce_backend_health_status: {gceBackendHealthStatus || "Not available"}
+                    </span>
+                    <span className="hint">service_probe_status: {serviceProbeStatus || "Not available"}</span>
+                    <span className="hint">
+                      in_cluster_service_status_code:{" "}
+                      {inClusterServiceStatusCode !== null ? String(inClusterServiceStatusCode) : "Not available"}
+                    </span>
+                    <span className="hint">endpoint_probe_status: {endpointProbeStatus || "Not available"}</span>
+                    <span className="hint">
+                      endpoint_probe_status_code:{" "}
+                      {endpointProbeStatusCode !== null ? String(endpointProbeStatusCode) : "Not available"}
+                    </span>
+                    <span className="hint">runtime_probe_status: {runtimeProbeStatus || "Not available"}</span>
+                    <span className="hint">pod_restart_detected: {formatBooleanStateLabel(podRestartDetected)}</span>
                     <span className="hint">
                       current_live_evidence_checked_at:{" "}
                       {currentLiveEvidenceCheckedAt ? formatAttemptTimestamp(currentLiveEvidenceCheckedAt) : "Not available"}

@@ -56,10 +56,13 @@ env:
   UI_CPU_LIMIT: "500m"
   UI_MEMORY_LIMIT: ${{ vars.UI_MEMORY_LIMIT }}
   UI_EPHEMERAL_STORAGE_LIMIT: ${{ vars.UI_EPHEMERAL_STORAGE_LIMIT }}
-  API_CPU_REQUEST: ${{ vars.API_CPU_REQUEST }}
+  # Conservative FinOps right-size for production API.
+  # Intentionally not using the raw recommender value (7m), which is too aggressive
+  # for synchronous FastAPI/admin/migration operational workflows.
+  API_CPU_REQUEST: "300m"
   API_MEMORY_REQUEST: ${{ vars.API_MEMORY_REQUEST }}
   API_EPHEMERAL_STORAGE_REQUEST: ${{ vars.API_EPHEMERAL_STORAGE_REQUEST }}
-  API_CPU_LIMIT: ${{ vars.API_CPU_LIMIT }}
+  API_CPU_LIMIT: "750m"
   API_MEMORY_LIMIT: ${{ vars.API_MEMORY_LIMIT }}
   API_EPHEMERAL_STORAGE_LIMIT: ${{ vars.API_EPHEMERAL_STORAGE_LIMIT }}
   DEPLOY_CPU_REQUEST: ${{ vars.DEPLOY_CPU_REQUEST }}
