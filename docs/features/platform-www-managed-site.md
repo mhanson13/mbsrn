@@ -41,8 +41,10 @@ Publish/deploy semantics are unchanged:
 ## Media Artifact Requirement
 For `mhanson13/mbsrn-www`, selected migration media must ship with the generated artifact package:
 - generated HTML must use deployable static image paths (for example `assets/images/...`)
+- selected usable images included in draft are materialized automatically into artifact files during generation
 - internal media IDs/placeholders (such as `upl-...` or unresolved `@image(...)`) are not cutover-ready
 - publish output must contain both page files and referenced image files
+- operators should not manually upload/copy migration images into the GitHub target repository
 
 Cutover/readiness remains blocked when media is unresolved or missing from artifact files, even if draft text generation otherwise succeeds.
 

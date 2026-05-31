@@ -2963,6 +2963,8 @@ def test_generate_draft_artifacts_includes_bounded_draft_input_summary_and_media
     assert uploaded_context.get("metadata_source") == "ai_suggested"
     assert uploaded_context.get("category") == "project_gallery"
     assert uploaded_context.get("alt_text") == "Crew on jobsite"
+    artifact_path = str(uploaded_context.get("artifact_path") or "")
+    assert artifact_path.startswith("assets/images/")
     for item in selected_assets:
         assert isinstance(item, dict)
         assert "storage_key" not in item
@@ -4563,6 +4565,98 @@ def test_generate_artifacts_materializes_selected_media_and_rewrites_internal_im
     assert "assets/images/" in str(html_publish.content or "")
 
 
+def test_generate_artifacts_materializes_selected_media_even_when_provider_does_not_reference_images(db_session) -> None:
+    provider = _StaticMigrationProvider(_build_publishable_output())
+    service = _build_service(db_session, provider)
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    service.upload_workspace_media_asset(
+        business_id=business_id,
+        site_id=site_id,
+        filename="Crew Hero.PNG",
+        content_type="image/png",
+        payload=_tiny_png_payload(),
+        selected_for_draft=True,
+        category="hero",
+        alt_text="Crew member cleaning carpet",
+        description=None,
+        usage_note=None,
+        page_assignment=None,
+        principal_id="principal-1",
+    )
+
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    generated_files = [item for item in (artifact.generated_files_json or []) if isinstance(item, dict)]
+    image_files = [item for item in generated_files if str(item.get("path") or "").startswith("assets/images/")]
+    assert len(image_files) == 1
+
+    context_json = artifact.context_json if isinstance(artifact.context_json, dict) else {}
+    media_diagnostics = context_json.get("artifact_media_diagnostics")
+    assert isinstance(media_diagnostics, dict)
+    assert media_diagnostics.get("selected_assets_count") == 1
+    assert media_diagnostics.get("materialized_assets_count") == 1
+    assert media_diagnostics.get("selected_not_materialized_count") == 0
+    assert media_diagnostics.get("unreferenced_materialized_media_paths_count") == 1
+    assert media_diagnostics.get("ready") is True
+
+
+def test_generate_artifacts_normalizes_assets_filename_references_to_assets_images_directory(db_session) -> None:
+    provider = _StaticMigrationProvider(_build_publishable_output())
+    service = _build_service(db_session, provider)
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    uploaded = service.upload_workspace_media_asset(
+        business_id=business_id,
+        site_id=site_id,
+        filename="frust_gc_person_www.png",
+        content_type="image/png",
+        payload=_tiny_png_payload(),
+        selected_for_draft=True,
+        category="hero",
+        alt_text="Crew member at work",
+        description=None,
+        usage_note=None,
+        page_assignment=None,
+        principal_id="principal-1",
+    )
+    asset_id = str(uploaded.get("asset_id") or "")
+    assert asset_id.startswith("upl-")
+
+    provider.output = _build_publishable_output(
+        index_content=(
+            "<html><head><!-- ANALYTICS_PLACEHOLDER --></head><body>"
+            "<img src=\"assets/frust_gc_person_www.png\" alt=\"hero\" />"
+            "</body></html>"
+        )
+    )
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    generated_files = [item for item in (artifact.generated_files_json or []) if isinstance(item, dict)]
+    index_file = next(item for item in generated_files if str(item.get("path") or "") == "index.html")
+    image_file = next(item for item in generated_files if str(item.get("path") or "").startswith("assets/images/"))
+    index_content = str(index_file.get("content") or "")
+    assert "assets/frust_gc_person_www.png" not in index_content
+    canonical_image_path = str(image_file.get("path") or "")
+    assert canonical_image_path
+    assert canonical_image_path in index_content
+
+    context_json = artifact.context_json if isinstance(artifact.context_json, dict) else {}
+    media_diagnostics = context_json.get("artifact_media_diagnostics")
+    assert isinstance(media_diagnostics, dict)
+    assert media_diagnostics.get("materialized_assets_count") == 1
+    assert media_diagnostics.get("referenced_media_paths_count") == 1
+    assert media_diagnostics.get("missing_referenced_media_paths_count") == 0
+    assert media_diagnostics.get("unresolved_generated_media_paths_count") == 0
+    assert media_diagnostics.get("ready") is True
+
+
 def test_publish_and_deploy_readiness_block_when_artifact_media_references_are_unresolved(db_session) -> None:
     provider = _StaticMigrationProvider(
         _build_publishable_output(
@@ -4646,8 +4740,59 @@ def test_generate_artifacts_flags_selected_media_not_materialized_when_storage_b
     media_diagnostics = context_json.get("artifact_media_diagnostics")
     assert isinstance(media_diagnostics, dict)
     assert media_diagnostics.get("selected_not_materialized_count") == 1
+    reason_counts = media_diagnostics.get("selected_not_materialized_reason_counts")
+    assert isinstance(reason_counts, dict)
+    assert reason_counts.get("media_storage_read_failed") == 1
+    not_materialized = media_diagnostics.get("selected_not_materialized")
+    assert isinstance(not_materialized, list)
+    assert isinstance(not_materialized[0], dict)
+    assert not_materialized[0].get("reason_code") == "media_storage_read_failed"
     assert "selected_media_not_materialized" in list(media_diagnostics.get("blocker_codes") or [])
     assert media_diagnostics.get("ready") is False
+
+
+def test_publish_and_deploy_readiness_block_when_generated_html_references_missing_assets_path(db_session) -> None:
+    provider = _StaticMigrationProvider(
+        _build_publishable_output(
+            index_content=(
+                "<html><head><!-- ANALYTICS_PLACEHOLDER --></head><body>"
+                "<img src=\"assets/missing-hero.png\" alt=\"missing\" />"
+                "</body></html>"
+            )
+        )
+    )
+    service = _build_service(db_session, provider)
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+    _configure_deploy_target(service, business_id=business_id, site_id=site_id)
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes=None,
+        principal_id="principal-1",
+    )
+    summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
+    publish_readiness = summary.publish_readiness if isinstance(summary.publish_readiness, dict) else {}
+    deploy_readiness = summary.deploy_readiness if isinstance(summary.deploy_readiness, dict) else {}
+    publish_media = publish_readiness.get("artifact_media_readiness")
+    deploy_media = deploy_readiness.get("artifact_media_readiness")
+    assert isinstance(publish_media, dict)
+    assert isinstance(deploy_media, dict)
+    assert publish_media.get("ready") is False
+    assert publish_media.get("missing_referenced_media_paths_count") == 0
+    assert publish_media.get("unresolved_generated_media_paths_count") == 1
+    assert "artifact_referenced_media_file_missing" in list(publish_media.get("blocker_codes") or [])
+    assert "publish_artifact_media_invalid" in list(publish_readiness.get("blocker_codes") or [])
+    assert deploy_media.get("ready") is False
+    assert "artifact_referenced_media_file_missing" in list(deploy_media.get("blocker_codes") or [])
+    assert "deploy_artifact_media_invalid" in list(deploy_readiness.get("blocker_codes") or [])
 
 def test_generate_artifacts_rejection_emits_contract_diagnostics(db_session, caplog) -> None:
     output = SEOMigrationArtifactGenerationOutput(

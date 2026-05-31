@@ -7426,12 +7426,12 @@ export function MigrationWorkspacePanel({
           summary, and existing business/site context.
         </span>
         <span className="hint muted" data-testid="migration-requirements-image-reference-hint">
-          Copy image references from Site Images and paste them into your requirements. Example: Use @image(backflow-4)
-          on the Services page hero.
+          Selected usable Site Images are included automatically in draft context and materialized into artifact assets.
+          You do not need to paste manual @image references for normal image usage.
         </span>
         <span className="hint muted" data-testid="migration-requirements-image-reference-hint-secondary">
-          Example: Use @image(backflow-4) on the Fire Sprinkler Services page near the backflow prevention section.
-          Image references affect draft generation only after you save requirements.
+          Use requirements text for placement intent only (for example, hero vs gallery). Generated HTML must use
+          artifact paths such as <code>assets/images/&lt;filename&gt;</code>.
         </span>
         <div className="migration-requirement-grid">
           {requirementFieldConfigs.map((config) => {

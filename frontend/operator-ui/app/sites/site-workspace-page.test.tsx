@@ -3387,10 +3387,10 @@ describe("site migration workflow route", () => {
     expect(within(requirements).getByTestId("migration-requirement-scratchpad-details-tone")).toBeInTheDocument();
     expect(within(requirements).getByTestId("migration-requirement-scratchpad-details-calls_to_action")).toBeInTheDocument();
     expect(within(requirements).getByTestId("migration-requirements-image-reference-hint")).toHaveTextContent(
-      "Use @image(backflow-4) on the Services page hero.",
+      "Selected usable Site Images are included automatically in draft context and materialized into artifact assets.",
     );
     expect(within(requirements).getByTestId("migration-requirements-image-reference-hint-secondary")).toHaveTextContent(
-      "Use @image(backflow-4) on the Fire Sprinkler Services page near the backflow prevention section.",
+      "Generated HTML must use artifact paths such as assets/images/<filename>.",
     );
   });
 

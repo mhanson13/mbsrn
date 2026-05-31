@@ -484,6 +484,7 @@ export interface MigrationSourceSnapshot {
 
 export interface MigrationMediaAsset {
   asset_id?: string | null;
+  artifact_path?: string | null;
   display_filename?: string | null;
   content_type?: string | null;
   fetch_status?: string | null;

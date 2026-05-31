@@ -34,7 +34,9 @@ def build_seo_migration_prompt(
         "Only emit static website artifacts under allowed relative paths. "
         "Do not claim publish/deploy execution. All outputs are draft-only. "
         "Use only selected media assets from migration_context.media_assets.selected_assets; "
-        "when none are selected, use safe placeholders and do not invent real media assets."
+        "when none are selected, use safe placeholders and do not invent real media assets. "
+        "For image references, use selected asset artifact_path values exactly as provided. "
+        "Do not emit internal media IDs, @image(...) tokens, app-private URLs, or invented asset paths."
     )
 
     user_prompt = (
@@ -49,6 +51,8 @@ def build_seo_migration_prompt(
         "  4) source snapshot context\n"
         "  5) recommendation/audit/competitor summaries.\n"
         "- Include explicit draft-only safeguards and publish/deploy placeholders.\n"
+        "- When selected media assets are provided, use their artifact_path fields in HTML/CSS image src references.\n"
+        "- Do not output src values like upl-... or @image(...).\n"
         "- Keep artifact set small and operator-reviewable.\n"
         f"{overlay_block}\n\n"
         "MIGRATION_CONTEXT_JSON:\n"

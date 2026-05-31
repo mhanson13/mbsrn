@@ -511,6 +511,7 @@ class SEOMigrationArtifactFileRead(BaseModel):
 
 class SEOMigrationMediaAssetRead(BaseModel):
     asset_id: str | None = None
+    artifact_path: str | None = None
     display_filename: str | None = None
     content_type: str | None = None
     fetch_status: str | None = None

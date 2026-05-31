@@ -2642,6 +2642,9 @@ Selected media is only deploy-ready when it is materialized into artifact files 
 
 Required behavior:
 - selected/imported/uploaded media used by a generated draft is exported into artifact output under stable relative paths (for example `assets/images/...`)
+- selected usable media marked `included in draft` is materialized automatically during draft generation, even when the provider does not reference every selected image
+- provider context supplies canonical `artifact_path` values for selected media, and generated output is normalized to that path convention
+- generated image references like `assets/<filename>` are normalized to canonical `assets/images/<filename>` when they match selected media
 - generated HTML must reference deployable artifact paths, not internal media IDs (`upl-...`) and not unresolved `@image(...)` placeholders
 - publish payloads include both generated HTML/CSS and the materialized image files
 - artifact read payloads remain bounded and do not expose raw base64 media blobs directly in API JSON responses
@@ -2649,6 +2652,7 @@ Required behavior:
 Readiness/cutover blockers now include:
 - unresolved internal media references remain in generated HTML (`src=\"upl-...\"`)
 - unresolved `@image(...)` references remain in generated HTML
+- unresolved generated image paths that do not map to materialized artifact files
 - selected media marked included but not materialized into artifact files
 - generated HTML references image paths that are missing from artifact files
 - generated HTML references internal/private media routes or unsafe paths
@@ -2662,6 +2666,7 @@ Operator expectation before publish/deploy/cutover:
 2. Artifact media readiness reports no blockers.
 3. Preview renders referenced images from artifact-relative paths.
 4. Published repository contains matching HTML and `assets/images/*` files.
+5. No additional manual GitHub image management is required for selected migration media.
 
 ## Known Limitations
 - bounded ingest scope (homepage-first, shallow extraction)
