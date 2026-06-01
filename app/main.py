@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from alembic.config import Config
@@ -35,7 +36,6 @@ from app.db.base import Base
 from app.db.session import engine, get_database_target
 
 settings = get_settings()
-app = FastAPI(title=settings.app_name)
 logger = logging.getLogger(__name__)
 
 API_CSP_VALUE = "default-src 'none'; frame-ancestors 'none'; base-uri 'none'"
@@ -98,6 +98,15 @@ _CLOUDSQL_PROXY_STARTUP_CONNECTIVITY_MAX_ATTEMPTS = 60
 _CLOUDSQL_PROXY_STARTUP_CONNECTIVITY_RETRY_DELAY_SECONDS = 1.0
 _SCHEMA_READINESS_MAX_ATTEMPTS = 2
 _SCHEMA_READINESS_LOGGED_REVISION: str | None = None
+
+
+@asynccontextmanager
+async def _app_lifespan(_: FastAPI):
+    on_startup()
+    yield
+
+
+app = FastAPI(title=settings.app_name, lifespan=_app_lifespan)
 
 
 class _UvicornLifespanCancelledErrorFilter(logging.Filter):
@@ -511,7 +520,6 @@ _configure_security_headers()
 _install_uvicorn_lifespan_cancelled_error_filter()
 
 
-@app.on_event("startup")
 def on_startup() -> None:
     runtime_build_metadata = get_runtime_build_metadata(app_env=settings.app_env)
     _emit_structured_startup_log(
