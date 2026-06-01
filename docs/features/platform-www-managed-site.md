@@ -41,12 +41,14 @@ Publish/deploy semantics are unchanged:
 - publish is explicit and writes reviewed artifacts to target repo
 - deploy is explicit and separate
 - deploy workflow provisioning/readiness belongs to deploy gates; publish is not blocked solely by deploy-workflow provisioning warnings
+- publish readiness still blocks on real artifact/media blockers (for example unresolved or missing referenced media files)
 - publish does not equal production cutover
 
 ## Media Artifact Requirement
 For `mhanson13/mbsrn-www`, selected migration media must ship with the generated artifact package:
 - generated HTML must use deployable static image paths (for example `assets/images/...`)
 - selected usable images included in draft are materialized automatically into artifact files during generation
+- when an older approved artifact has stale media diagnostics, publish preparation attempts deterministic media repair (materialize + path normalization) before requiring regeneration
 - internal media IDs/placeholders (such as `upl-...` or unresolved `@image(...)`) are not cutover-ready
 - publish output must contain both page files and referenced image files
 - operators should not manually upload/copy migration images into the GitHub target repository

@@ -2779,6 +2779,31 @@ describe("site migration workflow route", () => {
     );
   });
 
+  it("prioritizes current publish readiness blockers over stale publish failure summaries", async () => {
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(
+      buildMigrationWorkspaceSummary({
+        publish_readiness: {
+          ready: false,
+          reasons: ["Selected media were not materialized into artifact assets."],
+          last_failure_message: "Deploy workflow provisioning could not be verified.",
+          target: {
+            enabled: true,
+            repo_owner: "mhanson13",
+            repo_name: "tnmfire",
+            branch: "main",
+            artifact_root: "/",
+          },
+        },
+      }),
+    );
+
+    render(<SiteMigrationWorkflowPage />);
+
+    const publishReadiness = await screen.findByTestId("migration-publish-readiness");
+    expect(publishReadiness).toHaveTextContent("Blocker: Selected media were not materialized into artifact assets.");
+    expect(publishReadiness).not.toHaveTextContent("Blocker: Deploy workflow provisioning could not be verified.");
+  });
+
   it("shows repository ownership guidance in destination diagnostics when mbsrn.key is missing", async () => {
     const user = userEvent.setup();
     mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(

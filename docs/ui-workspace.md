@@ -244,6 +244,7 @@ Managed-site boundary cues (generic):
 - publish readiness validates artifact/repo/branch/credentials/media requirements
 - deploy readiness validates workflow/static-IP/TLS/runtime requirements
 - deploy workflow provisioning issues can appear as publish warnings but are deploy blockers, not publish blockers
+- when selected approved artifacts have stale media diagnostics, publish readiness/preparation can deterministically re-materialize selected media and normalize image paths; unresolved referenced media remains a publish blocker
 - F. Advanced Diagnostics & History:
   - draft/provider execution metadata
   - media diagnostics

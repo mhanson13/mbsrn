@@ -4806,6 +4806,150 @@ def test_publish_and_deploy_readiness_block_when_generated_html_references_missi
     assert "artifact_referenced_media_file_missing" in list(deploy_media.get("blocker_codes") or [])
     assert "deploy_artifact_media_invalid" in list(deploy_readiness.get("blocker_codes") or [])
 
+
+def test_publish_readiness_repairs_stale_selected_media_materialization_for_approved_artifacts(db_session) -> None:
+    publisher = _RecordingGitHubPublisher(
+        existing_repository=True,
+        preflight_blocker_code="github_workflow_write_not_authorized",
+        preflight_can_read_contents=True,
+        preflight_can_write_contents=True,
+        preflight_can_write_workflows=False,
+    )
+    provider = _StaticMigrationProvider(_build_publishable_output())
+    service = _build_service(
+        db_session,
+        provider,
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+    uploaded = service.upload_workspace_media_asset(
+        business_id=business_id,
+        site_id=site_id,
+        filename="frust_cleaning_person_www.png",
+        content_type="image/png",
+        payload=_tiny_png_payload(),
+        selected_for_draft=True,
+        category="hero",
+        alt_text="Crew member cleaning carpet",
+        description=None,
+        usage_note=None,
+        page_assignment=None,
+        principal_id="principal-1",
+    )
+    uploaded_asset_id = str(uploaded.get("asset_id") or "").strip()
+    assert uploaded_asset_id.startswith("upl-")
+    provider.output = _build_publishable_output(
+        index_content=(
+            "<html><head><!-- ANALYTICS_PLACEHOLDER --></head><body>"
+            "<img src=\"assets/images/frust-cleaning-person-www.png\" alt=\"hero\" />"
+            "</body></html>"
+        )
+    )
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+
+    stale_generated_files = [
+        item
+        for item in (artifact.generated_files_json or [])
+        if isinstance(item, dict) and not str(item.get("path") or "").startswith("assets/images/")
+    ]
+    stale_context = dict(artifact.context_json or {})
+    stale_context["artifact_media_manifest"] = {
+        "selected_assets_count": 1,
+        "materialized_assets_count": 0,
+        "manifest": [
+            {
+                "asset_id": uploaded_asset_id,
+                "original_filename": "frust_cleaning_person_www.png",
+                "safe_output_filename": None,
+                "content_type": "image/png",
+                "output_relative_path": None,
+                "materialized": False,
+                "reason_code": "media_storage_read_failed",
+            }
+        ],
+    }
+    stale_context["artifact_media_diagnostics"] = {
+        "selected_assets_count": 1,
+        "materialized_assets_count": 0,
+        "selected_not_materialized_count": 1,
+        "selected_not_materialized_asset_ids": [uploaded_asset_id],
+        "selected_not_materialized_reason_counts": {"media_storage_read_failed": 1},
+        "selected_not_materialized": [
+            {
+                "asset_id": uploaded_asset_id,
+                "reason_code": "media_storage_read_failed",
+            }
+        ],
+        "referenced_media_paths_count": 1,
+        "referenced_media_paths": ["assets/images/frust-cleaning-person-www.png"],
+        "missing_referenced_media_paths_count": 1,
+        "missing_referenced_media_paths": ["assets/images/frust-cleaning-person-www.png"],
+        "unresolved_generated_media_paths_count": 1,
+        "unresolved_generated_media_paths": ["assets/images/frust-cleaning-person-www.png"],
+        "unresolved_internal_media_ids_count": 0,
+        "unresolved_internal_media_ids": [],
+        "unresolved_image_token_references_count": 0,
+        "unresolved_image_token_references": [],
+        "invalid_media_references_count": 0,
+        "invalid_media_references": [],
+        "blocker_codes": ["selected_media_not_materialized", "artifact_referenced_media_file_missing"],
+        "ready": False,
+    }
+    artifact.generated_files_json = stale_generated_files
+    artifact.file_count = len(stale_generated_files)
+    artifact.total_bytes = sum(
+        max(0, int(item.get("size_bytes") or 0))
+        for item in stale_generated_files
+        if isinstance(item, dict)
+    )
+    artifact.context_json = stale_context
+    service.seo_migration_repository.save_artifact_version(artifact)
+    service.session.commit()
+
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes=None,
+        principal_id="principal-1",
+    )
+    summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
+    publish_readiness = summary.publish_readiness if isinstance(summary.publish_readiness, dict) else {}
+    publish_media = publish_readiness.get("artifact_media_readiness")
+    assert publish_readiness.get("ready") is True
+    assert "publish_artifact_media_invalid" not in list(publish_readiness.get("blocker_codes") or [])
+    assert isinstance(publish_media, dict)
+    assert publish_media.get("ready") is True
+    assert publish_media.get("materialized_assets_count") == 1
+    assert any(
+        "workflow provisioning stays unavailable" in str(item).lower()
+        for item in (publish_readiness.get("warnings") or [])
+    )
+
+    publish_result = service.publish_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        commit_message=None,
+        analytics_measurement_id=None,
+        principal_id="principal-1",
+    )
+    assert publish_result.result.get("artifact_media_repair_applied") is True
+    assert publisher.publish_calls
+    _, publish_files, _, _ = publisher.publish_calls[-1]
+    publish_paths = [item.path for item in publish_files]
+    image_path = next(path for path in publish_paths if path.startswith("assets/images/"))
+    html_publish = next(item for item in publish_files if item.path == "index.html")
+    assert image_path in str(html_publish.content or "")
+
+
 def test_generate_artifacts_rejection_emits_contract_diagnostics(db_session, caplog) -> None:
     output = SEOMigrationArtifactGenerationOutput(
         strategy_summary="Draft strategy",

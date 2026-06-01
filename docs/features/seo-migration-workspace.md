@@ -2651,6 +2651,7 @@ Required behavior:
 - selected usable media marked `included in draft` is materialized automatically during draft generation, even when the provider does not reference every selected image
 - provider context supplies canonical `artifact_path` values for selected media, and generated output is normalized to that path convention
 - generated image references like `assets/<filename>` are normalized to canonical `assets/images/<filename>` when they match selected media
+- approved artifacts with stale media diagnostics can be repaired deterministically during publish preparation (materialize selected media + normalize references) when bytes are still available; operator should not need manual filename mapping
 - generated HTML must reference deployable artifact paths, not internal media IDs (`upl-...`) and not unresolved `@image(...)` placeholders
 - publish payloads include both generated HTML/CSS and the materialized image files
 - artifact read payloads remain bounded and do not expose raw base64 media blobs directly in API JSON responses

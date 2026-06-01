@@ -3646,10 +3646,27 @@ class SEOMigrationService:
         )
         analytics_config = _normalize_analytics_config(workspace.analytics_config_json)
         analytics_insertion_mode = str(analytics_config.get("insertion_mode") or "publish_and_deploy")
+        artifact_media_publish_preparation = self._prepare_artifact_media_for_publish(
+            workspace=workspace,
+            artifact=artifact,
+            persist=(not dry_run),
+            principal_id=principal_id,
+        )
+        artifact_media_repair_applied = bool(artifact_media_publish_preparation.get("changed"))
+        artifact_media_repair_warnings = _normalize_string_list(
+            artifact_media_publish_preparation.get("warnings"),
+            max_items=12,
+            max_item_length=220,
+        )
         publish_files, analytics_injected_paths, publish_warnings = _prepare_publish_files(
             artifact=artifact,
             ga_measurement_id=effective_ga_measurement_id,
+            generated_files_override=_coerce_object_list(
+                artifact_media_publish_preparation.get("generated_files"),
+                max_items=160,
+            ),
         )
+        publish_warnings.extend(artifact_media_repair_warnings)
         if not publish_files:
             failure_message = "No publishable files were available for this artifact version."
             self._log_control_plane_action(
@@ -4439,6 +4456,17 @@ class SEOMigrationService:
             "analytics_applied": bool(analytics_injected_paths),
             "analytics_injected_paths": analytics_injected_paths,
             "warnings": publish_warnings,
+            "artifact_media_repair_applied": artifact_media_repair_applied,
+            "artifact_media_selected_assets_count": _coerce_non_negative_int(
+                _normalize_json_dict(artifact_media_publish_preparation.get("artifact_media_readiness")).get(
+                    "selected_assets_count"
+                )
+            ),
+            "artifact_media_materialized_assets_count": _coerce_non_negative_int(
+                _normalize_json_dict(artifact_media_publish_preparation.get("artifact_media_readiness")).get(
+                    "materialized_assets_count"
+                )
+            ),
             "expected_publish_url": expected_publish_url,
             "url_source": expected_publish_url_source,
             "url_source_detail": expected_publish_url_source_detail,
@@ -11511,144 +11539,32 @@ class SEOMigrationService:
             },
         )
         normalized_files = rewritten_files
+        media_artifact_diagnostics = _build_artifact_media_diagnostics_payload(
+            media_materialization=media_materialization,
+            media_reference_diagnostics=media_reference_diagnostics,
+        )
         selected_media_assets_count = max(0, int(media_materialization.get("selected_assets_count") or 0))
         materialized_media_assets_count = max(0, int(media_materialization.get("materialized_assets_count") or 0))
         materialized_manifest = _coerce_object_list(
             media_materialization.get("manifest"),
             max_items=_MIGRATION_ARTIFACT_MAX_MEDIA_FILES,
         )
-        selected_not_materialized = [
-            item
-            for item in materialized_manifest
-            if not bool(_normalize_json_dict(item).get("materialized"))
-        ]
-        selected_not_materialized_count = len(selected_not_materialized)
-        selected_not_materialized_payload: list[dict[str, object]] = []
-        selected_not_materialized_reason_counts: dict[str, int] = {}
-        for entry in selected_not_materialized[:_MIGRATION_ARTIFACT_MAX_MEDIA_FILES]:
-            payload = _normalize_json_dict(entry)
-            reason_code = (
-                _normalize_string(payload.get("reason_code"), max_length=80)
-                or _MIGRATION_ARTIFACT_MEDIA_REASON_BYTES_MISSING
-            )
-            selected_not_materialized_reason_counts[reason_code] = (
-                selected_not_materialized_reason_counts.get(reason_code, 0) + 1
-            )
-            selected_not_materialized_payload.append(
-                {
-                    "asset_id": _normalize_string(payload.get("asset_id"), max_length=80),
-                    "display_filename": _normalize_string(payload.get("original_filename"), max_length=160),
-                    "output_relative_path": _normalize_generated_path(payload.get("output_relative_path")),
-                    "reason_code": reason_code,
-                }
-            )
-        media_blocker_codes = _normalize_string_list(
-            _normalize_json_dict(media_reference_diagnostics).get("blocker_codes"),
+        deduped_media_blockers = _normalize_string_list(
+            media_artifact_diagnostics.get("blocker_codes"),
             max_items=12,
             max_item_length=80,
         )
-        if selected_not_materialized_count > 0:
-            media_blocker_codes.append("selected_media_not_materialized")
-        # Maintain deterministic order for downstream diagnostics/UI.
-        seen_media_blockers: set[str] = set()
-        deduped_media_blockers: list[str] = []
-        for code in media_blocker_codes:
-            key = code.lower()
-            if key in seen_media_blockers:
-                continue
-            seen_media_blockers.add(key)
-            deduped_media_blockers.append(code)
-        referenced_media_paths = _normalize_string_list(
-            _normalize_json_dict(media_reference_diagnostics).get("referenced_media_paths"),
-            max_items=80,
-            max_item_length=240,
+        selected_not_materialized_count = max(
+            0,
+            int(media_artifact_diagnostics.get("selected_not_materialized_count") or 0),
         )
-        materialized_media_paths = _normalize_string_list(
-            [
-                _normalize_json_dict(item).get("output_relative_path")
-                for item in materialized_manifest
-                if bool(_normalize_json_dict(item).get("materialized"))
-            ],
-            max_items=80,
-            max_item_length=240,
+        unreferenced_materialized_media_paths_count = max(
+            0,
+            int(media_artifact_diagnostics.get("unreferenced_materialized_media_paths_count") or 0),
         )
-        referenced_media_paths_lookup = {item.lower() for item in referenced_media_paths}
-        unreferenced_materialized_media_paths = [
-            path for path in materialized_media_paths if path.lower() not in referenced_media_paths_lookup
-        ]
-        media_artifact_diagnostics = {
-            "selected_assets_count": selected_media_assets_count,
-            "materialized_assets_count": materialized_media_assets_count,
-            "selected_not_materialized_count": selected_not_materialized_count,
-            "selected_not_materialized_asset_ids": [
-                _normalize_string(_normalize_json_dict(item).get("asset_id"), max_length=80)
-                for item in selected_not_materialized[:_MIGRATION_ARTIFACT_MAX_MEDIA_FILES]
-                if _normalize_string(_normalize_json_dict(item).get("asset_id"), max_length=80)
-            ],
-            "selected_not_materialized": selected_not_materialized_payload,
-            "selected_not_materialized_reason_counts": selected_not_materialized_reason_counts,
-            "referenced_media_paths_count": max(
-                0,
-                int(_normalize_json_dict(media_reference_diagnostics).get("referenced_media_paths_count") or 0),
-            ),
-            "missing_referenced_media_paths_count": max(
-                0,
-                int(_normalize_json_dict(media_reference_diagnostics).get("missing_referenced_media_paths_count") or 0),
-            ),
-            "missing_referenced_media_paths": _normalize_string_list(
-                _normalize_json_dict(media_reference_diagnostics).get("missing_referenced_media_paths"),
-                max_items=80,
-                max_item_length=240,
-            ),
-            "unresolved_generated_media_paths_count": max(
-                0,
-                int(_normalize_json_dict(media_reference_diagnostics).get("unresolved_generated_media_paths_count") or 0),
-            ),
-            "unresolved_generated_media_paths": _normalize_string_list(
-                _normalize_json_dict(media_reference_diagnostics).get("unresolved_generated_media_paths"),
-                max_items=80,
-                max_item_length=240,
-            ),
-            "unresolved_internal_media_ids_count": max(
-                0,
-                int(_normalize_json_dict(media_reference_diagnostics).get("unresolved_internal_media_ids_count") or 0),
-            ),
-            "unresolved_internal_media_ids": _normalize_string_list(
-                _normalize_json_dict(media_reference_diagnostics).get("unresolved_internal_media_ids"),
-                max_items=80,
-                max_item_length=120,
-            ),
-            "unresolved_image_token_references_count": max(
-                0,
-                int(
-                    _normalize_json_dict(media_reference_diagnostics).get(
-                        "unresolved_image_token_references_count"
-                    )
-                    or 0
-                ),
-            ),
-            "unresolved_image_token_references": _normalize_string_list(
-                _normalize_json_dict(media_reference_diagnostics).get("unresolved_image_token_references"),
-                max_items=80,
-                max_item_length=120,
-            ),
-            "invalid_media_references_count": max(
-                0,
-                int(_normalize_json_dict(media_reference_diagnostics).get("invalid_media_references_count") or 0),
-            ),
-            "invalid_media_references": _normalize_string_list(
-                _normalize_json_dict(media_reference_diagnostics).get("invalid_media_references"),
-                max_items=80,
-                max_item_length=240,
-            ),
-            "unreferenced_materialized_media_paths_count": len(unreferenced_materialized_media_paths),
-            "unreferenced_materialized_media_paths": unreferenced_materialized_media_paths[:80],
-            "blocker_codes": deduped_media_blockers,
-            "ready": len(deduped_media_blockers) == 0,
-        }
-        if unreferenced_materialized_media_paths:
+        if unreferenced_materialized_media_paths_count > 0:
             parse_warnings.append(
-                f"{len(unreferenced_materialized_media_paths)} materialized image asset(s) were not referenced by generated pages."
+                f"{unreferenced_materialized_media_paths_count} materialized image asset(s) were not referenced by generated pages."
             )
 
         artifact_version_number = self.seo_migration_repository.next_artifact_version_number(workspace.id)
@@ -12210,7 +12126,11 @@ class SEOMigrationService:
                 0,
                 int(preflight_blocked_setting_cap),
             )
-        latest_artifact_media_readiness = self._build_artifact_media_readiness(latest_artifact)
+        latest_artifact_media_readiness = self._resolve_effective_artifact_media_readiness(
+            workspace=workspace,
+            artifact=latest_artifact,
+            include_repair_preview=True,
+        )
         unresolved_media_reference_count = (
             max(0, int(latest_artifact_media_readiness.get("unresolved_internal_media_ids_count") or 0))
             + max(0, int(latest_artifact_media_readiness.get("unresolved_image_token_references_count") or 0))
@@ -14611,6 +14531,8 @@ class SEOMigrationService:
             for item in selected_assets
         ]
         return {
+            "business_id": resolved_business_id,
+            "site_id": resolved_site_id,
             "source_discovered": source_discovered_read,
             "operator_uploaded": operator_uploaded_read,
             "all_assets": all_assets,
@@ -18516,30 +18438,7 @@ class SEOMigrationService:
     @staticmethod
     def _build_artifact_media_readiness(artifact: SEOMigrationArtifactVersion | None) -> dict[str, object]:
         if artifact is None:
-            return {
-                "ready": True,
-                "blocker_codes": [],
-                "reasons": [],
-                "selected_assets_count": 0,
-                "materialized_assets_count": 0,
-                "selected_not_materialized_count": 0,
-                "selected_not_materialized_asset_ids": [],
-                "selected_not_materialized": [],
-                "selected_not_materialized_reason_counts": {},
-                "referenced_media_paths_count": 0,
-                "unreferenced_materialized_media_paths_count": 0,
-                "unreferenced_materialized_media_paths": [],
-                "missing_referenced_media_paths_count": 0,
-                "missing_referenced_media_paths": [],
-                "unresolved_generated_media_paths_count": 0,
-                "unresolved_generated_media_paths": [],
-                "unresolved_internal_media_ids_count": 0,
-                "unresolved_internal_media_ids": [],
-                "unresolved_image_token_references_count": 0,
-                "unresolved_image_token_references": [],
-                "invalid_media_references_count": 0,
-                "invalid_media_references": [],
-            }
+            return _build_artifact_media_readiness_from_payload(diagnostics_payload={}, manifest_payload={})
 
         context_payload = _normalize_json_dict(artifact.context_json)
         diagnostics_payload = _normalize_json_dict(context_payload.get("artifact_media_diagnostics"))
@@ -18551,140 +18450,10 @@ class SEOMigrationService:
                 _coerce_object_list(generated_files, max_items=120)
             )
         manifest_payload = _normalize_json_dict(context_payload.get("artifact_media_manifest"))
-        manifest_entries = _coerce_object_list(
-            manifest_payload.get("manifest"),
-            max_items=_MIGRATION_ARTIFACT_MAX_MEDIA_FILES,
+        return _build_artifact_media_readiness_from_payload(
+            diagnostics_payload=diagnostics_payload,
+            manifest_payload=manifest_payload,
         )
-        selected_assets_count = max(
-            0,
-            int(
-                manifest_payload.get("selected_assets_count")
-                or diagnostics_payload.get("selected_assets_count")
-                or len(manifest_entries)
-            ),
-        )
-        materialized_assets_count = max(
-            0,
-            int(
-                manifest_payload.get("materialized_assets_count")
-                or diagnostics_payload.get("materialized_assets_count")
-                or len([item for item in manifest_entries if bool(_normalize_json_dict(item).get("materialized"))])
-            ),
-        )
-        selected_not_materialized_asset_ids = _normalize_string_list(
-            diagnostics_payload.get("selected_not_materialized_asset_ids"),
-            max_items=_MIGRATION_ARTIFACT_MAX_MEDIA_FILES,
-            max_item_length=80,
-        )
-        selected_not_materialized_count = max(
-            0,
-            int(diagnostics_payload.get("selected_not_materialized_count") or len(selected_not_materialized_asset_ids)),
-        )
-        blocker_codes = _normalize_string_list(
-            diagnostics_payload.get("blocker_codes"),
-            max_items=12,
-            max_item_length=80,
-        )
-        reasons: list[str] = []
-        if selected_not_materialized_count > 0:
-            reasons.append(f"{selected_not_materialized_count} selected image(s) were not materialized into artifacts.")
-            if "selected_media_not_materialized" not in {code.lower() for code in blocker_codes}:
-                blocker_codes.append("selected_media_not_materialized")
-        unresolved_internal_count = max(
-            0,
-            int(diagnostics_payload.get("unresolved_internal_media_ids_count") or 0),
-        )
-        unresolved_token_count = max(
-            0,
-            int(diagnostics_payload.get("unresolved_image_token_references_count") or 0),
-        )
-        missing_referenced_count = max(
-            0,
-            int(diagnostics_payload.get("missing_referenced_media_paths_count") or 0),
-        )
-        unresolved_generated_count = max(
-            0,
-            int(diagnostics_payload.get("unresolved_generated_media_paths_count") or 0),
-        )
-        unreferenced_materialized_count = max(
-            0,
-            int(diagnostics_payload.get("unreferenced_materialized_media_paths_count") or 0),
-        )
-        invalid_reference_count = max(
-            0,
-            int(diagnostics_payload.get("invalid_media_references_count") or 0),
-        )
-        if unresolved_internal_count > 0:
-            reasons.append("Generated HTML still references internal media IDs.")
-        if unresolved_token_count > 0:
-            reasons.append("Generated HTML still contains unresolved @image(...) references.")
-        if missing_referenced_count > 0 or unresolved_generated_count > 0:
-            reasons.append("Generated HTML references media files that are missing from artifact output.")
-        if invalid_reference_count > 0:
-            reasons.append("Generated HTML includes non-deployable media references.")
-
-        seen_codes: set[str] = set()
-        normalized_blocker_codes: list[str] = []
-        for code in blocker_codes:
-            key = code.lower()
-            if key in seen_codes:
-                continue
-            seen_codes.add(key)
-            normalized_blocker_codes.append(code)
-
-        return {
-            "ready": len(normalized_blocker_codes) == 0,
-            "blocker_codes": normalized_blocker_codes,
-            "reasons": reasons[:12],
-            "selected_assets_count": selected_assets_count,
-            "materialized_assets_count": materialized_assets_count,
-            "selected_not_materialized_count": selected_not_materialized_count,
-            "selected_not_materialized_asset_ids": selected_not_materialized_asset_ids,
-            "selected_not_materialized": _coerce_object_list(
-                diagnostics_payload.get("selected_not_materialized"),
-                max_items=_MIGRATION_ARTIFACT_MAX_MEDIA_FILES,
-            ),
-            "selected_not_materialized_reason_counts": _normalize_json_dict(
-                diagnostics_payload.get("selected_not_materialized_reason_counts")
-            ),
-            "referenced_media_paths_count": max(0, int(diagnostics_payload.get("referenced_media_paths_count") or 0)),
-            "unreferenced_materialized_media_paths_count": unreferenced_materialized_count,
-            "unreferenced_materialized_media_paths": _normalize_string_list(
-                diagnostics_payload.get("unreferenced_materialized_media_paths"),
-                max_items=80,
-                max_item_length=240,
-            ),
-            "missing_referenced_media_paths_count": missing_referenced_count,
-            "missing_referenced_media_paths": _normalize_string_list(
-                diagnostics_payload.get("missing_referenced_media_paths"),
-                max_items=80,
-                max_item_length=240,
-            ),
-            "unresolved_generated_media_paths_count": unresolved_generated_count,
-            "unresolved_generated_media_paths": _normalize_string_list(
-                diagnostics_payload.get("unresolved_generated_media_paths"),
-                max_items=80,
-                max_item_length=240,
-            ),
-            "unresolved_internal_media_ids_count": unresolved_internal_count,
-            "unresolved_internal_media_ids": _normalize_string_list(
-                diagnostics_payload.get("unresolved_internal_media_ids"),
-                max_items=80,
-                max_item_length=120,
-            ),
-            "unresolved_image_token_references_count": unresolved_token_count,
-            "unresolved_image_token_references": _normalize_string_list(
-                diagnostics_payload.get("unresolved_image_token_references"),
-                max_items=80,
-                max_item_length=120,
-            ),
-            "invalid_media_references_count": invalid_reference_count,
-            "invalid_media_references": _normalize_string_list(
-                diagnostics_payload.get("invalid_media_references"),
-                max_items=80,
-                max_item_length=240,
-            ),
-        }
 
     def _build_publish_readiness(
         self,
@@ -18697,7 +18466,11 @@ class SEOMigrationService:
         blocker_codes: list[str] = []
         warnings: list[str] = []
         warning_codes: list[str] = []
-        artifact_media_readiness = self._build_artifact_media_readiness(artifact)
+        artifact_media_readiness = self._resolve_effective_artifact_media_readiness(
+            workspace=workspace,
+            artifact=artifact,
+            include_repair_preview=True,
+        )
         target_summary: dict[str, object] = {}
         target_valid = False
         repository_exists: bool | None = None
@@ -20672,6 +20445,8 @@ class SEOMigrationService:
             if bool(item.get("selected_for_draft")) and _is_media_asset_usable_for_draft(item)
         ]
         selected_assets = selected_assets[:_MIGRATION_ARTIFACT_MAX_MEDIA_FILES]
+        workspace_business_id = _normalize_string(media_assets_payload.get("business_id"), max_length=64)
+        workspace_site_id = _normalize_string(media_assets_payload.get("site_id"), max_length=64)
         warnings: list[str] = []
         manifest_entries: list[dict[str, object]] = []
         materialized_files: list[dict[str, object]] = []
@@ -20710,18 +20485,14 @@ class SEOMigrationService:
                 "materialized": False,
                 "reason_code": None,
             }
-            storage_key = _normalize_string(item.get("storage_key"), max_length=240)
-            if storage_key is None:
-                manifest_entry["reason_code"] = _MIGRATION_ARTIFACT_MEDIA_REASON_BYTES_MISSING
-                manifest_entries.append(manifest_entry)
-                continue
-            try:
-                media_bytes = _read_workspace_media_file(
-                    storage_root=self.media_storage_root,
-                    storage_key=storage_key,
-                )
-            except (SEOMigrationValidationError, OSError):
-                manifest_entry["reason_code"] = _MIGRATION_ARTIFACT_MEDIA_REASON_STORAGE_READ_FAILED
+            media_bytes, read_reason_code = _read_workspace_media_payload_for_materialization(
+                media_asset=item,
+                storage_root=self.media_storage_root,
+                business_id=workspace_business_id,
+                site_id=workspace_site_id,
+            )
+            if media_bytes is None:
+                manifest_entry["reason_code"] = read_reason_code or _MIGRATION_ARTIFACT_MEDIA_REASON_BYTES_MISSING
                 manifest_entries.append(manifest_entry)
                 continue
             if not media_bytes:
@@ -20906,6 +20677,173 @@ class SEOMigrationService:
             "blocker_codes": blocker_codes,
         }
         return rewritten, diagnostics
+
+    def _prepare_artifact_media_for_publish(
+        self,
+        *,
+        workspace: SEOMigrationWorkspace,
+        artifact: SEOMigrationArtifactVersion,
+        persist: bool,
+        principal_id: str | None,
+    ) -> dict[str, object]:
+        existing_generated_files = _coerce_object_list(
+            artifact.generated_files_json if isinstance(artifact.generated_files_json, list) else [],
+            max_items=160,
+        )
+        workspace_media_assets_payload = self._collect_workspace_media_assets(
+            workspace=workspace,
+            business_id=workspace.business_id,
+            site_id=workspace.site_id,
+        )
+        media_materialization = self._materialize_selected_media_assets_for_artifact(
+            media_assets_payload=workspace_media_assets_payload,
+        )
+        materialized_files = _coerce_object_list(
+            media_materialization.get("materialized_files"),
+            max_items=_MIGRATION_ARTIFACT_MAX_MEDIA_FILES,
+        )
+        merged_files_by_path: dict[str, dict[str, object]] = {}
+        merged_order: list[str] = []
+        for raw_item in existing_generated_files:
+            item = _normalize_json_dict(raw_item)
+            path = _normalize_generated_path(item.get("path"))
+            if path is None:
+                continue
+            normalized_item = dict(item)
+            normalized_item["path"] = path
+            merged_files_by_path[path] = normalized_item
+            merged_order.append(path)
+        for raw_item in materialized_files:
+            item = _normalize_json_dict(raw_item)
+            path = _normalize_generated_path(item.get("path"))
+            if path is None:
+                continue
+            normalized_item = dict(item)
+            normalized_item["path"] = path
+            if path not in merged_files_by_path:
+                merged_order.append(path)
+            merged_files_by_path[path] = normalized_item
+        merged_files: list[dict[str, object]] = []
+        seen_paths: set[str] = set()
+        for path in merged_order:
+            if path in seen_paths:
+                continue
+            seen_paths.add(path)
+            payload = merged_files_by_path.get(path)
+            if payload is None:
+                continue
+            merged_files.append(payload)
+
+        rewritten_files, media_reference_diagnostics = self._rewrite_generated_html_media_references(
+            generated_files=merged_files,
+            asset_path_by_id={
+                str(key): str(value)
+                for key, value in _normalize_json_dict(media_materialization.get("asset_path_by_id")).items()
+                if _normalize_string(key, max_length=120) and _normalize_string(value, max_length=240)
+            },
+            asset_aliases={
+                str(key): str(value)
+                for key, value in _normalize_json_dict(media_materialization.get("asset_aliases")).items()
+                if _normalize_string(key, max_length=120) and _normalize_string(value, max_length=240)
+            },
+        )
+        media_artifact_diagnostics = _build_artifact_media_diagnostics_payload(
+            media_materialization=media_materialization,
+            media_reference_diagnostics=media_reference_diagnostics,
+        )
+        media_manifest_payload = {
+            "selected_assets_count": max(0, int(media_materialization.get("selected_assets_count") or 0)),
+            "materialized_assets_count": max(0, int(media_materialization.get("materialized_assets_count") or 0)),
+            "manifest": _coerce_object_list(
+                media_materialization.get("manifest"),
+                max_items=_MIGRATION_ARTIFACT_MAX_MEDIA_FILES,
+            ),
+        }
+        effective_readiness = _build_artifact_media_readiness_from_payload(
+            diagnostics_payload=_normalize_json_dict(media_artifact_diagnostics),
+            manifest_payload=_normalize_json_dict(media_manifest_payload),
+        )
+        existing_context_json = _normalize_json_dict(artifact.context_json)
+        existing_manifest = _normalize_json_dict(existing_context_json.get("artifact_media_manifest"))
+        existing_diagnostics = _normalize_json_dict(existing_context_json.get("artifact_media_diagnostics"))
+        changed = (
+            rewritten_files != existing_generated_files
+            or media_manifest_payload != existing_manifest
+            or media_artifact_diagnostics != existing_diagnostics
+        )
+        if persist and changed:
+            updated_context_json = dict(existing_context_json)
+            updated_context_json["artifact_media_manifest"] = media_manifest_payload
+            updated_context_json["artifact_media_diagnostics"] = media_artifact_diagnostics
+            updated_context_json["artifact_media_repair"] = {
+                "status": "applied",
+                "applied_at": utc_now().isoformat(),
+                "selected_assets_count": media_manifest_payload["selected_assets_count"],
+                "materialized_assets_count": media_manifest_payload["materialized_assets_count"],
+                "referenced_media_paths_count": max(
+                    0,
+                    int(media_artifact_diagnostics.get("referenced_media_paths_count") or 0),
+                ),
+                "ready_for_publish": bool(effective_readiness.get("ready")),
+                "principal_id": _normalize_string(principal_id, max_length=120),
+            }
+            artifact.context_json = updated_context_json
+            artifact.generated_files_json = rewritten_files
+            artifact.file_count = len(rewritten_files)
+            artifact.total_bytes = _estimate_generated_files_total_bytes(rewritten_files)
+        warnings = _normalize_string_list(
+            media_materialization.get("warnings"),
+            max_items=12,
+            max_item_length=220,
+        )
+        return {
+            "changed": changed,
+            "warnings": warnings,
+            "generated_files": rewritten_files,
+            "artifact_media_manifest": media_manifest_payload,
+            "artifact_media_diagnostics": media_artifact_diagnostics,
+            "artifact_media_readiness": effective_readiness,
+        }
+
+    def _resolve_effective_artifact_media_readiness(
+        self,
+        *,
+        workspace: SEOMigrationWorkspace,
+        artifact: SEOMigrationArtifactVersion | None,
+        include_repair_preview: bool,
+    ) -> dict[str, object]:
+        baseline_readiness = self._build_artifact_media_readiness(artifact)
+        if artifact is None or not include_repair_preview:
+            return baseline_readiness
+        baseline_blockers = {
+            str(item).strip().lower() for item in (baseline_readiness.get("blocker_codes") or []) if str(item).strip()
+        }
+        if not baseline_blockers.intersection(
+            {
+                "selected_media_not_materialized",
+                "artifact_referenced_media_file_missing",
+                "artifact_internal_media_ids_unresolved",
+                "artifact_image_tokens_unresolved",
+            }
+        ):
+            return baseline_readiness
+        preview = self._prepare_artifact_media_for_publish(
+            workspace=workspace,
+            artifact=artifact,
+            persist=False,
+            principal_id=None,
+        )
+        preview_readiness = _normalize_json_dict(preview.get("artifact_media_readiness"))
+        if not preview_readiness:
+            return baseline_readiness
+        preview_blockers = {
+            str(item).strip().lower() for item in (preview_readiness.get("blocker_codes") or []) if str(item).strip()
+        }
+        if bool(preview_readiness.get("ready")) and not bool(baseline_readiness.get("ready")):
+            return preview_readiness
+        if len(preview_blockers) < len(baseline_blockers):
+            return preview_readiness
+        return baseline_readiness
 
     def _salvage_provider_error_output(
         self,
@@ -21161,6 +21099,28 @@ def _derive_safe_artifact_media_filename(
     return candidate
 
 
+def _media_reference_token_variants(token: str | None) -> set[str]:
+    normalized = _normalize_media_reference_token(token)
+    if normalized is None:
+        return set()
+    variants: set[str] = {normalized}
+    swap_hyphen = normalized.replace("-", "_")
+    swap_underscore = normalized.replace("_", "-")
+    variants.add(swap_hyphen)
+    variants.add(swap_underscore)
+    if "/" in normalized:
+        tail = normalized.rsplit("/", 1)[-1]
+        variants.add(tail)
+        variants.add(tail.replace("-", "_"))
+        variants.add(tail.replace("_", "-"))
+    stem = normalized.rsplit(".", 1)[0]
+    if stem:
+        variants.add(stem)
+        variants.add(stem.replace("-", "_"))
+        variants.add(stem.replace("_", "-"))
+    return {item for item in variants if item}
+
+
 def _derive_media_reference_aliases(
     *,
     asset_id: str,
@@ -21169,12 +21129,9 @@ def _derive_media_reference_aliases(
     output_relative_path: str | None = None,
 ) -> set[str]:
     aliases: set[str] = set()
-    asset_token = _normalize_media_reference_token(asset_id)
-    if asset_token:
-        aliases.add(asset_token)
+    aliases.update(_media_reference_token_variants(asset_id))
     for candidate in (original_filename, safe_filename):
-        normalized = _normalize_media_reference_token(candidate)
-        if normalized:
+        for normalized in _media_reference_token_variants(candidate):
             aliases.add(normalized)
             stem = normalized.rsplit(".", 1)[0]
             if stem:
@@ -21185,14 +21142,16 @@ def _derive_media_reference_aliases(
             aliases.add(f"{_MIGRATION_ARTIFACT_MEDIA_DIR}/{normalized}")
     normalized_output_path = _normalize_media_reference_token(output_relative_path)
     if normalized_output_path:
-        aliases.add(normalized_output_path)
+        aliases.update(_media_reference_token_variants(normalized_output_path))
         output_stem = normalized_output_path.rsplit(".", 1)[0]
         if output_stem:
-            aliases.add(output_stem)
+            aliases.update(_media_reference_token_variants(output_stem))
         if normalized_output_path.startswith(f"{_MIGRATION_ARTIFACT_MEDIA_DIR}/"):
             asset_tail = normalized_output_path.rsplit("/", 1)[-1]
             if asset_tail:
                 aliases.add(f"assets/{asset_tail}")
+                aliases.add(f"assets/{asset_tail.replace('-', '_')}")
+                aliases.add(f"assets/{asset_tail.replace('_', '-')}")
     return aliases
 
 
@@ -21371,6 +21330,273 @@ def _derive_artifact_media_reference_diagnostics_from_generated_files(
     }
 
 
+def _build_artifact_media_diagnostics_payload(
+    *,
+    media_materialization: dict[str, object],
+    media_reference_diagnostics: dict[str, object],
+) -> dict[str, object]:
+    manifest_entries = _coerce_object_list(
+        media_materialization.get("manifest"),
+        max_items=_MIGRATION_ARTIFACT_MAX_MEDIA_FILES,
+    )
+    selected_assets_count = max(0, int(media_materialization.get("selected_assets_count") or len(manifest_entries)))
+    materialized_assets_count = max(0, int(media_materialization.get("materialized_assets_count") or 0))
+    selected_not_materialized: list[dict[str, object]] = []
+    selected_not_materialized_asset_ids: list[str] = []
+    selected_not_materialized_reason_counts: dict[str, int] = {}
+    materialized_paths: set[str] = set()
+    for raw_entry in manifest_entries:
+        entry = _normalize_json_dict(raw_entry)
+        asset_id = _normalize_string(entry.get("asset_id"), max_length=80)
+        reason_code = _normalize_string(entry.get("reason_code"), max_length=80) or _MIGRATION_ARTIFACT_MEDIA_REASON_BYTES_MISSING
+        output_relative_path = _normalize_generated_path(entry.get("output_relative_path"))
+        if bool(entry.get("materialized")):
+            if output_relative_path:
+                materialized_paths.add(output_relative_path)
+            continue
+        if asset_id:
+            selected_not_materialized_asset_ids.append(asset_id)
+        selected_not_materialized_reason_counts[reason_code] = selected_not_materialized_reason_counts.get(reason_code, 0) + 1
+        selected_not_materialized.append(
+            {
+                "asset_id": asset_id,
+                "original_filename": _normalize_string(entry.get("original_filename"), max_length=160),
+                "safe_output_filename": _normalize_string(entry.get("safe_output_filename"), max_length=160),
+                "output_relative_path": output_relative_path,
+                "reason_code": reason_code,
+                "provenance": _normalize_string(entry.get("provenance"), max_length=40),
+            }
+        )
+
+    referenced_media_paths = set(
+        _normalize_string_list(
+            media_reference_diagnostics.get("referenced_media_paths"),
+            max_items=160,
+            max_item_length=240,
+        )
+    )
+    unreferenced_materialized_media_paths = sorted(path for path in materialized_paths if path not in referenced_media_paths)
+
+    blocker_codes = _normalize_string_list(
+        media_reference_diagnostics.get("blocker_codes"),
+        max_items=12,
+        max_item_length=80,
+    )
+    if selected_not_materialized and "selected_media_not_materialized" not in {item.lower() for item in blocker_codes}:
+        blocker_codes.append("selected_media_not_materialized")
+
+    seen_blockers: set[str] = set()
+    normalized_blockers: list[str] = []
+    for item in blocker_codes:
+        key = item.lower()
+        if key in seen_blockers:
+            continue
+        seen_blockers.add(key)
+        normalized_blockers.append(item)
+
+    return {
+        "selected_assets_count": selected_assets_count,
+        "materialized_assets_count": materialized_assets_count,
+        "selected_not_materialized_count": len(selected_not_materialized),
+        "selected_not_materialized_asset_ids": selected_not_materialized_asset_ids[:_MIGRATION_ARTIFACT_MAX_MEDIA_FILES],
+        "selected_not_materialized_reason_counts": selected_not_materialized_reason_counts,
+        "selected_not_materialized": selected_not_materialized[:_MIGRATION_ARTIFACT_MAX_MEDIA_FILES],
+        "referenced_media_paths_count": max(0, int(media_reference_diagnostics.get("referenced_media_paths_count") or 0)),
+        "referenced_media_paths": _normalize_string_list(
+            media_reference_diagnostics.get("referenced_media_paths"),
+            max_items=160,
+            max_item_length=240,
+        ),
+        "unreferenced_materialized_media_paths_count": len(unreferenced_materialized_media_paths),
+        "unreferenced_materialized_media_paths": unreferenced_materialized_media_paths[:160],
+        "missing_referenced_media_paths_count": max(
+            0,
+            int(media_reference_diagnostics.get("missing_referenced_media_paths_count") or 0),
+        ),
+        "missing_referenced_media_paths": _normalize_string_list(
+            media_reference_diagnostics.get("missing_referenced_media_paths"),
+            max_items=160,
+            max_item_length=240,
+        ),
+        "unresolved_generated_media_paths_count": max(
+            0,
+            int(media_reference_diagnostics.get("unresolved_generated_media_paths_count") or 0),
+        ),
+        "unresolved_generated_media_paths": _normalize_string_list(
+            media_reference_diagnostics.get("unresolved_generated_media_paths"),
+            max_items=160,
+            max_item_length=240,
+        ),
+        "unresolved_internal_media_ids_count": max(
+            0,
+            int(media_reference_diagnostics.get("unresolved_internal_media_ids_count") or 0),
+        ),
+        "unresolved_internal_media_ids": _normalize_string_list(
+            media_reference_diagnostics.get("unresolved_internal_media_ids"),
+            max_items=160,
+            max_item_length=120,
+        ),
+        "unresolved_image_token_references_count": max(
+            0,
+            int(media_reference_diagnostics.get("unresolved_image_token_references_count") or 0),
+        ),
+        "unresolved_image_token_references": _normalize_string_list(
+            media_reference_diagnostics.get("unresolved_image_token_references"),
+            max_items=160,
+            max_item_length=120,
+        ),
+        "invalid_media_references_count": max(0, int(media_reference_diagnostics.get("invalid_media_references_count") or 0)),
+        "invalid_media_references": _normalize_string_list(
+            media_reference_diagnostics.get("invalid_media_references"),
+            max_items=160,
+            max_item_length=240,
+        ),
+        "blocker_codes": normalized_blockers,
+        "ready": len(normalized_blockers) == 0,
+    }
+
+
+def _build_artifact_media_readiness_from_payload(
+    *,
+    diagnostics_payload: dict[str, object],
+    manifest_payload: dict[str, object],
+) -> dict[str, object]:
+    manifest_entries = _coerce_object_list(
+        manifest_payload.get("manifest"),
+        max_items=_MIGRATION_ARTIFACT_MAX_MEDIA_FILES,
+    )
+    selected_assets_count = max(
+        0,
+        int(
+            manifest_payload.get("selected_assets_count")
+            or diagnostics_payload.get("selected_assets_count")
+            or len(manifest_entries)
+        ),
+    )
+    materialized_assets_count = max(
+        0,
+        int(
+            manifest_payload.get("materialized_assets_count")
+            or diagnostics_payload.get("materialized_assets_count")
+            or len([item for item in manifest_entries if bool(_normalize_json_dict(item).get("materialized"))])
+        ),
+    )
+    selected_not_materialized_asset_ids = _normalize_string_list(
+        diagnostics_payload.get("selected_not_materialized_asset_ids"),
+        max_items=_MIGRATION_ARTIFACT_MAX_MEDIA_FILES,
+        max_item_length=80,
+    )
+    selected_not_materialized_count = max(
+        0,
+        int(diagnostics_payload.get("selected_not_materialized_count") or len(selected_not_materialized_asset_ids)),
+    )
+    blocker_codes = _normalize_string_list(
+        diagnostics_payload.get("blocker_codes"),
+        max_items=12,
+        max_item_length=80,
+    )
+    reasons: list[str] = []
+    if selected_not_materialized_count > 0:
+        reasons.append(f"{selected_not_materialized_count} selected image(s) were not materialized into artifacts.")
+        if "selected_media_not_materialized" not in {code.lower() for code in blocker_codes}:
+            blocker_codes.append("selected_media_not_materialized")
+    unresolved_internal_count = max(
+        0,
+        int(diagnostics_payload.get("unresolved_internal_media_ids_count") or 0),
+    )
+    unresolved_token_count = max(
+        0,
+        int(diagnostics_payload.get("unresolved_image_token_references_count") or 0),
+    )
+    missing_referenced_count = max(
+        0,
+        int(diagnostics_payload.get("missing_referenced_media_paths_count") or 0),
+    )
+    unresolved_generated_count = max(
+        0,
+        int(diagnostics_payload.get("unresolved_generated_media_paths_count") or 0),
+    )
+    unreferenced_materialized_count = max(
+        0,
+        int(diagnostics_payload.get("unreferenced_materialized_media_paths_count") or 0),
+    )
+    invalid_reference_count = max(
+        0,
+        int(diagnostics_payload.get("invalid_media_references_count") or 0),
+    )
+    if unresolved_internal_count > 0:
+        reasons.append("Generated HTML still references internal media IDs.")
+    if unresolved_token_count > 0:
+        reasons.append("Generated HTML still contains unresolved @image(...) references.")
+    if missing_referenced_count > 0 or unresolved_generated_count > 0:
+        reasons.append("Generated HTML references media files that are missing from artifact output.")
+    if invalid_reference_count > 0:
+        reasons.append("Generated HTML includes non-deployable media references.")
+
+    seen_codes: set[str] = set()
+    normalized_blocker_codes: list[str] = []
+    for code in blocker_codes:
+        key = code.lower()
+        if key in seen_codes:
+            continue
+        seen_codes.add(key)
+        normalized_blocker_codes.append(code)
+
+    return {
+        "ready": len(normalized_blocker_codes) == 0,
+        "blocker_codes": normalized_blocker_codes,
+        "reasons": reasons[:12],
+        "selected_assets_count": selected_assets_count,
+        "materialized_assets_count": materialized_assets_count,
+        "selected_not_materialized_count": selected_not_materialized_count,
+        "selected_not_materialized_asset_ids": selected_not_materialized_asset_ids,
+        "selected_not_materialized": _coerce_object_list(
+            diagnostics_payload.get("selected_not_materialized"),
+            max_items=_MIGRATION_ARTIFACT_MAX_MEDIA_FILES,
+        ),
+        "selected_not_materialized_reason_counts": _normalize_json_dict(
+            diagnostics_payload.get("selected_not_materialized_reason_counts")
+        ),
+        "referenced_media_paths_count": max(0, int(diagnostics_payload.get("referenced_media_paths_count") or 0)),
+        "unreferenced_materialized_media_paths_count": unreferenced_materialized_count,
+        "unreferenced_materialized_media_paths": _normalize_string_list(
+            diagnostics_payload.get("unreferenced_materialized_media_paths"),
+            max_items=80,
+            max_item_length=240,
+        ),
+        "missing_referenced_media_paths_count": missing_referenced_count,
+        "missing_referenced_media_paths": _normalize_string_list(
+            diagnostics_payload.get("missing_referenced_media_paths"),
+            max_items=80,
+            max_item_length=240,
+        ),
+        "unresolved_generated_media_paths_count": unresolved_generated_count,
+        "unresolved_generated_media_paths": _normalize_string_list(
+            diagnostics_payload.get("unresolved_generated_media_paths"),
+            max_items=80,
+            max_item_length=240,
+        ),
+        "unresolved_internal_media_ids_count": unresolved_internal_count,
+        "unresolved_internal_media_ids": _normalize_string_list(
+            diagnostics_payload.get("unresolved_internal_media_ids"),
+            max_items=80,
+            max_item_length=120,
+        ),
+        "unresolved_image_token_references_count": unresolved_token_count,
+        "unresolved_image_token_references": _normalize_string_list(
+            diagnostics_payload.get("unresolved_image_token_references"),
+            max_items=80,
+            max_item_length=120,
+        ),
+        "invalid_media_references_count": invalid_reference_count,
+        "invalid_media_references": _normalize_string_list(
+            diagnostics_payload.get("invalid_media_references"),
+            max_items=80,
+            max_item_length=240,
+        ),
+    }
+
+
 def _is_likely_image_path(path: str) -> bool:
     lowered = str(path or "").strip().lower()
     return lowered.endswith((".jpg", ".jpeg", ".png", ".webp", ".gif", ".avif", ".bmp"))
@@ -21516,6 +21742,105 @@ def _read_workspace_media_file(*, storage_root: Path, storage_key: str) -> bytes
         raise SEOMigrationValidationError("media storage payload is unavailable.")
     with target_path.open("rb") as handle:
         return handle.read()
+
+
+def _decode_legacy_media_base64_payload(media_asset: dict[str, object]) -> bytes | None:
+    for field_name in ("content_base64", "content_b64", "payload_base64", "file_base64"):
+        raw_value = media_asset.get(field_name)
+        if not isinstance(raw_value, str):
+            continue
+        encoded = raw_value.strip()
+        if not encoded:
+            continue
+        if len(encoded) > (_MIGRATION_MEDIA_UPLOAD_MAX_BYTES * 2):
+            continue
+        try:
+            payload = base64.b64decode(encoded, validate=True)
+        except (ValueError, TypeError):
+            continue
+        if payload:
+            return payload
+    return None
+
+
+def _candidate_workspace_media_storage_keys_for_materialization(
+    *,
+    media_asset: dict[str, object],
+    business_id: str | None,
+    site_id: str | None,
+) -> list[str]:
+    candidates: list[str] = []
+    explicit_storage_key = _normalize_string(media_asset.get("storage_key"), max_length=240)
+    if explicit_storage_key is not None:
+        candidates.append(explicit_storage_key)
+    asset_id = _normalize_string(media_asset.get("asset_id"), max_length=80)
+    resolved_business_id = _normalize_string(business_id, max_length=64)
+    resolved_site_id = _normalize_string(site_id, max_length=64)
+    if asset_id and resolved_business_id and resolved_site_id:
+        extensions: set[str] = set()
+        content_type = _normalize_media_content_type(media_asset.get("content_type"))
+        if content_type in _MIGRATION_MEDIA_UPLOAD_ALLOWED_CONTENT_TYPES:
+            extensions.add(_MIGRATION_MEDIA_UPLOAD_ALLOWED_CONTENT_TYPES[content_type])
+        filename = _normalize_media_filename(media_asset.get("display_filename") or media_asset.get("filename"))
+        filename_ext = _extract_file_extension(filename or "")
+        if filename_ext in _MIGRATION_MEDIA_UPLOAD_ALLOWED_EXTENSIONS:
+            extensions.add(".jpg" if filename_ext == ".jpeg" else filename_ext)
+        if not extensions:
+            extensions.add(".jpg")
+        for extension in sorted(extensions):
+            candidates.append(
+                _build_workspace_media_storage_key(
+                    business_id=resolved_business_id,
+                    site_id=resolved_site_id,
+                    asset_id=asset_id,
+                    extension=extension,
+                )
+            )
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for key in candidates:
+        normalized = (key or "").strip()
+        if not normalized:
+            continue
+        lookup = normalized.lower()
+        if lookup in seen:
+            continue
+        seen.add(lookup)
+        deduped.append(normalized)
+    return deduped
+
+
+def _read_workspace_media_payload_for_materialization(
+    *,
+    media_asset: dict[str, object],
+    storage_root: Path,
+    business_id: str | None,
+    site_id: str | None,
+) -> tuple[bytes | None, str | None]:
+    candidate_storage_keys = _candidate_workspace_media_storage_keys_for_materialization(
+        media_asset=media_asset,
+        business_id=business_id,
+        site_id=site_id,
+    )
+    attempted_storage_read = False
+    for storage_key in candidate_storage_keys:
+        attempted_storage_read = True
+        try:
+            payload = _read_workspace_media_file(
+                storage_root=storage_root,
+                storage_key=storage_key,
+            )
+        except (SEOMigrationValidationError, OSError):
+            continue
+        if payload:
+            return payload, None
+
+    legacy_payload = _decode_legacy_media_base64_payload(media_asset)
+    if legacy_payload:
+        return legacy_payload, None
+    if attempted_storage_read:
+        return None, _MIGRATION_ARTIFACT_MEDIA_REASON_STORAGE_READ_FAILED
+    return None, _MIGRATION_ARTIFACT_MEDIA_REASON_BYTES_MISSING
 
 
 def _normalize_discovered_media_lookup_url(value: object) -> str | None:
@@ -25194,12 +25519,35 @@ def _normalize_ga_measurement_id(value: object) -> str | None:
     return normalized
 
 
+def _estimate_generated_files_total_bytes(generated_files: list[dict[str, object]]) -> int:
+    total_bytes = 0
+    for raw_item in generated_files:
+        item = _normalize_json_dict(raw_item)
+        size_bytes = _coerce_int(item.get("size_bytes"))
+        if isinstance(size_bytes, int) and size_bytes >= 0:
+            total_bytes += size_bytes
+            continue
+        binary_payload = _decode_generated_binary_content(item)
+        if isinstance(binary_payload, (bytes, bytearray)):
+            total_bytes += len(binary_payload)
+            continue
+        content = _normalize_generated_content(item.get("content"))
+        if content is not None:
+            total_bytes += len(content.encode("utf-8"))
+    return max(0, int(total_bytes))
+
+
 def _prepare_publish_files(
     *,
     artifact: SEOMigrationArtifactVersion,
     ga_measurement_id: str | None,
+    generated_files_override: list[dict[str, object]] | None = None,
 ) -> tuple[list[SEOMigrationGitHubPublishFile], list[str], list[str]]:
-    generated_files = artifact.generated_files_json if isinstance(artifact.generated_files_json, list) else []
+    generated_files = (
+        generated_files_override
+        if isinstance(generated_files_override, list)
+        else (artifact.generated_files_json if isinstance(artifact.generated_files_json, list) else [])
+    )
     publish_files: list[SEOMigrationGitHubPublishFile] = []
     analytics_injected_paths: list[str] = []
     warnings: list[str] = []

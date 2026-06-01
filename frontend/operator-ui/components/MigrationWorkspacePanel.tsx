@@ -4414,9 +4414,33 @@ export function MigrationWorkspacePanel({
   const publishReadinessReasons = asStringList(publishReadiness.reasons);
   const publishReadinessWarnings = asStringList(publishReadiness.warnings);
   const deployReadinessReasons = asStringList(deployReadiness.reasons);
+  const publishReadinessHasCurrentReasons = publishReadinessReasons.length > 0;
+  const publishCurrentReadinessReason = publishReadinessReasons[0] || null;
+  const publishReasonAppearsGeneric = (() => {
+    const normalizedReason = (publishCurrentReadinessReason || "").trim().toLowerCase();
+    return (
+      normalizedReason === "publish target is not ready."
+      || normalizedReason === "publish target is not ready"
+      || normalizedReason === "publish target is not enabled."
+      || normalizedReason === "publish target is not enabled"
+      || normalizedReason === "publish target is not configured."
+      || normalizedReason === "publish target is not configured"
+    );
+  })();
   const publishPrimaryBlockerMessage = !Boolean(publishReadiness.ready)
-    ? publishFailureMessage || publishRuntimeStatusMessage || publishReadinessReasons[0] || "Publish target is not ready."
+    ? (
+      (publishCurrentReadinessReason && (!publishReasonAppearsGeneric || !publishFailureMessage))
+        ? publishCurrentReadinessReason
+        : publishRuntimeStatusMessage || publishFailureMessage || publishCurrentReadinessReason || "Publish target is not ready."
+    )
     : null;
+  const publishSecondaryFailureMessage =
+    !Boolean(publishReadiness.ready)
+    && !publishReadinessHasCurrentReasons
+    && publishFailureMessage
+    && publishFailureMessage !== publishPrimaryBlockerMessage
+      ? publishFailureMessage
+      : null;
   const publishPrimaryWarningMessage = publishReadinessWarnings[0] || null;
   const publishRepoAdoptionRequired = (() => {
     const normalizedPreflightBlocker = (publishPreflightBlockerCode || "").trim().toLowerCase();
@@ -8346,7 +8370,9 @@ export function MigrationWorkspacePanel({
                 {!publishReady && publishFailureCategory ? (
                   <span className="hint warning">Failure category: {toFailureCategoryLabel(publishFailureCategory)}</span>
                 ) : null}
-                {!publishReady && publishFailureMessage ? <span className="hint warning">{publishFailureMessage}</span> : null}
+                {!publishReady && publishSecondaryFailureMessage ? (
+                  <span className="hint warning">{publishSecondaryFailureMessage}</span>
+                ) : null}
                 {publishReady && publishPrimaryWarningMessage ? (
                   <span className="hint warning" data-testid="migration-publish-readiness-warning">
                     {publishPrimaryWarningMessage}
