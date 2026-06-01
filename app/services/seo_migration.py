@@ -3677,6 +3677,8 @@ class SEOMigrationService:
         deploy_workflow_provision_result: SEOMigrationGitHubWorkflowProvisionResult | None = None
         workflow_provisioning_status: str | None = None
         workflow_provisioning_remediation_mode: str | None = None
+        workflow_provisioning_warning_code: str | None = None
+        workflow_provisioning_warning_message: str | None = None
         workflow_remediation_attempted = False
         workflow_remediation_outcome = _WORKFLOW_REMEDIATION_OUTCOME_NOT_ATTEMPTED
         deploy_secret_propagation_attempted = False
@@ -3933,125 +3935,134 @@ class SEOMigrationService:
                     fallback_message="seo_migration_publish_workflow_resolution",
                     level=logging.INFO,
                 )
-                deploy_workflow_provision_result = self.github_publisher.ensure_deploy_workflow(
-                    repo_owner=workflow_owner,
-                    repo_name=workflow_repo,
-                    branch=workflow_ref,
-                    workflow_id=workflow_identifier,
-                    dry_run=False,
-                    deploy_workflow_mode=deploy_workflow_mode,
-                    target_environment_key=target_environment_key,
-                    target_environment_source=target_environment_source,
-                    managed_gke_config=_normalize_json_dict(admin_deploy_metadata.get("managed_gke_config")),
-                    managed_image_pull_secret_config=managed_image_pull_secret_config_for_provision,
-                    namespace_isolation_defaults=admin_deploy_metadata.get("namespace_isolation_defaults"),
-                    site_id=site.id,
-                    business_id=workspace.business_id,
-                    repository_auto_create_created=repository_auto_create_created,
-                    artifact_version_id=artifact.id,
-                )
-                workflow_provisioning_verified = True
-                workflow_remediation_outcome = _derive_workflow_remediation_outcome(
-                    remediation_attempted=workflow_remediation_attempted,
-                    managed_workflow_outcome=deploy_workflow_provision_result.managed_workflow_outcome,
-                    write_failed=False,
-                )
-                workflow_path = deploy_workflow_provision_result.workflow_path
-                workflow_provisioning_status = (
-                    "created" if deploy_workflow_provision_result.provisioned else "already_exists"
-                )
-                if not deploy_workflow_provision_result.provisioned:
-                    workflow_provisioning_remediation_mode = "already_present"
-                self._log_workflow_provisioning(
-                    business_id=business_id,
-                    site_id=site_id,
-                    workspace_id=workspace.id,
-                    principal_id=principal_id,
-                    artifact_version_id=artifact.id,
-                    repo_owner=workflow_owner,
-                    repo_name=workflow_repo,
-                    ref=workflow_ref,
-                    workflow_id=workflow_identifier,
-                    workflow_path=workflow_path,
-                    status=workflow_provisioning_status,
-                    remediation_mode=workflow_provisioning_remediation_mode,
-                    deploy_workflow_mode=deploy_workflow_mode,
-                    target_environment_key=target_environment_key,
-                    target_environment_source=target_environment_source,
-                    kubernetes_namespace=deploy_workflow_provision_result.kubernetes_namespace,
-                    namespace_source=deploy_workflow_provision_result.namespace_source,
-                    namespace_model_status=deploy_workflow_provision_result.namespace_model_status,
-                    managed_manifest_paths=deploy_workflow_provision_result.managed_manifest_paths,
-                    managed_resource_quota_expected=deploy_workflow_provision_result.managed_resource_quota_expected,
-                    managed_resource_quota_present=deploy_workflow_provision_result.managed_resource_quota_present,
-                    managed_limit_range_expected=deploy_workflow_provision_result.managed_limit_range_expected,
-                    managed_limit_range_present=deploy_workflow_provision_result.managed_limit_range_present,
-                    managed_network_policy_expected=deploy_workflow_provision_result.managed_network_policy_expected,
-                    managed_network_policy_present=deploy_workflow_provision_result.managed_network_policy_present,
-                    managed_namespace_policies_aligned=deploy_workflow_provision_result.managed_namespace_policies_aligned,
-                    workflow_remediation_outcome=workflow_remediation_outcome,
-                    repository_auto_create_created=repository_auto_create_created,
-                    commit_sha=deploy_workflow_provision_result.commit_sha,
-                    verified=True,
-                )
-                self._log_workflow_provisioning(
-                    business_id=business_id,
-                    site_id=site_id,
-                    workspace_id=workspace.id,
-                    principal_id=principal_id,
-                    artifact_version_id=artifact.id,
-                    repo_owner=workflow_owner,
-                    repo_name=workflow_repo,
-                    ref=workflow_ref,
-                    workflow_id=workflow_identifier,
-                    workflow_path=workflow_path,
-                    status="verified",
-                    remediation_mode=workflow_provisioning_remediation_mode,
-                    deploy_workflow_mode=deploy_workflow_mode,
-                    target_environment_key=target_environment_key,
-                    target_environment_source=target_environment_source,
-                    kubernetes_namespace=deploy_workflow_provision_result.kubernetes_namespace,
-                    namespace_source=deploy_workflow_provision_result.namespace_source,
-                    namespace_model_status=deploy_workflow_provision_result.namespace_model_status,
-                    managed_manifest_paths=deploy_workflow_provision_result.managed_manifest_paths,
-                    managed_resource_quota_expected=deploy_workflow_provision_result.managed_resource_quota_expected,
-                    managed_resource_quota_present=deploy_workflow_provision_result.managed_resource_quota_present,
-                    managed_limit_range_expected=deploy_workflow_provision_result.managed_limit_range_expected,
-                    managed_limit_range_present=deploy_workflow_provision_result.managed_limit_range_present,
-                    managed_network_policy_expected=deploy_workflow_provision_result.managed_network_policy_expected,
-                    managed_network_policy_present=deploy_workflow_provision_result.managed_network_policy_present,
-                    managed_namespace_policies_aligned=deploy_workflow_provision_result.managed_namespace_policies_aligned,
-                    workflow_remediation_outcome=workflow_remediation_outcome,
-                    repository_auto_create_created=repository_auto_create_created,
-                    commit_sha=deploy_workflow_provision_result.commit_sha,
-                    verified=True,
-                )
-                if deploy_workflow_provision_result.provisioned:
-                    self._log_workflow_provisioned(
+                if publish_preflight_blocker_code == "github_workflow_write_not_authorized":
+                    workflow_provisioning_status = "skipped_not_authorized"
+                    workflow_provisioning_remediation_mode = "authorization_required"
+                    workflow_provisioning_warning_code = "github_workflow_write_not_authorized"
+                    workflow_provisioning_warning_message = (
+                        "Deploy workflow provisioning could not be verified during publish because workflow write access is unavailable."
+                    )
+                    publish_warnings.append(workflow_provisioning_warning_message)
+                else:
+                    deploy_workflow_provision_result = self.github_publisher.ensure_deploy_workflow(
+                        repo_owner=workflow_owner,
+                        repo_name=workflow_repo,
+                        branch=workflow_ref,
+                        workflow_id=workflow_identifier,
+                        dry_run=False,
+                        deploy_workflow_mode=deploy_workflow_mode,
+                        target_environment_key=target_environment_key,
+                        target_environment_source=target_environment_source,
+                        managed_gke_config=_normalize_json_dict(admin_deploy_metadata.get("managed_gke_config")),
+                        managed_image_pull_secret_config=managed_image_pull_secret_config_for_provision,
+                        namespace_isolation_defaults=admin_deploy_metadata.get("namespace_isolation_defaults"),
+                        site_id=site.id,
+                        business_id=workspace.business_id,
+                        repository_auto_create_created=repository_auto_create_created,
+                        artifact_version_id=artifact.id,
+                    )
+                    workflow_provisioning_verified = True
+                    workflow_remediation_outcome = _derive_workflow_remediation_outcome(
+                        remediation_attempted=workflow_remediation_attempted,
+                        managed_workflow_outcome=deploy_workflow_provision_result.managed_workflow_outcome,
+                        write_failed=False,
+                    )
+                    workflow_path = deploy_workflow_provision_result.workflow_path
+                    workflow_provisioning_status = (
+                        "created" if deploy_workflow_provision_result.provisioned else "already_exists"
+                    )
+                    if not deploy_workflow_provision_result.provisioned:
+                        workflow_provisioning_remediation_mode = "already_present"
+                    self._log_workflow_provisioning(
                         business_id=business_id,
                         site_id=site_id,
                         workspace_id=workspace.id,
                         principal_id=principal_id,
-                        provision_result=deploy_workflow_provision_result,
+                        artifact_version_id=artifact.id,
+                        repo_owner=workflow_owner,
+                        repo_name=workflow_repo,
+                        ref=workflow_ref,
+                        workflow_id=workflow_identifier,
+                        workflow_path=workflow_path,
+                        status=workflow_provisioning_status,
+                        remediation_mode=workflow_provisioning_remediation_mode,
+                        deploy_workflow_mode=deploy_workflow_mode,
+                        target_environment_key=target_environment_key,
+                        target_environment_source=target_environment_source,
+                        kubernetes_namespace=deploy_workflow_provision_result.kubernetes_namespace,
+                        namespace_source=deploy_workflow_provision_result.namespace_source,
+                        namespace_model_status=deploy_workflow_provision_result.namespace_model_status,
+                        managed_manifest_paths=deploy_workflow_provision_result.managed_manifest_paths,
+                        managed_resource_quota_expected=deploy_workflow_provision_result.managed_resource_quota_expected,
+                        managed_resource_quota_present=deploy_workflow_provision_result.managed_resource_quota_present,
+                        managed_limit_range_expected=deploy_workflow_provision_result.managed_limit_range_expected,
+                        managed_limit_range_present=deploy_workflow_provision_result.managed_limit_range_present,
+                        managed_network_policy_expected=deploy_workflow_provision_result.managed_network_policy_expected,
+                        managed_network_policy_present=deploy_workflow_provision_result.managed_network_policy_present,
+                        managed_namespace_policies_aligned=deploy_workflow_provision_result.managed_namespace_policies_aligned,
+                        workflow_remediation_outcome=workflow_remediation_outcome,
+                        repository_auto_create_created=repository_auto_create_created,
+                        commit_sha=deploy_workflow_provision_result.commit_sha,
+                        verified=True,
                     )
-                (
-                    deploy_secret_propagation_attempted,
-                    deploy_secret_propagation_status,
-                    deploy_secret_propagation_reason,
-                    deploy_secret_propagation_source,
-                ) = self._attempt_deploy_secret_propagation(
-                    business_id=business_id,
-                    site_id=site_id,
-                    workspace_id=workspace.id,
-                    artifact_version_id=artifact.id,
-                    principal_id=principal_id,
-                    workflow_owner=workflow_owner,
-                    workflow_repo=workflow_repo,
-                    workflow_ref=workflow_ref,
-                    publish_target=target,
-                    deploy_target=deploy_target_for_workflow,
-                    admin_prerequisites=admin_publish_prerequisites,
-                )
+                    self._log_workflow_provisioning(
+                        business_id=business_id,
+                        site_id=site_id,
+                        workspace_id=workspace.id,
+                        principal_id=principal_id,
+                        artifact_version_id=artifact.id,
+                        repo_owner=workflow_owner,
+                        repo_name=workflow_repo,
+                        ref=workflow_ref,
+                        workflow_id=workflow_identifier,
+                        workflow_path=workflow_path,
+                        status="verified",
+                        remediation_mode=workflow_provisioning_remediation_mode,
+                        deploy_workflow_mode=deploy_workflow_mode,
+                        target_environment_key=target_environment_key,
+                        target_environment_source=target_environment_source,
+                        kubernetes_namespace=deploy_workflow_provision_result.kubernetes_namespace,
+                        namespace_source=deploy_workflow_provision_result.namespace_source,
+                        namespace_model_status=deploy_workflow_provision_result.namespace_model_status,
+                        managed_manifest_paths=deploy_workflow_provision_result.managed_manifest_paths,
+                        managed_resource_quota_expected=deploy_workflow_provision_result.managed_resource_quota_expected,
+                        managed_resource_quota_present=deploy_workflow_provision_result.managed_resource_quota_present,
+                        managed_limit_range_expected=deploy_workflow_provision_result.managed_limit_range_expected,
+                        managed_limit_range_present=deploy_workflow_provision_result.managed_limit_range_present,
+                        managed_network_policy_expected=deploy_workflow_provision_result.managed_network_policy_expected,
+                        managed_network_policy_present=deploy_workflow_provision_result.managed_network_policy_present,
+                        managed_namespace_policies_aligned=deploy_workflow_provision_result.managed_namespace_policies_aligned,
+                        workflow_remediation_outcome=workflow_remediation_outcome,
+                        repository_auto_create_created=repository_auto_create_created,
+                        commit_sha=deploy_workflow_provision_result.commit_sha,
+                        verified=True,
+                    )
+                    if deploy_workflow_provision_result.provisioned:
+                        self._log_workflow_provisioned(
+                            business_id=business_id,
+                            site_id=site_id,
+                            workspace_id=workspace.id,
+                            principal_id=principal_id,
+                            provision_result=deploy_workflow_provision_result,
+                        )
+                    (
+                        deploy_secret_propagation_attempted,
+                        deploy_secret_propagation_status,
+                        deploy_secret_propagation_reason,
+                        deploy_secret_propagation_source,
+                    ) = self._attempt_deploy_secret_propagation(
+                        business_id=business_id,
+                        site_id=site_id,
+                        workspace_id=workspace.id,
+                        artifact_version_id=artifact.id,
+                        principal_id=principal_id,
+                        workflow_owner=workflow_owner,
+                        workflow_repo=workflow_repo,
+                        workflow_ref=workflow_ref,
+                        publish_target=target,
+                        deploy_target=deploy_target_for_workflow,
+                        admin_prerequisites=admin_publish_prerequisites,
+                    )
             if duplicate_publish_attempt:
                 if deploy_workflow_provision_result is not None and deploy_workflow_provision_result.provisioned:
                     duplicate_publish_repaired = True
@@ -4083,6 +4094,8 @@ class SEOMigrationService:
                             **target,
                             "workflow_provisioning_status": workflow_provisioning_status,
                             "workflow_provisioning_remediation_mode": workflow_provisioning_remediation_mode,
+                            "workflow_provisioning_warning_code": workflow_provisioning_warning_code,
+                            "workflow_provisioning_warning_message": workflow_provisioning_warning_message,
                             "workflow_remediation_attempted": workflow_remediation_attempted,
                             "workflow_remediation_outcome": workflow_remediation_outcome,
                             "deploy_secret_propagation_attempted": deploy_secret_propagation_attempted,
@@ -4326,6 +4339,8 @@ class SEOMigrationService:
                     "failure_reason_code": _normalize_string(exc.code, max_length=80),
                     "workflow_provisioning_status": workflow_provisioning_status,
                     "workflow_provisioning_remediation_mode": workflow_provisioning_remediation_mode,
+                    "workflow_provisioning_warning_code": workflow_provisioning_warning_code,
+                    "workflow_provisioning_warning_message": workflow_provisioning_warning_message,
                     "workflow_remediation_attempted": workflow_remediation_attempted,
                     "workflow_remediation_outcome": workflow_remediation_outcome,
                     "deploy_secret_propagation_attempted": deploy_secret_propagation_attempted,
@@ -4430,6 +4445,8 @@ class SEOMigrationService:
             "duplicate_artifact_skipped": bool(duplicate_publish_repaired),
             "workflow_provisioning_status": workflow_provisioning_status,
             "workflow_provisioning_remediation_mode": workflow_provisioning_remediation_mode,
+            "workflow_provisioning_warning_code": workflow_provisioning_warning_code,
+            "workflow_provisioning_warning_message": workflow_provisioning_warning_message,
             "workflow_remediation_attempted": workflow_remediation_attempted,
             "workflow_remediation_outcome": workflow_remediation_outcome,
             "deploy_secret_propagation_attempted": deploy_secret_propagation_attempted,
@@ -4553,6 +4570,8 @@ class SEOMigrationService:
                 "duplicate_artifact_skipped": bool(duplicate_publish_repaired),
                 "workflow_provisioning_status": workflow_provisioning_status,
                 "workflow_provisioning_remediation_mode": workflow_provisioning_remediation_mode,
+                "workflow_provisioning_warning_code": workflow_provisioning_warning_code,
+                "workflow_provisioning_warning_message": workflow_provisioning_warning_message,
                 "workflow_remediation_attempted": workflow_remediation_attempted,
                 "workflow_remediation_outcome": workflow_remediation_outcome,
                 "deploy_secret_propagation_attempted": deploy_secret_propagation_attempted,
@@ -18676,6 +18695,8 @@ class SEOMigrationService:
     ) -> dict[str, object]:
         reasons: list[str] = []
         blocker_codes: list[str] = []
+        warnings: list[str] = []
+        warning_codes: list[str] = []
         artifact_media_readiness = self._build_artifact_media_readiness(artifact)
         target_summary: dict[str, object] = {}
         target_valid = False
@@ -18925,13 +18946,16 @@ class SEOMigrationService:
                 )
                 if preflight_blocker_code:
                     target_summary["repository_ensure_failure_reason_code"] = preflight_blocker_code
-                    reasons.append(
-                        _derive_publish_preflight_blocker_message(
-                            blocker_code=preflight_blocker_code,
-                            repository_auto_create_enabled=repository_auto_create_enabled,
-                        )
+                    preflight_blocker_message = _derive_publish_preflight_blocker_message(
+                        blocker_code=preflight_blocker_code,
+                        repository_auto_create_enabled=repository_auto_create_enabled,
                     )
-                    blocker_codes.extend(_map_publish_preflight_blocker_codes(preflight_blocker_code))
+                    if preflight_blocker_code == "github_workflow_write_not_authorized":
+                        warnings.append(preflight_blocker_message)
+                        warning_codes.append("publish_deploy_workflow_provisioning_unavailable")
+                    else:
+                        reasons.append(preflight_blocker_message)
+                        blocker_codes.extend(_map_publish_preflight_blocker_codes(preflight_blocker_code))
                 elif not repository_exists and not repository_auto_create_enabled:
                     reasons.append(
                         "Publish target repository was not found and admin repository auto-create is disabled."
@@ -18948,6 +18972,8 @@ class SEOMigrationService:
             "ready": not reasons,
             "reasons": reasons,
             "blocker_codes": blocker_codes,
+            "warnings": warnings,
+            "warning_codes": warning_codes,
             "failure_category": failure_category,
             "artifact_media_readiness": artifact_media_readiness,
             "target": target_summary,
@@ -22451,7 +22477,10 @@ def _derive_publish_preflight_blocker_message(
     if normalized_lower == "github_contents_write_not_authorized":
         return "GitHub runtime is not authorized to write repository contents for publish."
     if normalized_lower == "github_workflow_write_not_authorized":
-        return "GitHub runtime is not authorized to write workflow files in the configured repository."
+        return (
+            "GitHub runtime is not authorized to write deploy workflow files in the configured repository. "
+            "Publish to GitHub can proceed, but deploy workflow provisioning stays unavailable until workflows:write access is granted."
+        )
     if normalized_lower in {
         "github_branch_not_found_or_uninitialized",
         "github_repo_state_invalid_for_bootstrap",

@@ -643,6 +643,48 @@ describe("recommendations queue optimistic workflows", () => {
     expect(dismissedDetailPanel).toHaveTextContent("Ignore for now unless context changes");
   });
 
+  it("keeps checkbox selection local and only bulk-selects eligible open recommendations", async () => {
+    const openRecommendation = createRecommendation("rec-open-1", "open", "high", "Open Recommendation");
+    const acceptedRecommendation = createRecommendation("rec-accepted-1", "accepted", "medium", "Accepted Recommendation");
+    mockFetchRecommendations.mockResolvedValueOnce(
+      createListResponse(
+        [openRecommendation, acceptedRecommendation],
+        {
+          total: 2,
+          open: 1,
+          accepted: 1,
+          dismissed: 0,
+          high_priority: 1,
+        },
+      ),
+    );
+
+    const user = userEvent.setup();
+    render(<RecommendationsPage />);
+
+    await screen.findByText("Open Recommendation");
+    const acceptSelectedButton = screen.getByRole("button", { name: "Accept Selected" });
+    const openCheckbox = screen.getByLabelText("Select recommendation rec-open-1");
+    const acceptedCheckbox = screen.getByLabelText("Select recommendation rec-accepted-1");
+    const selectAllCheckbox = screen.getByLabelText("Select all displayed recommendations");
+
+    expect(acceptSelectedButton).toBeDisabled();
+    expect(acceptedCheckbox).toBeDisabled();
+
+    await user.click(openCheckbox);
+    expect(screen.getByText("1 selected on this page")).toBeInTheDocument();
+    expect(acceptSelectedButton).toBeEnabled();
+    expect(navigationState.push).not.toHaveBeenCalled();
+
+    await user.click(openCheckbox);
+    expect(screen.getByText("0 selected on this page")).toBeInTheDocument();
+    expect(acceptSelectedButton).toBeDisabled();
+
+    await user.click(selectAllCheckbox);
+    expect(screen.getByText("1 selected on this page")).toBeInTheDocument();
+    expect(acceptSelectedButton).toBeEnabled();
+  });
+
   it("renders content-to-update cues when recommendation content targets are present", async () => {
     const recommendation = {
       ...createRecommendation("rec-content-1", "open", "high", "Content Target Recommendation"),

@@ -1,7 +1,7 @@
-# Platform-Owned `www.mbsrn.com` Managed Site
+# Managed-Site Dogfooding Example (`www.mbsrn.com`)
 
 ## Purpose
-This document defines the repository/domain boundary for the platform-owned public website target.
+This document records the repository/domain boundary for the platform public-site dogfooding example. The workflow remains generic and configuration-driven for every managed site.
 
 ## Source-Of-Truth Boundary
 - `mhanson13/mbsrn` remains the authenticated MBSRN app/control-plane source repository.
@@ -16,12 +16,16 @@ What does **not** move to `mhanson13/mbsrn-www`:
 - control-plane CI/CD ownership
 
 ## Managed Publish Target Contract
-For the platform-owned public site, use the existing migration publish-target model (no special-case code path):
+Use the existing migration publish-target model (no special-case code path):
 - GitHub owner/account: `mhanson13` (Admin-owned baseline)
 - repository name: `mbsrn-www` (workspace/site-scoped target)
 - default branch: `main`
 - preview hostname: continue using managed preview host (`*.site.mbsrn.com`) until manual DNS cutover
 - customer domain target: `www.mbsrn.com`
+
+Configuration-driven equivalence:
+- these fields are site/admin configuration, not hard-coded product behavior
+- the same contract is used for customer/public sites (for example lars-construction.com, tnmfire.com, scmechanical.com) and for dogfooding (`www.mbsrn.com`)
 
 If an MBSRN site record already exists, reuse/update it. Do not create a duplicate site record for this platform-owned public site.
 
@@ -36,6 +40,7 @@ If an MBSRN site record already exists, reuse/update it. Do not create a duplica
 Publish/deploy semantics are unchanged:
 - publish is explicit and writes reviewed artifacts to target repo
 - deploy is explicit and separate
+- deploy workflow provisioning/readiness belongs to deploy gates; publish is not blocked solely by deploy-workflow provisioning warnings
 - publish does not equal production cutover
 
 ## Media Artifact Requirement

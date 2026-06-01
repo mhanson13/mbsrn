@@ -282,6 +282,9 @@ Interpretation:
   - media counts/actions belong to `B. Media / Images` (single source of truth)
   - provider execution/request metadata belongs to `F. Advanced Diagnostics & History`
 - provider recommender outputs and SEO recommendations remain advisory; operator review is still required before approval/publish/deploy
+- recommendation queue bulk actions are eligibility-scoped:
+  - `Accept Selected` and `Dismiss Selected` apply to selected open/in-progress rows
+  - bulk action results report succeeded/failed counts; partial failures do not falsely mark all rows accepted
 
 ## Operator Requirements + AI Suggestion Scratchpads (2026-05)
 
@@ -438,6 +441,7 @@ Media / Images compact browser behavior:
 
 Operator uploads:
 - uploads are stored as workspace-scoped media assets with provenance `operator_upload`
+- upload UI supports selecting multiple images in one action; shared metadata fields apply to all selected files in that batch
 - validation enforces:
   - allowed MIME: `image/jpeg`, `image/png`, `image/webp`, `image/gif`
   - extension checks
@@ -1342,11 +1346,13 @@ Effective publish target is merged at action/readiness time:
 - repository + optional branch override from workspace config
 - branch falls back to Admin `default_branch` when override is blank
 
-Platform-owned public website target:
-- control-plane source remains `mhanson13/mbsrn` (`app.mbsrn.com`)
-- for the public marketing site target (`www.mbsrn.com`), workspace repo name should be `mbsrn-www`
-- effective target resolves to `mhanson13/mbsrn-www` when Admin owner is `mhanson13`
-- this does not move operator/admin/control-plane source code into the public artifact repo
+Managed-site target contract (configuration-driven for every site):
+- source/current live URL is site configuration
+- preview hostname is site configuration
+- publish repository/branch/artifact root is site/admin configuration
+- deploy namespace/workflow routing is site/admin configuration
+- dogfooding example sites can use this same contract (including the platform public site), with no hard-coded domain/repo logic
+- app/control-plane source code is never copied into generated public artifact repositories
 
 Publish behavior:
 - explicit operator-triggered action only
@@ -1405,11 +1411,11 @@ Publish behavior:
     - includes `bootstrap_allowed` and `will_attempt_bootstrap` so dry-run/repair-disabled paths are explicit
 - runtime repository auto-create uses private repository visibility by default (`private=true`) to avoid accidental public exposure
 - dry-run never creates repositories; readiness and publish diagnostics report whether a live publish would auto-create the missing repository
-- publish always runs deploy-workflow bootstrap verification against the target branch (`.github/workflows/{workflow_id}`) before returning success for non-dry-run publish
-- generated/target repos are treated as workflow-missing by default until verified
-- if workflow is missing, publish provisions it and verifies presence before marking publish as valid/deploy-ready
-- provisioned workflow contract is explicitly dispatchable (`on: workflow_dispatch`) so deploy dispatch is a first-class bootstrap guarantee
-- if workflow provisioning cannot be created or verified, publish fails (`workflow_provisioning_failed`) and is not marked successful
+- publish and deploy are separate gates:
+  - publish commits approved static artifacts to the configured GitHub target
+  - deploy handles workflow/static IP/TLS/runtime provisioning checks
+- deploy-workflow provisioning findings can be surfaced during publish preflight as warnings, but they do not block artifact publish when repository-content writes are authorized
+- deploy workflow provisioning/verification remains a deploy-readiness concern and can block deploy independently
 - no writes outside configured artifact root
 - dry-run supported
 - history captured with status/result metadata

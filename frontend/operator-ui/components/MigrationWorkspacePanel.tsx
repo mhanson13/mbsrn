@@ -121,6 +121,13 @@ const EMPTY_PUBLISH_CONFIG: MigrationPublishConfig = {
   artifact_root: null,
 };
 
+const MIGRATION_UPLOAD_ALLOWED_MIME_TYPES = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/gif",
+]);
+
 type MigrationFailureCategory =
   | "config_missing"
   | "target_invalid"
@@ -1731,7 +1738,7 @@ function toRepositoryProvisioningGuidance(params: {
   } = params;
   const normalizedPreflightBlocker = (publishPreflightBlockerCode || "").trim().toLowerCase();
   if (normalizedPreflightBlocker === "github_workflow_write_not_authorized") {
-    return "GitHub runtime is not authorized to write workflow files in the configured repository.";
+    return "GitHub runtime is not authorized to write deploy workflow files in the configured repository.";
   }
   if (normalizedPreflightBlocker === "github_contents_write_not_authorized") {
     return "GitHub runtime is not authorized to write repository contents for publish.";
@@ -3755,7 +3762,7 @@ export function MigrationWorkspacePanel({
     Record<MigrationRequirementSuggestionField, RequirementSuggestionState>
   >(createDefaultRequirementSuggestionMap());
 
-  const [mediaUploadFile, setMediaUploadFile] = useState<File | null>(null);
+  const [mediaUploadFiles, setMediaUploadFiles] = useState<File[]>([]);
   const [mediaUploadCategory, setMediaUploadCategory] = useState("other");
   const [mediaUploadAltText, setMediaUploadAltText] = useState("");
   const [mediaUploadDescription, setMediaUploadDescription] = useState("");
@@ -4404,17 +4411,13 @@ export function MigrationWorkspacePanel({
     effectivePublishArtifactRoot,
     currentSiteUrl,
   });
-  const currentSiteHost = extractHostnameFromUrl(destinationSummary.currentSiteUrl);
-  const isPlatformPublicWebsiteSite = currentSiteHost === "www.mbsrn.com" || currentSiteHost === "mbsrn.com";
-  const isPlatformPublicWebsiteTargetRepository =
-    (effectivePublishRepoOwner || "").trim().toLowerCase() === "mhanson13"
-    && (effectivePublishRepoName || "").trim().toLowerCase() === "mbsrn-www";
-  const showPlatformPublicWebsiteBoundaryNote = isPlatformPublicWebsiteSite || isPlatformPublicWebsiteTargetRepository;
   const publishReadinessReasons = asStringList(publishReadiness.reasons);
+  const publishReadinessWarnings = asStringList(publishReadiness.warnings);
   const deployReadinessReasons = asStringList(deployReadiness.reasons);
   const publishPrimaryBlockerMessage = !Boolean(publishReadiness.ready)
     ? publishFailureMessage || publishRuntimeStatusMessage || publishReadinessReasons[0] || "Publish target is not ready."
     : null;
+  const publishPrimaryWarningMessage = publishReadinessWarnings[0] || null;
   const publishRepoAdoptionRequired = (() => {
     const normalizedPreflightBlocker = (publishPreflightBlockerCode || "").trim().toLowerCase();
     return (
@@ -6280,9 +6283,24 @@ export function MigrationWorkspacePanel({
   };
 
   const handleUploadMediaAsset = async (): Promise<void> => {
-    if (!mediaUploadFile) {
+    if (mediaUploadFiles.length <= 0) {
       setErrorHint(null);
       setErrorMessage("Select an image file before uploading.");
+      return;
+    }
+    const validFiles: File[] = [];
+    let skippedCount = 0;
+    for (const file of mediaUploadFiles) {
+      const normalizedMimeType = (file.type || "").trim().toLowerCase();
+      if (!normalizedMimeType || MIGRATION_UPLOAD_ALLOWED_MIME_TYPES.has(normalizedMimeType)) {
+        validFiles.push(file);
+      } else {
+        skippedCount += 1;
+      }
+    }
+    if (validFiles.length <= 0) {
+      setErrorHint(null);
+      setErrorMessage("Selected files are not supported image types.");
       return;
     }
     setBusyAction("upload_media");
@@ -6290,23 +6308,42 @@ export function MigrationWorkspacePanel({
     setErrorHint(null);
     setStatusMessage(null);
     try {
-      await uploadMigrationMediaAsset(token, businessId, siteId, {
-        file: mediaUploadFile,
-        selectedForDraft: mediaUploadSelectedForDraft,
-        category: asStringOrNull(mediaUploadCategory),
-        altText: asStringOrNull(mediaUploadAltText),
-        description: asStringOrNull(mediaUploadDescription),
-        usageNote: asStringOrNull(mediaUploadUsageNote),
-        pageAssignment: asStringOrNull(mediaUploadPageAssignment),
-      });
-      setMediaUploadFile(null);
+      let uploadedCount = 0;
+      let failedCount = 0;
+      for (const file of validFiles) {
+        try {
+          await uploadMigrationMediaAsset(token, businessId, siteId, {
+            file,
+            selectedForDraft: mediaUploadSelectedForDraft,
+            category: asStringOrNull(mediaUploadCategory),
+            altText: asStringOrNull(mediaUploadAltText),
+            description: asStringOrNull(mediaUploadDescription),
+            usageNote: asStringOrNull(mediaUploadUsageNote),
+            pageAssignment: asStringOrNull(mediaUploadPageAssignment),
+          });
+          uploadedCount += 1;
+        } catch {
+          failedCount += 1;
+        }
+      }
+      setMediaUploadFiles([]);
       setMediaUploadCategory("other");
       setMediaUploadAltText("");
       setMediaUploadDescription("");
       setMediaUploadUsageNote("");
       setMediaUploadPageAssignment("");
       setMediaUploadSelectedForDraft(true);
-      setStatusMessage("Workspace media uploaded.");
+      if (uploadedCount > 0 && failedCount === 0 && skippedCount === 0) {
+        setStatusMessage("Workspace media uploaded.");
+      } else {
+        setStatusMessage(
+          `Upload completed. Uploaded: ${uploadedCount} | Failed: ${failedCount} | Skipped: ${skippedCount}.`,
+        );
+      }
+      if (failedCount > 0) {
+        setErrorHint(null);
+        setErrorMessage("One or more image uploads failed. Retry failed files.");
+      }
       await loadWorkspaceData(false);
     } catch (error) {
       setErrorHint(null);
@@ -7131,12 +7168,16 @@ export function MigrationWorkspacePanel({
                   <input
                     type="file"
                     accept="image/jpeg,image/png,image/webp,image/gif"
+                    multiple
                     onChange={(event) => {
-                      const file = event.target.files && event.target.files.length > 0 ? event.target.files[0] : null;
-                      setMediaUploadFile(file);
+                      const files = event.target.files ? Array.from(event.target.files) : [];
+                      setMediaUploadFiles(files);
                     }}
                   />
                 </label>
+                <span className="hint muted" data-testid="migration-media-upload-selection-count">
+                  Files selected: {mediaUploadFiles.length}
+                </span>
                 <label className="stack-tight">
                   <span className="hint muted">Category</span>
                   <select
@@ -7183,15 +7224,19 @@ export function MigrationWorkspacePanel({
                     checked={mediaUploadSelectedForDraft}
                     onChange={(event) => setMediaUploadSelectedForDraft(event.target.checked)}
                   />
-                  <span>Include image in draft on upload</span>
+                  <span>Include images in draft on upload</span>
                 </label>
                 <button
                   type="button"
                   className="button button-secondary"
                   onClick={() => void handleUploadMediaAsset()}
-                  disabled={isActionInFlight || !mediaUploadFile}
+                  disabled={isActionInFlight || mediaUploadFiles.length === 0}
                 >
-                  {busyAction === "upload_media" ? "Uploading..." : "Upload images"}
+                  {busyAction === "upload_media"
+                    ? "Uploading..."
+                    : mediaUploadFiles.length === 1
+                      ? "Upload image"
+                      : "Upload images"}
                 </button>
               </div>
             </details>
@@ -8276,10 +8321,9 @@ export function MigrationWorkspacePanel({
                       {publishPrimaryBlockerMessage}
                     </span>
                   ) : null}
-                  {showPlatformPublicWebsiteBoundaryNote ? (
-                    <span className="hint muted" data-testid="migration-destination-platform-www-boundary">
-                      Platform boundary: `mhanson13/mbsrn` remains app/control-plane source for `app.mbsrn.com`.
-                      `mhanson13/mbsrn-www` is public-site artifacts only for `www.mbsrn.com`.
+                  {publishPrimaryWarningMessage ? (
+                    <span className="hint warning" data-testid="migration-destination-publish-warning">
+                      Warning: {publishPrimaryWarningMessage}
                     </span>
                   ) : null}
                 </div>
@@ -8303,6 +8347,11 @@ export function MigrationWorkspacePanel({
                   <span className="hint warning">Failure category: {toFailureCategoryLabel(publishFailureCategory)}</span>
                 ) : null}
                 {!publishReady && publishFailureMessage ? <span className="hint warning">{publishFailureMessage}</span> : null}
+                {publishReady && publishPrimaryWarningMessage ? (
+                  <span className="hint warning" data-testid="migration-publish-readiness-warning">
+                    {publishPrimaryWarningMessage}
+                  </span>
+                ) : null}
               </div>
             </div>
 
@@ -8312,12 +8361,6 @@ export function MigrationWorkspacePanel({
                 <span className="hint muted" data-testid="migration-publish-target-admin-boundary">
                   Admin controls GitHub account/owner. Operators control repository name and optional branch override.
                 </span>
-                {showPlatformPublicWebsiteBoundaryNote ? (
-                  <span className="hint muted" data-testid="migration-publish-target-platform-www-boundary">
-                    For the platform public website, use repository `mbsrn-www`. This does not move app/control-plane
-                    code from `mhanson13/mbsrn`.
-                  </span>
-                ) : null}
                 <span className="hint">{adminPublishReadyLabel}</span>
                 <label className="stack-tight">
                   <span className="hint muted">Repository name (Operator-owned)</span>

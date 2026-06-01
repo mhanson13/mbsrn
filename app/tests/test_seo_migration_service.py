@@ -4672,6 +4672,18 @@ def test_publish_and_deploy_readiness_block_when_artifact_media_references_are_u
     business_id, site_id = _seed_business_and_site(db_session)
     _seed_workspace(service, business_id=business_id, site_id=site_id)
     _configure_publish_target(service, business_id=business_id, site_id=site_id)
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes="Approved for publish",
+        principal_id="principal-1",
+    )
     _configure_deploy_target(service, business_id=business_id, site_id=site_id)
     artifact = service.generate_draft_artifacts(
         business_id=business_id,
@@ -13718,15 +13730,69 @@ def test_publish_readiness_reports_workflow_write_blocker_from_preflight(db_sess
     summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
     readiness = summary.publish_readiness
     reasons = readiness.get("reasons") if isinstance(readiness.get("reasons"), list) else []
+    warnings = readiness.get("warnings") if isinstance(readiness.get("warnings"), list) else []
     target = readiness.get("target") if isinstance(readiness.get("target"), dict) else {}
     prerequisites = (
         readiness.get("config_prerequisites") if isinstance(readiness.get("config_prerequisites"), dict) else {}
     )
 
+    blocker_codes = readiness.get("blocker_codes") if isinstance(readiness.get("blocker_codes"), list) else []
+
     assert readiness.get("ready") is False
-    assert any("not authorized to write workflow files" in str(reason).lower() for reason in reasons)
+    assert "publish_artifact_missing" in blocker_codes
+    assert "publish_runtime_unavailable" not in blocker_codes
+    assert any("approved artifact is required" in str(reason).lower() for reason in reasons)
+    assert any("workflow provisioning stays unavailable" in str(warning).lower() for warning in warnings)
     assert target.get("preflight_status") == "blocked"
     assert target.get("preflight_blocker_code") == "github_workflow_write_not_authorized"
     assert target.get("can_write_contents") is True
     assert target.get("can_write_workflows") is False
     assert prerequisites.get("publish_target_preflight_blocker_code") == "github_workflow_write_not_authorized"
+
+
+def test_publish_succeeds_when_workflow_write_not_authorized_is_reported_by_preflight(db_session) -> None:
+    publisher = _RecordingGitHubPublisher(
+        existing_repository=True,
+        preflight_blocker_code="github_workflow_write_not_authorized",
+        preflight_can_read_contents=True,
+        preflight_can_write_contents=True,
+        preflight_can_write_workflows=False,
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes="Approved for publish",
+        principal_id="principal-1",
+    )
+
+    result = service.publish_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        commit_message="Publish migration",
+        analytics_measurement_id=None,
+        principal_id="principal-1",
+    )
+
+    warnings = result.result.get("warnings") if isinstance(result.result.get("warnings"), list) else []
+    assert result.result.get("status") == "published"
+    assert result.result.get("workflow_provisioning_status") == "skipped_not_authorized"
+    assert result.result.get("workflow_provisioning_warning_code") == "github_workflow_write_not_authorized"
+    assert any("workflow provisioning could not be verified" in str(item).lower() for item in warnings)
+    assert publisher.publish_calls
+    assert publisher.workflow_provision_calls == []

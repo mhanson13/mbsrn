@@ -71,6 +71,10 @@ Workflow ownership boundaries:
     - compact competitor/GA4/GBP signal summaries when available
     - run IDs are de-emphasized from primary row scan content
   - each row exposes consistent actions: `Open`, `Review`, `Mark Complete`, `Show Details`
+  - bulk actions are explicit and eligibility-scoped:
+    - `Accept Selected` and `Dismiss Selected` target selected open/in-progress rows only
+    - row checkbox interactions do not trigger row navigation
+    - partial bulk failures report succeeded/failed counts without falsely marking all rows complete
   - recommendation detail view is decision-first (`What to do`, `Why it matters`, `First step`, `Success signal`, `Evidence used`)
   - recommendation detail keeps run lineage/tenant scope in `Advanced Diagnostics` disclosure
   - recommendation run detail is explicitly diagnostic; operators should return to queue for recommendation decisions
@@ -234,11 +238,12 @@ The dedicated migration route (`/sites/[site_id]/migration`) keeps primary opera
   - deploy evidence state can show `Confirmed Live` when current live HTTPS probe evidence is healthy
   - `Refresh Deploy Status` is scoped to the route site id; when selected artifact history is missing it can still refresh current-live evidence from the latest deploy record for that site
 
-Platform-owned public site boundary cues:
-- migration destination/publish cards can show explicit boundary copy for platform public-site targets
-- `mhanson13/mbsrn` remains the authenticated control-plane source (`app.mbsrn.com`)
-- `mhanson13/mbsrn-www` is public-site artifacts only (`www.mbsrn.com`)
-- workspace guidance for the platform public site recommends repository `mbsrn-www` without changing control-plane source ownership
+Managed-site boundary cues (generic):
+- source/current live URL, preview hostname, publish repo/branch, deploy namespace/workflow, and future cutover domain are configuration-derived per site
+- publish and deploy are separate gates for all managed sites
+- publish readiness validates artifact/repo/branch/credentials/media requirements
+- deploy readiness validates workflow/static-IP/TLS/runtime requirements
+- deploy workflow provisioning issues can appear as publish warnings but are deploy blockers, not publish blockers
 - F. Advanced Diagnostics & History:
   - draft/provider execution metadata
   - media diagnostics
@@ -620,3 +625,5 @@ Configuration prerequisites:
 - preflight verification helper:
   - `python scripts/verify_gcp_logs_wiring.py`
   - `python scripts/verify_gcp_logs_wiring.py --cluster --project-id <PROJECT_ID> --gsa-email <RUNTIME_GSA_EMAIL>`
+- upload supports selecting multiple images in one action; shared metadata fields apply across the selected file batch
+- upload completion reports uploaded/failed/skipped counts and preserves successful uploads when one file fails

@@ -2444,7 +2444,7 @@ describe("site migration workflow route", () => {
     expect(destinationSummary).not.toHaveTextContent("Operator-set");
   });
 
-  it("shows platform public website boundary guidance when targeting mhanson13/mbsrn-www", async () => {
+  it("does not render hard-coded platform boundary guidance in publish destination panels", async () => {
     mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(
       buildMigrationWorkspaceSummary({
         workspace: buildMigrationWorkspace({
@@ -2474,16 +2474,11 @@ describe("site migration workflow route", () => {
     render(<SiteMigrationWorkflowPage />);
 
     const destinationSummary = await screen.findByTestId("migration-destination-summary");
-    const boundaryCopy = within(destinationSummary).getByTestId("migration-destination-platform-www-boundary");
-    expect(boundaryCopy).toHaveTextContent(/mhanson13\/mbsrn/i);
-    expect(boundaryCopy).toHaveTextContent(/app\.mbsrn\.com/i);
-    expect(boundaryCopy).toHaveTextContent(/mhanson13\/mbsrn-www/i);
-    expect(boundaryCopy).toHaveTextContent(/www\.mbsrn\.com/i);
+    expect(within(destinationSummary).queryByTestId("migration-destination-platform-www-boundary")).not.toBeInTheDocument();
+    expect(destinationSummary).not.toHaveTextContent("app/control-plane source");
 
     const publishTargetSummary = screen.getByTestId("migration-publish-target-summary");
-    expect(within(publishTargetSummary).getByTestId("migration-publish-target-platform-www-boundary")).toHaveTextContent(
-      "repository `mbsrn-www`",
-    );
+    expect(within(publishTargetSummary).queryByTestId("migration-publish-target-platform-www-boundary")).not.toBeInTheDocument();
   });
 
   it("prioritizes current live runtime evidence over selected workflow failure for current deploy state", async () => {
@@ -2752,8 +2747,11 @@ describe("site migration workflow route", () => {
     mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(
       buildMigrationWorkspaceSummary({
         publish_readiness: {
-          ready: false,
-          reasons: ["GitHub runtime is not authorized to write workflow files in the configured repository."],
+          ready: true,
+          reasons: [],
+          warnings: [
+            "GitHub runtime is not authorized to write deploy workflow files in the configured repository. Publish to GitHub can proceed, but deploy workflow provisioning stays unavailable until workflows:write access is granted.",
+          ],
           target: {
             enabled: true,
             repo_owner: "mhanson13",
@@ -2771,9 +2769,13 @@ describe("site migration workflow route", () => {
 
     render(<SiteMigrationWorkflowPage />);
 
+    const publishReadiness = await screen.findByTestId("migration-publish-readiness");
+    expect(publishReadiness).toHaveTextContent("Ready: Yes");
+    expect(publishReadiness).toHaveTextContent("deploy workflow provisioning stays unavailable");
+
     const destinationDiagnostics = await openFullDestinationDiagnostics(user);
     expect(destinationDiagnostics).toHaveTextContent(
-      "GitHub runtime is not authorized to write workflow files in the configured repository.",
+      "GitHub runtime is not authorized to write deploy workflow files in the configured repository.",
     );
   });
 
@@ -3234,6 +3236,84 @@ describe("site migration workflow route", () => {
     expect(
       within(draftInputSummary).getByTestId("migration-draft-input-budget-blocked-reason"),
     ).toHaveTextContent("final input chars 9,200 exceeded cap 8,500");
+  });
+
+  it("uploads multiple migration images in one action and reports partial failures", async () => {
+    const user = userEvent.setup();
+    mockUploadMigrationMediaAsset
+      .mockResolvedValueOnce({
+        asset_id: "upload-1",
+        display_filename: "a.jpg",
+        provenance: "operator_upload",
+        selected_for_draft: true,
+      })
+      .mockRejectedValueOnce(new ApiRequestError("unsupported media type", { status: 415, detail: null }));
+
+    render(<SiteMigrationWorkflowPage />);
+
+    const mediaSection = await screen.findByTestId("migration-media-section");
+    const uploadDisclosure = within(mediaSection).getByTestId("migration-media-upload-disclosure");
+    const uploadSummary = uploadDisclosure.querySelector("summary");
+    if (!uploadSummary) {
+      throw new Error("Missing migration media upload summary.");
+    }
+    await user.click(uploadSummary);
+
+    const imageInput = within(uploadDisclosure).getByLabelText("Upload image file");
+    const firstFile = new File(["file-one"], "a.jpg", { type: "image/jpeg" });
+    const secondFile = new File(["file-two"], "b.png", { type: "image/png" });
+    await user.upload(imageInput, [firstFile, secondFile]);
+
+    expect(within(uploadDisclosure).getByTestId("migration-media-upload-selection-count")).toHaveTextContent(
+      "Files selected: 2",
+    );
+    await user.click(within(uploadDisclosure).getByRole("button", { name: "Upload images" }));
+
+    await waitFor(() => expect(mockUploadMigrationMediaAsset).toHaveBeenCalledTimes(2));
+    expect(mockUploadMigrationMediaAsset).toHaveBeenNthCalledWith(
+      1,
+      "token-1",
+      "biz-1",
+      "site-1",
+      expect.objectContaining({
+        file: firstFile,
+        selectedForDraft: true,
+      }),
+    );
+    expect(mockUploadMigrationMediaAsset).toHaveBeenNthCalledWith(
+      2,
+      "token-1",
+      "biz-1",
+      "site-1",
+      expect.objectContaining({
+        file: secondFile,
+        selectedForDraft: true,
+      }),
+    );
+    expect(await screen.findByText("Upload completed. Uploaded: 1 | Failed: 1 | Skipped: 0.")).toBeInTheDocument();
+  });
+
+  it("uses singular upload button text when exactly one migration image is selected", async () => {
+    const user = userEvent.setup();
+
+    render(<SiteMigrationWorkflowPage />);
+
+    const mediaSection = await screen.findByTestId("migration-media-section");
+    const uploadDisclosure = within(mediaSection).getByTestId("migration-media-upload-disclosure");
+    const uploadSummary = uploadDisclosure.querySelector("summary");
+    if (!uploadSummary) {
+      throw new Error("Missing migration media upload summary.");
+    }
+    await user.click(uploadSummary);
+
+    const imageInput = within(uploadDisclosure).getByLabelText("Upload image file");
+    const singleFile = new File(["file-one"], "single.jpg", { type: "image/jpeg" });
+    await user.upload(imageInput, singleFile);
+
+    expect(within(uploadDisclosure).getByTestId("migration-media-upload-selection-count")).toHaveTextContent(
+      "Files selected: 1",
+    );
+    expect(within(uploadDisclosure).getByRole("button", { name: "Upload image" })).toBeInTheDocument();
   });
 
   it("renders difficulty blocker messaging when preflight fails on difficulty under input cap", async () => {

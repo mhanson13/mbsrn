@@ -1608,6 +1608,13 @@ function recommendationIsReadyNow(item: Recommendation): boolean {
   return item.status === "open" || item.status === "in_progress";
 }
 
+function recommendationIsBulkActionEligible(item: Recommendation, status: RecommendationActionStatus): boolean {
+  if (status === "accepted" || status === "dismissed") {
+    return recommendationIsReadyNow(item);
+  }
+  return false;
+}
+
 function deriveRecommendationLifecycleSupport(item: Recommendation): {
   lifecycleCue: string;
   lifecycleCueTone: "badge-success" | "badge-warn" | "badge-muted";
@@ -2204,12 +2211,18 @@ function RecommendationsPageContent() {
     || filters.category !== DEFAULT_FILTERS.category
     || groupDuplicates !== defaultGroupDuplicatesForStatus(filters.status),
   );
-  const displayedRecommendationIds = useMemo(() => items.map((item) => item.id), [items]);
-  const displayedRecommendationIdSet = useMemo(() => new Set(displayedRecommendationIds), [displayedRecommendationIds]);
+  const selectableDisplayedRecommendationIds = useMemo(
+    () => items.filter((item) => recommendationIsReadyNow(item)).map((item) => item.id),
+    [items],
+  );
+  const selectableDisplayedRecommendationIdSet = useMemo(
+    () => new Set(selectableDisplayedRecommendationIds),
+    [selectableDisplayedRecommendationIds],
+  );
   const selectedCount = selectedRecommendationIds.length;
   const allDisplayedSelected =
-    displayedRecommendationIds.length > 0 &&
-    displayedRecommendationIds.every((id) => selectedRecommendationIds.includes(id));
+    selectableDisplayedRecommendationIds.length > 0 &&
+    selectableDisplayedRecommendationIds.every((id) => selectedRecommendationIds.includes(id));
   const hasInFlightActionExecution = useMemo(
     () => items.some((item) => hasInFlightLineageExecution(item.action_lineage || null)),
     [items],
@@ -2868,6 +2881,9 @@ function RecommendationsPageContent() {
   }
 
   function toggleRecommendationSelection(recommendationId: string) {
+    if (!selectableDisplayedRecommendationIdSet.has(recommendationId)) {
+      return;
+    }
     setSelectedRecommendationIds((current) => {
       if (current.includes(recommendationId)) {
         return current.filter((value) => value !== recommendationId);
@@ -2878,7 +2894,7 @@ function RecommendationsPageContent() {
 
   function toggleSelectAllDisplayed(checked: boolean) {
     if (checked) {
-      setSelectedRecommendationIds(displayedRecommendationIds);
+      setSelectedRecommendationIds(selectableDisplayedRecommendationIds);
       return;
     }
     setSelectedRecommendationIds([]);
@@ -2889,8 +2905,13 @@ function RecommendationsPageContent() {
       return;
     }
 
-    const selectedItems = items.filter((item) => selectedRecommendationIds.includes(item.id));
+    const selectedItems = items.filter(
+      (item) =>
+        selectedRecommendationIds.includes(item.id) && recommendationIsBulkActionEligible(item, status),
+    );
     if (selectedItems.length === 0) {
+      setBulkActionSuccess(null);
+      setBulkActionError("Select at least one open recommendation before applying a bulk action.");
       return;
     }
     const selectedItemIds = selectedItems.map((item) => item.id);
@@ -2997,8 +3018,8 @@ function RecommendationsPageContent() {
   }, [activePage, currentPage, pageSize, pathname, router, searchParams, totalRecommendations]);
 
   useEffect(() => {
-    setSelectedRecommendationIds((current) => current.filter((id) => displayedRecommendationIdSet.has(id)));
-  }, [displayedRecommendationIdSet]);
+    setSelectedRecommendationIds((current) => current.filter((id) => selectableDisplayedRecommendationIdSet.has(id)));
+  }, [selectableDisplayedRecommendationIdSet]);
 
   useEffect(() => {
     if (!executionPollingActive) {
@@ -3511,7 +3532,7 @@ function RecommendationsPageContent() {
                     aria-label="Select all displayed recommendations"
                     checked={allDisplayedSelected}
                     onChange={(event) => toggleSelectAllDisplayed(event.target.checked)}
-                    disabled={items.length === 0 || bulkActionInFlight !== null}
+                    disabled={selectableDisplayedRecommendationIds.length === 0 || bulkActionInFlight !== null}
                   />
                 </th>
                 <th>Priority</th>
@@ -3618,6 +3639,7 @@ function RecommendationsPageContent() {
                 const markCompleteLabel = markCompleteControl?.enabled
                   ? "Mark Complete"
                   : markCompleteControl?.label || "Mark Complete";
+                const bulkActionEligible = recommendationIsReadyNow(item);
                 return (
                   <Fragment key={item.id}>
                     <tr
@@ -3638,10 +3660,15 @@ function RecommendationsPageContent() {
                           type="checkbox"
                           aria-label={`Select recommendation ${item.id}`}
                           checked={selectedRecommendationIds.includes(item.id)}
-                          disabled={bulkActionInFlight !== null}
+                          disabled={bulkActionInFlight !== null || !bulkActionEligible}
+                          onMouseDown={(event) => event.stopPropagation()}
+                          onPointerDown={(event) => event.stopPropagation()}
                           onClick={(event) => event.stopPropagation()}
                           onKeyDown={(event) => event.stopPropagation()}
-                          onChange={() => toggleRecommendationSelection(item.id)}
+                          onChange={(event) => {
+                            event.stopPropagation();
+                            toggleRecommendationSelection(item.id);
+                          }}
                         />
                       </td>
                       <td>
