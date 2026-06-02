@@ -1472,6 +1472,95 @@ describe("site migration workflow route", () => {
     );
   });
 
+  it("surfaces target-repo deploy secret blockers with deploy auth mode diagnostics", async () => {
+    const user = userEvent.setup();
+    const summary = buildMigrationWorkspaceSummary({
+      deploy_readiness: {
+        ready: false,
+        reasons: ["Deploy workflow requires target-repo deploy secret before dispatch."],
+        dispatch_service_reason_code: "target_repo_deploy_secret_missing",
+        target: {
+          enabled: true,
+          repo_owner: "mhanson13",
+          repo_name: "integratedsafetyservices",
+          workflow_id: "deploy-integratedsafetyservices-www-prod.yml",
+          ref: "main",
+          managed_gke_config_details: {
+            deploy_auth_mode: "target_repo_actions_secret",
+            target_repo_deploy_secret_required: true,
+            target_repo_deploy_secret_name: "GCP_DEPLOY_KEY",
+            target_repo_deploy_secret_present: false,
+          },
+        },
+      },
+    });
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(summary);
+    mockFetchMigrationPublishHistory.mockResolvedValueOnce({ items: [], total: 0 });
+    mockFetchMigrationDeployHistory.mockResolvedValueOnce({ items: [], total: 0 });
+
+    render(<SiteMigrationWorkflowPage />);
+
+    const deployReadiness = await screen.findByTestId("migration-deploy-readiness");
+    expect(deployReadiness).toHaveTextContent("Deploy auth mode: target repo actions secret");
+    expect(deployReadiness).toHaveTextContent("Target repo deploy secret required: Yes");
+    expect(deployReadiness).toHaveTextContent("Target repo deploy secret name: GCP_DEPLOY_KEY");
+    expect(deployReadiness).toHaveTextContent("Target repo deploy secret present: No");
+    expect(deployReadiness).toHaveTextContent("requires target-repo secret GCP_DEPLOY_KEY");
+
+    await user.click(await screen.findByText("Show detailed migration failure diagnostics"));
+    const rawDeployDetails = within(screen.getByTestId("migration-deploy-diagnostics-raw-details"));
+    await user.click(rawDeployDetails.getByText("Show raw deploy diagnostics fields"));
+    expect(rawDeployDetails.getByText(/deploy_auth_mode:\s*target_repo_actions_secret/i)).toBeInTheDocument();
+    expect(rawDeployDetails.getByText(/target_repo_deploy_secret_required:\s*Yes/i)).toBeInTheDocument();
+    expect(rawDeployDetails.getByText(/target_repo_deploy_secret_name:\s*GCP_DEPLOY_KEY/i)).toBeInTheDocument();
+    expect(rawDeployDetails.getByText(/target_repo_deploy_secret_present:\s*No/i)).toBeInTheDocument();
+  });
+
+  it("surfaces static ip retry/list fallback diagnostics when address is still missing", async () => {
+    const user = userEvent.setup();
+    const summary = buildMigrationWorkspaceSummary({
+      deploy_readiness: {
+        ready: false,
+        reasons: ["Static IP address is unavailable after bounded ensure retry."],
+        dispatch_service_reason_code: "static_ip_address_missing_after_retry",
+        static_ip_status: "IN_USE",
+        last_failure_static_ip_error_diagnostics: {
+          static_ip_describe_attempts: 8,
+          static_ip_list_fallback_attempted: true,
+          static_ip_list_fallback_match_count: 0,
+          static_ip_list_fallback_address_present: false,
+          static_ip_list_fallback_response_keys: ["name", "status", "users"],
+        },
+        target: {
+          enabled: true,
+          repo_owner: "mhanson13",
+          repo_name: "integratedsafetyservices",
+          workflow_id: "deploy-integratedsafetyservices-www-prod.yml",
+          ref: "main",
+        },
+      },
+    });
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(summary);
+    mockFetchMigrationPublishHistory.mockResolvedValueOnce({ items: [], total: 0 });
+    mockFetchMigrationDeployHistory.mockResolvedValueOnce({ items: [], total: 0 });
+
+    render(<SiteMigrationWorkflowPage />);
+
+    const deployReadiness = await screen.findByTestId("migration-deploy-readiness");
+    expect(deployReadiness).toHaveTextContent("list fallback");
+
+    await user.click(await screen.findByText("Show detailed migration failure diagnostics"));
+    const rawDeployDetails = within(screen.getByTestId("migration-deploy-diagnostics-raw-details"));
+    await user.click(rawDeployDetails.getByText("Show raw deploy diagnostics fields"));
+    expect(rawDeployDetails.getByText(/static_ip_describe_attempts:\s*8/i)).toBeInTheDocument();
+    expect(rawDeployDetails.getByText(/static_ip_list_fallback_attempted:\s*Yes/i)).toBeInTheDocument();
+    expect(rawDeployDetails.getByText(/static_ip_list_fallback_match_count:\s*0/i)).toBeInTheDocument();
+    expect(rawDeployDetails.getByText(/static_ip_list_fallback_address_present:\s*No/i)).toBeInTheDocument();
+    expect(
+      rawDeployDetails.getByText(/static_ip_list_fallback_response_keys:\s*name, status, users/i),
+    ).toBeInTheDocument();
+  });
+
   it("renders FAILED_NOT_VISIBLE with DNS/TLS context in deploy consistency diagnostics", async () => {
     const user = userEvent.setup();
     const summary = buildMigrationWorkspaceSummary({

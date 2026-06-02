@@ -297,6 +297,19 @@ For migration-driven site repos, MBSRN acts as a control-plane orchestrator:
 - admin-owned environment mapping metadata (`target_environment_key`, `target_environment_source`) is injected as template metadata; operators cannot edit these deploy routing controls from workspace UI.
 - deploy execution remains in the target repo via GitHub Actions dispatch; MBSRN does not directly execute GKE deployment steps.
 
+Deploy auth mode is generic and configuration-driven:
+- `deploy_auth_mode=target_repo_actions_secret`
+  - site-repo workflow requires `GCP_DEPLOY_KEY`.
+  - deploy readiness blocks before dispatch when missing (`target_repo_deploy_secret_missing`).
+  - workflow run failures with the same root cause are classified as `generated_workflow_requires_missing_gcp_deploy_key`.
+- `deploy_auth_mode=control_plane_managed` or `deploy_auth_mode=github_oidc_workload_identity`
+  - target-repo `GCP_DEPLOY_KEY` is not required by the workflow contract.
+- deploy diagnostics/readiness expose:
+  - `deploy_auth_mode`
+  - `target_repo_deploy_secret_required`
+  - `target_repo_deploy_secret_name`
+  - `target_repo_deploy_secret_present`
+
 Operational implication:
 - a repo can contain published artifact files but is not considered deploy-ready until workflow provisioning/verification succeeds on the target ref.
 
@@ -333,7 +346,8 @@ Important state:
   - refresh is scoped to the active route/workspace site id and may fall back to the latest deploy record for that site when selected artifact history is missing
 - if selected workflow evidence collection failed but current live HTTPS probe succeeds, operator UI should report current runtime as healthy while preserving the failed selected attempt in history/diagnostics.
 - static-IP reconciliation rules:
-  - static IP ensure/describe uses bounded re-describe before classifying `managed_site_static_ip_address_missing`
+  - static IP ensure/describe uses bounded re-describe + list fallback before classifying `static_ip_address_missing_after_retry`
+  - list fallback succeeds only when exactly one address entry matches the expected name and includes a non-empty `address` value
   - stale selected-attempt static-IP-missing failures remain historical context and must not override healthy current live HTTPS evidence
 - Expected reason-code families include:
   - `managed_certificate_provisioning` / `tls_certificate_provisioning` (static IP + ingress can be healthy while TLS still converges)
@@ -368,6 +382,15 @@ Typical causes:
   - service/endpoint probes `ok` + preview HTTPS `502` + backend `HEALTHY` => ingress/LB edge convergence or stale backend path.
   - service/endpoint probes `http_502` => app runtime also returning 502.
   - pod restart/crash evidence => pod runtime instability.
+
+Common managed-site deploy blocker codes:
+- `repo_adoption_required` / `github_repo_adoption_required`
+- `workflow_provisioning_failed`
+- `target_repo_deploy_secret_missing`
+- `generated_workflow_requires_missing_gcp_deploy_key`
+- `site_web_image_tag_missing`
+- `static_ip_address_missing_after_retry`
+- `workflow_run_failed_without_live_url_evidence`
 
 Safe verification commands:
 

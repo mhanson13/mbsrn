@@ -508,6 +508,9 @@ _DEPLOY_RUN_FAILURE_REASON_HTTPS_PROBE_TIMEOUT = "https_probe_timeout"
 _DEPLOY_RUN_FAILURE_REASON_HTTPS_PROBE_EMPTY_REPLY = "https_probe_empty_reply"
 _DEPLOY_RUN_FAILURE_REASON_HTTPS_PROBE_NOT_ATTEMPTED = "https_probe_not_attempted"
 _DEPLOY_RUN_FAILURE_REASON_HTTPS_PROBE_FAILED_AFTER_CONTROL_PLANE_READY = "https_probe_failed_after_control_plane_ready"
+_DEPLOY_RUN_FAILURE_REASON_GENERATED_WORKFLOW_REQUIRES_MISSING_GCP_DEPLOY_KEY = (
+    "generated_workflow_requires_missing_gcp_deploy_key"
+)
 _DEPLOY_RUN_FAILURE_STAGE_GCP_AUTH = "gcp_auth"
 _DEPLOY_RUN_FAILURE_STAGE_CLUSTER_CREDENTIALS = "cluster_credentials"
 _DEPLOY_RUN_FAILURE_STAGE_MANIFEST_APPLY = "manifest_apply"
@@ -523,6 +526,7 @@ _DEPLOY_DISPATCH_SERVICE_REASON_TARGET_METADATA_MISSING = "target_metadata_missi
 _DEPLOY_DISPATCH_SERVICE_REASON_MISSING_CLUSTER_NAME = "missing_cluster_name"
 _DEPLOY_DISPATCH_SERVICE_REASON_MISSING_CLUSTER_LOCATION = "missing_cluster_location"
 _DEPLOY_DISPATCH_SERVICE_REASON_MISSING_GCP_PROJECT_ID = "missing_gcp_project_id"
+_DEPLOY_DISPATCH_SERVICE_REASON_TARGET_REPO_DEPLOY_SECRET_MISSING = "target_repo_deploy_secret_missing"
 _DEPLOY_DISPATCH_SERVICE_REASON_IMAGE_PULL_SECRET_MISSING = "image_pull_secret_missing"
 _DEPLOY_DISPATCH_SERVICE_REASON_IMAGE_PULL_SECRET_NOT_REFERENCED = "image_pull_secret_not_referenced"
 _DEPLOY_DISPATCH_SERVICE_REASON_CERTIFICATE_DOMAIN_MISMATCH = "certificate_domain_mismatch"
@@ -543,6 +547,7 @@ _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_QUOTA_EXCEEDED = "managed
 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROJECT_NOT_FOUND = "managed_site_static_ip_project_not_found"
 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFLICT = "managed_site_static_ip_conflict"
 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_ADDRESS_MISSING = "managed_site_static_ip_address_missing"
+_DEPLOY_DISPATCH_SERVICE_REASON_STATIC_IP_ADDRESS_MISSING_AFTER_RETRY = "static_ip_address_missing_after_retry"
 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_CONFIG_INVALID = (
     "managed_deploy_impersonation_config_invalid"
 )
@@ -6088,25 +6093,29 @@ class SEOMigrationService:
                                 _emit_prerequisite_chain_log(stage="static_ip_address_refreshed")
                         if not expected_static_ip_address:
                             dispatch_service_reason_code = (
-                                _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_ADDRESS_MISSING
+                                _DEPLOY_DISPATCH_SERVICE_REASON_STATIC_IP_ADDRESS_MISSING_AFTER_RETRY
                             )
                             static_ip_ensure_result = "failed"
                             static_ip_operation = "ensure"
                             static_ip_error_category = "address_missing"
-                            static_ip_error_code = "address_missing"
-                            static_ip_error_summary = "Static IP ensure succeeded but did not return an address value."
+                            static_ip_error_code = "address_missing_after_retry"
+                            static_ip_error_summary = (
+                                "Static IP ensure could not resolve an address value after bounded refresh attempts."
+                            )
                             static_ip_exit_code = None
-                            static_ip_permission_hint = "Verify global address describe permissions and retry."
+                            static_ip_permission_hint = (
+                                "Verify global address describe/list permissions and retry."
+                            )
                             _emit_prerequisite_chain_log(
                                 stage="static_ip_address_missing",
-                                reason_code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_ADDRESS_MISSING,
+                                reason_code=_DEPLOY_DISPATCH_SERVICE_REASON_STATIC_IP_ADDRESS_MISSING_AFTER_RETRY,
                                 level=logging.WARNING,
                             )
                             raise SEOMigrationGitHubPublisherError(
-                                code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_ADDRESS_MISSING,
+                                code=_DEPLOY_DISPATCH_SERVICE_REASON_STATIC_IP_ADDRESS_MISSING_AFTER_RETRY,
                                 safe_message=(
-                                    "Managed-site static IP ensure succeeded but did not return an address value. "
-                                    "Verify global address describe permissions and retry."
+                                    "Managed-site static IP ensure could not resolve an address value after bounded retries. "
+                                    "Verify global address visibility and retry."
                                 ),
                                 stage="static_ip_provision",
                             )
@@ -17712,6 +17721,7 @@ class SEOMigrationService:
             "repo_create_failed_runtime_unavailable",
             "github_workflow_write_not_authorized",
             "github_contents_write_not_authorized",
+            _DEPLOY_DISPATCH_SERVICE_REASON_TARGET_REPO_DEPLOY_SECRET_MISSING,
             _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFIG_MISSING,
             _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PERMISSION_DENIED,
             _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_API_DISABLED,
@@ -17719,6 +17729,7 @@ class SEOMigrationService:
             _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROJECT_NOT_FOUND,
             _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFLICT,
             _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_ADDRESS_MISSING,
+            _DEPLOY_DISPATCH_SERVICE_REASON_STATIC_IP_ADDRESS_MISSING_AFTER_RETRY,
             _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFIG_MISSING,
             _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PERMISSION_DENIED,
         }:
@@ -22835,6 +22846,25 @@ def _normalize_static_ip_error_diagnostics(value: object) -> dict[str, object] |
     normalized_error_code = _normalize_string(value.get("static_ip_error_code"), max_length=80)
     normalized_summary = _normalize_string(value.get("static_ip_error_summary"), max_length=300)
     normalized_exit_code = _coerce_int(value.get("static_ip_exit_code"))
+    normalized_describe_attempts = _coerce_int(value.get("static_ip_describe_attempts"))
+    if normalized_describe_attempts is not None:
+        normalized_describe_attempts = max(0, int(normalized_describe_attempts))
+    raw_list_fallback_attempted = value.get("static_ip_list_fallback_attempted")
+    normalized_list_fallback_attempted = (
+        bool(raw_list_fallback_attempted) if isinstance(raw_list_fallback_attempted, bool) else None
+    )
+    normalized_list_fallback_match_count = _coerce_int(value.get("static_ip_list_fallback_match_count"))
+    if normalized_list_fallback_match_count is not None:
+        normalized_list_fallback_match_count = max(0, int(normalized_list_fallback_match_count))
+    raw_list_fallback_address_present = value.get("static_ip_list_fallback_address_present")
+    normalized_list_fallback_address_present = (
+        bool(raw_list_fallback_address_present) if isinstance(raw_list_fallback_address_present, bool) else None
+    )
+    normalized_list_fallback_response_keys = _normalize_string_list(
+        value.get("static_ip_list_fallback_response_keys"),
+        max_items=16,
+        max_item_length=80,
+    )
     normalized_permission_hint = _normalize_string(value.get("static_ip_permission_hint"), max_length=240)
     credential_diagnostics = _normalize_gcp_credential_diagnostics(value) or {}
     return {
@@ -22843,6 +22873,11 @@ def _normalize_static_ip_error_diagnostics(value: object) -> dict[str, object] |
         "static_ip_error_code": normalized_error_code,
         "static_ip_error_summary": normalized_summary,
         "static_ip_exit_code": normalized_exit_code,
+        "static_ip_describe_attempts": normalized_describe_attempts,
+        "static_ip_list_fallback_attempted": normalized_list_fallback_attempted,
+        "static_ip_list_fallback_match_count": normalized_list_fallback_match_count,
+        "static_ip_list_fallback_address_present": normalized_list_fallback_address_present,
+        "static_ip_list_fallback_response_keys": normalized_list_fallback_response_keys,
         "static_ip_permission_hint": normalized_permission_hint,
         "gcp_credential_source": _normalize_string(
             credential_diagnostics.get("gcp_credential_source"),
@@ -22899,6 +22934,8 @@ def _normalize_deploy_failure_reason_code(value: object) -> str | None:
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROJECT_NOT_FOUND,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFLICT,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_ADDRESS_MISSING,
+        _DEPLOY_DISPATCH_SERVICE_REASON_STATIC_IP_ADDRESS_MISSING_AFTER_RETRY,
+        _DEPLOY_DISPATCH_SERVICE_REASON_TARGET_REPO_DEPLOY_SECRET_MISSING,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_CONFIG_INVALID,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_PERMISSION_DENIED,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFIG_MISSING,
@@ -22928,6 +22965,7 @@ def _normalize_deploy_failure_reason_code(value: object) -> str | None:
         "github_repo_state_invalid_for_bootstrap",
         "github_repo_initialization_failed",
         "github_repo_requires_manual_initialization",
+        _DEPLOY_RUN_FAILURE_REASON_GENERATED_WORKFLOW_REQUIRES_MISSING_GCP_DEPLOY_KEY,
     }
     if normalized_lower in allowed:
         return normalized_lower
@@ -23002,6 +23040,8 @@ def _normalize_workflow_run_failure_reason_code(value: object) -> str | None:
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROJECT_NOT_FOUND,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFLICT,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_ADDRESS_MISSING,
+        _DEPLOY_DISPATCH_SERVICE_REASON_STATIC_IP_ADDRESS_MISSING_AFTER_RETRY,
+        _DEPLOY_DISPATCH_SERVICE_REASON_TARGET_REPO_DEPLOY_SECRET_MISSING,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_CONFIG_INVALID,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_PERMISSION_DENIED,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFIG_MISSING,
@@ -23029,6 +23069,7 @@ def _normalize_workflow_run_failure_reason_code(value: object) -> str | None:
         _DEPLOY_RUN_FAILURE_REASON_HTTPS_PROBE_EMPTY_REPLY,
         _DEPLOY_RUN_FAILURE_REASON_HTTPS_PROBE_NOT_ATTEMPTED,
         _DEPLOY_RUN_FAILURE_REASON_HTTPS_PROBE_FAILED_AFTER_CONTROL_PLANE_READY,
+        _DEPLOY_RUN_FAILURE_REASON_GENERATED_WORKFLOW_REQUIRES_MISSING_GCP_DEPLOY_KEY,
     }
     if normalized_lower in allowed:
         return normalized_lower
@@ -23068,6 +23109,7 @@ def _normalize_dispatch_service_reason_code(value: object) -> str | None:
         _DEPLOY_DISPATCH_SERVICE_REASON_MISSING_CLUSTER_NAME,
         _DEPLOY_DISPATCH_SERVICE_REASON_MISSING_CLUSTER_LOCATION,
         _DEPLOY_DISPATCH_SERVICE_REASON_MISSING_GCP_PROJECT_ID,
+        _DEPLOY_DISPATCH_SERVICE_REASON_TARGET_REPO_DEPLOY_SECRET_MISSING,
         _DEPLOY_DISPATCH_SERVICE_REASON_IMAGE_PULL_SECRET_MISSING,
         _DEPLOY_DISPATCH_SERVICE_REASON_IMAGE_PULL_SECRET_NOT_REFERENCED,
         _DEPLOY_DISPATCH_SERVICE_REASON_CERTIFICATE_DOMAIN_MISMATCH,
@@ -23086,6 +23128,7 @@ def _normalize_dispatch_service_reason_code(value: object) -> str | None:
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROJECT_NOT_FOUND,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFLICT,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_ADDRESS_MISSING,
+        _DEPLOY_DISPATCH_SERVICE_REASON_STATIC_IP_ADDRESS_MISSING_AFTER_RETRY,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_CONFIG_INVALID,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_PERMISSION_DENIED,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFIG_MISSING,
@@ -23604,6 +23647,7 @@ def _derive_dispatch_service_reason_code(
         _DEPLOY_DISPATCH_SERVICE_REASON_MISSING_CLUSTER_NAME,
         _DEPLOY_DISPATCH_SERVICE_REASON_MISSING_CLUSTER_LOCATION,
         _DEPLOY_DISPATCH_SERVICE_REASON_MISSING_GCP_PROJECT_ID,
+        _DEPLOY_DISPATCH_SERVICE_REASON_TARGET_REPO_DEPLOY_SECRET_MISSING,
         _DEPLOY_DISPATCH_SERVICE_REASON_IMAGE_PULL_SECRET_MISSING,
         _DEPLOY_DISPATCH_SERVICE_REASON_IMAGE_PULL_SECRET_NOT_REFERENCED,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROVISIONING_FAILED,
@@ -23614,6 +23658,7 @@ def _derive_dispatch_service_reason_code(
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROJECT_NOT_FOUND,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFLICT,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_ADDRESS_MISSING,
+        _DEPLOY_DISPATCH_SERVICE_REASON_STATIC_IP_ADDRESS_MISSING_AFTER_RETRY,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_CONFIG_INVALID,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_PERMISSION_DENIED,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFIG_MISSING,
@@ -23671,6 +23716,8 @@ def _derive_dispatch_service_reason_code(
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROJECT_NOT_FOUND,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFLICT,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_ADDRESS_MISSING,
+        _DEPLOY_DISPATCH_SERVICE_REASON_STATIC_IP_ADDRESS_MISSING_AFTER_RETRY,
+        _DEPLOY_DISPATCH_SERVICE_REASON_TARGET_REPO_DEPLOY_SECRET_MISSING,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_CONFIG_INVALID,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_PERMISSION_DENIED,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFIG_MISSING,
@@ -23704,6 +23751,12 @@ def _derive_managed_gke_dispatch_readiness_message(*, dispatch_service_reason_co
         return (
             "Admin action required: managed deploy target is missing required admin GKE project id "
             "configuration. Update MBSRN admin deployment settings."
+        )
+    if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_TARGET_REPO_DEPLOY_SECRET_MISSING:
+        return (
+            "Deploy workflow requires target-repo secret GCP_DEPLOY_KEY, but it is missing. "
+            "Run publish to provision workflow prerequisites or configure deploy auth mode so dispatch is blocked "
+            "until required deploy credentials are available."
         )
     if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_IMAGE_PULL_SECRET_MISSING:
         return (
@@ -23763,6 +23816,11 @@ def _derive_managed_gke_dispatch_readiness_message(*, dispatch_service_reason_co
         return (
             "Managed-site static IP ensure succeeded but did not return an address value. "
             "Verify global address describe permissions and retry."
+        )
+    if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_STATIC_IP_ADDRESS_MISSING_AFTER_RETRY:
+        return (
+            "Managed-site static IP ensure could not resolve an address value after bounded describe retries "
+            "and list fallback. Verify global address visibility/scope permissions and retry."
         )
     if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROVISIONING_FAILED:
         return (
@@ -23923,6 +23981,11 @@ def _derive_deploy_failure_remediation_hint(
             "Managed deploy target is missing required admin GKE project id configuration. "
             "Update MBSRN admin deployment settings."
         )
+    if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_TARGET_REPO_DEPLOY_SECRET_MISSING:
+        return (
+            "Deploy workflow requires target-repo secret GCP_DEPLOY_KEY, but it is missing. "
+            "Run publish to provision deploy prerequisites or configure deploy auth mode so dispatch blocks before run."
+        )
     if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_IMAGE_PULL_SECRET_MISSING:
         return (
             "Private managed-site image auth is required, but GHCR pull credentials (GIT_USERID, GIT_EMAIL, "
@@ -23976,6 +24039,11 @@ def _derive_deploy_failure_remediation_hint(
         return (
             "Static IP ensure succeeded but did not return an address; verify global address describe "
             "permissions and retry."
+        )
+    if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_STATIC_IP_ADDRESS_MISSING_AFTER_RETRY:
+        return (
+            "Static IP ensure did not resolve an address after bounded describe retries and list fallback. "
+            "Verify global address scope/permissions and retry deploy."
         )
     if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROVISIONING_FAILED:
         return (
@@ -24093,6 +24161,11 @@ def _derive_deploy_failure_remediation_hint(
         return (
             "Infrastructure may be healthy but deployed content identity is wrong for this site. "
             "Republish managed deploy files before redeploy to restore site-specific runtime image identity."
+        )
+    if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_GENERATED_WORKFLOW_REQUIRES_MISSING_GCP_DEPLOY_KEY:
+        return (
+            "Workflow run failed because target-repo secret GCP_DEPLOY_KEY was missing. "
+            "Configure deploy auth prerequisites and refresh deploy readiness before rerun."
         )
     if (
         normalized_reason == _DEPLOY_TARGET_REASON_WORKFLOW_NOT_DISPATCHABLE
@@ -24265,6 +24338,16 @@ def _derive_workflow_run_failure_hint(
             "Ingress address is still pending, but expected hostname is already reachable. "
             "Verify ingress address assignment and continue with bounded monitoring."
         )
+    if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_GENERATED_WORKFLOW_REQUIRES_MISSING_GCP_DEPLOY_KEY:
+        return (
+            "Deploy workflow failed because required target-repo secret GCP_DEPLOY_KEY was missing. "
+            "Provision deploy auth prerequisites and retry."
+        )
+    if normalized_reason == _DEPLOY_DISPATCH_SERVICE_REASON_TARGET_REPO_DEPLOY_SECRET_MISSING:
+        return (
+            "Deploy workflow requires target-repo secret GCP_DEPLOY_KEY, but it is not configured. "
+            "Run publish/bootstrap to provision it or change deploy auth mode."
+        )
     if normalized_reason in {
         _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_STATIC_IP_CONFLICT,
         _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_STATIC_IP_NOT_ALLOWED,
@@ -24318,6 +24401,11 @@ def _derive_workflow_run_failure_hint(
         return (
             "Static IP ensure succeeded but did not return an address value. "
             "Verify global address describe permissions and retry."
+        )
+    if normalized_reason == _DEPLOY_DISPATCH_SERVICE_REASON_STATIC_IP_ADDRESS_MISSING_AFTER_RETRY:
+        return (
+            "Static IP ensure could not resolve an address value after bounded describe retries and list fallback. "
+            "Verify global address scope/permissions and retry."
         )
     if normalized_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROVISIONING_FAILED:
         return (

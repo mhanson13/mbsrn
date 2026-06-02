@@ -2631,6 +2631,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROJECT_NOT_FOUND,
                 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFLICT,
                 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_ADDRESS_MISSING,
+                _DEPLOY_DISPATCH_SERVICE_REASON_STATIC_IP_ADDRESS_MISSING_AFTER_RETRY,
                 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_CONFIG_INVALID,
                 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_PERMISSION_DENIED,
             }:
@@ -5772,6 +5773,14 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             site_id=None,
         )
         workflow_content = _decode_workflow_file_content(workflow_file_payload) or ""
+        deploy_auth_mode = _derive_managed_workflow_deploy_auth_mode(workflow_content=workflow_content)
+        target_repo_deploy_secret_required = _managed_workflow_requires_target_repo_deploy_secret(
+            deploy_auth_mode=deploy_auth_mode
+        )
+        target_repo_deploy_secret_name = (
+            _MANAGED_DEPLOY_TARGET_REPO_SECRET_NAME if target_repo_deploy_secret_required else None
+        )
+        target_repo_deploy_secret_present: bool | None = None
         expected_workflow_signature = _extract_managed_workflow_signature(workflow_yaml=workflow_content)
         observed_workflow_signature = _compute_managed_workflow_signature(workflow_yaml=workflow_content)
         workflow_integrity_status = _DEPLOY_WORKFLOW_INTEGRITY_STATUS_MISSING
@@ -6015,6 +6024,15 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         if managed_workflow and gke_config_reason_code is not None:
             dispatch_service_availability = False
             dispatch_service_reason_code = gke_config_reason_code
+        if managed_workflow and dispatch_service_availability and target_repo_deploy_secret_required:
+            target_repo_deploy_secret_present = self._actions_secret_present(
+                repo_owner=target.repo_owner,
+                repo_name=target.repo_name,
+                secret_name=_MANAGED_DEPLOY_TARGET_REPO_SECRET_NAME,
+            )
+            if not target_repo_deploy_secret_present:
+                dispatch_service_availability = False
+                dispatch_service_reason_code = _DEPLOY_DISPATCH_SERVICE_REASON_TARGET_REPO_DEPLOY_SECRET_MISSING
         if managed_workflow and dispatch_service_availability:
             if isinstance(managed_image_pull_secret_config, dict):
                 (
@@ -6106,6 +6124,10 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             **gke_config_details,
             "workflow_integrity_status": workflow_integrity_status,
             "workflow_integrity_reason_code": workflow_integrity_reason_code,
+            "deploy_auth_mode": deploy_auth_mode,
+            "target_repo_deploy_secret_required": target_repo_deploy_secret_required,
+            "target_repo_deploy_secret_name": target_repo_deploy_secret_name,
+            "target_repo_deploy_secret_present": target_repo_deploy_secret_present,
         }
         return SEOMigrationGitHubTargetReadinessResult(
             repo_owner=target.repo_owner,
@@ -7013,6 +7035,11 @@ def _ensure_managed_site_global_static_ip(
         f"{encoded_project}/global/addresses/{encoded_static_ip_name}"
     )
     create_url = "https://compute.googleapis.com/compute/v1/projects/" f"{encoded_project}/global/addresses"
+    list_filter = urllib.parse.quote(f"name eq {normalized_static_ip_name}", safe="")
+    list_url = (
+        "https://compute.googleapis.com/compute/v1/projects/"
+        f"{encoded_project}/global/addresses?filter={list_filter}&maxResults=2"
+    )
     request_kwargs = {
         "access_token": access_token,
         "timeout_seconds": timeout_seconds,
@@ -7021,27 +7048,122 @@ def _ensure_managed_site_global_static_ip(
         "safe_message_on_failure": "Managed site static IP provisioning request to Google APIs failed.",
         "safe_message_on_timeout": "Managed site static IP provisioning request timed out.",
     }
+    describe_max_attempts = 8
+    describe_attempts = 0
+    list_fallback_attempted = False
+    list_fallback_match_count: int | None = None
+    list_fallback_address_present: bool | None = None
+    list_fallback_failure_code: str | None = None
+    list_fallback_response_keys: tuple[str, ...] = ()
 
     def _coerce_static_ip_address(payload: object) -> str | None:
         if not isinstance(payload, dict):
             return None
         return _coerce_string(payload.get("address"))
 
+    def _coerce_static_ip_address_from_list_payload(payload: object) -> str | None:
+        nonlocal list_fallback_match_count, list_fallback_address_present
+        nonlocal list_fallback_failure_code, list_fallback_response_keys
+        if not isinstance(payload, dict):
+            list_fallback_match_count = 0
+            list_fallback_address_present = False
+            list_fallback_failure_code = "payload_invalid"
+            list_fallback_response_keys = ()
+            return None
+        list_fallback_response_keys = tuple(
+            sorted(
+                key
+                for key in payload.keys()
+                if isinstance(key, str)
+            )[:10]
+        )
+        items = payload.get("items")
+        if not isinstance(items, list):
+            list_fallback_match_count = 0
+            list_fallback_address_present = False
+            list_fallback_failure_code = "items_missing"
+            return None
+        matching_items: list[dict[str, object]] = []
+        for item in items[:20]:
+            if not isinstance(item, dict):
+                continue
+            item_name = _coerce_string(item.get("name"))
+            if item_name == normalized_static_ip_name:
+                matching_items.append(item)
+        list_fallback_match_count = len(matching_items)
+        matching_addresses = [
+            address
+            for item in matching_items
+            for address in (_coerce_static_ip_address(item),)
+            if address
+        ]
+        list_fallback_address_present = bool(matching_addresses)
+        if list_fallback_match_count == 0:
+            list_fallback_failure_code = "no_match"
+            return None
+        if list_fallback_match_count > 1:
+            list_fallback_failure_code = "multiple_matches"
+            return None
+        if not matching_addresses:
+            list_fallback_failure_code = "missing_address"
+            return None
+        list_fallback_failure_code = None
+        return matching_addresses[0]
+
+    def _derive_missing_address_diagnostics() -> tuple[str, str]:
+        if list_fallback_attempted:
+            if list_fallback_failure_code == "no_match":
+                return (
+                    "address_not_found_after_retry",
+                    (
+                        "Managed-site static IP ensure could not find a matching global address entry "
+                        "after bounded describe retries and list fallback."
+                    ),
+                )
+            if list_fallback_failure_code == "multiple_matches":
+                return (
+                    "address_ambiguous_after_retry",
+                    (
+                        "Managed-site static IP ensure found multiple matching global address entries "
+                        "after bounded describe retries and list fallback, so dispatch is blocked."
+                    ),
+                )
+            if list_fallback_failure_code == "missing_address":
+                return (
+                    "address_value_missing_after_retry",
+                    (
+                        "Managed-site static IP ensure found a matching global address entry but its "
+                        "'address' field was empty after bounded describe retries and list fallback."
+                    ),
+                )
+        return (
+            "address_missing_after_retry",
+            (
+                "Managed-site static IP address payload was missing required field 'address' "
+                "after bounded describe retries and list fallback."
+            ),
+        )
+
     def _raise_static_ip_address_missing(*, operation: str) -> None:
+        diagnostics_error_code, diagnostics_error_summary = _derive_missing_address_diagnostics()
         raise SEOMigrationGitHubPublisherError(
-            code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_ADDRESS_MISSING,
+            code=_DEPLOY_DISPATCH_SERVICE_REASON_STATIC_IP_ADDRESS_MISSING_AFTER_RETRY,
             safe_message=(
-                "Managed-site static IP ensure succeeded but Google address details did not contain an address value."
+                "Managed-site static IP ensure could not resolve an address value after bounded describe retries."
             ),
             stage="static_ip_provision",
             diagnostics=_normalize_static_ip_error_diagnostics(
                 {
                     "static_ip_operation": operation,
                     "static_ip_error_category": "address_missing",
-                    "static_ip_error_code": "address_missing",
-                    "static_ip_error_summary": (
-                        "Managed-site static IP address payload was missing required field 'address'."
-                    ),
+                    "static_ip_error_code": diagnostics_error_code,
+                    "static_ip_error_summary": diagnostics_error_summary,
+                    "static_ip_describe_attempts": describe_attempts,
+                    "static_ip_list_fallback_attempted": list_fallback_attempted,
+                    "static_ip_list_fallback_match_count": list_fallback_match_count,
+                    "static_ip_list_fallback_address_present": list_fallback_address_present,
+                    "static_ip_list_fallback_failure_code": list_fallback_failure_code,
+                    "static_ip_list_fallback_response_keys": list(list_fallback_response_keys),
                     "gcp_credential_source": gcp_credential_source,
                     "gcp_principal_email": gcp_principal_email,
                     "gcp_impersonated_service_account_email": gcp_impersonated_service_account_email,
@@ -7050,6 +7172,7 @@ def _ensure_managed_site_global_static_ip(
         )
 
     def _refresh_describe_payload(*, operation: str) -> dict[str, object] | None:
+        nonlocal describe_attempts
         try:
             refreshed_payload = _request_google_json(
                 method="GET",
@@ -7065,9 +7188,52 @@ def _ensure_managed_site_global_static_ip(
                 gcp_principal_email=gcp_principal_email,
                 gcp_impersonated_service_account_email=gcp_impersonated_service_account_email,
             ) from exc
+        describe_attempts += 1
         if isinstance(refreshed_payload, dict):
             return refreshed_payload
         return None
+
+    def _resolve_address_with_describe_retries(
+        *,
+        operation: str,
+        initial_payload: object | None = None,
+    ) -> str | None:
+        nonlocal describe_attempts
+        payload: object | None = initial_payload
+        for attempt in range(describe_max_attempts):
+            if payload is None:
+                payload = _refresh_describe_payload(operation=operation)
+            elif attempt == 0 and initial_payload is payload and isinstance(payload, dict):
+                # Initial payload bypasses _refresh_describe_payload; count it here for diagnostics.
+                describe_attempts += 1
+            if isinstance(payload, dict):
+                address = _coerce_static_ip_address(payload)
+                if address:
+                    return address
+            if attempt + 1 >= describe_max_attempts:
+                break
+            payload = None
+        return None
+
+    def _resolve_address_with_list_fallback(*, operation: str) -> str | None:
+        nonlocal list_fallback_attempted
+        list_fallback_attempted = True
+        try:
+            list_payload = _request_google_json(
+                method="GET",
+                url=list_url,
+                allow_404=True,
+                **request_kwargs,
+            )
+        except SEOMigrationGitHubPublisherError as exc:
+            raise _classify_managed_site_static_ip_provisioning_error(
+                exc=exc,
+                operation=operation,
+                gcp_credential_source=gcp_credential_source,
+                gcp_principal_email=gcp_principal_email,
+                gcp_impersonated_service_account_email=gcp_impersonated_service_account_email,
+            ) from exc
+        return _coerce_static_ip_address_from_list_payload(list_payload)
 
     try:
         existing_payload = _request_google_json(
@@ -7085,10 +7251,12 @@ def _ensure_managed_site_global_static_ip(
             gcp_impersonated_service_account_email=gcp_impersonated_service_account_email,
         ) from exc
     if isinstance(existing_payload, dict):
-        existing_address = _coerce_static_ip_address(existing_payload)
+        existing_address = _resolve_address_with_describe_retries(
+            operation="describe",
+            initial_payload=existing_payload,
+        )
         if not existing_address:
-            existing_payload = _refresh_describe_payload(operation="describe")
-            existing_address = _coerce_static_ip_address(existing_payload)
+            existing_address = _resolve_address_with_list_fallback(operation="list_after_describe")
         if not existing_address:
             _raise_static_ip_address_missing(operation="describe")
         return {
@@ -7127,10 +7295,12 @@ def _ensure_managed_site_global_static_ip(
                     gcp_impersonated_service_account_email=gcp_impersonated_service_account_email,
                 ) from describe_exc
             if isinstance(raced_payload, dict):
-                raced_address = _coerce_static_ip_address(raced_payload)
+                raced_address = _resolve_address_with_describe_retries(
+                    operation="describe_after_create",
+                    initial_payload=raced_payload,
+                )
                 if not raced_address:
-                    raced_payload = _refresh_describe_payload(operation="describe_after_create")
-                    raced_address = _coerce_static_ip_address(raced_payload)
+                    raced_address = _resolve_address_with_list_fallback(operation="list_after_describe")
                 if not raced_address:
                     _raise_static_ip_address_missing(operation="describe_after_create")
                 return {
@@ -7163,46 +7333,9 @@ def _ensure_managed_site_global_static_ip(
             gcp_impersonated_service_account_email=gcp_impersonated_service_account_email,
         ) from exc
 
-    last_payload: dict[str, object] | None = None
-    for attempt in range(5):
-        try:
-            created_payload = _request_google_json(
-                method="GET",
-                url=describe_url,
-                allow_404=True,
-                **request_kwargs,
-            )
-        except SEOMigrationGitHubPublisherError as exc:
-            raise _classify_managed_site_static_ip_provisioning_error(
-                exc=exc,
-                operation="describe_after_create",
-                gcp_credential_source=gcp_credential_source,
-                gcp_principal_email=gcp_principal_email,
-                gcp_impersonated_service_account_email=gcp_impersonated_service_account_email,
-            ) from exc
-        if isinstance(created_payload, dict):
-            last_payload = created_payload
-            break
-        if attempt < 4:
-            time.sleep(1)
-    if last_payload is None:
-        raise _classify_managed_site_static_ip_provisioning_error(
-            exc=SEOMigrationGitHubPublisherError(
-                code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROVISIONING_FAILED,
-                safe_message=(
-                    "Managed site static IP creation was requested but the resulting address was not visible."
-                ),
-                stage="static_ip_provision",
-            ),
-            operation="describe_after_create",
-            gcp_credential_source=gcp_credential_source,
-            gcp_principal_email=gcp_principal_email,
-            gcp_impersonated_service_account_email=gcp_impersonated_service_account_email,
-        )
-    created_address = _coerce_static_ip_address(last_payload)
+    created_address = _resolve_address_with_describe_retries(operation="describe_after_create")
     if not created_address:
-        last_payload = _refresh_describe_payload(operation="describe_after_create")
-        created_address = _coerce_static_ip_address(last_payload)
+        created_address = _resolve_address_with_list_fallback(operation="list_after_describe")
     if not created_address:
         _raise_static_ip_address_missing(operation="describe_after_create")
     return {
@@ -7296,6 +7429,8 @@ def _classify_managed_site_static_ip_provisioning_error(
             )
     elif force_reason_code == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFLICT:
         error_category = "conflict"
+    elif force_reason_code == _DEPLOY_DISPATCH_SERVICE_REASON_STATIC_IP_ADDRESS_MISSING_AFTER_RETRY:
+        error_category = "address_missing"
 
     error_summary = (
         _sanitize_static_ip_error_summary(
@@ -7431,6 +7566,11 @@ def _derive_static_ip_provisioning_safe_message(*, reason_code: str) -> str:
             "Managed-site static IP ensure succeeded but did not return an address value. "
             "Verify global address describe permissions and retry."
         )
+    if reason_code == _DEPLOY_DISPATCH_SERVICE_REASON_STATIC_IP_ADDRESS_MISSING_AFTER_RETRY:
+        return (
+            "Managed-site static IP ensure could not resolve an address value after bounded describe retries. "
+            "Verify global address visibility and list/describe permissions, then retry."
+        )
     if reason_code == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_CONFIG_INVALID:
         return (
             "Managed deploy impersonation configuration is invalid. "
@@ -7465,7 +7605,7 @@ def _normalize_static_ip_operation(value: object) -> str | None:
     if not normalized:
         return None
     normalized_lower = normalized.strip().lower()
-    if normalized_lower in {"describe", "create", "describe_after_create", "credential_resolve"}:
+    if normalized_lower in {"describe", "create", "describe_after_create", "list_after_describe", "credential_resolve"}:
         return normalized_lower
     return None
 
@@ -7485,6 +7625,45 @@ def _normalize_static_ip_error_diagnostics(value: object) -> dict[str, object] |
         max_length=240,
     )
     normalized_exit_code = _coerce_int(value.get("static_ip_exit_code"))
+    normalized_describe_attempts = _coerce_int(value.get("static_ip_describe_attempts"))
+    if normalized_describe_attempts is not None:
+        normalized_describe_attempts = max(0, int(normalized_describe_attempts))
+    list_fallback_attempted = value.get("static_ip_list_fallback_attempted")
+    normalized_list_fallback_attempted = (
+        bool(list_fallback_attempted) if isinstance(list_fallback_attempted, bool) else None
+    )
+    normalized_list_fallback_match_count = _coerce_int(value.get("static_ip_list_fallback_match_count"))
+    if normalized_list_fallback_match_count is not None:
+        normalized_list_fallback_match_count = max(0, int(normalized_list_fallback_match_count))
+    list_fallback_address_present = value.get("static_ip_list_fallback_address_present")
+    normalized_list_fallback_address_present = (
+        bool(list_fallback_address_present) if isinstance(list_fallback_address_present, bool) else None
+    )
+    normalized_list_fallback_failure_code = _coerce_string(value.get("static_ip_list_fallback_failure_code"))
+    if normalized_list_fallback_failure_code:
+        normalized_list_fallback_failure_code = normalized_list_fallback_failure_code.strip().lower()[:80]
+    if normalized_list_fallback_failure_code not in {
+        "payload_invalid",
+        "items_missing",
+        "no_match",
+        "multiple_matches",
+        "missing_address",
+    }:
+        normalized_list_fallback_failure_code = None
+    normalized_list_fallback_response_keys: tuple[str, ...] = ()
+    raw_list_fallback_response_keys = value.get("static_ip_list_fallback_response_keys")
+    if isinstance(raw_list_fallback_response_keys, (list, tuple, set)):
+        normalized_items: list[str] = []
+        for item in raw_list_fallback_response_keys:
+            candidate = _coerce_string(item)
+            if not candidate:
+                continue
+            candidate = candidate.strip()[:80]
+            if candidate and candidate not in normalized_items:
+                normalized_items.append(candidate)
+            if len(normalized_items) >= 16:
+                break
+        normalized_list_fallback_response_keys = tuple(normalized_items)
     credential_diagnostics = _normalize_gcp_credential_diagnostics(value)
     if normalized_exit_code is not None:
         normalized_exit_code = int(normalized_exit_code)
@@ -7494,6 +7673,12 @@ def _normalize_static_ip_error_diagnostics(value: object) -> dict[str, object] |
         "static_ip_error_code": normalized_code,
         "static_ip_error_summary": normalized_summary,
         "static_ip_exit_code": normalized_exit_code,
+        "static_ip_describe_attempts": normalized_describe_attempts,
+        "static_ip_list_fallback_attempted": normalized_list_fallback_attempted,
+        "static_ip_list_fallback_match_count": normalized_list_fallback_match_count,
+        "static_ip_list_fallback_address_present": normalized_list_fallback_address_present,
+        "static_ip_list_fallback_failure_code": normalized_list_fallback_failure_code,
+        "static_ip_list_fallback_response_keys": list(normalized_list_fallback_response_keys),
         "static_ip_permission_hint": normalized_permission_hint,
         "gcp_credential_source": credential_diagnostics.get("gcp_credential_source"),
         "gcp_principal_email": credential_diagnostics.get("gcp_principal_email"),
@@ -8548,11 +8733,15 @@ _GKE_ENV_CLUSTER_LOCATION = "KUBERNETES_CLUSTER_LOCATION"
 _GIT_ENV_USERID = "GIT_USERID"
 _GIT_ENV_EMAIL = "GIT_EMAIL"
 _GIT_ENV_TOKEN = "GIT_TOKEN"
+_MANAGED_DEPLOY_TARGET_REPO_SECRET_NAME = "GCP_DEPLOY_KEY"
 _GCP_CREDENTIAL_SOURCE_SERVICE_ACCOUNT_JSON = "service_account_json"
 _GCP_CREDENTIAL_SOURCE_MANAGED_DEPLOY_IMPERSONATION = "managed_deploy_impersonation"
 _GCP_CREDENTIAL_SOURCE_ADC_METADATA = "adc_metadata_server"
 _GCP_CREDENTIAL_SOURCE_UNKNOWN = "unknown"
 _IMAGE_PULL_SECRET_CONFIG_SOURCE_CONTROL_PLANE = "control_plane_runtime"
+_DEPLOY_AUTH_MODE_TARGET_REPO_SECRET = "target_repo_actions_secret"
+_DEPLOY_AUTH_MODE_GITHUB_OIDC = "github_oidc_workload_identity"
+_DEPLOY_AUTH_MODE_CONTROL_PLANE = "control_plane_managed"
 _MANAGED_GKE_CONFIG_CLUSTER_NAME = "cluster_name"
 _MANAGED_GKE_CONFIG_CLUSTER_LOCATION = "cluster_location"
 _MANAGED_GKE_CONFIG_PROJECT_ID = "project_id"
@@ -8566,6 +8755,7 @@ _GKE_CONFIG_SOURCE_UNKNOWN = "unknown"
 _DEPLOY_DISPATCH_SERVICE_REASON_MISSING_CLUSTER_NAME = "missing_cluster_name"
 _DEPLOY_DISPATCH_SERVICE_REASON_MISSING_CLUSTER_LOCATION = "missing_cluster_location"
 _DEPLOY_DISPATCH_SERVICE_REASON_MISSING_GCP_PROJECT_ID = "missing_gcp_project_id"
+_DEPLOY_DISPATCH_SERVICE_REASON_TARGET_REPO_DEPLOY_SECRET_MISSING = "target_repo_deploy_secret_missing"
 _DEPLOY_DISPATCH_SERVICE_REASON_IMAGE_PULL_SECRET_MISSING = "image_pull_secret_missing"
 _DEPLOY_DISPATCH_SERVICE_REASON_IMAGE_PULL_SECRET_NOT_REFERENCED = "image_pull_secret_not_referenced"
 _DEPLOY_DISPATCH_SERVICE_REASON_CERTIFICATE_DOMAIN_MISMATCH = "certificate_domain_mismatch"
@@ -8586,6 +8776,7 @@ _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_QUOTA_EXCEEDED = "managed
 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROJECT_NOT_FOUND = "managed_site_static_ip_project_not_found"
 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFLICT = "managed_site_static_ip_conflict"
 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_ADDRESS_MISSING = "managed_site_static_ip_address_missing"
+_DEPLOY_DISPATCH_SERVICE_REASON_STATIC_IP_ADDRESS_MISSING_AFTER_RETRY = "static_ip_address_missing_after_retry"
 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_CONFIG_INVALID = (
     "managed_deploy_impersonation_config_invalid"
 )
@@ -8980,6 +9171,19 @@ def _truncate_workflow_signature_for_log(value: object) -> str | None:
     return lowered[:12]
 
 
+def _derive_managed_workflow_deploy_auth_mode(*, workflow_content: str) -> str:
+    normalized = str(workflow_content or "").lower()
+    if "secrets.gcp_deploy_key" in normalized:
+        return _DEPLOY_AUTH_MODE_TARGET_REPO_SECRET
+    if "workload_identity_provider:" in normalized and "service_account:" in normalized:
+        return _DEPLOY_AUTH_MODE_GITHUB_OIDC
+    return _DEPLOY_AUTH_MODE_CONTROL_PLANE
+
+
+def _managed_workflow_requires_target_repo_deploy_secret(*, deploy_auth_mode: str) -> bool:
+    return (str(deploy_auth_mode or "").strip().lower()) == _DEPLOY_AUTH_MODE_TARGET_REPO_SECRET
+
+
 def _render_managed_deploy_workflow_yaml(
     *,
     workflow_id: str,
@@ -9161,8 +9365,10 @@ def _render_managed_deploy_workflow_yaml(
         "            ${{ env.SITE_WEB_IMAGE_REPOSITORY }}:latest\n"
         "      - name: Validate GCP credentials\n"
         "        run: |\n"
-        '          if [ -z "${{ secrets.GCP_DEPLOY_KEY }}" ]; then\n'
-        '            echo "Missing GCP_DEPLOY_KEY secret"\n'
+        f'          if [ -z "${{{{ secrets.{_MANAGED_DEPLOY_TARGET_REPO_SECRET_NAME} }}}}" ]; then\n'
+        f'            echo "Missing {_MANAGED_DEPLOY_TARGET_REPO_SECRET_NAME} secret"\n'
+        '            echo "deploy_runtime_reason_code=target_repo_deploy_secret_missing"\n'
+        f'            echo "deploy_runtime_reason_message=Managed deploy workflow requires target repo secret {_MANAGED_DEPLOY_TARGET_REPO_SECRET_NAME}."\n'
         "            exit 1\n"
         "          fi\n"
         "      - name: Validate GKE environment config\n"
@@ -9182,7 +9388,7 @@ def _render_managed_deploy_workflow_yaml(
         "      - name: Authenticate to GCP\n"
         "        uses: google-github-actions/auth@v2\n"
         "        with:\n"
-        "          credentials_json: ${{ secrets.GCP_DEPLOY_KEY }}\n"
+        f"          credentials_json: ${{{{ secrets.{_MANAGED_DEPLOY_TARGET_REPO_SECRET_NAME} }}}}\n"
         "          create_credentials_file: true\n"
         "          export_environment_variables: true\n"
         "      - name: Get GKE credentials\n"
@@ -11464,6 +11670,8 @@ def _classify_workflow_run_failure(
     step_name = (failed_step_name or "").strip().lower()
     conclusion = (run_conclusion or "").strip().lower()
     if step_name:
+        if "validate gcp credentials" in step_name:
+            return "generated_workflow_requires_missing_gcp_deploy_key", "workflow_execution"
         if "authenticate to gcp" in step_name or "google-github-actions/auth" in step_name:
             return "gcp_auth_failed", "gcp_auth"
         if "get gke credentials" in step_name or "get-gke-credentials" in step_name:
@@ -11496,6 +11704,8 @@ def _classify_cloudsql_proxy_failure_from_log_text(
         return _DEPLOY_RUNTIME_REASON_INGRESS_BACKEND_UNHEALTHY, "rollout_verify"
     if "deploy_runtime_reason_code=managed_certificate_provisioning" in normalized:
         return _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_PROVISIONING, "ingress_evidence"
+    if "deploy_runtime_reason_code=target_repo_deploy_secret_missing" in normalized:
+        return _DEPLOY_DISPATCH_SERVICE_REASON_TARGET_REPO_DEPLOY_SECRET_MISSING, "workflow_execution"
     if "deploy_runtime_reason_code=ingress_backend_502" in normalized:
         return _DEPLOY_RUNTIME_REASON_INGRESS_BACKEND_502, "rollout_verify"
     if "deploy_runtime_reason_code=service_has_no_ready_endpoints" in normalized:
@@ -11574,6 +11784,8 @@ def _classify_cloudsql_proxy_failure_from_log_text(
         return _DEPLOY_RUNTIME_REASON_HTTPS_PROBE_FAILED_AFTER_CONTROL_PLANE_READY, "ingress_evidence"
     if "deploy_runtime_reason_code=https_probe_failed" in normalized:
         return _DEPLOY_RUNTIME_REASON_HTTPS_PROBE_FAILED_AFTER_CONTROL_PLANE_READY, "ingress_evidence"
+    if "missing gcp_deploy_key secret" in normalized:
+        return "generated_workflow_requires_missing_gcp_deploy_key", "workflow_execution"
     if "deploy_runtime_reason_code=ingress_address_pending_but_hostname_reachable" in normalized:
         return _DEPLOY_RUNTIME_REASON_INGRESS_PENDING_BUT_HOST_REACHABLE, "ingress_evidence"
     if "deploy_runtime_reason_code=image_pull_secret_missing" in normalized:

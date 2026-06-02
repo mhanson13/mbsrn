@@ -6015,7 +6015,7 @@ def test_deploy_blocks_before_dns_ensure_when_static_ip_address_missing_after_re
     artifact = _prepare_published_artifact(service, business_id=business_id, site_id=site_id)
     caplog.set_level("INFO", logger="app.services.seo_migration")
 
-    with pytest.raises(SEOMigrationValidationError, match="did not return an address value"):
+    with pytest.raises(SEOMigrationValidationError, match="could not resolve an address value"):
         service.deploy_artifact_version(
             business_id=business_id,
             site_id=site_id,
@@ -6031,8 +6031,8 @@ def test_deploy_blocks_before_dns_ensure_when_static_ip_address_missing_after_re
     deploy_history = workspace.deploy_history_json or []
     assert deploy_history
     latest = deploy_history[-1]
-    assert latest.get("failure_reason") == "managed_site_static_ip_address_missing"
-    assert latest.get("dispatch_service_reason_code") == "managed_site_static_ip_address_missing"
+    assert latest.get("failure_reason") == "static_ip_address_missing_after_retry"
+    assert latest.get("dispatch_service_reason_code") == "static_ip_address_missing_after_retry"
     assert latest.get("dispatch_result_stage") == "static_ip_provision"
     prerequisite_logs = [
         record.__dict__.get("json_fields")
@@ -6043,7 +6043,7 @@ def test_deploy_blocks_before_dns_ensure_when_static_ip_address_missing_after_re
     assert prerequisite_logs
     missing_logs = [log for log in prerequisite_logs if log.get("stage") == "static_ip_address_missing"]
     assert missing_logs
-    assert missing_logs[-1].get("reason_code") == "managed_site_static_ip_address_missing"
+    assert missing_logs[-1].get("reason_code") == "static_ip_address_missing_after_retry"
     assert missing_logs[-1].get("static_ip_address_present") is False
     assert missing_logs[-1].get("dns_expected_ip_present") is False
 
@@ -8028,6 +8028,15 @@ def test_static_ip_pre_dispatch_reason_code_hint_mappings_cover_config_and_provi
         ).lower()
     )
     assert (
+        "bounded describe retries"
+        in str(
+            seo_migration_module._derive_managed_gke_dispatch_readiness_message(
+                dispatch_service_reason_code="static_ip_address_missing_after_retry"
+            )
+            or ""
+        ).lower()
+    )
+    assert (
         "config is missing"
         in str(
             seo_migration_module._derive_deploy_failure_remediation_hint(
@@ -8059,6 +8068,18 @@ def test_static_ip_pre_dispatch_reason_code_hint_mappings_cover_config_and_provi
                 failure_stage=None,
                 workflow_exists=None,
                 dispatch_service_reason_code="managed_site_static_ip_address_missing",
+            )
+            or ""
+        ).lower()
+    )
+    assert (
+        "bounded describe retries"
+        in str(
+            seo_migration_module._derive_deploy_failure_remediation_hint(
+                failure_reason=None,
+                failure_stage=None,
+                workflow_exists=None,
+                dispatch_service_reason_code="static_ip_address_missing_after_retry",
             )
             or ""
         ).lower()
@@ -8173,6 +8194,50 @@ def test_static_ip_pre_dispatch_reason_code_hint_mappings_cover_config_and_provi
         in str(
             seo_migration_module._derive_workflow_run_failure_hint(
                 failure_reason="managed_site_static_ip_address_missing",
+                post_dispatch_state=None,
+            )
+            or ""
+        ).lower()
+    )
+    assert (
+        "bounded describe retries"
+        in str(
+            seo_migration_module._derive_workflow_run_failure_hint(
+                failure_reason="static_ip_address_missing_after_retry",
+                post_dispatch_state=None,
+            )
+            or ""
+        ).lower()
+    )
+
+
+def test_deploy_secret_missing_reason_code_hint_mappings() -> None:
+    assert (
+        "gcp_deploy_key"
+        in str(
+            seo_migration_module._derive_managed_gke_dispatch_readiness_message(
+                dispatch_service_reason_code="target_repo_deploy_secret_missing"
+            )
+            or ""
+        ).lower()
+    )
+    assert (
+        "gcp_deploy_key"
+        in str(
+            seo_migration_module._derive_deploy_failure_remediation_hint(
+                failure_reason=None,
+                failure_stage=None,
+                workflow_exists=None,
+                dispatch_service_reason_code="target_repo_deploy_secret_missing",
+            )
+            or ""
+        ).lower()
+    )
+    assert (
+        "gcp_deploy_key"
+        in str(
+            seo_migration_module._derive_workflow_run_failure_hint(
+                failure_reason="generated_workflow_requires_missing_gcp_deploy_key",
                 post_dispatch_state=None,
             )
             or ""

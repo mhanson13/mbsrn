@@ -3570,6 +3570,10 @@ def test_check_deploy_target_readiness_resolves_managed_gke_config_from_admin_wi
     assert readiness.dispatch_service_reason_code == "available"
     details = readiness.managed_gke_config_details or {}
     assert details.get("gke_config_resolution_source") == "resolved_from_admin_config"
+    assert details.get("deploy_auth_mode") == "control_plane_managed"
+    assert details.get("target_repo_deploy_secret_required") is False
+    assert details.get("target_repo_deploy_secret_name") is None
+    assert details.get("target_repo_deploy_secret_present") is None
     assert all(
         not (
             method == "GET"
@@ -3585,6 +3589,136 @@ def test_check_deploy_target_readiness_resolves_managed_gke_config_from_admin_wi
         for method, url in calls
     )
     assert len(calls) == 11
+
+
+def test_check_deploy_target_readiness_blocks_when_target_repo_deploy_secret_is_missing(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    managed_workflow = _encode_workflow_yaml(
+        (
+            "# mbsrn-managed-template:site_repo_template_v1\n"
+            "name: Managed Deploy\n"
+            "on:\n"
+            "  workflow_dispatch:\n"
+            "jobs:\n"
+            "  deploy:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    env:\n"
+            "      K8S_NAMESPACE: tnmfire\n"
+            "    steps:\n"
+            "      - uses: google-github-actions/auth@v2\n"
+            "        with:\n"
+            "          credentials_json: ${{ secrets.GCP_DEPLOY_KEY }}\n"
+            '      - run: kubectl apply -n "$K8S_NAMESPACE" -f k8s/deployment.yaml\n'
+        )
+    )
+    namespace_manifest = _encode_workflow_yaml(
+        (
+            "# mbsrn-managed-manifest:site_repo_template_v1\n"
+            "apiVersion: v1\n"
+            "kind: Namespace\n"
+            "metadata:\n"
+            "  name: tnmfire\n"
+        )
+    )
+    namespaced_manifest = _encode_workflow_yaml(
+        (
+            "# mbsrn-managed-manifest:site_repo_template_v1\n"
+            "apiVersion: apps/v1\n"
+            "kind: Deployment\n"
+            "metadata:\n"
+            "  name: site-web\n"
+            "  namespace: tnmfire\n"
+        )
+    )
+    deployment_manifest = _encode_workflow_yaml(
+        (
+            "# mbsrn-managed-manifest:site_repo_template_v1\n"
+            "apiVersion: apps/v1\n"
+            "kind: Deployment\n"
+            "metadata:\n"
+            "  name: site-web\n"
+            "  namespace: tnmfire\n"
+            "spec:\n"
+            "  template:\n"
+            "    spec:\n"
+            "      imagePullSecrets:\n"
+            "        - name: ghcr-pull-secret\n"
+        )
+    )
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _FakeHTTPResponse(status=200, body="{}"),
+            _FakeHTTPResponse(status=200, body="{}"),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "wfsha", "encoding": "base64", "content": managed_workflow}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"state": "active", "path": ".github/workflows/deploy-tnmfire-www-prod.yml"}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-namespace", "encoding": "base64", "content": namespace_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-deployment", "encoding": "base64", "content": deployment_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-service", "encoding": "base64", "content": namespaced_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-ingress", "encoding": "base64", "content": namespaced_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps(
+                    {"sha": "sha-managedcertificate", "encoding": "base64", "content": namespaced_manifest}
+                ),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-frontendconfig", "encoding": "base64", "content": namespaced_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-backendconfig", "encoding": "base64", "content": namespaced_manifest}),
+            ),
+            _http_error(
+                "https://api.github.com/repos/acme/tnmfire-site/actions/secrets/GCP_DEPLOY_KEY",
+                status_code=404,
+                message="Not Found",
+            ),
+        ],
+        calls,
+    )
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    readiness = publisher.check_deploy_target_readiness(
+        target=_dispatch_target(),
+        allow_ref_repair=False,
+        allow_workflow_repair=False,
+        dry_run=False,
+        managed_gke_config={
+            "cluster_name": "mbsrn-cluster",
+            "cluster_location": "us-central1",
+            "project_id": "mbsrn-prod",
+        },
+    )
+    assert readiness.dispatch_service_availability is False
+    assert readiness.dispatch_service_reason_code == "target_repo_deploy_secret_missing"
+    details = readiness.managed_gke_config_details or {}
+    assert details.get("deploy_auth_mode") == "target_repo_actions_secret"
+    assert details.get("target_repo_deploy_secret_required") is True
+    assert details.get("target_repo_deploy_secret_name") == "GCP_DEPLOY_KEY"
+    assert details.get("target_repo_deploy_secret_present") is False
+    assert any(
+        method == "GET" and url.endswith("/actions/secrets/GCP_DEPLOY_KEY")
+        for method, url in calls
+    )
 
 
 def test_check_deploy_target_readiness_resolves_managed_gke_config_from_repo_fallback_when_admin_missing(
@@ -4502,22 +4636,147 @@ def test_ensure_managed_site_static_ip_handles_already_exists_race(monkeypatch) 
 
 def test_ensure_managed_site_static_ip_fails_when_address_missing_after_describe_refresh(monkeypatch) -> None:
     calls: list[tuple[str, str]] = []
+    describe_payloads = [
+        _FakeHTTPResponse(
+            status=200,
+            body=json.dumps(
+                {
+                    "name": "site-web-preview-ip-tnmfire",
+                }
+            ),
+        )
+        for _ in range(8)
+    ]
     _install_urlopen_stub(
         monkeypatch,
         [
+            *describe_payloads,
+            _FakeHTTPResponse(status=200, body=json.dumps({"items": [{"name": "site-web-preview-ip-tnmfire"}]})),
+        ],
+        calls,
+    )
+    monkeypatch.setattr(
+        "app.integrations.seo_migration_github_publisher._resolve_google_access_token_from_service_account_json",
+        lambda **kwargs: "token",
+    )
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    with pytest.raises(SEOMigrationGitHubPublisherError) as exc_info:
+        publisher.ensure_managed_site_static_ip(
+            repo_owner="mhanson13",
+            repo_name="tnmfire",
+            site_id="site-1",
+            managed_gke_config={"project_id": "mbsrn-prod"},
+            gcp_deploy_key='{"type":"service_account"}',
+            dry_run=False,
+        )
+
+    assert exc_info.value.code == "static_ip_address_missing_after_retry"
+    assert exc_info.value.stage == "static_ip_provision"
+    diagnostics = exc_info.value.diagnostics or {}
+    assert diagnostics.get("static_ip_error_category") == "address_missing"
+    assert diagnostics.get("static_ip_operation") == "describe"
+    assert diagnostics.get("static_ip_describe_attempts") == 8
+    assert diagnostics.get("static_ip_list_fallback_attempted") is True
+    assert diagnostics.get("static_ip_list_fallback_match_count") == 1
+    assert diagnostics.get("static_ip_list_fallback_address_present") is False
+    assert diagnostics.get("static_ip_list_fallback_response_keys") == ["items"]
+    assert len(calls) == 9
+    assert calls[0][0] == "GET"
+    assert calls[-1] == (
+        "GET",
+        "https://compute.googleapis.com/compute/v1/projects/mbsrn-prod/global/addresses?filter=name%20eq%20site-web-preview-ip-tnmfire&maxResults=2",
+    )
+
+
+def test_ensure_managed_site_static_ip_uses_list_fallback_when_single_match_has_address(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    describe_payloads = [
+        _FakeHTTPResponse(
+            status=200,
+            body=json.dumps(
+                {
+                    "name": "site-web-preview-ip-tnmfire",
+                }
+            ),
+        )
+        for _ in range(8)
+    ]
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            *describe_payloads,
             _FakeHTTPResponse(
                 status=200,
                 body=json.dumps(
                     {
-                        "name": "site-web-preview-ip-tnmfire",
+                        "items": [
+                            {
+                                "name": "site-web-preview-ip-tnmfire",
+                                "address": "34.160.224.212",
+                            }
+                        ]
                     }
                 ),
             ),
+        ],
+        calls,
+    )
+    monkeypatch.setattr(
+        "app.integrations.seo_migration_github_publisher._resolve_google_access_token_from_service_account_json",
+        lambda **kwargs: "token",
+    )
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    result = publisher.ensure_managed_site_static_ip(
+        repo_owner="mhanson13",
+        repo_name="tnmfire",
+        site_id="site-1",
+        managed_gke_config={"project_id": "mbsrn-prod"},
+        gcp_deploy_key='{"type":"service_account"}',
+        dry_run=False,
+    )
+
+    assert result.static_ip_name == "site-web-preview-ip-tnmfire"
+    assert result.static_ip_address == "34.160.224.212"
+    assert result.static_ip_created is False
+    assert result.result == "exists"
+    assert len(calls) == 9
+    assert calls[-1] == (
+        "GET",
+        "https://compute.googleapis.com/compute/v1/projects/mbsrn-prod/global/addresses?filter=name%20eq%20site-web-preview-ip-tnmfire&maxResults=2",
+    )
+
+
+def test_ensure_managed_site_static_ip_fails_closed_when_list_fallback_has_multiple_matches(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    describe_payloads = [
+        _FakeHTTPResponse(
+            status=200,
+            body=json.dumps(
+                {
+                    "name": "site-web-preview-ip-tnmfire",
+                }
+            ),
+        )
+        for _ in range(8)
+    ]
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            *describe_payloads,
             _FakeHTTPResponse(
                 status=200,
                 body=json.dumps(
                     {
-                        "name": "site-web-preview-ip-tnmfire",
+                        "items": [
+                            {
+                                "name": "site-web-preview-ip-tnmfire",
+                                "address": "34.160.224.212",
+                            },
+                            {
+                                "name": "site-web-preview-ip-tnmfire",
+                                "address": "34.160.224.213",
+                            },
+                        ]
                     }
                 ),
             ),
@@ -4539,21 +4798,20 @@ def test_ensure_managed_site_static_ip_fails_when_address_missing_after_describe
             dry_run=False,
         )
 
-    assert exc_info.value.code == "managed_site_static_ip_address_missing"
+    assert exc_info.value.code == "static_ip_address_missing_after_retry"
     assert exc_info.value.stage == "static_ip_provision"
     diagnostics = exc_info.value.diagnostics or {}
     assert diagnostics.get("static_ip_error_category") == "address_missing"
+    assert diagnostics.get("static_ip_error_code") == "address_ambiguous_after_retry"
     assert diagnostics.get("static_ip_operation") == "describe"
-    assert calls == [
-        (
-            "GET",
-            "https://compute.googleapis.com/compute/v1/projects/mbsrn-prod/global/addresses/site-web-preview-ip-tnmfire",
-        ),
-        (
-            "GET",
-            "https://compute.googleapis.com/compute/v1/projects/mbsrn-prod/global/addresses/site-web-preview-ip-tnmfire",
-        ),
-    ]
+    assert diagnostics.get("static_ip_list_fallback_attempted") is True
+    assert diagnostics.get("static_ip_list_fallback_match_count") == 2
+    assert diagnostics.get("static_ip_list_fallback_address_present") is True
+    assert diagnostics.get("static_ip_list_fallback_failure_code") == "multiple_matches"
+    assert calls[-1] == (
+        "GET",
+        "https://compute.googleapis.com/compute/v1/projects/mbsrn-prod/global/addresses?filter=name%20eq%20site-web-preview-ip-tnmfire&maxResults=2",
+    )
 
 
 def test_ensure_managed_site_static_ip_requires_project_config(monkeypatch) -> None:

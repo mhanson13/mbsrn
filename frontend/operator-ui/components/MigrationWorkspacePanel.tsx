@@ -1566,6 +1566,9 @@ function toManagedGkeConfigGuidance(value: string | null): string | null {
   if (normalized === "missing_gcp_project_id") {
     return "Managed deploy target is missing required admin GKE project id configuration. Update admin deployment settings.";
   }
+  if (normalized === "target_repo_deploy_secret_missing") {
+    return "Deploy workflow requires target-repo secret GCP_DEPLOY_KEY, but it is missing. Run publish/bootstrap to provision deploy auth prerequisites, then retry deploy.";
+  }
   if (normalized === "image_pull_secret_missing") {
     return "Private managed-site image auth is required, but required GHCR pull credentials (GIT_USERID, GIT_EMAIL, GIT_TOKEN) are missing in the MBSRN control-plane runtime. Configure MBSRN deployment settings and verify deploy-prod projects them into the API runtime secret. Target site repositories do not need these secrets.";
   }
@@ -1599,8 +1602,14 @@ function toManagedGkeConfigGuidance(value: string | null): string | null {
   if (normalized === "managed_certificate_failed_not_visible") {
     return "ManagedCertificate is not visible for this hostname yet. Verify DNS/ingress exposure and certificate visibility before retry.";
   }
+  if (normalized === "static_ip_address_missing_after_retry") {
+    return "Managed-site static IP ensure could not resolve an address value after bounded describe retries and list fallback. Verify address scope/permissions and retry.";
+  }
   if (normalized === "tls_certificate_provisioning" || normalized === "managed_certificate_provisioning") {
     return "Deploy reached the load balancer, but TLS is still provisioning for the preview hostname. Wait for ManagedCertificate to become ACTIVE, then refresh and retry deploy.";
+  }
+  if (normalized === "generated_workflow_requires_missing_gcp_deploy_key") {
+    return "Deploy workflow run failed because required target-repo deploy secret GCP_DEPLOY_KEY was missing. Provision deploy auth prerequisites and rerun deploy.";
   }
   if (normalized === "backendconfig_health_check_mismatch") {
     return "BackendConfig health check path/port does not match the running site-web application health endpoint.";
@@ -4661,6 +4670,44 @@ export function MigrationWorkspacePanel({
     asStringOrNull(migrationDiagnostics.last_deploy_failure_dispatch_service_reason_code) ||
     asStringOrNull(deployReadiness.dispatch_service_reason_code);
   const dispatchServiceReasonCode = dispatchServiceReasonCodeFromSelected || dispatchServiceReasonCodeFromSummary;
+  const managedGkeConfigDetails = asRecord(deployTarget.managed_gke_config_details);
+  const deployAuthMode =
+    asStringOrNull(selectedDeployHistoryRecord.deploy_auth_mode) ||
+    asStringOrNull(managedGkeConfigDetails.deploy_auth_mode);
+  const targetRepoDeploySecretRequired =
+    asBooleanOrNull(selectedDeployHistoryRecord.target_repo_deploy_secret_required) ??
+    asBooleanOrNull(managedGkeConfigDetails.target_repo_deploy_secret_required);
+  const targetRepoDeploySecretName =
+    asStringOrNull(selectedDeployHistoryRecord.target_repo_deploy_secret_name) ||
+    asStringOrNull(managedGkeConfigDetails.target_repo_deploy_secret_name);
+  const targetRepoDeploySecretPresent =
+    asBooleanOrNull(selectedDeployHistoryRecord.target_repo_deploy_secret_present) ??
+    asBooleanOrNull(managedGkeConfigDetails.target_repo_deploy_secret_present);
+  const staticIpErrorDiagnosticsFromSelected = asRecord(selectedDeployHistoryRecord.static_ip_error_diagnostics);
+  const staticIpErrorDiagnosticsFromSummary = asRecord(deployReadiness.last_failure_static_ip_error_diagnostics);
+  const staticIpErrorDiagnostics =
+    Object.keys(staticIpErrorDiagnosticsFromSelected).length > 0
+      ? staticIpErrorDiagnosticsFromSelected
+      : staticIpErrorDiagnosticsFromSummary;
+  const staticIpDescribeAttempts =
+    asNonNegativeInt(selectedDeployHistoryRecord.static_ip_describe_attempts) ??
+    asNonNegativeInt(staticIpErrorDiagnostics.static_ip_describe_attempts);
+  const staticIpListFallbackAttempted =
+    asBooleanOrNull(selectedDeployHistoryRecord.static_ip_list_fallback_attempted) ??
+    asBooleanOrNull(staticIpErrorDiagnostics.static_ip_list_fallback_attempted);
+  const staticIpListFallbackMatchCount =
+    asNonNegativeInt(selectedDeployHistoryRecord.static_ip_list_fallback_match_count) ??
+    asNonNegativeInt(staticIpErrorDiagnostics.static_ip_list_fallback_match_count);
+  const staticIpListFallbackAddressPresent =
+    asBooleanOrNull(selectedDeployHistoryRecord.static_ip_list_fallback_address_present) ??
+    asBooleanOrNull(staticIpErrorDiagnostics.static_ip_list_fallback_address_present);
+  const staticIpListFallbackResponseKeys = (() => {
+    const fromSelected = asStringList(selectedDeployHistoryRecord.static_ip_list_fallback_response_keys);
+    if (fromSelected.length > 0) {
+      return fromSelected;
+    }
+    return asStringList(staticIpErrorDiagnostics.static_ip_list_fallback_response_keys);
+  })();
   const managedGkeConfigGuidance = toManagedGkeConfigGuidance(dispatchServiceReasonCode);
   const showManagedGkeConfigSourceHint = managedGkeConfigGuidance !== null;
   const managedSiteRolloutState = asStringOrNull(deployReadiness.managed_site_rollout_state);
@@ -8546,6 +8593,26 @@ export function MigrationWorkspacePanel({
                         {targetRepoSecretsNotRequired ? "No (control-plane provisioned)" : "Unknown"}
                       </span>
                     ) : null}
+                    {deployAuthMode ? (
+                      <span className="hint" data-testid="migration-deploy-auth-mode-readiness">
+                        Deploy auth mode: {formatReasonCodeLabel(deployAuthMode)}
+                      </span>
+                    ) : null}
+                    {targetRepoDeploySecretRequired !== null ? (
+                      <span className="hint" data-testid="migration-target-repo-deploy-secret-required-readiness">
+                        Target repo deploy secret required: {formatBooleanStateLabel(targetRepoDeploySecretRequired)}
+                      </span>
+                    ) : null}
+                    {targetRepoDeploySecretName ? (
+                      <span className="hint" data-testid="migration-target-repo-deploy-secret-name-readiness">
+                        Target repo deploy secret name: {targetRepoDeploySecretName}
+                      </span>
+                    ) : null}
+                    {targetRepoDeploySecretPresent !== null ? (
+                      <span className="hint" data-testid="migration-target-repo-deploy-secret-present-readiness">
+                        Target repo deploy secret present: {formatBooleanStateLabel(targetRepoDeploySecretPresent)}
+                      </span>
+                    ) : null}
                     {imagePullSecretNotProvisioned ? (
                       <span className="hint warning" data-testid="migration-image-pull-secret-not-provisioned-readiness">
                         Namespace pull secret is not yet confirmed. Control-plane provisioning runs before deploy.
@@ -9518,6 +9585,18 @@ export function MigrationWorkspacePanel({
                     <span className="hint">
                       Dispatch service reason: {formatReasonCodeLabel(dispatchServiceReasonCode)}
                     </span>
+                    <span className="hint">deploy_auth_mode: {deployAuthMode || "Not available"}</span>
+                    <span className="hint">
+                      target_repo_deploy_secret_required:{" "}
+                      {formatBooleanStateLabel(targetRepoDeploySecretRequired)}
+                    </span>
+                    <span className="hint">
+                      target_repo_deploy_secret_name: {targetRepoDeploySecretName || "Not available"}
+                    </span>
+                    <span className="hint">
+                      target_repo_deploy_secret_present:{" "}
+                      {formatBooleanStateLabel(targetRepoDeploySecretPresent)}
+                    </span>
                     <span className="hint">Dispatch ref sent: {dispatchRefSent || "Not available"}</span>
                     <span className="hint">
                       Workflow input keys (configured):{" "}
@@ -9627,6 +9706,23 @@ export function MigrationWorkspacePanel({
                     </span>
                     <span className="hint">expected_static_ip_address: {expectedStaticIpAddress || "Not available"}</span>
                     <span className="hint">static_ip_status: {staticIpStatus || "Not available"}</span>
+                    <span className="hint">
+                      static_ip_describe_attempts: {staticIpDescribeAttempts !== null ? String(staticIpDescribeAttempts) : "Not available"}
+                    </span>
+                    <span className="hint">
+                      static_ip_list_fallback_attempted: {formatBooleanStateLabel(staticIpListFallbackAttempted)}
+                    </span>
+                    <span className="hint">
+                      static_ip_list_fallback_match_count:{" "}
+                      {staticIpListFallbackMatchCount !== null ? String(staticIpListFallbackMatchCount) : "Not available"}
+                    </span>
+                    <span className="hint">
+                      static_ip_list_fallback_address_present: {formatBooleanStateLabel(staticIpListFallbackAddressPresent)}
+                    </span>
+                    <span className="hint">
+                      static_ip_list_fallback_response_keys:{" "}
+                      {staticIpListFallbackResponseKeys.length > 0 ? staticIpListFallbackResponseKeys.join(", ") : "Not available"}
+                    </span>
                     <span className="hint">ingress_status_ip: {ingressStatusIp || "Not available"}</span>
                     <span className="hint">
                       ingress_status_ip_matches_static_ip: {formatBooleanStateLabel(ingressStatusIpMatchesStaticIp)}

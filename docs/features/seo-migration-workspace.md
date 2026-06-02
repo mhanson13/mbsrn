@@ -178,7 +178,7 @@ Destination, readiness, and diagnostics IA refinements:
   3. selected attempt diagnostics
   4. latest summary fallback
   5. historical failure detail
-- stale selected-attempt static IP failures (for example `managed_site_static_ip_address_missing`) remain in selected/history diagnostics and do not override current runtime live status when current live HTTPS evidence is healthy.
+- stale selected-attempt static IP failures (for example legacy `managed_site_static_ip_address_missing` or current `static_ip_address_missing_after_retry`) remain in selected/history diagnostics and do not override current runtime live status when current live HTTPS evidence is healthy.
 - manual follow-up capture remains available through `Refresh Deploy Status`
   - refresh evaluates the route/workspace site id and can fall back to the latest deploy record for that site when the currently selected artifact has no deploy record, so current-live probe fields can still be populated.
 
@@ -1870,7 +1870,7 @@ Post-fix rollout for existing managed sites:
         - `managed_site_static_ip_quota_exceeded` (global static-address quota exhausted)
         - `managed_site_static_ip_project_not_found` (invalid/inaccessible managed project)
         - `managed_site_static_ip_conflict` (named address conflict that could not be reconciled)
-        - `managed_site_static_ip_address_missing` (ensure succeeded but no usable address was returned after refresh; DNS ensure is not attempted with null IP)
+        - `static_ip_address_missing_after_retry` (ensure completed but no usable address was returned after bounded describe retry and list fallback; DNS ensure is not attempted with null IP)
         - fallback: `managed_site_static_ip_provisioning_failed`
       - static IP ensure diagnostics include effective credential metadata for IAM remediation:
         - `static_ip_gcp_credential_source` (`service_account_json`, `managed_deploy_impersonation`, `adc_metadata_server`, `unknown`)
@@ -2377,6 +2377,17 @@ If dispatch was accepted but run evidence is not yet present, the workspace show
 
 Managed-site deploy validation is site-isolated and evaluated per deploy attempt, per site hostname (`<repo>.site.mbsrn.com`).
 
+Managed-site deploy auth is configuration-driven and generic for all sites:
+- `target_repo_actions_secret`: site-repo workflow authenticates with target-repo Actions secret (`GCP_DEPLOY_KEY`).
+  - deploy readiness blocks before dispatch when the secret is required but missing (`target_repo_deploy_secret_missing`).
+  - workflow-run failures with the same root cause are classified explicitly (`generated_workflow_requires_missing_gcp_deploy_key`) instead of generic provisioning failure text.
+- `control_plane_managed` / `github_oidc_workload_identity`: target-repo deploy secret is not required by the workflow contract.
+- readiness and diagnostics expose:
+  - `deploy_auth_mode`
+  - `target_repo_deploy_secret_required`
+  - `target_repo_deploy_secret_name`
+  - `target_repo_deploy_secret_present`
+
 Deploy is not considered HTTPS-ready unless all runtime checks agree:
 - DNS A record matches expected deploy DNS target IP (`dns_record_matches_ingress=true`, `dns_expected_ip == dns_observed_ip`)
   - for managed per-site static-IP ingress, `dns_expected_ip` is the reserved static IP address when metadata is available/bound
@@ -2436,7 +2447,7 @@ Blocking reason-code examples:
   - `managed_site_static_ip_quota_exceeded`
   - `managed_site_static_ip_project_not_found`
   - `managed_site_static_ip_conflict`
-  - `managed_site_static_ip_address_missing`
+  - `static_ip_address_missing_after_retry` (legacy history entries may still show `managed_site_static_ip_address_missing`)
   - `managed_site_static_ip_provisioning_failed`
   - `managed_site_dns_config_missing`
   - `managed_site_dns_provisioning_failed`
@@ -2461,6 +2472,24 @@ Isolation rules:
 - blocking cert-identity decisions rely on desired-state managed-certificate annotation, ManagedCertificate domain/status, and HTTPS/TLS probe identity evidence.
 - `tls_certificate_bound_to_wrong_site` requires positive mismatch evidence (wrong ingress annotation/cert resource identity, non-empty mismatched ManagedCertificate domain evidence, or HTTPS TLS hostname mismatch); empty metadata alone is not treated as cross-site proof when HTTPS certificate identity is valid.
 - when ingress annotation already references the expected deterministic ManagedCertificate resource name, workflow may safely repair domain drift by deleting/recreating only that ManagedCertificate and re-checking bounded status/domain convergence before allowing success.
+
+Managed deploy troubleshooting reason codes:
+- `repo_adoption_required` / `github_repo_adoption_required`:
+  - target repo exists but is not yet adopted/marked as managed for this site.
+  - publish/deploy behavior follows the configured adoption policy; deploy workflow provisioning remains blocked until adoption is resolved.
+- `workflow_provisioning_failed`:
+  - managed workflow/bootstrap verification did not converge; inspect workflow provisioning diagnostics fields for failed stage and remediation mode.
+- `target_repo_deploy_secret_missing`:
+  - deploy auth mode requires target-repo secret `GCP_DEPLOY_KEY`, and readiness blocked before dispatch because it is missing.
+- `generated_workflow_requires_missing_gcp_deploy_key`:
+  - workflow run reached repo execution but failed the credential pre-check because required secret `GCP_DEPLOY_KEY` was not available.
+- `site_web_image_tag_missing`:
+  - deploy preflight could not resolve an image tag for `SITE_WEB_IMAGE_TAG`; deploy is blocked until a valid tag or safe resolver fallback is available.
+- `static_ip_address_missing_after_retry`:
+  - static IP ensure completed but bounded describe/list resolution never returned a usable address value.
+  - list fallback is fail-closed: zero matches, multiple matches, or a match without `address` all remain blocked until a single exact name match resolves with a concrete address.
+- `workflow_run_failed_without_live_url_evidence`:
+  - workflow failed before usable live URL evidence was captured; use deploy history + workflow logs for stage-specific failure data.
 
 ### Deploy Consistency Block (Operator UI)
 
