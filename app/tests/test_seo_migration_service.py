@@ -8019,7 +8019,7 @@ def test_static_ip_pre_dispatch_reason_code_hint_mappings_cover_config_and_provi
         ).lower()
     )
     assert (
-        "did not return an address value"
+        "numeric address value"
         in str(
             seo_migration_module._derive_managed_gke_dispatch_readiness_message(
                 dispatch_service_reason_code="managed_site_static_ip_address_missing"
@@ -8032,6 +8032,33 @@ def test_static_ip_pre_dispatch_reason_code_hint_mappings_cover_config_and_provi
         in str(
             seo_migration_module._derive_managed_gke_dispatch_readiness_message(
                 dispatch_service_reason_code="static_ip_address_missing_after_retry"
+            )
+            or ""
+        ).lower()
+    )
+    assert (
+        "could not find"
+        in str(
+            seo_migration_module._derive_managed_gke_dispatch_readiness_message(
+                dispatch_service_reason_code="address_not_found_after_retry"
+            )
+            or ""
+        ).lower()
+    )
+    assert (
+        "ambiguous"
+        in str(
+            seo_migration_module._derive_managed_gke_dispatch_readiness_message(
+                dispatch_service_reason_code="address_ambiguous_after_retry"
+            )
+            or ""
+        ).lower()
+    )
+    assert (
+        "address value remained empty"
+        in str(
+            seo_migration_module._derive_managed_gke_dispatch_readiness_message(
+                dispatch_service_reason_code="address_value_missing_after_retry"
             )
             or ""
         ).lower()

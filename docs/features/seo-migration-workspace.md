@@ -451,6 +451,7 @@ Operator uploads:
 - local/internal storage keys are not returned in operator-facing API payloads
 - uploaded/imported preview behavior:
   - active workspace assets with local storage receive a bounded same-origin authenticated `preview_url`
+  - toggling `Use in draft` (`selected_for_draft=true`) must preserve preview metadata for that asset; selection state updates should not blank preview thumbnails for still-active assets
   - preview bytes are served only through `GET .../migration/media/assets/{asset_id}/preview`
   - preview route enforces site/workspace authorization, image content-type validation, max preview size, and safe storage-root path checks
   - preview failures return bounded reasons (`storage_preview_not_available`, `unsupported_content_type`, `file_too_large`)
@@ -2488,6 +2489,10 @@ Managed deploy troubleshooting reason codes:
 - `static_ip_address_missing_after_retry`:
   - static IP ensure completed but bounded describe/list resolution never returned a usable address value.
   - list fallback is fail-closed: zero matches, multiple matches, or a match without `address` all remain blocked until a single exact name match resolves with a concrete address.
+  - related diagnostics:
+    - `address_not_found_after_retry`: no exact-name match found after bounded retry/list fallback.
+    - `address_ambiguous_after_retry`: multiple exact-name matches were returned; deploy stays blocked.
+    - `address_value_missing_after_retry`: exact-name match exists but has no usable numeric `address` value yet.
 - `workflow_run_failed_without_live_url_evidence`:
   - workflow failed before usable live URL evidence was captured; use deploy history + workflow logs for stage-specific failure data.
 

@@ -23129,6 +23129,9 @@ def _normalize_dispatch_service_reason_code(value: object) -> str | None:
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFLICT,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_ADDRESS_MISSING,
         _DEPLOY_DISPATCH_SERVICE_REASON_STATIC_IP_ADDRESS_MISSING_AFTER_RETRY,
+        "address_not_found_after_retry",
+        "address_ambiguous_after_retry",
+        "address_value_missing_after_retry",
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_CONFIG_INVALID,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_PERMISSION_DENIED,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFIG_MISSING,
@@ -23814,13 +23817,28 @@ def _derive_managed_gke_dispatch_readiness_message(*, dispatch_service_reason_co
         )
     if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_ADDRESS_MISSING:
         return (
-            "Managed-site static IP ensure succeeded but did not return an address value. "
-            "Verify global address describe permissions and retry."
+            "Google Cloud created or found the managed static IP resource, but did not return a numeric address value yet. "
+            "The temporary managed preview hostname needs that numeric IP before deploy can continue."
         )
     if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_STATIC_IP_ADDRESS_MISSING_AFTER_RETRY:
         return (
-            "Managed-site static IP ensure could not resolve an address value after bounded describe retries "
-            "and list fallback. Verify global address visibility/scope permissions and retry."
+            "Google Cloud created or found the managed static IP resource, but the numeric address is still unavailable "
+            "after bounded describe retries and list fallback. Verify address scope/visibility permissions and retry."
+        )
+    if normalized_dispatch_reason == "address_not_found_after_retry":
+        return (
+            "Managed static IP lookup could not find the expected resource by exact name after bounded retries/list fallback. "
+            "Verify static IP scope and visibility, then retry."
+        )
+    if normalized_dispatch_reason == "address_ambiguous_after_retry":
+        return (
+            "Managed static IP lookup returned ambiguous matches after bounded retries/list fallback. "
+            "Resolve duplicate/conflicting address resources, then retry deploy."
+        )
+    if normalized_dispatch_reason == "address_value_missing_after_retry":
+        return (
+            "Managed static IP resource was found, but the numeric address value remained empty after bounded retries/list fallback. "
+            "Wait for address convergence, then retry deploy."
         )
     if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROVISIONING_FAILED:
         return (

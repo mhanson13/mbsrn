@@ -1603,7 +1603,16 @@ function toManagedGkeConfigGuidance(value: string | null): string | null {
     return "ManagedCertificate is not visible for this hostname yet. Verify DNS/ingress exposure and certificate visibility before retry.";
   }
   if (normalized === "static_ip_address_missing_after_retry") {
-    return "Managed-site static IP ensure could not resolve an address value after bounded describe retries and list fallback. Verify address scope/permissions and retry.";
+    return "Google Cloud created or found the managed static IP resource, but the numeric IP address is still unavailable after bounded describe/list retries. This preview hostname needs the numeric managed preview IP before deploy can continue.";
+  }
+  if (normalized === "address_not_found_after_retry") {
+    return "Google Cloud static IP resource could not be found by exact name after bounded retries/list fallback. Verify static IP scope and visibility for this managed preview deployment.";
+  }
+  if (normalized === "address_ambiguous_after_retry") {
+    return "Google Cloud static IP lookup returned ambiguous matches after bounded retries/list fallback. Resolve duplicate/conflicting address resources, then retry deploy.";
+  }
+  if (normalized === "address_value_missing_after_retry") {
+    return "Google Cloud static IP resource was found, but the numeric address value was still missing after bounded retries/list fallback. Wait and retry deploy after address convergence.";
   }
   if (normalized === "tls_certificate_provisioning" || normalized === "managed_certificate_provisioning") {
     return "Deploy reached the load balancer, but TLS is still provisioning for the preview hostname. Wait for ManagedCertificate to become ACTIVE, then refresh and retry deploy.";
@@ -4095,6 +4104,28 @@ export function MigrationWorkspacePanel({
   }, [selectedMediaAssets]);
   const mediaBrowserAssets = useMemo(() => {
     const byAssetKey = new Map<string, Record<string, unknown>>();
+    const mergeMediaAssetRecord = (
+      current: Record<string, unknown>,
+      incoming: Record<string, unknown>,
+    ): Record<string, unknown> => {
+      const merged: Record<string, unknown> = { ...current, ...incoming };
+      const preserveIfMissing = (
+        key: "preview_url" | "display_url",
+      ): void => {
+        const nextValue = incoming[key];
+        const currentValue = current[key];
+        const nextMissing = nextValue == null || (typeof nextValue === "string" && nextValue.trim().length === 0);
+        const currentPresent = currentValue != null && (
+          typeof currentValue !== "string" || currentValue.trim().length > 0
+        );
+        if (nextMissing && currentPresent) {
+          merged[key] = currentValue;
+        }
+      };
+      preserveIfMissing("preview_url");
+      preserveIfMissing("display_url");
+      return merged;
+    };
     const ingest = (items: Array<Record<string, unknown>>, sourceTag: string): void => {
       items.forEach((rawItem, index) => {
         const item = asRecord(rawItem);
@@ -4105,7 +4136,7 @@ export function MigrationWorkspacePanel({
           return;
         }
         const current = byAssetKey.get(key) || {};
-        byAssetKey.set(key, { ...current, ...item });
+        byAssetKey.set(key, mergeMediaAssetRecord(current, item));
       });
     };
     ingest(sourceDiscoveredMediaAssets, "source");
@@ -4459,7 +4490,7 @@ export function MigrationWorkspacePanel({
     );
   })();
   const deploySummaryBlockerMessage = !Boolean(deployReadiness.ready)
-    ? deployFailureMessage || deployPrimaryBlockerMessage || deployRuntimeStatusMessage || deployReadinessReasons[0] || "Deploy target is not ready."
+    ? deployPrimaryBlockerMessage || deployRuntimeStatusMessage || deployReadinessReasons[0] || deployFailureMessage || "Deploy target is not ready."
     : null;
   const publishTargetStateLabel = toDestinationStateLabel(destinationSummary.publishState);
   const deployTargetStateLabel = toDestinationStateLabel(destinationSummary.deployState);
@@ -4713,6 +4744,7 @@ export function MigrationWorkspacePanel({
   const managedSiteRolloutState = asStringOrNull(deployReadiness.managed_site_rollout_state);
   const managedSiteRolloutMessage = asStringOrNull(deployReadiness.managed_site_rollout_message);
   const managedSiteRolloutFixActive = asBooleanOrNull(deployReadiness.managed_site_rollout_fix_active);
+  const managedSiteRolloutStaleEvidence = (managedSiteRolloutState || "").trim().toLowerCase() === "workflow_republished_but_deploy_not_rerun";
   const managedSiteExpectedImageRepository = asStringOrNull(
     deployReadiness.managed_site_rollout_expected_image_repository,
   );
@@ -8631,10 +8663,12 @@ export function MigrationWorkspacePanel({
                     ) : null}
                     {managedSiteRolloutMessage ? (
                       <span
-                        className={managedSiteRolloutFixActive ? "hint" : "hint warning"}
+                        className={managedSiteRolloutFixActive ? "hint" : managedSiteRolloutStaleEvidence ? "hint muted" : "hint warning"}
                         data-testid="migration-managed-site-rollout-guidance-readiness"
                       >
-                        {managedSiteRolloutMessage}
+                        {managedSiteRolloutStaleEvidence
+                          ? `Previous deploy evidence (deploy not rerun yet): ${managedSiteRolloutMessage}`
+                          : managedSiteRolloutMessage}
                       </span>
                     ) : null}
                     {managedSiteExpectedImageRepository ? (
@@ -9367,10 +9401,12 @@ export function MigrationWorkspacePanel({
                   ) : null}
                   {managedSiteRolloutMessage ? (
                     <span
-                      className={managedSiteRolloutFixActive ? "hint" : "hint warning"}
+                      className={managedSiteRolloutFixActive ? "hint" : managedSiteRolloutStaleEvidence ? "hint muted" : "hint warning"}
                       data-testid="migration-managed-site-rollout-guidance-diagnostics"
                     >
-                      {managedSiteRolloutMessage}
+                      {managedSiteRolloutStaleEvidence
+                        ? `Previous deploy evidence (deploy not rerun yet): ${managedSiteRolloutMessage}`
+                        : managedSiteRolloutMessage}
                     </span>
                   ) : null}
                   {managedSiteExpectedImageRepository ? (

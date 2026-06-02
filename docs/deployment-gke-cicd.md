@@ -390,6 +390,9 @@ Common managed-site deploy blocker codes:
 - `generated_workflow_requires_missing_gcp_deploy_key`
 - `site_web_image_tag_missing`
 - `static_ip_address_missing_after_retry`
+- `address_not_found_after_retry`
+- `address_ambiguous_after_retry`
+- `address_value_missing_after_retry`
 - `workflow_run_failed_without_live_url_evidence`
 
 Safe verification commands:

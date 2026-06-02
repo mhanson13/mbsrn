@@ -1547,7 +1547,7 @@ describe("site migration workflow route", () => {
     render(<SiteMigrationWorkflowPage />);
 
     const deployReadiness = await screen.findByTestId("migration-deploy-readiness");
-    expect(deployReadiness).toHaveTextContent("list fallback");
+    expect(deployReadiness).toHaveTextContent("numeric IP address is still unavailable");
 
     await user.click(await screen.findByText("Show detailed migration failure diagnostics"));
     const rawDeployDetails = within(screen.getByTestId("migration-deploy-diagnostics-raw-details"));
@@ -1559,6 +1559,71 @@ describe("site migration workflow route", () => {
     expect(
       rawDeployDetails.getByText(/static_ip_list_fallback_response_keys:\s*name, status, users/i),
     ).toBeInTheDocument();
+  });
+
+  it("surfaces static ip fallback guidance variants without exposing raw provider payloads", async () => {
+    const summary = buildMigrationWorkspaceSummary({
+      deploy_readiness: {
+        ready: false,
+        reasons: ["Static IP address lookup is ambiguous after retry."],
+        dispatch_service_reason_code: "address_ambiguous_after_retry",
+        target: {
+          enabled: true,
+          repo_owner: "mhanson13",
+          repo_name: "example-site",
+          workflow_id: "deploy-example-site-www-prod.yml",
+          ref: "main",
+        },
+      },
+    });
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(summary);
+    mockFetchMigrationPublishHistory.mockResolvedValueOnce({ items: [], total: 0 });
+    mockFetchMigrationDeployHistory.mockResolvedValueOnce({ items: [], total: 0 });
+
+    render(<SiteMigrationWorkflowPage />);
+
+    const deployReadiness = await screen.findByTestId("migration-deploy-readiness");
+    expect(within(deployReadiness).getByTestId("migration-managed-gke-config-guidance-readiness")).toHaveTextContent(
+      "static IP lookup returned ambiguous matches",
+    );
+    expect(deployReadiness).not.toHaveTextContent("response body");
+    expect(deployReadiness).not.toHaveTextContent("Authorization");
+  });
+
+  it("prioritizes current deploy blockers over stale selected-attempt failure text", async () => {
+    const summary = buildMigrationWorkspaceSummary({
+      deploy_readiness: {
+        ready: false,
+        blocker_codes: ["deploy_configuration_invalid"],
+        reasons: ["Google static IP address is not yet available after bounded retry."],
+        last_failure_message:
+          "Managed workflow appears republished, but observed deploy image evidence does not yet confirm the site-scoped runtime image.",
+        managed_site_rollout_state: "workflow_republished_but_deploy_not_rerun",
+        managed_site_rollout_message:
+          "Managed workflow appears republished, but observed deploy image evidence does not yet confirm the site-scoped runtime image.",
+        managed_site_rollout_fix_active: false,
+        target: {
+          enabled: true,
+          repo_owner: "mhanson13",
+          repo_name: "example-site",
+          workflow_id: "deploy-example-site-www-prod.yml",
+          ref: "main",
+        },
+      },
+    });
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(summary);
+    mockFetchMigrationPublishHistory.mockResolvedValueOnce({ items: [], total: 0 });
+    mockFetchMigrationDeployHistory.mockResolvedValueOnce({ items: [], total: 0 });
+
+    render(<SiteMigrationWorkflowPage />);
+
+    const deployReadiness = await screen.findByTestId("migration-deploy-readiness");
+    expect(within(deployReadiness).getByTestId("migration-deploy-readiness-primary-action")).toHaveTextContent(
+      "Blocker: Deployment target configuration is invalid.",
+    );
+    expect(within(deployReadiness).getByTestId("migration-managed-site-rollout-guidance-readiness")).toHaveTextContent(
+      "Previous deploy evidence (deploy not rerun yet):",
+    );
   });
 
   it("renders FAILED_NOT_VISIBLE with DNS/TLS context in deploy consistency diagnostics", async () => {
@@ -2441,7 +2506,7 @@ describe("site migration workflow route", () => {
     );
     const deployTargetSummary = screen.getByTestId("migration-deploy-target-summary");
     expect(within(deployTargetSummary).getByTestId("migration-destination-deploy-blocker")).toHaveTextContent(
-      "GitHub repository or workflow target was not found.",
+      "Deploy target is not enabled.",
     );
     expect(within(destinationSummary).queryByText(/Category:/i)).not.toBeInTheDocument();
     expect(within(destinationSummary).queryByText(/Reason:/i)).not.toBeInTheDocument();
@@ -3915,7 +3980,7 @@ describe("site migration workflow route", () => {
               provenance: "operator_upload",
               import_status: "uploaded",
               selected_for_draft: true,
-              preview_url: "/api/businesses/biz-1/seo/sites/site-1/migration/media/assets/uploaded-preview/preview",
+              preview_url: null,
             },
           ],
         },
