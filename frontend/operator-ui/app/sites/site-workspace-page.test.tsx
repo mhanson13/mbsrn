@@ -686,6 +686,74 @@ describe("site migration workflow route", () => {
     confirmSpy.mockRestore();
   });
 
+  it("treats duplicate publish requests as already published status instead of failure", async () => {
+    const user = userEvent.setup();
+    const approvedArtifact = buildMigrationArtifactVersion({
+      approval_status: "approved",
+      publish_status: "not_published",
+    });
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(
+      buildMigrationWorkspaceSummary({
+        workspace: buildMigrationWorkspace({
+          latest_generated_artifact_version_id: approvedArtifact.id,
+          latest_generated_artifact_version_number: approvedArtifact.version,
+          latest_approved_artifact_version_id: approvedArtifact.id,
+          latest_approved_artifact_version_number: approvedArtifact.version,
+        }),
+        latest_artifact: approvedArtifact,
+        publish_readiness: {
+          ready: true,
+          reasons: [],
+          approved_artifact_version_id: approvedArtifact.id,
+          target: {
+            enabled: true,
+            repo_owner: "mhanson13",
+            repo_name: "example-site",
+            branch: "main",
+          },
+        },
+      }),
+    );
+    mockFetchMigrationArtifactVersions.mockResolvedValueOnce({
+      items: [approvedArtifact],
+      total: 1,
+    });
+    mockFetchMigrationArtifactFilePreview.mockResolvedValueOnce(
+      buildMigrationArtifactFilePreview({ artifact_version_id: approvedArtifact.id }),
+    );
+    mockPublishMigrationArtifactVersion.mockRejectedValueOnce(
+      new ApiRequestError("This artifact version is already published to the configured GitHub target.", {
+        status: 409,
+        detail: {
+          message: "This artifact version is already published to the configured GitHub target.",
+          failure_category: "duplicate_request",
+          failure_reason: "duplicate_request",
+        },
+      }),
+    );
+
+    render(<SiteMigrationWorkflowPage />);
+
+    const publishButton = await screen.findByRole("button", { name: "Publish Approved Draft to GitHub" });
+    expect(publishButton).toBeEnabled();
+    await user.click(publishButton);
+
+    await waitFor(() =>
+      expect(mockPublishMigrationArtifactVersion).toHaveBeenCalledWith(
+        "token-1",
+        "biz-1",
+        "site-1",
+        expect.objectContaining({
+          artifact_version_id: approvedArtifact.id,
+        }),
+      ),
+    );
+    expect(
+      await screen.findByText("Already published to the configured GitHub target. Deploy remains a separate action."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Duplicate publish request detected.")).not.toBeInTheDocument();
+  });
+
   it("renders a compact GA4 outcome snapshot for deploy events when available", async () => {
     mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(
       buildMigrationWorkspaceSummary({

@@ -95,7 +95,7 @@ describe("app global error boundary", () => {
     );
     expect(errorSpy).not.toHaveBeenCalled();
     expect(
-      screen.getByText("The app was updated. Refresh and retry."),
+      screen.getByText("A new version of MBSRN was deployed. Refresh this page before continuing."),
     ).toBeInTheDocument();
 
     errorSpy.mockRestore();

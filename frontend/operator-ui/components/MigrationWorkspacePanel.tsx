@@ -7232,6 +7232,11 @@ export function MigrationWorkspacePanel({
       const category = parseFailureCategory(error, baseMessage, "publish");
       await loadWorkspaceData(false, { preserveErrorMessage: true });
       setErrorHint(null);
+      if (category === "duplicate_request") {
+        setErrorMessage(null);
+        setStatusMessage("Already published to the configured GitHub target. Deploy remains a separate action.");
+        return;
+      }
       setErrorMessage(formatActionFailureMessage("publish", category, baseMessage));
     } finally {
       setBusyAction(null);

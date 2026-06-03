@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable, Generator
 from dataclasses import dataclass
 import hashlib
+import ipaddress
 import logging
 
 from fastapi import Depends, Header, HTTPException, Request, status
@@ -134,6 +135,17 @@ from app.services.action_automation_execution_service import ActionAutomationExe
 from app.services.google_login_state import GoogleLoginStateService
 
 logger = logging.getLogger(__name__)
+
+_LIKELY_INFRA_PROBE_UA_TOKENS = (
+    "googlehc",
+    "gcp-health-check",
+    "google-cloud-load-balancer-healthcheck",
+    "kube-probe",
+)
+_GCP_HEALTHCHECK_NETWORKS = (
+    ipaddress.ip_network("35.191.0.0/16"),
+    ipaddress.ip_network("130.211.0.0/22"),
+)
 
 
 @dataclass(frozen=True)
@@ -1393,13 +1405,43 @@ def _log_auth_failure(
     reason: str,
     auth_kind: str,
 ) -> None:
-    logger.warning(
-        "auth_failure reason=%s auth_kind=%s client_ip=%s user_agent_bucket=%s",
+    classification = "auth_failure"
+    log_level = logging.WARNING
+    if reason == "missing_bearer_token" and auth_kind == "none":
+        if _is_likely_infrastructure_probe_request(request):
+            classification = "expected_infrastructure_probe"
+            log_level = logging.INFO
+        else:
+            classification = "missing_bearer_token_request"
+
+    logger.log(
+        log_level,
+        "auth_failure reason=%s auth_kind=%s classification=%s method=%s path=%s client_ip=%s user_agent_bucket=%s",
         reason,
         auth_kind,
+        classification,
+        request.method.upper(),
+        request.url.path or "/",
         _client_ip(request),
         _bucket_hash(_normalized_user_agent(request)),
     )
+
+
+def _is_likely_infrastructure_probe_request(request: Request) -> bool:
+    method = request.method.upper()
+    if method not in {"GET", "HEAD"}:
+        return False
+
+    normalized_user_agent = _normalized_user_agent(request)
+    if any(token in normalized_user_agent for token in _LIKELY_INFRA_PROBE_UA_TOKENS):
+        return True
+
+    client_ip = _client_ip(request)
+    try:
+        parsed_ip = ipaddress.ip_address(client_ip)
+    except ValueError:
+        return False
+    return any(parsed_ip in network for network in _GCP_HEALTHCHECK_NETWORKS)
 
 
 def _auth_required_detail(*, reason_code: str = "app_auth_required", message: str = "Unauthorized.") -> dict[str, str]:

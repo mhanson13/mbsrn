@@ -89,7 +89,7 @@ export default function GlobalError({
               <h1 className="operator-page-title">Workspace unavailable</h1>
               <p className="operator-page-subtitle">
                 {safeClassification === "stale_server_action_build_mismatch"
-                  ? "The app was updated. Refresh and retry."
+                  ? "A new version of MBSRN was deployed. Refresh this page before continuing."
                   : "We hit a rendering problem at the app boundary. Refresh, then try again."}
               </p>
             </header>

@@ -92,7 +92,7 @@ export default function Error({
           <h1 className="operator-page-title">Workspace unavailable</h1>
           <p className="operator-page-subtitle">
             {safeClassification === "stale_server_action_build_mismatch"
-              ? "The app was updated. Refresh and retry."
+              ? "A new version of MBSRN was deployed. Refresh this page before continuing."
               : "We hit a rendering problem for this page. Try again, or refresh if the issue continues."}
           </p>
         </header>

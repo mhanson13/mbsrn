@@ -1,4 +1,4 @@
-import { middleware } from "./middleware";
+import { __resetMiddlewareTestState, middleware } from "./middleware";
 jest.mock("next/server", () => {
   class MockNextResponse {
     status: number;
@@ -50,6 +50,7 @@ function createRequest(overrides?: {
 describe("operator-ui middleware multipart guard", () => {
   beforeEach(() => {
     process.env.NEXT_PUBLIC_APP_VERSION = "sha-test-build-1";
+    __resetMiddlewareTestState();
   });
 
   it("blocks unsupported multipart POST requests outside /api", async () => {
@@ -109,10 +110,11 @@ describe("operator-ui middleware multipart guard", () => {
 
     const response = middleware(request);
     expect(response.status).toBe(409);
-    await expect(response.text()).resolves.toContain("out of date after a deployment");
+    await expect(response.text()).resolves.toContain("A new version of MBSRN was deployed");
     expect(response.headers.get("X-Operator-UI-Error-Classification")).toBe(
       "stale_server_action_build_mismatch",
     );
+    expect(response.headers.get("X-Operator-UI-Refresh-Required")).toBe("true");
     expect(warnSpy).toHaveBeenCalledWith(
       "[operator-ui] blocked_stale_server_action_request",
       expect.objectContaining({
@@ -120,6 +122,7 @@ describe("operator-ui middleware multipart guard", () => {
         pathname: "/sites",
         classification: "stale_server_action_build_mismatch",
         app_version: "sha-test-build-1",
+        refresh_required: true,
       }),
     );
 
@@ -136,6 +139,33 @@ describe("operator-ui middleware multipart guard", () => {
 
     const response = middleware(request);
     expect(response.headers.get("x-middleware-next")).toBe("1");
+  });
+
+  it("throttles repeated stale server-action warnings while continuing to block requests", async () => {
+    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+    const nowSpy = jest.spyOn(Date, "now").mockReturnValue(1_700_000_000_000);
+    try {
+      const firstRequest = createRequest({
+        url: "https://operator.example/sites",
+        method: "POST",
+      });
+      (firstRequest as { headers: Headers }).headers.set("next-action", "1");
+      const firstResponse = middleware(firstRequest);
+      expect(firstResponse.status).toBe(409);
+
+      const secondRequest = createRequest({
+        url: "https://operator.example/sites",
+        method: "POST",
+      });
+      (secondRequest as { headers: Headers }).headers.set("next-action", "1");
+      const secondResponse = middleware(secondRequest);
+      expect(secondResponse.status).toBe(409);
+
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      nowSpy.mockRestore();
+      warnSpy.mockRestore();
+    }
   });
 
   it("allows non-multipart traffic", () => {
