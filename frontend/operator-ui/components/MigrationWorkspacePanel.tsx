@@ -1794,10 +1794,10 @@ function toManagedGkeConfigGuidance(value: string | null): string | null {
     return "Ingress managed-certificate annotation does not match the expected site certificate. Republish/deploy after admin verification.";
   }
   if (normalized === "shared_static_ip_not_allowed_for_per_site_ingress" || normalized === "ingress_static_ip_conflict") {
-    return "Ingress static IP annotation does not match the configured managed preview endpoint mode. Republish managed ingress resources with the expected static IP binding and redeploy.";
+    return "Ingress static IP annotation does not match the configured managed preview endpoint mode. After changing managed_preview_endpoint settings, run publish to reprovision managed workflow/manifests, then rerun deploy.";
   }
   if (normalized === "shared_preview_gateway_missing") {
-    return "Shared preview gateway mode is configured, but no shared preview static IP name is set. Admin must configure the shared preview gateway static IP before deploy can continue.";
+    return "Shared preview gateway mode is configured, but no shared preview static IP name is set. Admin must configure managed_preview_endpoint.shared_preview_static_ip_name, rerun publish/provisioning, then rerun deploy.";
   }
   if (normalized === "shared_preview_gateway_hostname_missing") {
     return "Shared preview gateway mode requires a valid managed preview hostname before deploy checks can run.";

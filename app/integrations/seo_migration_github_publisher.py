@@ -9485,6 +9485,7 @@ def _render_managed_deploy_workflow_yaml(
         "      site_runtime_image_selection_mode: ${{ steps.resolve_site_runtime_image.outputs.site_runtime_image_selection_mode }}\n"
         "      site_runtime_image_repository: ${{ steps.resolve_site_runtime_image.outputs.site_runtime_image_repository }}\n"
         "      site_runtime_image_tag: ${{ steps.resolve_site_runtime_image.outputs.site_runtime_image_tag }}\n"
+        "      site_runtime_image_tag_source: ${{ steps.resolve_site_runtime_image.outputs.site_runtime_image_tag_source }}\n"
         "      site_runtime_source_commit: ${{ steps.resolve_site_runtime_image.outputs.site_runtime_source_commit }}\n"
         "      site_runtime_content_source: ${{ steps.resolve_site_runtime_image.outputs.site_runtime_content_source }}\n"
         "    environment:\n"
@@ -9604,20 +9605,26 @@ def _render_managed_deploy_workflow_yaml(
         "          set -euo pipefail\n"
         '          selected_mode="immutable_sha"\n'
         '          selected_image="${SITE_WEB_IMAGE_REPOSITORY}:${GITHUB_SHA}"\n'
+        '          selected_tag_source="github_sha_fallback"\n'
         '          normalized_tag="$(echo "${SITE_WEB_IMAGE_TAG:-}" | tr -d \'[:space:]\')"\n'
         '          if [ -n "$normalized_tag" ] && [ "$normalized_tag" != "latest" ]; then\n'
         "            if echo \"$normalized_tag\" | grep -Eq '^[A-Fa-f0-9]{7,64}$'; then\n"
         '              candidate_image="${SITE_WEB_IMAGE_REPOSITORY}:${normalized_tag}"\n'
         '              selected_image="$candidate_image"\n'
         '              selected_mode="immutable_sha"\n'
+        '              selected_tag_source="configured_sha"\n'
         "            else\n"
         "              echo \"Configured SITE_WEB_IMAGE_TAG '$normalized_tag' is not a SHA-like tag; falling back to latest.\"\n"
         '              selected_image="${SITE_WEB_IMAGE_REPOSITORY}:latest"\n'
         '              selected_mode="fallback_latest"\n'
+        '              selected_tag_source="configured_invalid_fallback_latest"\n'
         "            fi\n"
         '          elif [ "$normalized_tag" = "latest" ]; then\n'
         '            selected_image="${SITE_WEB_IMAGE_REPOSITORY}:latest"\n'
         '            selected_mode="fallback_latest"\n'
+        '            selected_tag_source="configured_latest"\n'
+        "          else\n"
+        '            echo "SITE_WEB_IMAGE_TAG is empty; using GITHUB_SHA ${GITHUB_SHA}."\n'
         "          fi\n"
         '          echo "Managed site runtime image selected: ${selected_image} (mode=${selected_mode})"\n'
         '          kubectl set image deployment/site-web site-web="${selected_image}" --namespace "$K8S_NAMESPACE"\n'
@@ -9637,6 +9644,7 @@ def _render_managed_deploy_workflow_yaml(
         '            echo "site_runtime_image_selection_mode=${selected_mode}"\n'
         '            echo "site_runtime_image_repository=${selected_repo}"\n'
         '            echo "site_runtime_image_tag=${selected_tag}"\n'
+        '            echo "site_runtime_image_tag_source=${selected_tag_source}"\n'
         '            echo "site_runtime_source_commit=${GITHUB_SHA}"\n'
         '            echo "site_runtime_content_source=site_repo_build"\n'
         '          } >> "$GITHUB_OUTPUT"\n'
@@ -11116,6 +11124,7 @@ def _render_managed_deploy_workflow_yaml(
         '          echo "Site runtime image selection mode: ${{ steps.resolve_site_runtime_image.outputs.site_runtime_image_selection_mode }}"\n'
         '          echo "Site runtime image repository: ${{ steps.resolve_site_runtime_image.outputs.site_runtime_image_repository }}"\n'
         '          echo "Site runtime image tag: ${{ steps.resolve_site_runtime_image.outputs.site_runtime_image_tag }}"\n'
+        '          echo "Site runtime image tag source: ${{ steps.resolve_site_runtime_image.outputs.site_runtime_image_tag_source }}"\n'
         '          echo "Site runtime source commit: ${{ steps.resolve_site_runtime_image.outputs.site_runtime_source_commit }}"\n'
         '          echo "Site runtime content source: ${{ steps.resolve_site_runtime_image.outputs.site_runtime_content_source }}"\n'
     )

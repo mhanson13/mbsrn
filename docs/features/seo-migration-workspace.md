@@ -2487,6 +2487,7 @@ Isolation rules:
   - `preview_shared_gateway`: ingress must bind to configured shared preview static-IP name.
   - `dedicated_static_ip`: ingress must bind to expected dedicated static-IP name (`site-web-preview-ip-<normalized-site>` unless configured otherwise).
 - Shared ingress static-IP binding is allowed only when endpoint mode resolves to `preview_shared_gateway`.
+- After changing `managed_preview_endpoint` admin defaults, rerun publish/workflow provisioning and then rerun deploy so the generated target-repo workflow/manifests pick up the new mode.
 - Cross-site certificate bindings are blocked.
 - Control plane ensures expected static-IP/gateway prerequisites before dispatch; target workflow validates presence as a runtime safety check.
 - Control plane ensures preview-host DNS `A` record (`<normalized-site>.site.mbsrn.com`) before dispatch and updates only that exact hostname/type when DNS management is enabled for that mode.
@@ -2507,8 +2508,10 @@ Managed deploy troubleshooting reason codes:
   - deploy auth mode requires target-repo secret `GCP_DEPLOY_KEY`, and readiness blocked before dispatch because it is missing.
 - `generated_workflow_requires_missing_gcp_deploy_key`:
   - workflow run reached repo execution but failed the credential pre-check because required secret `GCP_DEPLOY_KEY` was not available.
-- `site_web_image_tag_missing`:
-  - deploy preflight could not resolve an image tag for `SITE_WEB_IMAGE_TAG`; deploy is blocked until a valid tag or safe resolver fallback is available.
+- `SITE_WEB_IMAGE_TAG` empty handling:
+  - empty `SITE_WEB_IMAGE_TAG` is allowed; managed workflow falls back to `${GITHUB_SHA}` and emits explicit diagnostics (`site_runtime_image_tag_source=github_sha_fallback`).
+  - configured SHA-like values are used directly (`site_runtime_image_tag_source=configured_sha`).
+  - `latest` or non-SHA values resolve to `:latest` fallback with explicit diagnostics.
 - `static_ip_address_missing_after_retry`:
   - static IP ensure completed but bounded describe/list resolution never returned a usable address value.
   - list fallback is fail-closed: zero matches, multiple matches, or a match without `address` all remain blocked until a single exact name match resolves with a concrete address.

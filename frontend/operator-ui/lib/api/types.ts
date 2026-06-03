@@ -176,6 +176,11 @@ export interface GitHubNamespaceNetworkPolicyDefaults {
   mode: string;
 }
 
+export interface GitHubManagedPreviewEndpointDefaults {
+  mode: "auto" | "preview_shared_gateway" | "dedicated_static_ip" | string;
+  shared_preview_static_ip_name: string | null;
+}
+
 export interface MigrationGenerationBudgetConfig {
   migration_context_budget_chars: number;
   migration_recommendation_limit: number;
@@ -205,6 +210,7 @@ export interface GitHubNamespaceIsolationDefaults {
   resource_quota: GitHubNamespaceResourceQuotaDefaults;
   limit_range: GitHubNamespaceLimitRangeDefaults;
   network_policy: GitHubNamespaceNetworkPolicyDefaults;
+  managed_preview_endpoint: GitHubManagedPreviewEndpointDefaults;
   migration_generation_budget: MigrationGenerationBudgetConfig;
   migration_generation_safety: MigrationGenerationSafetyConfig;
 }

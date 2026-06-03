@@ -389,7 +389,6 @@ Common managed-site deploy blocker codes:
 - `workflow_provisioning_failed`
 - `target_repo_deploy_secret_missing`
 - `generated_workflow_requires_missing_gcp_deploy_key`
-- `site_web_image_tag_missing`
 - `shared_preview_gateway_missing`
 - `shared_preview_gateway_hostname_missing`
 - `static_ip_address_missing_after_retry`
@@ -398,6 +397,13 @@ Common managed-site deploy blocker codes:
 - `address_value_missing_after_retry`
 - `ingress_static_ip_conflict`
 - `workflow_run_failed_without_live_url_evidence`
+
+Endpoint mode/template guidance:
+- changing `managed_preview_endpoint` admin defaults requires rerunning publish/workflow provisioning and then rerunning deploy so target-repo workflow env/manifests are regenerated with the updated endpoint mode.
+
+`SITE_WEB_IMAGE_TAG` diagnostics:
+- empty `SITE_WEB_IMAGE_TAG` is allowed for managed workflows and falls back to `${GITHUB_SHA}`.
+- workflow outputs now include `site_runtime_image_tag_source` (`github_sha_fallback`, `configured_sha`, `configured_latest`, `configured_invalid_fallback_latest`) so rollout evidence shows the effective tag source.
 
 Safe verification commands:
 

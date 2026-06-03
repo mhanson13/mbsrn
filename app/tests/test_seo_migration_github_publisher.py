@@ -7600,11 +7600,16 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "kubectl apply -f k8s/deployment.yaml" in workflow_yaml
     assert "Resolve managed site runtime image" in workflow_yaml
     assert 'selected_mode="immutable_sha"' in workflow_yaml
+    assert 'selected_tag_source="github_sha_fallback"' in workflow_yaml
     assert 'selected_image="${SITE_WEB_IMAGE_REPOSITORY}:${GITHUB_SHA}"' in workflow_yaml
     assert 'selected_mode="fallback_latest"' in workflow_yaml
     assert 'selected_mode="immutable_sha"' in workflow_yaml
+    assert 'selected_tag_source="configured_sha"' in workflow_yaml
+    assert 'selected_tag_source="configured_invalid_fallback_latest"' in workflow_yaml
+    assert 'selected_tag_source="configured_latest"' in workflow_yaml
     assert 'kubectl set image deployment/site-web site-web="${selected_image}"' in workflow_yaml
     assert "Managed site runtime image selected: ${selected_image} (mode=${selected_mode})" in workflow_yaml
+    assert "SITE_WEB_IMAGE_TAG is empty; using GITHUB_SHA ${GITHUB_SHA}." in workflow_yaml
     assert (
         "Configured SITE_WEB_IMAGE_TAG '$normalized_tag' is not a SHA-like tag; falling back to latest."
         in workflow_yaml
@@ -7650,6 +7655,10 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     )
     assert (
         "site_runtime_image_tag: ${{ steps.resolve_site_runtime_image.outputs.site_runtime_image_tag }}"
+        in workflow_yaml
+    )
+    assert (
+        "site_runtime_image_tag_source: ${{ steps.resolve_site_runtime_image.outputs.site_runtime_image_tag_source }}"
         in workflow_yaml
     )
     assert (
@@ -8015,6 +8024,76 @@ def test_resolve_managed_preview_endpoint_configuration_uses_shared_gateway_for_
     assert resolved.get("requires_dedicated_static_ip") is False
     assert resolved.get("expected_static_ip_name") == "site-preview-shared-ip"
     assert resolved.get("reason_code") is None
+
+
+def test_resolve_managed_preview_endpoint_configuration_auto_without_shared_config_falls_back_to_dedicated() -> None:
+    resolved = resolve_managed_preview_endpoint_configuration(
+        repo_name="tnmfire",
+        site_id="site-tnmfire",
+        preview_hostname="tnmfire.site.mbsrn.com",
+        namespace_isolation_defaults={
+            "managed_preview_endpoint": {
+                "mode": "auto",
+                "shared_preview_static_ip_name": None,
+            }
+        },
+    )
+
+    assert resolved.get("effective_mode") == "dedicated_static_ip"
+    assert resolved.get("uses_shared_preview_gateway") is False
+    assert resolved.get("requires_dedicated_static_ip") is True
+    assert str(resolved.get("expected_static_ip_name") or "").startswith("site-web-preview-ip-")
+    assert resolved.get("reason_code") is None
+
+
+def test_resolve_managed_preview_endpoint_configuration_preserves_dedicated_mode_when_explicit() -> None:
+    resolved = resolve_managed_preview_endpoint_configuration(
+        repo_name="tnmfire",
+        site_id="site-tnmfire",
+        preview_hostname="tnmfire.site.mbsrn.com",
+        namespace_isolation_defaults={
+            "managed_preview_endpoint": {
+                "mode": "dedicated_static_ip",
+                "shared_preview_static_ip_name": "site-preview-shared-ip",
+            }
+        },
+    )
+
+    assert resolved.get("effective_mode") == "dedicated_static_ip"
+    assert resolved.get("uses_shared_preview_gateway") is False
+    assert resolved.get("requires_dedicated_static_ip") is True
+    assert resolved.get("expected_static_ip_name") != "site-preview-shared-ip"
+    assert str(resolved.get("expected_static_ip_name") or "").startswith("site-web-preview-ip-")
+    assert resolved.get("reason_code") is None
+
+
+def test_rendered_managed_templates_preserve_dedicated_mode_static_ip_binding_when_explicit() -> None:
+    namespace_defaults = {
+        "managed_preview_endpoint": {
+            "mode": "dedicated_static_ip",
+            "shared_preview_static_ip_name": "site-preview-shared-ip",
+        }
+    }
+    workflow_yaml = _render_managed_deploy_workflow_yaml(
+        workflow_id="deploy-tnmfire-www-prod.yml",
+        repo_owner="mhanson13",
+        repo_name="tnmfire",
+        branch="main",
+        deploy_workflow_mode="site_repo_template_v1",
+        target_environment_key="gke_prod",
+        target_environment_source="admin_config",
+        managed_gke_config=None,
+        kubernetes_namespace="tnmfire",
+        namespace_source="repo_name",
+        preview_hostname="tnmfire.site.mbsrn.com",
+        namespace_isolation_defaults=namespace_defaults,
+        private_image_auth_required=False,
+        site_id="site-tnmfire",
+    )
+
+    assert "MBSRN_PREVIEW_ENDPOINT_MODE: dedicated_static_ip" in workflow_yaml
+    assert "MBSRN_PREVIEW_STATIC_IP_NAME: site-preview-shared-ip" not in workflow_yaml
+    assert "MBSRN_PREVIEW_STATIC_IP_NAME: site-web-preview-ip-tnmfire" in workflow_yaml
 
 
 def test_rendered_managed_templates_use_shared_preview_gateway_static_ip_when_configured() -> None:

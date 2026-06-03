@@ -111,6 +111,11 @@ const GITHUB_NAMESPACE_CPU_PATTERN = /^(?:[1-9]\d*m|[1-9]\d*(?:\.\d+)?)$/;
 const GITHUB_NAMESPACE_MEMORY_PATTERN = /^(?:[1-9]\d*(?:Ei|Pi|Ti|Gi|Mi|Ki)|[1-9]\d*(?:\.\d+)?(?:E|P|T|G|M|K)i?)$/;
 const GITHUB_NAMESPACE_COUNT_PATTERN = /^\d{1,6}$/;
 const GITHUB_NETWORK_POLICY_MODE_OPTIONS = ["default_deny_ingress"] as const;
+const GITHUB_MANAGED_PREVIEW_ENDPOINT_MODE_OPTIONS = [
+  "auto",
+  "preview_shared_gateway",
+  "dedicated_static_ip",
+] as const;
 const MIGRATION_GENERATION_DEPTH_OPTIONS = ["compact", "standard", "expanded"] as const;
 const MIGRATION_VARIATION_LEVEL_OPTIONS = ["conservative", "balanced", "differentiated"] as const;
 const MIGRATION_PREFLIGHT_MODE_OPTIONS = ["compact_fallback", "block_before_provider"] as const;
@@ -208,6 +213,10 @@ const DEFAULT_NAMESPACE_ISOLATION_DEFAULTS: GitHubNamespaceIsolationDefaults = {
   network_policy: {
     enabled: false,
     mode: "default_deny_ingress",
+  },
+  managed_preview_endpoint: {
+    mode: "auto",
+    shared_preview_static_ip_name: null,
   },
   migration_generation_budget: DEFAULT_MIGRATION_GENERATION_BUDGET,
   migration_generation_safety: DEFAULT_MIGRATION_GENERATION_SAFETY,
@@ -973,6 +982,38 @@ function normalizeNamespaceIsolationDefaults(
         defaults.network_policy.mode
       ).trim().toLowerCase(),
     },
+    managed_preview_endpoint: {
+      mode: (() => {
+        const requestedMode = (
+          source.managed_preview_endpoint?.mode ||
+          defaults.managed_preview_endpoint.mode
+        ).trim().toLowerCase();
+        if (
+          GITHUB_MANAGED_PREVIEW_ENDPOINT_MODE_OPTIONS.includes(
+            requestedMode as (typeof GITHUB_MANAGED_PREVIEW_ENDPOINT_MODE_OPTIONS)[number],
+          )
+        ) {
+          return requestedMode;
+        }
+        return defaults.managed_preview_endpoint.mode;
+      })(),
+      shared_preview_static_ip_name: (() => {
+        const rawValue = source.managed_preview_endpoint?.shared_preview_static_ip_name;
+        if (typeof rawValue !== "string") {
+          return null;
+        }
+        let normalized = rawValue.trim().toLowerCase();
+        if (!normalized) {
+          return null;
+        }
+        normalized = normalized.replace(/[^a-z0-9-]+/g, "-");
+        normalized = normalized.replace(/--+/g, "-").replace(/^-+|-+$/g, "");
+        if (!normalized) {
+          return null;
+        }
+        return normalized.slice(0, 80);
+      })(),
+    },
     migration_generation_budget: {
       migration_context_budget_chars: normalizeMigrationBudgetCount(
         source.migration_generation_budget?.migration_context_budget_chars,
@@ -1130,6 +1171,13 @@ function validateNamespaceIsolationDefaults(defaults: GitHubNamespaceIsolationDe
     ) {
       errors.push("NetworkPolicy mode is invalid for platform-managed defaults.");
     }
+  }
+  if (
+    !GITHUB_MANAGED_PREVIEW_ENDPOINT_MODE_OPTIONS.includes(
+      normalized.managed_preview_endpoint.mode as (typeof GITHUB_MANAGED_PREVIEW_ENDPOINT_MODE_OPTIONS)[number],
+    )
+  ) {
+    errors.push("Managed preview endpoint mode is invalid.");
   }
 
   // Migration generation budget/safety field ranges are validated by backend schema

@@ -8036,6 +8036,7 @@ class SEOMigrationService:
             "site_runtime_source_commit": content_identity.get("site_runtime_source_commit"),
             "site_runtime_content_source": content_identity.get("site_runtime_content_source"),
             "site_runtime_image_selection_mode": content_identity.get("site_runtime_image_selection_mode"),
+            "site_runtime_image_tag_source": content_identity.get("site_runtime_image_tag_source"),
         }
         workspace.deploy_history_json = _append_history_item(
             workspace.deploy_history_json,
@@ -9543,6 +9544,7 @@ class SEOMigrationService:
             "site_runtime_source_commit",
             "site_runtime_content_source",
             "site_runtime_image_selection_mode",
+            "site_runtime_image_tag_source",
         ):
             content_value = refreshed_content_identity.get(content_field)
             if content_value and next_item.get(content_field) != content_value:
@@ -10089,6 +10091,10 @@ class SEOMigrationService:
             "site_runtime_image_selection_mode": _normalize_string(
                 next_item.get("site_runtime_image_selection_mode"),
                 max_length=40,
+            ),
+            "site_runtime_image_tag_source": _normalize_string(
+                next_item.get("site_runtime_image_tag_source"),
+                max_length=80,
             ),
             "updated": updated,
         }
@@ -17234,6 +17240,10 @@ class SEOMigrationService:
             workflow_output_payload.get("site_runtime_image_selection_mode"),
             max_length=40,
         )
+        tag_source = _normalize_string(
+            workflow_output_payload.get("site_runtime_image_tag_source"),
+            max_length=80,
+        )
         return {
             "site_runtime_image_reference": image_reference,
             "site_runtime_image_repository": image_repository,
@@ -17241,6 +17251,7 @@ class SEOMigrationService:
             "site_runtime_source_commit": source_commit,
             "site_runtime_content_source": content_source,
             "site_runtime_image_selection_mode": selection_mode,
+            "site_runtime_image_tag_source": tag_source,
         }
 
     def _resolve_deploy_runtime_network_readiness(self, *, deploy_result: object) -> dict[str, object]:
@@ -18487,6 +18498,10 @@ class SEOMigrationService:
                 "site_runtime_image_selection_mode": _normalize_string(
                     item.get("site_runtime_image_selection_mode"),
                     max_length=40,
+                ),
+                "site_runtime_image_tag_source": _normalize_string(
+                    item.get("site_runtime_image_tag_source"),
+                    max_length=80,
                 ),
             }
         return {}
@@ -24163,7 +24178,8 @@ def _derive_deploy_failure_remediation_hint(
     if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_MISSING:
         return (
             "Shared preview gateway mode is enabled, but shared preview static IP name is not configured. "
-            "Set managed_preview_endpoint.shared_preview_static_ip_name in admin namespace defaults and retry deploy."
+            "Set managed_preview_endpoint.shared_preview_static_ip_name in admin namespace defaults, rerun publish "
+            "to reprovision managed workflow/manifests, then retry deploy."
         )
     if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_HOSTNAME_MISSING:
         return (

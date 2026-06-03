@@ -1309,7 +1309,7 @@ describe("site migration workflow route", () => {
 
     const deployReadinessCard = await screen.findByTestId("migration-deploy-readiness");
     expect(within(deployReadinessCard).getByTestId("migration-managed-gke-config-guidance-readiness")).toHaveTextContent(
-      "Ingress static IP annotation does not match the configured managed preview endpoint mode. Republish managed ingress resources with the expected static IP binding and redeploy.",
+      "Ingress static IP annotation does not match the configured managed preview endpoint mode. After changing managed_preview_endpoint settings, run publish to reprovision managed workflow/manifests, then rerun deploy.",
     );
   });
 
@@ -1336,7 +1336,7 @@ describe("site migration workflow route", () => {
 
     const deployReadinessCard = await screen.findByTestId("migration-deploy-readiness");
     expect(within(deployReadinessCard).getByTestId("migration-managed-gke-config-guidance-readiness")).toHaveTextContent(
-      "Shared preview gateway mode is configured, but no shared preview static IP name is set. Admin must configure the shared preview gateway static IP before deploy can continue.",
+      "Shared preview gateway mode is configured, but no shared preview static IP name is set. Admin must configure managed_preview_endpoint.shared_preview_static_ip_name, rerun publish/provisioning, then rerun deploy.",
     );
   });
 

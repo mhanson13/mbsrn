@@ -174,6 +174,10 @@ describe("admin route", () => {
           enabled: false,
           mode: "default_deny_ingress",
         },
+        managed_preview_endpoint: {
+          mode: "auto",
+          shared_preview_static_ip_name: null,
+        },
         migration_generation_budget: {
           ...DEFAULT_MIGRATION_GENERATION_BUDGET,
         },
@@ -225,6 +229,10 @@ describe("admin route", () => {
         network_policy: {
           enabled: false,
           mode: "default_deny_ingress",
+        },
+        managed_preview_endpoint: {
+          mode: "auto",
+          shared_preview_static_ip_name: null,
         },
         migration_generation_budget: {
           ...DEFAULT_MIGRATION_GENERATION_BUDGET,
@@ -675,6 +683,10 @@ describe("admin route", () => {
           enabled: false,
           mode: "default_deny_ingress",
         },
+        managed_preview_endpoint: {
+          mode: "auto",
+          shared_preview_static_ip_name: null,
+        },
         migration_generation_budget: {
           ...DEFAULT_MIGRATION_GENERATION_BUDGET,
         },
@@ -726,6 +738,10 @@ describe("admin route", () => {
         network_policy: {
           enabled: false,
           mode: "default_deny_ingress",
+        },
+        managed_preview_endpoint: {
+          mode: "auto",
+          shared_preview_static_ip_name: null,
         },
         migration_generation_budget: {
           ...DEFAULT_MIGRATION_GENERATION_BUDGET,
@@ -860,6 +876,10 @@ describe("admin route", () => {
           enabled: false,
           mode: "default_deny_ingress",
         },
+        managed_preview_endpoint: {
+          mode: "auto",
+          shared_preview_static_ip_name: null,
+        },
         migration_generation_budget: {
           migration_context_budget_chars: 22000,
           migration_recommendation_limit: 10,
@@ -885,6 +905,98 @@ describe("admin route", () => {
     expect(screen.getByTestId("github-publish-effective-preview")).toHaveTextContent("/site/content");
     expect(screen.queryByText("{\"secret\":\"write-only\"}")).not.toBeInTheDocument();
   }, 15000);
+
+  it("preserves managed preview endpoint defaults when saving GitHub publish configuration", async () => {
+    const fetchedConfig = {
+      id: 1,
+      owner: "mhanson13",
+      repository: "mhanson13",
+      default_branch: "main",
+      base_path: "/",
+      deploy_workflow_mode: "site_repo_template_v1",
+      target_environment_key: "gke_prod",
+      target_environment_source: "admin_config",
+      github_repository_auto_create_enabled: false,
+      managed_gke_cluster_name: "mbsrn-cluster",
+      managed_gke_cluster_location: "us-central1",
+      managed_gke_project_id: "mbsrn-prod",
+      namespace_isolation_defaults: {
+        resource_quota: {
+          enabled: false,
+          requests_cpu: "1000m",
+          requests_memory: "1Gi",
+          limits_cpu: "2000m",
+          limits_memory: "2Gi",
+          pods: 20,
+          services: 10,
+          configmaps: 40,
+          secrets: 40,
+          persistentvolumeclaims: 10,
+        },
+        limit_range: {
+          enabled: false,
+          default_cpu: "500m",
+          default_memory: "512Mi",
+          default_request_cpu: "250m",
+          default_request_memory: "256Mi",
+          min_cpu: "100m",
+          min_memory: "128Mi",
+          max_cpu: "2000m",
+          max_memory: "2Gi",
+        },
+        network_policy: {
+          enabled: false,
+          mode: "default_deny_ingress",
+        },
+        managed_preview_endpoint: {
+          mode: "preview_shared_gateway",
+          shared_preview_static_ip_name: "site-preview-shared-ip",
+        },
+        migration_generation_budget: {
+          ...DEFAULT_MIGRATION_GENERATION_BUDGET,
+        },
+        migration_generation_safety: {
+          ...DEFAULT_MIGRATION_GENERATION_SAFETY,
+        },
+      },
+      enabled: true,
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+    };
+    mockFetchGitHubPublishConfig.mockResolvedValueOnce(fetchedConfig);
+    mockUpdateGitHubPublishConfig.mockImplementationOnce(async (_token: string, payload: any) => ({
+      ...fetchedConfig,
+      ...payload,
+      namespace_isolation_defaults: payload.namespace_isolation_defaults,
+      namespace_isolation_effective_defaults: payload.namespace_isolation_defaults,
+      namespace_isolation_cap_reasons: {},
+    }));
+    mockUseAuth.mockReturnValue({
+      principal: {
+        business_id: "biz-1",
+        principal_id: "admin-gh-managed-preview-endpoint",
+        display_name: "Admin Managed Endpoint",
+        role: "admin",
+        is_active: true,
+      },
+    });
+
+    render(<AdminPage />);
+
+    await screen.findByLabelText("GitHub account/owner");
+    fireEvent.change(screen.getByLabelText("Default Branch"), { target: { value: "release" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save GitHub Publish Config" }));
+
+    await waitFor(() => {
+      expect(mockUpdateGitHubPublishConfig).toHaveBeenCalled();
+    });
+    const payload = mockUpdateGitHubPublishConfig.mock.calls.at(-1)?.[1];
+    expect(payload.namespace_isolation_defaults.managed_preview_endpoint).toEqual({
+      mode: "preview_shared_gateway",
+      shared_preview_static_ip_name: "site-preview-shared-ip",
+    });
+    expect(await screen.findByText("GitHub publish configuration saved.")).toBeInTheDocument();
+  });
 
   it("clears a prior GitHub publish save failure after a later successful save", async () => {
     const failedSaveMessage = "Failed to save GitHub publish configuration.";
@@ -968,6 +1080,10 @@ describe("admin route", () => {
         network_policy: {
           enabled: false,
           mode: "default_deny_ingress",
+        },
+        managed_preview_endpoint: {
+          mode: "auto",
+          shared_preview_static_ip_name: null,
         },
         migration_generation_budget: {
           ...DEFAULT_MIGRATION_GENERATION_BUDGET,
@@ -1144,6 +1260,10 @@ describe("admin route", () => {
           enabled: false,
           mode: "default_deny_ingress",
         },
+        managed_preview_endpoint: {
+          mode: "auto",
+          shared_preview_static_ip_name: null,
+        },
         migration_generation_budget: {
           ...DEFAULT_MIGRATION_GENERATION_BUDGET,
           migration_media_asset_limit: 30,
@@ -1182,6 +1302,10 @@ describe("admin route", () => {
         network_policy: {
           enabled: false,
           mode: "default_deny_ingress",
+        },
+        managed_preview_endpoint: {
+          mode: "auto",
+          shared_preview_static_ip_name: null,
         },
         migration_generation_budget: {
           ...DEFAULT_MIGRATION_GENERATION_BUDGET,
