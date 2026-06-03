@@ -8019,9 +8019,9 @@ export function MigrationWorkspacePanel({
         </div>
         <input
           ref={requirementsImportInputRef}
+          className="workspace-hidden-file-input"
           type="file"
           accept="application/json,.json"
-          style={{ display: "none" }}
           tabIndex={-1}
           aria-hidden="true"
           data-testid="migration-requirements-import-input"

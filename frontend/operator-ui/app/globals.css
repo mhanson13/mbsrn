@@ -2896,6 +2896,10 @@ code {
   margin: 0;
 }
 
+.workspace-hidden-file-input {
+  display: none;
+}
+
 .workflow-context-surface {
   gap: var(--space-2);
 }
