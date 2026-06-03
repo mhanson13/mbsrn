@@ -12187,6 +12187,14 @@ class SEOMigrationService:
             max_items=12,
             max_item_length=80,
         )
+        draft_input_summary_payload["artifact_media_reasons"] = _normalize_string_list(
+            latest_artifact_media_readiness.get("reasons"),
+            max_items=8,
+            max_item_length=240,
+        )
+        draft_input_summary_payload["artifact_media_selected_media_updated_after_artifact_created"] = bool(
+            latest_artifact_media_readiness.get("selected_media_updated_after_artifact_created")
+        )
         provider_call_skipped = ai_execution_summary.get("provider_call_skipped")
         if isinstance(provider_call_skipped, bool):
             draft_input_summary_payload["generation_provider_call_skipped"] = provider_call_skipped
@@ -20918,8 +20926,17 @@ class SEOMigrationService:
         include_repair_preview: bool,
     ) -> dict[str, object]:
         baseline_readiness = self._build_artifact_media_readiness(artifact)
-        if artifact is None or not include_repair_preview:
+        if artifact is None:
             return baseline_readiness
+        selected_readiness = baseline_readiness
+        readiness_source = "artifact_snapshot"
+        if not include_repair_preview:
+            return self._annotate_artifact_media_readiness_evidence(
+                workspace=workspace,
+                artifact=artifact,
+                readiness=selected_readiness,
+                readiness_source=readiness_source,
+            )
         baseline_blockers = {
             str(item).strip().lower() for item in (baseline_readiness.get("blocker_codes") or []) if str(item).strip()
         }
@@ -20931,7 +20948,12 @@ class SEOMigrationService:
                 "artifact_image_tokens_unresolved",
             }
         ):
-            return baseline_readiness
+            return self._annotate_artifact_media_readiness_evidence(
+                workspace=workspace,
+                artifact=artifact,
+                readiness=selected_readiness,
+                readiness_source=readiness_source,
+            )
         preview = self._prepare_artifact_media_for_publish(
             workspace=workspace,
             artifact=artifact,
@@ -20940,15 +20962,179 @@ class SEOMigrationService:
         )
         preview_readiness = _normalize_json_dict(preview.get("artifact_media_readiness"))
         if not preview_readiness:
-            return baseline_readiness
+            return self._annotate_artifact_media_readiness_evidence(
+                workspace=workspace,
+                artifact=artifact,
+                readiness=selected_readiness,
+                readiness_source=readiness_source,
+            )
         preview_blockers = {
             str(item).strip().lower() for item in (preview_readiness.get("blocker_codes") or []) if str(item).strip()
         }
         if bool(preview_readiness.get("ready")) and not bool(baseline_readiness.get("ready")):
-            return preview_readiness
-        if len(preview_blockers) < len(baseline_blockers):
-            return preview_readiness
-        return baseline_readiness
+            selected_readiness = preview_readiness
+            readiness_source = "repair_preview"
+        elif len(preview_blockers) < len(baseline_blockers):
+            selected_readiness = preview_readiness
+            readiness_source = "repair_preview"
+        else:
+            baseline_selected_not_materialized_count = max(
+                0,
+                int(baseline_readiness.get("selected_not_materialized_count") or 0),
+            )
+            preview_selected_not_materialized_count = max(
+                0,
+                int(preview_readiness.get("selected_not_materialized_count") or 0),
+            )
+            baseline_materialized_assets_count = max(0, int(baseline_readiness.get("materialized_assets_count") or 0))
+            preview_materialized_assets_count = max(0, int(preview_readiness.get("materialized_assets_count") or 0))
+            if (
+                baseline_selected_not_materialized_count != preview_selected_not_materialized_count
+                or baseline_materialized_assets_count != preview_materialized_assets_count
+            ):
+                selected_readiness = preview_readiness
+                readiness_source = "repair_preview"
+        return self._annotate_artifact_media_readiness_evidence(
+            workspace=workspace,
+            artifact=artifact,
+            readiness=selected_readiness,
+            readiness_source=readiness_source,
+        )
+
+    def _annotate_artifact_media_readiness_evidence(
+        self,
+        *,
+        workspace: SEOMigrationWorkspace,
+        artifact: SEOMigrationArtifactVersion,
+        readiness: dict[str, object],
+        readiness_source: str,
+    ) -> dict[str, object]:
+        readiness_payload = _normalize_json_dict(readiness)
+        readiness_payload["readiness_source"] = _normalize_string(readiness_source, max_length=40) or "artifact_snapshot"
+        readiness_payload["artifact_version_id"] = _normalize_string(artifact.id, max_length=80)
+        readiness_payload["artifact_version_created_at"] = (
+            artifact.created_at.isoformat() if isinstance(artifact.created_at, datetime) else None
+        )
+
+        media_assets_payload = self._collect_workspace_media_assets(
+            workspace=workspace,
+            business_id=workspace.business_id,
+            site_id=workspace.site_id,
+        )
+        selected_assets = _normalize_media_asset_list(
+            media_assets_payload.get("selected_assets"),
+            max_items=_MIGRATION_ARTIFACT_MAX_MEDIA_FILES,
+        )
+        selected_media_ids: list[str] = []
+        selected_media_id_seen: set[str] = set()
+        for item in selected_assets:
+            asset_id = _normalize_string(_normalize_json_dict(item).get("asset_id"), max_length=80)
+            if asset_id is None:
+                continue
+            key = asset_id.lower()
+            if key in selected_media_id_seen:
+                continue
+            selected_media_id_seen.add(key)
+            selected_media_ids.append(asset_id)
+
+        context_payload = _normalize_json_dict(artifact.context_json)
+        manifest_payload = _normalize_json_dict(context_payload.get("artifact_media_manifest"))
+        manifest_entries = _coerce_object_list(
+            manifest_payload.get("manifest"),
+            max_items=_MIGRATION_ARTIFACT_MAX_MEDIA_FILES,
+        )
+        manifest_asset_ids: list[str] = []
+        manifest_asset_id_seen: set[str] = set()
+        for entry in manifest_entries:
+            asset_id = _normalize_string(_normalize_json_dict(entry).get("asset_id"), max_length=80)
+            if asset_id is None:
+                continue
+            key = asset_id.lower()
+            if key in manifest_asset_id_seen:
+                continue
+            manifest_asset_id_seen.add(key)
+            manifest_asset_ids.append(asset_id)
+        manifest_asset_id_lookup = {item.lower() for item in manifest_asset_ids}
+        selected_media_missing_from_manifest = [
+            item for item in selected_media_ids if item.lower() not in manifest_asset_id_lookup
+        ]
+
+        selected_artifact_path_plan = _plan_selected_media_artifact_paths(selected_assets)
+        expected_artifact_paths = _dedupe_strings(
+            [
+                _normalize_generated_path(_normalize_json_dict(item).get("output_relative_path")) or ""
+                for item in selected_artifact_path_plan.values()
+            ]
+        )
+        expected_artifact_paths = [item for item in expected_artifact_paths if item]
+        artifact_generated_files = _coerce_object_list(artifact.generated_files_json, max_items=200)
+        artifact_generated_paths = {
+            path
+            for path in (
+                _normalize_generated_path(_normalize_json_dict(item).get("path"))
+                for item in artifact_generated_files
+            )
+            if path
+        }
+        matched_artifact_paths = [item for item in expected_artifact_paths if item in artifact_generated_paths]
+        missing_artifact_paths = [item for item in expected_artifact_paths if item not in artifact_generated_paths]
+
+        selected_media_updated_after_artifact_created = bool(selected_media_missing_from_manifest)
+        readiness_payload["selected_media_count"] = len(selected_media_ids)
+        readiness_payload["selected_media_ids"] = selected_media_ids[:_MIGRATION_ARTIFACT_MAX_MEDIA_FILES]
+        readiness_payload["artifact_manifest_selected_media_count"] = len(manifest_asset_ids)
+        readiness_payload["artifact_manifest_selected_media_ids"] = manifest_asset_ids[:_MIGRATION_ARTIFACT_MAX_MEDIA_FILES]
+        readiness_payload["selected_media_missing_from_artifact_manifest_count"] = len(selected_media_missing_from_manifest)
+        readiness_payload["selected_media_missing_from_artifact_manifest_ids"] = (
+            selected_media_missing_from_manifest[:_MIGRATION_ARTIFACT_MAX_MEDIA_FILES]
+        )
+        readiness_payload["selected_media_updated_after_artifact_created"] = selected_media_updated_after_artifact_created
+        readiness_payload["expected_artifact_paths"] = expected_artifact_paths[:160]
+        readiness_payload["matched_artifact_paths"] = matched_artifact_paths[:160]
+        readiness_payload["missing_artifact_paths"] = missing_artifact_paths[:160]
+        readiness_payload["github_asset_check_attempted"] = False
+        readiness_payload["github_asset_check_status"] = "not_checked"
+        readiness_payload["github_asset_matched_paths"] = []
+        readiness_payload["github_asset_missing_paths"] = []
+        readiness_payload["stale_action_refresh_required"] = False
+
+        if not selected_media_updated_after_artifact_created:
+            return readiness_payload
+        if readiness_source != "artifact_snapshot":
+            return readiness_payload
+
+        blocker_codes = _normalize_string_list(
+            readiness_payload.get("blocker_codes"),
+            max_items=20,
+            max_item_length=80,
+        )
+        blocker_codes = [
+            item for item in blocker_codes if item.lower() != "selected_media_not_materialized"
+        ]
+        blocker_codes.insert(0, "artifact_regeneration_required_after_media_selection")
+        readiness_payload["blocker_codes"] = _dedupe_strings(blocker_codes)
+
+        reasons = _normalize_string_list(
+            readiness_payload.get("reasons"),
+            max_items=20,
+            max_item_length=240,
+        )
+        reasons = [
+            item
+            for item in reasons
+            if "selected image" not in item.lower() or "not materialized into artifacts" not in item.lower()
+        ]
+        changed_count = len(selected_media_missing_from_manifest)
+        reasons.insert(
+            0,
+            (
+                f"{changed_count} selected image(s) were chosen after this artifact was generated. "
+                "Generate and approve a new artifact version before publishing media changes."
+            ),
+        )
+        readiness_payload["reasons"] = reasons[:12]
+        readiness_payload["ready"] = False
+        return readiness_payload
 
     def _salvage_provider_error_output(
         self,

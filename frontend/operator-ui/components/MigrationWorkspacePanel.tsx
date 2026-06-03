@@ -524,6 +524,26 @@ function toErrorMessage(error: unknown, fallback: string): string {
   return fallback;
 }
 
+function isRefreshRequiredActionError(error: unknown, message: string): boolean {
+  const normalizedMessage = message.trim().toLowerCase();
+  if (
+    normalizedMessage.includes("refresh this page before continuing")
+    || normalizedMessage.includes("newer app version is deployed")
+    || normalizedMessage.includes("new version of mbsrn was deployed")
+  ) {
+    return true;
+  }
+  if (!(error instanceof ApiRequestError)) {
+    return false;
+  }
+  const detail = asRecord(error.detail);
+  const detailCode = asString(detail.code || detail.error_code || detail.reason_code).trim().toLowerCase();
+  if (detailCode === "refresh_required") {
+    return true;
+  }
+  return error.status === 409 && normalizedMessage.includes("refresh");
+}
+
 function parseFailureCategory(
   error: unknown,
   message: string,
@@ -4277,6 +4297,13 @@ export function MigrationWorkspacePanel({
     draftInputSummary.artifact_media_ready_for_publish_deploy,
   );
   const artifactMediaBlockerCodes = asStringList(draftInputSummary.artifact_media_blocker_codes);
+  const artifactMediaReasons = asStringList(draftInputSummary.artifact_media_reasons);
+  const artifactMediaPrimaryReason = artifactMediaReasons[0] || null;
+  const artifactMediaSelectionUpdatedAfterArtifactCreated =
+    asBooleanOrNull(draftInputSummary.artifact_media_selected_media_updated_after_artifact_created) ?? false;
+  const artifactMediaRegenerationRequired = artifactMediaBlockerCodes.some(
+    (item) => item.trim().toLowerCase() === "artifact_regeneration_required_after_media_selection",
+  ) || artifactMediaSelectionUpdatedAfterArtifactCreated;
   const mediaRequirementSatisfied =
     asBooleanOrNull(draftReadinessPreflight.media_requirement_satisfied)
     ?? asBooleanOrNull(draftInputSummary.media_requirement_satisfied)
@@ -7229,12 +7256,21 @@ export function MigrationWorkspacePanel({
       await loadWorkspaceData(false);
     } catch (error) {
       const baseMessage = toErrorMessage(error, "Publish failed.");
+      if (isRefreshRequiredActionError(error, baseMessage)) {
+        await loadWorkspaceData(false, { preserveErrorMessage: true });
+        setErrorHint(null);
+        setErrorMessage("A new version of MBSRN was deployed. Refresh this page before continuing.");
+        setStatusMessage(null);
+        return;
+      }
       const category = parseFailureCategory(error, baseMessage, "publish");
       await loadWorkspaceData(false, { preserveErrorMessage: true });
       setErrorHint(null);
       if (category === "duplicate_request") {
         setErrorMessage(null);
-        setStatusMessage("Already published to the configured GitHub target. Deploy remains a separate action.");
+        setStatusMessage(
+          "This artifact version is already published. Generate or approve a new artifact version before publishing media changes.",
+        );
         return;
       }
       setErrorMessage(formatActionFailureMessage("publish", category, baseMessage));
@@ -8438,7 +8474,12 @@ export function MigrationWorkspacePanel({
         <span className="hint" data-testid="migration-artifact-media-reference-summary">
           Referenced by generated pages: {artifactMediaReferencedPathsCount}. Unresolved references: {artifactMediaUnresolvedReferencesCount}.
         </span>
-        {artifactMediaSelectedNotMaterializedCount > 0 ? (
+        {artifactMediaRegenerationRequired ? (
+          <span className="hint warning" data-testid="migration-artifact-media-regeneration-required-warning">
+            {artifactMediaPrimaryReason
+              || "Selected images changed after this artifact was generated. Generate and approve a new artifact version before publishing media changes."}
+          </span>
+        ) : artifactMediaSelectedNotMaterializedCount > 0 ? (
           <span className="hint warning" data-testid="migration-artifact-media-not-materialized-warning">
             {artifactMediaSelectedNotMaterializedCount} selected image
             {artifactMediaSelectedNotMaterializedCount === 1 ? "" : "s"} were not materialized into artifact assets.

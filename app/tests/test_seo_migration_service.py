@@ -5036,6 +5036,93 @@ def test_publish_readiness_repairs_stale_selected_media_materialization_for_appr
     assert image_path in str(html_publish.content or "")
 
 
+def test_publish_readiness_requires_regeneration_when_selected_media_changes_after_artifact_generation(db_session) -> None:
+    publisher = _RecordingGitHubPublisher(
+        existing_repository=True,
+        preflight_blocker_code="github_workflow_write_not_authorized",
+        preflight_can_read_contents=True,
+        preflight_can_write_contents=True,
+        preflight_can_write_workflows=False,
+    )
+    provider = _StaticMigrationProvider(_build_publishable_output())
+    service = _build_service(
+        db_session,
+        provider,
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+
+    first_upload = service.upload_workspace_media_asset(
+        business_id=business_id,
+        site_id=site_id,
+        filename="hero-before.png",
+        content_type="image/png",
+        payload=_tiny_png_payload(),
+        selected_for_draft=True,
+        category="hero",
+        alt_text="Hero before",
+        description=None,
+        usage_note=None,
+        page_assignment=None,
+        principal_id="principal-1",
+    )
+    first_asset_id = str(first_upload.get("asset_id") or "").strip()
+    assert first_asset_id.startswith("upl-")
+
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes=None,
+        principal_id="principal-1",
+    )
+
+    second_upload = service.upload_workspace_media_asset(
+        business_id=business_id,
+        site_id=site_id,
+        filename="hero-after.png",
+        content_type="image/png",
+        payload=_tiny_png_payload(),
+        selected_for_draft=True,
+        category="hero",
+        alt_text="Hero after",
+        description=None,
+        usage_note=None,
+        page_assignment=None,
+        principal_id="principal-1",
+    )
+    second_asset_id = str(second_upload.get("asset_id") or "").strip()
+    assert second_asset_id.startswith("upl-")
+
+    summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
+    publish_readiness = summary.publish_readiness if isinstance(summary.publish_readiness, dict) else {}
+    publish_media = (
+        publish_readiness.get("artifact_media_readiness")
+        if isinstance(publish_readiness.get("artifact_media_readiness"), dict)
+        else {}
+    )
+
+    assert publish_readiness.get("ready") is False
+    assert "publish_artifact_media_invalid" in list(publish_readiness.get("blocker_codes") or [])
+    assert publish_media.get("ready") is False
+    assert "artifact_regeneration_required_after_media_selection" in list(publish_media.get("blocker_codes") or [])
+    assert "selected_media_not_materialized" not in list(publish_media.get("blocker_codes") or [])
+    assert publish_media.get("selected_media_updated_after_artifact_created") is True
+    assert publish_media.get("selected_media_missing_from_artifact_manifest_count") == 1
+    assert second_asset_id in list(publish_media.get("selected_media_missing_from_artifact_manifest_ids") or [])
+    assert first_asset_id in list(publish_media.get("artifact_manifest_selected_media_ids") or [])
+    reasons = [str(item) for item in list(publish_media.get("reasons") or [])]
+    assert reasons
+    assert "chosen after this artifact was generated" in reasons[0].lower()
+
+
 def test_generate_artifacts_rejection_emits_contract_diagnostics(db_session, caplog) -> None:
     output = SEOMigrationArtifactGenerationOutput(
         strategy_summary="Draft strategy",

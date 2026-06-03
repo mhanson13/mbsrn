@@ -2723,6 +2723,13 @@ Readiness/cutover blockers now include:
 - selected media marked included but not materialized into artifact files
 - generated HTML references image paths that are missing from artifact files
 - generated HTML references internal/private media routes or unsafe paths
+- selected media was changed after the currently selected artifact version was generated (`artifact_regeneration_required_after_media_selection`); generate/approve a new artifact version before publish
+
+Readiness evidence notes:
+- media readiness is artifact-version-specific and includes selected-media IDs, expected artifact paths, matched artifact paths, and missing artifact paths
+- when GitHub asset evidence is unavailable, diagnostics explicitly report `github_asset_check_status=not_checked` instead of implying absence
+- duplicate publish requests do not republish content for an already published artifact version; media changes require a newly generated/approved artifact version
+- stale UI/server-action build mismatch should be resolved by refreshing the app before trusting publish/media state
 
 Warnings (non-blocking):
 - selected media exists but is unused by generated pages

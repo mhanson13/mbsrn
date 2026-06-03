@@ -749,9 +749,66 @@ describe("site migration workflow route", () => {
       ),
     );
     expect(
-      await screen.findByText("Already published to the configured GitHub target. Deploy remains a separate action."),
+      await screen.findByText(
+        "This artifact version is already published. Generate or approve a new artifact version before publishing media changes.",
+      ),
     ).toBeInTheDocument();
     expect(screen.queryByText("Duplicate publish request detected.")).not.toBeInTheDocument();
+  });
+
+  it("shows refresh-required guidance when publish is blocked by stale server-action build mismatch", async () => {
+    const user = userEvent.setup();
+    const approvedArtifact = buildMigrationArtifactVersion({
+      approval_status: "approved",
+      publish_status: "not_published",
+    });
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(
+      buildMigrationWorkspaceSummary({
+        workspace: buildMigrationWorkspace({
+          latest_generated_artifact_version_id: approvedArtifact.id,
+          latest_generated_artifact_version_number: approvedArtifact.version,
+          latest_approved_artifact_version_id: approvedArtifact.id,
+          latest_approved_artifact_version_number: approvedArtifact.version,
+        }),
+        latest_artifact: approvedArtifact,
+        publish_readiness: {
+          ready: true,
+          reasons: [],
+          approved_artifact_version_id: approvedArtifact.id,
+          target: {
+            enabled: true,
+            repo_owner: "mhanson13",
+            repo_name: "example-site",
+            branch: "main",
+          },
+        },
+      }),
+    );
+    mockFetchMigrationArtifactVersions.mockResolvedValueOnce({
+      items: [approvedArtifact],
+      total: 1,
+    });
+    mockFetchMigrationArtifactFilePreview.mockResolvedValueOnce(
+      buildMigrationArtifactFilePreview({ artifact_version_id: approvedArtifact.id }),
+    );
+    mockPublishMigrationArtifactVersion.mockRejectedValueOnce(
+      new ApiRequestError("A newer app version is deployed. Refresh this page before continuing.", {
+        status: 409,
+        detail: {
+          code: "refresh_required",
+          message: "A newer app version is deployed. Refresh this page before continuing.",
+        },
+      }),
+    );
+
+    render(<SiteMigrationWorkflowPage />);
+
+    const publishButton = await screen.findByRole("button", { name: "Publish Approved Draft to GitHub" });
+    await user.click(publishButton);
+
+    expect(
+      await screen.findByText("A new version of MBSRN was deployed. Refresh this page before continuing."),
+    ).toBeInTheDocument();
   });
 
   it("renders a compact GA4 outcome snapshot for deploy events when available", async () => {
@@ -3821,6 +3878,41 @@ describe("site migration workflow route", () => {
     await user.click(screen.getByRole("button", { name: "Generate Draft Mockup" }));
     await waitFor(() => expect(mockGenerateMigrationDraftArtifacts).toHaveBeenCalled());
     expect(mockUpdateMigrationRequirements).not.toHaveBeenCalled();
+  });
+
+  it("shows artifact regeneration guidance when selected media changed after artifact generation", async () => {
+    const summary = buildMigrationWorkspaceSummary();
+    summary.context_summary = {
+      ...summary.context_summary,
+      draft_input_summary: {
+        artifact_media_selected_assets_count: 8,
+        artifact_media_materialized_assets_count: 5,
+        artifact_media_referenced_paths_count: 4,
+        artifact_media_unresolved_references_count: 0,
+        artifact_media_selected_not_materialized_count: 0,
+        artifact_media_unreferenced_materialized_count: 0,
+        artifact_media_ready_for_publish_deploy: false,
+        artifact_media_blocker_codes: [
+          "artifact_regeneration_required_after_media_selection",
+        ],
+        artifact_media_selected_media_updated_after_artifact_created: true,
+        artifact_media_reasons: [
+          "3 selected image(s) were chosen after this artifact was generated. Generate and approve a new artifact version before publishing media changes.",
+        ],
+      },
+    };
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(summary);
+    mockFetchMigrationArtifactVersions.mockResolvedValueOnce({
+      items: [summary.latest_artifact as MigrationArtifactVersion],
+      total: 1,
+    });
+
+    render(<SiteMigrationWorkflowPage />);
+
+    expect(await screen.findByTestId("migration-artifact-media-regeneration-required-warning")).toHaveTextContent(
+      "Generate and approve a new artifact version before publishing media changes.",
+    );
+    expect(screen.queryByTestId("migration-artifact-media-not-materialized-warning")).not.toBeInTheDocument();
   });
 
   it("supports AI suggestion helper for additional requirements", async () => {
