@@ -2562,13 +2562,40 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         site_id: str | None,
         managed_gke_config: dict[str, object] | None,
         gcp_deploy_key: str | None,
+        namespace_isolation_defaults: dict[str, object] | None = None,
+        preview_hostname: str | None = None,
         dry_run: bool = False,
     ) -> SEOMigrationGitHubManagedSiteStaticIPEnsureResult:
         del repo_owner
-        static_ip_name, _ = derive_site_preview_static_ip_name(
+        preview_endpoint = resolve_managed_preview_endpoint_configuration(
             repo_name=repo_name,
             site_id=site_id,
+            preview_hostname=preview_hostname,
+            namespace_isolation_defaults=namespace_isolation_defaults,
         )
+        preview_endpoint_reason_code = _coerce_string(preview_endpoint.get("reason_code"))
+        if preview_endpoint_reason_code == _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_MISSING:
+            raise SEOMigrationGitHubPublisherError(
+                code=_DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_MISSING,
+                safe_message=(
+                    "Shared preview gateway mode is enabled, but shared preview static IP name is not configured."
+                ),
+                stage="static_ip_provision",
+            )
+        if preview_endpoint_reason_code == _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_HOSTNAME_MISSING:
+            raise SEOMigrationGitHubPublisherError(
+                code=_DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_HOSTNAME_MISSING,
+                safe_message=(
+                    "Shared preview gateway mode requires a preview hostname before deploy static-IP checks can run."
+                ),
+                stage="static_ip_provision",
+            )
+        static_ip_name = _coerce_string(preview_endpoint.get("expected_static_ip_name"))
+        if not static_ip_name:
+            static_ip_name, _ = derive_site_preview_static_ip_name(
+                repo_name=repo_name,
+                site_id=site_id,
+            )
         normalized_managed_gke_config = _normalize_managed_gke_config(managed_gke_config)
         project_id = _coerce_string(normalized_managed_gke_config.get(_MANAGED_GKE_CONFIG_PROJECT_ID))
         if not project_id:
@@ -5424,6 +5451,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             preview_hostname=preview_hostname,
             private_image_auth_required=private_image_auth_required,
             site_id=site_id,
+            namespace_isolation_defaults=normalized_namespace_isolation_defaults,
         )
         template_validation = _validate_managed_workflow_template_before_publish(
             workflow_yaml=workflow_yaml,
@@ -5768,9 +5796,19 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             repo_name=target.repo_name,
             site_id=None,
         )
-        preview_static_ip_name, _ = derive_site_preview_static_ip_name(
+        preview_endpoint = resolve_managed_preview_endpoint_configuration(
             repo_name=target.repo_name,
             site_id=None,
+            preview_hostname=preview_hostname,
+            namespace_isolation_defaults=normalized_namespace_isolation_defaults,
+        )
+        preview_static_ip_name = _coerce_string(preview_endpoint.get("expected_static_ip_name"))
+        preview_endpoint_reason_code = _coerce_string(preview_endpoint.get("reason_code"))
+        uses_shared_preview_gateway = bool(preview_endpoint.get("uses_shared_preview_gateway"))
+        ingress_static_ip_conflict_reason_code = (
+            _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_STATIC_IP_CONFLICT
+            if uses_shared_preview_gateway
+            else _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_STATIC_IP_NOT_ALLOWED
         )
         workflow_content = _decode_workflow_file_content(workflow_file_payload) or ""
         deploy_auth_mode = _derive_managed_workflow_deploy_auth_mode(workflow_content=workflow_content)
@@ -5933,18 +5971,32 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         gke_config_missing_reason_codes: list[str] = []
         gke_config_presence: dict[str, bool] = {}
         gke_config_reason_code: str | None = None
-        gke_config_details: dict[str, object] = {}
+        gke_config_details: dict[str, object] = {
+            "managed_preview_endpoint_requested_mode": _coerce_string(preview_endpoint.get("requested_mode")),
+            "managed_preview_endpoint_effective_mode": _coerce_string(preview_endpoint.get("effective_mode")),
+            "uses_shared_preview_gateway": uses_shared_preview_gateway,
+            "requires_dedicated_static_ip": bool(preview_endpoint.get("requires_dedicated_static_ip")),
+            "shared_preview_static_ip_name": _coerce_string(preview_endpoint.get("shared_preview_static_ip_name")),
+            "expected_preview_static_ip_name": preview_static_ip_name,
+            "expected_preview_static_ip_name_source": _coerce_string(
+                preview_endpoint.get("expected_static_ip_name_source")
+            ),
+        }
         if managed_workflow:
             (
                 gke_config_reason_code,
                 gke_config_missing_reason_codes,
                 gke_config_presence,
-                gke_config_details,
+                resolved_gke_config_details,
             ) = self._validate_managed_gke_environment_config(
                 repo_owner=target.repo_owner,
                 repo_name=target.repo_name,
                 managed_gke_config=managed_gke_config,
             )
+            gke_config_details = {
+                **gke_config_details,
+                **(resolved_gke_config_details if isinstance(resolved_gke_config_details, dict) else {}),
+            }
             _emit_structured_publisher_log(
                 payload={
                     "event": "seo_migration_deploy_gke_environment_config",
@@ -6003,6 +6055,9 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         if managed_workflow and namespace_model_status == _NAMESPACE_MODEL_STATUS_MISALIGNED:
             dispatch_service_availability = False
             dispatch_service_reason_code = "target_configuration_invalid"
+        if managed_workflow and preview_endpoint_reason_code:
+            dispatch_service_availability = False
+            dispatch_service_reason_code = preview_endpoint_reason_code
         if managed_workflow and certificate_domain_mismatch is True:
             dispatch_service_availability = False
             dispatch_service_reason_code = _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_BOUND_TO_WRONG_SITE
@@ -6014,7 +6069,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             dispatch_service_reason_code = _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_CERTIFICATE_ANNOTATION_MISMATCH
         elif managed_workflow and ingress_static_ip_conflict is True:
             dispatch_service_availability = False
-            dispatch_service_reason_code = _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_STATIC_IP_NOT_ALLOWED
+            dispatch_service_reason_code = ingress_static_ip_conflict_reason_code
         elif managed_workflow and stale_pre_shared_cert_binding_detected is True:
             dispatch_service_availability = False
             dispatch_service_reason_code = _DEPLOY_DISPATCH_SERVICE_REASON_STALE_PRE_SHARED_CERT_BINDING
@@ -8695,6 +8750,14 @@ _MBSRN_MANAGED_PREVIEW_CERTIFICATE_NAME_PREFIX = "site-web-preview-cert"
 _MBSRN_MANAGED_PREVIEW_DOMAIN_SUFFIX = "site.mbsrn.com"
 _MBSRN_MANAGED_PREVIEW_DNS_ZONE_DEFAULT = "sites"
 _MBSRN_MANAGED_PREVIEW_DNS_TTL_DEFAULT = 300
+_MANAGED_PREVIEW_ENDPOINT_MODE_AUTO = "auto"
+_MANAGED_PREVIEW_ENDPOINT_MODE_SHARED_GATEWAY = "preview_shared_gateway"
+_MANAGED_PREVIEW_ENDPOINT_MODE_DEDICATED_STATIC_IP = "dedicated_static_ip"
+_MANAGED_PREVIEW_ENDPOINT_MODE_VALUES = {
+    _MANAGED_PREVIEW_ENDPOINT_MODE_AUTO,
+    _MANAGED_PREVIEW_ENDPOINT_MODE_SHARED_GATEWAY,
+    _MANAGED_PREVIEW_ENDPOINT_MODE_DEDICATED_STATIC_IP,
+}
 _MBSRN_MANAGED_REPO_BASELINE_README_PATH = "README.md"
 _MBSRN_MANAGED_REPO_BASELINE_GITIGNORE_PATH = ".gitignore"
 _MBSRN_MANAGED_REPO_BASELINE_LICENSE_PATH = "LICENSE"
@@ -8790,6 +8853,8 @@ _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFLICTING_RECORD = "managed_s
 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PERMISSION_DENIED = "managed_site_dns_permission_denied"
 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_TRANSACTION_CONFLICT = "managed_site_dns_transaction_conflict"
 _DEPLOY_DISPATCH_SERVICE_REASON_EXPECTED_STATIC_IP_NOT_BOUND_TO_INGRESS = "expected_static_ip_not_bound_to_ingress"
+_DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_MISSING = "shared_preview_gateway_missing"
+_DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_HOSTNAME_MISSING = "shared_preview_gateway_hostname_missing"
 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_DOMAIN_DRIFT_REPAIRED = "managed_certificate_domain_drift_repaired"
 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_DOMAIN_DRIFT_REPAIR_FAILED = (
     "managed_certificate_domain_drift_repair_failed"
@@ -8864,6 +8929,10 @@ _DEFAULT_NAMESPACE_ISOLATION_DEFAULTS = {
     "network_policy": {
         "enabled": False,
         "mode": "default_deny_ingress",
+    },
+    "managed_preview_endpoint": {
+        "mode": _MANAGED_PREVIEW_ENDPOINT_MODE_AUTO,
+        "shared_preview_static_ip_name": None,
     },
 }
 
@@ -9001,6 +9070,78 @@ def derive_site_preview_static_ip_name(*, repo_name: object, site_id: object | N
     )
 
 
+def resolve_managed_preview_endpoint_configuration(
+    *,
+    repo_name: object,
+    site_id: object | None,
+    preview_hostname: object | None,
+    namespace_isolation_defaults: dict[str, object] | None,
+) -> dict[str, object]:
+    normalized_defaults = _normalize_namespace_isolation_defaults(namespace_isolation_defaults)
+    endpoint_settings = normalized_defaults.get("managed_preview_endpoint")
+    endpoint_payload = endpoint_settings if isinstance(endpoint_settings, dict) else {}
+    requested_mode = (
+        _coerce_string(endpoint_payload.get("mode")) or _MANAGED_PREVIEW_ENDPOINT_MODE_AUTO
+    ).strip().lower()
+    if requested_mode not in _MANAGED_PREVIEW_ENDPOINT_MODE_VALUES:
+        requested_mode = _MANAGED_PREVIEW_ENDPOINT_MODE_AUTO
+    shared_preview_static_ip_name = _coerce_string(endpoint_payload.get("shared_preview_static_ip_name"))
+    if shared_preview_static_ip_name:
+        shared_preview_static_ip_name = shared_preview_static_ip_name.strip().lower()
+    else:
+        shared_preview_static_ip_name = None
+
+    preview_hostname_normalized = (_coerce_string(preview_hostname) or "").strip().lower().rstrip(".")
+    managed_preview_suffix = f".{_MBSRN_MANAGED_PREVIEW_DOMAIN_SUFFIX}"
+    preview_hostname_is_managed = bool(
+        preview_hostname_normalized and preview_hostname_normalized.endswith(managed_preview_suffix)
+    )
+
+    per_site_static_ip_name, per_site_static_ip_source = derive_site_preview_static_ip_name(
+        repo_name=repo_name,
+        site_id=site_id,
+    )
+    effective_mode = _MANAGED_PREVIEW_ENDPOINT_MODE_DEDICATED_STATIC_IP
+    if requested_mode == _MANAGED_PREVIEW_ENDPOINT_MODE_SHARED_GATEWAY:
+        effective_mode = _MANAGED_PREVIEW_ENDPOINT_MODE_SHARED_GATEWAY
+    elif requested_mode == _MANAGED_PREVIEW_ENDPOINT_MODE_DEDICATED_STATIC_IP:
+        effective_mode = _MANAGED_PREVIEW_ENDPOINT_MODE_DEDICATED_STATIC_IP
+    elif preview_hostname_is_managed and shared_preview_static_ip_name:
+        effective_mode = _MANAGED_PREVIEW_ENDPOINT_MODE_SHARED_GATEWAY
+
+    expected_static_ip_name = (
+        shared_preview_static_ip_name
+        if effective_mode == _MANAGED_PREVIEW_ENDPOINT_MODE_SHARED_GATEWAY
+        else per_site_static_ip_name
+    )
+    expected_static_ip_source = (
+        "managed_preview_endpoint.shared_preview_static_ip_name"
+        if effective_mode == _MANAGED_PREVIEW_ENDPOINT_MODE_SHARED_GATEWAY
+        else per_site_static_ip_source
+    )
+    reason_code: str | None = None
+    if effective_mode == _MANAGED_PREVIEW_ENDPOINT_MODE_SHARED_GATEWAY:
+        if not preview_hostname_normalized:
+            reason_code = _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_HOSTNAME_MISSING
+        elif not shared_preview_static_ip_name:
+            reason_code = _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_MISSING
+            expected_static_ip_name = per_site_static_ip_name
+            expected_static_ip_source = per_site_static_ip_source
+
+    return {
+        "requested_mode": requested_mode,
+        "effective_mode": effective_mode,
+        "uses_shared_preview_gateway": effective_mode == _MANAGED_PREVIEW_ENDPOINT_MODE_SHARED_GATEWAY,
+        "requires_dedicated_static_ip": effective_mode == _MANAGED_PREVIEW_ENDPOINT_MODE_DEDICATED_STATIC_IP,
+        "preview_hostname": preview_hostname_normalized or None,
+        "preview_hostname_is_managed": preview_hostname_is_managed,
+        "shared_preview_static_ip_name": shared_preview_static_ip_name,
+        "expected_static_ip_name": expected_static_ip_name,
+        "expected_static_ip_name_source": expected_static_ip_source,
+        "reason_code": reason_code,
+    }
+
+
 def _derive_site_runtime_image_repository(*, repo_owner: object, repo_name: object) -> str:
     owner_fragment = _safe_identifier_fragment(repo_owner, fallback="", max_length=80).strip("-")
     if not owner_fragment:
@@ -9081,6 +9222,27 @@ def _normalize_namespace_isolation_defaults(value: object | None) -> dict[str, o
             normalized_np["enabled"] = _coerce_bool(network_policy.get("enabled"), default=False)
             mode = _coerce_string(network_policy.get("mode")) or "default_deny_ingress"
             normalized_np["mode"] = mode.strip().lower()[:80] or "default_deny_ingress"
+
+    managed_preview_endpoint = value.get("managed_preview_endpoint")
+    if isinstance(managed_preview_endpoint, dict):
+        normalized_endpoint = normalized["managed_preview_endpoint"]
+        if isinstance(normalized_endpoint, dict):
+            mode = (_coerce_string(managed_preview_endpoint.get("mode")) or _MANAGED_PREVIEW_ENDPOINT_MODE_AUTO).strip().lower()
+            if mode not in _MANAGED_PREVIEW_ENDPOINT_MODE_VALUES:
+                mode = _MANAGED_PREVIEW_ENDPOINT_MODE_AUTO
+            normalized_endpoint["mode"] = mode
+            shared_preview_static_ip_name = _coerce_string(
+                managed_preview_endpoint.get("shared_preview_static_ip_name")
+            )
+            if shared_preview_static_ip_name:
+                shared_preview_static_ip_name = shared_preview_static_ip_name.strip().lower()
+                shared_preview_static_ip_name = re.sub(r"[^a-z0-9-]", "-", shared_preview_static_ip_name)
+                while "--" in shared_preview_static_ip_name:
+                    shared_preview_static_ip_name = shared_preview_static_ip_name.replace("--", "-")
+                shared_preview_static_ip_name = shared_preview_static_ip_name.strip("-")
+            normalized_endpoint["shared_preview_static_ip_name"] = (
+                shared_preview_static_ip_name[:63] if shared_preview_static_ip_name else None
+            )
 
     return normalized
 
@@ -9197,6 +9359,7 @@ def _render_managed_deploy_workflow_yaml(
     kubernetes_namespace: str,
     namespace_source: str,
     preview_hostname: str,
+    namespace_isolation_defaults: dict[str, object] | None = None,
     private_image_auth_required: bool = False,
     site_id: str | None = None,
 ) -> str:
@@ -9252,9 +9415,24 @@ def _render_managed_deploy_workflow_yaml(
         repo_name=repo_name,
         site_id=site_id,
     )
-    preview_static_ip_name, _ = derive_site_preview_static_ip_name(
+    preview_endpoint = resolve_managed_preview_endpoint_configuration(
         repo_name=repo_name,
         site_id=site_id,
+        preview_hostname=normalized_preview_hostname,
+        namespace_isolation_defaults=_normalize_namespace_isolation_defaults(namespace_isolation_defaults),
+    )
+    preview_static_ip_name = _coerce_string(preview_endpoint.get("expected_static_ip_name")) or ""
+    preview_endpoint_mode = _coerce_string(preview_endpoint.get("effective_mode")) or _MANAGED_PREVIEW_ENDPOINT_MODE_AUTO
+    preview_endpoint_uses_shared_gateway = bool(preview_endpoint.get("uses_shared_preview_gateway"))
+    preview_static_ip_missing_reason = (
+        _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_MISSING
+        if preview_endpoint_uses_shared_gateway
+        else _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_MISSING
+    )
+    preview_static_ip_missing_message = (
+        "Expected shared preview gateway static IP must be created and assigned by admin before deploy."
+        if preview_endpoint_uses_shared_gateway
+        else "Expected per-site static IP must be created and assigned by admin before deploy."
     )
     normalized_name = f"MBSRN Deploy {normalized_repo_fragment}"
     private_image_auth_value = "true" if private_image_auth_required else "false"
@@ -9319,6 +9497,7 @@ def _render_managed_deploy_workflow_yaml(
         f"      MBSRN_TARGET_ENVIRONMENT_SOURCE: {normalized_environment_source}\n"
         f"      MBSRN_SITE_IDENTITY: {normalized_site_fragment}\n"
         f"      MBSRN_PREVIEW_HOSTNAME: {normalized_preview_hostname}\n"
+        f"      MBSRN_PREVIEW_ENDPOINT_MODE: {preview_endpoint_mode}\n"
         f"      MBSRN_PREVIEW_CERTIFICATE_NAME: {preview_certificate_name}\n"
         f"      MBSRN_PREVIEW_STATIC_IP_NAME: {preview_static_ip_name}\n"
         f"      MBSRN_FRONTEND_CONFIG_NAME: {frontend_config_name}\n"
@@ -9397,13 +9576,14 @@ def _render_managed_deploy_workflow_yaml(
         "          cluster_name: ${{ env.GKE_CLUSTER_NAME }}\n"
         "          location: ${{ env.GKE_CLUSTER_LOCATION }}\n"
         "          project_id: ${{ env.GKE_PROJECT_ID }}\n"
-        "      - name: Verify expected per-site static IP exists\n"
+        "      - name: Verify expected preview ingress static IP exists\n"
         "        run: |\n"
         "          set -euo pipefail\n"
         '          if ! gcloud compute addresses describe "$MBSRN_PREVIEW_STATIC_IP_NAME" --global --project "$GKE_PROJECT_ID" >/dev/null 2>&1; then\n'
-        '            echo "deploy_runtime_reason_code=managed_site_static_ip_missing"\n'
-        '            echo "deploy_runtime_reason_message=Expected per-site static IP must be created and assigned by admin before deploy."\n'
+        f'            echo "deploy_runtime_reason_code={preview_static_ip_missing_reason}"\n'
+        f'            echo "deploy_runtime_reason_message={preview_static_ip_missing_message}"\n'
         '            echo "expected_static_ip_name=$MBSRN_PREVIEW_STATIC_IP_NAME"\n'
+        '            echo "preview_endpoint_mode=$MBSRN_PREVIEW_ENDPOINT_MODE"\n'
         '            echo "gcp_project_id=$GKE_PROJECT_ID"\n'
         "            exit 1\n"
         "          fi\n"
@@ -10971,10 +11151,6 @@ def _render_managed_gke_manifest_files(
         repo_name=repo_name,
         site_id=site_id,
     )
-    preview_static_ip_name, _ = derive_site_preview_static_ip_name(
-        repo_name=repo_name,
-        site_id=site_id,
-    )
     repo_owner_fragment = _safe_identifier_fragment(repo_owner, fallback="mbsrn", max_length=40)
     repo_fragment = _safe_identifier_fragment(repo_name, fallback="site", max_length=40)
     env_key = _safe_identifier_fragment(target_environment_key, fallback="gke-prod", max_length=40)
@@ -10983,6 +11159,18 @@ def _render_managed_gke_manifest_files(
     namespace_origin = _safe_identifier_fragment(namespace_source, fallback="repo-name", max_length=40)
     site_fragment = _safe_identifier_fragment(site_id, fallback="workspace", max_length=60)
     normalized_preview_hostname = (_coerce_string(preview_hostname) or "").strip().lower()
+    preview_endpoint = resolve_managed_preview_endpoint_configuration(
+        repo_name=repo_name,
+        site_id=site_id,
+        preview_hostname=normalized_preview_hostname,
+        namespace_isolation_defaults=_normalize_namespace_isolation_defaults(namespace_isolation_defaults),
+    )
+    preview_static_ip_name = _coerce_string(preview_endpoint.get("expected_static_ip_name"))
+    if not preview_static_ip_name:
+        preview_static_ip_name, _ = derive_site_preview_static_ip_name(
+            repo_name=repo_name,
+            site_id=site_id,
+        )
     image_pull_secrets_block = ""
     if private_image_auth_required:
         image_pull_secrets_block = (
@@ -11742,6 +11930,10 @@ def _classify_cloudsql_proxy_failure_from_log_text(
         return _DEPLOY_DISPATCH_SERVICE_REASON_DNS_RECORD_MISMATCH, "ingress_evidence"
     if "deploy_runtime_reason_code=managed_site_static_ip_missing" in normalized:
         return _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_MISSING, "ingress_verify"
+    if "deploy_runtime_reason_code=shared_preview_gateway_missing" in normalized:
+        return _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_MISSING, "ingress_verify"
+    if "deploy_runtime_reason_code=shared_preview_gateway_hostname_missing" in normalized:
+        return _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_HOSTNAME_MISSING, "ingress_verify"
     if "deploy_runtime_reason_code=expected_static_ip_not_bound_to_ingress" in normalized:
         return _DEPLOY_DISPATCH_SERVICE_REASON_EXPECTED_STATIC_IP_NOT_BOUND_TO_INGRESS, "ingress_evidence"
     if "deploy_runtime_reason_code=managed_certificate_pending" in normalized:

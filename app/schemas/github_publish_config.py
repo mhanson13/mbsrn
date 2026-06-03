@@ -133,6 +133,12 @@ _VALID_MEMORY_PATTERN = r"^(?:[1-9]\d*(?:Ei|Pi|Ti|Gi|Mi|Ki)|[1-9]\d*(?:\.\d+)?(?
 _VALID_NONNEGATIVE_COUNT_PATTERN = r"^\d{1,6}$"
 _DEFAULT_NETWORK_POLICY_MODE = "default_deny_ingress"
 _ALLOWED_NETWORK_POLICY_MODES = {_DEFAULT_NETWORK_POLICY_MODE}
+_DEFAULT_MANAGED_PREVIEW_ENDPOINT_MODE = "auto"
+_ALLOWED_MANAGED_PREVIEW_ENDPOINT_MODES = {
+    _DEFAULT_MANAGED_PREVIEW_ENDPOINT_MODE,
+    "preview_shared_gateway",
+    "dedicated_static_ip",
+}
 
 
 def _normalize_quantity(
@@ -376,10 +382,40 @@ class MigrationGenerationSafetyDefaults(BaseModel):
         return lowered
 
 
+class ManagedPreviewEndpointDefaults(BaseModel):
+    mode: str = _DEFAULT_MANAGED_PREVIEW_ENDPOINT_MODE
+    shared_preview_static_ip_name: str | None = Field(default=None, max_length=80)
+
+    @field_validator("mode", mode="before")
+    @classmethod
+    def _normalize_mode(cls, value: object) -> str:
+        normalized = _normalize_optional_text(value, max_length=40) or _DEFAULT_MANAGED_PREVIEW_ENDPOINT_MODE
+        lowered = normalized.lower()
+        if lowered not in _ALLOWED_MANAGED_PREVIEW_ENDPOINT_MODES:
+            raise ValueError(
+                "is invalid. Supported values: " + ", ".join(sorted(_ALLOWED_MANAGED_PREVIEW_ENDPOINT_MODES)) + "."
+            )
+        return lowered
+
+    @field_validator("shared_preview_static_ip_name", mode="before")
+    @classmethod
+    def _normalize_shared_preview_static_ip_name(cls, value: object) -> str | None:
+        normalized = _normalize_optional_text(value, max_length=80)
+        if not normalized:
+            return None
+        normalized = normalized.lower().replace(" ", "-")
+        normalized = normalized.replace("/", "-").replace("\\", "-")
+        while "--" in normalized:
+            normalized = normalized.replace("--", "-")
+        normalized = normalized.strip("-")
+        return normalized or None
+
+
 class GitHubNamespaceIsolationDefaults(BaseModel):
     resource_quota: GitHubNamespaceResourceQuotaDefaults = Field(default_factory=GitHubNamespaceResourceQuotaDefaults)
     limit_range: GitHubNamespaceLimitRangeDefaults = Field(default_factory=GitHubNamespaceLimitRangeDefaults)
     network_policy: GitHubNamespaceNetworkPolicyDefaults = Field(default_factory=GitHubNamespaceNetworkPolicyDefaults)
+    managed_preview_endpoint: ManagedPreviewEndpointDefaults = Field(default_factory=ManagedPreviewEndpointDefaults)
     migration_generation_budget: MigrationGenerationBudgetDefaults = Field(
         default_factory=MigrationGenerationBudgetDefaults
     )

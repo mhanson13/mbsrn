@@ -1218,7 +1218,7 @@ describe("site migration workflow route", () => {
     );
   });
 
-  it("surfaces shared static IP conflict guidance for per-site managed ingress", async () => {
+  it("surfaces static IP annotation guidance for managed preview endpoint mode conflicts", async () => {
     const summary = buildMigrationWorkspaceSummary({
       deploy_readiness: {
         ready: false,
@@ -1241,7 +1241,34 @@ describe("site migration workflow route", () => {
 
     const deployReadinessCard = await screen.findByTestId("migration-deploy-readiness");
     expect(within(deployReadinessCard).getByTestId("migration-managed-gke-config-guidance-readiness")).toHaveTextContent(
-      "Per-site managed ingress cannot safely reuse one shared static IP. Republish managed ingress without shared static IP binding and redeploy.",
+      "Ingress static IP annotation does not match the configured managed preview endpoint mode. Republish managed ingress resources with the expected static IP binding and redeploy.",
+    );
+  });
+
+  it("surfaces shared preview gateway missing guidance when shared mode lacks static IP config", async () => {
+    const summary = buildMigrationWorkspaceSummary({
+      deploy_readiness: {
+        ready: false,
+        reasons: ["Deploy target configuration is invalid."],
+        dispatch_service_reason_code: "shared_preview_gateway_missing",
+        target: {
+          enabled: true,
+          repo_owner: "mhanson13",
+          repo_name: "tnmfire",
+          workflow_id: "deploy-tnmfire-www-prod.yml",
+          ref: "main",
+        },
+      },
+    });
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(summary);
+    mockFetchMigrationPublishHistory.mockResolvedValueOnce({ items: [], total: 0 });
+    mockFetchMigrationDeployHistory.mockResolvedValueOnce({ items: [], total: 0 });
+
+    render(<SiteMigrationWorkflowPage />);
+
+    const deployReadinessCard = await screen.findByTestId("migration-deploy-readiness");
+    expect(within(deployReadinessCard).getByTestId("migration-managed-gke-config-guidance-readiness")).toHaveTextContent(
+      "Shared preview gateway mode is configured, but no shared preview static IP name is set. Admin must configure the shared preview gateway static IP before deploy can continue.",
     );
   });
 
@@ -3639,12 +3666,14 @@ describe("site migration workflow route", () => {
     expect(within(requirements).getByTestId("migration-requirement-operator-must_avoid")).toBeInTheDocument();
     expect(within(requirements).getByTestId("migration-requirement-operator-tone")).toBeInTheDocument();
     expect(within(requirements).getByTestId("migration-requirement-operator-calls_to_action")).toBeInTheDocument();
+    expect(within(requirements).getByTestId("migration-requirement-operator-additional_notes")).toBeInTheDocument();
     expect(within(requirements).getByTestId("migration-requirement-scratchpad-details-business_objectives")).toBeInTheDocument();
     expect(within(requirements).getByTestId("migration-requirement-scratchpad-details-requested_pages")).toBeInTheDocument();
     expect(within(requirements).getByTestId("migration-requirement-scratchpad-details-must_include")).toBeInTheDocument();
     expect(within(requirements).getByTestId("migration-requirement-scratchpad-details-must_avoid")).toBeInTheDocument();
     expect(within(requirements).getByTestId("migration-requirement-scratchpad-details-tone")).toBeInTheDocument();
     expect(within(requirements).getByTestId("migration-requirement-scratchpad-details-calls_to_action")).toBeInTheDocument();
+    expect(within(requirements).getByTestId("migration-requirement-scratchpad-details-additional_notes")).toBeInTheDocument();
     expect(within(requirements).getByTestId("migration-requirements-image-reference-hint")).toHaveTextContent(
       "Selected usable Site Images are included automatically in draft context and materialized into artifact assets.",
     );
@@ -3726,6 +3755,53 @@ describe("site migration workflow route", () => {
     expect(mockUpdateMigrationRequirements).not.toHaveBeenCalled();
   });
 
+  it("supports AI suggestion helper for additional requirements", async () => {
+    const user = userEvent.setup();
+    mockSuggestMigrationRequirementField.mockResolvedValueOnce({
+      field: "additional_notes",
+      suggestion_status: "completed",
+      suggested_value: [
+        "Prioritize service-area trust proof near the first CTA.",
+        "Keep legal/compliance language factual and concise.",
+      ],
+      reason_code: "requirements_suggestion_completed",
+      context_sources_used: ["source_snapshot", "selected_media_summary"],
+      retryable: false,
+      generated_at: "2026-03-21T00:08:00Z",
+    });
+
+    render(<SiteMigrationWorkflowPage />);
+
+    const requirementField = await screen.findByTestId("migration-requirement-field-additional_notes");
+    const operatorTextarea = within(requirementField).getByTestId(
+      "migration-requirement-operator-additional_notes",
+    ) as HTMLTextAreaElement;
+    expect(operatorTextarea.value).toBe("");
+
+    const scratchpadDetails = within(requirementField).getByTestId(
+      "migration-requirement-scratchpad-details-additional_notes",
+    );
+    await user.click(within(scratchpadDetails).getByText("AI suggestion draft"));
+    await user.click(within(requirementField).getByTestId("migration-requirement-suggest-additional_notes"));
+
+    await waitFor(() =>
+      expect(mockSuggestMigrationRequirementField).toHaveBeenCalledWith("token-1", "biz-1", "site-1", {
+        field: "additional_notes",
+        current_value: null,
+        force_refresh: false,
+      }),
+    );
+
+    const scratchpadTextarea = within(scratchpadDetails).getByTestId(
+      "migration-requirement-scratchpad-additional_notes",
+    ) as HTMLTextAreaElement;
+    expect(scratchpadTextarea.value).toContain("Prioritize service-area trust proof near the first CTA.");
+
+    await user.click(within(scratchpadDetails).getByTestId("migration-requirement-append-additional_notes"));
+    expect(operatorTextarea.value).toContain("Prioritize service-area trust proof near the first CTA.");
+    expect(operatorTextarea.value).toContain("Keep legal/compliance language factual and concise.");
+  });
+
   it("uses clipboard copy when available and falls back to field-local guidance when unavailable", async () => {
     const user = userEvent.setup();
     mockSuggestMigrationRequirementField.mockResolvedValueOnce({
@@ -3803,6 +3879,156 @@ describe("site migration workflow route", () => {
     const localError = await within(requirementField).findByTestId("migration-requirement-suggestion-error-tone");
     expect(localError).toHaveTextContent("AI provider is currently unavailable for requirement suggestions.");
     expect(screen.queryByTestId("migration-message-stack")).not.toBeInTheDocument();
+  });
+
+  it("exports and imports operator requirements JSON with schema validation", async () => {
+    const user = userEvent.setup();
+    const originalCreateObjectURL = URL.createObjectURL;
+    const originalRevokeObjectURL = URL.revokeObjectURL;
+    const createObjectURLMock = jest.fn<string, [Blob]>((_blob) => "blob:requirements-export");
+    const revokeObjectURLMock = jest.fn();
+    Object.defineProperty(URL, "createObjectURL", {
+      value: createObjectURLMock,
+      configurable: true,
+    });
+    Object.defineProperty(URL, "revokeObjectURL", {
+      value: revokeObjectURLMock,
+      configurable: true,
+    });
+    const clickSpy = jest.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+
+    try {
+      render(<SiteMigrationWorkflowPage />);
+
+      const requirements = await screen.findByTestId("migration-operator-requirements");
+      const mustIncludeInput = within(requirements).getByTestId(
+        "migration-requirement-operator-must_include",
+      ) as HTMLTextAreaElement;
+      const callsToActionInput = within(requirements).getByTestId(
+        "migration-requirement-operator-calls_to_action",
+      ) as HTMLTextAreaElement;
+      const additionalNotesInput = within(requirements).getByTestId(
+        "migration-requirement-operator-additional_notes",
+      ) as HTMLTextAreaElement;
+
+      await user.type(mustIncludeInput, "Include financing options");
+      await user.type(callsToActionInput, "Call now");
+      await user.type(additionalNotesInput, "Preserve local licensing references.");
+
+      await user.click(within(requirements).getByTestId("migration-requirements-export"));
+      expect(clickSpy).toHaveBeenCalled();
+      expect(createObjectURLMock).toHaveBeenCalledTimes(1);
+      const exportedBlob = createObjectURLMock.mock.calls[0]?.[0];
+      if (!(exportedBlob instanceof Blob)) {
+        throw new Error("Expected export to create a Blob payload.");
+      }
+      const exportedText = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : "");
+        reader.onerror = () => reject(new Error("Failed to read exported requirements payload."));
+        reader.readAsText(exportedBlob);
+      });
+      const exportedJson = JSON.parse(exportedText) as Record<string, unknown>;
+      expect(exportedJson.schema).toBe("mbsrn.operator_requirements.v1");
+      expect(exportedJson.site_id).toBe("site-1");
+      expect(exportedJson.business_id).toBe("biz-1");
+      const exportedRequirements = exportedJson.requirements as Record<string, unknown>;
+      expect(exportedRequirements.must_include).toEqual(["Include financing options"]);
+      expect(exportedRequirements.calls_to_action).toEqual(["Call now"]);
+      expect(exportedRequirements.additional_notes).toBe("Preserve local licensing references.");
+      expect(JSON.stringify(exportedJson).toLowerCase()).not.toContain("token");
+      expect(JSON.stringify(exportedJson).toLowerCase()).not.toContain("secret");
+
+      const importInput = within(requirements).getByTestId("migration-requirements-import-input") as HTMLInputElement;
+      const importPayload = {
+        schema: "mbsrn.operator_requirements.v1",
+        exported_at: "2026-03-22T00:00:00Z",
+        site_id: "other-site",
+        business_id: "other-biz",
+        requirements: {
+          must_include: ["Include emergency response coverage"],
+          additional_notes: "Imported additional requirement note.",
+          unknown_field: "ignored",
+          token: "ignored",
+        },
+      };
+      const importFile = new File([JSON.stringify(importPayload)], "requirements-import.json", {
+        type: "application/json",
+      });
+      await user.upload(importInput, importFile);
+
+      await waitFor(() =>
+        expect(
+          (within(requirements).getByTestId("migration-requirement-operator-must_include") as HTMLTextAreaElement).value,
+        ).toContain("Include emergency response coverage"),
+      );
+      expect(
+        (within(requirements).getByTestId("migration-requirement-operator-additional_notes") as HTMLTextAreaElement).value,
+      ).toContain("Imported additional requirement note.");
+      expect(
+        (within(requirements).getByTestId("migration-requirement-operator-calls_to_action") as HTMLTextAreaElement).value,
+      ).toContain("Call now");
+      expect(mockGenerateMigrationDraftArtifacts).not.toHaveBeenCalled();
+      expect(mockPublishMigrationArtifactVersion).not.toHaveBeenCalled();
+    } finally {
+      clickSpy.mockRestore();
+      if (originalCreateObjectURL) {
+        Object.defineProperty(URL, "createObjectURL", {
+          value: originalCreateObjectURL,
+          configurable: true,
+        });
+      } else {
+        Object.defineProperty(URL, "createObjectURL", {
+          value: undefined,
+          configurable: true,
+        });
+      }
+      if (originalRevokeObjectURL) {
+        Object.defineProperty(URL, "revokeObjectURL", {
+          value: originalRevokeObjectURL,
+          configurable: true,
+        });
+      } else {
+        Object.defineProperty(URL, "revokeObjectURL", {
+          value: undefined,
+          configurable: true,
+        });
+      }
+    }
+  });
+
+  it("rejects invalid or wrong-schema operator requirements imports without mutating fields", async () => {
+    const user = userEvent.setup();
+    render(<SiteMigrationWorkflowPage />);
+
+    const requirements = await screen.findByTestId("migration-operator-requirements");
+    const notesInput = within(requirements).getByTestId(
+      "migration-requirement-operator-additional_notes",
+    ) as HTMLTextAreaElement;
+    await user.type(notesInput, "Keep this note.");
+
+    const importInput = within(requirements).getByTestId("migration-requirements-import-input") as HTMLInputElement;
+
+    const invalidJsonFile = new File(["{invalid-json"], "invalid.json", { type: "application/json" });
+    await user.upload(importInput, invalidJsonFile);
+    await screen.findByText("Import failed: file is not valid JSON.");
+    expect(notesInput.value).toBe("Keep this note.");
+
+    const wrongSchemaFile = new File(
+      [
+        JSON.stringify({
+          schema: "wrong.schema.v1",
+          requirements: {
+            additional_notes: "Should not apply",
+          },
+        }),
+      ],
+      "wrong-schema.json",
+      { type: "application/json" },
+    );
+    await user.upload(importInput, wrongSchemaFile);
+    await screen.findByText("Import failed: expected schema mbsrn.operator_requirements.v1.");
+    expect(notesInput.value).toBe("Keep this note.");
   });
 
   it("supports media metadata suggestion actions while preserving manual metadata until apply", async () => {
@@ -4014,6 +4240,80 @@ describe("site migration workflow route", () => {
     expect(within(sourceList).getByTestId("migration-media-preview-unavailable-blocked-1")).toHaveTextContent(
       "preview_url_unsafe",
     );
+  });
+
+  it("preserves safe uploaded preview metadata when selected assets are sparse", async () => {
+    const summary = buildMigrationWorkspaceSummary({
+      context_summary: {
+        ...buildMigrationWorkspaceSummary().context_summary,
+        media_assets: {
+          source_discovered_count: 1,
+          source_imported_count: 1,
+          operator_uploaded_count: 1,
+          selected_assets_count: 2,
+          media_asset_categories: ["project_gallery", "hero"],
+          selected_assets_trimmed: false,
+          diagnostics: [],
+          source_discovered: [
+            {
+              asset_id: "discovered-safe",
+              normalized_url: "https://legacy.example/images/discovered-safe.jpg",
+              provenance: "source_site_import",
+              import_status: "selected",
+              selected_for_draft: true,
+              alt_text: "Discovered safe preview",
+            },
+          ],
+          operator_uploaded: [
+            {
+              asset_id: "uploaded-safe-display",
+              display_filename: "crew.jpg",
+              provenance: "operator_upload",
+              import_status: "selected",
+              selected_for_draft: true,
+              preview_url: "gs://private-bucket/crew.jpg",
+              normalized_url: "https://legacy.example/images/uploaded-safe-display.jpg",
+            },
+          ],
+          selected_assets: [
+            {
+              asset_id: "discovered-safe",
+              normalized_url: "https://legacy.example/images/discovered-safe.jpg",
+              provenance: "source_site_import",
+              import_status: "selected",
+              selected_for_draft: true,
+              alt_text: "Discovered safe preview",
+            },
+            {
+              asset_id: "uploaded-safe-display",
+              display_filename: "crew.jpg",
+              provenance: "operator_upload",
+              import_status: "selected",
+              selected_for_draft: true,
+              preview_url: null,
+            },
+          ],
+        },
+      },
+    });
+    const mediaAssetsPayload = (summary.context_summary as Record<string, unknown>).media_assets as Record<
+      string,
+      unknown
+    >;
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(summary);
+    mockFetchMigrationMediaAssets.mockResolvedValue(mediaAssetsPayload);
+
+    render(<SiteMigrationWorkflowPage />);
+
+    const mediaSection = await screen.findByTestId("migration-media-section");
+    const sourceList = within(mediaSection).getByTestId("migration-media-source-list");
+
+    const uploadedPreview = within(sourceList).getByRole("img", { name: "crew.jpg" });
+    expect(uploadedPreview.getAttribute("src")).toContain("https://legacy.example/images/uploaded-safe-display.jpg");
+    expect(uploadedPreview.getAttribute("src")).not.toContain("gs://");
+
+    const discoveredPreview = within(sourceList).getByRole("img", { name: "Discovered safe preview" });
+    expect(discoveredPreview.getAttribute("src")).toContain("https://legacy.example/images/discovered-safe.jpg");
   });
 
   it("shows bounded fallback when uploaded image preview URL is unavailable", async () => {

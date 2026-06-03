@@ -401,7 +401,8 @@ export type MigrationRequirementSuggestionField =
   | "must_include"
   | "must_avoid"
   | "tone"
-  | "calls_to_action";
+  | "calls_to_action"
+  | "additional_notes";
 
 export interface MigrationRequirementsSuggestionRequest {
   field: MigrationRequirementSuggestionField;

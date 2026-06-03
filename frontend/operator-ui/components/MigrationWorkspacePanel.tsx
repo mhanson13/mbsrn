@@ -1,6 +1,6 @@
 "use client";
 
-import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type ChangeEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { WorkspaceActionBar } from "./layout/WorkspaceActionBar";
 import { WorkspaceEmptyStateCard } from "./layout/WorkspaceEmptyStateCard";
@@ -78,6 +78,18 @@ const EMPTY_REQUIREMENTS: MigrationOperatorRequirements = {
   additional_notes: null,
 };
 
+const OPERATOR_REQUIREMENTS_EXPORT_SCHEMA = "mbsrn.operator_requirements.v1";
+const OPERATOR_REQUIREMENTS_IMPORT_MAX_BYTES = 256 * 1024;
+const OPERATOR_REQUIREMENTS_FIELD_KEYS = [
+  "business_objectives",
+  "requested_pages",
+  "must_include",
+  "must_avoid",
+  "tone_preferences",
+  "calls_to_action",
+  "additional_notes",
+] as const;
+
 type RequirementSuggestionStatus = "idle" | "loading" | "completed" | "failed" | "not_available";
 
 interface RequirementSuggestionState {
@@ -110,6 +122,7 @@ function createDefaultRequirementSuggestionMap(): Record<MigrationRequirementSug
     must_avoid: createEmptyRequirementSuggestionState(),
     tone: createEmptyRequirementSuggestionState(),
     calls_to_action: createEmptyRequirementSuggestionState(),
+    additional_notes: createEmptyRequirementSuggestionState(),
   };
 }
 
@@ -1091,6 +1104,71 @@ function resolveSafeMediaPreviewUrl(rawUrl: string | null): string | null {
   }
 }
 
+const MIGRATION_MEDIA_PREVIEW_CANDIDATE_KEYS = [
+  "preview_url",
+  "display_url",
+  "thumbnail_url",
+  "previewUrl",
+  "displayUrl",
+  "thumbnailUrl",
+  "media_url",
+  "image_url",
+  "mediaUrl",
+  "imageUrl",
+  "normalized_url",
+] as const;
+
+const MIGRATION_MEDIA_PREVIEW_PRESERVE_KEYS = [
+  "preview_url",
+  "display_url",
+  "thumbnail_url",
+  "previewUrl",
+  "displayUrl",
+  "thumbnailUrl",
+  "media_url",
+  "image_url",
+  "mediaUrl",
+  "imageUrl",
+] as const;
+
+function toMediaPreviewCandidates(asset: Record<string, unknown>): string[] {
+  const values: string[] = [];
+  const seen = new Set<string>();
+  for (const key of MIGRATION_MEDIA_PREVIEW_CANDIDATE_KEYS) {
+    const normalized = asStringOrNull(asset[key]);
+    if (!normalized) {
+      continue;
+    }
+    const dedupeKey = normalized.toLowerCase();
+    if (seen.has(dedupeKey)) {
+      continue;
+    }
+    seen.add(dedupeKey);
+    values.push(normalized);
+  }
+  return values;
+}
+
+function mergeMigrationMediaAssetPreservingPreview(
+  current: Record<string, unknown>,
+  incoming: Record<string, unknown>,
+): Record<string, unknown> {
+  const merged: Record<string, unknown> = { ...current, ...incoming };
+  for (const key of MIGRATION_MEDIA_PREVIEW_PRESERVE_KEYS) {
+    const incomingValue = asStringOrNull(incoming[key]);
+    const currentValue = asStringOrNull(current[key]);
+    const incomingSafeValue = resolveSafeMediaPreviewUrl(incomingValue);
+    const currentSafeValue = resolveSafeMediaPreviewUrl(currentValue);
+    if (!currentSafeValue) {
+      continue;
+    }
+    if (!incomingValue || !incomingSafeValue) {
+      merged[key] = current[key];
+    }
+  }
+  return merged;
+}
+
 function resolveMediaPreviewAvailability(
   asset: Record<string, unknown>,
   options: { remoteImportRequired: boolean },
@@ -1102,11 +1180,7 @@ function resolveMediaPreviewAvailability(
       reasonCode: "unsupported_image_type",
     };
   }
-  const candidateUrls = [
-    asStringOrNull(asset.preview_url),
-    asStringOrNull(asset.display_url),
-    asStringOrNull(asset.normalized_url),
-  ].filter((value): value is string => Boolean(value));
+  const candidateUrls = toMediaPreviewCandidates(asset);
   let hadUnsafeCandidate = false;
   for (const candidateUrl of candidateUrls) {
     const safePreviewUrl = resolveSafeMediaPreviewUrl(candidateUrl);
@@ -1215,6 +1289,132 @@ function joinLines(values: string[] | null | undefined): string {
     return "";
   }
   return values.map((item) => String(item || "").trim()).filter(Boolean).join("\n");
+}
+
+interface OperatorRequirementsExportPayload {
+  schema: string;
+  exported_at: string;
+  site_id: string | null;
+  business_id: string | null;
+  requirements: MigrationOperatorRequirements;
+}
+
+function buildOperatorRequirementsExportPayload({
+  siteId,
+  businessId,
+  requirements,
+  exportedAt,
+}: {
+  siteId: string | null;
+  businessId: string | null;
+  requirements: MigrationOperatorRequirements;
+  exportedAt: string;
+}): OperatorRequirementsExportPayload {
+  return {
+    schema: OPERATOR_REQUIREMENTS_EXPORT_SCHEMA,
+    exported_at: exportedAt,
+    site_id: asStringOrNull(siteId),
+    business_id: asStringOrNull(businessId),
+    requirements: {
+      business_objectives: asStringList(requirements.business_objectives),
+      requested_pages: asStringList(requirements.requested_pages),
+      must_include: asStringList(requirements.must_include),
+      must_avoid: asStringList(requirements.must_avoid),
+      tone_preferences: asStringList(requirements.tone_preferences),
+      calls_to_action: asStringList(requirements.calls_to_action),
+      additional_notes: asStringOrNull(requirements.additional_notes),
+    },
+  };
+}
+
+function toOperatorRequirementsExportFilename({ siteId, exportedAt }: { siteId: string | null; exportedAt: Date }): string {
+  const safeSiteSlug = (asStringOrNull(siteId) || "site")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+/, "")
+    .replace(/-+$/, "")
+    .slice(0, 48) || "site";
+  const datePart = exportedAt.toISOString().slice(0, 10);
+  return `migration-operator-requirements-${safeSiteSlug}-${datePart}.json`;
+}
+
+function parseOperatorRequirementsImportPayload(rawText: string): {
+  requirements: Partial<MigrationOperatorRequirements>;
+  errorMessage: string | null;
+} {
+  try {
+    const parsed = JSON.parse(rawText);
+    const payload = asRecord(parsed);
+    const schema = asStringOrNull(payload.schema);
+    if (schema !== OPERATOR_REQUIREMENTS_EXPORT_SCHEMA) {
+      return {
+        requirements: {},
+        errorMessage: `Import failed: expected schema ${OPERATOR_REQUIREMENTS_EXPORT_SCHEMA}.`,
+      };
+    }
+    const rawRequirements = asRecord(payload.requirements);
+    const hasRecognizedRequirementField = OPERATOR_REQUIREMENTS_FIELD_KEYS.some((field) =>
+      Object.prototype.hasOwnProperty.call(rawRequirements, field),
+    );
+    if (Object.keys(rawRequirements).length === 0 || !hasRecognizedRequirementField) {
+      return {
+        requirements: {},
+        errorMessage: "Import failed: requirements payload is missing.",
+      };
+    }
+    const next: Partial<MigrationOperatorRequirements> = {};
+    if (Object.prototype.hasOwnProperty.call(rawRequirements, "business_objectives")) {
+      next.business_objectives = asStringList(rawRequirements.business_objectives);
+    }
+    if (Object.prototype.hasOwnProperty.call(rawRequirements, "requested_pages")) {
+      next.requested_pages = asStringList(rawRequirements.requested_pages);
+    }
+    if (Object.prototype.hasOwnProperty.call(rawRequirements, "must_include")) {
+      next.must_include = asStringList(rawRequirements.must_include);
+    }
+    if (Object.prototype.hasOwnProperty.call(rawRequirements, "must_avoid")) {
+      next.must_avoid = asStringList(rawRequirements.must_avoid);
+    }
+    if (Object.prototype.hasOwnProperty.call(rawRequirements, "tone_preferences")) {
+      next.tone_preferences = asStringList(rawRequirements.tone_preferences);
+    }
+    if (Object.prototype.hasOwnProperty.call(rawRequirements, "calls_to_action")) {
+      next.calls_to_action = asStringList(rawRequirements.calls_to_action);
+    }
+    if (Object.prototype.hasOwnProperty.call(rawRequirements, "additional_notes")) {
+      next.additional_notes = asStringOrNull(rawRequirements.additional_notes);
+    }
+    return { requirements: next, errorMessage: null };
+  } catch {
+    return {
+      requirements: {},
+      errorMessage: "Import failed: file is not valid JSON.",
+    };
+  }
+}
+
+function readTextFromFile(file: File): Promise<string> {
+  if (typeof file.text === "function") {
+    return file.text();
+  }
+  return new Promise((resolve, reject) => {
+    if (typeof FileReader === "undefined") {
+      reject(new Error("FileReader is unavailable."));
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === "string") {
+        resolve(reader.result);
+      } else {
+        resolve("");
+      }
+    };
+    reader.onerror = () => {
+      reject(new Error("File read failed."));
+    };
+    reader.readAsText(file);
+  });
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -1594,7 +1794,13 @@ function toManagedGkeConfigGuidance(value: string | null): string | null {
     return "Ingress managed-certificate annotation does not match the expected site certificate. Republish/deploy after admin verification.";
   }
   if (normalized === "shared_static_ip_not_allowed_for_per_site_ingress" || normalized === "ingress_static_ip_conflict") {
-    return "Per-site managed ingress cannot safely reuse one shared static IP. Republish managed ingress without shared static IP binding and redeploy.";
+    return "Ingress static IP annotation does not match the configured managed preview endpoint mode. Republish managed ingress resources with the expected static IP binding and redeploy.";
+  }
+  if (normalized === "shared_preview_gateway_missing") {
+    return "Shared preview gateway mode is configured, but no shared preview static IP name is set. Admin must configure the shared preview gateway static IP before deploy can continue.";
+  }
+  if (normalized === "shared_preview_gateway_hostname_missing") {
+    return "Shared preview gateway mode requires a valid managed preview hostname before deploy checks can run.";
   }
   if (normalized === "stale_pre_shared_cert_binding_detected") {
     return "Ingress includes stale pre-shared certificate binding metadata. Republish managed ingress resources so ManagedCertificate remains the only certificate binding source.";
@@ -3812,6 +4018,7 @@ export function MigrationWorkspacePanel({
   const [draftPreviewOpen, setDraftPreviewOpen] = useState(false);
   const [selectedPublishHistoryIdentity, setSelectedPublishHistoryIdentity] = useState("");
   const [selectedDeployHistoryIdentity, setSelectedDeployHistoryIdentity] = useState("");
+  const requirementsImportInputRef = useRef<HTMLInputElement | null>(null);
   const draftPreviewFrameRef = useRef<HTMLIFrameElement | null>(null);
 
   const selectedArtifact = useMemo(() => {
@@ -4104,28 +4311,6 @@ export function MigrationWorkspacePanel({
   }, [selectedMediaAssets]);
   const mediaBrowserAssets = useMemo(() => {
     const byAssetKey = new Map<string, Record<string, unknown>>();
-    const mergeMediaAssetRecord = (
-      current: Record<string, unknown>,
-      incoming: Record<string, unknown>,
-    ): Record<string, unknown> => {
-      const merged: Record<string, unknown> = { ...current, ...incoming };
-      const preserveIfMissing = (
-        key: "preview_url" | "display_url",
-      ): void => {
-        const nextValue = incoming[key];
-        const currentValue = current[key];
-        const nextMissing = nextValue == null || (typeof nextValue === "string" && nextValue.trim().length === 0);
-        const currentPresent = currentValue != null && (
-          typeof currentValue !== "string" || currentValue.trim().length > 0
-        );
-        if (nextMissing && currentPresent) {
-          merged[key] = currentValue;
-        }
-      };
-      preserveIfMissing("preview_url");
-      preserveIfMissing("display_url");
-      return merged;
-    };
     const ingest = (items: Array<Record<string, unknown>>, sourceTag: string): void => {
       items.forEach((rawItem, index) => {
         const item = asRecord(rawItem);
@@ -4136,7 +4321,7 @@ export function MigrationWorkspacePanel({
           return;
         }
         const current = byAssetKey.get(key) || {};
-        byAssetKey.set(key, mergeMediaAssetRecord(current, item));
+        byAssetKey.set(key, mergeMigrationMediaAssetPreservingPreview(current, item));
       });
     };
     ingest(sourceDiscoveredMediaAssets, "source");
@@ -6173,17 +6358,27 @@ export function MigrationWorkspacePanel({
     }
   };
 
+  const buildCurrentOperatorRequirementsPayload = useCallback((): MigrationOperatorRequirements => ({
+    ...EMPTY_REQUIREMENTS,
+    business_objectives: splitLines(businessObjectives),
+    requested_pages: splitLines(requestedPages),
+    must_include: splitLines(mustInclude),
+    must_avoid: splitLines(mustAvoid),
+    tone_preferences: splitLines(tonePreferences),
+    calls_to_action: splitLines(callsToAction),
+    additional_notes: asStringOrNull(requirementsNotes),
+  }), [
+    businessObjectives,
+    callsToAction,
+    mustAvoid,
+    mustInclude,
+    requestedPages,
+    requirementsNotes,
+    tonePreferences,
+  ]);
+
   const handleSaveRequirements = async (): Promise<void> => {
-    const payload: MigrationOperatorRequirements = {
-      ...EMPTY_REQUIREMENTS,
-      business_objectives: splitLines(businessObjectives),
-      requested_pages: splitLines(requestedPages),
-      must_include: splitLines(mustInclude),
-      must_avoid: splitLines(mustAvoid),
-      tone_preferences: splitLines(tonePreferences),
-      calls_to_action: splitLines(callsToAction),
-      additional_notes: asStringOrNull(requirementsNotes),
-    };
+    const payload = buildCurrentOperatorRequirementsPayload();
     setBusyAction("save_requirements");
     setErrorMessage(null);
     setErrorHint(null);
@@ -6200,6 +6395,104 @@ export function MigrationWorkspacePanel({
     } finally {
       setBusyAction(null);
     }
+  };
+
+  const handleExportRequirements = (): void => {
+    const exportedAtDate = new Date();
+    const payload = buildOperatorRequirementsExportPayload({
+      siteId,
+      businessId,
+      requirements: buildCurrentOperatorRequirementsPayload(),
+      exportedAt: exportedAtDate.toISOString(),
+    });
+    const jsonText = `${JSON.stringify(payload, null, 2)}\n`;
+    const downloadFilename = toOperatorRequirementsExportFilename({
+      siteId,
+      exportedAt: exportedAtDate,
+    });
+    const link = document.createElement("a");
+    link.download = downloadFilename;
+    link.rel = "noopener noreferrer";
+    if (typeof URL !== "undefined" && typeof URL.createObjectURL === "function") {
+      const blob = new Blob([jsonText], { type: "application/json" });
+      const objectUrl = URL.createObjectURL(blob);
+      link.href = objectUrl;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(objectUrl);
+    } else {
+      link.href = `data:application/json;charset=utf-8,${encodeURIComponent(jsonText)}`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+    }
+    setErrorMessage(null);
+    setErrorHint(null);
+    setStatusMessage("Operator requirements exported.");
+  };
+
+  const applyImportedOperatorRequirements = (nextRequirements: Partial<MigrationOperatorRequirements>): void => {
+    if (Object.prototype.hasOwnProperty.call(nextRequirements, "business_objectives")) {
+      setBusinessObjectives(joinLines(nextRequirements.business_objectives || []));
+    }
+    if (Object.prototype.hasOwnProperty.call(nextRequirements, "requested_pages")) {
+      setRequestedPages(joinLines(nextRequirements.requested_pages || []));
+    }
+    if (Object.prototype.hasOwnProperty.call(nextRequirements, "must_include")) {
+      setMustInclude(joinLines(nextRequirements.must_include || []));
+    }
+    if (Object.prototype.hasOwnProperty.call(nextRequirements, "must_avoid")) {
+      setMustAvoid(joinLines(nextRequirements.must_avoid || []));
+    }
+    if (Object.prototype.hasOwnProperty.call(nextRequirements, "tone_preferences")) {
+      setTonePreferences(joinLines(nextRequirements.tone_preferences || []));
+    }
+    if (Object.prototype.hasOwnProperty.call(nextRequirements, "calls_to_action")) {
+      setCallsToAction(joinLines(nextRequirements.calls_to_action || []));
+    }
+    if (Object.prototype.hasOwnProperty.call(nextRequirements, "additional_notes")) {
+      setRequirementsNotes(asString(nextRequirements.additional_notes));
+    }
+  };
+
+  const handleImportRequirementsFileSelected = async (event: ChangeEvent<HTMLInputElement>): Promise<void> => {
+    const inputElement = event.currentTarget;
+    const selectedFile = inputElement.files && inputElement.files.length > 0 ? inputElement.files[0] : null;
+    inputElement.value = "";
+    if (!selectedFile) {
+      return;
+    }
+    if (selectedFile.size > OPERATOR_REQUIREMENTS_IMPORT_MAX_BYTES) {
+      setStatusMessage(null);
+      setErrorHint(null);
+      setErrorMessage("Import failed: file is too large.");
+      return;
+    }
+    let fileText = "";
+    try {
+      fileText = await readTextFromFile(selectedFile);
+    } catch {
+      setStatusMessage(null);
+      setErrorHint(null);
+      setErrorMessage("Import failed: unable to read file.");
+      return;
+    }
+    const parsedImport = parseOperatorRequirementsImportPayload(fileText);
+    if (parsedImport.errorMessage) {
+      setStatusMessage(null);
+      setErrorHint(null);
+      setErrorMessage(parsedImport.errorMessage);
+      return;
+    }
+    applyImportedOperatorRequirements(parsedImport.requirements);
+    setErrorMessage(null);
+    setErrorHint(null);
+    setStatusMessage("Operator requirements imported. Review and save to apply.");
+  };
+
+  const handleOpenImportRequirementsFilePicker = (): void => {
+    requirementsImportInputRef.current?.click();
   };
 
   const updateRequirementSuggestion = useCallback(
@@ -6240,7 +6533,11 @@ export function MigrationWorkspacePanel({
         setTonePreferences((current) => updater(current));
         return;
       }
-      setCallsToAction((current) => updater(current));
+      if (field === "calls_to_action") {
+        setCallsToAction((current) => updater(current));
+        return;
+      }
+      setRequirementsNotes((current) => updater(current));
     },
     [],
   );
@@ -6262,9 +6559,12 @@ export function MigrationWorkspacePanel({
       if (field === "tone") {
         return tonePreferences;
       }
-      return callsToAction;
+      if (field === "calls_to_action") {
+        return callsToAction;
+      }
+      return requirementsNotes;
     },
-    [businessObjectives, callsToAction, mustAvoid, mustInclude, requestedPages, tonePreferences],
+    [businessObjectives, callsToAction, mustAvoid, mustInclude, requestedPages, requirementsNotes, tonePreferences],
   );
 
   const handleSuggestRequirementField = async (
@@ -7121,6 +7421,13 @@ export function MigrationWorkspacePanel({
       value: callsToAction,
       onChange: setCallsToAction,
     },
+    {
+      field: "additional_notes",
+      label: "Additional requirements",
+      rows: 4,
+      value: requirementsNotes,
+      onChange: setRequirementsNotes,
+    },
   ];
 
   if (busyAction === "load" && !summary) {
@@ -7709,11 +8016,19 @@ export function MigrationWorkspacePanel({
               </div>
             );
           })}
-          <label className="stack-tight">
-            <span className="hint muted">Additional requirements notes</span>
-            <textarea value={requirementsNotes} onChange={(event) => setRequirementsNotes(event.target.value)} rows={4} />
-          </label>
         </div>
+        <input
+          ref={requirementsImportInputRef}
+          type="file"
+          accept="application/json,.json"
+          style={{ display: "none" }}
+          tabIndex={-1}
+          aria-hidden="true"
+          data-testid="migration-requirements-import-input"
+          onChange={(event) => {
+            void handleImportRequirementsFileSelected(event);
+          }}
+        />
         <WorkspaceActionBar variant="secondary">
           <button
             type="button"
@@ -7722,6 +8037,24 @@ export function MigrationWorkspacePanel({
             disabled={busyAction === "save_requirements" || busyAction === "load"}
           >
             {busyAction === "save_requirements" ? "Saving..." : "Save Requirements"}
+          </button>
+          <button
+            type="button"
+            className="button button-tertiary"
+            data-testid="migration-requirements-export"
+            onClick={handleExportRequirements}
+            disabled={busyAction === "load"}
+          >
+            Export Requirements
+          </button>
+          <button
+            type="button"
+            className="button button-tertiary"
+            data-testid="migration-requirements-import"
+            onClick={handleOpenImportRequirementsFilePicker}
+            disabled={busyAction === "load"}
+          >
+            Import Requirements
           </button>
         </WorkspaceActionBar>
       </div>

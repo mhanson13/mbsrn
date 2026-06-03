@@ -59,6 +59,7 @@ from app.integrations.seo_migration_github_publisher import (
     derive_site_kubernetes_namespace,
     derive_site_preview_hostname,
     derive_site_preview_static_ip_name,
+    resolve_managed_preview_endpoint_configuration,
     normalize_workflow_dispatch_identifier_for_api,
 )
 from app.models.business import Business
@@ -562,6 +563,8 @@ _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PERMISSION_DENIED = "managed_si
 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_TRANSACTION_CONFLICT = "managed_site_dns_transaction_conflict"
 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PROPAGATION_PENDING = "managed_site_dns_propagation_pending"
 _DEPLOY_DISPATCH_SERVICE_REASON_EXPECTED_STATIC_IP_NOT_BOUND_TO_INGRESS = "expected_static_ip_not_bound_to_ingress"
+_DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_MISSING = "shared_preview_gateway_missing"
+_DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_HOSTNAME_MISSING = "shared_preview_gateway_hostname_missing"
 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_DOMAIN_DRIFT_REPAIRED = "managed_certificate_domain_drift_repaired"
 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_DOMAIN_DRIFT_REPAIR_FAILED = (
     "managed_certificate_domain_drift_repair_failed"
@@ -573,6 +576,8 @@ _DEPLOY_DISPATCH_SERVICE_REASON_DNS_RECORD_MISMATCH = "dns_record_mismatch"
 _DEPLOY_DISPATCH_SERVICE_REASON_DNS_POINTS_TO_OLD_INGRESS_IP = "dns_points_to_old_ingress_ip"
 _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_IP_ASSIGNED_BUT_DNS_NOT_UPDATED = "ingress_ip_assigned_but_dns_not_updated"
 _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_PROVISIONING = "tls_certificate_provisioning"
+_MANAGED_PREVIEW_ENDPOINT_MODE_SHARED_GATEWAY = "preview_shared_gateway"
+_MANAGED_PREVIEW_ENDPOINT_MODE_DEDICATED_STATIC_IP = "dedicated_static_ip"
 _DEPLOY_WORKFLOW_INTEGRITY_STATUS_MATCH = "match"
 _DEPLOY_WORKFLOW_INTEGRITY_STATUS_MISMATCH = "mismatch"
 _DEPLOY_WORKFLOW_INTEGRITY_STATUS_MISSING = "missing"
@@ -628,6 +633,7 @@ _REQUIREMENTS_SUGGESTION_SUPPORTED_FIELDS = {
     "must_avoid",
     "tone",
     "calls_to_action",
+    "additional_notes",
 }
 _REQUIREMENTS_SUGGESTION_STATUS_COMPLETED = "completed"
 _REQUIREMENTS_SUGGESTION_STATUS_FAILED = "failed"
@@ -1160,8 +1166,7 @@ class SEOMigrationService:
         if _normalize_media_workspace_status(media_asset.get("workspace_status")) != _MIGRATION_MEDIA_WORKSPACE_STATUS_ACTIVE:
             return None
         asset_id = _normalize_string(media_asset.get("asset_id"), max_length=80)
-        storage_key = _normalize_string(media_asset.get("storage_key"), max_length=240)
-        if asset_id is None or storage_key is None:
+        if asset_id is None:
             return None
         encoded_asset_id = quote(asset_id, safe="")
         return f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/media/assets/{encoded_asset_id}/preview"
@@ -1502,16 +1507,6 @@ class SEOMigrationService:
                 workspace_id=workspace.id,
             )
 
-        storage_key = _normalize_string(target_asset.get("storage_key"), max_length=240)
-        if storage_key is None:
-            raise SEOMigrationValidationError(
-                "Storage preview is unavailable for this media asset.",
-                failure_category="artifact_invalid",
-                failure_reason="validation_failed",
-                error_code=_MIGRATION_MEDIA_REASON_STORAGE_PREVIEW_NOT_AVAILABLE,
-                workspace_id=workspace.id,
-            )
-
         declared_content_type = _normalize_media_content_type(target_asset.get("content_type"))
         if declared_content_type is not None and declared_content_type not in _MIGRATION_MEDIA_UPLOAD_ALLOWED_CONTENT_TYPES:
             raise SEOMigrationValidationError(
@@ -1521,28 +1516,13 @@ class SEOMigrationService:
                 error_code=_MIGRATION_MEDIA_REASON_UNSUPPORTED_CONTENT_TYPE,
                 workspace_id=workspace.id,
             )
-        try:
-            payload = _read_workspace_media_file(
-                storage_root=self.media_storage_root,
-                storage_key=storage_key,
-            )
-        except SEOMigrationValidationError as exc:
-            raise SEOMigrationValidationError(
-                "Storage preview is unavailable for this media asset.",
-                failure_category="artifact_invalid",
-                failure_reason="validation_failed",
-                error_code=_MIGRATION_MEDIA_REASON_STORAGE_PREVIEW_NOT_AVAILABLE,
-                workspace_id=workspace.id,
-            ) from exc
-        except OSError as exc:
-            raise SEOMigrationValidationError(
-                "Storage preview is unavailable for this media asset.",
-                failure_category="artifact_invalid",
-                failure_reason="validation_failed",
-                error_code=_MIGRATION_MEDIA_REASON_STORAGE_PREVIEW_NOT_AVAILABLE,
-                workspace_id=workspace.id,
-            ) from exc
 
+        payload, _preview_unavailable_reason = _read_workspace_media_payload_for_materialization(
+            media_asset=target_asset,
+            storage_root=self.media_storage_root,
+            business_id=business_id,
+            site_id=site_id,
+        )
         if not payload:
             raise SEOMigrationValidationError(
                 "Storage preview is unavailable for this media asset.",
@@ -3297,6 +3277,14 @@ class SEOMigrationService:
             lines = ["Request a Quote", "Schedule Service"]
             if media_category:
                 lines.append(f"View {media_category[0].replace('_', ' ')} examples")
+            return lines
+        if field == "additional_notes":
+            lines = [
+                "Keep claims verifiable and tie trust signals to specific services.",
+                "Preserve practical local-service language and clear response expectations.",
+            ]
+            if top_recommendation:
+                lines.append(f"Prioritize recommendation evidence for: {top_recommendation[0]}.")
             return lines
         return []
 
@@ -5927,6 +5915,13 @@ class SEOMigrationService:
                 )
                 deploy_secret_value_for_control_plane: str | None = None
                 if deploy_workflow_mode_for_dispatch == _DEPLOY_WORKFLOW_MODE_SITE_REPO_TEMPLATE_V1 and not dry_run:
+                    preview_hostname_for_static_ip = _normalize_string(
+                        target_readiness.preview_hostname if target_readiness is not None else None,
+                        max_length=253,
+                    ) or _normalize_string(
+                        workflow_resolution.get("preview_hostname"),
+                        max_length=253,
+                    )
 
                     def _emit_prerequisite_chain_log(
                         *,
@@ -5969,6 +5964,8 @@ class SEOMigrationService:
                                 site_id=site_id,
                                 managed_gke_config=managed_gke_config_for_dispatch,
                                 gcp_deploy_key=deploy_secret_value_for_control_plane,
+                                namespace_isolation_defaults=namespace_isolation_defaults,
+                                preview_hostname=preview_hostname_for_static_ip,
                                 dry_run=False,
                             )
                         )
@@ -6029,6 +6026,8 @@ class SEOMigrationService:
                                         site_id=site_id,
                                         managed_gke_config=managed_gke_config_for_dispatch,
                                         gcp_deploy_key=deploy_secret_value_for_control_plane,
+                                        namespace_isolation_defaults=namespace_isolation_defaults,
+                                        preview_hostname=preview_hostname_for_static_ip,
                                         dry_run=False,
                                     )
                                 )
@@ -6122,13 +6121,19 @@ class SEOMigrationService:
                     except SEOMigrationGitHubPublisherError as static_ip_exc:
                         derived_static_ip_name = None
                         try:
-                            derived_static_ip_name, _ = derive_site_preview_static_ip_name(
+                            preview_endpoint = resolve_managed_preview_endpoint_configuration(
                                 repo_name=deploy_target_for_dispatch.repo_name,
                                 site_id=site_id,
+                                preview_hostname=preview_hostname_for_static_ip,
+                                namespace_isolation_defaults=namespace_isolation_defaults,
+                            )
+                            derived_static_ip_name = _normalize_string(
+                                preview_endpoint.get("expected_static_ip_name"),
+                                max_length=80,
                             )
                         except Exception:
                             derived_static_ip_name = None
-                        expected_static_ip_name = _normalize_string(derived_static_ip_name, max_length=80)
+                        expected_static_ip_name = derived_static_ip_name
                         static_ip_project_id = _normalize_string(
                             _normalize_json_dict(managed_gke_config_for_dispatch).get("project_id"),
                             max_length=120,
@@ -16396,6 +16401,37 @@ class SEOMigrationService:
             repo_name=repo_name,
             site_id=workspace.site_id,
         )
+        preview_endpoint_mode = _MANAGED_PREVIEW_ENDPOINT_MODE_DEDICATED_STATIC_IP
+        uses_shared_preview_gateway = False
+        shared_preview_static_ip_name: str | None = None
+        try:
+            preview_endpoint = resolve_managed_preview_endpoint_configuration(
+                repo_name=repo_name,
+                site_id=workspace.site_id,
+                preview_hostname=preview_hostname,
+                namespace_isolation_defaults=_normalize_json_dict(
+                    admin_deploy_metadata.get("namespace_isolation_defaults")
+                ),
+            )
+            preview_endpoint_mode = _normalize_string(
+                preview_endpoint.get("effective_mode"),
+                max_length=40,
+            ) or _MANAGED_PREVIEW_ENDPOINT_MODE_DEDICATED_STATIC_IP
+            uses_shared_preview_gateway = bool(preview_endpoint.get("uses_shared_preview_gateway"))
+            shared_preview_static_ip_name = _normalize_string(
+                preview_endpoint.get("shared_preview_static_ip_name"),
+                max_length=80,
+            )
+            expected_static_ip_name = _normalize_string(
+                preview_endpoint.get("expected_static_ip_name"),
+                max_length=80,
+            ) or expected_static_ip_name
+            expected_static_ip_name_source = _normalize_string(
+                preview_endpoint.get("expected_static_ip_name_source"),
+                max_length=80,
+            ) or expected_static_ip_name_source
+        except Exception:  # noqa: BLE001
+            pass
         expected_dns_managed_zone = (
             _normalize_string(
                 admin_deploy_metadata.get("managed_site_dns_managed_zone"),
@@ -16432,6 +16468,9 @@ class SEOMigrationService:
             "preview_url": f"https://{preview_hostname}" if preview_hostname else None,
             "expected_static_ip_name": expected_static_ip_name,
             "expected_static_ip_name_source": expected_static_ip_name_source,
+            "preview_endpoint_mode": preview_endpoint_mode,
+            "uses_shared_preview_gateway": uses_shared_preview_gateway,
+            "shared_preview_static_ip_name": shared_preview_static_ip_name,
             "expected_dns_hostname": preview_hostname,
             "expected_dns_hostname_source": preview_hostname_source,
             "expected_dns_managed_zone": expected_dns_managed_zone,
@@ -16583,6 +16622,37 @@ class SEOMigrationService:
             site_id=workspace.site_id,
         )
         admin_deploy_metadata = self._resolve_admin_deploy_template_metadata()
+        preview_endpoint_mode = _MANAGED_PREVIEW_ENDPOINT_MODE_DEDICATED_STATIC_IP
+        uses_shared_preview_gateway = False
+        shared_preview_static_ip_name: str | None = None
+        try:
+            preview_endpoint = resolve_managed_preview_endpoint_configuration(
+                repo_name=resolved_target.get("repo_name"),
+                site_id=workspace.site_id,
+                preview_hostname=resolved_preview_hostname,
+                namespace_isolation_defaults=_normalize_json_dict(
+                    admin_deploy_metadata.get("namespace_isolation_defaults")
+                ),
+            )
+            preview_endpoint_mode = _normalize_string(
+                preview_endpoint.get("effective_mode"),
+                max_length=40,
+            ) or _MANAGED_PREVIEW_ENDPOINT_MODE_DEDICATED_STATIC_IP
+            uses_shared_preview_gateway = bool(preview_endpoint.get("uses_shared_preview_gateway"))
+            shared_preview_static_ip_name = _normalize_string(
+                preview_endpoint.get("shared_preview_static_ip_name"),
+                max_length=80,
+            )
+            resolved_static_ip_name = _normalize_string(
+                preview_endpoint.get("expected_static_ip_name"),
+                max_length=80,
+            ) or resolved_static_ip_name
+            resolved_static_ip_source = _normalize_string(
+                preview_endpoint.get("expected_static_ip_name_source"),
+                max_length=80,
+            ) or resolved_static_ip_source
+        except Exception:  # noqa: BLE001
+            pass
         resolved_dns_managed_zone = (
             _normalize_string(
                 admin_deploy_metadata.get("managed_site_dns_managed_zone"),
@@ -16624,6 +16694,9 @@ class SEOMigrationService:
             "preview_url": f"https://{resolved_preview_hostname}" if resolved_preview_hostname else None,
             "expected_static_ip_name": resolved_static_ip_name,
             "expected_static_ip_name_source": resolved_static_ip_source,
+            "preview_endpoint_mode": preview_endpoint_mode,
+            "uses_shared_preview_gateway": uses_shared_preview_gateway,
+            "shared_preview_static_ip_name": shared_preview_static_ip_name,
             "managed_site_dns_managed_zone": resolved_dns_managed_zone,
             "managed_site_dns_project_id": resolved_dns_project_id,
             "managed_site_dns_ttl": resolved_dns_ttl,
@@ -18896,6 +18969,12 @@ class SEOMigrationService:
                     "kubernetes_namespace": workflow_resolution.get("kubernetes_namespace"),
                     "namespace_source": workflow_resolution.get("namespace_source"),
                     "namespace_model_status": workflow_resolution.get("namespace_model_status"),
+                    "preview_hostname": workflow_resolution.get("preview_hostname"),
+                    "expected_static_ip_name": workflow_resolution.get("expected_static_ip_name"),
+                    "expected_static_ip_name_source": workflow_resolution.get("expected_static_ip_name_source"),
+                    "preview_endpoint_mode": workflow_resolution.get("preview_endpoint_mode"),
+                    "uses_shared_preview_gateway": workflow_resolution.get("uses_shared_preview_gateway"),
+                    "shared_preview_static_ip_name": workflow_resolution.get("shared_preview_static_ip_name"),
                 }
                 if workflow_resolution.get("workflow_path"):
                     target_summary["resolved_workflow_path"] = workflow_resolution.get("workflow_path")
@@ -22935,6 +23014,8 @@ def _normalize_deploy_failure_reason_code(value: object) -> str | None:
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFLICT,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_ADDRESS_MISSING,
         _DEPLOY_DISPATCH_SERVICE_REASON_STATIC_IP_ADDRESS_MISSING_AFTER_RETRY,
+        _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_MISSING,
+        _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_HOSTNAME_MISSING,
         _DEPLOY_DISPATCH_SERVICE_REASON_TARGET_REPO_DEPLOY_SECRET_MISSING,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_CONFIG_INVALID,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_PERMISSION_DENIED,
@@ -23041,6 +23122,8 @@ def _normalize_workflow_run_failure_reason_code(value: object) -> str | None:
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFLICT,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_ADDRESS_MISSING,
         _DEPLOY_DISPATCH_SERVICE_REASON_STATIC_IP_ADDRESS_MISSING_AFTER_RETRY,
+        _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_MISSING,
+        _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_HOSTNAME_MISSING,
         _DEPLOY_DISPATCH_SERVICE_REASON_TARGET_REPO_DEPLOY_SECRET_MISSING,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_CONFIG_INVALID,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_PERMISSION_DENIED,
@@ -23129,6 +23212,8 @@ def _normalize_dispatch_service_reason_code(value: object) -> str | None:
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFLICT,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_ADDRESS_MISSING,
         _DEPLOY_DISPATCH_SERVICE_REASON_STATIC_IP_ADDRESS_MISSING_AFTER_RETRY,
+        _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_MISSING,
+        _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_HOSTNAME_MISSING,
         "address_not_found_after_retry",
         "address_ambiguous_after_retry",
         "address_value_missing_after_retry",
@@ -23662,6 +23747,8 @@ def _derive_dispatch_service_reason_code(
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFLICT,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_ADDRESS_MISSING,
         _DEPLOY_DISPATCH_SERVICE_REASON_STATIC_IP_ADDRESS_MISSING_AFTER_RETRY,
+        _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_MISSING,
+        _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_HOSTNAME_MISSING,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_CONFIG_INVALID,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_PERMISSION_DENIED,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFIG_MISSING,
@@ -23825,6 +23912,16 @@ def _derive_managed_gke_dispatch_readiness_message(*, dispatch_service_reason_co
             "Google Cloud created or found the managed static IP resource, but the numeric address is still unavailable "
             "after bounded describe retries and list fallback. Verify address scope/visibility permissions and retry."
         )
+    if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_MISSING:
+        return (
+            "Shared preview gateway mode is configured, but no shared preview static IP name is set. "
+            "Admin must configure the shared preview gateway static IP before deploy can continue."
+        )
+    if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_HOSTNAME_MISSING:
+        return (
+            "Shared preview gateway mode requires a preview hostname under the managed preview domain. "
+            "Refresh target metadata and retry deploy."
+        )
     if normalized_dispatch_reason == "address_not_found_after_retry":
         return (
             "Managed static IP lookup could not find the expected resource by exact name after bounded retries/list fallback. "
@@ -23904,8 +24001,8 @@ def _derive_managed_gke_dispatch_readiness_message(*, dispatch_service_reason_co
         _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_STATIC_IP_NOT_ALLOWED,
     }:
         return (
-            "Ingress static IP annotation does not match this site's deterministic per-site static IP name. "
-            "Republish managed ingress resources with the expected per-site static IP binding."
+            "Ingress static IP annotation does not match the expected managed preview endpoint binding. "
+            "Republish managed ingress resources with the expected static IP annotation for the configured endpoint mode."
         )
     if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_MISSING:
         return (
@@ -24063,6 +24160,16 @@ def _derive_deploy_failure_remediation_hint(
             "Static IP ensure did not resolve an address after bounded describe retries and list fallback. "
             "Verify global address scope/permissions and retry deploy."
         )
+    if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_MISSING:
+        return (
+            "Shared preview gateway mode is enabled, but shared preview static IP name is not configured. "
+            "Set managed_preview_endpoint.shared_preview_static_ip_name in admin namespace defaults and retry deploy."
+        )
+    if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_HOSTNAME_MISSING:
+        return (
+            "Shared preview gateway mode requires a valid preview hostname in deploy target metadata. "
+            "Refresh deploy target metadata and retry."
+        )
     if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROVISIONING_FAILED:
         return (
             "Control-plane static IP provisioning failed before workflow dispatch. "
@@ -24128,8 +24235,8 @@ def _derive_deploy_failure_remediation_hint(
         _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_STATIC_IP_NOT_ALLOWED,
     }:
         return (
-            "Ingress static IP annotation does not match this site's deterministic per-site static IP name. "
-            "Republish managed ingress resources so the expected per-site static IP is bound."
+            "Ingress static IP annotation does not match the configured managed preview endpoint mode. "
+            "Republish managed ingress resources so the expected static IP annotation is bound."
         )
     if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_MISSING:
         return (

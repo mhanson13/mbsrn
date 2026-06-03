@@ -345,10 +345,11 @@ Important state:
   - current runtime evidence precedence: `current_live_probe` -> `workflow_output` -> selected attempt -> summary fallback -> historical failure
   - refresh is scoped to the active route/workspace site id and may fall back to the latest deploy record for that site when selected artifact history is missing
 - if selected workflow evidence collection failed but current live HTTPS probe succeeds, operator UI should report current runtime as healthy while preserving the failed selected attempt in history/diagnostics.
-- static-IP reconciliation rules:
-  - static IP ensure/describe uses bounded re-describe + list fallback before classifying `static_ip_address_missing_after_retry`
-  - list fallback succeeds only when exactly one address entry matches the expected name and includes a non-empty `address` value
-  - stale selected-attempt static-IP-missing failures remain historical context and must not override healthy current live HTTPS evidence
+- preview endpoint-mode reconciliation rules:
+  - `preview_shared_gateway`: deploy readiness validates shared preview gateway config and expected shared static-IP name for `*.site.mbsrn.com`; per-site static-IP ensure is not required.
+  - `dedicated_static_ip`: static-IP ensure/describe uses bounded re-describe + list fallback before classifying `static_ip_address_missing_after_retry`.
+  - list fallback succeeds only when exactly one address entry matches the expected name and includes a non-empty `address` value.
+  - stale selected-attempt static-IP-missing failures remain historical context and must not override healthy current live HTTPS evidence.
 - Expected reason-code families include:
   - `managed_certificate_provisioning` / `tls_certificate_provisioning` (static IP + ingress can be healthy while TLS still converges)
   - `https_probe_failed_after_control_plane_ready`
@@ -389,10 +390,13 @@ Common managed-site deploy blocker codes:
 - `target_repo_deploy_secret_missing`
 - `generated_workflow_requires_missing_gcp_deploy_key`
 - `site_web_image_tag_missing`
+- `shared_preview_gateway_missing`
+- `shared_preview_gateway_hostname_missing`
 - `static_ip_address_missing_after_retry`
 - `address_not_found_after_retry`
 - `address_ambiguous_after_retry`
 - `address_value_missing_after_retry`
+- `ingress_static_ip_conflict`
 - `workflow_run_failed_without_live_url_evidence`
 
 Safe verification commands:

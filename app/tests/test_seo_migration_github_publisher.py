@@ -32,6 +32,7 @@ from app.integrations.seo_migration_github_publisher import (
     _classify_rollout_blocker_hints_from_describe_outputs,
     _emit_structured_publisher_log,
     _resolve_google_credential_principal,
+    resolve_managed_preview_endpoint_configuration,
     derive_site_kubernetes_namespace,
     derive_site_preview_certificate_name,
     derive_site_preview_hostname,
@@ -7575,7 +7576,7 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     )
     assert "Authenticate to GCP" in workflow_yaml
     assert "Get GKE credentials" in workflow_yaml
-    assert "Verify expected per-site static IP exists" in workflow_yaml
+    assert "Verify expected preview ingress static IP exists" in workflow_yaml
     assert (
         'gcloud compute addresses describe "$MBSRN_PREVIEW_STATIC_IP_NAME" --global --project "$GKE_PROJECT_ID"'
         in workflow_yaml
@@ -7994,6 +7995,68 @@ def test_rendered_managed_templates_enable_pull_secret_only_for_private_image_au
     assert 'kubectl get secret ghcr-pull-secret --namespace "$K8S_NAMESPACE"' in workflow_yaml
     assert "imagePullSecrets:" in deployment_yaml
     assert "name: ghcr-pull-secret" in deployment_yaml
+
+
+def test_resolve_managed_preview_endpoint_configuration_uses_shared_gateway_for_managed_preview_when_configured() -> None:
+    resolved = resolve_managed_preview_endpoint_configuration(
+        repo_name="tnmfire",
+        site_id="site-tnmfire",
+        preview_hostname="tnmfire.site.mbsrn.com",
+        namespace_isolation_defaults={
+            "managed_preview_endpoint": {
+                "mode": "auto",
+                "shared_preview_static_ip_name": "site-preview-shared-ip",
+            }
+        },
+    )
+
+    assert resolved.get("effective_mode") == "preview_shared_gateway"
+    assert resolved.get("uses_shared_preview_gateway") is True
+    assert resolved.get("requires_dedicated_static_ip") is False
+    assert resolved.get("expected_static_ip_name") == "site-preview-shared-ip"
+    assert resolved.get("reason_code") is None
+
+
+def test_rendered_managed_templates_use_shared_preview_gateway_static_ip_when_configured() -> None:
+    namespace_defaults = {
+        "managed_preview_endpoint": {
+            "mode": "preview_shared_gateway",
+            "shared_preview_static_ip_name": "site-preview-shared-ip",
+        }
+    }
+    workflow_yaml = _render_managed_deploy_workflow_yaml(
+        workflow_id="deploy-tnmfire-www-prod.yml",
+        repo_owner="mhanson13",
+        repo_name="tnmfire",
+        branch="main",
+        deploy_workflow_mode="site_repo_template_v1",
+        target_environment_key="gke_prod",
+        target_environment_source="admin_config",
+        managed_gke_config=None,
+        kubernetes_namespace="tnmfire",
+        namespace_source="repo_name",
+        preview_hostname="tnmfire.site.mbsrn.com",
+        namespace_isolation_defaults=namespace_defaults,
+        private_image_auth_required=False,
+        site_id="site-tnmfire",
+    )
+    manifests = _render_managed_gke_manifest_files(
+        repo_owner="mhanson13",
+        repo_name="tnmfire",
+        target_environment_key="gke_prod",
+        target_environment_source="admin_config",
+        kubernetes_namespace="tnmfire",
+        namespace_source="repo_name",
+        preview_hostname="tnmfire.site.mbsrn.com",
+        namespace_isolation_defaults=namespace_defaults,
+        site_id="site-tnmfire",
+    )
+    ingress_yaml = manifests["k8s/ingress.yaml"]
+
+    assert "MBSRN_PREVIEW_ENDPOINT_MODE: preview_shared_gateway" in workflow_yaml
+    assert "MBSRN_PREVIEW_STATIC_IP_NAME: site-preview-shared-ip" in workflow_yaml
+    assert "deploy_runtime_reason_code=shared_preview_gateway_missing" in workflow_yaml
+    assert "kubernetes.io/ingress.global-static-ip-name: site-preview-shared-ip" in ingress_yaml
 
 
 def test_render_managed_gke_manifests_network_policy_allows_site_web_probe_without_broad_ingress() -> None:
@@ -9476,6 +9539,159 @@ def test_check_deploy_target_readiness_flags_shared_static_ip_conflict(monkeypat
     assert details.get("ingress_static_ip_conflict") is True
     assert details.get("shared_static_ip_not_allowed_for_per_site_ingress") is True
     assert details.get("preview_certificate_ingress_static_ip_name") == "mbsrn-site-lb-ip"
+
+
+def test_check_deploy_target_readiness_allows_shared_preview_gateway_static_ip_when_configured(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    managed_workflow = _encode_workflow_yaml(
+        (
+            "# mbsrn-managed-template:site_repo_template_v1\n"
+            "name: Managed Deploy\n"
+            "on:\n"
+            "  workflow_dispatch:\n"
+            "jobs:\n"
+            "  deploy:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    env:\n"
+            "      K8S_NAMESPACE: tnmfire\n"
+            "    steps:\n"
+            "      - uses: google-github-actions/auth@v2\n"
+            '      - run: kubectl apply -n "$K8S_NAMESPACE" -f k8s/deployment.yaml\n'
+        )
+    )
+    namespace_manifest = _encode_workflow_yaml(
+        (
+            "# mbsrn-managed-manifest:site_repo_template_v1\n"
+            "apiVersion: v1\n"
+            "kind: Namespace\n"
+            "metadata:\n"
+            "  name: tnmfire\n"
+        )
+    )
+    deployment_manifest = _encode_workflow_yaml(
+        (
+            "# mbsrn-managed-manifest:site_repo_template_v1\n"
+            "apiVersion: apps/v1\n"
+            "kind: Deployment\n"
+            "metadata:\n"
+            "  name: site-web\n"
+            "  namespace: tnmfire\n"
+            "spec:\n"
+            "  template:\n"
+            "    spec:\n"
+            "      imagePullSecrets:\n"
+            "        - name: ghcr-pull-secret\n"
+        )
+    )
+    namespaced_manifest = _encode_workflow_yaml(
+        (
+            "# mbsrn-managed-manifest:site_repo_template_v1\n"
+            "apiVersion: v1\n"
+            "kind: Service\n"
+            "metadata:\n"
+            "  name: site-web\n"
+            "  namespace: tnmfire\n"
+        )
+    )
+    ingress_manifest_with_shared_ip = _encode_workflow_yaml(
+        (
+            "# mbsrn-managed-manifest:site_repo_template_v1\n"
+            "apiVersion: networking.k8s.io/v1\n"
+            "kind: Ingress\n"
+            "metadata:\n"
+            "  name: site-web\n"
+            "  namespace: tnmfire\n"
+            "  annotations:\n"
+            "    kubernetes.io/ingress.global-static-ip-name: site-preview-shared-ip\n"
+            "    networking.gke.io/managed-certificates: site-web-preview-cert-tnmfire\n"
+            "spec:\n"
+            "  rules:\n"
+            "    - host: tnmfire.site.mbsrn.com\n"
+        )
+    )
+    certificate_manifest_expected = _encode_workflow_yaml(
+        (
+            "# mbsrn-managed-manifest:site_repo_template_v1\n"
+            "apiVersion: networking.gke.io/v1\n"
+            "kind: ManagedCertificate\n"
+            "metadata:\n"
+            "  name: site-web-preview-cert-tnmfire\n"
+            "  namespace: tnmfire\n"
+            "spec:\n"
+            "  domains:\n"
+            "    - tnmfire.site.mbsrn.com\n"
+        )
+    )
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _FakeHTTPResponse(status=200, body="{}"),
+            _FakeHTTPResponse(status=200, body="{}"),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "wfsha", "encoding": "base64", "content": managed_workflow}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"state": "active", "path": ".github/workflows/deploy-tnmfire-www-prod.yml"}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-namespace", "encoding": "base64", "content": namespace_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-deployment", "encoding": "base64", "content": deployment_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-service", "encoding": "base64", "content": namespaced_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps(
+                    {"sha": "sha-ingress", "encoding": "base64", "content": ingress_manifest_with_shared_ip}
+                ),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps(
+                    {"sha": "sha-managedcertificate", "encoding": "base64", "content": certificate_manifest_expected}
+                ),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-frontendconfig", "encoding": "base64", "content": namespaced_manifest}),
+            ),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps({"sha": "sha-backendconfig", "encoding": "base64", "content": namespaced_manifest}),
+            ),
+            *_gke_environment_config_present_responses(),
+        ],
+        calls,
+    )
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    readiness = publisher.check_deploy_target_readiness(
+        target=_dispatch_target(),
+        allow_ref_repair=False,
+        allow_workflow_repair=False,
+        dry_run=False,
+        namespace_isolation_defaults={
+            "managed_preview_endpoint": {
+                "mode": "preview_shared_gateway",
+                "shared_preview_static_ip_name": "site-preview-shared-ip",
+            }
+        },
+    )
+
+    assert readiness.dispatch_service_availability is True
+    assert readiness.dispatch_service_reason_code == "available"
+    details = readiness.managed_gke_config_details or {}
+    assert details.get("managed_preview_endpoint_effective_mode") == "preview_shared_gateway"
+    assert details.get("uses_shared_preview_gateway") is True
+    assert details.get("preview_certificate_ingress_static_ip_name") == "site-preview-shared-ip"
+    assert details.get("preview_certificate_ingress_static_ip_matches_expected") is True
 
 
 def test_check_deploy_target_readiness_allows_expected_per_site_static_ip_name(monkeypatch) -> None:

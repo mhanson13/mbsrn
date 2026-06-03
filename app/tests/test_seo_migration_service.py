@@ -43,6 +43,7 @@ from app.integrations.seo_migration_github_publisher import (
     SEOMigrationGitHubTargetReadinessResult,
     SEOMigrationGitHubWorkflowProvisionResult,
     derive_site_preview_static_ip_name,
+    resolve_managed_preview_endpoint_configuration,
 )
 from app.models.business import Business
 from app.models.github_publish_config import GitHubPublishConfig
@@ -437,7 +438,16 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
             tuple[str, str, str, str, dict[str, object] | None, str | None, str | None, str | None, str | None, bool]
         ] = []
         self.ensure_managed_site_static_ip_calls: list[
-            tuple[str, str, str | None, dict[str, object] | None, str | None, bool]
+            tuple[
+                str,
+                str,
+                str | None,
+                dict[str, object] | None,
+                str | None,
+                bool,
+                dict[str, object] | None,
+                str | None,
+            ]
         ] = []
         self.ensure_managed_site_dns_calls: list[tuple[str, str, str, str, str | None, int, bool]] = []
         self.deploy_call_order: list[str] = []
@@ -797,6 +807,8 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         site_id: str | None,
         managed_gke_config: dict[str, object] | None,
         gcp_deploy_key: str | None,
+        namespace_isolation_defaults: dict[str, object] | None = None,
+        preview_hostname: str | None = None,
         dry_run: bool = False,
     ) -> SEOMigrationGitHubManagedSiteStaticIPEnsureResult:
         self.ensure_managed_site_static_ip_calls.append(
@@ -807,6 +819,8 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
                 dict(managed_gke_config or {}) or None,
                 gcp_deploy_key,
                 bool(dry_run),
+                dict(namespace_isolation_defaults or {}) or None,
+                preview_hostname,
             )
         )
         self.deploy_call_order.append("ensure_static_ip")
@@ -817,12 +831,22 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
                 stage=self.static_ip_ensure_error_stage or "static_ip_provision",
                 diagnostics=self.static_ip_ensure_error_diagnostics,
             )
-        static_ip_name = self.ensure_static_ip_name
-        if not static_ip_name:
-            static_ip_name, _ = derive_site_preview_static_ip_name(
-                repo_name=repo_name,
-                site_id=site_id,
+        endpoint_config = resolve_managed_preview_endpoint_configuration(
+            repo_name=repo_name,
+            site_id=site_id,
+            preview_hostname=preview_hostname,
+            namespace_isolation_defaults=namespace_isolation_defaults,
+        )
+        endpoint_reason = str(endpoint_config.get("reason_code") or "").strip().lower()
+        if endpoint_reason:
+            raise SEOMigrationGitHubPublisherError(
+                code=endpoint_reason,
+                safe_message=f"Simulated static IP readiness failure: {endpoint_reason}",
+                stage="static_ip_provision",
             )
+        static_ip_name = self.ensure_static_ip_name or str(endpoint_config.get("expected_static_ip_name") or "")
+        if not static_ip_name:
+            static_ip_name, _ = derive_site_preview_static_ip_name(repo_name=repo_name, site_id=site_id)
         project_id = self.ensure_static_ip_project_id or str((managed_gke_config or {}).get("project_id") or "")
         if not project_id:
             project_id = "mbsrn-prod"
@@ -1927,6 +1951,67 @@ def test_workspace_media_preview_returns_uploaded_image_payload_for_authorized_w
         asset_id=uploaded_asset_id,
     )
 
+    assert media_type == "image/png"
+    assert payload == _tiny_png_payload()
+
+
+def test_workspace_media_preview_uses_candidate_storage_lookup_when_storage_key_missing(
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("MIGRATION_MEDIA_STORAGE_ROOT", str(tmp_path))
+    service = _build_service(db_session, _StaticMigrationProvider(_build_publishable_output()))
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+
+    uploaded = service.upload_workspace_media_asset(
+        business_id=business_id,
+        site_id=site_id,
+        filename="fallback-preview.png",
+        content_type="image/png",
+        payload=_tiny_png_payload(),
+        selected_for_draft=True,
+        category="project_gallery",
+        alt_text="Fallback preview target",
+        description=None,
+        usage_note=None,
+        page_assignment=None,
+        principal_id="principal-1",
+    )
+    uploaded_asset_id = str(uploaded.get("asset_id") or "")
+    assert uploaded_asset_id
+
+    workspace = service.get_workspace(business_id=business_id, site_id=site_id)
+    enriched = dict(workspace.enriched_content_notes_json or {})
+    workspace_media_assets = list(enriched.get("workspace_media_assets") or [])
+    for index, item in enumerate(workspace_media_assets):
+        record = dict(item or {})
+        if str(record.get("asset_id") or "").strip() != uploaded_asset_id:
+            continue
+        record.pop("storage_key", None)
+        workspace_media_assets[index] = record
+        break
+    enriched["workspace_media_assets"] = workspace_media_assets
+    workspace.enriched_content_notes_json = enriched
+    service.seo_migration_repository.save_workspace(workspace)
+    db_session.commit()
+
+    listed = service.list_workspace_media_assets(business_id=business_id, site_id=site_id)
+    uploaded_assets = [
+        item for item in list(listed.get("operator_uploaded") or []) if isinstance(item, dict)
+    ]
+    fallback_asset = next(
+        item for item in uploaded_assets if str(item.get("asset_id") or "").strip() == uploaded_asset_id
+    )
+    assert isinstance(fallback_asset.get("preview_url"), str)
+    assert fallback_asset.get("preview_url", "").endswith(f"/media/assets/{uploaded_asset_id}/preview")
+
+    media_type, payload = service.preview_workspace_media_asset(
+        business_id=business_id,
+        site_id=site_id,
+        asset_id=uploaded_asset_id,
+    )
     assert media_type == "image/png"
     assert payload == _tiny_png_payload()
 
@@ -3121,6 +3206,7 @@ def test_draft_generation_readiness_missing_enriched_content_is_supporting_only(
         "must_avoid",
         "tone",
         "calls_to_action",
+        "additional_notes",
     ],
 )
 def test_requirements_suggestion_returns_completed_for_supported_fields_with_mock_provider(
@@ -5651,6 +5737,100 @@ def test_deploy_ensures_managed_site_static_ip_existing_before_dispatch(db_sessi
     assert publisher.deploy_calls
     assert deploy_result.result.get("static_ip_created") is False
     assert deploy_result.result.get("static_ip_ensure_result") == "exists"
+
+
+def test_deploy_uses_shared_preview_gateway_static_ip_when_configured(db_session, monkeypatch) -> None:
+    publisher = _RecordingGitHubPublisher(
+        ensure_static_ip_name="site-preview-shared-ip",
+        ensure_static_ip_created=False,
+        ensure_static_ip_result="exists",
+        ensure_static_ip_address="34.160.224.212",
+        ensure_dns_created=False,
+        ensure_dns_updated=False,
+        ensure_dns_result="exists",
+        ensure_dns_expected_ip="34.160.224.212",
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    config = service.github_publish_config_service.get()
+    namespace_defaults = dict(config.namespace_isolation_defaults_json or {})
+    namespace_defaults["managed_preview_endpoint"] = {
+        "mode": "preview_shared_gateway",
+        "shared_preview_static_ip_name": "site-preview-shared-ip",
+    }
+    config.namespace_isolation_defaults_json = namespace_defaults
+    service.github_publish_config_service.repository.save(config)
+    service.session.commit()
+
+    artifact = _prepare_published_artifact(service, business_id=business_id, site_id=site_id)
+    monkeypatch.setattr(
+        seo_migration_module,
+        "_resolve_hostname_ipv4_addresses",
+        lambda _hostname: ["34.160.224.212"],
+    )
+
+    deploy_result = service.deploy_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        principal_id="principal-1",
+    )
+
+    assert publisher.ensure_managed_site_static_ip_calls
+    ensure_call = publisher.ensure_managed_site_static_ip_calls[-1]
+    assert isinstance(ensure_call[6], dict)
+    assert (ensure_call[6] or {}).get("managed_preview_endpoint", {}).get("mode") == "preview_shared_gateway"
+    assert (ensure_call[6] or {}).get("managed_preview_endpoint", {}).get("shared_preview_static_ip_name") == (
+        "site-preview-shared-ip"
+    )
+    assert str(ensure_call[7] or "").endswith(".site.mbsrn.com")
+    assert deploy_result.result.get("expected_static_ip_name") == "site-preview-shared-ip"
+    assert deploy_result.result.get("dispatch_result_stage") == "workflow_dispatch"
+    assert publisher.deploy_calls
+
+
+def test_deploy_blocks_before_dispatch_when_shared_preview_gateway_static_ip_name_missing(db_session) -> None:
+    publisher = _RecordingGitHubPublisher()
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    config = service.github_publish_config_service.get()
+    namespace_defaults = dict(config.namespace_isolation_defaults_json or {})
+    namespace_defaults["managed_preview_endpoint"] = {
+        "mode": "preview_shared_gateway",
+    }
+    config.namespace_isolation_defaults_json = namespace_defaults
+    service.github_publish_config_service.repository.save(config)
+    service.session.commit()
+
+    artifact = _prepare_published_artifact(service, business_id=business_id, site_id=site_id)
+
+    with pytest.raises(SEOMigrationValidationError, match="shared_preview_gateway_missing"):
+        service.deploy_artifact_version(
+            business_id=business_id,
+            site_id=site_id,
+            artifact_version_id=artifact.id,
+            dry_run=False,
+            principal_id="principal-1",
+        )
+
+    assert publisher.ensure_managed_site_static_ip_calls
+    assert publisher.deploy_calls == []
+    workspace = service.get_workspace(business_id=business_id, site_id=site_id)
+    deploy_history = workspace.deploy_history_json or []
+    assert deploy_history
+    latest = deploy_history[-1]
+    assert latest.get("failure_reason") == "shared_preview_gateway_missing"
+    assert latest.get("dispatch_service_reason_code") == "shared_preview_gateway_missing"
+    assert latest.get("dispatch_result_stage") == "static_ip_provision"
 
 
 def test_deploy_ensures_managed_site_static_ip_handles_already_exists_race(db_session) -> None:

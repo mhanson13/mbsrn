@@ -102,6 +102,10 @@ def test_get_github_publish_config_returns_defaults_when_unset(db_session, seede
             "enabled": False,
             "mode": "default_deny_ingress",
         },
+        "managed_preview_endpoint": {
+            "mode": "auto",
+            "shared_preview_static_ip_name": None,
+        },
         "migration_generation_budget": {
             "migration_context_budget_chars": 90000,
             "migration_recommendation_limit": 6,

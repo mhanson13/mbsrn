@@ -300,6 +300,7 @@ Field-level suggestion support:
 - `must_avoid`
 - `tone`
 - `calls_to_action`
+- `additional_notes` (Additional requirements)
 
 Scratchpad behavior:
 - each field has an operator-owned textarea plus an `AI suggestion draft` scratchpad
@@ -344,6 +345,15 @@ Suggestion safety constraints:
 - no forced Google OAuth reconnect for suggestion requests
 - no secrets/tokens/storage keys/raw media bytes/base64 in suggestion responses
 - local tests mock provider behavior; no real provider calls are required for test runs
+
+Operator requirements import/export:
+- Export control downloads operator requirements as JSON:
+  - schema: `mbsrn.operator_requirements.v1`
+  - payload keys: `schema`, `exported_at`, `site_id`, `business_id`, `requirements`
+- Import control accepts the same schema and updates matching operator requirement fields in the editor.
+- Import does not auto-save, auto-generate, auto-publish, or auto-deploy.
+- Unknown fields are ignored safely.
+- Export/import payloads exclude secrets, credentials, deploy config, diagnostics, raw prompts/provider payloads, and media bytes.
 
 ## Media Discovery, Upload, and Safety Boundaries (2026-05)
 Source-site media discovery:
@@ -1846,14 +1856,20 @@ Post-fix rollout for existing managed sites:
     - managed certificate resource: `k8s/managedcertificate.yaml`
     - managed certificate name: `site-web-preview-cert-<normalized-site>`
     - ingress annotation: `networking.gke.io/managed-certificates: site-web-preview-cert-<normalized-site>`
-    - ingress requires deterministic per-site static IP binding:
-      - annotation: `kubernetes.io/ingress.global-static-ip-name: site-web-preview-ip-<normalized-site>`
-      - static IP names are site-scoped and must not be shared across sites
-      - control plane ensures the expected global address exists before workflow dispatch using admin-managed deploy credentials
-      - prerequisite chain is single-request and ordered: static-IP ensure -> DNS ensure (with the same in-request static IP address) -> DNS propagation gate -> workflow dispatch
-      - generated target workflow still performs a preflight existence check (`gcloud compute addresses describe site-web-preview-ip-<normalized-site> --global --project "$GKE_PROJECT_ID"`) as a drift safety check
-      - when ingress static-IP annotation matches expected per-site name, workflow fetches static-IP metadata (`address`, `status`, `users`) and treats reserved `address` as `dns_expected_ip`
-      - if static IP is `IN_USE` and `users` indicate expected site forwarding-rule binding, ingress status IP mismatch is advisory only (`ingress_status_ip_stale_or_mismatched`)
+    - ingress static-IP binding is endpoint-mode driven:
+      - `preview_shared_gateway` (default for managed preview hosts like `<normalized-site>.site.mbsrn.com` when configured):
+        - ingress annotation uses the configured shared preview static-IP name
+        - control plane validates shared preview gateway config before dispatch
+        - per-site static-IP ensure is not required in this mode
+      - `dedicated_static_ip` (live/cutover or explicitly selected dedicated endpoint mode):
+        - annotation: `kubernetes.io/ingress.global-static-ip-name: site-web-preview-ip-<normalized-site>` (or configured expected dedicated name)
+        - control plane ensures the expected global address exists before workflow dispatch using admin-managed deploy credentials
+      - `auto` mode resolves to `preview_shared_gateway` for `*.site.mbsrn.com` when shared preview static-IP config is present; otherwise it falls back to `dedicated_static_ip`
+      - prerequisite chain remains ordered and fail-closed for the active endpoint mode:
+        - static-IP/gateway validation -> DNS ensure (when applicable) -> DNS propagation gate -> workflow dispatch
+      - generated target workflow validates expected preview ingress static-IP presence as drift safety using the resolved expected static-IP name
+      - when ingress static-IP annotation matches expected name, workflow fetches static-IP metadata (`address`, `status`, `users`) and treats reserved `address` as `dns_expected_ip`
+      - if static IP is `IN_USE` and `users` indicate expected forwarding-rule binding, ingress status IP mismatch is advisory only (`ingress_status_ip_stale_or_mismatched`)
       - if static IP metadata does not show expected binding evidence, deploy remains blocked with `expected_static_ip_not_bound_to_ingress`
       - workflow outputs additional network-binding diagnostics:
         - `expected_static_ip_address`
@@ -1862,10 +1878,13 @@ Post-fix rollout for existing managed sites:
         - `ingress_status_ip`
         - `ingress_status_ip_matches_static_ip`
         - `static_ip_bound_to_expected_forwarding_rule`
-      - `managed_site_static_ip_config_missing` blocks dispatch when control-plane static IP ensure is missing required project/deploy-key config
+      - endpoint-mode configuration blockers:
+        - `shared_preview_gateway_missing`
+        - `shared_preview_gateway_hostname_missing`
+      - `managed_site_static_ip_config_missing` blocks dispatch when control-plane static-IP ensure is missing required project/deploy-key config
       - `managed_deploy_impersonation_config_invalid` blocks dispatch when `GCP_MANAGED_DEPLOY` is not a valid service-account email
       - `managed_deploy_impersonation_permission_denied` blocks dispatch when control-plane principal cannot impersonate `GCP_MANAGED_DEPLOY`
-      - static IP ensure failures are classified before dispatch with operator-safe reason codes:
+      - dedicated static-IP ensure failures are classified before dispatch with operator-safe reason codes:
         - `managed_site_static_ip_permission_denied` (control-plane identity lacks `compute.globalAddresses.get/create`)
         - `managed_site_static_ip_api_disabled` (Compute Engine API disabled for managed project)
         - `managed_site_static_ip_quota_exceeded` (global static-address quota exhausted)
@@ -1873,7 +1892,7 @@ Post-fix rollout for existing managed sites:
         - `managed_site_static_ip_conflict` (named address conflict that could not be reconciled)
         - `static_ip_address_missing_after_retry` (ensure completed but no usable address was returned after bounded describe retry and list fallback; DNS ensure is not attempted with null IP)
         - fallback: `managed_site_static_ip_provisioning_failed`
-      - static IP ensure diagnostics include effective credential metadata for IAM remediation:
+      - static-IP ensure diagnostics include effective credential metadata for IAM remediation:
         - `static_ip_gcp_credential_source` (`service_account_json`, `managed_deploy_impersonation`, `adc_metadata_server`, `unknown`)
         - `static_ip_gcp_principal_email` (safe principal identity; never includes private keys/tokens)
         - `static_ip_gcp_impersonated_service_account_email` (when impersonation is configured)
@@ -1898,9 +1917,9 @@ Post-fix rollout for existing managed sites:
       - `tls_certificate_bound_to_wrong_site` when ingress host/certificate domain disagree
       - `ingress_certificate_annotation_mismatch` when ingress annotation references the wrong certificate name
       - `managed_certificate_identity_mismatch` when ingress annotation includes stale cross-site certificate names
-      - `managed_site_static_ip_missing` when the expected per-site global static IP does not exist in GCP
-      - `expected_static_ip_not_bound_to_ingress` when ingress is missing the expected per-site static IP annotation binding
-      - `shared_static_ip_not_allowed_for_per_site_ingress` when ingress static IP annotation is present but does not match the expected per-site static IP name
+      - `managed_site_static_ip_missing` when the expected dedicated global static IP does not exist in GCP
+      - `expected_static_ip_not_bound_to_ingress` when ingress is missing the expected static-IP annotation binding for the active endpoint mode
+      - `ingress_static_ip_conflict` when ingress static-IP annotation does not match the expected name for the active endpoint mode
       - `pre_shared_cert_metadata_mismatch` when controller-generated pre-shared certificate metadata differs from expected managed-certificate name (advisory; non-blocking by itself)
       - `stale_pre_shared_cert_binding_detected` only when stale/cross-site pre-shared metadata is corroborated by desired-state annotation/domain mismatch or HTTPS/TLS identity mismatch
       - `managed_certificate_failed_not_visible` when certificate visibility checks fail for the expected hostname
@@ -2442,6 +2461,8 @@ Blocking reason-code examples:
   - `managed_certificate_domain_drift_repair_failed` (blocking: domain drift persisted or repair could not converge)
   - `tls_certificate_bound_to_wrong_site`
 - Ingress isolation:
+  - `shared_preview_gateway_missing`
+  - `shared_preview_gateway_hostname_missing`
   - `managed_site_static_ip_config_missing`
   - `managed_site_static_ip_permission_denied`
   - `managed_site_static_ip_api_disabled`
@@ -2458,15 +2479,17 @@ Blocking reason-code examples:
   - `managed_site_dns_propagation_pending`
   - `managed_site_static_ip_missing`
   - `expected_static_ip_not_bound_to_ingress`
-  - `shared_static_ip_not_allowed_for_per_site_ingress`
+  - `ingress_static_ip_conflict` (legacy histories may still show `shared_static_ip_not_allowed_for_per_site_ingress`)
   - `stale_pre_shared_cert_binding_detected`
 
 Isolation rules:
-- Per-site ingress must bind only its deterministic static IP name (`site-web-preview-ip-<normalized-site>`).
-- Shared ingress static IP binding across sites is blocked.
+- Endpoint mode controls static-IP expectations:
+  - `preview_shared_gateway`: ingress must bind to configured shared preview static-IP name.
+  - `dedicated_static_ip`: ingress must bind to expected dedicated static-IP name (`site-web-preview-ip-<normalized-site>` unless configured otherwise).
+- Shared ingress static-IP binding is allowed only when endpoint mode resolves to `preview_shared_gateway`.
 - Cross-site certificate bindings are blocked.
-- Control plane ensures per-site global static IP existence before dispatch; target workflow validates presence as a runtime safety check.
-- Control plane ensures preview-host DNS `A` record (`<normalized-site>.site.mbsrn.com`) before dispatch and updates only that exact hostname/type.
+- Control plane ensures expected static-IP/gateway prerequisites before dispatch; target workflow validates presence as a runtime safety check.
+- Control plane ensures preview-host DNS `A` record (`<normalized-site>.site.mbsrn.com`) before dispatch and updates only that exact hostname/type when DNS management is enabled for that mode.
 - Target repositories do not create or mutate Cloud DNS records.
 - Conflicting DNS record types at the same hostname (for example CNAME) block deploy before dispatch.
 - `ingress.gcp.kubernetes.io/pre-shared-cert` is controller metadata and does not block deploy readiness by itself (including single-value name mismatch or multiple values).

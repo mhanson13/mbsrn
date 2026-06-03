@@ -219,8 +219,11 @@ class _StubMigrationGitHubPublisher(SEOMigrationGitHubPublisher):
         site_id: str | None,
         managed_gke_config: dict[str, object] | None,
         gcp_deploy_key: str | None,
+        namespace_isolation_defaults: dict[str, object] | None = None,
+        preview_hostname: str | None = None,
         dry_run: bool = False,
     ) -> SEOMigrationGitHubManagedSiteStaticIPEnsureResult:
+        del namespace_isolation_defaults, preview_hostname
         self.ensure_static_ip_calls.append(
             (
                 repo_owner,
