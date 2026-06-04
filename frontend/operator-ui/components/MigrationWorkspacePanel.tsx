@@ -4322,9 +4322,37 @@ export function MigrationWorkspacePanel({
   const artifactMediaPrimaryReason = artifactMediaReasons[0] || null;
   const artifactMediaSelectionUpdatedAfterArtifactCreated =
     asBooleanOrNull(draftInputSummary.artifact_media_selected_media_updated_after_artifact_created) ?? false;
+  const artifactMediaPendingGenerationCount =
+    asNonNegativeInt(draftInputSummary.artifact_media_selected_media_pending_generation_count)
+    ?? 0;
+  const artifactMediaPendingGeneration =
+    asBooleanOrNull(draftInputSummary.artifact_media_selected_media_pending_generation)
+    ?? artifactMediaPendingGenerationCount > 0;
+  const artifactMediaPendingGenerationMessage =
+    asStringOrNull(draftInputSummary.artifact_media_selected_media_pending_generation_message);
   const artifactMediaRegenerationRequired = artifactMediaBlockerCodes.some(
     (item) => item.trim().toLowerCase() === "artifact_regeneration_required_after_media_selection",
   ) || artifactMediaSelectionUpdatedAfterArtifactCreated;
+  const artifactMediaBlockingCodesForDraftInput = artifactMediaBlockerCodes.filter((item) => {
+    const normalized = item.trim().toLowerCase();
+    if (!normalized) {
+      return false;
+    }
+    if (
+      artifactMediaPendingGeneration
+      && (
+        normalized === "artifact_regeneration_required_after_media_selection"
+        || normalized === "selected_media_pending_generation"
+      )
+    ) {
+      return false;
+    }
+    return true;
+  });
+  const artifactMediaPendingGenerationDisplayCount =
+    artifactMediaPendingGenerationCount > 0
+      ? artifactMediaPendingGenerationCount
+      : Math.max(0, selectedUsableMediaAssetsCount - artifactMediaMaterializedAssetsCount);
   const mediaRequirementSatisfied =
     asBooleanOrNull(draftReadinessPreflight.media_requirement_satisfied)
     ?? asBooleanOrNull(draftInputSummary.media_requirement_satisfied)
@@ -8500,12 +8528,21 @@ export function MigrationWorkspacePanel({
         <span className="hint" data-testid="migration-artifact-media-reference-summary">
           Referenced by generated pages: {artifactMediaReferencedPathsCount}. Unresolved references: {artifactMediaUnresolvedReferencesCount}.
         </span>
+        {artifactMediaPendingGeneration ? (
+          <span className="hint muted" data-testid="migration-artifact-media-pending-generation-note">
+            {artifactMediaPendingGenerationMessage
+              || (
+                `${artifactMediaPendingGenerationDisplayCount} selected image`
+                + `${artifactMediaPendingGenerationDisplayCount === 1 ? "" : "s"} will be included when you generate the next draft package.`
+              )}
+          </span>
+        ) : null}
         {artifactMediaRegenerationRequired ? (
           <span className="hint warning" data-testid="migration-artifact-media-regeneration-required-warning">
             {artifactMediaPrimaryReason
               || "Selected images changed after this artifact was generated. Generate and approve a new artifact version before publishing media changes."}
           </span>
-        ) : artifactMediaSelectedNotMaterializedCount > 0 ? (
+        ) : artifactMediaSelectedNotMaterializedCount > 0 && !artifactMediaPendingGeneration ? (
           <span className="hint warning" data-testid="migration-artifact-media-not-materialized-warning">
             {artifactMediaSelectedNotMaterializedCount} selected image
             {artifactMediaSelectedNotMaterializedCount === 1 ? "" : "s"} were not materialized into artifact assets.
@@ -8522,9 +8559,9 @@ export function MigrationWorkspacePanel({
             {artifactMediaUnreferencedMaterializedCount === 1 ? "" : "s"} are currently unused by generated pages.
           </span>
         ) : null}
-        {artifactMediaReadyForPublishDeploy === false && artifactMediaBlockerCodes.length > 0 ? (
+        {artifactMediaReadyForPublishDeploy === false && artifactMediaBlockingCodesForDraftInput.length > 0 ? (
           <span className="hint warning" data-testid="migration-artifact-media-readiness-blockers">
-            Media readiness blockers: {artifactMediaBlockerCodes.slice(0, 4).join(", ").replace(/_/g, " ")}.
+            Media readiness blockers: {artifactMediaBlockingCodesForDraftInput.slice(0, 4).join(", ").replace(/_/g, " ")}.
           </span>
         ) : null}
         <span className="hint muted">

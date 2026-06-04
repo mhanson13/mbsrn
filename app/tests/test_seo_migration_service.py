@@ -5131,6 +5131,149 @@ def test_publish_readiness_requires_regeneration_when_selected_media_changes_aft
     assert "chosen after this artifact was generated" in reasons[0].lower()
 
 
+def test_publish_media_readiness_uses_pending_generation_status_for_stale_artifact_media_snapshot(
+    db_session,
+    monkeypatch,
+) -> None:
+    publisher = _RecordingGitHubPublisher(
+        existing_repository=True,
+        preflight_blocker_code="github_workflow_write_not_authorized",
+        preflight_can_read_contents=True,
+        preflight_can_write_contents=True,
+        preflight_can_write_workflows=False,
+    )
+    provider = _StaticMigrationProvider(_build_publishable_output())
+    service = _build_service(
+        db_session,
+        provider,
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+
+    first_upload = service.upload_workspace_media_asset(
+        business_id=business_id,
+        site_id=site_id,
+        filename="hero-before.png",
+        content_type="image/png",
+        payload=_tiny_png_payload(),
+        selected_for_draft=True,
+        category="hero",
+        alt_text="Hero before",
+        description=None,
+        usage_note=None,
+        page_assignment=None,
+        principal_id="principal-1",
+    )
+    first_asset_id = str(first_upload.get("asset_id") or "").strip()
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes=None,
+        principal_id="principal-1",
+    )
+    assert first_asset_id.startswith("upl-")
+
+    context_json = seo_migration_module._normalize_json_dict(artifact.context_json)
+    context_json["artifact_media_manifest"] = {
+        "selected_assets_count": 1,
+        "materialized_assets_count": 0,
+        "manifest": [
+            {
+                "asset_id": first_asset_id,
+                "original_filename": "hero-before.png",
+                "safe_output_filename": "hero-before.png",
+                "output_relative_path": "assets/images/hero-before.png",
+                "materialized": False,
+                "reason_code": "media_bytes_missing",
+            }
+        ],
+    }
+    context_json["artifact_media_diagnostics"] = {
+        "selected_assets_count": 1,
+        "materialized_assets_count": 0,
+        "selected_not_materialized_count": 1,
+        "selected_not_materialized_asset_ids": [first_asset_id],
+        "selected_not_materialized_reason_counts": {"media_bytes_missing": 1},
+        "selected_not_materialized": [
+            {
+                "asset_id": first_asset_id,
+                "output_relative_path": "assets/images/hero-before.png",
+                "reason_code": "media_bytes_missing",
+            }
+        ],
+        "blocker_codes": ["selected_media_not_materialized"],
+    }
+    artifact.context_json = context_json
+    db_session.add(artifact)
+    db_session.commit()
+
+    second_upload = service.upload_workspace_media_asset(
+        business_id=business_id,
+        site_id=site_id,
+        filename="hero-after.png",
+        content_type="image/png",
+        payload=_tiny_png_payload(),
+        selected_for_draft=True,
+        category="hero",
+        alt_text="Hero after",
+        description=None,
+        usage_note=None,
+        page_assignment=None,
+        principal_id="principal-1",
+    )
+    second_asset_id = str(second_upload.get("asset_id") or "").strip()
+    assert second_asset_id.startswith("upl-")
+
+    def _mock_prepare_artifact_media_for_publish(**_: object) -> dict[str, object]:
+        return {
+            "artifact_media_readiness": {
+                "ready": False,
+                "blocker_codes": ["selected_media_not_materialized"],
+                "reasons": ["2 selected image(s) were not materialized into artifacts."],
+                "selected_assets_count": 2,
+                "materialized_assets_count": 0,
+                "selected_not_materialized_count": 2,
+                "selected_not_materialized_asset_ids": [first_asset_id, second_asset_id],
+            }
+        }
+
+    monkeypatch.setattr(service, "_prepare_artifact_media_for_publish", _mock_prepare_artifact_media_for_publish)
+
+    summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
+    publish_readiness = summary.publish_readiness if isinstance(summary.publish_readiness, dict) else {}
+    publish_media = (
+        publish_readiness.get("artifact_media_readiness")
+        if isinstance(publish_readiness.get("artifact_media_readiness"), dict)
+        else {}
+    )
+    draft_input_summary = seo_migration_module._normalize_json_dict(
+        seo_migration_module._normalize_json_dict(summary.context_summary).get("draft_input_summary")
+    )
+
+    assert publish_media.get("readiness_source") == "repair_preview"
+    assert publish_media.get("selected_media_pending_generation") is True
+    assert publish_media.get("selected_media_pending_generation_count") == 1
+    assert second_asset_id in list(publish_media.get("selected_media_pending_generation_ids") or [])
+    assert "artifact_regeneration_required_after_media_selection" in list(publish_media.get("blocker_codes") or [])
+    assert "selected_media_not_materialized" not in list(publish_media.get("blocker_codes") or [])
+    assert "next draft package" in str(publish_media.get("selected_media_pending_generation_message") or "").lower()
+
+    assert draft_input_summary.get("artifact_media_selected_media_pending_generation") is True
+    assert draft_input_summary.get("artifact_media_selected_media_pending_generation_count") == 1
+    assert (
+        "next draft package"
+        in str(draft_input_summary.get("artifact_media_selected_media_pending_generation_message") or "").lower()
+    )
+
+
 def test_generate_artifacts_rejection_emits_contract_diagnostics(db_session, caplog) -> None:
     output = SEOMigrationArtifactGenerationOutput(
         strategy_summary="Draft strategy",

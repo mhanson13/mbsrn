@@ -2740,6 +2740,12 @@ Readiness/cutover blockers now include:
 - generated HTML references internal/private media routes or unsafe paths
 - selected media was changed after the currently selected artifact version was generated (`artifact_regeneration_required_after_media_selection`); generate/approve a new artifact version before publish
 
+Pending-generation status (non-blocking in draft preflight):
+- if selected usable images were added after the currently selected artifact snapshot, draft input summary may show `selected_media_pending_generation`
+- operator copy should read: `X selected images will be included when you generate the next draft package.`
+- this pending-generation state is not treated as a post-generation materialization failure
+- `selected_media_not_materialized` remains valid only when a generated artifact/package should already contain the selected media but files are still missing
+
 Readiness evidence notes:
 - media readiness is artifact-version-specific and includes selected-media IDs, expected artifact paths, matched artifact paths, and missing artifact paths
 - when GitHub asset evidence is unavailable, diagnostics explicitly report `github_asset_check_status=not_checked` instead of implying absence

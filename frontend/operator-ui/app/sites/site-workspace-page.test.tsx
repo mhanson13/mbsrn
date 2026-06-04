@@ -2667,6 +2667,50 @@ describe("site migration workflow route", () => {
     );
   });
 
+  it("shows pending-generation guidance instead of selected-media materialization blocker before next draft package generation", async () => {
+    const summary = buildMigrationWorkspaceSummary();
+    summary.context_summary = {
+      ...summary.context_summary,
+      draft_input_summary: {
+        artifact_media_selected_assets_count: 5,
+        artifact_media_materialized_assets_count: 0,
+        artifact_media_referenced_paths_count: 3,
+        artifact_media_unresolved_references_count: 0,
+        artifact_media_selected_not_materialized_count: 5,
+        artifact_media_unreferenced_materialized_count: 0,
+        artifact_media_ready_for_publish_deploy: false,
+        artifact_media_blocker_codes: [
+          "artifact_regeneration_required_after_media_selection",
+          "selected_media_pending_generation",
+        ],
+        artifact_media_reasons: [
+          "5 selected image(s) were chosen after this artifact was generated. Generate and approve a new artifact version before publishing media changes.",
+        ],
+        artifact_media_selected_media_updated_after_artifact_created: true,
+        artifact_media_selected_media_pending_generation: true,
+        artifact_media_selected_media_pending_generation_count: 5,
+        artifact_media_selected_media_pending_generation_message:
+          "5 selected images will be included when you generate the next draft package.",
+        selected_usable_media_assets_count: 5,
+      },
+    };
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(summary);
+    mockFetchMigrationArtifactVersions.mockResolvedValueOnce({
+      items: [summary.latest_artifact as MigrationArtifactVersion],
+      total: 1,
+    });
+
+    render(<SiteMigrationWorkflowPage />);
+
+    expect(await screen.findByTestId("migration-draft-readiness")).toHaveTextContent("Status: Ready");
+    expect(screen.getByTestId("migration-draft-readiness")).toHaveTextContent("Ready to generate draft.");
+    expect(screen.getByTestId("migration-artifact-media-pending-generation-note")).toHaveTextContent(
+      "5 selected images will be included when you generate the next draft package.",
+    );
+    expect(screen.queryByTestId("migration-artifact-media-not-materialized-warning")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("migration-artifact-media-readiness-blockers")).not.toBeInTheDocument();
+  });
+
   it("renders Section D as a single Draft Artifact Review surface with top action row and quality directly below", async () => {
     render(<SiteMigrationWorkflowPage />);
 

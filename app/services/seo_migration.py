@@ -12253,6 +12253,22 @@ class SEOMigrationService:
         draft_input_summary_payload["artifact_media_selected_media_updated_after_artifact_created"] = bool(
             latest_artifact_media_readiness.get("selected_media_updated_after_artifact_created")
         )
+        draft_input_summary_payload["artifact_media_selected_media_pending_generation"] = bool(
+            latest_artifact_media_readiness.get("selected_media_pending_generation")
+        )
+        draft_input_summary_payload["artifact_media_selected_media_pending_generation_count"] = max(
+            0,
+            int(latest_artifact_media_readiness.get("selected_media_pending_generation_count") or 0),
+        )
+        draft_input_summary_payload["artifact_media_selected_media_pending_generation_message"] = _normalize_string(
+            latest_artifact_media_readiness.get("selected_media_pending_generation_message"),
+            max_length=240,
+        )
+        draft_input_summary_payload["artifact_media_status_codes"] = _normalize_string_list(
+            latest_artifact_media_readiness.get("status_codes"),
+            max_items=12,
+            max_item_length=80,
+        )
         provider_call_skipped = ai_execution_summary.get("provider_call_skipped")
         if isinstance(provider_call_skipped, bool):
             draft_input_summary_payload["generation_provider_call_skipped"] = provider_call_skipped
@@ -21233,9 +21249,29 @@ class SEOMigrationService:
         readiness_payload["github_asset_missing_paths"] = []
         readiness_payload["stale_action_refresh_required"] = False
 
+        selected_media_pending_generation_count = len(selected_media_missing_from_manifest)
+        readiness_payload["selected_media_pending_generation"] = selected_media_updated_after_artifact_created
+        readiness_payload["selected_media_pending_generation_count"] = selected_media_pending_generation_count
+        readiness_payload["selected_media_pending_generation_ids"] = (
+            selected_media_missing_from_manifest[:_MIGRATION_ARTIFACT_MAX_MEDIA_FILES]
+        )
+        if selected_media_updated_after_artifact_created:
+            readiness_payload["selected_media_pending_generation_message"] = (
+                f"{selected_media_pending_generation_count} selected image"
+                f"{'' if selected_media_pending_generation_count == 1 else 's'} "
+                "will be included when you generate the next draft package."
+            )
+            status_codes = _normalize_string_list(
+                readiness_payload.get("status_codes"),
+                max_items=20,
+                max_item_length=80,
+            )
+            status_codes.insert(0, "selected_media_pending_generation")
+            readiness_payload["status_codes"] = _dedupe_strings(status_codes)
+        else:
+            readiness_payload["selected_media_pending_generation_message"] = None
+
         if not selected_media_updated_after_artifact_created:
-            return readiness_payload
-        if readiness_source != "artifact_snapshot":
             return readiness_payload
 
         blocker_codes = _normalize_string_list(
@@ -21257,7 +21293,11 @@ class SEOMigrationService:
         reasons = [
             item
             for item in reasons
-            if "selected image" not in item.lower() or "not materialized into artifacts" not in item.lower()
+            if (
+                "selected image" not in item.lower()
+                or "not materialized into artifacts" not in item.lower()
+            )
+            and "chosen after this artifact was generated" not in item.lower()
         ]
         changed_count = len(selected_media_missing_from_manifest)
         reasons.insert(
@@ -22020,6 +22060,11 @@ def _build_artifact_media_readiness_from_payload(
             max_items=80,
             max_item_length=240,
         ),
+        "status_codes": [],
+        "selected_media_pending_generation": False,
+        "selected_media_pending_generation_count": 0,
+        "selected_media_pending_generation_ids": [],
+        "selected_media_pending_generation_message": None,
     }
 
 
