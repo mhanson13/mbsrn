@@ -413,6 +413,9 @@ _DEPLOY_EXPECTED_WORKFLOW_OUTPUT_KEYS: tuple[str, ...] = (
     "resolved_live_url",
     "live_url",
     "deployed_url",
+    "managed_site_runtime_replace_performed",
+    "managed_site_runtime_replace_scope",
+    "managed_site_runtime_replace_deleted_kinds",
 )
 _DEPLOY_EVIDENCE_CONTRACT_STATUS_CONFIRMED = "confirmed_live_evidence"
 _DEPLOY_EVIDENCE_CONTRACT_STATUS_PLACEHOLDER = "workflow_placeholder_advisory"
@@ -448,6 +451,7 @@ _WORKFLOW_REMEDIATION_OUTCOME_ALREADY_CURRENT = "remediation_already_current"
 _WORKFLOW_REMEDIATION_OUTCOME_PRESERVED_CUSTOM = "remediation_preserved_custom"
 _WORKFLOW_REMEDIATION_OUTCOME_WRITE_FAILED = "remediation_write_failed"
 _DEPLOY_SECRET_NAME_GCP_DEPLOY_KEY = "GCP_DEPLOY_KEY"
+_DEPLOY_WORKFLOW_INPUT_REPLACE_EXISTING_RUNTIME = "replace_existing_runtime"
 _DEPLOY_SECRET_PROPAGATION_STATUS_NOT_ATTEMPTED = "not_attempted"
 _DEPLOY_SECRET_PROPAGATION_STATUS_CREATED = "created"
 _DEPLOY_SECRET_PROPAGATION_STATUS_UPDATED = "updated"
@@ -572,10 +576,14 @@ _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_DOMAIN_DRIFT_REPAIR_FAILED =
 _DEPLOY_DISPATCH_SERVICE_REASON_STALE_PRE_SHARED_CERT_BINDING = "stale_pre_shared_cert_binding_detected"
 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_FAILED_NOT_VISIBLE = "managed_certificate_failed_not_visible"
 _DEPLOY_DISPATCH_SERVICE_REASON_DEPLOYED_CONTENT_IDENTITY_MISMATCH = "deployed_content_identity_mismatch"
+_DEPLOY_DISPATCH_SERVICE_REASON_LEGACY_RUNTIME_REPLACEMENT_REQUIRED = "legacy_runtime_replacement_required"
 _DEPLOY_DISPATCH_SERVICE_REASON_DNS_RECORD_MISMATCH = "dns_record_mismatch"
 _DEPLOY_DISPATCH_SERVICE_REASON_DNS_POINTS_TO_OLD_INGRESS_IP = "dns_points_to_old_ingress_ip"
 _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_IP_ASSIGNED_BUT_DNS_NOT_UPDATED = "ingress_ip_assigned_but_dns_not_updated"
 _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_PROVISIONING = "tls_certificate_provisioning"
+_DEPLOY_RUNTIME_REASON_MANAGED_SITE_RUNTIME_REPLACE_REQUESTED = "managed_site_runtime_replace_requested"
+_DEPLOY_RUNTIME_REASON_MANAGED_SITE_RUNTIME_REPLACE_COMPLETED = "managed_site_runtime_replace_completed"
+_DEPLOY_RUNTIME_REASON_MANAGED_SITE_RUNTIME_REPLACE_FAILED = "managed_site_runtime_replace_failed"
 _MANAGED_PREVIEW_ENDPOINT_MODE_SHARED_GATEWAY = "preview_shared_gateway"
 _MANAGED_PREVIEW_ENDPOINT_MODE_DEDICATED_STATIC_IP = "dedicated_static_ip"
 _DEPLOY_WORKFLOW_INTEGRITY_STATUS_MATCH = "match"
@@ -4779,6 +4787,7 @@ class SEOMigrationService:
         site_id: str,
         artifact_version_id: str,
         dry_run: bool,
+        replace_existing_runtime: bool = False,
         principal_id: str | None,
     ) -> SEOMigrationDeployActionResult:
         started_at = time.monotonic()
@@ -4800,6 +4809,7 @@ class SEOMigrationService:
             artifact_version=artifact.version,
             principal_id=principal_id,
             dry_run=dry_run,
+            replace_existing_runtime=bool(replace_existing_runtime),
             target_summary=self._safe_deploy_target_summary(
                 workspace=workspace,
             ),
@@ -4809,6 +4819,7 @@ class SEOMigrationService:
             site=site,
             workspace=workspace,
             artifact=artifact,
+            replace_existing_runtime=bool(replace_existing_runtime),
         )
         if not readiness["ready"]:
             reason_text = "; ".join(str(item) for item in readiness.get("reasons", [])) or "Deploy readiness failed."
@@ -5025,6 +5036,8 @@ class SEOMigrationService:
         # Implicit runtime metadata (site_id/artifact_version/ga_measurement_id/etc.) should not
         # be auto-injected because GitHub rejects undeclared workflow_dispatch inputs.
         deploy_inputs = dict(deploy_target["inputs"])
+        if replace_existing_runtime:
+            deploy_inputs[_DEPLOY_WORKFLOW_INPUT_REPLACE_EXISTING_RUNTIME] = "true"
         workflow_inputs_sent_keys = _normalize_dispatch_input_keys(deploy_inputs)
         analytics_config = _normalize_analytics_config(workspace.analytics_config_json)
         analytics_insertion_mode = str(analytics_config.get("insertion_mode") or "publish_and_deploy")
@@ -7444,6 +7457,13 @@ class SEOMigrationService:
         endpoint_probe_status_code = runtime_network_readiness.get("endpoint_probe_status_code")
         runtime_probe_status = runtime_network_readiness.get("runtime_probe_status")
         pod_restart_detected = runtime_network_readiness.get("pod_restart_detected")
+        managed_site_runtime_replace_performed = runtime_network_readiness.get(
+            "managed_site_runtime_replace_performed"
+        )
+        managed_site_runtime_replace_scope = runtime_network_readiness.get("managed_site_runtime_replace_scope")
+        managed_site_runtime_replace_deleted_kinds = runtime_network_readiness.get(
+            "managed_site_runtime_replace_deleted_kinds"
+        )
         workflow_integrity_status = None
         workflow_integrity_reason_code = None
         if target_readiness is not None:
@@ -7985,6 +8005,9 @@ class SEOMigrationService:
             "endpoint_probe_status_code": endpoint_probe_status_code,
             "runtime_probe_status": runtime_probe_status,
             "pod_restart_detected": pod_restart_detected,
+            "managed_site_runtime_replace_performed": managed_site_runtime_replace_performed,
+            "managed_site_runtime_replace_scope": managed_site_runtime_replace_scope,
+            "managed_site_runtime_replace_deleted_kinds": managed_site_runtime_replace_deleted_kinds,
             "expected_static_ip_name": expected_static_ip_name,
             "expected_static_ip_address": expected_static_ip_address,
             "static_ip_created": static_ip_created,
@@ -10068,6 +10091,19 @@ class SEOMigrationService:
             "workflow_integrity_reason_code": _normalize_workflow_integrity_reason_code(
                 next_item.get("workflow_integrity_reason_code")
             ),
+            "managed_site_runtime_replace_performed": (
+                bool(next_item.get("managed_site_runtime_replace_performed"))
+                if isinstance(next_item.get("managed_site_runtime_replace_performed"), bool)
+                else None
+            ),
+            "managed_site_runtime_replace_scope": _normalize_string(
+                next_item.get("managed_site_runtime_replace_scope"),
+                max_length=240,
+            ),
+            "managed_site_runtime_replace_deleted_kinds": _normalize_string(
+                next_item.get("managed_site_runtime_replace_deleted_kinds"),
+                max_length=240,
+            ),
             "site_runtime_image_reference": _normalize_string(
                 next_item.get("site_runtime_image_reference"),
                 max_length=255,
@@ -10592,6 +10628,19 @@ class SEOMigrationService:
             ),
             "workflow_integrity_reason_code": _normalize_workflow_integrity_reason_code(
                 history_item.get("workflow_integrity_reason_code")
+            ),
+            "managed_site_runtime_replace_performed": (
+                bool(history_item.get("managed_site_runtime_replace_performed"))
+                if isinstance(history_item.get("managed_site_runtime_replace_performed"), bool)
+                else None
+            ),
+            "managed_site_runtime_replace_scope": _normalize_string(
+                history_item.get("managed_site_runtime_replace_scope"),
+                max_length=240,
+            ),
+            "managed_site_runtime_replace_deleted_kinds": _normalize_string(
+                history_item.get("managed_site_runtime_replace_deleted_kinds"),
+                max_length=240,
             ),
             "post_dispatch_state": _normalize_string(history_item.get("post_dispatch_state"), max_length=80)
             or _derive_post_dispatch_state(
@@ -15288,6 +15337,7 @@ class SEOMigrationService:
         principal_id: str | None,
         target_summary: object | None = None,
         dry_run: bool | None = None,
+        replace_existing_runtime: bool | None = None,
         duration_ms: int | None = None,
         failure_category: str | None = None,
         failure_reason: str | None = None,
@@ -15312,6 +15362,8 @@ class SEOMigrationService:
         }
         if dry_run is not None:
             payload["dry_run"] = bool(dry_run)
+        if replace_existing_runtime is not None:
+            payload["replace_existing_runtime"] = bool(replace_existing_runtime)
         if duration_ms is not None:
             payload["duration_ms"] = max(0, int(duration_ms))
         if safe_failure_reason:
@@ -17384,6 +17436,17 @@ class SEOMigrationService:
                 max_length=48,
             ),
             "pod_restart_detected": _coerce_optional_bool(workflow_output_payload.get("pod_restart_detected")),
+            "managed_site_runtime_replace_performed": _coerce_optional_bool(
+                workflow_output_payload.get("managed_site_runtime_replace_performed")
+            ),
+            "managed_site_runtime_replace_scope": _normalize_string(
+                workflow_output_payload.get("managed_site_runtime_replace_scope"),
+                max_length=240,
+            ),
+            "managed_site_runtime_replace_deleted_kinds": _normalize_string(
+                workflow_output_payload.get("managed_site_runtime_replace_deleted_kinds"),
+                max_length=240,
+            ),
             "current_live_url": _normalize_url_candidate(workflow_output_payload.get("current_live_url"))
             or _normalize_url_candidate(workflow_output_payload.get("live_url")),
             "current_host_reachable": (
@@ -18380,6 +18443,17 @@ class SEOMigrationService:
                     max_length=80,
                 ),
                 "pod_restart_detected": _coerce_optional_bool(item.get("pod_restart_detected")),
+                "managed_site_runtime_replace_performed": _coerce_optional_bool(
+                    item.get("managed_site_runtime_replace_performed")
+                ),
+                "managed_site_runtime_replace_scope": _normalize_string(
+                    item.get("managed_site_runtime_replace_scope"),
+                    max_length=240,
+                ),
+                "managed_site_runtime_replace_deleted_kinds": _normalize_string(
+                    item.get("managed_site_runtime_replace_deleted_kinds"),
+                    max_length=240,
+                ),
                 "current_live_url": _normalize_url_candidate(item.get("current_live_url")),
                 "current_host_reachable": (
                     bool(item.get("current_host_reachable"))
@@ -18944,6 +19018,7 @@ class SEOMigrationService:
         site: SEOSite,
         workspace: SEOMigrationWorkspace,
         artifact: SEOMigrationArtifactVersion | None,
+        replace_existing_runtime: bool = False,
     ) -> dict[str, object]:
         reasons: list[str] = []
         blocker_codes: list[str] = []
@@ -18998,6 +19073,7 @@ class SEOMigrationService:
                     "preview_endpoint_mode": workflow_resolution.get("preview_endpoint_mode"),
                     "uses_shared_preview_gateway": workflow_resolution.get("uses_shared_preview_gateway"),
                     "shared_preview_static_ip_name": workflow_resolution.get("shared_preview_static_ip_name"),
+                    "managed_site_runtime_replace_requested": bool(replace_existing_runtime),
                 }
                 if workflow_resolution.get("workflow_path"):
                     target_summary["resolved_workflow_path"] = workflow_resolution.get("workflow_path")
@@ -19279,6 +19355,22 @@ class SEOMigrationService:
                             target_summary.get("image_pull_secret_provisioning_unavailable"),
                         )
                     )
+
+        legacy_runtime_reason_code = (
+            _normalize_dispatch_service_reason_code(dispatch_service_reason_code)
+            if _is_legacy_runtime_replacement_reason(dispatch_service_reason_code)
+            else None
+        )
+        if legacy_runtime_reason_code is not None:
+            target_summary["legacy_runtime_detected"] = True
+            target_summary["legacy_runtime_reason_code"] = legacy_runtime_reason_code
+            target_summary["managed_site_runtime_replace_requested"] = bool(replace_existing_runtime)
+            if replace_existing_runtime:
+                dispatch_service_reason_code = _DEPLOY_DISPATCH_SERVICE_REASON_AVAILABLE
+                if dispatch_service_availability is not None:
+                    dispatch_service_availability = True
+            else:
+                dispatch_service_reason_code = _DEPLOY_DISPATCH_SERVICE_REASON_LEGACY_RUNTIME_REPLACEMENT_REQUIRED
 
         managed_gke_dispatch_message = _derive_managed_gke_dispatch_readiness_message(
             dispatch_service_reason_code=dispatch_service_reason_code
@@ -20114,6 +20206,19 @@ class SEOMigrationService:
             "endpoint_probe_status_code": endpoint_probe_status_code,
             "runtime_probe_status": runtime_probe_status,
             "pod_restart_detected": pod_restart_detected,
+            "managed_site_runtime_replace_performed": (
+                bool(latest_traceability.get("managed_site_runtime_replace_performed"))
+                if isinstance(latest_traceability.get("managed_site_runtime_replace_performed"), bool)
+                else None
+            ),
+            "managed_site_runtime_replace_scope": _normalize_string(
+                latest_traceability.get("managed_site_runtime_replace_scope"),
+                max_length=240,
+            ),
+            "managed_site_runtime_replace_deleted_kinds": _normalize_string(
+                latest_traceability.get("managed_site_runtime_replace_deleted_kinds"),
+                max_length=240,
+            ),
             "selected_workflow_attempt_status": selected_workflow_attempt_status,
             "selected_workflow_attempt_conclusion": selected_workflow_attempt_conclusion,
             "selected_workflow_failed_step": selected_workflow_failed_step,
@@ -20256,6 +20361,19 @@ class SEOMigrationService:
                 "endpoint_probe_status_code": endpoint_probe_status_code,
                 "runtime_probe_status": runtime_probe_status,
                 "pod_restart_detected": pod_restart_detected,
+                "managed_site_runtime_replace_performed": (
+                    bool(latest_traceability.get("managed_site_runtime_replace_performed"))
+                    if isinstance(latest_traceability.get("managed_site_runtime_replace_performed"), bool)
+                    else None
+                ),
+                "managed_site_runtime_replace_scope": _normalize_string(
+                    latest_traceability.get("managed_site_runtime_replace_scope"),
+                    max_length=240,
+                ),
+                "managed_site_runtime_replace_deleted_kinds": _normalize_string(
+                    latest_traceability.get("managed_site_runtime_replace_deleted_kinds"),
+                    max_length=240,
+                ),
                 "current_live_url": current_live_url,
                 "current_host_reachable": current_host_reachable,
                 "current_host_reachability_scheme": current_host_reachability_scheme,
@@ -23248,6 +23366,7 @@ def _normalize_deploy_failure_reason_code(value: object) -> str | None:
         "github_repo_initialization_failed",
         "github_repo_requires_manual_initialization",
         _DEPLOY_RUN_FAILURE_REASON_GENERATED_WORKFLOW_REQUIRES_MISSING_GCP_DEPLOY_KEY,
+        _DEPLOY_RUNTIME_REASON_MANAGED_SITE_RUNTIME_REPLACE_FAILED,
     }
     if normalized_lower in allowed:
         return normalized_lower
@@ -23354,6 +23473,9 @@ def _normalize_workflow_run_failure_reason_code(value: object) -> str | None:
         _DEPLOY_RUN_FAILURE_REASON_HTTPS_PROBE_NOT_ATTEMPTED,
         _DEPLOY_RUN_FAILURE_REASON_HTTPS_PROBE_FAILED_AFTER_CONTROL_PLANE_READY,
         _DEPLOY_RUN_FAILURE_REASON_GENERATED_WORKFLOW_REQUIRES_MISSING_GCP_DEPLOY_KEY,
+        _DEPLOY_RUNTIME_REASON_MANAGED_SITE_RUNTIME_REPLACE_REQUESTED,
+        _DEPLOY_RUNTIME_REASON_MANAGED_SITE_RUNTIME_REPLACE_COMPLETED,
+        _DEPLOY_RUNTIME_REASON_MANAGED_SITE_RUNTIME_REPLACE_FAILED,
     }
     if normalized_lower in allowed:
         return normalized_lower
@@ -23433,10 +23555,14 @@ def _normalize_dispatch_service_reason_code(value: object) -> str | None:
         _DEPLOY_DISPATCH_SERVICE_REASON_STALE_PRE_SHARED_CERT_BINDING,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_FAILED_NOT_VISIBLE,
         _DEPLOY_DISPATCH_SERVICE_REASON_DEPLOYED_CONTENT_IDENTITY_MISMATCH,
+        _DEPLOY_DISPATCH_SERVICE_REASON_LEGACY_RUNTIME_REPLACEMENT_REQUIRED,
         _DEPLOY_DISPATCH_SERVICE_REASON_DNS_RECORD_MISMATCH,
         _DEPLOY_DISPATCH_SERVICE_REASON_DNS_POINTS_TO_OLD_INGRESS_IP,
         _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_IP_ASSIGNED_BUT_DNS_NOT_UPDATED,
         _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_PROVISIONING,
+        _DEPLOY_RUNTIME_REASON_MANAGED_SITE_RUNTIME_REPLACE_REQUESTED,
+        _DEPLOY_RUNTIME_REASON_MANAGED_SITE_RUNTIME_REPLACE_COMPLETED,
+        _DEPLOY_RUNTIME_REASON_MANAGED_SITE_RUNTIME_REPLACE_FAILED,
     }:
         return normalized_lower
     if normalized_lower in {
@@ -24026,6 +24152,21 @@ def _derive_dispatch_service_reason_code(
     return _DEPLOY_DISPATCH_SERVICE_REASON_RUNTIME_UNAVAILABLE
 
 
+def _is_legacy_runtime_replacement_reason(reason_code: object) -> bool:
+    normalized_reason = _normalize_dispatch_service_reason_code(reason_code)
+    if not normalized_reason:
+        return False
+    return normalized_reason in {
+        _DEPLOY_DISPATCH_SERVICE_REASON_DEPLOYED_CONTENT_IDENTITY_MISMATCH,
+        _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_STATIC_IP_CONFLICT,
+        _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_STATIC_IP_NOT_ALLOWED,
+        _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_CERTIFICATE_ANNOTATION_MISMATCH,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_IDENTITY_MISMATCH,
+        _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_BOUND_TO_WRONG_SITE,
+        _DEPLOY_DISPATCH_SERVICE_REASON_STALE_PRE_SHARED_CERT_BINDING,
+    }
+
+
 def _derive_managed_gke_dispatch_readiness_message(*, dispatch_service_reason_code: object) -> str | None:
     normalized_dispatch_reason = _normalize_dispatch_service_reason_code(dispatch_service_reason_code)
     if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MISSING_CLUSTER_NAME:
@@ -24042,6 +24183,12 @@ def _derive_managed_gke_dispatch_readiness_message(*, dispatch_service_reason_co
         return (
             "Admin action required: managed deploy target is missing required admin GKE project id "
             "configuration. Update MBSRN admin deployment settings."
+        )
+    if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_LEGACY_RUNTIME_REPLACEMENT_REQUIRED:
+        return (
+            "Existing managed-site runtime resources were created with legacy endpoint/runtime state. "
+            "Use 'Replace existing managed-site runtime before deploy' to recreate site resources from current "
+            "managed manifests and endpoint settings."
         )
     if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_TARGET_REPO_DEPLOY_SECRET_MISSING:
         return (
@@ -24440,6 +24587,12 @@ def _derive_deploy_failure_remediation_hint(
             "Ingress static IP annotation does not match the configured managed preview endpoint mode. "
             "Republish managed ingress resources so the expected static IP annotation is bound."
         )
+    if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_LEGACY_RUNTIME_REPLACEMENT_REQUIRED:
+        return (
+            "Existing managed-site runtime resources were created with legacy endpoint/runtime state. "
+            "Enable 'Replace existing managed-site runtime before deploy' for the next deploy attempt to run "
+            "scoped runtime cleanup and recreate resources from current managed manifests."
+        )
     if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_MISSING:
         return (
             "Expected per-site global static IP is missing in GCP. "
@@ -24591,6 +24744,20 @@ def _derive_workflow_run_failure_hint(
             "NetworkPolicy may be blocking same-namespace probe traffic to site-web. "
             "Verify allow rules for namespace-local ingress to pod port 8080."
         )
+    if normalized_reason == _DEPLOY_RUNTIME_REASON_MANAGED_SITE_RUNTIME_REPLACE_FAILED:
+        return (
+            "Scoped managed-site runtime replacement failed before manifest apply. "
+            "Verify Kubernetes RBAC/resource permissions for ingress, managedcertificate, frontendconfig, "
+            "backendconfig, service, deployment, and site-scoped networkpolicy cleanup in the target namespace."
+        )
+    if normalized_reason == _DEPLOY_RUNTIME_REASON_MANAGED_SITE_RUNTIME_REPLACE_REQUESTED:
+        return (
+            "Scoped managed-site runtime replacement was requested for this deploy run."
+        )
+    if normalized_reason == _DEPLOY_RUNTIME_REASON_MANAGED_SITE_RUNTIME_REPLACE_COMPLETED:
+        return (
+            "Scoped managed-site runtime replacement completed before managed manifests were applied."
+        )
     if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_MANAGED_CERTIFICATE_METADATA_UNAVAILABLE:
         return (
             "ManagedCertificate metadata was unavailable from cluster API, but HTTPS/TLS identity evidence can still "
@@ -24669,6 +24836,11 @@ def _derive_workflow_run_failure_hint(
         return (
             "Deploy workflow failed because required target-repo secret GCP_DEPLOY_KEY was missing. "
             "Provision deploy auth prerequisites and retry."
+        )
+    if normalized_reason == _DEPLOY_RUNTIME_REASON_MANAGED_SITE_RUNTIME_REPLACE_FAILED:
+        return (
+            "Replace runtime step failed while deleting managed site resources. "
+            "Review workflow diagnostics and retry replace runtime deploy."
         )
     if normalized_reason == _DEPLOY_DISPATCH_SERVICE_REASON_TARGET_REPO_DEPLOY_SECRET_MISSING:
         return (

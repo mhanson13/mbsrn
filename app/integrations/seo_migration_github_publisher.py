@@ -9450,6 +9450,12 @@ def _render_managed_deploy_workflow_yaml(
         "\n"
         "on:\n"
         "  workflow_dispatch:\n"
+        "    inputs:\n"
+        "      replace_existing_runtime:\n"
+        "        description: Replace existing managed-site runtime resources before deploy\n"
+        "        required: false\n"
+        "        default: false\n"
+        "        type: boolean\n"
         "\n"
         "permissions:\n"
         "  contents: read\n"
@@ -9488,6 +9494,9 @@ def _render_managed_deploy_workflow_yaml(
         "      site_runtime_image_tag_source: ${{ steps.resolve_site_runtime_image.outputs.site_runtime_image_tag_source }}\n"
         "      site_runtime_source_commit: ${{ steps.resolve_site_runtime_image.outputs.site_runtime_source_commit }}\n"
         "      site_runtime_content_source: ${{ steps.resolve_site_runtime_image.outputs.site_runtime_content_source }}\n"
+        "      managed_site_runtime_replace_performed: ${{ steps.replace_managed_runtime.outputs.managed_site_runtime_replace_performed }}\n"
+        "      managed_site_runtime_replace_scope: ${{ steps.replace_managed_runtime.outputs.managed_site_runtime_replace_scope }}\n"
+        "      managed_site_runtime_replace_deleted_kinds: ${{ steps.replace_managed_runtime.outputs.managed_site_runtime_replace_deleted_kinds }}\n"
         "    environment:\n"
         f"      name: {normalized_environment_key}\n"
         "      url: ${{ steps.resolve_live_url.outputs.resolved_live_url }}\n"
@@ -9499,6 +9508,7 @@ def _render_managed_deploy_workflow_yaml(
         f"      MBSRN_SITE_IDENTITY: {normalized_site_fragment}\n"
         f"      MBSRN_PREVIEW_HOSTNAME: {normalized_preview_hostname}\n"
         f"      MBSRN_PREVIEW_ENDPOINT_MODE: {preview_endpoint_mode}\n"
+        "      MBSRN_REPLACE_EXISTING_RUNTIME: ${{ github.event.inputs.replace_existing_runtime || 'false' }}\n"
         f"      MBSRN_PREVIEW_CERTIFICATE_NAME: {preview_certificate_name}\n"
         f"      MBSRN_PREVIEW_STATIC_IP_NAME: {preview_static_ip_name}\n"
         f"      MBSRN_FRONTEND_CONFIG_NAME: {frontend_config_name}\n"
@@ -9591,10 +9601,70 @@ def _render_managed_deploy_workflow_yaml(
         "      - name: Ensure namespace exists\n"
         "        run: kubectl apply -f k8s/namespace.yaml\n"
         f"{verify_pull_secret_step}"
-        "      - name: Reset stale site-web deployment\n"
+        "      - name: Replace existing managed-site runtime resources (optional)\n"
+        "        id: replace_managed_runtime\n"
         "        run: |\n"
-        '          echo "Resetting deployment to eliminate stale image references."\n'
-        '          kubectl delete deployment site-web --namespace "$K8S_NAMESPACE" --ignore-not-found\n'
+        "          set -euo pipefail\n"
+        '          replace_requested="$(echo "${MBSRN_REPLACE_EXISTING_RUNTIME:-false}" | tr \'[:upper:]\' \'[:lower:]\' | tr -d \'[:space:]\')"\n'
+        '          scope_summary="namespace=${K8S_NAMESPACE};site_id=${MBSRN_SITE_IDENTITY};repo=${GITHUB_REPOSITORY}"\n'
+        '          deleted_kinds="none"\n'
+        "          append_deleted_kind() {\n"
+        '            local next_kind="$1"\n'
+        '            if [ -z "$next_kind" ]; then\n'
+        "              return\n"
+        "            fi\n"
+        '            if [ "$deleted_kinds" = "none" ]; then\n'
+        '              deleted_kinds="$next_kind"\n'
+        "              return\n"
+        "            fi\n"
+        '            case ",$deleted_kinds," in\n'
+        '              *",$next_kind,"*) ;;\n'
+        '              *) deleted_kinds="${deleted_kinds},${next_kind}" ;;\n'
+        "            esac\n"
+        "          }\n"
+        "          fail_replace_runtime() {\n"
+        '            local failed_kind="$1"\n'
+        '            local failed_name="$2"\n'
+        '            echo "deploy_runtime_reason_code=managed_site_runtime_replace_failed"\n'
+        '            echo "deploy_runtime_reason_message=Managed-site runtime replace failed while deleting ${failed_kind}/${failed_name}."\n'
+        '            echo "managed_site_runtime_replace_performed=false" >> "$GITHUB_OUTPUT"\n'
+        '            echo "managed_site_runtime_replace_scope=$scope_summary" >> "$GITHUB_OUTPUT"\n'
+        '            echo "managed_site_runtime_replace_deleted_kinds=$deleted_kinds" >> "$GITHUB_OUTPUT"\n'
+        "            exit 1\n"
+        "          }\n"
+        "          delete_named_resource() {\n"
+        '            local resource_kind="$1"\n'
+        '            local resource_name="$2"\n'
+        '            if kubectl delete "$resource_kind" "$resource_name" --namespace "$K8S_NAMESPACE" --ignore-not-found=true; then\n'
+        '              append_deleted_kind "$resource_kind"\n'
+        "            else\n"
+        '              fail_replace_runtime "$resource_kind" "$resource_name"\n'
+        "            fi\n"
+        "          }\n"
+        '          if [ "$replace_requested" != "true" ]; then\n'
+        '            echo "managed_site_runtime_replace_performed=false" >> "$GITHUB_OUTPUT"\n'
+        '            echo "managed_site_runtime_replace_scope=$scope_summary" >> "$GITHUB_OUTPUT"\n'
+        '            echo "managed_site_runtime_replace_deleted_kinds=$deleted_kinds" >> "$GITHUB_OUTPUT"\n'
+        "            exit 0\n"
+        "          fi\n"
+        '          echo "deploy_runtime_reason_code=managed_site_runtime_replace_requested"\n'
+        '          echo "Replacing managed runtime resources in namespace ${K8S_NAMESPACE} for site ${MBSRN_SITE_IDENTITY}."\n'
+        '          delete_named_resource "ingress" "site-web"\n'
+        '          delete_named_resource "managedcertificate" "$MBSRN_PREVIEW_CERTIFICATE_NAME"\n'
+        '          delete_named_resource "frontendconfig" "$MBSRN_FRONTEND_CONFIG_NAME"\n'
+        '          delete_named_resource "backendconfig" "$MBSRN_BACKEND_CONFIG_NAME"\n'
+        '          delete_named_resource "service" "site-web"\n'
+        '          delete_named_resource "deployment" "site-web"\n'
+        '          network_policy_selector="app.kubernetes.io/managed-by=mbsrn,mbsrn.io/site-id=${MBSRN_SITE_IDENTITY}"\n'
+        '          if kubectl delete networkpolicy --namespace "$K8S_NAMESPACE" -l "$network_policy_selector" --ignore-not-found=true; then\n'
+        '            append_deleted_kind "networkpolicy"\n'
+        "          else\n"
+        '            fail_replace_runtime "networkpolicy" "$network_policy_selector"\n'
+        "          fi\n"
+        '          echo "deploy_runtime_reason_code=managed_site_runtime_replace_completed"\n'
+        '          echo "managed_site_runtime_replace_performed=true" >> "$GITHUB_OUTPUT"\n'
+        '          echo "managed_site_runtime_replace_scope=$scope_summary" >> "$GITHUB_OUTPUT"\n'
+        '          echo "managed_site_runtime_replace_deleted_kinds=$deleted_kinds" >> "$GITHUB_OUTPUT"\n'
         "      - name: Apply managed manifests\n"
         "        run: |\n"
         "          kubectl apply -f k8s/deployment.yaml\n"
@@ -11903,6 +11973,12 @@ def _classify_cloudsql_proxy_failure_from_log_text(
         return _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_PROVISIONING, "ingress_evidence"
     if "deploy_runtime_reason_code=target_repo_deploy_secret_missing" in normalized:
         return _DEPLOY_DISPATCH_SERVICE_REASON_TARGET_REPO_DEPLOY_SECRET_MISSING, "workflow_execution"
+    if "deploy_runtime_reason_code=managed_site_runtime_replace_failed" in normalized:
+        return "managed_site_runtime_replace_failed", "workflow_execution"
+    if "deploy_runtime_reason_code=managed_site_runtime_replace_requested" in normalized:
+        return "managed_site_runtime_replace_requested", "workflow_execution"
+    if "deploy_runtime_reason_code=managed_site_runtime_replace_completed" in normalized:
+        return "managed_site_runtime_replace_completed", "workflow_execution"
     if "deploy_runtime_reason_code=ingress_backend_502" in normalized:
         return _DEPLOY_RUNTIME_REASON_INGRESS_BACKEND_502, "rollout_verify"
     if "deploy_runtime_reason_code=service_has_no_ready_endpoints" in normalized:

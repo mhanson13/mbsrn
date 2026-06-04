@@ -460,6 +460,7 @@ class SEOMigrationPublishRequest(BaseModel):
 class SEOMigrationDeployRequest(BaseModel):
     artifact_version_id: str = Field(min_length=1, max_length=36)
     dry_run: bool = False
+    replace_existing_runtime: bool = False
 
 
 class SEOMigrationDeployStatusRefreshRequest(BaseModel):

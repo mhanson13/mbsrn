@@ -460,6 +460,7 @@ export interface MigrationPublishRequest {
 export interface MigrationDeployRequest {
   artifact_version_id: string;
   dry_run?: boolean;
+  replace_existing_runtime?: boolean;
 }
 
 export interface MigrationDeployStatusRefreshRequest {

@@ -1424,6 +1424,175 @@ describe("site migration workflow route", () => {
     );
   });
 
+  it("renders replace-runtime deploy control and omits replace flag when not selected", async () => {
+    const user = userEvent.setup();
+    const approvedArtifact = buildMigrationArtifactVersion({
+      approval_status: "approved",
+      publish_status: "published",
+    });
+    const summary = buildMigrationWorkspaceSummary({
+      workspace: buildMigrationWorkspace({
+        latest_generated_artifact_version_id: approvedArtifact.id,
+        latest_generated_artifact_version_number: approvedArtifact.version,
+        latest_approved_artifact_version_id: approvedArtifact.id,
+        latest_approved_artifact_version_number: approvedArtifact.version,
+        last_published_artifact_version_id: approvedArtifact.id,
+        last_published_artifact_version_number: approvedArtifact.version,
+      }),
+      latest_artifact: approvedArtifact,
+      deploy_readiness: {
+        ready: true,
+        reasons: [],
+        approved_artifact_version_id: approvedArtifact.id,
+        blocker_codes: [],
+        target: {
+          enabled: true,
+          repo_owner: "mhanson13",
+          repo_name: "tnmfire",
+          workflow_id: "deploy-tnmfire-www-prod.yml",
+          ref: "main",
+        },
+      },
+      publish_readiness: {
+        ready: true,
+        reasons: [],
+        approved_artifact_version_id: approvedArtifact.id,
+        target: {
+          enabled: true,
+          repo_owner: "mhanson13",
+          repo_name: "tnmfire",
+          branch: "main",
+        },
+      },
+    });
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(summary);
+    mockFetchMigrationArtifactVersions.mockResolvedValueOnce({
+      items: [approvedArtifact],
+      total: 1,
+    });
+    mockFetchMigrationArtifactFilePreview.mockResolvedValueOnce(
+      buildMigrationArtifactFilePreview({ artifact_version_id: approvedArtifact.id }),
+    );
+    mockFetchMigrationPublishHistory.mockResolvedValueOnce({ items: [], total: 0 });
+    mockFetchMigrationDeployHistory.mockResolvedValueOnce({ items: [], total: 0 });
+
+    render(<SiteMigrationWorkflowPage />);
+
+    const replaceToggle = await screen.findByTestId("migration-deploy-replace-runtime-toggle");
+    const replaceCheckbox = within(replaceToggle).getByRole("checkbox");
+    expect(replaceCheckbox).not.toBeChecked();
+    expect(await screen.findByTestId("migration-deploy-replace-runtime-hint")).toHaveTextContent(
+      "Deletes and recreates only MBSRN-managed runtime resources in this site namespace.",
+    );
+    expect(screen.queryByTestId("migration-deploy-replace-runtime-override-active")).not.toBeInTheDocument();
+
+    const deployButton = screen.getByRole("button", { name: "Request GKE Deploy" });
+    expect(deployButton).toBeEnabled();
+    await user.click(deployButton);
+
+    await waitFor(() =>
+      expect(mockDeployMigrationArtifactVersion).toHaveBeenCalledWith(
+        "token-1",
+        "biz-1",
+        "site-1",
+        expect.objectContaining({
+          artifact_version_id: approvedArtifact.id,
+          dry_run: true,
+        }),
+      ),
+    );
+    const deployPayload = mockDeployMigrationArtifactVersion.mock.calls.at(-1)?.[3] as Record<string, unknown>;
+    expect(deployPayload?.replace_existing_runtime).toBeUndefined();
+  });
+
+  it("allows deploy when legacy runtime replacement is required only after replace-runtime is selected", async () => {
+    const user = userEvent.setup();
+    const approvedArtifact = buildMigrationArtifactVersion({
+      approval_status: "approved",
+      publish_status: "published",
+    });
+    const summary = buildMigrationWorkspaceSummary({
+      workspace: buildMigrationWorkspace({
+        latest_generated_artifact_version_id: approvedArtifact.id,
+        latest_generated_artifact_version_number: approvedArtifact.version,
+        latest_approved_artifact_version_id: approvedArtifact.id,
+        latest_approved_artifact_version_number: approvedArtifact.version,
+        last_published_artifact_version_id: approvedArtifact.id,
+        last_published_artifact_version_number: approvedArtifact.version,
+      }),
+      latest_artifact: approvedArtifact,
+      deploy_readiness: {
+        ready: false,
+        reasons: ["Deploy target configuration is invalid."],
+        dispatch_service_reason_code: "legacy_runtime_replacement_required",
+        blocker_codes: ["deploy_configuration_missing"],
+        approved_artifact_version_id: approvedArtifact.id,
+        target: {
+          enabled: true,
+          repo_owner: "mhanson13",
+          repo_name: "tnmfire",
+          workflow_id: "deploy-tnmfire-www-prod.yml",
+          ref: "main",
+        },
+      },
+      publish_readiness: {
+        ready: true,
+        reasons: [],
+        approved_artifact_version_id: approvedArtifact.id,
+        target: {
+          enabled: true,
+          repo_owner: "mhanson13",
+          repo_name: "tnmfire",
+          branch: "main",
+        },
+      },
+    });
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(summary);
+    mockFetchMigrationArtifactVersions.mockResolvedValueOnce({
+      items: [approvedArtifact],
+      total: 1,
+    });
+    mockFetchMigrationArtifactFilePreview.mockResolvedValueOnce(
+      buildMigrationArtifactFilePreview({ artifact_version_id: approvedArtifact.id }),
+    );
+    mockFetchMigrationPublishHistory.mockResolvedValueOnce({ items: [], total: 0 });
+    mockFetchMigrationDeployHistory.mockResolvedValueOnce({ items: [], total: 0 });
+
+    render(<SiteMigrationWorkflowPage />);
+
+    const deployReadinessCard = await screen.findByTestId("migration-deploy-readiness");
+    expect(within(deployReadinessCard).getByTestId("migration-managed-gke-config-guidance-readiness")).toHaveTextContent(
+      "Existing managed-site runtime resources were created with legacy endpoint/runtime state. Enable 'Replace existing managed-site runtime before deploy' for the next deploy request.",
+    );
+
+    const deployButton = screen.getByRole("button", { name: "Request GKE Deploy" });
+    expect(deployButton).toBeDisabled();
+
+    const replaceToggle = screen.getByTestId("migration-deploy-replace-runtime-toggle");
+    const replaceCheckbox = within(replaceToggle).getByRole("checkbox");
+    await user.click(replaceCheckbox);
+
+    expect(replaceCheckbox).toBeChecked();
+    expect(screen.getByTestId("migration-deploy-replace-runtime-override-active")).toBeInTheDocument();
+    expect(deployButton).toBeEnabled();
+
+    await user.click(deployButton);
+
+    await waitFor(() =>
+      expect(mockDeployMigrationArtifactVersion).toHaveBeenCalledWith(
+        "token-1",
+        "biz-1",
+        "site-1",
+        expect.objectContaining({
+          artifact_version_id: approvedArtifact.id,
+          dry_run: true,
+          replace_existing_runtime: true,
+        }),
+      ),
+    );
+    await waitFor(() => expect(replaceCheckbox).not.toBeChecked());
+  });
+
   it.each([
     ["managed_workflow_not_yet_republished", "Managed workflow not yet republished", false],
     ["workflow_republished_but_deploy_not_rerun", "Workflow republished but deploy not rerun", false],

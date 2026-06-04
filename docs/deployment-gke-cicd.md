@@ -401,6 +401,27 @@ Common managed-site deploy blocker codes:
 Endpoint mode/template guidance:
 - changing `managed_preview_endpoint` admin defaults requires rerunning publish/workflow provisioning and then rerunning deploy so target-repo workflow env/manifests are regenerated with the updated endpoint mode.
 
+Scoped fresh redeploy (`replace_existing_runtime`) guidance:
+- deploy UI exposes an explicit per-attempt option: `Replace existing managed-site runtime before deploy`.
+- when enabled, managed workflow runs namespace/site-scoped cleanup before `kubectl apply` and then recreates runtime resources from current managed manifests.
+- scoped cleanup targets managed runtime resources only:
+  - `ingress/site-web`
+  - preview `managedcertificate`
+  - preview `frontendconfig`
+  - preview `backendconfig`
+  - `service/site-web`
+  - `deployment/site-web`
+  - site-scoped `networkpolicy` (selector: `app.kubernetes.io/managed-by=mbsrn,mbsrn.io/site-id=<site-id>`)
+- this option does **not** delete:
+  - GitHub repositories or published artifact commits
+  - migration artifacts/media/business/site records
+  - global static IP resources (manual/admin cleanup remains separate)
+- diagnostics/reason codes:
+  - `legacy_runtime_replacement_required`
+  - `managed_site_runtime_replace_requested`
+  - `managed_site_runtime_replace_completed`
+  - `managed_site_runtime_replace_failed`
+
 `SITE_WEB_IMAGE_TAG` diagnostics:
 - empty `SITE_WEB_IMAGE_TAG` is allowed for managed workflows and falls back to `${GITHUB_SHA}`.
 - workflow outputs now include `site_runtime_image_tag_source` (`github_sha_fallback`, `configured_sha`, `configured_latest`, `configured_invalid_fallback_latest`) so rollout evidence shows the effective tag source.

@@ -6641,6 +6641,76 @@ def test_deploy_dispatch_payload_uses_explicit_configured_inputs_only(db_session
     assert deploy_result.result.get("workflow_inputs_sent_keys") == ["site_url"]
 
 
+def test_deploy_dispatch_payload_includes_replace_runtime_input_when_requested(db_session) -> None:
+    publisher = _RecordingGitHubPublisher()
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    artifact = _prepare_published_artifact(service, business_id=business_id, site_id=site_id)
+    service.update_deploy_config(
+        business_id=business_id,
+        site_id=site_id,
+        deploy_config={
+            "enabled": True,
+            "workflow_id": "deploy-www-prod.yml",
+            "ref": "main",
+            "inputs": {"site_url": "https://www.tnmfire.com"},
+        },
+        principal_id="principal-1",
+    )
+
+    deploy_result = service.deploy_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        replace_existing_runtime=True,
+        principal_id="principal-1",
+    )
+
+    assert publisher.deploy_calls
+    deploy_target, _ = publisher.deploy_calls[-1]
+    assert deploy_target.inputs.get("site_url") == "https://www.tnmfire.com"
+    assert deploy_target.inputs.get("replace_existing_runtime") == "true"
+    assert "site_url" in (deploy_result.result.get("workflow_inputs_sent_keys") or [])
+    assert "replace_existing_runtime" in (deploy_result.result.get("workflow_inputs_sent_keys") or [])
+
+
+def test_deploy_allows_legacy_runtime_replacement_when_requested(db_session) -> None:
+    publisher = _RecordingGitHubPublisher(
+        readiness_dispatch_service_availability=False,
+        readiness_dispatch_service_reason_code="deployed_content_identity_mismatch",
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    artifact = _prepare_published_artifact(service, business_id=business_id, site_id=site_id)
+
+    deploy_result = service.deploy_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        replace_existing_runtime=True,
+        principal_id="principal-1",
+    )
+
+    assert deploy_result.result.get("status") == "deploy_requested"
+    assert publisher.deploy_calls
+    deploy_target, _ = publisher.deploy_calls[-1]
+    assert deploy_target.inputs.get("replace_existing_runtime") == "true"
+    workspace = service.get_workspace(business_id=business_id, site_id=site_id)
+    latest_history_item = (workspace.deploy_history_json or [])[-1]
+    assert latest_history_item.get("dispatch_service_reason_code") == "deployed_content_identity_mismatch"
+    assert latest_history_item.get("inputs", {}).get("replace_existing_runtime") == "true"
+
+
 def test_publish_records_expected_publish_url_when_determinable(db_session) -> None:
     publisher = _RecordingGitHubPublisher()
     service = _build_service(
@@ -6917,7 +6987,10 @@ def test_deploy_records_resolved_live_url_from_workflow_output(db_session) -> No
     assert deploy_result.result.get("resolved_live_url") == "https://workflow-live.tnmfire.com"
     assert deploy_result.result.get("url_source") == "workflow_output"
     assert deploy_result.result.get("url_source_detail") == "workflow_output:live_url"
-    assert deploy_result.result.get("expected_workflow_outputs") == ["resolved_live_url", "live_url", "deployed_url"]
+    expected_workflow_outputs = deploy_result.result.get("expected_workflow_outputs") or []
+    assert "resolved_live_url" in expected_workflow_outputs
+    assert "live_url" in expected_workflow_outputs
+    assert "deployed_url" in expected_workflow_outputs
     assert deploy_result.result.get("deploy_evidence_contract_status") == "confirmed_live_evidence"
     assert deploy_result.result.get("workflow_contract_advisory") is None
 
@@ -13147,37 +13220,44 @@ def test_runtime_credential_missing_reason_is_exposed_in_publish_readiness(db_se
 
 
 @pytest.mark.parametrize(
-    ("dispatch_reason_code", "expected_reason_snippet"),
+    ("dispatch_reason_code", "expected_dispatch_reason_code", "expected_reason_snippet"),
     [
         (
+            "missing_cluster_name",
             "missing_cluster_name",
             "managed deploy target is missing required admin gke cluster name configuration",
         ),
         (
             "missing_cluster_location",
+            "missing_cluster_location",
             "managed deploy target is missing required admin gke cluster location configuration",
         ),
         (
+            "missing_gcp_project_id",
             "missing_gcp_project_id",
             "managed deploy target is missing required admin gke project id configuration",
         ),
         (
             "image_pull_secret_missing",
+            "image_pull_secret_missing",
             "private managed-site image auth is required",
         ),
         (
+            "image_pull_secret_not_referenced",
             "image_pull_secret_not_referenced",
             "managed deployment manifest is missing required image pull secret reference",
         ),
         (
             "deployed_content_identity_mismatch",
-            "managed deployment manifest image identity does not match this site/repo target",
+            "legacy_runtime_replacement_required",
+            "existing managed-site runtime resources were created with legacy endpoint/runtime state",
         ),
     ],
 )
 def test_deploy_readiness_blocks_when_managed_gke_environment_config_is_missing(
     db_session,
     dispatch_reason_code: str,
+    expected_dispatch_reason_code: str,
     expected_reason_snippet: str,
 ) -> None:
     publisher = _RecordingGitHubPublisher(
@@ -13223,13 +13303,13 @@ def test_deploy_readiness_blocks_when_managed_gke_environment_config_is_missing(
     summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
     deploy_readiness = summary.deploy_readiness or {}
     assert deploy_readiness.get("ready") is False
-    assert deploy_readiness.get("dispatch_service_reason_code") == dispatch_reason_code
+    assert deploy_readiness.get("dispatch_service_reason_code") == expected_dispatch_reason_code
     deploy_reasons = [str(item).lower() for item in deploy_readiness.get("reasons", [])]
     assert any(expected_reason_snippet in item for item in deploy_reasons)
     assert "deploy_configuration_missing" in (deploy_readiness.get("blocker_codes") or [])
     deploy_prereqs = deploy_readiness.get("config_prerequisites") or {}
     assert deploy_prereqs.get("target_config_valid") is True
-    assert deploy_prereqs.get("dispatch_service_reason_code") == dispatch_reason_code
+    assert deploy_prereqs.get("dispatch_service_reason_code") == expected_dispatch_reason_code
 
 
 def test_deploy_readiness_prioritizes_managed_gke_blocker_when_secret_propagation_runtime_credential_missing(

@@ -1786,6 +1786,9 @@ function toManagedGkeConfigGuidance(value: string | null): string | null {
   if (normalized === "missing_gcp_project_id") {
     return "Managed deploy target is missing required admin GKE project id configuration. Update admin deployment settings.";
   }
+  if (normalized === "legacy_runtime_replacement_required") {
+    return "Existing managed-site runtime resources were created with legacy endpoint/runtime state. Enable 'Replace existing managed-site runtime before deploy' for the next deploy request.";
+  }
   if (normalized === "target_repo_deploy_secret_missing") {
     return "Deploy workflow requires target-repo secret GCP_DEPLOY_KEY, but it is missing. Run publish/bootstrap to provision deploy auth prerequisites, then retry deploy.";
   }
@@ -1845,6 +1848,15 @@ function toManagedGkeConfigGuidance(value: string | null): string | null {
   }
   if (normalized === "generated_workflow_requires_missing_gcp_deploy_key") {
     return "Deploy workflow run failed because required target-repo deploy secret GCP_DEPLOY_KEY was missing. Provision deploy auth prerequisites and rerun deploy.";
+  }
+  if (normalized === "managed_site_runtime_replace_failed") {
+    return "Scoped runtime replacement failed before manifest apply. Verify namespace-scoped delete permissions for managed ingress/certificate/config/service/deployment resources, then retry deploy.";
+  }
+  if (normalized === "managed_site_runtime_replace_requested") {
+    return "Scoped runtime replacement was requested for this deploy run.";
+  }
+  if (normalized === "managed_site_runtime_replace_completed") {
+    return "Scoped runtime replacement completed before managed manifests were applied.";
   }
   if (normalized === "backendconfig_health_check_mismatch") {
     return "BackendConfig health check path/port does not match the running site-web application health endpoint.";
@@ -4033,6 +4045,7 @@ export function MigrationWorkspacePanel({
   const [publishCommitMessage, setPublishCommitMessage] = useState("");
   const [publishAnalyticsOverride, setPublishAnalyticsOverride] = useState("");
   const [deployDryRun, setDeployDryRun] = useState(true);
+  const [deployReplaceExistingRuntime, setDeployReplaceExistingRuntime] = useState(false);
 
   const [selectedFilePath, setSelectedFilePath] = useState("");
   const [draftPreviewOpen, setDraftPreviewOpen] = useState(false);
@@ -4061,6 +4074,15 @@ export function MigrationWorkspacePanel({
   const selectedArtifactVersionIdTrimmed = selectedArtifactVersionId.trim();
   const publishReadinessArtifactVersionId = asString(publishReadiness.approved_artifact_version_id);
   const deployReadinessArtifactVersionId = asString(deployReadiness.approved_artifact_version_id);
+  const deployBlockerCodes = parseBlockerCodes(deployReadiness.blocker_codes);
+  const deployDispatchReasonForAction = (asStringOrNull(deployReadiness.dispatch_service_reason_code) || "")
+    .trim()
+    .toLowerCase();
+  const deployCanProceedWithRuntimeReplace =
+    deployReplaceExistingRuntime &&
+    deployDispatchReasonForAction === "legacy_runtime_replacement_required" &&
+    deployBlockerCodes.length > 0 &&
+    deployBlockerCodes.every((code) => code === "deploy_configuration_missing");
   const isActionInFlight = busyAction !== null;
   const canApproveSelectedArtifact =
     selectedArtifactVersionIdTrimmed.length > 0 &&
@@ -4074,7 +4096,7 @@ export function MigrationWorkspacePanel({
   const canDeploySelectedArtifact =
     selectedArtifactVersionIdTrimmed.length > 0 &&
     selectedArtifact !== null &&
-    Boolean(deployReadiness.ready) &&
+    (Boolean(deployReadiness.ready) || deployCanProceedWithRuntimeReplace) &&
     (!deployReadinessArtifactVersionId || deployReadinessArtifactVersionId === selectedArtifactVersionIdTrimmed);
   const selectedArtifactReferencedByPublishHistory =
     selectedArtifactVersionIdTrimmed.length > 0
@@ -4108,7 +4130,6 @@ export function MigrationWorkspacePanel({
   const canDeleteSelectedArtifact = Boolean(selectedArtifact && !selectedArtifactDeleteBlockedReason);
   const publishConfigPrerequisites = asRecord(publishReadiness.config_prerequisites);
   const deployConfigPrerequisites = asRecord(deployReadiness.config_prerequisites);
-  const deployBlockerCodes = parseBlockerCodes(deployReadiness.blocker_codes);
   const publishTarget = asRecord(publishReadiness.target);
   const deployTarget = asRecord(deployReadiness.target);
   const effectivePublishRepoOwner = asStringOrNull(publishTarget.repo_owner);
@@ -7326,9 +7347,13 @@ export function MigrationWorkspacePanel({
     setErrorHint(null);
     setStatusMessage(null);
     try {
-      await deployMigrationArtifactVersion(token, businessId, siteId, {
+      const deployPayload = {
         artifact_version_id: selectedArtifactVersionId,
         dry_run: deployDryRun,
+        ...(deployReplaceExistingRuntime ? { replace_existing_runtime: true } : {}),
+      };
+      await deployMigrationArtifactVersion(token, businessId, siteId, {
+        ...deployPayload,
       });
       setStatusMessage(deployDryRun ? "Deploy dry-run completed." : "Deploy request submitted.");
       await loadWorkspaceData(false);
@@ -7339,6 +7364,7 @@ export function MigrationWorkspacePanel({
       setErrorHint(null);
       setErrorMessage(formatActionFailureMessage("deploy", category, baseMessage));
     } finally {
+      setDeployReplaceExistingRuntime(false);
       setBusyAction(null);
     }
   };
@@ -9165,6 +9191,26 @@ export function MigrationWorkspacePanel({
                   <input type="checkbox" checked={deployDryRun} onChange={(event) => setDeployDryRun(event.target.checked)} />
                   <span>Dry run only</span>
                 </label>
+                <label className="link-row" data-testid="migration-deploy-replace-runtime-toggle">
+                  <input
+                    type="checkbox"
+                    checked={deployReplaceExistingRuntime}
+                    onChange={(event) => setDeployReplaceExistingRuntime(event.target.checked)}
+                  />
+                  <span>Replace existing managed-site runtime before deploy</span>
+                </label>
+                <span
+                  className={deployReplaceExistingRuntime ? "hint warning" : "hint muted"}
+                  data-testid="migration-deploy-replace-runtime-hint"
+                >
+                  Deletes and recreates only MBSRN-managed runtime resources in this site namespace. It does not delete
+                  artifacts, media, GitHub repository content, or site/business records.
+                </span>
+                {deployCanProceedWithRuntimeReplace ? (
+                  <span className="hint success" data-testid="migration-deploy-replace-runtime-override-active">
+                    Replace-runtime override active: deploy request will run scoped cleanup before applying managed manifests.
+                  </span>
+                ) : null}
                 <button
                   type="button"
                   className="button button-primary"

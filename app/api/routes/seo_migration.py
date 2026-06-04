@@ -1471,6 +1471,7 @@ def deploy_seo_migration_artifact_version(
             site_id=site_id,
             artifact_version_id=payload.artifact_version_id,
             dry_run=payload.dry_run,
+            replace_existing_runtime=payload.replace_existing_runtime,
             principal_id=tenant_context.principal_id,
         )
     except SEOMigrationNotFoundError as exc:

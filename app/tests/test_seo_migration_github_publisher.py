@@ -6335,6 +6335,15 @@ def test_classify_cloudsql_proxy_failure_maps_https_probe_not_attempted_reason()
     assert failure_stage == "ingress_evidence"
 
 
+def test_classify_cloudsql_proxy_failure_maps_runtime_replace_failed_reason() -> None:
+    reason_code, failure_stage = _classify_cloudsql_proxy_failure_from_log_text(
+        "deploy_runtime_reason_code=managed_site_runtime_replace_failed"
+    )
+
+    assert reason_code == "managed_site_runtime_replace_failed"
+    assert failure_stage == "workflow_execution"
+
+
 def test_extract_resolve_live_url_state_from_log_text_parses_sanitized_probe_details() -> None:
     state = _extract_resolve_live_url_state_from_log_text(
         "\n".join(
@@ -7559,12 +7568,17 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert encoded_backend_config_content
     backend_config_yaml = base64.b64decode(encoded_backend_config_content).decode("utf-8")
     assert "workflow_dispatch" in workflow_yaml
+    assert "replace_existing_runtime:" in workflow_yaml
+    assert "description: Replace existing managed-site runtime resources before deploy" in workflow_yaml
+    assert "default: false" in workflow_yaml
+    assert "type: boolean" in workflow_yaml
     assert "permissions:" in workflow_yaml
     assert "packages: write" in workflow_yaml
     assert "K8S_NAMESPACE: tnmfire" in workflow_yaml
     assert "MBSRN_PREVIEW_HOSTNAME: tnmfire.site.mbsrn.com" in workflow_yaml
     assert "MBSRN_PREVIEW_CERTIFICATE_NAME: site-web-preview-cert-tnmfire" in workflow_yaml
     assert "MBSRN_PREVIEW_STATIC_IP_NAME: site-web-preview-ip-tnmfire" in workflow_yaml
+    assert "MBSRN_REPLACE_EXISTING_RUNTIME: ${{ github.event.inputs.replace_existing_runtime || 'false' }}" in workflow_yaml
     assert "MBSRN_FRONTEND_CONFIG_NAME: site-web-frontend-config-tnmfire" in workflow_yaml
     assert "MBSRN_BACKEND_CONFIG_NAME: site-web-backend-config-tnmfire" in workflow_yaml
     assert "SITE_WEB_IMAGE_REPOSITORY: ghcr.io/mhanson13/tnmfire-site-web" in workflow_yaml
@@ -7585,9 +7599,21 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "Ensure namespace exists" in workflow_yaml
     assert "Verify GHCR image pull secret" in workflow_yaml
     assert 'kubectl get secret ghcr-pull-secret --namespace "$K8S_NAMESPACE"' in workflow_yaml
-    assert "Reset stale site-web deployment" in workflow_yaml
-    assert "Resetting deployment to eliminate stale image references." in workflow_yaml
-    assert 'kubectl delete deployment site-web --namespace "$K8S_NAMESPACE" --ignore-not-found' in workflow_yaml
+    assert "Replace existing managed-site runtime resources (optional)" in workflow_yaml
+    assert "deploy_runtime_reason_code=managed_site_runtime_replace_requested" in workflow_yaml
+    assert "deploy_runtime_reason_code=managed_site_runtime_replace_completed" in workflow_yaml
+    assert "deploy_runtime_reason_code=managed_site_runtime_replace_failed" in workflow_yaml
+    assert 'delete_named_resource "ingress" "site-web"' in workflow_yaml
+    assert 'delete_named_resource "managedcertificate" "$MBSRN_PREVIEW_CERTIFICATE_NAME"' in workflow_yaml
+    assert 'delete_named_resource "frontendconfig" "$MBSRN_FRONTEND_CONFIG_NAME"' in workflow_yaml
+    assert 'delete_named_resource "backendconfig" "$MBSRN_BACKEND_CONFIG_NAME"' in workflow_yaml
+    assert 'delete_named_resource "service" "site-web"' in workflow_yaml
+    assert 'delete_named_resource "deployment" "site-web"' in workflow_yaml
+    assert 'kubectl delete networkpolicy --namespace "$K8S_NAMESPACE" -l "$network_policy_selector" --ignore-not-found=true' in workflow_yaml
+    assert "managed_site_runtime_replace_performed" in workflow_yaml
+    assert "managed_site_runtime_replace_scope" in workflow_yaml
+    assert "managed_site_runtime_replace_deleted_kinds" in workflow_yaml
+    assert "gcloud compute addresses delete" not in workflow_yaml
     assert "GIT_USERID: ${{ secrets.GIT_USERID }}" not in workflow_yaml
     assert "GIT_EMAIL: ${{ secrets.GIT_EMAIL }}" not in workflow_yaml
     assert "GIT_TOKEN: ${{ secrets.GIT_TOKEN }}" not in workflow_yaml
@@ -7667,6 +7693,10 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     )
     assert (
         "site_runtime_content_source: ${{ steps.resolve_site_runtime_image.outputs.site_runtime_content_source }}"
+        in workflow_yaml
+    )
+    assert (
+        "managed_site_runtime_replace_performed: ${{ steps.replace_managed_runtime.outputs.managed_site_runtime_replace_performed }}"
         in workflow_yaml
     )
     assert "url: ${{ steps.resolve_live_url.outputs.resolved_live_url }}" in workflow_yaml

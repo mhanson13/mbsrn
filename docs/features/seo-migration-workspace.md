@@ -1761,6 +1761,16 @@ Post-fix rollout for existing managed sites:
   - `workflow_republished_but_deploy_not_rerun`: redeploy after republish
   - `deploy_running_old_generic_image`: redeploy is still on legacy generic image
   - `deploy_running_expected_site_scoped_image`: fix is active
+- Optional scoped fresh redeploy path:
+  - Deploy controls include `Replace existing managed-site runtime before deploy` for a single deploy attempt.
+  - This is intended for legacy-runtime cleanup during endpoint-mode/runtime transitions.
+  - When selected, workflow performs scoped namespace/site cleanup before apply and emits:
+    - `managed_site_runtime_replace_requested`
+    - `managed_site_runtime_replace_completed`
+    - `managed_site_runtime_replace_failed`
+  - Readiness can surface `legacy_runtime_replacement_required` when stale legacy runtime evidence is detected and replace-runtime was not requested.
+  - Cleanup scope is limited to managed runtime resources (`site-web` ingress/service/deployment, managed preview certificate/config resources, site-scoped networkpolicy) and does not delete artifacts/media/GitHub content/business data.
+  - Publish readiness is unchanged; this is deploy-only behavior.
 - required managed deploy configuration contract for real deploy execution:
   - admin-owned managed GKE settings in MBSRN GitHub publish configuration:
     - `managed_gke_cluster_name`
