@@ -5050,16 +5050,16 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             workflow_path = (_coerce_string(workflow_payload.get("path")) or "").strip()
         if workflow_state and workflow_state != "active":
             raise SEOMigrationGitHubPublisherError(
-                code="workflow_not_dispatchable",
-                safe_message="GitHub workflow is not dispatchable for the deploy target.",
+                code="workflow_disabled",
+                safe_message="GitHub workflow is disabled for the deploy target.",
                 stage="workflow_lookup",
             )
         if workflow_path:
             expected_path = _workflow_repo_path(target.workflow_id)
             if workflow_path.strip().lower() != expected_path.strip().lower():
                 raise SEOMigrationGitHubPublisherError(
-                    code="workflow_not_found",
-                    safe_message="GitHub workflow target was not found.",
+                    code="workflow_file_missing",
+                    safe_message="GitHub workflow file was not found on the deploy ref.",
                     stage="workflow_lookup",
                 )
         trigger_types = _extract_workflow_trigger_types(workflow_file_payload)
@@ -5069,8 +5069,8 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         )
         if conformance.conformance_status == _WORKFLOW_CONFORMANCE_STATUS_WORKFLOW_DISPATCH_MISSING:
             raise SEOMigrationGitHubPublisherError(
-                code="workflow_not_dispatchable",
-                safe_message="GitHub workflow is not dispatchable for the deploy target.",
+                code="workflow_dispatch_missing",
+                safe_message="GitHub workflow does not define workflow_dispatch.",
                 stage="workflow_lookup",
             )
         if conformance.conformance_status == _WORKFLOW_CONFORMANCE_STATUS_WORKFLOW_PLACEHOLDER_DETECTED:
@@ -5148,29 +5148,29 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                         stage="workflow_dispatch",
                     ) from exc
                 if "ref" in response_message or "branch" in response_message:
-                    if preflight_ref_verified and preflight_workflow_verified and preflight_dispatch_ready:
-                        raise SEOMigrationGitHubPublisherError(
-                            code="workflow_not_dispatchable",
-                            safe_message="GitHub workflow is not dispatchable for the deploy target.",
-                            status_code=status_code,
-                            stage="workflow_dispatch",
-                        ) from exc
                     raise SEOMigrationGitHubPublisherError(
                         code="branch_not_found_or_ref_invalid",
                         safe_message="GitHub deploy ref was not found or is invalid.",
                         status_code=status_code,
                         stage="workflow_dispatch",
                     ) from exc
-                if preflight_ref_verified and preflight_workflow_verified and preflight_dispatch_ready:
-                    raise SEOMigrationGitHubPublisherError(
-                        code="workflow_not_dispatchable",
-                        safe_message="GitHub workflow is not dispatchable for the deploy target.",
-                        status_code=status_code,
-                        stage="workflow_dispatch",
-                    ) from exc
+                fallback_code = (
+                    "branch_not_found_or_ref_invalid"
+                    if (not preflight_ref_verified)
+                    else ("workflow_file_missing" if not preflight_workflow_verified else "workflow_dispatch_rejected")
+                )
+                fallback_message = (
+                    "GitHub deploy ref was not found or is invalid."
+                    if fallback_code == "branch_not_found_or_ref_invalid"
+                    else (
+                        "GitHub workflow file was not found on the deploy ref."
+                        if fallback_code == "workflow_file_missing"
+                        else "GitHub rejected workflow dispatch for this target."
+                    )
+                )
                 raise SEOMigrationGitHubPublisherError(
-                    code="branch_not_found_or_ref_invalid",
-                    safe_message="GitHub deploy ref was not found or is invalid.",
+                    code=fallback_code,
+                    safe_message=fallback_message,
                     status_code=status_code,
                     stage="workflow_dispatch",
                 ) from exc
@@ -13059,5 +13059,5 @@ def _workflow_dispatch_identifier_type(workflow_id: str) -> str:
     if "/" in normalized:
         return "workflow_file_path"
     if normalized.lower().endswith(".yml") or normalized.lower().endswith(".yaml"):
-        return "workflow_id"
+        return "workflow_file_path"
     return "workflow_id"

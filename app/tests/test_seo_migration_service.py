@@ -1170,7 +1170,15 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
                 stage="workflow_lookup",
             )
         dispatch_identifier_type = self.readiness_dispatch_identifier_type or (
-            "workflow_file_path" if workflow_path == target.workflow_id else "workflow_id"
+            (
+                "workflow_file_path"
+                if (
+                    workflow_path == target.workflow_id
+                    or str(target.workflow_id or "").strip().lower().endswith(".yml")
+                    or str(target.workflow_id or "").strip().lower().endswith(".yaml")
+                )
+                else "workflow_id"
+            )
         )
         return SEOMigrationGitHubTargetReadinessResult(
             repo_owner=target.repo_owner,
@@ -12264,14 +12272,14 @@ def test_deploy_prefers_site_specific_workflow_when_publish_history_is_stale(db_
     assert deploy_target.workflow_id == ".github/workflows/deploy-tnmfire-www-prod.yml"
     assert action_result.result.get("workflow_identifier_requested") == "deploy-tnmfire-www-prod.yml"
     assert action_result.result.get("workflow_identifier_used") == ".github/workflows/deploy-tnmfire-www-prod.yml"
-    assert action_result.result.get("workflow_identifier_type_requested") == "workflow_id"
+    assert action_result.result.get("workflow_identifier_type_requested") == "workflow_file_path"
     assert action_result.result.get("workflow_identifier_type_used") == "workflow_file_path"
     assert action_result.result.get("workflow_dispatch_resolution_source") == "workflow_file_path"
     assert action_result.result.get("workflow_file_path") == ".github/workflows/deploy-tnmfire-www-prod.yml"
     assert action_result.result.get("workflow_name") == "deploy-tnmfire-www-prod.yml"
     assert action_result.result.get("resolved_workflow_source") == "site_specific_workflow"
     assert action_result.result.get("actual_dispatch_identifier_sent") == "deploy-tnmfire-www-prod.yml"
-    assert action_result.result.get("actual_dispatch_identifier_type_sent") == "workflow_id"
+    assert action_result.result.get("actual_dispatch_identifier_type_sent") == "workflow_file_path"
     assert action_result.result.get("workflow_conformance_checked") is True
     assert action_result.result.get("workflow_conformance_status") == "conformant"
     assert action_result.result.get("workflow_conformance_reasons") == []
@@ -12289,7 +12297,7 @@ def test_deploy_prefers_site_specific_workflow_when_publish_history_is_stale(db_
     assert accepted_payloads[-1].get("workflow_identifier_type_used") == "workflow_file_path"
     assert accepted_payloads[-1].get("workflow_dispatch_resolution_source") == "workflow_file_path"
     assert accepted_payloads[-1].get("actual_dispatch_identifier_sent") == "deploy-tnmfire-www-prod.yml"
-    assert accepted_payloads[-1].get("actual_dispatch_identifier_type_sent") == "workflow_id"
+    assert accepted_payloads[-1].get("actual_dispatch_identifier_type_sent") == "workflow_file_path"
     assert accepted_payloads[-1].get("workflow_conformance_checked") is True
     assert accepted_payloads[-1].get("workflow_conformance_status") == "conformant"
     assert accepted_payloads[-1].get("workflow_conformance_reasons") == []
@@ -12302,7 +12310,7 @@ def test_deploy_prefers_site_specific_workflow_when_publish_history_is_stale(db_
     ]
     assert preflight_payloads
     assert preflight_payloads[-1].get("actual_dispatch_identifier_sent") == "deploy-tnmfire-www-prod.yml"
-    assert preflight_payloads[-1].get("actual_dispatch_identifier_type_sent") == "workflow_id"
+    assert preflight_payloads[-1].get("actual_dispatch_identifier_type_sent") == "workflow_file_path"
     assert preflight_payloads[-1].get("workflow_conformance_checked") is True
     assert preflight_payloads[-1].get("workflow_conformance_status") == "conformant"
     alignment_payloads = [
@@ -12576,6 +12584,64 @@ def test_deploy_failure_reason_codes_are_recorded(
     assert dispatch_failure_logs
     assert dispatch_failure_logs[-1].get("failure_reason_code") == reason_code
     assert dispatch_failure_logs[-1].get("failure_stage") == failure_stage
+
+
+def test_deploy_dispatch_rejection_does_not_emit_dispatch_accepted_no_run_state(db_session) -> None:
+    publisher = _RecordingGitHubPublisher(
+        fail_deploy=True,
+        deploy_error_code="workflow_dispatch_rejected",
+        deploy_error_message="GitHub rejected workflow dispatch for this target.",
+        deploy_error_stage="workflow_dispatch",
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+    _configure_deploy_target(service, business_id=business_id, site_id=site_id)
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes=None,
+        principal_id="principal-1",
+    )
+    service.publish_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        commit_message=None,
+        analytics_measurement_id=None,
+        principal_id="principal-1",
+    )
+
+    with pytest.raises(SEOMigrationValidationError, match="GitHub rejected workflow dispatch for this target."):
+        service.deploy_artifact_version(
+            business_id=business_id,
+            site_id=site_id,
+            artifact_version_id=artifact.id,
+            dry_run=False,
+            principal_id="principal-1",
+        )
+
+    workspace = service.get_workspace(business_id=business_id, site_id=site_id)
+    deploy_history = workspace.deploy_history_json or []
+    assert deploy_history
+    latest = deploy_history[-1]
+    assert latest.get("failure_reason") == "workflow_dispatch_rejected"
+    assert latest.get("dispatch_result_stage") == "workflow_dispatch"
+    assert latest.get("post_dispatch_state") == "dispatch_not_attempted"
+    assert latest.get("deploy_evidence_contract_status") == "evidence_not_attempted"
+    assert latest.get("deploy_evidence_contract_reasons") == ["dispatch_not_attempted"]
 
 
 def test_deploy_failure_without_known_mapping_omits_remediation_hint(db_session) -> None:

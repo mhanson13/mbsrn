@@ -2102,9 +2102,13 @@ Migration publish/deploy paths normalize failures into stable categories:
   - Deploy dispatch failures now include specific non-secret reason codes for target resolution:
     - `repo_not_found`
     - `workflow_not_found`
+    - `workflow_file_missing`
     - `branch_not_found_or_ref_invalid`
+    - `workflow_disabled`
+    - `workflow_dispatch_missing`
     - `workflow_not_dispatchable`
     - `workflow_dispatch_not_supported`
+    - `workflow_dispatch_rejected`
   - Publish repository auto-create/control-plane reason codes:
     - `repo_auto_create_disabled`
     - `repo_auto_create_not_authorized`
@@ -2637,7 +2641,8 @@ After clicking deploy:
 If no run appears:
 1. Use **Refresh Deploy Status**.
 2. Treat `dispatch_accepted_no_run` / `dispatch_unverified_no_run` as short-lived uncertainty.
-3. Retry once no-run state becomes stale (2-minute TTL) or the prior attempt reaches terminal state.
+3. If dispatch is explicitly rejected (`workflow_dispatch_rejected`, `workflow_dispatch_not_supported`, `workflow_disabled`, `workflow_dispatch_missing`), treat it as a dispatch-blocked target issue rather than a no-run uncertainty state.
+4. Retry once no-run state becomes stale (2-minute TTL) or the prior attempt reaches terminal state.
 
 If ingress evidence does not appear:
 1. Check `workflow_run_failure_stage` and `workflow_run_failure_reason_code` for `ingress_verify` or `ingress_evidence`.

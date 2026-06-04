@@ -387,6 +387,10 @@ Typical causes:
 Common managed-site deploy blocker codes:
 - `repo_adoption_required` / `github_repo_adoption_required`
 - `workflow_provisioning_failed`
+- `workflow_file_missing`
+- `workflow_disabled`
+- `workflow_dispatch_missing`
+- `workflow_dispatch_rejected`
 - `target_repo_deploy_secret_missing`
 - `generated_workflow_requires_missing_gcp_deploy_key`
 - `shared_preview_gateway_missing`
@@ -397,6 +401,10 @@ Common managed-site deploy blocker codes:
 - `address_value_missing_after_retry`
 - `ingress_static_ip_conflict`
 - `workflow_run_failed_without_live_url_evidence`
+
+Dispatch/run-evidence classification notes:
+- `dispatch_accepted_no_run` / `dispatch_unverified_no_run` means GitHub accepted dispatch transport but workflow run evidence is still pending.
+- explicit dispatch rejection reason codes (`workflow_dispatch_rejected`, `workflow_dispatch_not_supported`, `workflow_disabled`, `workflow_dispatch_missing`) are classified as dispatch-blocked target failures, not no-run uncertainty.
 
 Endpoint mode/template guidance:
 - changing `managed_preview_endpoint` admin defaults requires rerunning publish/workflow provisioning and then rerunning deploy so target-repo workflow env/manifests are regenerated with the updated endpoint mode.

@@ -465,6 +465,10 @@ _DEPLOY_TARGET_REASON_REF_INVALID = "branch_not_found_or_ref_invalid"
 _DEPLOY_TARGET_REASON_DISPATCH_UNSUPPORTED = "workflow_dispatch_not_supported"
 _DEPLOY_TARGET_REASON_TOKEN_UNAUTHORIZED = "token_not_authorized"
 _DEPLOY_TARGET_REASON_WORKFLOW_NOT_DISPATCHABLE = "workflow_not_dispatchable"
+_DEPLOY_TARGET_REASON_WORKFLOW_FILE_MISSING = "workflow_file_missing"
+_DEPLOY_TARGET_REASON_WORKFLOW_DISPATCH_MISSING = "workflow_dispatch_missing"
+_DEPLOY_TARGET_REASON_WORKFLOW_DISABLED = "workflow_disabled"
+_DEPLOY_TARGET_REASON_WORKFLOW_DISPATCH_REJECTED = "workflow_dispatch_rejected"
 _DEPLOY_TARGET_REASON_WORKFLOW_NOT_PRODUCTION_READY = "workflow_not_production_ready"
 _DEPLOY_TARGET_REASON_DEPLOY_BLOCKER_RECONCILIATION_FAILED = "deploy_blocker_reconciliation_failed"
 _DEPLOY_TARGET_REASON_STALE_DEPLOY_BLOCKER_REQUIRES_REFRESH = "stale_deploy_blocker_requires_refresh"
@@ -6707,7 +6711,10 @@ class SEOMigrationService:
             failure_category = self._categorize_publisher_failure(exc=exc, action="deploy")
             failure_reason_code = _normalize_deploy_failure_reason_code(exc.code)
             failure_stage = _normalize_deploy_failure_stage(exc.stage)
-            dispatch_attempted = failure_stage == "workflow_dispatch"
+            dispatch_attempted = (
+                failure_stage == "workflow_dispatch"
+                and failure_reason_code in {"github_temporal_failure", "github_timeout", "github_network_error"}
+            )
             dispatch_result_stage = failure_stage or "workflow_dispatch"
             workflow_run_lookup_attempted = False
             workflow_run_found = False
@@ -6721,6 +6728,8 @@ class SEOMigrationService:
                 workflow_dispatch_ready = failure_stage not in {"repo_lookup", "ref_lookup", "workflow_lookup"}
                 if failure_stage == "workflow_lookup" and failure_reason_code in {
                     _DEPLOY_TARGET_REASON_WORKFLOW_NOT_DISPATCHABLE,
+                    _DEPLOY_TARGET_REASON_WORKFLOW_DISABLED,
+                    _DEPLOY_TARGET_REASON_WORKFLOW_DISPATCH_MISSING,
                     _DEPLOY_TARGET_REASON_DISPATCH_UNSUPPORTED,
                     _DEPLOY_TARGET_REASON_WORKFLOW_NOT_PRODUCTION_READY,
                 }:
@@ -16659,6 +16668,8 @@ class SEOMigrationService:
                     continue
                 if candidate_reason_code in {
                     _DEPLOY_TARGET_REASON_WORKFLOW_NOT_DISPATCHABLE,
+                    _DEPLOY_TARGET_REASON_WORKFLOW_DISABLED,
+                    _DEPLOY_TARGET_REASON_WORKFLOW_DISPATCH_MISSING,
                     _DEPLOY_TARGET_REASON_DISPATCH_UNSUPPORTED,
                     _DEPLOY_TARGET_REASON_WORKFLOW_NOT_PRODUCTION_READY,
                 }:
@@ -16820,6 +16831,8 @@ class SEOMigrationService:
         if not readiness.workflow_exists:
             return False, _DEPLOY_TARGET_REASON_WORKFLOW_NOT_FOUND
         if not readiness.workflow_dispatch_ready:
+            if readiness.workflow_conformance_status == "workflow_dispatch_missing":
+                return False, _DEPLOY_TARGET_REASON_WORKFLOW_DISPATCH_MISSING
             return False, _DEPLOY_TARGET_REASON_WORKFLOW_NOT_DISPATCHABLE
         if not readiness.workflow_dispatch_supported:
             return False, _DEPLOY_TARGET_REASON_DISPATCH_UNSUPPORTED
@@ -17909,8 +17922,12 @@ class SEOMigrationService:
             _DEPLOY_TARGET_REASON_REPO_NOT_FOUND,
             _DEPLOY_TARGET_REASON_WORKFLOW_NOT_FOUND,
             _DEPLOY_TARGET_REASON_REF_INVALID,
+            _DEPLOY_TARGET_REASON_WORKFLOW_FILE_MISSING,
             _DEPLOY_TARGET_REASON_DISPATCH_UNSUPPORTED,
+            _DEPLOY_TARGET_REASON_WORKFLOW_DISPATCH_MISSING,
             _DEPLOY_TARGET_REASON_WORKFLOW_NOT_DISPATCHABLE,
+            _DEPLOY_TARGET_REASON_WORKFLOW_DISABLED,
+            _DEPLOY_TARGET_REASON_WORKFLOW_DISPATCH_REJECTED,
             _DEPLOY_TARGET_REASON_WORKFLOW_NOT_PRODUCTION_READY,
             "repo_create_failed_invalid_name",
             "repo_create_failed_owner_mismatch",
@@ -23317,9 +23334,13 @@ def _normalize_deploy_failure_reason_code(value: object) -> str | None:
         _DEPLOY_TARGET_REASON_REPO_NOT_FOUND,
         _DEPLOY_TARGET_REASON_WORKFLOW_NOT_FOUND,
         _DEPLOY_TARGET_REASON_REF_INVALID,
+        _DEPLOY_TARGET_REASON_WORKFLOW_FILE_MISSING,
         _DEPLOY_TARGET_REASON_DISPATCH_UNSUPPORTED,
+        _DEPLOY_TARGET_REASON_WORKFLOW_DISPATCH_MISSING,
         _DEPLOY_TARGET_REASON_TOKEN_UNAUTHORIZED,
         _DEPLOY_TARGET_REASON_WORKFLOW_NOT_DISPATCHABLE,
+        _DEPLOY_TARGET_REASON_WORKFLOW_DISABLED,
+        _DEPLOY_TARGET_REASON_WORKFLOW_DISPATCH_REJECTED,
         _DEPLOY_TARGET_REASON_WORKFLOW_NOT_PRODUCTION_READY,
         _DEPLOY_TARGET_REASON_DEPLOY_BLOCKER_RECONCILIATION_FAILED,
         _DEPLOY_TARGET_REASON_STALE_DEPLOY_BLOCKER_REQUIRES_REFRESH,
@@ -23960,6 +23981,11 @@ def _infer_dispatch_identifier_type(workflow_id: object) -> str:
         normalized_workflow_id = _normalize_string(workflow_id, max_length=160) or ""
     if normalized_workflow_id.isdigit():
         return "workflow_numeric_id"
+    lowered_identifier = normalized_workflow_id.strip().lower()
+    if lowered_identifier.endswith(".yml") or lowered_identifier.endswith(".yaml"):
+        return "workflow_file_path"
+    if "/" in normalized_workflow_id:
+        return "workflow_file_path"
     return "workflow_id"
 
 
@@ -24116,11 +24142,15 @@ def _derive_dispatch_service_reason_code(
         _DEPLOY_TARGET_REASON_REPO_NOT_FOUND,
         _DEPLOY_TARGET_REASON_WORKFLOW_NOT_FOUND,
         _DEPLOY_TARGET_REASON_REF_INVALID,
+        _DEPLOY_TARGET_REASON_WORKFLOW_FILE_MISSING,
     }:
         return _DEPLOY_DISPATCH_SERVICE_REASON_TARGET_METADATA_MISSING
     if normalized_failure_reason in {
         _DEPLOY_TARGET_REASON_WORKFLOW_NOT_DISPATCHABLE,
         _DEPLOY_TARGET_REASON_DISPATCH_UNSUPPORTED,
+        _DEPLOY_TARGET_REASON_WORKFLOW_DISPATCH_MISSING,
+        _DEPLOY_TARGET_REASON_WORKFLOW_DISABLED,
+        _DEPLOY_TARGET_REASON_WORKFLOW_DISPATCH_REJECTED,
         _DEPLOY_TARGET_REASON_WORKFLOW_NOT_PRODUCTION_READY,
     }:
         return _DEPLOY_DISPATCH_SERVICE_REASON_TARGET_CONFIG_INVALID
@@ -24653,6 +24683,14 @@ def _derive_deploy_failure_remediation_hint(
         and workflow_exists_bool is True
     ):
         return "Selected workflow exists but is not dispatchable for this deploy target."
+    if normalized_reason == _DEPLOY_TARGET_REASON_WORKFLOW_DISABLED:
+        return "Selected workflow is disabled in GitHub and cannot be dispatched."
+    if normalized_reason == _DEPLOY_TARGET_REASON_WORKFLOW_DISPATCH_MISSING:
+        return "Selected workflow is missing workflow_dispatch; enable it before retrying deploy."
+    if normalized_reason == _DEPLOY_TARGET_REASON_WORKFLOW_FILE_MISSING:
+        return "Selected workflow file could not be found on the target ref."
+    if normalized_reason == _DEPLOY_TARGET_REASON_WORKFLOW_DISPATCH_REJECTED:
+        return "GitHub rejected workflow dispatch after preflight checks; refresh target readiness and retry."
     if normalized_reason == _DEPLOY_TARGET_REASON_WORKFLOW_NOT_PRODUCTION_READY:
         return (
             "Selected workflow is scaffold-only and not production-ready. "

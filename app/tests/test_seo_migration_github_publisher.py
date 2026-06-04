@@ -2070,7 +2070,7 @@ def test_dispatch_deploy_classifies_ref_invalid(monkeypatch) -> None:
     publisher = GitHubSEOMigrationPublisher(token="test-token")
     with pytest.raises(SEOMigrationGitHubPublisherError) as exc_info:
         publisher.dispatch_deploy(target=_dispatch_target(), dry_run=False)
-    assert exc_info.value.code == "workflow_not_dispatchable"
+    assert exc_info.value.code == "branch_not_found_or_ref_invalid"
     assert exc_info.value.stage == "workflow_dispatch"
     assert len(calls) == 5
 
@@ -2153,7 +2153,7 @@ def test_dispatch_deploy_classifies_workflow_not_dispatchable(monkeypatch) -> No
     publisher = GitHubSEOMigrationPublisher(token="test-token")
     with pytest.raises(SEOMigrationGitHubPublisherError) as exc_info:
         publisher.dispatch_deploy(target=_dispatch_target(), dry_run=False)
-    assert exc_info.value.code == "workflow_not_dispatchable"
+    assert exc_info.value.code == "workflow_disabled"
     assert exc_info.value.stage == "workflow_lookup"
     assert len(calls) == 4
 
@@ -2202,7 +2202,7 @@ def test_dispatch_deploy_classifies_workflow_not_dispatchable_when_trigger_missi
     publisher = GitHubSEOMigrationPublisher(token="test-token")
     with pytest.raises(SEOMigrationGitHubPublisherError) as exc_info:
         publisher.dispatch_deploy(target=_dispatch_target(), dry_run=False)
-    assert exc_info.value.code == "workflow_not_dispatchable"
+    assert exc_info.value.code == "workflow_dispatch_missing"
     assert exc_info.value.stage == "workflow_lookup"
     assert len(calls) == 4
 
