@@ -1999,6 +1999,12 @@ describe("site migration workflow route", () => {
         ready: false,
         reasons: ["ManagedCertificate provisioning is still in progress for expected hostname."],
         dispatch_service_reason_code: "tls_certificate_provisioning",
+        certificate_readiness_state: "certificate_provisioning_pending",
+        certificate_gate_required_before_deploy: false,
+        certificate_gate_blocked: false,
+        runtime_ready_tls_pending: true,
+        runtime_reached_load_balancer: true,
+        https_ready: false,
         dns_record_matches_ingress: true,
         dns_expected_ip: "8.233.146.106",
         dns_observed_ip: "8.233.146.106",
@@ -2033,8 +2039,8 @@ describe("site migration workflow route", () => {
     await user.click(await screen.findByText("Show detailed migration failure diagnostics"));
 
     const diagnostics = screen.getByTestId("migration-deploy-diagnostics");
-    expect(diagnostics).toHaveTextContent(/tls is still provisioning/i);
-    expect(diagnostics).toHaveTextContent(/wait for managedcertificate to become active/i);
+    expect(diagnostics).toHaveTextContent(/managedcertificate is provisioning/i);
+    expect(diagnostics).toHaveTextContent(/wait for managedcertificate/i);
 
     const consistency = screen.getByTestId("migration-deploy-consistency");
     expect(within(consistency).getByTestId("migration-deploy-consistency-gate-ingress_conflict")).toHaveTextContent(
@@ -2055,6 +2061,49 @@ describe("site migration workflow route", () => {
     expect(
       within(rawConsistencyDetails).getByTestId("migration-deploy-consistency-observed-managed-certificate-status"),
     ).toHaveTextContent("observed_managed_certificate_status: PROVISIONING");
+    expect(
+      within(rawConsistencyDetails).getByTestId("migration-deploy-consistency-certificate-readiness-state"),
+    ).toHaveTextContent("certificate_readiness_state: certificate_provisioning_pending");
+    expect(
+      within(rawConsistencyDetails).getByTestId("migration-deploy-consistency-runtime-ready-tls-pending"),
+    ).toHaveTextContent("runtime_ready_tls_pending: Yes");
+    expect(
+      within(rawConsistencyDetails).getByTestId("migration-deploy-consistency-certificate-gate-required"),
+    ).toHaveTextContent("certificate_gate_required_before_deploy: No");
+  });
+
+  it("shows certificate pre-deploy gate guidance when https-ready mode requires ACTIVE cert", async () => {
+    const user = userEvent.setup();
+    const summary = buildMigrationWorkspaceSummary({
+      deploy_readiness: {
+        ready: false,
+        reasons: ["Certificate exists but is still provisioning. Wait for ACTIVE before HTTPS-ready deploy."],
+        dispatch_service_reason_code: "tls_certificate_provisioning",
+        certificate_readiness_state: "certificate_provisioning_pending",
+        certificate_gate_required_before_deploy: true,
+        certificate_gate_blocked: true,
+        runtime_ready_tls_pending: false,
+        runtime_reached_load_balancer: false,
+        deploy_https_ready: false,
+        target: {
+          enabled: true,
+          repo_owner: "mhanson13",
+          repo_name: "example-site",
+          workflow_id: "deploy-example-site-www-prod.yml",
+          ref: "main",
+        },
+      },
+    });
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(summary);
+    mockFetchMigrationPublishHistory.mockResolvedValueOnce({ items: [], total: 0 });
+    mockFetchMigrationDeployHistory.mockResolvedValueOnce({ items: [], total: 0 });
+
+    render(<SiteMigrationWorkflowPage />);
+    await user.click(await screen.findByText("Show detailed migration failure diagnostics"));
+
+    const diagnostics = screen.getByTestId("migration-deploy-diagnostics");
+    expect(diagnostics).toHaveTextContent(/certificate.*still provisioning/i);
+    expect(diagnostics).toHaveTextContent(/requires an ACTIVE certificate before HTTPS-ready deploy can continue/i);
   });
 
   it("renders workflow integrity mismatch as warning with remediation guidance", async () => {

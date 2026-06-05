@@ -8248,6 +8248,14 @@ def test_refresh_deploy_status_tls_provisioning_with_static_ip_alignment_maps_to
     assert deploy_readiness.get("static_ip_bound_to_expected_forwarding_rule") is True
     assert deploy_readiness.get("tls_certificate_status") == "PROVISIONING"
     assert deploy_readiness.get("tls_domain_status") == "PROVISIONING"
+    assert deploy_readiness.get("certificate_readiness_state") == "certificate_provisioning_pending"
+    assert deploy_readiness.get("runtime_ready_tls_pending") is True
+    assert deploy_readiness.get("certificate_gate_required_before_deploy") is True
+    assert deploy_readiness.get("certificate_gate_blocked") is True
+    assert deploy_readiness.get("https_ready") is False
+    assert "wait for active before https-ready deploy" in " ".join(
+        str(item).lower() for item in (deploy_readiness.get("reasons") or [])
+    )
     assert "reason=managed_certificate_provisioning" in str(deploy_readiness.get("https_probe_error_summary") or "")
 
 
@@ -8302,6 +8310,119 @@ def test_refresh_deploy_status_ingress_502_surfaces_runtime_probe_diagnostics(db
     assert deploy_readiness.get("service_has_ready_endpoints") is True
     assert deploy_readiness.get("service_probe_status") == "ok"
     assert deploy_readiness.get("runtime_probe_status") == "ingress_or_edge_convergence"
+
+
+def test_refresh_deploy_status_tls_provisioning_in_shared_preview_mode_is_runtime_pending_not_dispatch_blocking(
+    db_session,
+) -> None:
+    publisher = _RecordingGitHubPublisher(
+        deploy_workflow_run_id=910141,
+        deploy_workflow_run_status="in_progress",
+        refresh_workflow_run_id=910141,
+        refresh_workflow_run_status="completed",
+        refresh_workflow_run_conclusion="failure",
+        refresh_workflow_run_failure_reason_code="https_probe_failed_after_control_plane_ready",
+        refresh_workflow_run_failure_stage="ingress_evidence",
+        refresh_workflow_run_failure_step="Resolve live URL from ingress status",
+        refresh_workflow_output={
+            "dns_record_matches_ingress": "true",
+            "dns_expected_ip": "34.149.170.250",
+            "dns_observed_ip": "34.149.170.250",
+            "expected_static_ip_address": "34.149.170.250",
+            "static_ip_status": "IN_USE",
+            "ingress_status_ip": "34.149.170.250",
+            "ingress_status_ip_matches_static_ip": "true",
+            "static_ip_bound_to_expected_forwarding_rule": "true",
+            "tls_certificate_status": "PROVISIONING",
+            "tls_domain_status": "PROVISIONING",
+            "host_reachable": "true",
+            "host_reachability_scheme": "https",
+            "deploy_https_ready": "false",
+        },
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    config = service.github_publish_config_service.get()
+    namespace_defaults = dict(config.namespace_isolation_defaults_json or {})
+    namespace_defaults["managed_preview_endpoint"] = {
+        "mode": "preview_shared_gateway",
+        "shared_preview_static_ip_name": "site-preview-shared-ip",
+    }
+    config.namespace_isolation_defaults_json = namespace_defaults
+    service.github_publish_config_service.repository.save(config)
+    service.session.commit()
+    artifact = _prepare_and_request_deploy(service, business_id=business_id, site_id=site_id)
+
+    service.refresh_deploy_run_status(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        principal_id="principal-1",
+    )
+
+    summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
+    deploy_readiness = summary.deploy_readiness or {}
+    assert deploy_readiness.get("certificate_readiness_state") == "certificate_provisioning_pending"
+    assert deploy_readiness.get("runtime_ready_tls_pending") is True
+    assert deploy_readiness.get("certificate_gate_required_before_deploy") is False
+    assert deploy_readiness.get("certificate_gate_blocked") is False
+    assert deploy_readiness.get("ready") is True
+
+
+def test_refresh_deploy_status_tls_provisioning_overrides_runtime_replace_failure_reason(db_session) -> None:
+    publisher = _RecordingGitHubPublisher(
+        deploy_workflow_run_id=910142,
+        deploy_workflow_run_status="in_progress",
+        refresh_workflow_run_id=910142,
+        refresh_workflow_run_status="completed",
+        refresh_workflow_run_conclusion="failure",
+        refresh_workflow_run_failure_reason_code="managed_site_runtime_replace_failed",
+        refresh_workflow_run_failure_stage="workflow_execution",
+        refresh_workflow_run_failure_step="Replace existing managed runtime resources",
+        refresh_workflow_output={
+            "static_ip_status": "IN_USE",
+            "ingress_status_ip": "34.149.170.250",
+            "ingress_status_ip_matches_static_ip": "true",
+            "static_ip_bound_to_expected_forwarding_rule": "true",
+            "tls_certificate_status": "PROVISIONING",
+            "tls_domain_status": "PROVISIONING",
+            "host_reachable": "true",
+            "host_reachability_scheme": "https",
+            "deploy_https_ready": "false",
+        },
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    artifact = _prepare_published_artifact(service, business_id=business_id, site_id=site_id)
+    service.deploy_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        replace_existing_runtime=True,
+        principal_id="principal-1",
+    )
+
+    service.refresh_deploy_run_status(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        principal_id="principal-1",
+    )
+
+    summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
+    deploy_readiness = summary.deploy_readiness or {}
+    assert deploy_readiness.get("selected_workflow_failure_reason") == "tls_certificate_provisioning"
+    assert deploy_readiness.get("selected_workflow_failure_stage") == "ingress_evidence"
+    assert deploy_readiness.get("runtime_ready_tls_pending") is True
 
 
 def test_refresh_deploy_status_certificate_domain_mismatch_blocks_https_ready(db_session) -> None:

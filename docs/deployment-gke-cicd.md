@@ -368,7 +368,12 @@ Typical causes:
 `managed_certificate_provisioning` / `tls_certificate_provisioning` interpretation:
 - static IP can be `IN_USE` and ingress IP can already match the reserved address while certificate remains `PROVISIONING`.
 - in this state, HTTPS probe failures are usually a downstream symptom of TLS convergence and should not be classified as backend 502 or app runtime failure.
-- deploy still fails bounded readiness (non-zero) until preview HTTPS is healthy.
+- runtime and TLS are tracked separately in readiness:
+  - `certificate_readiness_state=certificate_provisioning_pending`
+  - `runtime_ready_tls_pending=true` when LB/runtime evidence is present but HTTPS is still pending
+  - `https_ready=false` until certificate converges and HTTPS probe succeeds
+- when endpoint mode requires HTTPS-ready certificate before dispatch (for example dedicated/static-IP mode), deploy readiness blocks with a certificate gate and does not dispatch another run until cert is `ACTIVE`.
+- when endpoint mode is preview-tolerant (`preview_shared_gateway`), runtime can remain deployable while TLS is pending; UI shows this as a wait-state, not as runtime-replace failure.
 - next action: wait for ManagedCertificate to reach `ACTIVE`, then refresh/rerun deploy.
 
 `ingress_backend_502` interpretation:

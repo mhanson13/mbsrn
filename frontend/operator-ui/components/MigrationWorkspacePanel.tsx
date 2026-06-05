@@ -505,6 +505,9 @@ function toDeployBlockerMessage(blockerCodes: string[]): string | null {
   if (blockerCodes.includes("deploy_configuration_missing")) {
     return "Deployment target configuration is missing or disabled.";
   }
+  if (blockerCodes.includes("deploy_certificate_readiness_pending")) {
+    return "Certificate is still provisioning for this hostname. Wait for ACTIVE before HTTPS-ready deploy.";
+  }
   return null;
 }
 
@@ -1844,7 +1847,7 @@ function toManagedGkeConfigGuidance(value: string | null): string | null {
     return "Google Cloud static IP resource was found, but the numeric address value was still missing after bounded retries/list fallback. Wait and retry deploy after address convergence.";
   }
   if (normalized === "tls_certificate_provisioning" || normalized === "managed_certificate_provisioning") {
-    return "Deploy reached the load balancer, but TLS is still provisioning for the preview hostname. Wait for ManagedCertificate to become ACTIVE, then refresh and retry deploy.";
+    return "ManagedCertificate is still provisioning for the preview hostname. Wait for ACTIVE status before HTTPS-ready deploy can continue.";
   }
   if (normalized === "generated_workflow_requires_missing_gcp_deploy_key") {
     return "Deploy workflow run failed because required target-repo deploy secret GCP_DEPLOY_KEY was missing. Provision deploy auth prerequisites and rerun deploy.";
@@ -5296,6 +5299,12 @@ export function MigrationWorkspacePanel({
   const currentLiveRuntimeStatus = asStringOrNull(deployReadiness.current_live_runtime_status);
   const currentLiveRuntimeSource = asStringOrNull(deployReadiness.current_live_runtime_source) || currentLiveEvidenceSource;
   const currentLiveRuntimeNote = asStringOrNull(deployReadiness.current_live_runtime_note);
+  const certificateReadinessState = asStringOrNull(deployReadiness.certificate_readiness_state);
+  const certificateGateRequiredBeforeDeploy = asBooleanOrNull(deployReadiness.certificate_gate_required_before_deploy);
+  const certificateGateBlocked = asBooleanOrNull(deployReadiness.certificate_gate_blocked);
+  const runtimeReadyTlsPending = asBooleanOrNull(deployReadiness.runtime_ready_tls_pending);
+  const runtimeReachedLoadBalancer = asBooleanOrNull(deployReadiness.runtime_reached_load_balancer);
+  const httpsReady = asBooleanOrNull(deployReadiness.https_ready);
   const selectedWorkflowAttemptStatus =
     asStringOrNull(deployReadiness.selected_workflow_attempt_status) || workflowRunStatus;
   const selectedWorkflowAttemptConclusion =
@@ -6129,9 +6138,11 @@ export function MigrationWorkspacePanel({
           .map((value) => value.trim())
           .filter((value) => value.length > 0),
       );
+      const certificateProvisioningPending = (certificateReadinessState || "").trim().toLowerCase()
+        === "certificate_provisioning_pending";
       const hasTlsProvisioningReason =
         reasonCodes.has("tls_certificate_provisioning") || reasonCodes.has("managed_certificate_provisioning");
-      if (!hasTlsProvisioningReason && !tlsProvisioning) {
+      if (!hasTlsProvisioningReason && !tlsProvisioning && !certificateProvisioningPending && runtimeReadyTlsPending !== true) {
         return null;
       }
       if (deployHttpsReady === true) {
@@ -6142,11 +6153,24 @@ export function MigrationWorkspacePanel({
         extractHostnameFromUrl(destinationSummary.deployResolvedLiveUrl) ||
         extractHostnameFromUrl(currentLiveUrl);
       const parts: string[] = [
-        hostname
-          ? `Deploy reached the load balancer, but TLS is still provisioning for ${hostname}.`
-          : "Deploy reached the load balancer, but TLS is still provisioning for the preview hostname.",
-        "Wait for ManagedCertificate to become ACTIVE, then refresh or rerun deploy.",
+        runtimeReadyTlsPending === true
+          ? (
+            hostname
+              ? `Runtime reached the load balancer, but HTTPS is still pending because ManagedCertificate is provisioning for ${hostname}.`
+              : "Runtime reached the load balancer, but HTTPS is still pending because ManagedCertificate is provisioning for the preview hostname."
+          )
+          : (
+            hostname
+              ? `Certificate for ${hostname} is still provisioning.`
+              : "Certificate for the preview hostname is still provisioning."
+          ),
+        certificateGateRequiredBeforeDeploy === true
+          ? "This deploy mode requires an ACTIVE certificate before HTTPS-ready deploy can continue."
+          : "Runtime is deployed; wait for ManagedCertificate to become ACTIVE, then refresh readiness.",
       ];
+      if (certificateReadinessState) {
+        parts.push(`Certificate readiness state: ${certificateReadinessState}.`);
+      }
       if (staticIpStatus) {
         parts.push(`Static IP status: ${staticIpStatus}.`);
       }
@@ -10055,6 +10079,16 @@ export function MigrationWorkspacePanel({
                         <span className="hint" data-testid="migration-deploy-consistency-https-ready">
                           deploy_https_ready: {formatBooleanStateLabel(deployHttpsReady)}
                         </span>
+                        <span className="hint" data-testid="migration-deploy-consistency-certificate-readiness-state">
+                          certificate_readiness_state: {certificateReadinessState || "Not available"}
+                        </span>
+                        <span className="hint" data-testid="migration-deploy-consistency-runtime-ready-tls-pending">
+                          runtime_ready_tls_pending: {formatBooleanStateLabel(runtimeReadyTlsPending)}
+                        </span>
+                        <span className="hint" data-testid="migration-deploy-consistency-certificate-gate-required">
+                          certificate_gate_required_before_deploy:{" "}
+                          {formatBooleanStateLabel(certificateGateRequiredBeforeDeploy)}
+                        </span>
                         <span className="hint" data-testid="migration-deploy-consistency-gce-backend-health-status">
                           gce_backend_health_status: {gceBackendHealthStatus || "Not available"}
                         </span>
@@ -10223,6 +10257,23 @@ export function MigrationWorkspacePanel({
                     <span className="hint">
                       current_deploy_https_ready: {formatBooleanStateLabel(currentDeployHttpsReady)}
                     </span>
+                    <span className="hint">
+                      certificate_readiness_state: {certificateReadinessState || "Not available"}
+                    </span>
+                    <span className="hint">
+                      certificate_gate_required_before_deploy:{" "}
+                      {formatBooleanStateLabel(certificateGateRequiredBeforeDeploy)}
+                    </span>
+                    <span className="hint">
+                      certificate_gate_blocked: {formatBooleanStateLabel(certificateGateBlocked)}
+                    </span>
+                    <span className="hint">
+                      runtime_ready_tls_pending: {formatBooleanStateLabel(runtimeReadyTlsPending)}
+                    </span>
+                    <span className="hint">
+                      runtime_reached_load_balancer: {formatBooleanStateLabel(runtimeReachedLoadBalancer)}
+                    </span>
+                    <span className="hint">https_ready: {formatBooleanStateLabel(httpsReady)}</span>
                     <span className="hint">
                       current_cert_identity_valid: {formatBooleanStateLabel(currentCertIdentityValid)}
                     </span>

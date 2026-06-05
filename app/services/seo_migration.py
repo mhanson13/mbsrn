@@ -398,6 +398,7 @@ _DEPLOY_BLOCKER_RUNTIME_UNAVAILABLE = "deploy_runtime_unavailable"
 _DEPLOY_BLOCKER_CONFIGURATION_MISSING = "deploy_configuration_missing"
 _DEPLOY_BLOCKER_CONFIGURATION_INVALID = "deploy_configuration_invalid"
 _DEPLOY_BLOCKER_INTEGRATION_UNAVAILABLE = "deploy_integration_unavailable"
+_DEPLOY_BLOCKER_CERTIFICATE_PENDING = "deploy_certificate_readiness_pending"
 _DEPLOY_WORKFLOW_SOURCE_PUBLISH_HISTORY = "publish_history_workflow"
 _DEPLOY_WORKFLOW_SOURCE_SITE_SPECIFIC = "site_specific_workflow"
 _DEPLOY_WORKFLOW_SOURCE_WORKSPACE_CONFIG = "workspace_config_workflow"
@@ -588,6 +589,11 @@ _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_PROVISIONING = "tls_certificate_
 _DEPLOY_RUNTIME_REASON_MANAGED_SITE_RUNTIME_REPLACE_REQUESTED = "managed_site_runtime_replace_requested"
 _DEPLOY_RUNTIME_REASON_MANAGED_SITE_RUNTIME_REPLACE_COMPLETED = "managed_site_runtime_replace_completed"
 _DEPLOY_RUNTIME_REASON_MANAGED_SITE_RUNTIME_REPLACE_FAILED = "managed_site_runtime_replace_failed"
+_CERTIFICATE_READINESS_STATE_RESOURCE_MISSING = "certificate_resource_missing"
+_CERTIFICATE_READINESS_STATE_PROVISIONING_PENDING = "certificate_provisioning_pending"
+_CERTIFICATE_READINESS_STATE_ACTIVE = "certificate_active"
+_CERTIFICATE_READINESS_STATE_DOMAIN_MISMATCH = "certificate_domain_mismatch"
+_CERTIFICATE_READINESS_STATE_STALE_OR_LEGACY = "certificate_stale_or_legacy"
 _MANAGED_PREVIEW_ENDPOINT_MODE_SHARED_GATEWAY = "preview_shared_gateway"
 _MANAGED_PREVIEW_ENDPOINT_MODE_DEDICATED_STATIC_IP = "dedicated_static_ip"
 _DEPLOY_WORKFLOW_INTEGRITY_STATUS_MATCH = "match"
@@ -20244,6 +20250,7 @@ class SEOMigrationService:
                 _DEPLOY_RUN_FAILURE_REASON_HTTPS_PROBE_NOT_ATTEMPTED,
                 _DEPLOY_RUN_FAILURE_REASON_INGRESS_EVIDENCE,
                 _DEPLOY_RUN_FAILURE_REASON_INGRESS_VERIFY,
+                _DEPLOY_RUNTIME_REASON_MANAGED_SITE_RUNTIME_REPLACE_FAILED,
             }:
                 dispatch_service_reason_code = _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_PROVISIONING
             if selected_workflow_failure_reason in {
@@ -20252,10 +20259,109 @@ class SEOMigrationService:
                 _DEPLOY_RUN_FAILURE_REASON_HTTPS_PROBE_NOT_ATTEMPTED,
                 _DEPLOY_RUN_FAILURE_REASON_INGRESS_EVIDENCE,
                 _DEPLOY_RUN_FAILURE_REASON_INGRESS_VERIFY,
+                _DEPLOY_RUNTIME_REASON_MANAGED_SITE_RUNTIME_REPLACE_FAILED,
             }:
                 selected_workflow_failure_reason = _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_PROVISIONING
-                if selected_workflow_failure_stage is None:
+                if selected_workflow_failure_stage in {
+                    None,
+                    _DEPLOY_RUN_FAILURE_STAGE_WORKFLOW_EXECUTION,
+                }:
                     selected_workflow_failure_stage = _DEPLOY_RUN_FAILURE_STAGE_INGRESS_EVIDENCE
+
+        preview_endpoint_mode = _normalize_string(
+            target_summary.get("preview_endpoint_mode"),
+            max_length=60,
+        )
+        uses_shared_preview_gateway = (
+            bool(target_summary.get("uses_shared_preview_gateway"))
+            if isinstance(target_summary.get("uses_shared_preview_gateway"), bool)
+            else False
+        )
+        certificate_gate_required_before_deploy = (
+            preview_endpoint_mode != _MANAGED_PREVIEW_ENDPOINT_MODE_SHARED_GATEWAY and not uses_shared_preview_gateway
+        )
+        cert_domain_mismatch_reason_codes = {
+            _DEPLOY_DISPATCH_SERVICE_REASON_CERTIFICATE_DOMAIN_MISMATCH,
+            _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_BOUND_TO_WRONG_SITE,
+            _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_IDENTITY_MISMATCH,
+            _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_CERTIFICATE_ANNOTATION_MISMATCH,
+            _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_CERTIFICATE_MISMATCH,
+            _DEPLOY_RUN_FAILURE_REASON_REACHABLE_BUT_TLS_MISMATCH,
+        }
+        cert_stale_or_legacy_reason_codes = {
+            _DEPLOY_DISPATCH_SERVICE_REASON_STALE_PRE_SHARED_CERT_BINDING,
+            _DEPLOY_DISPATCH_SERVICE_REASON_STALE_MANAGED_CERTIFICATE_PRESENT,
+        }
+        cert_missing_reason_codes = {
+            _DEPLOY_RUN_FAILURE_REASON_MANAGED_CERTIFICATE_METADATA_UNAVAILABLE,
+        }
+        cert_failed_not_visible_reason_codes = {
+            _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_FAILED_NOT_VISIBLE,
+        }
+        certificate_reason_candidates = set(reason_candidates)
+        certificate_reason_candidates.update(
+            {
+                _normalize_workflow_run_failure_reason_code(selected_workflow_failure_reason),
+            }
+        )
+        certificate_reason_candidates = {item for item in certificate_reason_candidates if item}
+        certificate_readiness_state: str | None = None
+        if any(code in certificate_reason_candidates for code in cert_domain_mismatch_reason_codes):
+            certificate_readiness_state = _CERTIFICATE_READINESS_STATE_DOMAIN_MISMATCH
+        elif any(code in certificate_reason_candidates for code in cert_stale_or_legacy_reason_codes):
+            certificate_readiness_state = _CERTIFICATE_READINESS_STATE_STALE_OR_LEGACY
+        elif any(code in certificate_reason_candidates for code in cert_missing_reason_codes):
+            certificate_readiness_state = _CERTIFICATE_READINESS_STATE_RESOURCE_MISSING
+        elif (
+            tls_provisioning_evidence
+            or any(code in certificate_reason_candidates for code in cert_failed_not_visible_reason_codes)
+        ):
+            certificate_readiness_state = _CERTIFICATE_READINESS_STATE_PROVISIONING_PENDING
+        elif normalized_tls_status == "ACTIVE" and normalized_tls_domain_status == "ACTIVE":
+            certificate_readiness_state = _CERTIFICATE_READINESS_STATE_ACTIVE
+        elif deploy_https_ready is True and cert_identity_valid is True:
+            certificate_readiness_state = _CERTIFICATE_READINESS_STATE_ACTIVE
+
+        runtime_reached_load_balancer = bool(
+            host_reachable is True
+            or current_host_reachable is True
+            or static_ip_alignment_evidence
+            or ingress_status_ip
+            or preview_https_status is not None
+        )
+        runtime_ready_tls_pending = bool(
+            runtime_reached_load_balancer
+            and deploy_https_ready is False
+            and certificate_readiness_state == _CERTIFICATE_READINESS_STATE_PROVISIONING_PENDING
+        )
+        https_ready = bool(
+            deploy_https_ready is True
+            and certificate_readiness_state == _CERTIFICATE_READINESS_STATE_ACTIVE
+        )
+
+        certificate_gate_blocked = bool(
+            certificate_gate_required_before_deploy
+            and deploy_https_ready is not True
+            and certificate_readiness_state
+            in {
+                _CERTIFICATE_READINESS_STATE_RESOURCE_MISSING,
+                _CERTIFICATE_READINESS_STATE_PROVISIONING_PENDING,
+            }
+        )
+        if certificate_gate_blocked:
+            if certificate_readiness_state == _CERTIFICATE_READINESS_STATE_RESOURCE_MISSING:
+                reasons.append(
+                    "ManagedCertificate resource for the expected hostname is not yet visible. "
+                    "Provision or refresh certificate resources, then rerun deploy."
+                )
+            else:
+                reasons.append(
+                    "Certificate exists but is still provisioning. "
+                    "Wait for ACTIVE before HTTPS-ready deploy."
+                )
+            blocker_codes.append(_DEPLOY_BLOCKER_CERTIFICATE_PENDING)
+        blocker_codes = _dedupe_strings(blocker_codes)
+        reasons = _dedupe_strings(reasons)
 
         return {
             "ready": not reasons,
@@ -20343,6 +20449,12 @@ class SEOMigrationService:
             "current_live_runtime_status": current_live_runtime_status,
             "current_live_runtime_source": current_live_runtime_source,
             "current_live_runtime_note": current_live_runtime_note,
+            "certificate_readiness_state": certificate_readiness_state,
+            "certificate_gate_required_before_deploy": certificate_gate_required_before_deploy,
+            "certificate_gate_blocked": certificate_gate_blocked,
+            "runtime_ready_tls_pending": runtime_ready_tls_pending,
+            "runtime_reached_load_balancer": runtime_reached_load_balancer,
+            "https_ready": https_ready,
             "workflow_integrity_status": workflow_integrity_status,
             "workflow_integrity_reason_code": workflow_integrity_reason_code,
             "workflow_conformance_checked": workflow_conformance_checked,
@@ -20492,6 +20604,12 @@ class SEOMigrationService:
                 "current_live_evidence_source": current_live_evidence_source,
                 "current_live_runtime_status": current_live_runtime_status,
                 "current_live_runtime_source": current_live_runtime_source,
+                "certificate_readiness_state": certificate_readiness_state,
+                "certificate_gate_required_before_deploy": certificate_gate_required_before_deploy,
+                "certificate_gate_blocked": certificate_gate_blocked,
+                "runtime_ready_tls_pending": runtime_ready_tls_pending,
+                "runtime_reached_load_balancer": runtime_reached_load_balancer,
+                "https_ready": https_ready,
                 "workflow_integrity_status": workflow_integrity_status,
                 "workflow_integrity_reason_code": workflow_integrity_reason_code,
                 "managed_deploy_secret_available": managed_deploy_secret_available,
@@ -24633,8 +24751,8 @@ def _derive_managed_gke_dispatch_readiness_message(*, dispatch_service_reason_co
         )
     if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_PROVISIONING:
         return (
-            "ManagedCertificate provisioning is still in progress for this site hostname. "
-            "Wait for ACTIVE certificate status before treating deploy as successful."
+            "Certificate exists but is still provisioning for this site hostname. "
+            "Wait for ACTIVE before HTTPS-ready deploy."
         )
     if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_DEPLOYED_CONTENT_IDENTITY_MISMATCH:
         return (
@@ -24875,7 +24993,7 @@ def _derive_deploy_failure_remediation_hint(
     if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_PROVISIONING:
         return (
             "ManagedCertificate is still provisioning for this hostname. "
-            "Wait for ACTIVE domain status and retry deploy refresh."
+            "Treat this as TLS readiness pending and retry once ACTIVE status is observed."
         )
     if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_DEPLOYED_CONTENT_IDENTITY_MISMATCH:
         return (
@@ -25236,7 +25354,7 @@ def _derive_workflow_run_failure_hint(
     if normalized_reason == _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_PROVISIONING:
         return (
             "ManagedCertificate provisioning is still in progress. "
-            "Wait for ACTIVE status before marking deploy successful."
+            "Treat this as TLS readiness pending and wait for ACTIVE status."
         )
     if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_CLOUDSQL_INVALID_STATE:
         return (

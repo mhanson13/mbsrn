@@ -2431,6 +2431,18 @@ Deploy is not considered HTTPS-ready unless all runtime checks agree:
 - no ingress/static-ip or certificate cross-site conflict (`ingress_conflict_detected=false`)
 - explicit HTTPS live URL evidence is present (`deploy_https_ready=true` and `resolved_live_url` starts with `https://`)
 
+TLS/certificate readiness is exposed separately from runtime rollout status:
+- `certificate_readiness_state` values:
+  - `certificate_resource_missing`
+  - `certificate_provisioning_pending`
+  - `certificate_active`
+  - `certificate_domain_mismatch`
+  - `certificate_stale_or_legacy`
+- `runtime_ready_tls_pending=true` means ingress/load-balancer/runtime evidence exists, but cert/HTTPS are still converging.
+- `certificate_gate_required_before_deploy=true` means this endpoint mode requires ACTIVE certificate before dispatch.
+- `certificate_gate_blocked=true` indicates deploy dispatch is intentionally blocked on certificate readiness.
+- `https_ready=true` is only emitted when HTTPS probe and certificate readiness are both satisfied.
+
 Resolve-live-url failure diagnostics are evidence-first:
 - workflow gathers ingress status, reserved static-IP metadata, DNS A-record observation, and ManagedCertificate domain/status evidence before terminal failure classification.
 - failure-state trap fields (`resolve_live_url_state_*`) should include populated `expected_static_ip_address`, `dns_expected_ip`, `dns_observed_ip`, and ManagedCertificate status/domain fields when that evidence is available from cluster/GCP APIs.
@@ -2511,6 +2523,7 @@ Isolation rules:
 - blocking cert-identity decisions rely on desired-state managed-certificate annotation, ManagedCertificate domain/status, and HTTPS/TLS probe identity evidence.
 - `tls_certificate_bound_to_wrong_site` requires positive mismatch evidence (wrong ingress annotation/cert resource identity, non-empty mismatched ManagedCertificate domain evidence, or HTTPS TLS hostname mismatch); empty metadata alone is not treated as cross-site proof when HTTPS certificate identity is valid.
 - when ingress annotation already references the expected deterministic ManagedCertificate resource name, workflow may safely repair domain drift by deleting/recreating only that ManagedCertificate and re-checking bounded status/domain convergence before allowing success.
+- `replace_existing_runtime=true` does not treat TLS provisioning as runtime-replace failure: replacement status and TLS pending status are reported separately (`runtime_ready_tls_pending` / certificate state).
 
 Managed deploy troubleshooting reason codes:
 - `repo_adoption_required` / `github_repo_adoption_required`:
