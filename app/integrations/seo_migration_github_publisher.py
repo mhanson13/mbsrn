@@ -8885,6 +8885,15 @@ _DEPLOY_RUNTIME_REASON_IN_CLUSTER_SERVICE_PROBE_TIMEOUT = "in_cluster_service_pr
 _DEPLOY_RUNTIME_REASON_NETWORK_POLICY_MAY_BLOCK_SERVICE_PROBE = "network_policy_may_block_service_probe"
 _DEPLOY_RUNTIME_REASON_MANAGED_CERTIFICATE_METADATA_UNAVAILABLE = "managed_certificate_metadata_unavailable"
 _DEPLOY_RUNTIME_REASON_PRE_SHARED_CERT_METADATA_MISMATCH = "pre_shared_cert_metadata_mismatch"
+_DEPLOY_RUNTIME_REASON_RUNTIME_DEPLOYMENT_MISSING_AFTER_APPLY = "runtime_deployment_missing_after_apply"
+_DEPLOY_RUNTIME_REASON_RUNTIME_SERVICE_MISSING_AFTER_APPLY = "runtime_service_missing_after_apply"
+_DEPLOY_RUNTIME_REASON_RUNTIME_INGRESS_MISSING_AFTER_APPLY = "runtime_ingress_missing_after_apply"
+_DEPLOY_RUNTIME_REASON_RUNTIME_MANAGED_CERTIFICATE_MISSING_AFTER_APPLY = (
+    "runtime_managed_certificate_missing_after_apply"
+)
+_DEPLOY_RUNTIME_REASON_RUNTIME_FRONTEND_CONFIG_MISSING_AFTER_APPLY = "runtime_frontend_config_missing_after_apply"
+_DEPLOY_RUNTIME_REASON_RUNTIME_BACKEND_CONFIG_MISSING_AFTER_APPLY = "runtime_backend_config_missing_after_apply"
+_DEPLOY_RUNTIME_REASON_RUNTIME_SERVICE_ENDPOINTS_MISSING_AFTER_APPLY = "runtime_service_endpoints_missing_after_apply"
 _DEPLOY_RUNTIME_REASON_SERVICE_PROBE_WAITING_FOR_CONVERGENCE = "service_probe_waiting_for_convergence"
 _DEPLOY_RUNTIME_REASON_INGRESS_NEG_CONVERGENCE_PENDING = "ingress_neg_convergence_pending"
 _DEPLOY_RUNTIME_REASON_INGRESS_STATUS_IP_STALE_OR_MISMATCHED = "ingress_status_ip_stale_or_mismatched"
@@ -9667,8 +9676,60 @@ def _render_managed_deploy_workflow_yaml(
         '          echo "managed_site_runtime_replace_deleted_kinds=$deleted_kinds" >> "$GITHUB_OUTPUT"\n'
         "      - name: Apply managed manifests\n"
         "        run: |\n"
+        "          set -euo pipefail\n"
         "          kubectl apply -f k8s/deployment.yaml\n"
         "          kubectl apply -f k8s/\n"
+        "      - name: Verify required resources after apply\n"
+        "        run: |\n"
+        "          set -euo pipefail\n"
+        "          fail_missing_resource() {\n"
+        '            local reason_code=\"$1\"\n'
+        '            local reason_message=\"$2\"\n'
+        '            echo \"deploy_runtime_reason_code=managed_site_runtime_replace_failed\"\n'
+        '            echo \"deploy_runtime_reason_code=${reason_code}\"\n'
+        '            echo \"deploy_runtime_reason_message=${reason_message}\"\n'
+        "            exit 1\n"
+        "          }\n"
+        '          if ! kubectl get deployment site-web --namespace \"$K8S_NAMESPACE\" >/dev/null 2>&1; then\n'
+        '            fail_missing_resource \"runtime_deployment_missing_after_apply\" \"Deployment site-web is missing after managed manifest apply.\"\n'
+        "          fi\n"
+        '          if ! kubectl get service site-web --namespace \"$K8S_NAMESPACE\" >/dev/null 2>&1; then\n'
+        '            fail_missing_resource \"runtime_service_missing_after_apply\" \"Service site-web is missing after managed manifest apply.\"\n'
+        "          fi\n"
+        '          ingress_manifest_present=false\n'
+        '          if [ -f k8s/ingress.yaml ]; then\n'
+        '            ingress_manifest_present=true\n'
+        "          fi\n"
+        '          if [ \"$ingress_manifest_present\" = true ] \\\n'
+        '            && ! kubectl get ingress site-web --namespace \"$K8S_NAMESPACE\" >/dev/null 2>&1; then\n'
+        '            fail_missing_resource \"runtime_ingress_missing_after_apply\" \"Ingress site-web is missing after managed manifest apply.\"\n'
+        "          fi\n"
+        '          ingress_references_managed_certificate=false\n'
+        '          ingress_references_frontend_config=false\n'
+        '          if [ \"$ingress_manifest_present\" = true ]; then\n'
+        '            if grep -q \"networking.gke.io/managed-certificates:\" k8s/ingress.yaml; then\n'
+        '              ingress_references_managed_certificate=true\n'
+        "            fi\n"
+        '            if grep -q \"networking.gke.io/v1beta1.FrontendConfig:\" k8s/ingress.yaml; then\n'
+        '              ingress_references_frontend_config=true\n'
+        "            fi\n"
+        "          fi\n"
+        '          if [ \"$ingress_references_managed_certificate\" = true ] \\\n'
+        '            && ! kubectl get managedcertificate \"$MBSRN_PREVIEW_CERTIFICATE_NAME\" --namespace \"$K8S_NAMESPACE\" >/dev/null 2>&1; then\n'
+        '            fail_missing_resource \"runtime_managed_certificate_missing_after_apply\" \"ManagedCertificate referenced by ingress is missing after managed manifest apply.\"\n'
+        "          fi\n"
+        '          if [ \"$ingress_references_frontend_config\" = true ] \\\n'
+        '            && ! kubectl get frontendconfig \"$MBSRN_FRONTEND_CONFIG_NAME\" --namespace \"$K8S_NAMESPACE\" >/dev/null 2>&1; then\n'
+        '            fail_missing_resource \"runtime_frontend_config_missing_after_apply\" \"FrontendConfig referenced by ingress is missing after managed manifest apply.\"\n'
+        "          fi\n"
+        '          service_references_backend_config=false\n'
+        '          if [ -f k8s/service.yaml ] && grep -q \"cloud.google.com/backend-config\" k8s/service.yaml; then\n'
+        '            service_references_backend_config=true\n'
+        "          fi\n"
+        '          if [ \"$service_references_backend_config\" = true ] \\\n'
+        '            && ! kubectl get backendconfig \"$MBSRN_BACKEND_CONFIG_NAME\" --namespace \"$K8S_NAMESPACE\" >/dev/null 2>&1; then\n'
+        '            fail_missing_resource \"runtime_backend_config_missing_after_apply\" \"BackendConfig referenced by service is missing after managed manifest apply.\"\n'
+        "          fi\n"
         "      - name: Resolve managed site runtime image\n"
         "        id: resolve_site_runtime_image\n"
         "        run: |\n"
@@ -9896,6 +9957,7 @@ def _render_managed_deploy_workflow_yaml(
         '          kubectl describe backendconfig "$MBSRN_BACKEND_CONFIG_NAME" --namespace "$K8S_NAMESPACE" || true\n'
         "          endpoint_count=\"$(kubectl get endpoints site-web --namespace \"$K8S_NAMESPACE\" -o jsonpath='{range .subsets[*].addresses[*]}x{end}' 2>/dev/null | wc -c | tr -d '[:space:]')\"\n"
         '          if [ -z "$endpoint_count" ] || [ "$endpoint_count" -eq 0 ]; then\n'
+        '            echo "deploy_runtime_reason_code=runtime_service_endpoints_missing_after_apply"\n'
         '            echo "deploy_runtime_reason_code=service_endpoint_missing"\n'
         '            echo "deploy_runtime_reason_code=service_has_no_ready_endpoints"\n'
         '            echo "deploy_runtime_reason_message=Service has no ready endpoints after rollout."\n'
@@ -11945,6 +12007,8 @@ def _classify_workflow_run_failure(
             return "gke_credentials_failed", "cluster_credentials"
         if "apply managed manifests" in step_name or "kubectl apply" in step_name:
             return "kubectl_apply_failed", "manifest_apply"
+        if "verify required resources after apply" in step_name:
+            return "service_ingress_verification_failed", "ingress_verify"
         if "verify rollout" in step_name or "rollout status" in step_name:
             return "rollout_verification_failed", "rollout_verify"
         if "verify service and ingress" in step_name:
@@ -11973,6 +12037,20 @@ def _classify_cloudsql_proxy_failure_from_log_text(
         return _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_PROVISIONING, "ingress_evidence"
     if "deploy_runtime_reason_code=target_repo_deploy_secret_missing" in normalized:
         return _DEPLOY_DISPATCH_SERVICE_REASON_TARGET_REPO_DEPLOY_SECRET_MISSING, "workflow_execution"
+    if "deploy_runtime_reason_code=runtime_service_missing_after_apply" in normalized:
+        return _DEPLOY_RUNTIME_REASON_RUNTIME_SERVICE_MISSING_AFTER_APPLY, "ingress_verify"
+    if "deploy_runtime_reason_code=runtime_deployment_missing_after_apply" in normalized:
+        return _DEPLOY_RUNTIME_REASON_RUNTIME_DEPLOYMENT_MISSING_AFTER_APPLY, "ingress_verify"
+    if "deploy_runtime_reason_code=runtime_ingress_missing_after_apply" in normalized:
+        return _DEPLOY_RUNTIME_REASON_RUNTIME_INGRESS_MISSING_AFTER_APPLY, "ingress_verify"
+    if "deploy_runtime_reason_code=runtime_managed_certificate_missing_after_apply" in normalized:
+        return _DEPLOY_RUNTIME_REASON_RUNTIME_MANAGED_CERTIFICATE_MISSING_AFTER_APPLY, "ingress_verify"
+    if "deploy_runtime_reason_code=runtime_frontend_config_missing_after_apply" in normalized:
+        return _DEPLOY_RUNTIME_REASON_RUNTIME_FRONTEND_CONFIG_MISSING_AFTER_APPLY, "ingress_verify"
+    if "deploy_runtime_reason_code=runtime_backend_config_missing_after_apply" in normalized:
+        return _DEPLOY_RUNTIME_REASON_RUNTIME_BACKEND_CONFIG_MISSING_AFTER_APPLY, "ingress_verify"
+    if "deploy_runtime_reason_code=runtime_service_endpoints_missing_after_apply" in normalized:
+        return _DEPLOY_RUNTIME_REASON_RUNTIME_SERVICE_ENDPOINTS_MISSING_AFTER_APPLY, "ingress_verify"
     if "deploy_runtime_reason_code=managed_site_runtime_replace_failed" in normalized:
         return "managed_site_runtime_replace_failed", "workflow_execution"
     if "deploy_runtime_reason_code=managed_site_runtime_replace_requested" in normalized:

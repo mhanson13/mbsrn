@@ -8357,7 +8357,7 @@ def test_refresh_deploy_status_tls_provisioning_in_shared_preview_mode_is_runtim
     service.session.commit()
     artifact = _prepare_and_request_deploy(service, business_id=business_id, site_id=site_id)
 
-    service.refresh_deploy_run_status(
+    refresh_result = service.refresh_deploy_run_status(
         business_id=business_id,
         site_id=site_id,
         artifact_version_id=artifact.id,
@@ -8411,7 +8411,7 @@ def test_refresh_deploy_status_tls_provisioning_overrides_runtime_replace_failur
         principal_id="principal-1",
     )
 
-    service.refresh_deploy_run_status(
+    refresh_result = service.refresh_deploy_run_status(
         business_id=business_id,
         site_id=site_id,
         artifact_version_id=artifact.id,
@@ -8423,6 +8423,94 @@ def test_refresh_deploy_status_tls_provisioning_overrides_runtime_replace_failur
     assert deploy_readiness.get("selected_workflow_failure_reason") == "tls_certificate_provisioning"
     assert deploy_readiness.get("selected_workflow_failure_stage") == "ingress_evidence"
     assert deploy_readiness.get("runtime_ready_tls_pending") is True
+
+
+def test_refresh_deploy_status_runtime_service_missing_after_apply_not_reclassified_as_tls_pending(db_session) -> None:
+    publisher = _RecordingGitHubPublisher(
+        deploy_workflow_run_id=910143,
+        deploy_workflow_run_status="in_progress",
+        refresh_workflow_run_id=910143,
+        refresh_workflow_run_status="completed",
+        refresh_workflow_run_conclusion="failure",
+        refresh_workflow_run_failure_reason_code="runtime_service_missing_after_apply",
+        refresh_workflow_run_failure_stage="ingress_verify",
+        refresh_workflow_run_failure_step="Verify required resources after apply",
+        refresh_workflow_output={
+            "deploy_https_ready": "false",
+        },
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    artifact = _prepare_published_artifact(service, business_id=business_id, site_id=site_id)
+    service.deploy_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        replace_existing_runtime=True,
+        principal_id="principal-1",
+    )
+
+    refresh_result = service.refresh_deploy_run_status(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        principal_id="principal-1",
+    )
+
+    summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
+    deploy_readiness = summary.deploy_readiness or {}
+    assert deploy_readiness.get("selected_workflow_failure_reason") == "runtime_service_missing_after_apply"
+    assert deploy_readiness.get("selected_workflow_failure_stage") == "ingress_verify"
+    assert deploy_readiness.get("runtime_ready_tls_pending") is False
+    assert "service/site-web is missing afterward" in str(
+        refresh_result.result.get("workflow_run_failure_hint") or ""
+    ).lower()
+
+
+def test_refresh_deploy_status_runtime_managed_certificate_missing_after_apply_sets_resource_missing_state(
+    db_session,
+) -> None:
+    publisher = _RecordingGitHubPublisher(
+        deploy_workflow_run_id=910144,
+        deploy_workflow_run_status="in_progress",
+        refresh_workflow_run_id=910144,
+        refresh_workflow_run_status="completed",
+        refresh_workflow_run_conclusion="failure",
+        refresh_workflow_run_failure_reason_code="runtime_managed_certificate_missing_after_apply",
+        refresh_workflow_run_failure_stage="ingress_verify",
+        refresh_workflow_run_failure_step="Verify required resources after apply",
+        refresh_workflow_output={
+            "deploy_https_ready": "false",
+        },
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    artifact = _prepare_and_request_deploy(service, business_id=business_id, site_id=site_id)
+
+    service.refresh_deploy_run_status(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        principal_id="principal-1",
+    )
+
+    summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
+    deploy_readiness = summary.deploy_readiness or {}
+    assert deploy_readiness.get("selected_workflow_failure_reason") == "runtime_managed_certificate_missing_after_apply"
+    assert deploy_readiness.get("certificate_readiness_state") == "certificate_resource_missing"
+    assert deploy_readiness.get("runtime_ready_tls_pending") is False
+    assert "managedcertificate resource for the expected hostname is not yet visible" in " ".join(
+        str(item).lower() for item in (deploy_readiness.get("reasons") or [])
+    )
 
 
 def test_refresh_deploy_status_certificate_domain_mismatch_blocks_https_ready(db_session) -> None:

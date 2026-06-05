@@ -1855,6 +1855,27 @@ function toManagedGkeConfigGuidance(value: string | null): string | null {
   if (normalized === "managed_site_runtime_replace_failed") {
     return "Scoped runtime replacement failed before manifest apply. Verify namespace-scoped delete permissions for managed ingress/certificate/config/service/deployment resources, then retry deploy.";
   }
+  if (normalized === "runtime_deployment_missing_after_apply") {
+    return "Managed manifests were applied, but deployment/site-web is missing afterward. Verify manifest apply ordering and namespace RBAC.";
+  }
+  if (normalized === "runtime_service_missing_after_apply") {
+    return "Managed manifests were applied, but service/site-web is missing afterward. Verify manifest apply ordering and namespace RBAC.";
+  }
+  if (normalized === "runtime_ingress_missing_after_apply") {
+    return "Managed manifests were applied, but ingress/site-web is missing afterward. Verify manifest apply ordering and namespace RBAC.";
+  }
+  if (normalized === "runtime_managed_certificate_missing_after_apply") {
+    return "Ingress references a ManagedCertificate, but the ManagedCertificate object is missing after apply. This is a manifest/apply failure, not TLS provisioning.";
+  }
+  if (normalized === "runtime_frontend_config_missing_after_apply") {
+    return "Ingress references a FrontendConfig, but the FrontendConfig object is missing after apply. Verify managed manifest rendering and apply ordering.";
+  }
+  if (normalized === "runtime_backend_config_missing_after_apply") {
+    return "Service references a BackendConfig, but the BackendConfig object is missing after apply. Verify managed manifest rendering and apply ordering.";
+  }
+  if (normalized === "runtime_service_endpoints_missing_after_apply") {
+    return "Service/site-web exists but has no ready endpoints after apply/rollout. Verify pod readiness, selectors, and endpoint population.";
+  }
   if (normalized === "managed_site_runtime_replace_requested") {
     return "Scoped runtime replacement was requested for this deploy run.";
   }
@@ -5435,6 +5456,8 @@ export function MigrationWorkspacePanel({
     "ingress_ip_assigned_but_dns_not_updated",
   ]);
   const serviceEndpointReasonCodes = new Set([
+    "runtime_service_missing_after_apply",
+    "runtime_service_endpoints_missing_after_apply",
     "service_has_no_ready_endpoints",
     "service_endpoint_missing",
     "service_endpoint_unhealthy",
@@ -5492,6 +5515,7 @@ export function MigrationWorkspacePanel({
     }
     if (
       deploymentRolledOut === false ||
+      hasDeployConsistencyReasonCode("runtime_deployment_missing_after_apply") ||
       normalizedDeployRunFailureStage === "rollout_verify" ||
       hasDeployConsistencyReasonCode("rollout_verification_failed")
     ) {

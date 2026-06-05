@@ -6344,6 +6344,29 @@ def test_classify_cloudsql_proxy_failure_maps_runtime_replace_failed_reason() ->
     assert failure_stage == "workflow_execution"
 
 
+def test_classify_cloudsql_proxy_failure_maps_runtime_service_missing_after_apply_reason() -> None:
+    reason_code, failure_stage = _classify_cloudsql_proxy_failure_from_log_text(
+        "\n".join(
+            [
+                "deploy_runtime_reason_code=managed_site_runtime_replace_failed",
+                "deploy_runtime_reason_code=runtime_service_missing_after_apply",
+            ]
+        )
+    )
+
+    assert reason_code == "runtime_service_missing_after_apply"
+    assert failure_stage == "ingress_verify"
+
+
+def test_classify_cloudsql_proxy_failure_maps_runtime_managed_certificate_missing_after_apply_reason() -> None:
+    reason_code, failure_stage = _classify_cloudsql_proxy_failure_from_log_text(
+        "deploy_runtime_reason_code=runtime_managed_certificate_missing_after_apply"
+    )
+
+    assert reason_code == "runtime_managed_certificate_missing_after_apply"
+    assert failure_stage == "ingress_verify"
+
+
 def test_extract_resolve_live_url_state_from_log_text_parses_sanitized_probe_details() -> None:
     state = _extract_resolve_live_url_state_from_log_text(
         "\n".join(
@@ -7624,6 +7647,15 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "kubectl create secret docker-registry ghcr-pull-secret" not in workflow_yaml
     assert "Apply managed manifests" in workflow_yaml
     assert "kubectl apply -f k8s/deployment.yaml" in workflow_yaml
+    assert "Verify required resources after apply" in workflow_yaml
+    assert 'fail_missing_resource "runtime_deployment_missing_after_apply"' in workflow_yaml
+    assert 'fail_missing_resource "runtime_service_missing_after_apply"' in workflow_yaml
+    assert 'fail_missing_resource "runtime_ingress_missing_after_apply"' in workflow_yaml
+    assert 'fail_missing_resource "runtime_managed_certificate_missing_after_apply"' in workflow_yaml
+    assert 'fail_missing_resource "runtime_frontend_config_missing_after_apply"' in workflow_yaml
+    assert 'fail_missing_resource "runtime_backend_config_missing_after_apply"' in workflow_yaml
+    assert 'if ! kubectl get deployment site-web --namespace "$K8S_NAMESPACE" >/dev/null 2>&1; then' in workflow_yaml
+    assert 'if ! kubectl get service site-web --namespace "$K8S_NAMESPACE" >/dev/null 2>&1; then' in workflow_yaml
     assert "Resolve managed site runtime image" in workflow_yaml
     assert 'selected_mode="immutable_sha"' in workflow_yaml
     assert 'selected_tag_source="github_sha_fallback"' in workflow_yaml
@@ -7788,6 +7820,7 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
         "      - name: Resolve live URL from ingress status",
         1,
     )[0]
+    assert "deploy_runtime_reason_code=runtime_service_endpoints_missing_after_apply" in verify_service_step_yaml
     assert "deploy_runtime_reason_code=service_probe_waiting_for_convergence" in verify_service_step_yaml
     assert "deploy_runtime_reason_code=ingress_neg_convergence_pending" not in verify_service_step_yaml
     assert "deploy_runtime_reason_code=in_cluster_service_probe_timeout" in verify_service_step_yaml

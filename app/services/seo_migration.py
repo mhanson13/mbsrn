@@ -504,6 +504,17 @@ _DEPLOY_RUN_FAILURE_REASON_IN_CLUSTER_SERVICE_CURL_FAILED = "in_cluster_service_
 _DEPLOY_RUN_FAILURE_REASON_IN_CLUSTER_SERVICE_CURL_FAILED_AFTER_RETRIES = "in_cluster_service_curl_failed_after_retries"
 _DEPLOY_RUN_FAILURE_REASON_IN_CLUSTER_SERVICE_PROBE_TIMEOUT = "in_cluster_service_probe_timeout"
 _DEPLOY_RUN_FAILURE_REASON_NETWORK_POLICY_MAY_BLOCK_SERVICE_PROBE = "network_policy_may_block_service_probe"
+_DEPLOY_RUN_FAILURE_REASON_RUNTIME_DEPLOYMENT_MISSING_AFTER_APPLY = "runtime_deployment_missing_after_apply"
+_DEPLOY_RUN_FAILURE_REASON_RUNTIME_SERVICE_MISSING_AFTER_APPLY = "runtime_service_missing_after_apply"
+_DEPLOY_RUN_FAILURE_REASON_RUNTIME_INGRESS_MISSING_AFTER_APPLY = "runtime_ingress_missing_after_apply"
+_DEPLOY_RUN_FAILURE_REASON_RUNTIME_MANAGED_CERTIFICATE_MISSING_AFTER_APPLY = (
+    "runtime_managed_certificate_missing_after_apply"
+)
+_DEPLOY_RUN_FAILURE_REASON_RUNTIME_FRONTEND_CONFIG_MISSING_AFTER_APPLY = "runtime_frontend_config_missing_after_apply"
+_DEPLOY_RUN_FAILURE_REASON_RUNTIME_BACKEND_CONFIG_MISSING_AFTER_APPLY = "runtime_backend_config_missing_after_apply"
+_DEPLOY_RUN_FAILURE_REASON_RUNTIME_SERVICE_ENDPOINTS_MISSING_AFTER_APPLY = (
+    "runtime_service_endpoints_missing_after_apply"
+)
 _DEPLOY_RUN_FAILURE_REASON_MANAGED_CERTIFICATE_METADATA_UNAVAILABLE = "managed_certificate_metadata_unavailable"
 _DEPLOY_RUN_FAILURE_REASON_PRE_SHARED_CERT_METADATA_MISMATCH = "pre_shared_cert_metadata_mismatch"
 _DEPLOY_RUN_FAILURE_REASON_SERVICE_PROBE_WAITING_FOR_CONVERGENCE = "service_probe_waiting_for_convergence"
@@ -20294,6 +20305,7 @@ class SEOMigrationService:
         }
         cert_missing_reason_codes = {
             _DEPLOY_RUN_FAILURE_REASON_MANAGED_CERTIFICATE_METADATA_UNAVAILABLE,
+            _DEPLOY_RUN_FAILURE_REASON_RUNTIME_MANAGED_CERTIFICATE_MISSING_AFTER_APPLY,
         }
         cert_failed_not_visible_reason_codes = {
             _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_FAILED_NOT_VISIBLE,
@@ -23715,6 +23727,13 @@ def _normalize_deploy_failure_reason_code(value: object) -> str | None:
         "github_repo_initialization_failed",
         "github_repo_requires_manual_initialization",
         _DEPLOY_RUN_FAILURE_REASON_GENERATED_WORKFLOW_REQUIRES_MISSING_GCP_DEPLOY_KEY,
+        _DEPLOY_RUN_FAILURE_REASON_RUNTIME_DEPLOYMENT_MISSING_AFTER_APPLY,
+        _DEPLOY_RUN_FAILURE_REASON_RUNTIME_SERVICE_MISSING_AFTER_APPLY,
+        _DEPLOY_RUN_FAILURE_REASON_RUNTIME_INGRESS_MISSING_AFTER_APPLY,
+        _DEPLOY_RUN_FAILURE_REASON_RUNTIME_MANAGED_CERTIFICATE_MISSING_AFTER_APPLY,
+        _DEPLOY_RUN_FAILURE_REASON_RUNTIME_FRONTEND_CONFIG_MISSING_AFTER_APPLY,
+        _DEPLOY_RUN_FAILURE_REASON_RUNTIME_BACKEND_CONFIG_MISSING_AFTER_APPLY,
+        _DEPLOY_RUN_FAILURE_REASON_RUNTIME_SERVICE_ENDPOINTS_MISSING_AFTER_APPLY,
         _DEPLOY_RUNTIME_REASON_MANAGED_SITE_RUNTIME_REPLACE_FAILED,
     }
     if normalized_lower in allowed:
@@ -23774,6 +23793,13 @@ def _normalize_workflow_run_failure_reason_code(value: object) -> str | None:
         _DEPLOY_RUN_FAILURE_REASON_IN_CLUSTER_SERVICE_CURL_FAILED_AFTER_RETRIES,
         _DEPLOY_RUN_FAILURE_REASON_IN_CLUSTER_SERVICE_PROBE_TIMEOUT,
         _DEPLOY_RUN_FAILURE_REASON_NETWORK_POLICY_MAY_BLOCK_SERVICE_PROBE,
+        _DEPLOY_RUN_FAILURE_REASON_RUNTIME_DEPLOYMENT_MISSING_AFTER_APPLY,
+        _DEPLOY_RUN_FAILURE_REASON_RUNTIME_SERVICE_MISSING_AFTER_APPLY,
+        _DEPLOY_RUN_FAILURE_REASON_RUNTIME_INGRESS_MISSING_AFTER_APPLY,
+        _DEPLOY_RUN_FAILURE_REASON_RUNTIME_MANAGED_CERTIFICATE_MISSING_AFTER_APPLY,
+        _DEPLOY_RUN_FAILURE_REASON_RUNTIME_FRONTEND_CONFIG_MISSING_AFTER_APPLY,
+        _DEPLOY_RUN_FAILURE_REASON_RUNTIME_BACKEND_CONFIG_MISSING_AFTER_APPLY,
+        _DEPLOY_RUN_FAILURE_REASON_RUNTIME_SERVICE_ENDPOINTS_MISSING_AFTER_APPLY,
         _DEPLOY_RUN_FAILURE_REASON_MANAGED_CERTIFICATE_METADATA_UNAVAILABLE,
         _DEPLOY_RUN_FAILURE_REASON_PRE_SHARED_CERT_METADATA_MISMATCH,
         _DEPLOY_RUN_FAILURE_REASON_SERVICE_PROBE_WAITING_FOR_CONVERGENCE,
@@ -25109,6 +25135,41 @@ def _derive_workflow_run_failure_hint(
         return (
             "NetworkPolicy may be blocking same-namespace probe traffic to site-web. "
             "Verify allow rules for namespace-local ingress to pod port 8080."
+        )
+    if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_RUNTIME_DEPLOYMENT_MISSING_AFTER_APPLY:
+        return (
+            "Managed manifests were applied, but deployment/site-web is missing afterward. "
+            "Verify managed manifest rendering/apply ordering and namespace RBAC, then retry deploy."
+        )
+    if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_RUNTIME_SERVICE_MISSING_AFTER_APPLY:
+        return (
+            "Managed manifests were applied, but service/site-web is missing afterward. "
+            "Verify managed manifest rendering/apply ordering and namespace RBAC, then retry deploy."
+        )
+    if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_RUNTIME_INGRESS_MISSING_AFTER_APPLY:
+        return (
+            "Managed manifests were applied, but ingress/site-web is missing afterward. "
+            "Verify managed manifest rendering/apply ordering and namespace RBAC, then retry deploy."
+        )
+    if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_RUNTIME_MANAGED_CERTIFICATE_MISSING_AFTER_APPLY:
+        return (
+            "Ingress references a ManagedCertificate, but the ManagedCertificate object is missing after apply. "
+            "This is a manifest/apply failure, not TLS provisioning."
+        )
+    if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_RUNTIME_FRONTEND_CONFIG_MISSING_AFTER_APPLY:
+        return (
+            "Ingress references a FrontendConfig, but the FrontendConfig object is missing after apply. "
+            "Verify managed manifest rendering and apply ordering."
+        )
+    if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_RUNTIME_BACKEND_CONFIG_MISSING_AFTER_APPLY:
+        return (
+            "Service references a BackendConfig, but the BackendConfig object is missing after apply. "
+            "Verify managed manifest rendering and apply ordering."
+        )
+    if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_RUNTIME_SERVICE_ENDPOINTS_MISSING_AFTER_APPLY:
+        return (
+            "Service/site-web exists but has no ready endpoints after apply/rollout. "
+            "Verify pod readiness, service selectors, and endpoint population before retry."
         )
     if normalized_reason == _DEPLOY_RUNTIME_REASON_MANAGED_SITE_RUNTIME_REPLACE_FAILED:
         return (

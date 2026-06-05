@@ -2106,6 +2106,72 @@ describe("site migration workflow route", () => {
     expect(diagnostics).toHaveTextContent(/requires an ACTIVE certificate before HTTPS-ready deploy can continue/i);
   });
 
+  it("shows missing service-after-apply diagnostics as deploy blocker", async () => {
+    const user = userEvent.setup();
+    const summary = buildMigrationWorkspaceSummary({
+      deploy_readiness: {
+        ready: false,
+        reasons: ["Service/site-web is missing after managed manifest apply."],
+        dispatch_service_reason_code: "runtime_service_missing_after_apply",
+        selected_workflow_failure_reason: "runtime_service_missing_after_apply",
+        selected_workflow_failure_stage: "ingress_verify",
+        deploy_https_ready: false,
+        target: {
+          enabled: true,
+          repo_owner: "mhanson13",
+          repo_name: "tnmfire",
+          workflow_id: "deploy-tnmfire-www-prod.yml",
+          ref: "main",
+        },
+      },
+    });
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(summary);
+    mockFetchMigrationPublishHistory.mockResolvedValueOnce({ items: [], total: 0 });
+    mockFetchMigrationDeployHistory.mockResolvedValueOnce({ items: [], total: 0 });
+
+    render(<SiteMigrationWorkflowPage />);
+    await user.click(await screen.findByText("Show detailed migration failure diagnostics"));
+
+    const diagnostics = screen.getByTestId("migration-deploy-diagnostics");
+    expect(diagnostics).toHaveTextContent(/service\/site-web is missing afterward/i);
+    expect(diagnostics).not.toHaveTextContent(/managedcertificate is still provisioning/i);
+  });
+
+  it("distinguishes missing managedcertificate object from provisioning wait-state", async () => {
+    const user = userEvent.setup();
+    const summary = buildMigrationWorkspaceSummary({
+      deploy_readiness: {
+        ready: false,
+        reasons: [
+          "ManagedCertificate resource for the expected hostname is not yet visible. Provision or refresh certificate resources, then rerun deploy.",
+        ],
+        dispatch_service_reason_code: "runtime_managed_certificate_missing_after_apply",
+        selected_workflow_failure_reason: "runtime_managed_certificate_missing_after_apply",
+        selected_workflow_failure_stage: "ingress_verify",
+        certificate_readiness_state: "certificate_resource_missing",
+        runtime_ready_tls_pending: false,
+        deploy_https_ready: false,
+        target: {
+          enabled: true,
+          repo_owner: "mhanson13",
+          repo_name: "lars-construction",
+          workflow_id: "deploy-lars-construction-www-prod.yml",
+          ref: "main",
+        },
+      },
+    });
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(summary);
+    mockFetchMigrationPublishHistory.mockResolvedValueOnce({ items: [], total: 0 });
+    mockFetchMigrationDeployHistory.mockResolvedValueOnce({ items: [], total: 0 });
+
+    render(<SiteMigrationWorkflowPage />);
+    await user.click(await screen.findByText("Show detailed migration failure diagnostics"));
+
+    const diagnostics = screen.getByTestId("migration-deploy-diagnostics");
+    expect(diagnostics).toHaveTextContent(/managedcertificate object is missing after apply/i);
+    expect(diagnostics).not.toHaveTextContent(/still provisioning for the preview hostname/i);
+  });
+
   it("renders workflow integrity mismatch as warning with remediation guidance", async () => {
     const user = userEvent.setup();
     const summary = buildMigrationWorkspaceSummary({

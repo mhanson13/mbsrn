@@ -418,6 +418,10 @@ Endpoint mode/template guidance:
 Scoped fresh redeploy (`replace_existing_runtime`) guidance:
 - deploy UI exposes an explicit per-attempt option: `Replace existing managed-site runtime before deploy`.
 - when enabled, managed workflow runs namespace/site-scoped cleanup before `kubectl apply` and then recreates runtime resources from current managed manifests.
+- after apply (and before ingress/TLS wait loops), workflow now verifies required runtime resources exist:
+  - required always: `deployment/site-web`, `service/site-web`
+  - required when rendered/referenced by manifests: `ingress/site-web`, `ManagedCertificate`, `FrontendConfig`, `BackendConfig`
+  - if `service/site-web` exists but has no ready endpoint addresses after apply/rollout, workflow fails before ingress readiness with an explicit endpoint-missing reason.
 - scoped cleanup targets managed runtime resources only:
   - `ingress/site-web`
   - preview `managedcertificate`
@@ -435,6 +439,17 @@ Scoped fresh redeploy (`replace_existing_runtime`) guidance:
   - `managed_site_runtime_replace_requested`
   - `managed_site_runtime_replace_completed`
   - `managed_site_runtime_replace_failed`
+  - `runtime_deployment_missing_after_apply`
+  - `runtime_service_missing_after_apply`
+  - `runtime_ingress_missing_after_apply`
+  - `runtime_managed_certificate_missing_after_apply`
+  - `runtime_frontend_config_missing_after_apply`
+  - `runtime_backend_config_missing_after_apply`
+  - `runtime_service_endpoints_missing_after_apply`
+- classification distinction:
+  - missing ManagedCertificate object after apply is a manifest/apply failure
+  - ManagedCertificate `PROVISIONING` is TLS convergence pending (not missing-resource failure)
+  - missing `service/site-web` after apply is a runtime apply failure (not TLS pending)
 
 `SITE_WEB_IMAGE_TAG` diagnostics:
 - empty `SITE_WEB_IMAGE_TAG` is allowed for managed workflows and falls back to `${GITHUB_SHA}`.

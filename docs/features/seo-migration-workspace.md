@@ -1768,6 +1768,18 @@ Post-fix rollout for existing managed sites:
     - `managed_site_runtime_replace_requested`
     - `managed_site_runtime_replace_completed`
     - `managed_site_runtime_replace_failed`
+  - After apply and before ingress/TLS readiness loops, workflow verifies required runtime resources exist:
+    - `deployment/site-web`, `service/site-web`
+    - plus rendered/referenced ingress resources (`ingress`, `ManagedCertificate`, `FrontendConfig`, `BackendConfig`)
+  - explicit missing-resource codes:
+    - `runtime_deployment_missing_after_apply`
+    - `runtime_service_missing_after_apply`
+    - `runtime_ingress_missing_after_apply`
+    - `runtime_managed_certificate_missing_after_apply`
+    - `runtime_frontend_config_missing_after_apply`
+    - `runtime_backend_config_missing_after_apply`
+    - `runtime_service_endpoints_missing_after_apply`
+  - missing ManagedCertificate object after apply is treated as manifest/apply failure; `PROVISIONING` is treated as TLS pending only after required objects exist.
   - Readiness can surface `legacy_runtime_replacement_required` when stale legacy runtime evidence is detected and replace-runtime was not requested.
   - Cleanup scope is limited to managed runtime resources (`site-web` ingress/service/deployment, managed preview certificate/config resources, site-scoped networkpolicy) and does not delete artifacts/media/GitHub content/business data.
   - Publish readiness is unchanged; this is deploy-only behavior.
