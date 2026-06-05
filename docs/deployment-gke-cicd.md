@@ -340,6 +340,11 @@ Important state:
 - DNS/static IP/ingress/certificate checks can all be valid while `deploy_https_ready=false`.
 - In this state, deploy diagnostics should preserve bounded probe evidence in `https_probe_error_summary`.
 - `deploy_https_ready=false` with blank `https_probe_error_summary` is a diagnostics regression and should trigger workflow/template verification.
+- managed deploy workflow failures should always emit a final safe reason summary (`deploy_runtime_reason_code`, `deploy_runtime_reason_message`, `deploy_runtime_failure_stage`) plus bounded runtime-state evidence fields before exit.
+- if GitHub shows only `Process completed with exit code 1` and run logs have no `deploy_runtime_reason_code`, treat the run as diagnostics-incomplete:
+  - `runtime_readiness_unknown_failure` when managed template markers are present
+  - `managed_deploy_workflow_template_stale` when managed template markers are missing
+  - operator action: reprovision workflow/template files from publish, then retry deploy or inspect Advanced Diagnostics.
 - selected workflow attempt outcome and current runtime outcome are distinct:
   - selected workflow failure remains historical evidence
   - current runtime state is derived from latest bounded HTTPS probe evidence when available
@@ -414,6 +419,8 @@ Dispatch/run-evidence classification notes:
 
 Endpoint mode/template guidance:
 - changing `managed_preview_endpoint` admin defaults requires rerunning publish/workflow provisioning and then rerunning deploy so target-repo workflow env/manifests are regenerated with the updated endpoint mode.
+- target repository deploy workflows must also be reprovisioned after managed deploy workflow template changes so new failure-summary logic and diagnostics markers are present.
+- `mbsrn_managed_deploy_template_version` is a diagnostics marker only; it does not gate publish/deploy execution by itself.
 
 Scoped fresh redeploy (`replace_existing_runtime`) guidance:
 - deploy UI exposes an explicit per-attempt option: `Replace existing managed-site runtime before deploy`.

@@ -6402,6 +6402,125 @@ def test_extract_resolve_live_url_state_from_log_text_parses_sanitized_probe_det
     assert len(str(state.get("https_probe_error_summary") or "")) <= 240
 
 
+def test_extract_runtime_failure_state_from_log_text_captures_reason_presence_and_template_marker() -> None:
+    state = github_publisher_module._extract_runtime_failure_state_from_log_text(
+        "\n".join(
+            [
+                "deploy_runtime_reason_code=https_probe_timeout",
+                "resolve_live_url_state_mbsrn_managed_deploy_template_version=site_repo_template_v1",
+            ]
+        )
+    )
+
+    assert state.get("deploy_runtime_reason_code_present") == "true"
+    assert state.get("managed_deploy_template_marker_present") == "true"
+    assert state.get("mbsrn_managed_deploy_template_version") == "site_repo_template_v1"
+
+
+def test_resolve_workflow_run_failure_details_falls_back_to_runtime_unknown_when_marker_present(monkeypatch) -> None:
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    target = _dispatch_target()
+
+    def _fake_request_json(*, method, path, expected_statuses=(200,), **kwargs):  # type: ignore[no-untyped-def]
+        del expected_statuses, kwargs
+        assert method == "GET"
+        if "/actions/runs/123/jobs" in path:
+            return {
+                "jobs": [
+                    {
+                        "id": 456,
+                        "name": "deploy",
+                        "conclusion": "failure",
+                        "steps": [
+                            {"name": "Resolve live URL from ingress status", "conclusion": "failure"},
+                        ],
+                    }
+                ]
+            }
+        raise AssertionError(f"Unexpected JSON path: {path}")
+
+    def _fake_request_text(*, method, path, expected_statuses=(200,), **kwargs):  # type: ignore[no-untyped-def]
+        del expected_statuses, kwargs
+        assert method == "GET"
+        assert path.endswith("/actions/jobs/456/logs")
+        return "\n".join(
+            [
+                "Error: Process completed with exit code 1.",
+                "resolve_live_url_state_mbsrn_managed_deploy_template_version=site_repo_template_v1",
+            ]
+        )
+
+    monkeypatch.setattr(publisher, "_request_json", _fake_request_json)
+    monkeypatch.setattr(publisher, "_request_text", _fake_request_text)
+
+    reason_code, failure_stage, failed_step_name, workflow_output = publisher._resolve_workflow_run_failure_details(
+        target=target,
+        workflow_run_id=123,
+        workflow_run_status="completed",
+        workflow_run_conclusion="failure",
+    )
+
+    assert reason_code == "runtime_readiness_unknown_failure"
+    assert failure_stage == "ingress_evidence"
+    assert failed_step_name == "Resolve live URL from ingress status"
+    assert workflow_output is not None
+    assert workflow_output.get("deploy_runtime_reason_message") == (
+        "Managed-site runtime readiness failed before a precise reason was recorded."
+    )
+    assert workflow_output.get("deploy_runtime_reason_code_present") == "false"
+    assert workflow_output.get("managed_deploy_template_marker_present") == "true"
+    assert workflow_output.get("mbsrn_managed_deploy_template_version") == "site_repo_template_v1"
+
+
+def test_resolve_workflow_run_failure_details_falls_back_to_template_stale_when_marker_missing(monkeypatch) -> None:
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    target = _dispatch_target()
+
+    def _fake_request_json(*, method, path, expected_statuses=(200,), **kwargs):  # type: ignore[no-untyped-def]
+        del expected_statuses, kwargs
+        assert method == "GET"
+        if "/actions/runs/123/jobs" in path:
+            return {
+                "jobs": [
+                    {
+                        "id": 456,
+                        "name": "deploy",
+                        "conclusion": "failure",
+                        "steps": [
+                            {"name": "Resolve live URL from ingress status", "conclusion": "failure"},
+                        ],
+                    }
+                ]
+            }
+        raise AssertionError(f"Unexpected JSON path: {path}")
+
+    def _fake_request_text(*, method, path, expected_statuses=(200,), **kwargs):  # type: ignore[no-untyped-def]
+        del expected_statuses, kwargs
+        assert method == "GET"
+        assert path.endswith("/actions/jobs/456/logs")
+        return "Error: Process completed with exit code 1."
+
+    monkeypatch.setattr(publisher, "_request_json", _fake_request_json)
+    monkeypatch.setattr(publisher, "_request_text", _fake_request_text)
+
+    reason_code, failure_stage, failed_step_name, workflow_output = publisher._resolve_workflow_run_failure_details(
+        target=target,
+        workflow_run_id=123,
+        workflow_run_status="completed",
+        workflow_run_conclusion="failure",
+    )
+
+    assert reason_code == "managed_deploy_workflow_template_stale"
+    assert failure_stage == "ingress_evidence"
+    assert failed_step_name == "Resolve live URL from ingress status"
+    assert workflow_output is not None
+    assert "reprovision target workflow template and retry deploy" in str(
+        workflow_output.get("deploy_runtime_reason_message") or ""
+    ).lower()
+    assert workflow_output.get("deploy_runtime_reason_code_present") == "false"
+    assert workflow_output.get("managed_deploy_template_marker_present") == "false"
+
+
 def test_derive_https_probe_error_summary_for_failure_maps_dns_reason() -> None:
     summary = _derive_https_probe_error_summary_for_failure(
         reason_code="dns_record_mismatch",
@@ -7933,6 +8052,16 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert 'echo "host_reachability_scheme=$host_reachability_scheme"' in workflow_yaml
     assert 'echo "https_probe_error_summary=$https_probe_error_summary"' in workflow_yaml
     assert 'echo "deploy_https_ready=$deploy_https_ready"' in workflow_yaml
+    assert "trap finalize_resolve_live_url EXIT" in workflow_yaml
+    assert 'resolve_live_url_exit_code="$?"' in workflow_yaml
+    assert "emit_final_deploy_runtime_summary" in workflow_yaml
+    assert 'observed_reason_code="runtime_readiness_unknown_failure"' in workflow_yaml
+    assert "Managed-site runtime readiness failed before a precise reason was recorded." in workflow_yaml
+    assert 'echo "resolve_live_url_state_mbsrn_managed_deploy_template_version=site_repo_template_v1"' in workflow_yaml
+    assert (
+        "mbsrn_managed_deploy_template_version: ${{ steps.resolve_live_url.outputs.mbsrn_managed_deploy_template_version }}"
+        in workflow_yaml
+    )
     assert "--format='json(name,address,status,users)'" in workflow_yaml
     assert 'dns_expected_ip="$expected_static_ip_address"' in workflow_yaml
     assert "deploy_runtime_reason_code=ingress_status_ip_stale_or_mismatched" in workflow_yaml

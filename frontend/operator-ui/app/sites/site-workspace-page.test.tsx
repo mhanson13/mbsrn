@@ -2172,6 +2172,72 @@ describe("site migration workflow route", () => {
     expect(diagnostics).not.toHaveTextContent(/still provisioning for the preview hostname/i);
   });
 
+  it("shows generic runtime readiness failure guidance when workflow exits without precise reason output", async () => {
+    const user = userEvent.setup();
+    const summary = buildMigrationWorkspaceSummary({
+      deploy_readiness: {
+        ready: false,
+        reasons: ["Deploy workflow run failed before explicit runtime readiness reason was emitted."],
+        dispatch_service_reason_code: "runtime_readiness_unknown_failure",
+        selected_workflow_failure_reason: "runtime_readiness_unknown_failure",
+        selected_workflow_failure_stage: "ingress_evidence",
+        deploy_runtime_reason_code_present: false,
+        managed_deploy_template_marker_present: true,
+        target: {
+          enabled: true,
+          repo_owner: "mhanson13",
+          repo_name: "sc-mechanical",
+          workflow_id: "deploy-sc-mechanical-www-prod.yml",
+          ref: "main",
+        },
+      },
+    });
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(summary);
+    mockFetchMigrationPublishHistory.mockResolvedValueOnce({ items: [], total: 0 });
+    mockFetchMigrationDeployHistory.mockResolvedValueOnce({ items: [], total: 0 });
+
+    render(<SiteMigrationWorkflowPage />);
+    await user.click(await screen.findByText("Show detailed migration failure diagnostics"));
+
+    const diagnostics = screen.getByTestId("migration-deploy-diagnostics");
+    expect(diagnostics).toHaveTextContent(
+      /exited before reporting a precise readiness reason\. reprovision the workflow and retry, or check advanced diagnostics\./i,
+    );
+    expect(diagnostics).not.toHaveTextContent(/certificate.*still provisioning/i);
+  });
+
+  it("shows workflow reprovision guidance when managed deploy template markers are missing", async () => {
+    const user = userEvent.setup();
+    const summary = buildMigrationWorkspaceSummary({
+      deploy_readiness: {
+        ready: false,
+        reasons: ["Managed deploy workflow diagnostics markers were not detected in the run logs."],
+        dispatch_service_reason_code: "managed_deploy_workflow_template_stale",
+        selected_workflow_failure_reason: "managed_deploy_workflow_template_stale",
+        selected_workflow_failure_stage: "ingress_evidence",
+        deploy_runtime_reason_code_present: false,
+        managed_deploy_template_marker_present: false,
+        target: {
+          enabled: true,
+          repo_owner: "mhanson13",
+          repo_name: "sc-mechanical",
+          workflow_id: "deploy-sc-mechanical-www-prod.yml",
+          ref: "main",
+        },
+      },
+    });
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(summary);
+    mockFetchMigrationPublishHistory.mockResolvedValueOnce({ items: [], total: 0 });
+    mockFetchMigrationDeployHistory.mockResolvedValueOnce({ items: [], total: 0 });
+
+    render(<SiteMigrationWorkflowPage />);
+    await user.click(await screen.findByText("Show detailed migration failure diagnostics"));
+
+    const diagnostics = screen.getByTestId("migration-deploy-diagnostics");
+    expect(diagnostics).toHaveTextContent(/did not include current managed template diagnostics markers/i);
+    expect(diagnostics).toHaveTextContent(/reprovision target workflow files from publish and retry deploy/i);
+  });
+
   it("renders workflow integrity mismatch as warning with remediation guidance", async () => {
     const user = userEvent.setup();
     const summary = buildMigrationWorkspaceSummary({

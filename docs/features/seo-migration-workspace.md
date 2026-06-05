@@ -2461,6 +2461,15 @@ Resolve-live-url failure diagnostics are evidence-first:
 - empty trap fields now primarily indicate upstream evidence is genuinely unavailable (for example missing ingress/static-IP/hostname), not premature early exit ordering.
 - when `deploy_https_ready=false`, probe evidence is expected to remain populated via bounded `https_probe_error_summary` unless no probe was attempted (`https_probe_not_attempted`).
 - `deploy_https_ready=false` with blank `https_probe_error_summary` is treated as a diagnostics regression.
+- managed deploy workflow failures are expected to emit final reason summary fields before exit:
+  - `deploy_runtime_reason_code`
+  - `deploy_runtime_reason_message`
+  - `deploy_runtime_failure_stage`
+  - plus bounded final runtime-state evidence (`runtime_ready`, `ingress_address_resolved`, `service_exists`, `endpoints_ready`, `managed_certificate_exists`, `managed_certificate_status`, `https_ready`, `runtime_ready_tls_pending`, and replace-runtime requested/performed fields).
+- if GitHub UI only shows `Process completed with exit code 1` and logs do not include `deploy_runtime_reason_code`, workspace guidance falls back to:
+  - `runtime_readiness_unknown_failure` when managed template marker evidence exists
+  - `managed_deploy_workflow_template_stale` when managed template markers are missing (reprovision workflow/template from publish).
+- `mbsrn_managed_deploy_template_version` is diagnostics-only metadata and is not a publish/deploy execution gate by itself.
 - control-plane-ready but host-unreachable states are explicitly classified:
   - `managed_certificate_provisioning` / `tls_certificate_provisioning` when static IP + ingress binding are aligned but ManagedCertificate is still `PROVISIONING`
   - `https_probe_failed_after_control_plane_ready`
@@ -2484,6 +2493,9 @@ Operator verification commands for control-plane-ready / HTTPS-not-ready:
 - `curl -Iv https://<preview-host>/`
 
 Blocking reason-code examples:
+- workflow diagnostics fallback:
+  - `runtime_readiness_unknown_failure`
+  - `managed_deploy_workflow_template_stale`
 - DNS mismatch:
   - `dns_record_mismatch`
   - `dns_points_to_old_ingress_ip`

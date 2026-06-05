@@ -417,6 +417,7 @@ _DEPLOY_EXPECTED_WORKFLOW_OUTPUT_KEYS: tuple[str, ...] = (
     "managed_site_runtime_replace_performed",
     "managed_site_runtime_replace_scope",
     "managed_site_runtime_replace_deleted_kinds",
+    "mbsrn_managed_deploy_template_version",
 )
 _DEPLOY_EVIDENCE_CONTRACT_STATUS_CONFIRMED = "confirmed_live_evidence"
 _DEPLOY_EVIDENCE_CONTRACT_STATUS_PLACEHOLDER = "workflow_placeholder_advisory"
@@ -489,6 +490,8 @@ _DEPLOY_RUN_FAILURE_REASON_CLOUDSQL_CONNECTION = "cloudsql_proxy_connection_fail
 _DEPLOY_RUN_FAILURE_REASON_CANCELLED = "workflow_run_cancelled"
 _DEPLOY_RUN_FAILURE_REASON_TIMED_OUT = "workflow_run_timed_out"
 _DEPLOY_RUN_FAILURE_REASON_GENERIC = "workflow_run_failed"
+_DEPLOY_RUN_FAILURE_REASON_RUNTIME_READINESS_UNKNOWN_FAILURE = "runtime_readiness_unknown_failure"
+_DEPLOY_RUN_FAILURE_REASON_MANAGED_DEPLOY_WORKFLOW_TEMPLATE_STALE = "managed_deploy_workflow_template_stale"
 _DEPLOY_RUN_FAILURE_REASON_TRACKING_LOST = "workflow_run_tracking_lost"
 _DEPLOY_RUN_FAILURE_REASON_RECONCILIATION_TIMEOUT = "workflow_reconciliation_timeout"
 _DEPLOY_RUN_FAILURE_REASON_STALE_DEPLOY_BLOCKER_SUPERSEDED = "stale_deploy_blocker_superseded"
@@ -600,6 +603,9 @@ _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_PROVISIONING = "tls_certificate_
 _DEPLOY_RUNTIME_REASON_MANAGED_SITE_RUNTIME_REPLACE_REQUESTED = "managed_site_runtime_replace_requested"
 _DEPLOY_RUNTIME_REASON_MANAGED_SITE_RUNTIME_REPLACE_COMPLETED = "managed_site_runtime_replace_completed"
 _DEPLOY_RUNTIME_REASON_MANAGED_SITE_RUNTIME_REPLACE_FAILED = "managed_site_runtime_replace_failed"
+_MBSRN_MANAGED_DEPLOY_TEMPLATE_VERSION_OUTPUT_KEY = "mbsrn_managed_deploy_template_version"
+_DEPLOY_RUNTIME_REASON_CODE_PRESENT_OUTPUT_KEY = "deploy_runtime_reason_code_present"
+_MANAGED_DEPLOY_TEMPLATE_MARKER_PRESENT_OUTPUT_KEY = "managed_deploy_template_marker_present"
 _CERTIFICATE_READINESS_STATE_RESOURCE_MISSING = "certificate_resource_missing"
 _CERTIFICATE_READINESS_STATE_PROVISIONING_PENDING = "certificate_provisioning_pending"
 _CERTIFICATE_READINESS_STATE_ACTIVE = "certificate_active"
@@ -7483,12 +7489,42 @@ class SEOMigrationService:
         endpoint_probe_status_code = runtime_network_readiness.get("endpoint_probe_status_code")
         runtime_probe_status = runtime_network_readiness.get("runtime_probe_status")
         pod_restart_detected = runtime_network_readiness.get("pod_restart_detected")
+        runtime_ready = runtime_network_readiness.get("runtime_ready")
+        ingress_address_resolved = runtime_network_readiness.get("ingress_address_resolved")
+        service_exists = runtime_network_readiness.get("service_exists")
+        endpoints_ready = runtime_network_readiness.get("endpoints_ready")
+        managed_certificate_exists = runtime_network_readiness.get("managed_certificate_exists")
+        managed_certificate_status = runtime_network_readiness.get("managed_certificate_status")
+        https_ready = runtime_network_readiness.get("https_ready")
+        runtime_ready_tls_pending = runtime_network_readiness.get("runtime_ready_tls_pending")
+        replace_existing_runtime_requested = runtime_network_readiness.get("replace_existing_runtime_requested")
+        replace_existing_runtime_performed = runtime_network_readiness.get("replace_existing_runtime_performed")
+        deploy_runtime_failure_stage = runtime_network_readiness.get("deploy_runtime_failure_stage")
+        deploy_runtime_reason_message = runtime_network_readiness.get("deploy_runtime_reason_message")
+        mbsrn_managed_deploy_template_version = runtime_network_readiness.get(
+            _MBSRN_MANAGED_DEPLOY_TEMPLATE_VERSION_OUTPUT_KEY
+        )
+        deploy_runtime_reason_code_present = runtime_network_readiness.get(
+            _DEPLOY_RUNTIME_REASON_CODE_PRESENT_OUTPUT_KEY
+        )
+        managed_deploy_template_marker_present = runtime_network_readiness.get(
+            _MANAGED_DEPLOY_TEMPLATE_MARKER_PRESENT_OUTPUT_KEY
+        )
         managed_site_runtime_replace_performed = runtime_network_readiness.get(
             "managed_site_runtime_replace_performed"
         )
         managed_site_runtime_replace_scope = runtime_network_readiness.get("managed_site_runtime_replace_scope")
         managed_site_runtime_replace_deleted_kinds = runtime_network_readiness.get(
             "managed_site_runtime_replace_deleted_kinds"
+        )
+        (
+            workflow_run_failure_reason_code,
+            workflow_run_failure_stage,
+        ) = _resolve_runtime_readiness_failure_classification(
+            workflow_run_failure_reason_code=workflow_run_failure_reason_code,
+            workflow_run_failure_stage=workflow_run_failure_stage,
+            deploy_runtime_reason_code_present=deploy_runtime_reason_code_present,
+            managed_deploy_template_marker_present=managed_deploy_template_marker_present,
         )
         workflow_integrity_status = None
         workflow_integrity_reason_code = None
@@ -8031,6 +8067,25 @@ class SEOMigrationService:
             "endpoint_probe_status_code": endpoint_probe_status_code,
             "runtime_probe_status": runtime_probe_status,
             "pod_restart_detected": pod_restart_detected,
+            "runtime_ready": runtime_ready,
+            "ingress_address_resolved": ingress_address_resolved,
+            "service_exists": service_exists,
+            "endpoints_ready": endpoints_ready,
+            "managed_certificate_exists": managed_certificate_exists,
+            "managed_certificate_status": managed_certificate_status,
+            "https_ready": https_ready,
+            "runtime_ready_tls_pending": runtime_ready_tls_pending,
+            "replace_existing_runtime_requested": (
+                replace_existing_runtime_requested
+                if isinstance(replace_existing_runtime_requested, bool)
+                else bool(replace_existing_runtime)
+            ),
+            "replace_existing_runtime_performed": replace_existing_runtime_performed,
+            "deploy_runtime_failure_stage": deploy_runtime_failure_stage,
+            "deploy_runtime_reason_message": deploy_runtime_reason_message,
+            _MBSRN_MANAGED_DEPLOY_TEMPLATE_VERSION_OUTPUT_KEY: mbsrn_managed_deploy_template_version,
+            _DEPLOY_RUNTIME_REASON_CODE_PRESENT_OUTPUT_KEY: deploy_runtime_reason_code_present,
+            _MANAGED_DEPLOY_TEMPLATE_MARKER_PRESENT_OUTPUT_KEY: managed_deploy_template_marker_present,
             "managed_site_runtime_replace_performed": managed_site_runtime_replace_performed,
             "managed_site_runtime_replace_scope": managed_site_runtime_replace_scope,
             "managed_site_runtime_replace_deleted_kinds": managed_site_runtime_replace_deleted_kinds,
@@ -9497,6 +9552,20 @@ class SEOMigrationService:
             workflow_run_failure_reason_code = _DEPLOY_RUN_FAILURE_REASON_GENERIC
         if workflow_job_failure_detected and workflow_run_failure_stage is None:
             workflow_run_failure_stage = _DEPLOY_RUN_FAILURE_STAGE_WORKFLOW_EXECUTION
+        refreshed_network_readiness = self._resolve_deploy_runtime_network_readiness(deploy_result=refresh_result)
+        (
+            workflow_run_failure_reason_code,
+            workflow_run_failure_stage,
+        ) = _resolve_runtime_readiness_failure_classification(
+            workflow_run_failure_reason_code=workflow_run_failure_reason_code,
+            workflow_run_failure_stage=workflow_run_failure_stage,
+            deploy_runtime_reason_code_present=refreshed_network_readiness.get(
+                _DEPLOY_RUNTIME_REASON_CODE_PRESENT_OUTPUT_KEY
+            ),
+            managed_deploy_template_marker_present=refreshed_network_readiness.get(
+                _MANAGED_DEPLOY_TEMPLATE_MARKER_PRESENT_OUTPUT_KEY
+            ),
+        )
         workflow_run_failure_hint = _derive_workflow_run_failure_hint(
             failure_reason=workflow_run_failure_reason_code,
             post_dispatch_state=post_dispatch_state,
@@ -9585,7 +9654,6 @@ class SEOMigrationService:
             expected_publish_url_source_detail=None,
         )
         refreshed_content_identity = self._resolve_deploy_content_identity(deploy_result=refresh_result)
-        refreshed_network_readiness = self._resolve_deploy_runtime_network_readiness(deploy_result=refresh_result)
         for content_field in (
             "site_runtime_image_reference",
             "site_runtime_image_repository",
@@ -9636,6 +9704,21 @@ class SEOMigrationService:
             "endpoint_probe_status_code",
             "runtime_probe_status",
             "pod_restart_detected",
+            "runtime_ready",
+            "ingress_address_resolved",
+            "service_exists",
+            "endpoints_ready",
+            "managed_certificate_exists",
+            "managed_certificate_status",
+            "https_ready",
+            "runtime_ready_tls_pending",
+            "replace_existing_runtime_requested",
+            "replace_existing_runtime_performed",
+            "deploy_runtime_failure_stage",
+            "deploy_runtime_reason_message",
+            _MBSRN_MANAGED_DEPLOY_TEMPLATE_VERSION_OUTPUT_KEY,
+            _DEPLOY_RUNTIME_REASON_CODE_PRESENT_OUTPUT_KEY,
+            _MANAGED_DEPLOY_TEMPLATE_MARKER_PRESENT_OUTPUT_KEY,
             "workflow_integrity_status",
             "workflow_integrity_reason_code",
         ):
@@ -10070,6 +10153,76 @@ class SEOMigrationService:
                 if isinstance(next_item.get("deploy_https_ready"), bool)
                 else None
             ),
+            "runtime_ready": (
+                bool(next_item.get("runtime_ready"))
+                if isinstance(next_item.get("runtime_ready"), bool)
+                else None
+            ),
+            "ingress_address_resolved": (
+                bool(next_item.get("ingress_address_resolved"))
+                if isinstance(next_item.get("ingress_address_resolved"), bool)
+                else None
+            ),
+            "service_exists": (
+                bool(next_item.get("service_exists"))
+                if isinstance(next_item.get("service_exists"), bool)
+                else None
+            ),
+            "endpoints_ready": (
+                bool(next_item.get("endpoints_ready"))
+                if isinstance(next_item.get("endpoints_ready"), bool)
+                else None
+            ),
+            "managed_certificate_exists": (
+                bool(next_item.get("managed_certificate_exists"))
+                if isinstance(next_item.get("managed_certificate_exists"), bool)
+                else None
+            ),
+            "managed_certificate_status": _normalize_string(
+                next_item.get("managed_certificate_status"),
+                max_length=64,
+            ),
+            "https_ready": (
+                bool(next_item.get("https_ready"))
+                if isinstance(next_item.get("https_ready"), bool)
+                else None
+            ),
+            "runtime_ready_tls_pending": (
+                bool(next_item.get("runtime_ready_tls_pending"))
+                if isinstance(next_item.get("runtime_ready_tls_pending"), bool)
+                else None
+            ),
+            "replace_existing_runtime_requested": (
+                bool(next_item.get("replace_existing_runtime_requested"))
+                if isinstance(next_item.get("replace_existing_runtime_requested"), bool)
+                else None
+            ),
+            "replace_existing_runtime_performed": (
+                bool(next_item.get("replace_existing_runtime_performed"))
+                if isinstance(next_item.get("replace_existing_runtime_performed"), bool)
+                else None
+            ),
+            "deploy_runtime_failure_stage": _normalize_workflow_run_failure_stage(
+                next_item.get("deploy_runtime_failure_stage")
+            ),
+            "deploy_runtime_reason_message": _normalize_string(
+                next_item.get("deploy_runtime_reason_message"),
+                max_length=240,
+            ),
+            _MBSRN_MANAGED_DEPLOY_TEMPLATE_VERSION_OUTPUT_KEY: _normalize_string(
+                next_item.get(_MBSRN_MANAGED_DEPLOY_TEMPLATE_VERSION_OUTPUT_KEY),
+                max_length=80,
+            ),
+            _DEPLOY_RUNTIME_REASON_CODE_PRESENT_OUTPUT_KEY: (
+                bool(next_item.get(_DEPLOY_RUNTIME_REASON_CODE_PRESENT_OUTPUT_KEY))
+                if isinstance(next_item.get(_DEPLOY_RUNTIME_REASON_CODE_PRESENT_OUTPUT_KEY), bool)
+                else None
+            ),
+            _MANAGED_DEPLOY_TEMPLATE_MARKER_PRESENT_OUTPUT_KEY: (
+                bool(next_item.get(_MANAGED_DEPLOY_TEMPLATE_MARKER_PRESENT_OUTPUT_KEY))
+                if isinstance(next_item.get(_MANAGED_DEPLOY_TEMPLATE_MARKER_PRESENT_OUTPUT_KEY), bool)
+                else None
+            ),
             "current_live_url": _normalize_url_candidate(next_item.get("current_live_url")),
             "current_host_reachable": (
                 bool(next_item.get("current_host_reachable"))
@@ -10321,6 +10474,16 @@ class SEOMigrationService:
     ) -> SEOMigrationDeployActionResult:
         history_item = history_item or {}
         now = utc_now().isoformat()
+        history_workflow_failure_reason_code, history_workflow_failure_stage = (
+            _resolve_runtime_readiness_failure_classification(
+                workflow_run_failure_reason_code=history_item.get("workflow_run_failure_reason_code"),
+                workflow_run_failure_stage=history_item.get("workflow_run_failure_stage"),
+                deploy_runtime_reason_code_present=history_item.get(_DEPLOY_RUNTIME_REASON_CODE_PRESENT_OUTPUT_KEY),
+                managed_deploy_template_marker_present=history_item.get(
+                    _MANAGED_DEPLOY_TEMPLATE_MARKER_PRESENT_OUTPUT_KEY
+                ),
+            )
+        )
         result_payload: dict[str, object] = {
             "action": "deploy_status_refresh",
             "status": "no_change",
@@ -10505,12 +10668,8 @@ class SEOMigrationService:
             "workflow_run_id": _coerce_int(history_item.get("workflow_run_id")),
             "workflow_run_status": _normalize_string(history_item.get("workflow_run_status"), max_length=40),
             "workflow_run_conclusion": _normalize_string(history_item.get("workflow_run_conclusion"), max_length=40),
-            "workflow_run_failure_reason_code": _normalize_workflow_run_failure_reason_code(
-                history_item.get("workflow_run_failure_reason_code")
-            ),
-            "workflow_run_failure_stage": _normalize_workflow_run_failure_stage(
-                history_item.get("workflow_run_failure_stage")
-            ),
+            "workflow_run_failure_reason_code": history_workflow_failure_reason_code,
+            "workflow_run_failure_stage": history_workflow_failure_stage,
             "workflow_run_failure_step": _normalize_string(
                 history_item.get("workflow_run_failure_step"), max_length=200
             ),
@@ -10518,7 +10677,7 @@ class SEOMigrationService:
                 history_item.get("workflow_run_failure_hint"), max_length=240
             )
             or _derive_workflow_run_failure_hint(
-                failure_reason=history_item.get("workflow_run_failure_reason_code"),
+                failure_reason=history_workflow_failure_reason_code,
                 post_dispatch_state=history_item.get("post_dispatch_state"),
             ),
             "selected_workflow_attempt_status": _normalize_string(
@@ -10532,12 +10691,8 @@ class SEOMigrationService:
                 history_item.get("workflow_run_failure_step"),
                 max_length=200,
             ),
-            "selected_workflow_failure_stage": _normalize_workflow_run_failure_stage(
-                history_item.get("workflow_run_failure_stage")
-            ),
-            "selected_workflow_failure_reason": _normalize_workflow_run_failure_reason_code(
-                history_item.get("workflow_run_failure_reason_code")
-            ),
+            "selected_workflow_failure_stage": history_workflow_failure_stage,
+            "selected_workflow_failure_reason": history_workflow_failure_reason_code,
             "resolved_live_url": _normalize_url_candidate(history_item.get("resolved_live_url")),
             "url_source": _normalize_migration_url_source(history_item.get("url_source")),
             "url_source_detail": _normalize_string(history_item.get("url_source_detail"), max_length=120),
@@ -10606,6 +10761,76 @@ class SEOMigrationService:
             "deploy_https_ready": (
                 bool(history_item.get("deploy_https_ready"))
                 if isinstance(history_item.get("deploy_https_ready"), bool)
+                else None
+            ),
+            "runtime_ready": (
+                bool(history_item.get("runtime_ready"))
+                if isinstance(history_item.get("runtime_ready"), bool)
+                else None
+            ),
+            "ingress_address_resolved": (
+                bool(history_item.get("ingress_address_resolved"))
+                if isinstance(history_item.get("ingress_address_resolved"), bool)
+                else None
+            ),
+            "service_exists": (
+                bool(history_item.get("service_exists"))
+                if isinstance(history_item.get("service_exists"), bool)
+                else None
+            ),
+            "endpoints_ready": (
+                bool(history_item.get("endpoints_ready"))
+                if isinstance(history_item.get("endpoints_ready"), bool)
+                else None
+            ),
+            "managed_certificate_exists": (
+                bool(history_item.get("managed_certificate_exists"))
+                if isinstance(history_item.get("managed_certificate_exists"), bool)
+                else None
+            ),
+            "managed_certificate_status": _normalize_string(
+                history_item.get("managed_certificate_status"),
+                max_length=64,
+            ),
+            "https_ready": (
+                bool(history_item.get("https_ready"))
+                if isinstance(history_item.get("https_ready"), bool)
+                else None
+            ),
+            "runtime_ready_tls_pending": (
+                bool(history_item.get("runtime_ready_tls_pending"))
+                if isinstance(history_item.get("runtime_ready_tls_pending"), bool)
+                else None
+            ),
+            "replace_existing_runtime_requested": (
+                bool(history_item.get("replace_existing_runtime_requested"))
+                if isinstance(history_item.get("replace_existing_runtime_requested"), bool)
+                else None
+            ),
+            "replace_existing_runtime_performed": (
+                bool(history_item.get("replace_existing_runtime_performed"))
+                if isinstance(history_item.get("replace_existing_runtime_performed"), bool)
+                else None
+            ),
+            "deploy_runtime_failure_stage": _normalize_workflow_run_failure_stage(
+                history_item.get("deploy_runtime_failure_stage")
+            ),
+            "deploy_runtime_reason_message": _normalize_string(
+                history_item.get("deploy_runtime_reason_message"),
+                max_length=240,
+            ),
+            _MBSRN_MANAGED_DEPLOY_TEMPLATE_VERSION_OUTPUT_KEY: _normalize_string(
+                history_item.get(_MBSRN_MANAGED_DEPLOY_TEMPLATE_VERSION_OUTPUT_KEY),
+                max_length=80,
+            ),
+            _DEPLOY_RUNTIME_REASON_CODE_PRESENT_OUTPUT_KEY: (
+                bool(history_item.get(_DEPLOY_RUNTIME_REASON_CODE_PRESENT_OUTPUT_KEY))
+                if isinstance(history_item.get(_DEPLOY_RUNTIME_REASON_CODE_PRESENT_OUTPUT_KEY), bool)
+                else None
+            ),
+            _MANAGED_DEPLOY_TEMPLATE_MARKER_PRESENT_OUTPUT_KEY: (
+                bool(history_item.get(_MANAGED_DEPLOY_TEMPLATE_MARKER_PRESENT_OUTPUT_KEY))
+                if isinstance(history_item.get(_MANAGED_DEPLOY_TEMPLATE_MARKER_PRESENT_OUTPUT_KEY), bool)
                 else None
             ),
             "current_live_url": _normalize_url_candidate(history_item.get("current_live_url")),
@@ -17435,6 +17660,59 @@ class SEOMigrationService:
             workflow_output_payload.get("gce_backend_health_status"),
             max_length=32,
         )
+        runtime_ready = _coerce_optional_bool(workflow_output_payload.get("runtime_ready"))
+        ingress_address_resolved = _coerce_optional_bool(workflow_output_payload.get("ingress_address_resolved"))
+        service_exists = _coerce_optional_bool(workflow_output_payload.get("service_exists"))
+        endpoints_ready = _coerce_optional_bool(workflow_output_payload.get("endpoints_ready"))
+        k8s_endpoint_ready = _coerce_optional_bool(workflow_output_payload.get("k8s_endpoint_ready"))
+        if k8s_endpoint_ready is None:
+            k8s_endpoint_ready = endpoints_ready
+        if endpoints_ready is None:
+            endpoints_ready = k8s_endpoint_ready
+        managed_certificate_exists = _coerce_optional_bool(workflow_output_payload.get("managed_certificate_exists"))
+        managed_certificate_status = _normalize_string(
+            workflow_output_payload.get("managed_certificate_status"),
+            max_length=64,
+        )
+        if managed_certificate_status is None:
+            managed_certificate_status = _normalize_string(
+                workflow_output_payload.get("observed_managed_certificate_status"),
+                max_length=64,
+            )
+        https_ready = _coerce_optional_bool(workflow_output_payload.get("https_ready"))
+        runtime_ready_tls_pending = _coerce_optional_bool(workflow_output_payload.get("runtime_ready_tls_pending"))
+        replace_existing_runtime_requested = _coerce_optional_bool(
+            workflow_output_payload.get("replace_existing_runtime_requested")
+        )
+        if replace_existing_runtime_requested is None:
+            replace_existing_runtime_requested = _coerce_optional_bool(
+                workflow_output_payload.get("managed_site_runtime_replace_requested")
+            )
+        replace_existing_runtime_performed = _coerce_optional_bool(
+            workflow_output_payload.get("replace_existing_runtime_performed")
+        )
+        managed_site_runtime_replace_performed = _coerce_optional_bool(
+            workflow_output_payload.get("managed_site_runtime_replace_performed")
+        )
+        if managed_site_runtime_replace_performed is None:
+            managed_site_runtime_replace_performed = replace_existing_runtime_performed
+        deploy_runtime_failure_stage = _normalize_workflow_run_failure_stage(
+            workflow_output_payload.get("deploy_runtime_failure_stage")
+        )
+        deploy_runtime_reason_message = _normalize_string(
+            workflow_output_payload.get("deploy_runtime_reason_message"),
+            max_length=240,
+        )
+        mbsrn_managed_deploy_template_version = _normalize_string(
+            workflow_output_payload.get(_MBSRN_MANAGED_DEPLOY_TEMPLATE_VERSION_OUTPUT_KEY),
+            max_length=80,
+        )
+        deploy_runtime_reason_code_present = _coerce_optional_bool(
+            workflow_output_payload.get(_DEPLOY_RUNTIME_REASON_CODE_PRESENT_OUTPUT_KEY)
+        )
+        managed_deploy_template_marker_present = _coerce_optional_bool(
+            workflow_output_payload.get(_MANAGED_DEPLOY_TEMPLATE_MARKER_PRESENT_OUTPUT_KEY)
+        )
         return {
             "dns_record_matches_ingress": _coerce_optional_bool(
                 workflow_output_payload.get("dns_record_matches_ingress")
@@ -17506,9 +17784,9 @@ class SEOMigrationService:
                     else None
                 )
             ),
-            "k8s_endpoint_ready": _coerce_optional_bool(workflow_output_payload.get("k8s_endpoint_ready")),
-            "service_has_ready_endpoints": _coerce_optional_bool(workflow_output_payload.get("k8s_endpoint_ready")),
-            "service_ready_endpoints": _coerce_optional_bool(workflow_output_payload.get("k8s_endpoint_ready")),
+            "k8s_endpoint_ready": k8s_endpoint_ready,
+            "service_has_ready_endpoints": k8s_endpoint_ready,
+            "service_ready_endpoints": k8s_endpoint_ready,
             "service_probe_status": _normalize_string(
                 workflow_output_payload.get("service_probe_status"),
                 max_length=40,
@@ -17526,9 +17804,22 @@ class SEOMigrationService:
                 max_length=48,
             ),
             "pod_restart_detected": _coerce_optional_bool(workflow_output_payload.get("pod_restart_detected")),
-            "managed_site_runtime_replace_performed": _coerce_optional_bool(
-                workflow_output_payload.get("managed_site_runtime_replace_performed")
-            ),
+            "runtime_ready": runtime_ready,
+            "ingress_address_resolved": ingress_address_resolved,
+            "service_exists": service_exists,
+            "endpoints_ready": endpoints_ready,
+            "managed_certificate_exists": managed_certificate_exists,
+            "managed_certificate_status": managed_certificate_status,
+            "https_ready": https_ready,
+            "runtime_ready_tls_pending": runtime_ready_tls_pending,
+            "replace_existing_runtime_requested": replace_existing_runtime_requested,
+            "replace_existing_runtime_performed": replace_existing_runtime_performed,
+            "deploy_runtime_failure_stage": deploy_runtime_failure_stage,
+            "deploy_runtime_reason_message": deploy_runtime_reason_message,
+            _MBSRN_MANAGED_DEPLOY_TEMPLATE_VERSION_OUTPUT_KEY: mbsrn_managed_deploy_template_version,
+            _DEPLOY_RUNTIME_REASON_CODE_PRESENT_OUTPUT_KEY: deploy_runtime_reason_code_present,
+            _MANAGED_DEPLOY_TEMPLATE_MARKER_PRESENT_OUTPUT_KEY: managed_deploy_template_marker_present,
+            "managed_site_runtime_replace_performed": managed_site_runtime_replace_performed,
             "managed_site_runtime_replace_scope": _normalize_string(
                 workflow_output_payload.get("managed_site_runtime_replace_scope"),
                 max_length=240,
@@ -18266,6 +18557,15 @@ class SEOMigrationService:
                 item.get("workflow_run_failure_reason_code")
             )
             workflow_run_failure_stage = _normalize_workflow_run_failure_stage(item.get("workflow_run_failure_stage"))
+            (
+                workflow_run_failure_reason_code,
+                workflow_run_failure_stage,
+            ) = _resolve_runtime_readiness_failure_classification(
+                workflow_run_failure_reason_code=workflow_run_failure_reason_code,
+                workflow_run_failure_stage=workflow_run_failure_stage,
+                deploy_runtime_reason_code_present=item.get(_DEPLOY_RUNTIME_REASON_CODE_PRESENT_OUTPUT_KEY),
+                managed_deploy_template_marker_present=item.get(_MANAGED_DEPLOY_TEMPLATE_MARKER_PRESENT_OUTPUT_KEY),
+            )
             workflow_run_failure_step = _normalize_string(item.get("workflow_run_failure_step"), max_length=200)
             workflow_run_failure_hint = _normalize_string(item.get("workflow_run_failure_hint"), max_length=240)
             resolved_live_url = _normalize_url_candidate(item.get("resolved_live_url"))
@@ -18537,6 +18837,40 @@ class SEOMigrationService:
                     max_length=80,
                 ),
                 "pod_restart_detected": _coerce_optional_bool(item.get("pod_restart_detected")),
+                "runtime_ready": _coerce_optional_bool(item.get("runtime_ready")),
+                "ingress_address_resolved": _coerce_optional_bool(item.get("ingress_address_resolved")),
+                "service_exists": _coerce_optional_bool(item.get("service_exists")),
+                "endpoints_ready": _coerce_optional_bool(item.get("endpoints_ready")),
+                "managed_certificate_exists": _coerce_optional_bool(item.get("managed_certificate_exists")),
+                "managed_certificate_status": _normalize_string(
+                    item.get("managed_certificate_status"),
+                    max_length=64,
+                ),
+                "https_ready": _coerce_optional_bool(item.get("https_ready")),
+                "runtime_ready_tls_pending": _coerce_optional_bool(item.get("runtime_ready_tls_pending")),
+                "replace_existing_runtime_requested": _coerce_optional_bool(
+                    item.get("replace_existing_runtime_requested")
+                ),
+                "replace_existing_runtime_performed": _coerce_optional_bool(
+                    item.get("replace_existing_runtime_performed")
+                ),
+                "deploy_runtime_failure_stage": _normalize_workflow_run_failure_stage(
+                    item.get("deploy_runtime_failure_stage")
+                ),
+                "deploy_runtime_reason_message": _normalize_string(
+                    item.get("deploy_runtime_reason_message"),
+                    max_length=240,
+                ),
+                _MBSRN_MANAGED_DEPLOY_TEMPLATE_VERSION_OUTPUT_KEY: _normalize_string(
+                    item.get(_MBSRN_MANAGED_DEPLOY_TEMPLATE_VERSION_OUTPUT_KEY),
+                    max_length=80,
+                ),
+                _DEPLOY_RUNTIME_REASON_CODE_PRESENT_OUTPUT_KEY: _coerce_optional_bool(
+                    item.get(_DEPLOY_RUNTIME_REASON_CODE_PRESENT_OUTPUT_KEY)
+                ),
+                _MANAGED_DEPLOY_TEMPLATE_MARKER_PRESENT_OUTPUT_KEY: _coerce_optional_bool(
+                    item.get(_MANAGED_DEPLOY_TEMPLATE_MARKER_PRESENT_OUTPUT_KEY)
+                ),
                 "managed_site_runtime_replace_performed": _coerce_optional_bool(
                     item.get("managed_site_runtime_replace_performed")
                 ),
@@ -20040,6 +20374,115 @@ class SEOMigrationService:
                 else None
             )
         )
+        runtime_ready = (
+            bool(latest_traceability.get("runtime_ready"))
+            if isinstance(latest_traceability.get("runtime_ready"), bool)
+            else (
+                bool(target_summary.get("runtime_ready"))
+                if isinstance(target_summary.get("runtime_ready"), bool)
+                else None
+            )
+        )
+        ingress_address_resolved = (
+            bool(latest_traceability.get("ingress_address_resolved"))
+            if isinstance(latest_traceability.get("ingress_address_resolved"), bool)
+            else (
+                bool(target_summary.get("ingress_address_resolved"))
+                if isinstance(target_summary.get("ingress_address_resolved"), bool)
+                else None
+            )
+        )
+        service_exists = (
+            bool(latest_traceability.get("service_exists"))
+            if isinstance(latest_traceability.get("service_exists"), bool)
+            else (
+                bool(target_summary.get("service_exists"))
+                if isinstance(target_summary.get("service_exists"), bool)
+                else None
+            )
+        )
+        endpoints_ready = (
+            bool(latest_traceability.get("endpoints_ready"))
+            if isinstance(latest_traceability.get("endpoints_ready"), bool)
+            else (
+                bool(target_summary.get("endpoints_ready"))
+                if isinstance(target_summary.get("endpoints_ready"), bool)
+                else None
+            )
+        )
+        managed_certificate_exists = (
+            bool(latest_traceability.get("managed_certificate_exists"))
+            if isinstance(latest_traceability.get("managed_certificate_exists"), bool)
+            else (
+                bool(target_summary.get("managed_certificate_exists"))
+                if isinstance(target_summary.get("managed_certificate_exists"), bool)
+                else None
+            )
+        )
+        managed_certificate_status = _normalize_string(
+            latest_traceability.get("managed_certificate_status"),
+            max_length=64,
+        ) or _normalize_string(
+            target_summary.get("managed_certificate_status"),
+            max_length=64,
+        )
+        https_ready_observed = (
+            bool(latest_traceability.get("https_ready"))
+            if isinstance(latest_traceability.get("https_ready"), bool)
+            else (
+                bool(target_summary.get("https_ready"))
+                if isinstance(target_summary.get("https_ready"), bool)
+                else None
+            )
+        )
+        runtime_ready_tls_pending_observed = (
+            bool(latest_traceability.get("runtime_ready_tls_pending"))
+            if isinstance(latest_traceability.get("runtime_ready_tls_pending"), bool)
+            else (
+                bool(target_summary.get("runtime_ready_tls_pending"))
+                if isinstance(target_summary.get("runtime_ready_tls_pending"), bool)
+                else None
+            )
+        )
+        replace_existing_runtime_requested = (
+            bool(latest_traceability.get("replace_existing_runtime_requested"))
+            if isinstance(latest_traceability.get("replace_existing_runtime_requested"), bool)
+            else (
+                bool(target_summary.get("managed_site_runtime_replace_requested"))
+                if isinstance(target_summary.get("managed_site_runtime_replace_requested"), bool)
+                else None
+            )
+        )
+        replace_existing_runtime_performed = (
+            bool(latest_traceability.get("replace_existing_runtime_performed"))
+            if isinstance(latest_traceability.get("replace_existing_runtime_performed"), bool)
+            else (
+                bool(latest_traceability.get("managed_site_runtime_replace_performed"))
+                if isinstance(latest_traceability.get("managed_site_runtime_replace_performed"), bool)
+                else None
+            )
+        )
+        deploy_runtime_failure_stage = _normalize_workflow_run_failure_stage(
+            latest_traceability.get("deploy_runtime_failure_stage")
+        )
+        deploy_runtime_reason_message = _normalize_string(
+            latest_traceability.get("deploy_runtime_reason_message"),
+            max_length=240,
+        )
+        mbsrn_managed_deploy_template_version = _normalize_string(
+            latest_traceability.get(_MBSRN_MANAGED_DEPLOY_TEMPLATE_VERSION_OUTPUT_KEY),
+            max_length=80,
+        )
+        deploy_runtime_reason_code_present = (
+            bool(latest_traceability.get(_DEPLOY_RUNTIME_REASON_CODE_PRESENT_OUTPUT_KEY))
+            if isinstance(latest_traceability.get(_DEPLOY_RUNTIME_REASON_CODE_PRESENT_OUTPUT_KEY), bool)
+            else None
+        )
+        managed_deploy_template_marker_present = (
+            bool(latest_traceability.get(_MANAGED_DEPLOY_TEMPLATE_MARKER_PRESENT_OUTPUT_KEY))
+            if isinstance(latest_traceability.get(_MANAGED_DEPLOY_TEMPLATE_MARKER_PRESENT_OUTPUT_KEY), bool)
+            else None
+        )
         workflow_integrity_status = _normalize_workflow_integrity_status(
             latest_traceability.get("workflow_integrity_status")
         ) or _normalize_workflow_integrity_status(target_summary.get("workflow_integrity_status"))
@@ -20064,6 +20507,25 @@ class SEOMigrationService:
         selected_workflow_failure_reason = _normalize_workflow_run_failure_reason_code(
             latest_traceability.get("workflow_run_failure_reason_code")
         )
+        (
+            selected_workflow_failure_reason,
+            selected_workflow_failure_stage,
+        ) = _resolve_runtime_readiness_failure_classification(
+            workflow_run_failure_reason_code=selected_workflow_failure_reason,
+            workflow_run_failure_stage=selected_workflow_failure_stage,
+            deploy_runtime_reason_code_present=deploy_runtime_reason_code_present,
+            managed_deploy_template_marker_present=managed_deploy_template_marker_present,
+        )
+        if deploy_runtime_failure_stage is None:
+            deploy_runtime_failure_stage = selected_workflow_failure_stage
+        if deploy_runtime_reason_message is None and selected_workflow_failure_reason in {
+            _DEPLOY_RUN_FAILURE_REASON_RUNTIME_READINESS_UNKNOWN_FAILURE,
+            _DEPLOY_RUN_FAILURE_REASON_MANAGED_DEPLOY_WORKFLOW_TEMPLATE_STALE,
+        }:
+            deploy_runtime_reason_message = _derive_workflow_run_failure_hint(
+                failure_reason=selected_workflow_failure_reason,
+                post_dispatch_state=latest_traceability.get("post_dispatch_state"),
+            )
         current_live_url = _normalize_url_candidate(latest_traceability.get("current_live_url"))
         current_host_reachable = (
             bool(latest_traceability.get("current_host_reachable"))
@@ -20341,15 +20803,39 @@ class SEOMigrationService:
             or ingress_status_ip
             or preview_https_status is not None
         )
+        if service_exists is None and (
+            k8s_endpoint_ready is True
+            or in_cluster_service_status_code is not None
+            or service_probe_status in {"ok", "http_502"}
+        ):
+            service_exists = True
+        if managed_certificate_status is None:
+            managed_certificate_status = observed_managed_certificate_status or tls_certificate_status
+        if managed_certificate_exists is None and (
+            bool(managed_certificate_status) or bool(observed_managed_certificate_domains)
+        ):
+            managed_certificate_exists = True
+        if ingress_address_resolved is None and runtime_reached_load_balancer:
+            ingress_address_resolved = True
+        if runtime_ready is None and deploy_https_ready is not None:
+            runtime_ready = bool(deploy_https_ready)
+        if endpoints_ready is None and isinstance(k8s_endpoint_ready, bool):
+            endpoints_ready = k8s_endpoint_ready
+        if https_ready_observed is True:
+            deploy_https_ready = True
         runtime_ready_tls_pending = bool(
             runtime_reached_load_balancer
             and deploy_https_ready is False
             and certificate_readiness_state == _CERTIFICATE_READINESS_STATE_PROVISIONING_PENDING
         )
+        if runtime_ready_tls_pending_observed is True and deploy_https_ready is False:
+            runtime_ready_tls_pending = True
         https_ready = bool(
             deploy_https_ready is True
             and certificate_readiness_state == _CERTIFICATE_READINESS_STATE_ACTIVE
         )
+        if https_ready_observed is True:
+            https_ready = True
 
         certificate_gate_blocked = bool(
             certificate_gate_required_before_deploy
@@ -20431,10 +20917,17 @@ class SEOMigrationService:
             "endpoint_probe_status_code": endpoint_probe_status_code,
             "runtime_probe_status": runtime_probe_status,
             "pod_restart_detected": pod_restart_detected,
+            "replace_existing_runtime_requested": replace_existing_runtime_requested,
+            "replace_existing_runtime_performed": replace_existing_runtime_performed,
+            "deploy_runtime_failure_stage": deploy_runtime_failure_stage,
+            "deploy_runtime_reason_message": deploy_runtime_reason_message,
+            _MBSRN_MANAGED_DEPLOY_TEMPLATE_VERSION_OUTPUT_KEY: mbsrn_managed_deploy_template_version,
+            _DEPLOY_RUNTIME_REASON_CODE_PRESENT_OUTPUT_KEY: deploy_runtime_reason_code_present,
+            _MANAGED_DEPLOY_TEMPLATE_MARKER_PRESENT_OUTPUT_KEY: managed_deploy_template_marker_present,
             "managed_site_runtime_replace_performed": (
                 bool(latest_traceability.get("managed_site_runtime_replace_performed"))
                 if isinstance(latest_traceability.get("managed_site_runtime_replace_performed"), bool)
-                else None
+                else replace_existing_runtime_performed
             ),
             "managed_site_runtime_replace_scope": _normalize_string(
                 latest_traceability.get("managed_site_runtime_replace_scope"),
@@ -20577,6 +21070,12 @@ class SEOMigrationService:
                 "host_reachability_scheme": host_reachability_scheme,
                 "https_probe_error_summary": https_probe_error_summary,
                 "deploy_https_ready": deploy_https_ready,
+                "runtime_ready": runtime_ready,
+                "ingress_address_resolved": ingress_address_resolved,
+                "service_exists": service_exists,
+                "endpoints_ready": endpoints_ready,
+                "managed_certificate_exists": managed_certificate_exists,
+                "managed_certificate_status": managed_certificate_status,
                 "preview_https_status": preview_https_status,
                 "preview_http_status": preview_http_status,
                 "preview_probe_attempt": preview_probe_attempt,
@@ -20592,10 +21091,17 @@ class SEOMigrationService:
                 "endpoint_probe_status_code": endpoint_probe_status_code,
                 "runtime_probe_status": runtime_probe_status,
                 "pod_restart_detected": pod_restart_detected,
+                "replace_existing_runtime_requested": replace_existing_runtime_requested,
+                "replace_existing_runtime_performed": replace_existing_runtime_performed,
+                "deploy_runtime_failure_stage": deploy_runtime_failure_stage,
+                "deploy_runtime_reason_message": deploy_runtime_reason_message,
+                _MBSRN_MANAGED_DEPLOY_TEMPLATE_VERSION_OUTPUT_KEY: mbsrn_managed_deploy_template_version,
+                _DEPLOY_RUNTIME_REASON_CODE_PRESENT_OUTPUT_KEY: deploy_runtime_reason_code_present,
+                _MANAGED_DEPLOY_TEMPLATE_MARKER_PRESENT_OUTPUT_KEY: managed_deploy_template_marker_present,
                 "managed_site_runtime_replace_performed": (
                     bool(latest_traceability.get("managed_site_runtime_replace_performed"))
                     if isinstance(latest_traceability.get("managed_site_runtime_replace_performed"), bool)
-                    else None
+                    else replace_existing_runtime_performed
                 ),
                 "managed_site_runtime_replace_scope": _normalize_string(
                     latest_traceability.get("managed_site_runtime_replace_scope"),
@@ -23727,6 +24233,8 @@ def _normalize_deploy_failure_reason_code(value: object) -> str | None:
         "github_repo_initialization_failed",
         "github_repo_requires_manual_initialization",
         _DEPLOY_RUN_FAILURE_REASON_GENERATED_WORKFLOW_REQUIRES_MISSING_GCP_DEPLOY_KEY,
+        _DEPLOY_RUN_FAILURE_REASON_RUNTIME_READINESS_UNKNOWN_FAILURE,
+        _DEPLOY_RUN_FAILURE_REASON_MANAGED_DEPLOY_WORKFLOW_TEMPLATE_STALE,
         _DEPLOY_RUN_FAILURE_REASON_RUNTIME_DEPLOYMENT_MISSING_AFTER_APPLY,
         _DEPLOY_RUN_FAILURE_REASON_RUNTIME_SERVICE_MISSING_AFTER_APPLY,
         _DEPLOY_RUN_FAILURE_REASON_RUNTIME_INGRESS_MISSING_AFTER_APPLY,
@@ -23778,6 +24286,8 @@ def _normalize_workflow_run_failure_reason_code(value: object) -> str | None:
         _DEPLOY_RUN_FAILURE_REASON_CANCELLED,
         _DEPLOY_RUN_FAILURE_REASON_TIMED_OUT,
         _DEPLOY_RUN_FAILURE_REASON_GENERIC,
+        _DEPLOY_RUN_FAILURE_REASON_RUNTIME_READINESS_UNKNOWN_FAILURE,
+        _DEPLOY_RUN_FAILURE_REASON_MANAGED_DEPLOY_WORKFLOW_TEMPLATE_STALE,
         _DEPLOY_RUN_FAILURE_REASON_TRACKING_LOST,
         _DEPLOY_RUN_FAILURE_REASON_RECONCILIATION_TIMEOUT,
         _DEPLOY_RUN_FAILURE_REASON_STALE_DEPLOY_BLOCKER_SUPERSEDED,
@@ -23881,6 +24391,8 @@ def _normalize_dispatch_service_reason_code(value: object) -> str | None:
     if not normalized:
         return None
     normalized_lower = normalized.lower()
+    if normalized_lower in {"certificate_provisioning_pending", "runtime_ready_tls_pending"}:
+        return _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_PROVISIONING
     if normalized_lower in {
         _DEPLOY_DISPATCH_SERVICE_REASON_AVAILABLE,
         _DEPLOY_DISPATCH_SERVICE_REASON_RUNTIME_UNAVAILABLE,
@@ -23935,6 +24447,10 @@ def _normalize_dispatch_service_reason_code(value: object) -> str | None:
         _DEPLOY_DISPATCH_SERVICE_REASON_DNS_POINTS_TO_OLD_INGRESS_IP,
         _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_IP_ASSIGNED_BUT_DNS_NOT_UPDATED,
         _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_PROVISIONING,
+        "certificate_provisioning_pending",
+        "runtime_ready_tls_pending",
+        _DEPLOY_RUN_FAILURE_REASON_RUNTIME_READINESS_UNKNOWN_FAILURE,
+        _DEPLOY_RUN_FAILURE_REASON_MANAGED_DEPLOY_WORKFLOW_TEMPLATE_STALE,
         _DEPLOY_RUNTIME_REASON_MANAGED_SITE_RUNTIME_REPLACE_REQUESTED,
         _DEPLOY_RUNTIME_REASON_MANAGED_SITE_RUNTIME_REPLACE_COMPLETED,
         _DEPLOY_RUNTIME_REASON_MANAGED_SITE_RUNTIME_REPLACE_FAILED,
@@ -24801,6 +25317,35 @@ def _derive_managed_deploy_secret_readiness_message(*, reason_code: object) -> s
     )
 
 
+def _resolve_runtime_readiness_failure_classification(
+    *,
+    workflow_run_failure_reason_code: object,
+    workflow_run_failure_stage: object,
+    deploy_runtime_reason_code_present: object,
+    managed_deploy_template_marker_present: object,
+) -> tuple[str | None, str | None]:
+    normalized_reason = _normalize_workflow_run_failure_reason_code(workflow_run_failure_reason_code)
+    normalized_stage = _normalize_workflow_run_failure_stage(workflow_run_failure_stage)
+    generic_runtime_reasons = {
+        _DEPLOY_RUN_FAILURE_REASON_GENERIC,
+        _DEPLOY_RUN_FAILURE_REASON_INGRESS_EVIDENCE,
+    }
+    if normalized_reason not in generic_runtime_reasons:
+        return normalized_reason, normalized_stage
+
+    if _coerce_optional_bool(deploy_runtime_reason_code_present) is True:
+        return normalized_reason, normalized_stage
+
+    marker_present = _coerce_optional_bool(managed_deploy_template_marker_present)
+    if marker_present is False:
+        normalized_reason = _DEPLOY_RUN_FAILURE_REASON_MANAGED_DEPLOY_WORKFLOW_TEMPLATE_STALE
+    else:
+        normalized_reason = _DEPLOY_RUN_FAILURE_REASON_RUNTIME_READINESS_UNKNOWN_FAILURE
+    if normalized_stage in {None, _DEPLOY_RUN_FAILURE_STAGE_WORKFLOW_EXECUTION}:
+        normalized_stage = _DEPLOY_RUN_FAILURE_STAGE_INGRESS_EVIDENCE
+    return normalized_reason, normalized_stage
+
+
 def _derive_deploy_failure_remediation_hint(
     *,
     failure_reason: object,
@@ -25026,10 +25571,30 @@ def _derive_deploy_failure_remediation_hint(
             "Infrastructure may be healthy but deployed content identity is wrong for this site. "
             "Republish managed deploy files before redeploy to restore site-specific runtime image identity."
         )
+    if normalized_dispatch_reason == _DEPLOY_RUN_FAILURE_REASON_RUNTIME_READINESS_UNKNOWN_FAILURE:
+        return (
+            "The target workflow exited before reporting a precise readiness reason. "
+            "Reprovision the managed deploy workflow from publish and retry, or review Advanced Diagnostics."
+        )
+    if normalized_dispatch_reason == _DEPLOY_RUN_FAILURE_REASON_MANAGED_DEPLOY_WORKFLOW_TEMPLATE_STALE:
+        return (
+            "Target repository deploy workflow appears stale and did not emit current managed diagnostics markers. "
+            "Run publish to reprovision managed workflow/template files, then retry deploy."
+        )
     if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_GENERATED_WORKFLOW_REQUIRES_MISSING_GCP_DEPLOY_KEY:
         return (
             "Workflow run failed because target-repo secret GCP_DEPLOY_KEY was missing. "
             "Configure deploy auth prerequisites and refresh deploy readiness before rerun."
+        )
+    if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_RUNTIME_READINESS_UNKNOWN_FAILURE:
+        return (
+            "The target workflow exited before reporting a precise readiness reason. "
+            "Reprovision workflow files from publish and retry, or inspect Advanced Diagnostics for bounded evidence."
+        )
+    if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_MANAGED_DEPLOY_WORKFLOW_TEMPLATE_STALE:
+        return (
+            "Target repository deploy workflow appears stale relative to current managed template diagnostics. "
+            "Run publish to reprovision managed workflow/template files, then retry deploy."
         )
     if (
         normalized_reason == _DEPLOY_TARGET_REASON_WORKFLOW_NOT_DISPATCHABLE
@@ -25170,6 +25735,16 @@ def _derive_workflow_run_failure_hint(
         return (
             "Service/site-web exists but has no ready endpoints after apply/rollout. "
             "Verify pod readiness, service selectors, and endpoint population before retry."
+        )
+    if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_RUNTIME_READINESS_UNKNOWN_FAILURE:
+        return (
+            "The target workflow exited before reporting a precise readiness reason. "
+            "Reprovision the workflow and retry, or check Advanced Diagnostics."
+        )
+    if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_MANAGED_DEPLOY_WORKFLOW_TEMPLATE_STALE:
+        return (
+            "Deploy workflow logs did not include current managed template diagnostics markers. "
+            "Reprovision target workflow files from publish and retry deploy."
         )
     if normalized_reason == _DEPLOY_RUNTIME_REASON_MANAGED_SITE_RUNTIME_REPLACE_FAILED:
         return (

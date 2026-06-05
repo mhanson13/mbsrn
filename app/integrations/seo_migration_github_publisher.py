@@ -3465,7 +3465,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             run_conclusion=run_conclusion,
         )
         workflow_output: dict[str, str] | None = None
-        if reason_code == "workflow_run_failed" and failed_job_id is not None:
+        if failed_job_id is not None:
             (
                 cloudsql_reason_code,
                 cloudsql_failure_stage,
@@ -3475,11 +3475,61 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 job_id=failed_job_id,
             )
             if extracted_runtime_network_state:
-                workflow_output = extracted_runtime_network_state
+                workflow_output = dict(extracted_runtime_network_state)
             if cloudsql_reason_code:
-                reason_code = cloudsql_reason_code
-                if cloudsql_failure_stage:
-                    failure_stage = cloudsql_failure_stage
+                fallback_reason_codes = {
+                    _DEPLOY_RUNTIME_REASON_RUNTIME_READINESS_UNKNOWN_FAILURE,
+                    _DEPLOY_RUNTIME_REASON_MANAGED_DEPLOY_WORKFLOW_TEMPLATE_STALE,
+                }
+                should_override_with_cloudsql_reason = True
+                if cloudsql_reason_code in fallback_reason_codes and reason_code not in {
+                    "workflow_run_failed",
+                    "ingress_endpoint_not_ready",
+                }:
+                    should_override_with_cloudsql_reason = False
+                if should_override_with_cloudsql_reason:
+                    reason_code = cloudsql_reason_code
+                    if cloudsql_failure_stage:
+                        failure_stage = cloudsql_failure_stage
+            reason_code_present = bool(
+                isinstance(workflow_output, dict)
+                and workflow_output.get(_DEPLOY_RUNTIME_REASON_CODE_PRESENT_OUTPUT_KEY) == "true"
+            )
+            template_marker_present = bool(
+                isinstance(workflow_output, dict)
+                and workflow_output.get(_MANAGED_DEPLOY_TEMPLATE_MARKER_PRESENT_OUTPUT_KEY) == "true"
+            )
+            runtime_step_failed = bool(
+                isinstance(failed_step_name, str)
+                and "resolve live url from ingress status" in failed_step_name.strip().lower()
+            )
+            if not reason_code_present and (
+                runtime_step_failed
+                or reason_code in {"workflow_run_failed", "ingress_endpoint_not_ready"}
+                or failure_stage == "ingress_evidence"
+            ):
+                reason_code = (
+                    _DEPLOY_RUNTIME_REASON_RUNTIME_READINESS_UNKNOWN_FAILURE
+                    if template_marker_present
+                    else _DEPLOY_RUNTIME_REASON_MANAGED_DEPLOY_WORKFLOW_TEMPLATE_STALE
+                )
+                if workflow_output is None:
+                    workflow_output = {}
+                if reason_code == _DEPLOY_RUNTIME_REASON_RUNTIME_READINESS_UNKNOWN_FAILURE:
+                    workflow_output.setdefault(
+                        "deploy_runtime_reason_message",
+                        "Managed-site runtime readiness failed before a precise reason was recorded.",
+                    )
+                else:
+                    workflow_output.setdefault(
+                        "deploy_runtime_reason_message",
+                        (
+                            "Deploy workflow logs did not include managed deploy template diagnostics. "
+                            "Reprovision target workflow template and retry deploy."
+                        ),
+                    )
+                if not failure_stage:
+                    failure_stage = "ingress_evidence"
         ingress_failure_stages = {"ingress_verify", "ingress_evidence"}
         if failure_stage in ingress_failure_stages:
             if workflow_output is None:
@@ -3525,6 +3575,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         )
         reason_code, failure_stage = _classify_cloudsql_proxy_failure_from_log_text(logs_text)
         runtime_network_state = _extract_resolve_live_url_state_from_log_text(logs_text)
+        runtime_network_state.update(_extract_runtime_failure_state_from_log_text(logs_text))
         return reason_code, failure_stage, runtime_network_state
 
     def _request_text(
@@ -8729,6 +8780,9 @@ _MBSRN_MANAGED_WORKFLOW_MARKER = f"mbsrn-managed-template:{_MBSRN_MANAGED_TEMPLA
 _MBSRN_MANAGED_WORKFLOW_SIGNATURE_MARKER = "mbsrn-workflow-signature:"
 _MBSRN_MANAGED_MANIFEST_MARKER = f"mbsrn-managed-manifest:{_MBSRN_MANAGED_TEMPLATE_VERSION}"
 _MBSRN_MANAGED_TEMPLATE_MARKER_PREFIX = "mbsrn-managed-template:"
+_MBSRN_MANAGED_DEPLOY_TEMPLATE_VERSION_OUTPUT_KEY = "mbsrn_managed_deploy_template_version"
+_DEPLOY_RUNTIME_REASON_CODE_PRESENT_OUTPUT_KEY = "deploy_runtime_reason_code_present"
+_MANAGED_DEPLOY_TEMPLATE_MARKER_PRESENT_OUTPUT_KEY = "managed_deploy_template_marker_present"
 _MBSRN_MANAGED_LABEL = "mbsrn"
 _MBSRN_MANAGED_NAMESPACE_FILE_PATH = "k8s/namespace.yaml"
 _MBSRN_MANAGED_DEPLOYMENT_FILE_PATH = "k8s/deployment.yaml"
@@ -8906,6 +8960,8 @@ _DEPLOY_RUNTIME_REASON_HTTPS_PROBE_TIMEOUT = "https_probe_timeout"
 _DEPLOY_RUNTIME_REASON_HTTPS_PROBE_EMPTY_REPLY = "https_probe_empty_reply"
 _DEPLOY_RUNTIME_REASON_HTTPS_PROBE_NOT_ATTEMPTED = "https_probe_not_attempted"
 _DEPLOY_RUNTIME_REASON_HTTPS_PROBE_FAILED_AFTER_CONTROL_PLANE_READY = "https_probe_failed_after_control_plane_ready"
+_DEPLOY_RUNTIME_REASON_RUNTIME_READINESS_UNKNOWN_FAILURE = "runtime_readiness_unknown_failure"
+_DEPLOY_RUNTIME_REASON_MANAGED_DEPLOY_WORKFLOW_TEMPLATE_STALE = "managed_deploy_workflow_template_stale"
 _DEPLOY_GKE_CONFIG_MISSING_REASON_PRIORITY: tuple[str, ...] = (
     _DEPLOY_DISPATCH_SERVICE_REASON_MISSING_CLUSTER_NAME,
     _DEPLOY_DISPATCH_SERVICE_REASON_MISSING_CLUSTER_LOCATION,
@@ -9496,6 +9552,7 @@ def _render_managed_deploy_workflow_yaml(
         "      cert_identity_valid: ${{ steps.resolve_live_url.outputs.cert_identity_valid }}\n"
         "      https_probe_error_summary: ${{ steps.resolve_live_url.outputs.https_probe_error_summary }}\n"
         "      deploy_https_ready: ${{ steps.resolve_live_url.outputs.deploy_https_ready }}\n"
+        f"      {_MBSRN_MANAGED_DEPLOY_TEMPLATE_VERSION_OUTPUT_KEY}: ${{{{ steps.resolve_live_url.outputs.{_MBSRN_MANAGED_DEPLOY_TEMPLATE_VERSION_OUTPUT_KEY} }}}}\n"
         "      site_runtime_image_reference: ${{ steps.resolve_site_runtime_image.outputs.site_runtime_image_reference }}\n"
         "      site_runtime_image_selection_mode: ${{ steps.resolve_site_runtime_image.outputs.site_runtime_image_selection_mode }}\n"
         "      site_runtime_image_repository: ${{ steps.resolve_site_runtime_image.outputs.site_runtime_image_repository }}\n"
@@ -9568,20 +9625,30 @@ def _render_managed_deploy_workflow_yaml(
         f'            echo "Missing {_MANAGED_DEPLOY_TARGET_REPO_SECRET_NAME} secret"\n'
         '            echo "deploy_runtime_reason_code=target_repo_deploy_secret_missing"\n'
         f'            echo "deploy_runtime_reason_message=Managed deploy workflow requires target repo secret {_MANAGED_DEPLOY_TARGET_REPO_SECRET_NAME}."\n'
+        '            echo "deploy_runtime_failure_stage=workflow_execution"\n'
         "            exit 1\n"
         "          fi\n"
         "      - name: Validate GKE environment config\n"
         "        run: |\n"
         '          if [ -z "$GKE_CLUSTER_NAME" ]; then\n'
         '            echo "Missing managed GKE cluster name (admin config or legacy repo fallback)."\n'
+        '            echo "deploy_runtime_reason_code=missing_cluster_name"\n'
+        '            echo "deploy_runtime_reason_message=Managed deploy workflow missing required GKE cluster name configuration."\n'
+        '            echo "deploy_runtime_failure_stage=workflow_execution"\n'
         "            exit 1\n"
         "          fi\n"
         '          if [ -z "$GKE_CLUSTER_LOCATION" ]; then\n'
         '            echo "Missing managed GKE cluster location (admin config or legacy repo fallback)."\n'
+        '            echo "deploy_runtime_reason_code=missing_cluster_location"\n'
+        '            echo "deploy_runtime_reason_message=Managed deploy workflow missing required GKE cluster location configuration."\n'
+        '            echo "deploy_runtime_failure_stage=workflow_execution"\n'
         "            exit 1\n"
         "          fi\n"
         '          if [ -z "$GKE_PROJECT_ID" ]; then\n'
         '            echo "Missing managed GKE project id (admin config or legacy repo fallback)."\n'
+        '            echo "deploy_runtime_reason_code=missing_gcp_project_id"\n'
+        '            echo "deploy_runtime_reason_message=Managed deploy workflow missing required GKE project id configuration."\n'
+        '            echo "deploy_runtime_failure_stage=workflow_execution"\n'
         "            exit 1\n"
         "          fi\n"
         "      - name: Authenticate to GCP\n"
@@ -9602,6 +9669,7 @@ def _render_managed_deploy_workflow_yaml(
         '          if ! gcloud compute addresses describe "$MBSRN_PREVIEW_STATIC_IP_NAME" --global --project "$GKE_PROJECT_ID" >/dev/null 2>&1; then\n'
         f'            echo "deploy_runtime_reason_code={preview_static_ip_missing_reason}"\n'
         f'            echo "deploy_runtime_reason_message={preview_static_ip_missing_message}"\n'
+        '            echo "deploy_runtime_failure_stage=ingress_verify"\n'
         '            echo "expected_static_ip_name=$MBSRN_PREVIEW_STATIC_IP_NAME"\n'
         '            echo "preview_endpoint_mode=$MBSRN_PREVIEW_ENDPOINT_MODE"\n'
         '            echo "gcp_project_id=$GKE_PROJECT_ID"\n'
@@ -9636,6 +9704,7 @@ def _render_managed_deploy_workflow_yaml(
         '            local failed_name="$2"\n'
         '            echo "deploy_runtime_reason_code=managed_site_runtime_replace_failed"\n'
         '            echo "deploy_runtime_reason_message=Managed-site runtime replace failed while deleting ${failed_kind}/${failed_name}."\n'
+        '            echo "deploy_runtime_failure_stage=workflow_execution"\n'
         '            echo "managed_site_runtime_replace_performed=false" >> "$GITHUB_OUTPUT"\n'
         '            echo "managed_site_runtime_replace_scope=$scope_summary" >> "$GITHUB_OUTPUT"\n'
         '            echo "managed_site_runtime_replace_deleted_kinds=$deleted_kinds" >> "$GITHUB_OUTPUT"\n'
@@ -9685,9 +9754,9 @@ def _render_managed_deploy_workflow_yaml(
         "          fail_missing_resource() {\n"
         '            local reason_code=\"$1\"\n'
         '            local reason_message=\"$2\"\n'
-        '            echo \"deploy_runtime_reason_code=managed_site_runtime_replace_failed\"\n'
         '            echo \"deploy_runtime_reason_code=${reason_code}\"\n'
         '            echo \"deploy_runtime_reason_message=${reason_message}\"\n'
+        '            echo \"deploy_runtime_failure_stage=ingress_verify\"\n'
         "            exit 1\n"
         "          }\n"
         '          if ! kubectl get deployment site-web --namespace \"$K8S_NAMESPACE\" >/dev/null 2>&1; then\n'
@@ -9941,6 +10010,9 @@ def _render_managed_deploy_workflow_yaml(
         '                kubectl logs --namespace "$K8S_NAMESPACE" "$pod" -c site-web --tail=200 || kubectl logs --namespace "$K8S_NAMESPACE" "$pod" --tail=200 || true\n'
         "              done\n"
         "            fi\n"
+        '            echo "deploy_runtime_reason_code=rollout_verification_failed"\n'
+        '            echo "deploy_runtime_failure_stage=rollout_verify"\n'
+        '            echo "deploy_runtime_reason_message=Managed deployment rollout did not converge before timeout and diagnostics were collected."\n'
         "            exit 1\n"
         "          fi\n"
         "      - name: Verify service and ingress\n"
@@ -9961,6 +10033,7 @@ def _render_managed_deploy_workflow_yaml(
         '            echo "deploy_runtime_reason_code=service_endpoint_missing"\n'
         '            echo "deploy_runtime_reason_code=service_has_no_ready_endpoints"\n'
         '            echo "deploy_runtime_reason_message=Service has no ready endpoints after rollout."\n'
+        '            echo "deploy_runtime_failure_stage=rollout_verify"\n'
         "            exit 1\n"
         "          fi\n"
         "          probe_max_attempts=20\n"
@@ -10016,6 +10089,7 @@ def _render_managed_deploy_workflow_yaml(
         '            echo "deploy_runtime_reason_code=service_endpoint_unhealthy"\n'
         '            echo "deploy_runtime_reason_code=ingress_backend_unhealthy_after_rollout"\n'
         '            echo "deploy_runtime_reason_message=In-cluster service endpoint check failed after bounded retries."\n'
+        '            echo "deploy_runtime_failure_stage=rollout_verify"\n'
         '            kubectl get networkpolicy --namespace "$K8S_NAMESPACE" -o yaml || true\n'
         '            kubectl describe networkpolicy --namespace "$K8S_NAMESPACE" || true\n'
         '            latest_site_web_pod="$(kubectl get pods --namespace "$K8S_NAMESPACE" -l app.kubernetes.io/name=site-web --sort-by=.metadata.creationTimestamp -o name 2>/dev/null | tail -n 1 | sed \'s#^pod/##\')"\n'
@@ -10036,6 +10110,8 @@ def _render_managed_deploy_workflow_yaml(
         "          fi\n"
         "      - name: Resolve live URL from ingress status\n"
         "        id: resolve_live_url\n"
+        "        env:\n"
+        "          MBSRN_REPLACE_RUNTIME_PERFORMED: ${{ steps.replace_managed_runtime.outputs.managed_site_runtime_replace_performed || 'false' }}\n"
         "        run: |\n"
         "          set -euo pipefail\n"
         "          max_attempts=40\n"
@@ -10085,6 +10161,17 @@ def _render_managed_deploy_workflow_yaml(
         '          endpoint_probe_status_code=""\n'
         '          runtime_probe_status=""\n'
         "          pod_restart_detected=false\n"
+        '          replace_existing_runtime_requested="$(echo "${MBSRN_REPLACE_EXISTING_RUNTIME:-false}" | tr \'[:upper:]\' \'[:lower:]\' | tr -d \'[:space:]\')"\n'
+        '          replace_existing_runtime_performed="$(echo "${MBSRN_REPLACE_RUNTIME_PERFORMED:-false}" | tr \'[:upper:]\' \'[:lower:]\' | tr -d \'[:space:]\')"\n'
+        '          deploy_runtime_reason_message=""\n'
+        '          service_exists="unknown"\n'
+        '          endpoints_ready="unknown"\n'
+        '          managed_certificate_exists="unknown"\n'
+        '          resolve_live_url_log_path="$(mktemp)"\n'
+        '          exec > >(tee -a "$resolve_live_url_log_path") 2>&1\n'
+        "          deploy_runtime_failure_stage=ingress_evidence\n"
+        f'          echo "{_MBSRN_MANAGED_DEPLOY_TEMPLATE_VERSION_OUTPUT_KEY}={_MBSRN_MANAGED_TEMPLATE_VERSION}"\n'
+        f'          echo "{_MBSRN_MANAGED_DEPLOY_TEMPLATE_VERSION_OUTPUT_KEY}={_MBSRN_MANAGED_TEMPLATE_VERSION}" >> "$GITHUB_OUTPUT"\n'
         "          redact_sensitive_stream() {\n"
         "            sed -E \\\n"
         "              -e 's/(Authorization:).*/\\1 [REDACTED]/Ig' \\\n"
@@ -10171,23 +10258,47 @@ def _render_managed_deploy_workflow_yaml(
         "          }\n"
         "          emit_resolve_live_url_state() {\n"
             "            ensure_https_probe_error_summary\n"
+            '            runtime_ready_state="false"\n'
+            '            if [ "$deploy_https_ready" = "true" ]; then\n'
+            '              runtime_ready_state="true"\n'
+            "            fi\n"
+            '            ingress_address_resolved_state="false"\n'
+            '            if [ -n "${ingress_ip:-}" ] || [ -n "${ingress_host:-}" ] || [ -n "${ingress_status_ip:-}" ]; then\n'
+            '              ingress_address_resolved_state="true"\n'
+            "            fi\n"
+            '            endpoints_ready_state="${endpoints_ready:-unknown}"\n'
+            '            if [ "$endpoints_ready_state" = "unknown" ] && [ -n "${k8s_endpoint_ready:-}" ]; then\n'
+            '              endpoints_ready_state="$k8s_endpoint_ready"\n'
+            "            fi\n"
+            '            managed_certificate_status_state="$tls_certificate_status"\n'
+            '            if [ -z "$managed_certificate_status_state" ] && [ -n "$observed_managed_certificate_status" ]; then\n'
+            '              managed_certificate_status_state="$observed_managed_certificate_status"\n'
+            "            fi\n"
+            '            runtime_ready_tls_pending_state="false"\n'
+            "            normalized_cert_status_state=\"$(echo \"${tls_certificate_status:-}\" | tr '[:lower:]' '[:upper:]' | tr -d '[:space:]')\"\n"
+            "            normalized_domain_status_state=\"$(echo \"${tls_domain_status:-}\" | tr '[:lower:]' '[:upper:]' | tr -d '[:space:]')\"\n"
+            '            if [ "$runtime_ready_state" != "true" ] \\\n'
+            '              && [ "$ingress_address_resolved_state" = "true" ] \\\n'
+            '              && { [ "$normalized_cert_status_state" = "PROVISIONING" ] || [ "$normalized_domain_status_state" = "PROVISIONING" ]; }; then\n'
+            '              runtime_ready_tls_pending_state="true"\n'
+            "            fi\n"
             '            echo "resolve_live_url_state_host_reachable=$host_reachable"\n'
             '            echo "resolve_live_url_state_host_reachability_scheme=$host_reachability_scheme"\n'
             '            echo "resolve_live_url_state_live_url=$live_url"\n'
-        '            echo "resolve_live_url_state_dns_record_matches_ingress=$dns_record_matches_ingress"\n'
-        '            echo "resolve_live_url_state_dns_expected_ip=$dns_expected_ip"\n'
-        '            echo "resolve_live_url_state_dns_observed_ip=$dns_observed_ip"\n'
-        '            echo "resolve_live_url_state_expected_static_ip_address=$expected_static_ip_address"\n'
-        '            echo "resolve_live_url_state_static_ip_status=$static_ip_status"\n'
-        '            echo "resolve_live_url_state_static_ip_users=$static_ip_users"\n'
-        '            echo "resolve_live_url_state_ingress_status_ip=$ingress_status_ip"\n'
-        '            echo "resolve_live_url_state_ingress_status_ip_matches_static_ip=$ingress_status_ip_matches_static_ip"\n'
-        '            echo "resolve_live_url_state_static_ip_bound_to_expected_forwarding_rule=$static_ip_bound_to_expected_forwarding_rule"\n'
-        '            echo "resolve_live_url_state_tls_certificate_status=$tls_certificate_status"\n'
-        '            echo "resolve_live_url_state_tls_domain_status=$tls_domain_status"\n'
-        '            echo "resolve_live_url_state_observed_managed_certificate_domains=$observed_managed_certificate_domains"\n'
-        '            echo "resolve_live_url_state_observed_managed_certificate_status=$observed_managed_certificate_status"\n'
-        '            echo "resolve_live_url_state_observed_managed_certificate_domain_status=$observed_managed_certificate_domain_status"\n'
+            '            echo "resolve_live_url_state_dns_record_matches_ingress=$dns_record_matches_ingress"\n'
+            '            echo "resolve_live_url_state_dns_expected_ip=$dns_expected_ip"\n'
+            '            echo "resolve_live_url_state_dns_observed_ip=$dns_observed_ip"\n'
+            '            echo "resolve_live_url_state_expected_static_ip_address=$expected_static_ip_address"\n'
+            '            echo "resolve_live_url_state_static_ip_status=$static_ip_status"\n'
+            '            echo "resolve_live_url_state_static_ip_users=$static_ip_users"\n'
+            '            echo "resolve_live_url_state_ingress_status_ip=$ingress_status_ip"\n'
+            '            echo "resolve_live_url_state_ingress_status_ip_matches_static_ip=$ingress_status_ip_matches_static_ip"\n'
+            '            echo "resolve_live_url_state_static_ip_bound_to_expected_forwarding_rule=$static_ip_bound_to_expected_forwarding_rule"\n'
+            '            echo "resolve_live_url_state_tls_certificate_status=$tls_certificate_status"\n'
+            '            echo "resolve_live_url_state_tls_domain_status=$tls_domain_status"\n'
+            '            echo "resolve_live_url_state_observed_managed_certificate_domains=$observed_managed_certificate_domains"\n'
+            '            echo "resolve_live_url_state_observed_managed_certificate_status=$observed_managed_certificate_status"\n'
+            '            echo "resolve_live_url_state_observed_managed_certificate_domain_status=$observed_managed_certificate_domain_status"\n'
             '            echo "resolve_live_url_state_https_probe_error_summary=$https_probe_error_summary"\n'
             '            echo "resolve_live_url_state_cert_identity_valid=$cert_identity_valid"\n'
             '            echo "resolve_live_url_state_deploy_https_ready=$deploy_https_ready"\n'
@@ -10203,6 +10314,19 @@ def _render_managed_deploy_workflow_yaml(
             '            echo "resolve_live_url_state_endpoint_probe_status_code=$endpoint_probe_status_code"\n'
             '            echo "resolve_live_url_state_runtime_probe_status=$runtime_probe_status"\n'
             '            echo "resolve_live_url_state_pod_restart_detected=$pod_restart_detected"\n'
+            '            echo "resolve_live_url_state_runtime_ready=$runtime_ready_state"\n'
+            '            echo "resolve_live_url_state_ingress_address_resolved=$ingress_address_resolved_state"\n'
+            '            echo "resolve_live_url_state_service_exists=$service_exists"\n'
+            '            echo "resolve_live_url_state_endpoints_ready=$endpoints_ready_state"\n'
+            '            echo "resolve_live_url_state_managed_certificate_exists=$managed_certificate_exists"\n'
+            '            echo "resolve_live_url_state_managed_certificate_status=$managed_certificate_status_state"\n'
+            '            echo "resolve_live_url_state_https_ready=$deploy_https_ready"\n'
+            '            echo "resolve_live_url_state_runtime_ready_tls_pending=$runtime_ready_tls_pending_state"\n'
+            '            echo "resolve_live_url_state_replace_existing_runtime_requested=$replace_existing_runtime_requested"\n'
+            '            echo "resolve_live_url_state_replace_existing_runtime_performed=$replace_existing_runtime_performed"\n'
+            '            echo "resolve_live_url_state_deploy_runtime_failure_stage=$deploy_runtime_failure_stage"\n'
+            '            echo "resolve_live_url_state_deploy_runtime_reason_message=$deploy_runtime_reason_message"\n'
+            f'            echo "resolve_live_url_state_{_MBSRN_MANAGED_DEPLOY_TEMPLATE_VERSION_OUTPUT_KEY}={_MBSRN_MANAGED_TEMPLATE_VERSION}"\n'
         "          }\n"
         "          collect_ingress_502_runtime_diagnostics() {\n"
         "            preview_probe_elapsed_seconds=$(( $(date +%s) - resolve_started_at ))\n"
@@ -10246,8 +10370,10 @@ def _render_managed_deploy_workflow_yaml(
         '            endpoint_ip="$(kubectl -n "$K8S_NAMESPACE" get endpoints site-web -o jsonpath=\'{.subsets[0].addresses[0].ip}\' 2>/dev/null || true)"\n'
         '            if [ -n "$endpoint_ip" ]; then\n'
         '              k8s_endpoint_ready="true"\n'
+        '              endpoints_ready="true"\n'
         "            else\n"
         '              k8s_endpoint_ready="false"\n'
+        '              endpoints_ready="false"\n'
         "            fi\n"
         '            if [ -n "$preview_host" ]; then\n'
         '              preview_headers_output="$(mktemp)"\n'
@@ -10313,11 +10439,92 @@ def _render_managed_deploy_workflow_yaml(
         "            fi\n"
         '            echo "deploy_runtime_reason_context=gce_backend_health=${gce_backend_health_status:-UNKNOWN};k8s_endpoint_ready=${k8s_endpoint_ready:-unknown};preview_https_status=${preview_https_status:-unknown};service_probe_status=${service_probe_status:-unknown};endpoint_probe_status=${endpoint_probe_status:-unknown};runtime_probe_status=${runtime_probe_status:-unknown}"\n'
         "          }\n"
-        "          trap 'resolve_live_url_exit_code=$?; if [ \"$resolve_live_url_exit_code\" -ne 0 ]; then emit_resolve_live_url_state; fi' EXIT\n"
+        "          emit_final_deploy_runtime_summary() {\n"
+        '            runtime_ready_state="false"\n'
+        '            if [ "$deploy_https_ready" = "true" ]; then\n'
+        '              runtime_ready_state="true"\n'
+        "            fi\n"
+        '            ingress_address_resolved_state="false"\n'
+        '            if [ -n "${ingress_ip:-}" ] || [ -n "${ingress_host:-}" ] || [ -n "${ingress_status_ip:-}" ]; then\n'
+        '              ingress_address_resolved_state="true"\n'
+        "            fi\n"
+        '            endpoints_ready_state="${endpoints_ready:-unknown}"\n'
+        '            if [ "$endpoints_ready_state" = "unknown" ] && [ -n "${k8s_endpoint_ready:-}" ]; then\n'
+        '              endpoints_ready_state="$k8s_endpoint_ready"\n'
+        "            fi\n"
+        '            managed_certificate_status_state="$tls_certificate_status"\n'
+        '            if [ -z "$managed_certificate_status_state" ] && [ -n "$observed_managed_certificate_status" ]; then\n'
+        '              managed_certificate_status_state="$observed_managed_certificate_status"\n'
+        "            fi\n"
+        '            runtime_ready_tls_pending_state="false"\n'
+        "            normalized_cert_status_state=\"$(echo \"${tls_certificate_status:-}\" | tr '[:lower:]' '[:upper:]' | tr -d '[:space:]')\"\n"
+        "            normalized_domain_status_state=\"$(echo \"${tls_domain_status:-}\" | tr '[:lower:]' '[:upper:]' | tr -d '[:space:]')\"\n"
+        '            if [ "$runtime_ready_state" != "true" ] \\\n'
+        '              && [ "$ingress_address_resolved_state" = "true" ] \\\n'
+        '              && { [ "$normalized_cert_status_state" = "PROVISIONING" ] || [ "$normalized_domain_status_state" = "PROVISIONING" ]; }; then\n'
+        '              runtime_ready_tls_pending_state="true"\n'
+        "            fi\n"
+        '            echo "runtime_ready=$runtime_ready_state"\n'
+        '            echo "ingress_address_resolved=$ingress_address_resolved_state"\n'
+        '            echo "service_exists=$service_exists"\n'
+        '            echo "endpoints_ready=$endpoints_ready_state"\n'
+        '            echo "managed_certificate_exists=$managed_certificate_exists"\n'
+        '            echo "managed_certificate_status=$managed_certificate_status_state"\n'
+        '            echo "https_ready=$deploy_https_ready"\n'
+        '            echo "runtime_ready_tls_pending=$runtime_ready_tls_pending_state"\n'
+        '            echo "replace_existing_runtime_requested=$replace_existing_runtime_requested"\n'
+        '            echo "replace_existing_runtime_performed=$replace_existing_runtime_performed"\n'
+        "          }\n"
+        "          finalize_resolve_live_url() {\n"
+        '            resolve_live_url_exit_code="$?"\n'
+        "            trap - EXIT\n"
+        '            if [ "$resolve_live_url_exit_code" -ne 0 ]; then\n'
+        "              emit_resolve_live_url_state\n"
+        '              observed_reason_code="$(grep -E \'^[[:space:]]*deploy_runtime_reason_code=\' "$resolve_live_url_log_path" | tail -n1 | cut -d\'=\' -f2- | tr -d \'\\r\' || true)"\n'
+        '              if [ -z "$observed_reason_code" ]; then\n'
+        f'                observed_reason_code="{_DEPLOY_RUNTIME_REASON_RUNTIME_READINESS_UNKNOWN_FAILURE}"\n'
+        '                echo "deploy_runtime_reason_code=$observed_reason_code"\n'
+        '                deploy_runtime_reason_message="Managed-site runtime readiness failed before a precise reason was recorded."\n'
+        "              fi\n"
+        '              observed_reason_message="$(grep -E \'^[[:space:]]*deploy_runtime_reason_message=\' "$resolve_live_url_log_path" | tail -n1 | cut -d\'=\' -f2- | tr -d \'\\r\' || true)"\n'
+        '              if [ -n "$observed_reason_message" ]; then\n'
+        '                deploy_runtime_reason_message="$observed_reason_message"\n'
+        '              elif [ -z "$deploy_runtime_reason_message" ]; then\n'
+        '                deploy_runtime_reason_message="Managed-site runtime readiness failed. Review workflow diagnostics for bounded evidence."\n'
+        "              fi\n"
+        '              observed_failure_stage="$(grep -E \'^[[:space:]]*deploy_runtime_failure_stage=\' "$resolve_live_url_log_path" | tail -n1 | cut -d\'=\' -f2- | tr -d \'\\r\' || true)"\n'
+        '              if [ -n "$observed_failure_stage" ]; then\n'
+        '                deploy_runtime_failure_stage="$observed_failure_stage"\n'
+        "              fi\n"
+        '              if [ -z "${deploy_runtime_failure_stage:-}" ]; then\n'
+        '                deploy_runtime_failure_stage="ingress_evidence"\n'
+        "              fi\n"
+        '              echo "deploy_runtime_reason_code=$observed_reason_code"\n'
+        '              echo "deploy_runtime_reason_message=$deploy_runtime_reason_message"\n'
+        '              echo "deploy_runtime_failure_stage=$deploy_runtime_failure_stage"\n'
+        "              emit_final_deploy_runtime_summary\n"
+        "            fi\n"
+        '            if [ -n "${resolve_live_url_log_path:-}" ] && [ -f "$resolve_live_url_log_path" ]; then\n'
+        '              rm -f "$resolve_live_url_log_path"\n'
+        "            fi\n"
+        '            exit "$resolve_live_url_exit_code"\n'
+        "          }\n"
+        "          trap finalize_resolve_live_url EXIT\n"
         "          collect_resolve_live_url_evidence() {\n"
         '            ingress_host="$(kubectl get ingress site-web --namespace "$K8S_NAMESPACE" -o jsonpath=\'{.status.loadBalancer.ingress[0].hostname}\' 2>/dev/null || true)"\n'
         '            ingress_ip="$(kubectl get ingress site-web --namespace "$K8S_NAMESPACE" -o jsonpath=\'{.status.loadBalancer.ingress[0].ip}\' 2>/dev/null || true)"\n'
         '            ingress_spec_host="$(kubectl get ingress site-web --namespace "$K8S_NAMESPACE" -o jsonpath=\'{.spec.rules[0].host}\' 2>/dev/null || true)"\n'
+        '            if kubectl get service site-web --namespace "$K8S_NAMESPACE" >/dev/null 2>&1; then\n'
+        '              service_exists="true"\n'
+        "            else\n"
+        '              service_exists="false"\n'
+        "            fi\n"
+        '            endpoints_address_probe="$(kubectl get endpoints site-web --namespace "$K8S_NAMESPACE" -o jsonpath=\'{.subsets[0].addresses[0].ip}\' 2>/dev/null || true)"\n'
+        '            if [ -n "$endpoints_address_probe" ]; then\n'
+        '              endpoints_ready="true"\n'
+        "            else\n"
+        '              endpoints_ready="false"\n'
+        "            fi\n"
         '            if [ -z "$preview_host" ] && [ -n "$ingress_spec_host" ]; then\n'
         '              preview_host="$ingress_spec_host"\n'
         "            fi\n"
@@ -10404,6 +10611,7 @@ def _render_managed_deploy_workflow_yaml(
         '            observed_managed_certificate_status=""\n'
         '            observed_managed_certificate_domain_status=""\n'
         '            if [ -n "$managed_certificate_json" ]; then\n'
+        '              managed_certificate_exists="true"\n'
         "              expected_cert_name_collect=\"$(echo \"$MBSRN_PREVIEW_CERTIFICATE_NAME\" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')\"\n"
         '              cert_collect_output="$(MANAGED_CERTIFICATE_JSON="$managed_certificate_json" EXPECTED_PREVIEW_HOST="$preview_host" EXPECTED_CERT_NAME="$expected_cert_name_collect" python - <<\'PY\'\n'
         "          import json\n"
@@ -10476,6 +10684,8 @@ def _render_managed_deploy_workflow_yaml(
         "              else\n"
         "                cert_identity_valid=false\n"
         "              fi\n"
+        "            else\n"
+        '              managed_certificate_exists="false"\n'
         "            fi\n"
         "          }\n"
         '          for attempt in $(seq 1 "$max_attempts"); do\n'
@@ -10556,6 +10766,8 @@ def _render_managed_deploy_workflow_yaml(
         '            elif [ "$normalized_domain_status_early" = "PROVISIONING" ] || [ "$normalized_cert_status_early" = "PROVISIONING" ] || [ "$normalized_domain_status_early" = "" ] || [ "$normalized_domain_status_early" = "UNKNOWN" ] || [ "$normalized_cert_status_early" = "UNKNOWN" ]; then\n'
         '              echo "deploy_runtime_reason_code=managed_certificate_pending"\n'
         '              echo "deploy_runtime_reason_code=tls_certificate_provisioning"\n'
+        '              echo "deploy_runtime_reason_code=certificate_provisioning_pending"\n'
+        '              echo "deploy_runtime_reason_code=runtime_ready_tls_pending"\n'
         '              echo "deploy_runtime_reason_message=ManagedCertificate provisioning/status is still pending for expected hostname."\n'
         "            else\n"
         '              echo "deploy_runtime_reason_code=tls_certificate_bound_to_wrong_site"\n'
@@ -11062,6 +11274,8 @@ def _render_managed_deploy_workflow_yaml(
         '            echo "deploy_runtime_reason_code=managed_certificate_provisioning"\n'
         '            echo "deploy_runtime_reason_code=managed_certificate_pending"\n'
         '            echo "deploy_runtime_reason_code=tls_certificate_provisioning"\n'
+        '            echo "deploy_runtime_reason_code=certificate_provisioning_pending"\n'
+        '            echo "deploy_runtime_reason_code=runtime_ready_tls_pending"\n'
         '            echo "deploy_runtime_reason_message=Deploy reached the load balancer, but ManagedCertificate/TLS is still provisioning for expected hostname. Wait for ACTIVE status, then refresh or rerun deploy."\n'
         "            exit 1\n"
         "          fi\n"
@@ -11070,6 +11284,8 @@ def _render_managed_deploy_workflow_yaml(
         '            echo "deploy_runtime_reason_code=managed_certificate_provisioning"\n'
         '            echo "deploy_runtime_reason_code=managed_certificate_pending"\n'
         '            echo "deploy_runtime_reason_code=tls_certificate_provisioning"\n'
+        '            echo "deploy_runtime_reason_code=certificate_provisioning_pending"\n'
+        '            echo "deploy_runtime_reason_code=runtime_ready_tls_pending"\n'
         '            echo "deploy_runtime_reason_message=ManagedCertificate domain status is not ACTIVE for expected hostname."\n'
         "            exit 1\n"
         "          fi\n"
@@ -11078,6 +11294,8 @@ def _render_managed_deploy_workflow_yaml(
         '            echo "deploy_runtime_reason_code=managed_certificate_provisioning"\n'
         '            echo "deploy_runtime_reason_code=managed_certificate_pending"\n'
         '            echo "deploy_runtime_reason_code=tls_certificate_provisioning"\n'
+        '            echo "deploy_runtime_reason_code=certificate_provisioning_pending"\n'
+        '            echo "deploy_runtime_reason_code=runtime_ready_tls_pending"\n'
         '            echo "deploy_runtime_reason_message=ManagedCertificate status is not ACTIVE yet."\n'
         "            exit 1\n"
         "          fi\n"
@@ -11130,6 +11348,8 @@ def _render_managed_deploy_workflow_yaml(
         '                set_https_probe_error_summary "managed_certificate_provisioning" "$https_verify_exit" "" "$https_verify_output"\n'
         '                echo "deploy_runtime_reason_code=managed_certificate_provisioning"\n'
         '                echo "deploy_runtime_reason_code=tls_certificate_provisioning"\n'
+        '                echo "deploy_runtime_reason_code=certificate_provisioning_pending"\n'
+        '                echo "deploy_runtime_reason_code=runtime_ready_tls_pending"\n'
         '                echo "deploy_runtime_reason_message=Deploy reached the load balancer, but ManagedCertificate/TLS is still provisioning for expected hostname. Wait for ACTIVE status, then refresh or rerun deploy."\n'
         '              elif [ "$control_plane_ready" = "true" ]; then\n'
         '                set_https_probe_error_summary "https_probe_failed_after_control_plane_ready" "$https_verify_exit" "" "$https_verify_output"\n'
@@ -11237,6 +11457,17 @@ def _render_managed_deploy_workflow_yaml(
             '            echo "endpoint_probe_status_code=$endpoint_probe_status_code"\n'
             '            echo "runtime_probe_status=$runtime_probe_status"\n'
             '            echo "pod_restart_detected=$pod_restart_detected"\n'
+            '            echo "runtime_ready=true"\n'
+            '            echo "ingress_address_resolved=true"\n'
+            '            echo "service_exists=$service_exists"\n'
+            '            echo "endpoints_ready=true"\n'
+            '            echo "managed_certificate_exists=$managed_certificate_exists"\n'
+            '            echo "managed_certificate_status=$tls_certificate_status"\n'
+            '            echo "https_ready=true"\n'
+            '            echo "runtime_ready_tls_pending=false"\n'
+            '            echo "replace_existing_runtime_requested=$replace_existing_runtime_requested"\n'
+            '            echo "replace_existing_runtime_performed=$replace_existing_runtime_performed"\n'
+            f'            echo "{_MBSRN_MANAGED_DEPLOY_TEMPLATE_VERSION_OUTPUT_KEY}={_MBSRN_MANAGED_TEMPLATE_VERSION}"\n'
         '          } >> "$GITHUB_OUTPUT"\n'
         "      - name: Emit managed deployment metadata\n"
         "        run: |\n"
@@ -12029,10 +12260,22 @@ def _classify_cloudsql_proxy_failure_from_log_text(
     normalized = (str(log_text or "")).strip().lower()
     if not normalized:
         return None, None
+    if "deploy_runtime_reason_code=runtime_readiness_unknown_failure" in normalized:
+        return _DEPLOY_RUNTIME_REASON_RUNTIME_READINESS_UNKNOWN_FAILURE, "ingress_evidence"
+    if "deploy_runtime_reason_code=managed_deploy_workflow_template_stale" in normalized:
+        return _DEPLOY_RUNTIME_REASON_MANAGED_DEPLOY_WORKFLOW_TEMPLATE_STALE, "workflow_execution"
+    if "deploy_runtime_reason_code=missing_cluster_name" in normalized:
+        return _DEPLOY_DISPATCH_SERVICE_REASON_MISSING_CLUSTER_NAME, "workflow_execution"
+    if "deploy_runtime_reason_code=missing_cluster_location" in normalized:
+        return _DEPLOY_DISPATCH_SERVICE_REASON_MISSING_CLUSTER_LOCATION, "workflow_execution"
+    if "deploy_runtime_reason_code=missing_gcp_project_id" in normalized:
+        return _DEPLOY_DISPATCH_SERVICE_REASON_MISSING_GCP_PROJECT_ID, "workflow_execution"
     if "deploy_runtime_reason_code=backendconfig_health_check_mismatch" in normalized:
         return _DEPLOY_RUNTIME_REASON_BACKENDCONFIG_HEALTH_CHECK_MISMATCH, "rollout_verify"
     if "deploy_runtime_reason_code=ingress_backend_unhealthy" in normalized:
         return _DEPLOY_RUNTIME_REASON_INGRESS_BACKEND_UNHEALTHY, "rollout_verify"
+    if "deploy_runtime_reason_code=rollout_verification_failed" in normalized:
+        return "rollout_verification_failed", "rollout_verify"
     if "deploy_runtime_reason_code=managed_certificate_provisioning" in normalized:
         return _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_PROVISIONING, "ingress_evidence"
     if "deploy_runtime_reason_code=target_repo_deploy_secret_missing" in normalized:
@@ -12103,6 +12346,10 @@ def _classify_cloudsql_proxy_failure_from_log_text(
         return _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_PROVISIONING, "ingress_evidence"
     if "deploy_runtime_reason_code=tls_certificate_provisioning" in normalized:
         return _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_PROVISIONING, "ingress_evidence"
+    if "deploy_runtime_reason_code=certificate_provisioning_pending" in normalized:
+        return _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_PROVISIONING, "ingress_evidence"
+    if "deploy_runtime_reason_code=runtime_ready_tls_pending" in normalized:
+        return _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_PROVISIONING, "ingress_evidence"
     if "deploy_runtime_reason_code=managed_certificate_domain_drift_repair_failed" in normalized:
         return _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_DOMAIN_DRIFT_REPAIR_FAILED, "ingress_evidence"
     if "deploy_runtime_reason_code=tls_certificate_bound_to_wrong_site" in normalized:
@@ -12169,6 +12416,58 @@ def _classify_cloudsql_proxy_failure_from_log_text(
     return None, None
 
 
+def _extract_runtime_failure_state_from_log_text(log_text: str | None) -> dict[str, str]:
+    normalized = str(log_text or "")
+    if not normalized:
+        return {}
+    ansi_escape = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+    reason_code_present = False
+    template_marker_present = False
+    template_version: str | None = None
+    template_version_prefix = f"{_MBSRN_MANAGED_DEPLOY_TEMPLATE_VERSION_OUTPUT_KEY}="
+    resolve_template_version_prefix = f"resolve_live_url_state_{template_version_prefix}"
+
+    for raw_line in normalized.splitlines():
+        cleaned_line = ansi_escape.sub("", raw_line).strip()
+        if not cleaned_line:
+            continue
+        lowered = cleaned_line.lower()
+        if lowered.startswith("deploy_runtime_reason_code="):
+            reason_code_value = cleaned_line.split("=", 1)[1].strip()
+            sanitized_reason_code = _sanitize_github_error_message(
+                reason_code_value,
+                max_length=80,
+            )
+            if sanitized_reason_code:
+                reason_code_present = True
+        if lowered.startswith(resolve_template_version_prefix):
+            template_version_value = cleaned_line.split("=", 1)[1].strip()
+            sanitized_template_version = _sanitize_github_error_message(
+                template_version_value,
+                max_length=80,
+            )
+            if sanitized_template_version:
+                template_version = sanitized_template_version
+                template_marker_present = True
+        elif lowered.startswith(template_version_prefix):
+            template_version_value = cleaned_line.split("=", 1)[1].strip()
+            sanitized_template_version = _sanitize_github_error_message(
+                template_version_value,
+                max_length=80,
+            )
+            if sanitized_template_version:
+                template_version = sanitized_template_version
+                template_marker_present = True
+
+    output: dict[str, str] = {
+        _DEPLOY_RUNTIME_REASON_CODE_PRESENT_OUTPUT_KEY: "true" if reason_code_present else "false",
+        _MANAGED_DEPLOY_TEMPLATE_MARKER_PRESENT_OUTPUT_KEY: "true" if template_marker_present else "false",
+    }
+    if template_version:
+        output[_MBSRN_MANAGED_DEPLOY_TEMPLATE_VERSION_OUTPUT_KEY] = template_version
+    return output
+
+
 def _extract_resolve_live_url_state_from_log_text(log_text: str | None) -> dict[str, str]:
     normalized = str(log_text or "")
     if not normalized:
@@ -12207,6 +12506,19 @@ def _extract_resolve_live_url_state_from_log_text(log_text: str | None) -> dict[
         "endpoint_probe_status_code": 16,
         "runtime_probe_status": 48,
         "pod_restart_detected": 8,
+        "runtime_ready": 8,
+        "ingress_address_resolved": 8,
+        "service_exists": 12,
+        "endpoints_ready": 12,
+        "managed_certificate_exists": 12,
+        "managed_certificate_status": 64,
+        "https_ready": 8,
+        "runtime_ready_tls_pending": 8,
+        "replace_existing_runtime_requested": 8,
+        "replace_existing_runtime_performed": 8,
+        "deploy_runtime_failure_stage": 40,
+        "deploy_runtime_reason_message": 240,
+        _MBSRN_MANAGED_DEPLOY_TEMPLATE_VERSION_OUTPUT_KEY: 80,
     }
     output: dict[str, str] = {}
     ansi_escape = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
@@ -12441,6 +12753,7 @@ _MANAGED_WORKFLOW_REQUIRED_DEPLOY_OUTPUTS: tuple[str, ...] = (
     "ingress_conflict_detected",
     "cert_identity_valid",
     "deploy_https_ready",
+    _MBSRN_MANAGED_DEPLOY_TEMPLATE_VERSION_OUTPUT_KEY,
 )
 
 _WORKFLOW_CONFORMANCE_REQUIRED_DEPLOY_MARKERS: tuple[str, ...] = (

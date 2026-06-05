@@ -2162,6 +2162,34 @@ def test_migration_summary_contract_includes_readiness_and_history_shapes(db_ses
     assert isinstance(payload["deploy_readiness"].get("blocker_codes"), list)
     assert isinstance(payload["deploy_readiness"].get("target"), dict)
     assert isinstance(payload["deploy_readiness"].get("config_prerequisites"), dict)
+    deploy_prereqs = payload["deploy_readiness"].get("config_prerequisites") or {}
+    for key in (
+        "runtime_ready",
+        "ingress_address_resolved",
+        "service_exists",
+        "endpoints_ready",
+        "managed_certificate_exists",
+        "https_ready",
+        "runtime_ready_tls_pending",
+        "replace_existing_runtime_requested",
+        "replace_existing_runtime_performed",
+        "deploy_runtime_reason_code_present",
+        "managed_deploy_template_marker_present",
+    ):
+        value = payload["deploy_readiness"].get(key)
+        assert value is None or isinstance(value, bool)
+        prereq_value = deploy_prereqs.get(key)
+        assert prereq_value is None or isinstance(prereq_value, bool)
+    for key in (
+        "managed_certificate_status",
+        "deploy_runtime_failure_stage",
+        "deploy_runtime_reason_message",
+        "mbsrn_managed_deploy_template_version",
+    ):
+        value = payload["deploy_readiness"].get(key)
+        assert value is None or isinstance(value, str)
+        prereq_value = deploy_prereqs.get(key)
+        assert prereq_value is None or isinstance(prereq_value, str)
     assert "last_status" in payload["deploy_readiness"]
     assert "last_failure_category" in payload["deploy_readiness"]
     assert "last_failure_reason" in payload["deploy_readiness"]

@@ -8513,6 +8513,100 @@ def test_refresh_deploy_status_runtime_managed_certificate_missing_after_apply_s
     )
 
 
+def test_refresh_deploy_status_generic_failure_with_template_marker_maps_to_runtime_unknown_failure(db_session) -> None:
+    publisher = _RecordingGitHubPublisher(
+        deploy_workflow_run_id=910145,
+        deploy_workflow_run_status="in_progress",
+        refresh_workflow_run_id=910145,
+        refresh_workflow_run_status="completed",
+        refresh_workflow_run_conclusion="failure",
+        refresh_workflow_run_failure_reason_code="workflow_run_failed",
+        refresh_workflow_run_failure_stage="workflow_execution",
+        refresh_workflow_run_failure_step="Resolve live URL from ingress status",
+        refresh_workflow_output={
+            "deploy_runtime_reason_code_present": "false",
+            "managed_deploy_template_marker_present": "true",
+            "mbsrn_managed_deploy_template_version": "site_repo_template_v1",
+        },
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    artifact = _prepare_and_request_deploy(service, business_id=business_id, site_id=site_id)
+
+    refresh_result = service.refresh_deploy_run_status(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        principal_id="principal-1",
+    )
+
+    assert refresh_result.result.get("workflow_run_failure_reason_code") == "runtime_readiness_unknown_failure"
+    assert refresh_result.result.get("workflow_run_failure_stage") == "ingress_evidence"
+    assert refresh_result.result.get("selected_workflow_failure_reason") == "runtime_readiness_unknown_failure"
+    assert refresh_result.result.get("deploy_runtime_reason_code_present") is False
+    assert refresh_result.result.get("managed_deploy_template_marker_present") is True
+    assert refresh_result.result.get("mbsrn_managed_deploy_template_version") == "site_repo_template_v1"
+    assert "exited before reporting a precise readiness reason" in str(
+        refresh_result.result.get("workflow_run_failure_hint") or ""
+    ).lower()
+
+    summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
+    deploy_readiness = summary.deploy_readiness or {}
+    assert deploy_readiness.get("selected_workflow_failure_reason") == "runtime_readiness_unknown_failure"
+    assert deploy_readiness.get("deploy_runtime_reason_code_present") is False
+    assert deploy_readiness.get("managed_deploy_template_marker_present") is True
+
+
+def test_refresh_deploy_status_generic_failure_without_template_marker_maps_to_template_stale(db_session) -> None:
+    publisher = _RecordingGitHubPublisher(
+        deploy_workflow_run_id=910146,
+        deploy_workflow_run_status="in_progress",
+        refresh_workflow_run_id=910146,
+        refresh_workflow_run_status="completed",
+        refresh_workflow_run_conclusion="failure",
+        refresh_workflow_run_failure_reason_code="workflow_run_failed",
+        refresh_workflow_run_failure_stage="workflow_execution",
+        refresh_workflow_run_failure_step="Resolve live URL from ingress status",
+        refresh_workflow_output={
+            "deploy_runtime_reason_code_present": "false",
+            "managed_deploy_template_marker_present": "false",
+        },
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    artifact = _prepare_and_request_deploy(service, business_id=business_id, site_id=site_id)
+
+    refresh_result = service.refresh_deploy_run_status(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        principal_id="principal-1",
+    )
+
+    assert refresh_result.result.get("workflow_run_failure_reason_code") == "managed_deploy_workflow_template_stale"
+    assert refresh_result.result.get("workflow_run_failure_stage") == "ingress_evidence"
+    assert refresh_result.result.get("selected_workflow_failure_reason") == "managed_deploy_workflow_template_stale"
+    assert refresh_result.result.get("deploy_runtime_reason_code_present") is False
+    assert refresh_result.result.get("managed_deploy_template_marker_present") is False
+    assert "reprovision target workflow files from publish" in str(
+        refresh_result.result.get("workflow_run_failure_hint") or ""
+    ).lower()
+
+    summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
+    deploy_readiness = summary.deploy_readiness or {}
+    assert deploy_readiness.get("selected_workflow_failure_reason") == "managed_deploy_workflow_template_stale"
+    assert deploy_readiness.get("deploy_runtime_reason_code_present") is False
+    assert deploy_readiness.get("managed_deploy_template_marker_present") is False
+
+
 def test_refresh_deploy_status_certificate_domain_mismatch_blocks_https_ready(db_session) -> None:
     publisher = _RecordingGitHubPublisher(
         deploy_workflow_run_id=910002,
@@ -8726,6 +8820,53 @@ def test_static_ip_reason_code_hint_mappings_cover_missing_and_not_bound() -> No
                 failure_stage=None,
                 workflow_exists=None,
                 dispatch_service_reason_code="expected_static_ip_not_bound_to_ingress",
+            )
+            or ""
+        ).lower()
+    )
+
+
+def test_runtime_readiness_unknown_and_template_stale_hint_mappings() -> None:
+    assert (
+        "precise readiness reason"
+        in str(
+            seo_migration_module._derive_workflow_run_failure_hint(
+                failure_reason="runtime_readiness_unknown_failure",
+                post_dispatch_state="workflow_run_failed",
+            )
+            or ""
+        ).lower()
+    )
+    assert (
+        "reprovision target workflow files from publish"
+        in str(
+            seo_migration_module._derive_workflow_run_failure_hint(
+                failure_reason="managed_deploy_workflow_template_stale",
+                post_dispatch_state="workflow_run_failed",
+            )
+            or ""
+        ).lower()
+    )
+    assert (
+        "reprovision workflow files from publish"
+        in str(
+            seo_migration_module._derive_deploy_failure_remediation_hint(
+                failure_reason="runtime_readiness_unknown_failure",
+                failure_stage="ingress_evidence",
+                workflow_exists=True,
+                dispatch_service_reason_code=None,
+            )
+            or ""
+        ).lower()
+    )
+    assert (
+        "reprovision managed workflow/template files"
+        in str(
+            seo_migration_module._derive_deploy_failure_remediation_hint(
+                failure_reason="managed_deploy_workflow_template_stale",
+                failure_stage="ingress_evidence",
+                workflow_exists=True,
+                dispatch_service_reason_code=None,
             )
             or ""
         ).lower()

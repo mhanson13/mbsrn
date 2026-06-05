@@ -1876,6 +1876,12 @@ function toManagedGkeConfigGuidance(value: string | null): string | null {
   if (normalized === "runtime_service_endpoints_missing_after_apply") {
     return "Service/site-web exists but has no ready endpoints after apply/rollout. Verify pod readiness, selectors, and endpoint population.";
   }
+  if (normalized === "runtime_readiness_unknown_failure") {
+    return "The target workflow exited before reporting a precise readiness reason. Reprovision the workflow and retry, or check Advanced Diagnostics.";
+  }
+  if (normalized === "managed_deploy_workflow_template_stale") {
+    return "Deploy workflow logs did not include current managed template diagnostics markers. Reprovision target workflow files from publish and retry deploy.";
+  }
   if (normalized === "managed_site_runtime_replace_requested") {
     return "Scoped runtime replacement was requested for this deploy run.";
   }
