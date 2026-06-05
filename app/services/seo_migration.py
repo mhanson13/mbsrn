@@ -11636,6 +11636,13 @@ class SEOMigrationService:
             0,
             int(media_artifact_diagnostics.get("selected_not_materialized_count") or 0),
         )
+        if selected_not_materialized_count > 0:
+            parse_warnings.append(
+                (
+                    f"{selected_not_materialized_count} selected image(s) are not in this artifact package yet. "
+                    "This is advisory unless generated output references missing image paths."
+                )
+            )
         unreferenced_materialized_media_paths_count = max(
             0,
             int(media_artifact_diagnostics.get("unreferenced_materialized_media_paths_count") or 0),
@@ -11673,10 +11680,6 @@ class SEOMigrationService:
         )
         if deduped_media_blockers:
             media_blocker_descriptions: list[str] = []
-            if selected_not_materialized_count > 0:
-                media_blocker_descriptions.append(
-                    f"{selected_not_materialized_count} selected image(s) were not materialized into artifact assets."
-                )
             unresolved_internal_count = max(
                 0,
                 int(media_artifact_diagnostics.get("unresolved_internal_media_ids_count") or 0),
@@ -12233,6 +12236,30 @@ class SEOMigrationService:
             0,
             int(latest_artifact_media_readiness.get("selected_not_materialized_count") or 0),
         )
+        draft_input_summary_payload["artifact_media_selected_media_available_count"] = max(
+            0,
+            int(latest_artifact_media_readiness.get("selected_media_available_count") or 0),
+        )
+        draft_input_summary_payload["artifact_media_selected_media_used_by_generated_pages_count"] = max(
+            0,
+            int(latest_artifact_media_readiness.get("selected_media_used_by_generated_pages_count") or 0),
+        )
+        draft_input_summary_payload["artifact_media_selected_media_unused_count"] = max(
+            0,
+            int(latest_artifact_media_readiness.get("selected_media_unused_count") or 0),
+        )
+        draft_input_summary_payload["artifact_media_generated_image_references_count"] = max(
+            0,
+            int(latest_artifact_media_readiness.get("generated_image_references_count") or 0),
+        )
+        draft_input_summary_payload["artifact_media_unresolved_generated_image_references_count"] = max(
+            0,
+            int(latest_artifact_media_readiness.get("unresolved_generated_image_references_count") or 0),
+        )
+        draft_input_summary_payload["artifact_media_missing_required_generated_image_assets_count"] = max(
+            0,
+            int(latest_artifact_media_readiness.get("missing_required_generated_image_assets_count") or 0),
+        )
         draft_input_summary_payload["artifact_media_unreferenced_materialized_count"] = max(
             0,
             int(latest_artifact_media_readiness.get("unreferenced_materialized_media_paths_count") or 0),
@@ -12247,6 +12274,23 @@ class SEOMigrationService:
         )
         draft_input_summary_payload["artifact_media_reasons"] = _normalize_string_list(
             latest_artifact_media_readiness.get("reasons"),
+            max_items=8,
+            max_item_length=240,
+        )
+        draft_input_summary_payload["artifact_media_warning_codes"] = _normalize_string_list(
+            latest_artifact_media_readiness.get("warning_codes"),
+            max_items=12,
+            max_item_length=80,
+        )
+        draft_input_summary_payload["artifact_media_warning_reasons"] = _normalize_string_list(
+            latest_artifact_media_readiness.get("media_warning_reasons")
+            or latest_artifact_media_readiness.get("warnings"),
+            max_items=8,
+            max_item_length=240,
+        )
+        draft_input_summary_payload["artifact_media_blocker_reasons"] = _normalize_string_list(
+            latest_artifact_media_readiness.get("media_blocker_reasons")
+            or latest_artifact_media_readiness.get("reasons"),
             max_items=8,
             max_item_length=240,
         )
@@ -18685,6 +18729,19 @@ class SEOMigrationService:
             artifact=artifact,
             include_repair_preview=True,
         )
+        for warning in _normalize_string_list(
+            artifact_media_readiness.get("warnings"),
+            max_items=8,
+            max_item_length=220,
+        ):
+            warnings.append(warning)
+        warning_codes.extend(
+            _normalize_string_list(
+                artifact_media_readiness.get("warning_codes"),
+                max_items=8,
+                max_item_length=80,
+            )
+        )
         target_summary: dict[str, object] = {}
         target_valid = False
         repository_exists: bool | None = None
@@ -19055,7 +19112,22 @@ class SEOMigrationService:
     ) -> dict[str, object]:
         reasons: list[str] = []
         blocker_codes: list[str] = []
+        warnings: list[str] = []
+        warning_codes: list[str] = []
         artifact_media_readiness = self._build_artifact_media_readiness(artifact)
+        for warning in _normalize_string_list(
+            artifact_media_readiness.get("warnings"),
+            max_items=8,
+            max_item_length=220,
+        ):
+            warnings.append(warning)
+        warning_codes.extend(
+            _normalize_string_list(
+                artifact_media_readiness.get("warning_codes"),
+                max_items=8,
+                max_item_length=80,
+            )
+        )
         target_summary: dict[str, object] = {}
         target_valid = False
         workflow_identifier: str | None = None
@@ -20189,6 +20261,8 @@ class SEOMigrationService:
             "ready": not reasons,
             "reasons": reasons,
             "blocker_codes": blocker_codes,
+            "warnings": warnings,
+            "warning_codes": _dedupe_strings(warning_codes),
             "failure_category": failure_category,
             "workflow_identifier": workflow_identifier,
             "workflow_identifier_requested": workflow_identifier_requested,
@@ -21093,10 +21167,10 @@ class SEOMigrationService:
         }
         if not baseline_blockers.intersection(
             {
-                "selected_media_not_materialized",
                 "artifact_referenced_media_file_missing",
                 "artifact_internal_media_ids_unresolved",
                 "artifact_image_tokens_unresolved",
+                "artifact_media_reference_not_deployable",
             }
         ):
             return self._annotate_artifact_media_readiness_evidence(
@@ -21229,9 +21303,24 @@ class SEOMigrationService:
         }
         matched_artifact_paths = [item for item in expected_artifact_paths if item in artifact_generated_paths]
         missing_artifact_paths = [item for item in expected_artifact_paths if item not in artifact_generated_paths]
+        referenced_media_paths = set(
+            _normalize_string_list(
+                readiness_payload.get("referenced_media_paths"),
+                max_items=160,
+                max_item_length=240,
+            )
+        )
+        selected_media_used_paths = [item for item in expected_artifact_paths if item in referenced_media_paths]
+        selected_media_used_by_generated_pages_count = len(selected_media_used_paths)
 
         selected_media_updated_after_artifact_created = bool(selected_media_missing_from_manifest)
         readiness_payload["selected_media_count"] = len(selected_media_ids)
+        readiness_payload["selected_media_available_count"] = len(selected_media_ids)
+        readiness_payload["selected_media_used_by_generated_pages_count"] = selected_media_used_by_generated_pages_count
+        readiness_payload["selected_media_unused_count"] = max(
+            0,
+            len(selected_media_ids) - selected_media_used_by_generated_pages_count,
+        )
         readiness_payload["selected_media_ids"] = selected_media_ids[:_MIGRATION_ARTIFACT_MAX_MEDIA_FILES]
         readiness_payload["artifact_manifest_selected_media_count"] = len(manifest_asset_ids)
         readiness_payload["artifact_manifest_selected_media_ids"] = manifest_asset_ids[:_MIGRATION_ARTIFACT_MAX_MEDIA_FILES]
@@ -21271,9 +21360,6 @@ class SEOMigrationService:
         else:
             readiness_payload["selected_media_pending_generation_message"] = None
 
-        if not selected_media_updated_after_artifact_created:
-            return readiness_payload
-
         blocker_codes = _normalize_string_list(
             readiness_payload.get("blocker_codes"),
             max_items=20,
@@ -21282,33 +21368,37 @@ class SEOMigrationService:
         blocker_codes = [
             item for item in blocker_codes if item.lower() != "selected_media_not_materialized"
         ]
-        blocker_codes.insert(0, "artifact_regeneration_required_after_media_selection")
         readiness_payload["blocker_codes"] = _dedupe_strings(blocker_codes)
 
-        reasons = _normalize_string_list(
-            readiness_payload.get("reasons"),
+        warning_codes = _normalize_string_list(
+            readiness_payload.get("warning_codes"),
+            max_items=20,
+            max_item_length=80,
+        )
+        warning_reasons = _normalize_string_list(
+            readiness_payload.get("warnings"),
             max_items=20,
             max_item_length=240,
         )
-        reasons = [
-            item
-            for item in reasons
-            if (
-                "selected image" not in item.lower()
-                or "not materialized into artifacts" not in item.lower()
+        if selected_media_updated_after_artifact_created:
+            changed_count = len(selected_media_missing_from_manifest)
+            warning_codes.insert(0, "selected_media_changed_after_generation")
+            warning_reasons = [
+                item
+                for item in warning_reasons
+                if "chosen after this artifact was generated" not in item.lower()
+            ]
+            warning_reasons.insert(
+                0,
+                (
+                    f"{changed_count} selected image(s) were chosen after this artifact was generated. "
+                    "Generate a new draft package to include those changes."
+                ),
             )
-            and "chosen after this artifact was generated" not in item.lower()
-        ]
-        changed_count = len(selected_media_missing_from_manifest)
-        reasons.insert(
-            0,
-            (
-                f"{changed_count} selected image(s) were chosen after this artifact was generated. "
-                "Generate and approve a new artifact version before publishing media changes."
-            ),
-        )
-        readiness_payload["reasons"] = reasons[:12]
-        readiness_payload["ready"] = False
+        readiness_payload["warning_codes"] = _dedupe_strings(warning_codes)
+        readiness_payload["warnings"] = warning_reasons[:12]
+        readiness_payload["media_warning_reasons"] = warning_reasons[:12]
+        readiness_payload["ready"] = len(readiness_payload["blocker_codes"]) == 0
         return readiness_payload
 
     def _salvage_provider_error_output(
@@ -21848,8 +21938,19 @@ def _build_artifact_media_diagnostics_payload(
         max_items=12,
         max_item_length=80,
     )
-    if selected_not_materialized and "selected_media_not_materialized" not in {item.lower() for item in blocker_codes}:
-        blocker_codes.append("selected_media_not_materialized")
+    warning_codes = _normalize_string_list(
+        media_reference_diagnostics.get("warning_codes"),
+        max_items=12,
+        max_item_length=80,
+    )
+    if selected_not_materialized and "selected_media_available_not_referenced" not in {
+        item.lower() for item in warning_codes
+    }:
+        warning_codes.append("selected_media_available_not_referenced")
+    if unreferenced_materialized_media_paths and "selected_media_unused_by_generated_pages" not in {
+        item.lower() for item in warning_codes
+    }:
+        warning_codes.append("selected_media_unused_by_generated_pages")
 
     seen_blockers: set[str] = set()
     normalized_blockers: list[str] = []
@@ -21859,6 +21960,14 @@ def _build_artifact_media_diagnostics_payload(
             continue
         seen_blockers.add(key)
         normalized_blockers.append(item)
+    seen_warnings: set[str] = set()
+    normalized_warning_codes: list[str] = []
+    for item in warning_codes:
+        key = item.lower()
+        if key in seen_warnings:
+            continue
+        seen_warnings.add(key)
+        normalized_warning_codes.append(item)
 
     return {
         "selected_assets_count": selected_assets_count,
@@ -21918,6 +22027,7 @@ def _build_artifact_media_diagnostics_payload(
             max_item_length=240,
         ),
         "blocker_codes": normalized_blockers,
+        "warning_codes": normalized_warning_codes,
         "ready": len(normalized_blockers) == 0,
     }
 
@@ -21956,16 +22066,29 @@ def _build_artifact_media_readiness_from_payload(
         0,
         int(diagnostics_payload.get("selected_not_materialized_count") or len(selected_not_materialized_asset_ids)),
     )
-    blocker_codes = _normalize_string_list(
-        diagnostics_payload.get("blocker_codes"),
+    blocker_codes = [
+        code
+        for code in _normalize_string_list(
+            diagnostics_payload.get("blocker_codes"),
+            max_items=12,
+            max_item_length=80,
+        )
+        if code.lower() != "selected_media_not_materialized"
+    ]
+    warning_codes = _normalize_string_list(
+        diagnostics_payload.get("warning_codes"),
         max_items=12,
         max_item_length=80,
     )
-    reasons: list[str] = []
+    media_blocker_reasons: list[str] = []
+    media_warning_reasons: list[str] = []
     if selected_not_materialized_count > 0:
-        reasons.append(f"{selected_not_materialized_count} selected image(s) were not materialized into artifacts.")
-        if "selected_media_not_materialized" not in {code.lower() for code in blocker_codes}:
-            blocker_codes.append("selected_media_not_materialized")
+        media_warning_reasons.append(
+            f"{selected_not_materialized_count} selected image(s) are not in this artifact package yet. "
+            "This is advisory unless generated output references missing image paths."
+        )
+        if "selected_media_available_not_referenced" not in {code.lower() for code in warning_codes}:
+            warning_codes.append("selected_media_available_not_referenced")
     unresolved_internal_count = max(
         0,
         int(diagnostics_payload.get("unresolved_internal_media_ids_count") or 0),
@@ -21991,13 +22114,20 @@ def _build_artifact_media_readiness_from_payload(
         int(diagnostics_payload.get("invalid_media_references_count") or 0),
     )
     if unresolved_internal_count > 0:
-        reasons.append("Generated HTML still references internal media IDs.")
+        media_blocker_reasons.append("Generated HTML still references internal media IDs.")
     if unresolved_token_count > 0:
-        reasons.append("Generated HTML still contains unresolved @image(...) references.")
+        media_blocker_reasons.append("Generated HTML still contains unresolved @image(...) references.")
     if missing_referenced_count > 0 or unresolved_generated_count > 0:
-        reasons.append("Generated HTML references media files that are missing from artifact output.")
+        media_blocker_reasons.append("Generated HTML references media files that are missing from artifact output.")
     if invalid_reference_count > 0:
-        reasons.append("Generated HTML includes non-deployable media references.")
+        media_blocker_reasons.append("Generated HTML includes non-deployable media references.")
+    if unreferenced_materialized_count > 0:
+        media_warning_reasons.append(
+            f"{unreferenced_materialized_count} selected image asset(s) were not used by generated pages. "
+            "This is a warning only."
+        )
+        if "selected_media_unused_by_generated_pages" not in {code.lower() for code in warning_codes}:
+            warning_codes.append("selected_media_unused_by_generated_pages")
 
     seen_codes: set[str] = set()
     normalized_blocker_codes: list[str] = []
@@ -22007,12 +22137,44 @@ def _build_artifact_media_readiness_from_payload(
             continue
         seen_codes.add(key)
         normalized_blocker_codes.append(code)
+    seen_warning_codes: set[str] = set()
+    normalized_warning_codes: list[str] = []
+    for code in warning_codes:
+        key = code.lower()
+        if key in seen_warning_codes:
+            continue
+        seen_warning_codes.add(key)
+        normalized_warning_codes.append(code)
+
+    selected_media_available_count = max(0, selected_assets_count - selected_not_materialized_count)
+    selected_media_used_by_generated_pages_count = max(
+        0,
+        min(selected_media_available_count, materialized_assets_count - unreferenced_materialized_count),
+    )
+    selected_media_unused_count = max(0, selected_assets_count - selected_media_used_by_generated_pages_count)
+    unresolved_generated_image_references_count = max(
+        0,
+        unresolved_internal_count
+        + unresolved_token_count
+        + missing_referenced_count
+        + unresolved_generated_count
+        + invalid_reference_count,
+    )
+    missing_required_generated_image_assets_count = max(0, missing_referenced_count + unresolved_generated_count)
 
     return {
         "ready": len(normalized_blocker_codes) == 0,
         "blocker_codes": normalized_blocker_codes,
-        "reasons": reasons[:12],
+        "warning_codes": normalized_warning_codes,
+        "reasons": media_blocker_reasons[:12],
+        "warnings": media_warning_reasons[:12],
+        "media_blocker_reasons": media_blocker_reasons[:12],
+        "media_warning_reasons": media_warning_reasons[:12],
         "selected_assets_count": selected_assets_count,
+        "selected_media_count": selected_assets_count,
+        "selected_media_available_count": selected_media_available_count,
+        "selected_media_used_by_generated_pages_count": selected_media_used_by_generated_pages_count,
+        "selected_media_unused_count": selected_media_unused_count,
         "materialized_assets_count": materialized_assets_count,
         "selected_not_materialized_count": selected_not_materialized_count,
         "selected_not_materialized_asset_ids": selected_not_materialized_asset_ids,
@@ -22024,6 +22186,7 @@ def _build_artifact_media_readiness_from_payload(
             diagnostics_payload.get("selected_not_materialized_reason_counts")
         ),
         "referenced_media_paths_count": max(0, int(diagnostics_payload.get("referenced_media_paths_count") or 0)),
+        "generated_image_references_count": max(0, int(diagnostics_payload.get("referenced_media_paths_count") or 0)),
         "unreferenced_materialized_media_paths_count": unreferenced_materialized_count,
         "unreferenced_materialized_media_paths": _normalize_string_list(
             diagnostics_payload.get("unreferenced_materialized_media_paths"),
@@ -22037,6 +22200,8 @@ def _build_artifact_media_readiness_from_payload(
             max_item_length=240,
         ),
         "unresolved_generated_media_paths_count": unresolved_generated_count,
+        "unresolved_generated_image_references_count": unresolved_generated_image_references_count,
+        "missing_required_generated_image_assets_count": missing_required_generated_image_assets_count,
         "unresolved_generated_media_paths": _normalize_string_list(
             diagnostics_payload.get("unresolved_generated_media_paths"),
             max_items=80,
@@ -22060,7 +22225,7 @@ def _build_artifact_media_readiness_from_payload(
             max_items=80,
             max_item_length=240,
         ),
-        "status_codes": [],
+        "status_codes": normalized_warning_codes[:12],
         "selected_media_pending_generation": False,
         "selected_media_pending_generation_count": 0,
         "selected_media_pending_generation_ids": [],

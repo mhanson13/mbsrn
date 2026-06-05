@@ -4853,8 +4853,79 @@ def test_generate_artifacts_flags_selected_media_not_materialized_when_storage_b
     assert isinstance(not_materialized, list)
     assert isinstance(not_materialized[0], dict)
     assert not_materialized[0].get("reason_code") == "media_storage_read_failed"
-    assert "selected_media_not_materialized" in list(media_diagnostics.get("blocker_codes") or [])
+    assert "selected_media_not_materialized" not in list(media_diagnostics.get("blocker_codes") or [])
+    assert "selected_media_available_not_referenced" in list(media_diagnostics.get("warning_codes") or [])
     assert media_diagnostics.get("ready") is False
+
+
+def test_deploy_readiness_does_not_block_on_selected_only_media_warning_state(db_session) -> None:
+    publisher = _RecordingGitHubPublisher(
+        existing_repository=True,
+        preflight_can_read_contents=True,
+        preflight_can_write_contents=True,
+        preflight_can_write_workflows=True,
+    )
+    provider = _StaticMigrationProvider(
+        _build_publishable_output(
+            index_content="<html><head><!-- ANALYTICS_PLACEHOLDER --></head><body><h1>Home</h1></body></html>"
+        )
+    )
+    service = _build_service(db_session, provider, github_publisher=publisher)
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+    _configure_deploy_target(service, business_id=business_id, site_id=site_id)
+
+    workspace = service.get_workspace(business_id=business_id, site_id=site_id)
+    enriched_notes = dict(workspace.enriched_content_notes_json or {})
+    enriched_notes["workspace_media_assets"] = [
+        {
+            "asset_id": "upl-selected-missing",
+            "display_filename": "missing-image.png",
+            "content_type": "image/png",
+            "provenance": "operator_upload",
+            "import_status": "selected",
+            "selected_for_draft": True,
+            "workspace_status": "active",
+            "storage_key": "missing/not-found.png",
+        }
+    ]
+    workspace.enriched_content_notes_json = enriched_notes
+    service.seo_migration_repository.save_workspace(workspace)
+    service.session.commit()
+
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes=None,
+        principal_id="principal-1",
+    )
+    service.publish_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        commit_message=None,
+        analytics_measurement_id=None,
+        principal_id="principal-1",
+    )
+
+    summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
+    deploy_readiness = summary.deploy_readiness if isinstance(summary.deploy_readiness, dict) else {}
+    deploy_media = (
+        deploy_readiness.get("artifact_media_readiness")
+        if isinstance(deploy_readiness.get("artifact_media_readiness"), dict)
+        else {}
+    )
+    assert "deploy_artifact_media_invalid" not in list(deploy_readiness.get("blocker_codes") or [])
+    assert deploy_media.get("ready") is True
+    assert "selected_media_available_not_referenced" in list(deploy_media.get("warning_codes") or [])
 
 
 def test_publish_and_deploy_readiness_block_when_generated_html_references_missing_assets_path(db_session) -> None:
@@ -5044,7 +5115,7 @@ def test_publish_readiness_repairs_stale_selected_media_materialization_for_appr
     assert image_path in str(html_publish.content or "")
 
 
-def test_publish_readiness_requires_regeneration_when_selected_media_changes_after_artifact_generation(db_session) -> None:
+def test_publish_readiness_treats_selected_media_changed_after_generation_as_advisory(db_session) -> None:
     publisher = _RecordingGitHubPublisher(
         existing_repository=True,
         preflight_blocker_code="github_workflow_write_not_authorized",
@@ -5117,18 +5188,19 @@ def test_publish_readiness_requires_regeneration_when_selected_media_changes_aft
         else {}
     )
 
-    assert publish_readiness.get("ready") is False
-    assert "publish_artifact_media_invalid" in list(publish_readiness.get("blocker_codes") or [])
-    assert publish_media.get("ready") is False
-    assert "artifact_regeneration_required_after_media_selection" in list(publish_media.get("blocker_codes") or [])
+    assert publish_readiness.get("ready") is True
+    assert "publish_artifact_media_invalid" not in list(publish_readiness.get("blocker_codes") or [])
+    assert publish_media.get("ready") is True
+    assert "artifact_regeneration_required_after_media_selection" not in list(publish_media.get("blocker_codes") or [])
     assert "selected_media_not_materialized" not in list(publish_media.get("blocker_codes") or [])
+    assert "selected_media_changed_after_generation" in list(publish_media.get("warning_codes") or [])
     assert publish_media.get("selected_media_updated_after_artifact_created") is True
     assert publish_media.get("selected_media_missing_from_artifact_manifest_count") == 1
     assert second_asset_id in list(publish_media.get("selected_media_missing_from_artifact_manifest_ids") or [])
     assert first_asset_id in list(publish_media.get("artifact_manifest_selected_media_ids") or [])
-    reasons = [str(item) for item in list(publish_media.get("reasons") or [])]
-    assert reasons
-    assert "chosen after this artifact was generated" in reasons[0].lower()
+    warnings = [str(item) for item in list(publish_media.get("warnings") or [])]
+    assert warnings
+    assert "chosen after this artifact was generated" in warnings[0].lower()
 
 
 def test_publish_media_readiness_uses_pending_generation_status_for_stale_artifact_media_snapshot(
@@ -5235,9 +5307,10 @@ def test_publish_media_readiness_uses_pending_generation_status_for_stale_artifa
     def _mock_prepare_artifact_media_for_publish(**_: object) -> dict[str, object]:
         return {
             "artifact_media_readiness": {
-                "ready": False,
-                "blocker_codes": ["selected_media_not_materialized"],
-                "reasons": ["2 selected image(s) were not materialized into artifacts."],
+                "ready": True,
+                "blocker_codes": [],
+                "warning_codes": ["selected_media_available_not_referenced"],
+                "warnings": ["2 selected image(s) are not in this artifact package yet."],
                 "selected_assets_count": 2,
                 "materialized_assets_count": 0,
                 "selected_not_materialized_count": 2,
@@ -5258,12 +5331,13 @@ def test_publish_media_readiness_uses_pending_generation_status_for_stale_artifa
         seo_migration_module._normalize_json_dict(summary.context_summary).get("draft_input_summary")
     )
 
-    assert publish_media.get("readiness_source") == "repair_preview"
+    assert publish_media.get("readiness_source") == "artifact_snapshot"
     assert publish_media.get("selected_media_pending_generation") is True
     assert publish_media.get("selected_media_pending_generation_count") == 1
     assert second_asset_id in list(publish_media.get("selected_media_pending_generation_ids") or [])
-    assert "artifact_regeneration_required_after_media_selection" in list(publish_media.get("blocker_codes") or [])
+    assert "artifact_regeneration_required_after_media_selection" not in list(publish_media.get("blocker_codes") or [])
     assert "selected_media_not_materialized" not in list(publish_media.get("blocker_codes") or [])
+    assert "selected_media_changed_after_generation" in list(publish_media.get("warning_codes") or [])
     assert "next draft package" in str(publish_media.get("selected_media_pending_generation_message") or "").lower()
 
     assert draft_input_summary.get("artifact_media_selected_media_pending_generation") is True
@@ -5272,6 +5346,30 @@ def test_publish_media_readiness_uses_pending_generation_status_for_stale_artifa
         "next draft package"
         in str(draft_input_summary.get("artifact_media_selected_media_pending_generation_message") or "").lower()
     )
+
+
+def test_artifact_media_readiness_demotes_selected_not_materialized_to_warning_only() -> None:
+    readiness = seo_migration_module._build_artifact_media_readiness_from_payload(
+        diagnostics_payload={
+            "selected_assets_count": 3,
+            "materialized_assets_count": 0,
+            "selected_not_materialized_count": 3,
+            "selected_not_materialized_asset_ids": ["upl-a", "upl-b", "upl-c"],
+            "blocker_codes": ["selected_media_not_materialized"],
+        },
+        manifest_payload={
+            "selected_assets_count": 3,
+            "materialized_assets_count": 0,
+            "manifest": [],
+        },
+    )
+
+    assert readiness.get("ready") is True
+    assert "selected_media_not_materialized" not in list(readiness.get("blocker_codes") or [])
+    assert "selected_media_available_not_referenced" in list(readiness.get("warning_codes") or [])
+    warnings = [str(item) for item in list(readiness.get("warnings") or [])]
+    assert warnings
+    assert "advisory" in warnings[0].lower()
 
 
 def test_generate_artifacts_rejection_emits_contract_diagnostics(db_session, caplog) -> None:

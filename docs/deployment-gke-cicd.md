@@ -330,6 +330,7 @@ Managed-site implications:
 Safety reminder:
 - publishing artifacts to `mhanson13/mbsrn-www` does not move control-plane source/ownership out of `mhanson13/mbsrn`
 - public artifact output must not contain control-plane routes, internal diagnostics, or secret-bearing content
+- media deploy blockers are evaluated from deployable generated-package references (`assets/images/*`, unresolved `@image(...)`, unresolved `upl-...`, private/non-deployable URLs), not from selected-image productivity state alone
 
 ### Managed Site HTTPS Readiness Diagnostics
 

@@ -2636,12 +2636,15 @@ describe("site migration workflow route", () => {
         artifact_media_referenced_paths_count: 4,
         artifact_media_unresolved_references_count: 3,
         artifact_media_selected_not_materialized_count: 3,
+        artifact_media_selected_media_used_by_generated_pages_count: 4,
+        artifact_media_selected_media_unused_count: 4,
         artifact_media_unreferenced_materialized_count: 1,
         artifact_media_ready_for_publish_deploy: false,
         artifact_media_blocker_codes: [
-          "selected_media_not_materialized",
           "artifact_internal_media_ids_unresolved",
         ],
+        artifact_media_warning_codes: ["selected_media_available_not_referenced"],
+        artifact_media_blocker_reasons: ["Generated HTML still references internal media IDs."],
       },
     };
     mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(summary);
@@ -2658,8 +2661,9 @@ describe("site migration workflow route", () => {
     expect(screen.getByTestId("migration-artifact-media-reference-summary")).toHaveTextContent(
       "Referenced by generated pages: 4. Unresolved references: 3.",
     );
+    expect(screen.getByTestId("migration-selected-media-context-advisory")).toBeInTheDocument();
     expect(screen.getByTestId("migration-artifact-media-not-materialized-warning")).toHaveTextContent(
-      "3 selected images were not materialized into artifact assets.",
+      "3 selected images are not yet in this artifact package.",
     );
     expect(screen.getByTestId("migration-artifact-media-unresolved-warning")).toBeInTheDocument();
     expect(screen.getByTestId("migration-artifact-media-readiness-blockers")).toHaveTextContent(
@@ -2679,12 +2683,13 @@ describe("site migration workflow route", () => {
         artifact_media_selected_not_materialized_count: 5,
         artifact_media_unreferenced_materialized_count: 0,
         artifact_media_ready_for_publish_deploy: false,
-        artifact_media_blocker_codes: [
-          "artifact_regeneration_required_after_media_selection",
+        artifact_media_blocker_codes: [],
+        artifact_media_warning_codes: [
           "selected_media_pending_generation",
+          "selected_media_changed_after_generation",
         ],
-        artifact_media_reasons: [
-          "5 selected image(s) were chosen after this artifact was generated. Generate and approve a new artifact version before publishing media changes.",
+        artifact_media_warning_reasons: [
+          "5 selected image(s) were chosen after this artifact was generated. Generate a new draft package to include those changes.",
         ],
         artifact_media_selected_media_updated_after_artifact_created: true,
         artifact_media_selected_media_pending_generation: true,
@@ -2706,6 +2711,10 @@ describe("site migration workflow route", () => {
     expect(screen.getByTestId("migration-draft-readiness")).toHaveTextContent("Ready to generate draft.");
     expect(screen.getByTestId("migration-artifact-media-pending-generation-note")).toHaveTextContent(
       "5 selected images will be included when you generate the next draft package.",
+    );
+    expect(screen.getByTestId("migration-selected-media-context-advisory")).toBeInTheDocument();
+    expect(screen.getByTestId("migration-artifact-media-regeneration-required-warning")).toHaveTextContent(
+      "Generate a new draft package to include those changes.",
     );
     expect(screen.queryByTestId("migration-artifact-media-not-materialized-warning")).not.toBeInTheDocument();
     expect(screen.queryByTestId("migration-artifact-media-readiness-blockers")).not.toBeInTheDocument();
@@ -3303,7 +3312,7 @@ describe("site migration workflow route", () => {
       buildMigrationWorkspaceSummary({
         publish_readiness: {
           ready: false,
-          reasons: ["Selected media were not materialized into artifact assets."],
+          reasons: ["Generated HTML references media files that are missing from artifact output."],
           last_failure_message: "Deploy workflow provisioning could not be verified.",
           target: {
             enabled: true,
@@ -3319,7 +3328,9 @@ describe("site migration workflow route", () => {
     render(<SiteMigrationWorkflowPage />);
 
     const publishReadiness = await screen.findByTestId("migration-publish-readiness");
-    expect(publishReadiness).toHaveTextContent("Blocker: Selected media were not materialized into artifact assets.");
+    expect(publishReadiness).toHaveTextContent(
+      "Blocker: Generated HTML references media files that are missing from artifact output.",
+    );
     expect(publishReadiness).not.toHaveTextContent("Blocker: Deploy workflow provisioning could not be verified.");
   });
 
@@ -4105,12 +4116,11 @@ describe("site migration workflow route", () => {
         artifact_media_selected_not_materialized_count: 0,
         artifact_media_unreferenced_materialized_count: 0,
         artifact_media_ready_for_publish_deploy: false,
-        artifact_media_blocker_codes: [
-          "artifact_regeneration_required_after_media_selection",
-        ],
+        artifact_media_blocker_codes: [],
+        artifact_media_warning_codes: ["selected_media_changed_after_generation"],
         artifact_media_selected_media_updated_after_artifact_created: true,
-        artifact_media_reasons: [
-          "3 selected image(s) were chosen after this artifact was generated. Generate and approve a new artifact version before publishing media changes.",
+        artifact_media_warning_reasons: [
+          "3 selected image(s) were chosen after this artifact was generated. Generate a new draft package to include those changes.",
         ],
       },
     };
@@ -4123,9 +4133,10 @@ describe("site migration workflow route", () => {
     render(<SiteMigrationWorkflowPage />);
 
     expect(await screen.findByTestId("migration-artifact-media-regeneration-required-warning")).toHaveTextContent(
-      "Generate and approve a new artifact version before publishing media changes.",
+      "Generate a new draft package to include those changes.",
     );
     expect(screen.queryByTestId("migration-artifact-media-not-materialized-warning")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("migration-artifact-media-readiness-blockers")).not.toBeInTheDocument();
   });
 
   it("supports AI suggestion helper for additional requirements", async () => {

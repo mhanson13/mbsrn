@@ -2735,16 +2735,16 @@ Readiness/cutover blockers now include:
 - unresolved internal media references remain in generated HTML (`src=\"upl-...\"`)
 - unresolved `@image(...)` references remain in generated HTML
 - unresolved generated image paths that do not map to materialized artifact files
-- selected media marked included but not materialized into artifact files
 - generated HTML references image paths that are missing from artifact files
 - generated HTML references internal/private media routes or unsafe paths
-- selected media was changed after the currently selected artifact version was generated (`artifact_regeneration_required_after_media_selection`); generate/approve a new artifact version before publish
 
 Pending-generation status (non-blocking in draft preflight):
 - if selected usable images were added after the currently selected artifact snapshot, draft input summary may show `selected_media_pending_generation`
 - operator copy should read: `X selected images will be included when you generate the next draft package.`
 - this pending-generation state is not treated as a post-generation materialization failure
-- `selected_media_not_materialized` remains valid only when a generated artifact/package should already contain the selected media but files are still missing
+- selected-but-unused or changed-after-generation media is advisory only; generate a new draft package when you want those changes reflected in generated output
+- selected media not yet present in the selected artifact package is advisory only unless generated output references missing image paths
+- media blockers are driven by broken generated output references (missing `assets/images/*`, unresolved `@image(...)`, unresolved `upl-...`, or non-deployable/private URL references)
 
 Readiness evidence notes:
 - media readiness is artifact-version-specific and includes selected-media IDs, expected artifact paths, matched artifact paths, and missing artifact paths
