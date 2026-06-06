@@ -1591,6 +1591,13 @@ def test_derive_site_preview_certificate_name_is_site_scoped_and_dns1123_safe() 
     assert "_" not in certificate_name
 
 
+def test_derive_site_preview_certificate_name_is_stable_across_same_site_and_config() -> None:
+    first_name, first_source = derive_site_preview_certificate_name(repo_name="Sc Mechanical", site_id="site-1")
+    second_name, second_source = derive_site_preview_certificate_name(repo_name="Sc Mechanical", site_id="site-1")
+    assert first_source == second_source
+    assert first_name == second_name
+
+
 def test_derive_site_preview_static_ip_name_is_site_scoped_and_dns1123_safe() -> None:
     static_ip_name, source = derive_site_preview_static_ip_name(repo_name="Sc Mechanical", site_id=None)
     assert source == "repo_name"
@@ -5737,6 +5744,156 @@ def test_ensure_managed_site_dns_transaction_conflict_retries_and_accepts_alread
             "https://dns.googleapis.com/dns/v1/projects/mbsrn-prod/managedZones/sites/rrsets?name=tnmfire.site.mbsrn.com.&type=A",
         ),
     ]
+
+
+def _stub_managed_certificate_readiness_dependencies(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    managed_certificate_payload: dict[str, object] | None,
+) -> None:
+    monkeypatch.setattr(
+        "app.integrations.seo_migration_github_publisher._resolve_google_credential_principal",
+        lambda **kwargs: ("service_account_json", "mbsrn-api@mbsrn-prod.iam.gserviceaccount.com"),
+    )
+    monkeypatch.setattr(
+        "app.integrations.seo_migration_github_publisher._resolve_google_access_token_for_managed_deploy_operations",
+        lambda **kwargs: "token",
+    )
+    monkeypatch.setattr(
+        "app.integrations.seo_migration_github_publisher._request_google_json",
+        lambda **kwargs: {
+            "endpoint": "34.111.22.11",
+            "masterAuth": {"clusterCaCertificate": base64.b64encode(b"dummy-ca").decode("ascii")},
+        },
+    )
+    monkeypatch.setattr(
+        "app.integrations.seo_migration_github_publisher.ssl.create_default_context",
+        lambda **kwargs: object(),
+    )
+    monkeypatch.setattr(
+        "app.integrations.seo_migration_github_publisher._request_kubernetes_json",
+        lambda **kwargs: managed_certificate_payload,
+    )
+
+
+def test_check_managed_certificate_readiness_reports_missing_resource(monkeypatch) -> None:
+    _stub_managed_certificate_readiness_dependencies(
+        monkeypatch,
+        managed_certificate_payload=None,
+    )
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+
+    result = publisher.check_managed_certificate_readiness(
+        repo_name="mhanson13/tnmfire",
+        site_id="site-1",
+        preview_hostname="tnmfire.site.mbsrn.com",
+        kubernetes_namespace="tnmfire",
+        managed_gke_config={
+            "cluster_name": "cluster-1",
+            "cluster_location": "us-central1",
+            "project_id": "mbsrn-prod",
+        },
+        gcp_deploy_key='{"type":"service_account"}',
+    )
+
+    assert result.managed_certificate_exists is False
+    assert result.dispatch_service_reason_code == "managed_certificate_failed_not_visible"
+    assert result.managed_certificate_name.startswith("site-web-preview-cert-")
+
+
+def test_check_managed_certificate_readiness_reports_provisioning_state(monkeypatch) -> None:
+    _stub_managed_certificate_readiness_dependencies(
+        monkeypatch,
+        managed_certificate_payload={
+            "spec": {"domains": ["tnmfire.site.mbsrn.com"]},
+            "status": {
+                "certificateStatus": "PROVISIONING",
+                "domainStatus": [{"domain": "tnmfire.site.mbsrn.com", "status": "PROVISIONING"}],
+            },
+        },
+    )
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+
+    result = publisher.check_managed_certificate_readiness(
+        repo_name="mhanson13/tnmfire",
+        site_id="site-1",
+        preview_hostname="tnmfire.site.mbsrn.com",
+        kubernetes_namespace="tnmfire",
+        managed_gke_config={
+            "cluster_name": "cluster-1",
+            "cluster_location": "us-central1",
+            "project_id": "mbsrn-prod",
+        },
+        gcp_deploy_key='{"type":"service_account"}',
+    )
+
+    assert result.managed_certificate_exists is True
+    assert result.certificate_domain_matches_expected is True
+    assert result.observed_managed_certificate_status == "PROVISIONING"
+    assert result.observed_managed_certificate_domain_status == "PROVISIONING"
+    assert result.dispatch_service_reason_code == "tls_certificate_provisioning"
+
+
+def test_check_managed_certificate_readiness_reports_active_state(monkeypatch) -> None:
+    _stub_managed_certificate_readiness_dependencies(
+        monkeypatch,
+        managed_certificate_payload={
+            "spec": {"domains": ["tnmfire.site.mbsrn.com"]},
+            "status": {
+                "certificateStatus": "ACTIVE",
+                "domainStatus": [{"domain": "tnmfire.site.mbsrn.com", "status": "ACTIVE"}],
+            },
+        },
+    )
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+
+    result = publisher.check_managed_certificate_readiness(
+        repo_name="mhanson13/tnmfire",
+        site_id="site-1",
+        preview_hostname="tnmfire.site.mbsrn.com",
+        kubernetes_namespace="tnmfire",
+        managed_gke_config={
+            "cluster_name": "cluster-1",
+            "cluster_location": "us-central1",
+            "project_id": "mbsrn-prod",
+        },
+        gcp_deploy_key='{"type":"service_account"}',
+    )
+
+    assert result.managed_certificate_exists is True
+    assert result.certificate_domain_matches_expected is True
+    assert result.dispatch_service_reason_code is None
+
+
+def test_check_managed_certificate_readiness_reports_domain_mismatch(monkeypatch) -> None:
+    _stub_managed_certificate_readiness_dependencies(
+        monkeypatch,
+        managed_certificate_payload={
+            "spec": {"domains": ["wrong.site.mbsrn.com"]},
+            "status": {
+                "certificateStatus": "ACTIVE",
+                "domainStatus": [{"domain": "wrong.site.mbsrn.com", "status": "ACTIVE"}],
+            },
+        },
+    )
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+
+    result = publisher.check_managed_certificate_readiness(
+        repo_name="mhanson13/tnmfire",
+        site_id="site-1",
+        preview_hostname="tnmfire.site.mbsrn.com",
+        kubernetes_namespace="tnmfire",
+        managed_gke_config={
+            "cluster_name": "cluster-1",
+            "cluster_location": "us-central1",
+            "project_id": "mbsrn-prod",
+        },
+        gcp_deploy_key='{"type":"service_account"}',
+    )
+
+    assert result.managed_certificate_exists is True
+    assert result.certificate_domain_matches_expected is False
+    assert result.dispatch_service_reason_code == "certificate_domain_mismatch"
 
 
 def test_dispatch_deploy_captures_workflow_output_live_url_from_completion_metadata(monkeypatch) -> None:

@@ -2039,8 +2039,7 @@ describe("site migration workflow route", () => {
     await user.click(await screen.findByText("Show detailed migration failure diagnostics"));
 
     const diagnostics = screen.getByTestId("migration-deploy-diagnostics");
-    expect(diagnostics).toHaveTextContent(/managedcertificate is provisioning/i);
-    expect(diagnostics).toHaveTextContent(/wait for managedcertificate/i);
+    expect(diagnostics).toHaveTextContent(/runtime can deploy while https certificate provisioning continues/i);
 
     const consistency = screen.getByTestId("migration-deploy-consistency");
     expect(within(consistency).getByTestId("migration-deploy-consistency-gate-ingress_conflict")).toHaveTextContent(
@@ -2077,7 +2076,7 @@ describe("site migration workflow route", () => {
     const summary = buildMigrationWorkspaceSummary({
       deploy_readiness: {
         ready: false,
-        reasons: ["Certificate exists but is still provisioning. Wait for ACTIVE before HTTPS-ready deploy."],
+        reasons: ["Certificate exists but is still provisioning. Deploy is held until the certificate is ACTIVE."],
         dispatch_service_reason_code: "tls_certificate_provisioning",
         certificate_readiness_state: "certificate_provisioning_pending",
         certificate_gate_required_before_deploy: true,
@@ -2102,8 +2101,8 @@ describe("site migration workflow route", () => {
     await user.click(await screen.findByText("Show detailed migration failure diagnostics"));
 
     const diagnostics = screen.getByTestId("migration-deploy-diagnostics");
-    expect(diagnostics).toHaveTextContent(/certificate.*still provisioning/i);
-    expect(diagnostics).toHaveTextContent(/requires an ACTIVE certificate before HTTPS-ready deploy can continue/i);
+    expect(diagnostics).toHaveTextContent(/deploy is held until the certificate is active/i);
+    expect(diagnostics).toHaveTextContent(/requires an active certificate before https-ready deploy can continu/i);
   });
 
   it("shows missing service-after-apply diagnostics as deploy blocker", async () => {

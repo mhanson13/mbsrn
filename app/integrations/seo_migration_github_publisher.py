@@ -146,6 +146,22 @@ class SEOMigrationGitHubManagedSiteDnsEnsureResult:
 
 
 @dataclass(frozen=True)
+class SEOMigrationGitHubManagedCertificateReadinessResult:
+    managed_certificate_name: str
+    preview_hostname: str
+    kubernetes_namespace: str
+    managed_certificate_exists: bool
+    certificate_domain_matches_expected: bool | None = None
+    observed_managed_certificate_domains: tuple[str, ...] = ()
+    observed_managed_certificate_status: str | None = None
+    observed_managed_certificate_domain_status: str | None = None
+    dispatch_service_reason_code: str | None = None
+    gcp_credential_source: str | None = None
+    gcp_principal_email: str | None = None
+    gcp_impersonated_service_account_email: str | None = None
+
+
+@dataclass(frozen=True)
 class SEOMigrationGitHubRepositoryEnsureResult:
     repo_owner: str
     repo_name: str
@@ -526,6 +542,28 @@ class SEOMigrationGitHubPublisher:
             dry_run,
         )
         raise NotImplementedError
+
+    def check_managed_certificate_readiness(
+        self,
+        *,
+        repo_name: str,
+        site_id: str | None,
+        preview_hostname: str,
+        kubernetes_namespace: str,
+        managed_gke_config: dict[str, object] | None,
+        gcp_deploy_key: str | None,
+        expected_managed_certificate_name: str | None = None,
+    ) -> SEOMigrationGitHubManagedCertificateReadinessResult | None:
+        del (
+            repo_name,
+            site_id,
+            preview_hostname,
+            kubernetes_namespace,
+            managed_gke_config,
+            gcp_deploy_key,
+            expected_managed_certificate_name,
+        )
+        return None
 
     def adopt_repository(
         self,
@@ -2830,6 +2868,289 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             dns_created=bool(ensure_result.get("dns_created")),
             dns_ttl=_coerce_int(ensure_result.get("dns_ttl")) or normalized_ttl,
             result=_coerce_string(ensure_result.get("result")) or "exists",
+            gcp_credential_source=credential_source,
+            gcp_principal_email=principal_email,
+            gcp_impersonated_service_account_email=impersonated_service_account_email,
+        )
+
+    def check_managed_certificate_readiness(
+        self,
+        *,
+        repo_name: str,
+        site_id: str | None,
+        preview_hostname: str,
+        kubernetes_namespace: str,
+        managed_gke_config: dict[str, object] | None,
+        gcp_deploy_key: str | None,
+        expected_managed_certificate_name: str | None = None,
+    ) -> SEOMigrationGitHubManagedCertificateReadinessResult:
+        normalized_preview_hostname = (_coerce_string(preview_hostname) or "").strip().lower().rstrip(".")
+        if not normalized_preview_hostname:
+            raise SEOMigrationGitHubPublisherError(
+                code=_DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_HOSTNAME_MISSING,
+                safe_message=(
+                    "ManagedCertificate readiness checks require a valid preview hostname before deploy dispatch."
+                ),
+                stage="certificate_readiness",
+            )
+        normalized_namespace = _safe_identifier_fragment(
+            kubernetes_namespace,
+            fallback="site",
+            max_length=63,
+        )
+        managed_certificate_name = _coerce_string(expected_managed_certificate_name)
+        if not managed_certificate_name:
+            managed_certificate_name, _ = derive_site_preview_certificate_name(
+                repo_name=repo_name,
+                site_id=site_id,
+            )
+        if not managed_certificate_name:
+            raise SEOMigrationGitHubPublisherError(
+                code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_FAILED_NOT_VISIBLE,
+                safe_message=(
+                    "ManagedCertificate readiness checks could not derive the expected deterministic certificate name."
+                ),
+                stage="certificate_readiness",
+            )
+        normalized_managed_gke_config = _normalize_managed_gke_config(managed_gke_config)
+        cluster_name = _coerce_string(normalized_managed_gke_config.get(_MANAGED_GKE_CONFIG_CLUSTER_NAME))
+        cluster_location = _coerce_string(normalized_managed_gke_config.get(_MANAGED_GKE_CONFIG_CLUSTER_LOCATION))
+        project_id = _coerce_string(normalized_managed_gke_config.get(_MANAGED_GKE_CONFIG_PROJECT_ID))
+        if not cluster_name:
+            raise SEOMigrationGitHubPublisherError(
+                code=_DEPLOY_DISPATCH_SERVICE_REASON_MISSING_CLUSTER_NAME,
+                safe_message="Managed deploy target is missing required GKE cluster name configuration.",
+                stage="certificate_readiness",
+            )
+        if not cluster_location:
+            raise SEOMigrationGitHubPublisherError(
+                code=_DEPLOY_DISPATCH_SERVICE_REASON_MISSING_CLUSTER_LOCATION,
+                safe_message="Managed deploy target is missing required GKE cluster location configuration.",
+                stage="certificate_readiness",
+            )
+        if not project_id:
+            raise SEOMigrationGitHubPublisherError(
+                code=_DEPLOY_DISPATCH_SERVICE_REASON_MISSING_GCP_PROJECT_ID,
+                safe_message="Managed deploy target is missing required GKE project id configuration.",
+                stage="certificate_readiness",
+            )
+
+        impersonated_service_account_email: str | None = None
+        if self.managed_deploy_service_account_email:
+            impersonated_service_account_email = _validate_managed_deploy_impersonation_service_account_email(
+                self.managed_deploy_service_account_email,
+                stage="certificate_readiness",
+            )
+        credential_source, principal_email = _resolve_google_credential_principal(
+            credentials_json=gcp_deploy_key,
+            timeout_seconds=self.timeout_seconds,
+        )
+        if impersonated_service_account_email:
+            credential_source = _GCP_CREDENTIAL_SOURCE_MANAGED_DEPLOY_IMPERSONATION
+
+        access_token = _resolve_google_access_token_for_managed_deploy_operations(
+            credentials_json=_coerce_string(gcp_deploy_key),
+            impersonated_service_account_email=impersonated_service_account_email,
+            missing_code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_FAILED_NOT_VISIBLE,
+            missing_safe_message=(
+                "ManagedCertificate readiness check could not resolve control-plane credentials."
+            ),
+            invalid_code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_FAILED_NOT_VISIBLE,
+            invalid_safe_message=(
+                "ManagedCertificate readiness check could not resolve control-plane credentials."
+            ),
+            integration_code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_FAILED_NOT_VISIBLE,
+            integration_safe_message=(
+                "ManagedCertificate readiness check could not resolve control-plane credentials."
+            ),
+            stage="certificate_readiness",
+        )
+        encoded_project = urllib.parse.quote(project_id, safe="")
+        encoded_location = urllib.parse.quote(cluster_location, safe="")
+        encoded_cluster = urllib.parse.quote(cluster_name, safe="")
+        cluster_payload = _request_google_json(
+            method="GET",
+            url=(
+                "https://container.googleapis.com/v1/projects/"
+                f"{encoded_project}/locations/{encoded_location}/clusters/{encoded_cluster}"
+            ),
+            access_token=access_token,
+            timeout_seconds=self.timeout_seconds,
+            error_stage="certificate_readiness",
+            code_on_failure=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_FAILED_NOT_VISIBLE,
+            safe_message_on_failure=(
+                "ManagedCertificate readiness check could not resolve target GKE cluster metadata."
+            ),
+            safe_message_on_timeout="ManagedCertificate readiness check timed out while loading cluster metadata.",
+        )
+        if not isinstance(cluster_payload, dict):
+            raise SEOMigrationGitHubPublisherError(
+                code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_FAILED_NOT_VISIBLE,
+                safe_message="ManagedCertificate readiness check could not resolve target GKE cluster metadata.",
+                stage="certificate_readiness",
+            )
+        cluster_endpoint = _coerce_string(cluster_payload.get("endpoint"))
+        if not cluster_endpoint:
+            raise SEOMigrationGitHubPublisherError(
+                code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_FAILED_NOT_VISIBLE,
+                safe_message="ManagedCertificate readiness check could not resolve target GKE cluster endpoint.",
+                stage="certificate_readiness",
+            )
+        master_auth = cluster_payload.get("masterAuth")
+        cluster_ca_certificate = ""
+        if isinstance(master_auth, dict):
+            cluster_ca_certificate = _coerce_string(master_auth.get("clusterCaCertificate"))
+        if not cluster_ca_certificate:
+            raise SEOMigrationGitHubPublisherError(
+                code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_FAILED_NOT_VISIBLE,
+                safe_message="ManagedCertificate readiness check could not resolve target GKE cluster CA bundle.",
+                stage="certificate_readiness",
+            )
+        try:
+            decoded_cluster_ca = base64.b64decode(cluster_ca_certificate.encode("ascii")).decode(
+                "utf-8",
+                errors="ignore",
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            raise SEOMigrationGitHubPublisherError(
+                code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_FAILED_NOT_VISIBLE,
+                safe_message="ManagedCertificate readiness check could not decode target GKE cluster CA bundle.",
+                stage="certificate_readiness",
+            ) from exc
+        ssl_context = ssl.create_default_context(cadata=decoded_cluster_ca)
+        certificate_path = (
+            "/apis/networking.gke.io/v1/namespaces/"
+            f"{urllib.parse.quote(normalized_namespace, safe='')}/managedcertificates/"
+            f"{urllib.parse.quote(managed_certificate_name, safe='')}"
+        )
+        managed_certificate_payload = _request_kubernetes_json(
+            method="GET",
+            endpoint=cluster_endpoint,
+            path=certificate_path,
+            access_token=access_token,
+            ssl_context=ssl_context,
+            timeout_seconds=self.timeout_seconds,
+            allow_404=True,
+            error_stage="certificate_readiness",
+        )
+        if not isinstance(managed_certificate_payload, dict):
+            _emit_structured_publisher_log(
+                payload={
+                    "event": "seo_migration_managed_certificate_readiness_probe",
+                    "repo_name": repo_name,
+                    "preview_hostname": normalized_preview_hostname,
+                    "kubernetes_namespace": normalized_namespace,
+                    "managed_certificate_name": managed_certificate_name,
+                    "managed_certificate_exists": False,
+                    "dispatch_service_reason_code": _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_FAILED_NOT_VISIBLE,
+                    "gcp_credential_source": credential_source,
+                    "gcp_principal_email": principal_email,
+                    "gcp_impersonated_service_account_email": impersonated_service_account_email,
+                },
+                fallback_message="seo_migration_managed_certificate_readiness_probe",
+                level=logging.INFO,
+            )
+            return SEOMigrationGitHubManagedCertificateReadinessResult(
+                managed_certificate_name=managed_certificate_name,
+                preview_hostname=normalized_preview_hostname,
+                kubernetes_namespace=normalized_namespace,
+                managed_certificate_exists=False,
+                certificate_domain_matches_expected=None,
+                observed_managed_certificate_domains=(),
+                observed_managed_certificate_status=None,
+                observed_managed_certificate_domain_status=None,
+                dispatch_service_reason_code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_FAILED_NOT_VISIBLE,
+                gcp_credential_source=credential_source,
+                gcp_principal_email=principal_email,
+                gcp_impersonated_service_account_email=impersonated_service_account_email,
+            )
+
+        spec_payload = managed_certificate_payload.get("spec")
+        observed_domains: list[str] = []
+        if isinstance(spec_payload, dict):
+            domains_payload = spec_payload.get("domains")
+            if isinstance(domains_payload, list):
+                for raw_domain in domains_payload:
+                    normalized_domain = (_coerce_string(raw_domain) or "").strip().lower().rstrip(".")
+                    if normalized_domain:
+                        observed_domains.append(normalized_domain)
+        observed_domains = _dedupe_strings(observed_domains)
+        certificate_domain_matches_expected = normalized_preview_hostname in observed_domains if observed_domains else False
+        status_payload = managed_certificate_payload.get("status")
+        observed_certificate_status = ""
+        observed_domain_status = ""
+        if isinstance(status_payload, dict):
+            observed_certificate_status = _coerce_string(status_payload.get("certificateStatus"))
+            domain_status_payload = status_payload.get("domainStatus")
+            if isinstance(domain_status_payload, list):
+                fallback_domain_status = ""
+                for item in domain_status_payload:
+                    if not isinstance(item, dict):
+                        continue
+                    candidate_status = _coerce_string(item.get("status"))
+                    candidate_domain = (_coerce_string(item.get("domain")) or "").strip().lower().rstrip(".")
+                    if candidate_status and not fallback_domain_status:
+                        fallback_domain_status = candidate_status
+                    if candidate_status and candidate_domain == normalized_preview_hostname:
+                        observed_domain_status = candidate_status
+                        break
+                if not observed_domain_status:
+                    observed_domain_status = fallback_domain_status
+            elif isinstance(domain_status_payload, str):
+                observed_domain_status = _coerce_string(domain_status_payload)
+        normalized_certificate_status = observed_certificate_status.strip().upper()
+        normalized_domain_status = observed_domain_status.strip().upper()
+        dispatch_service_reason_code: str | None = None
+        if certificate_domain_matches_expected is False:
+            dispatch_service_reason_code = _DEPLOY_DISPATCH_SERVICE_REASON_CERTIFICATE_DOMAIN_MISMATCH
+        elif "FAILEDNOTVISIBLE" in {normalized_certificate_status, normalized_domain_status} or "FAILED_NOT_VISIBLE" in {
+            normalized_certificate_status,
+            normalized_domain_status,
+        }:
+            dispatch_service_reason_code = _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_FAILED_NOT_VISIBLE
+        elif normalized_certificate_status == "PROVISIONING" or normalized_domain_status == "PROVISIONING":
+            dispatch_service_reason_code = _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_PROVISIONING
+        elif normalized_certificate_status in {"FAILED", "ERROR"} or normalized_domain_status in {"FAILED", "ERROR"}:
+            dispatch_service_reason_code = _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_FAILED_NOT_VISIBLE
+        elif normalized_certificate_status in {"ACTIVE", ""} and normalized_domain_status in {"ACTIVE", ""}:
+            dispatch_service_reason_code = None
+        else:
+            dispatch_service_reason_code = _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_PROVISIONING
+
+        _emit_structured_publisher_log(
+            payload={
+                "event": "seo_migration_managed_certificate_readiness_probe",
+                "repo_name": repo_name,
+                "preview_hostname": normalized_preview_hostname,
+                "kubernetes_namespace": normalized_namespace,
+                "managed_certificate_name": managed_certificate_name,
+                "managed_certificate_exists": True,
+                "certificate_domain_matches_expected": certificate_domain_matches_expected,
+                "observed_managed_certificate_domains": list(observed_domains),
+                "observed_managed_certificate_status": observed_certificate_status or None,
+                "observed_managed_certificate_domain_status": observed_domain_status or None,
+                "dispatch_service_reason_code": dispatch_service_reason_code,
+                "gcp_credential_source": credential_source,
+                "gcp_principal_email": principal_email,
+                "gcp_impersonated_service_account_email": impersonated_service_account_email,
+            },
+            fallback_message="seo_migration_managed_certificate_readiness_probe",
+            level=(
+                logging.INFO
+                if dispatch_service_reason_code in {None, _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_PROVISIONING}
+                else logging.WARNING
+            ),
+        )
+        return SEOMigrationGitHubManagedCertificateReadinessResult(
+            managed_certificate_name=managed_certificate_name,
+            preview_hostname=normalized_preview_hostname,
+            kubernetes_namespace=normalized_namespace,
+            managed_certificate_exists=True,
+            certificate_domain_matches_expected=certificate_domain_matches_expected,
+            observed_managed_certificate_domains=tuple(observed_domains),
+            observed_managed_certificate_status=observed_certificate_status or None,
+            observed_managed_certificate_domain_status=observed_domain_status or None,
+            dispatch_service_reason_code=dispatch_service_reason_code,
             gcp_credential_source=credential_source,
             gcp_principal_email=principal_email,
             gcp_impersonated_service_account_email=impersonated_service_account_email,

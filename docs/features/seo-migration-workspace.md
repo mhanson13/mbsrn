@@ -2450,9 +2450,14 @@ TLS/certificate readiness is exposed separately from runtime rollout status:
   - `certificate_active`
   - `certificate_domain_mismatch`
   - `certificate_stale_or_legacy`
+- control-plane readiness probes the deterministic ManagedCertificate name before dispatch (`expected_managed_certificate_name`); workflow reconcile/apply remains idempotent for that same name across retries.
 - `runtime_ready_tls_pending=true` means ingress/load-balancer/runtime evidence exists, but cert/HTTPS are still converging.
 - `certificate_gate_required_before_deploy=true` means this endpoint mode requires ACTIVE certificate before dispatch.
 - `certificate_gate_blocked=true` indicates deploy dispatch is intentionally blocked on certificate readiness.
+- HTTPS-required operator copy:
+  - `Certificate exists but is still provisioning. Deploy is held until the certificate is ACTIVE.`
+- preview-tolerant operator copy:
+  - `Runtime can deploy while HTTPS certificate provisioning continues.`
 - `https_ready=true` is only emitted when HTTPS probe and certificate readiness are both satisfied.
 
 Resolve-live-url failure diagnostics are evidence-first:
@@ -2505,8 +2510,9 @@ Blocking reason-code examples:
 - TLS/certificate:
   - `managed_certificate_provisioning` (explicit wait-state classification when certificate/domain status is still `PROVISIONING`)
   - `tls_certificate_provisioning`
-  - `managed_certificate_failed_not_visible` (usually DNS/LB visibility mismatch)
+  - `managed_certificate_failed_not_visible` (missing certificate object or visibility mismatch for the expected deterministic name; distinct from provisioning wait-state)
   - `managed_certificate_metadata_unavailable` (advisory: cluster metadata read failed/empty; if ingress annotation, DNS, and HTTPS cert identity checks pass, this alone does not block success)
+  - `pre_shared_cert_metadata_mismatch` is advisory controller metadata only and does not override desired-state ManagedCertificate identity checks.
   - `managed_certificate_domain_drift_repaired` (advisory: expected ManagedCertificate name had stale `spec.domains`; workflow attempted safe delete/recreate repair)
   - `managed_certificate_domain_drift_repair_failed` (blocking: domain drift persisted or repair could not converge)
   - `tls_certificate_bound_to_wrong_site`

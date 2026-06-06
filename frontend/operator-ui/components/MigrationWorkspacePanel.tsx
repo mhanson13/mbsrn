@@ -506,7 +506,7 @@ function toDeployBlockerMessage(blockerCodes: string[]): string | null {
     return "Deployment target configuration is missing or disabled.";
   }
   if (blockerCodes.includes("deploy_certificate_readiness_pending")) {
-    return "Certificate is still provisioning for this hostname. Wait for ACTIVE before HTTPS-ready deploy.";
+    return "Certificate exists but is still provisioning. Deploy is held until the certificate is ACTIVE.";
   }
   return null;
 }
@@ -1847,7 +1847,7 @@ function toManagedGkeConfigGuidance(value: string | null): string | null {
     return "Google Cloud static IP resource was found, but the numeric address value was still missing after bounded retries/list fallback. Wait and retry deploy after address convergence.";
   }
   if (normalized === "tls_certificate_provisioning" || normalized === "managed_certificate_provisioning") {
-    return "ManagedCertificate is still provisioning for the preview hostname. Wait for ACTIVE status before HTTPS-ready deploy can continue.";
+    return "Certificate exists but is still provisioning. Deploy is held until the certificate is ACTIVE.";
   }
   if (normalized === "generated_workflow_requires_missing_gcp_deploy_key") {
     return "Deploy workflow run failed because required target-repo deploy secret GCP_DEPLOY_KEY was missing. Provision deploy auth prerequisites and rerun deploy.";
@@ -6183,21 +6183,20 @@ export function MigrationWorkspacePanel({
         extractHostnameFromUrl(destinationSummary.deployResolvedLiveUrl) ||
         extractHostnameFromUrl(currentLiveUrl);
       const parts: string[] = [
-        runtimeReadyTlsPending === true
-          ? (
-            hostname
-              ? `Runtime reached the load balancer, but HTTPS is still pending because ManagedCertificate is provisioning for ${hostname}.`
-              : "Runtime reached the load balancer, but HTTPS is still pending because ManagedCertificate is provisioning for the preview hostname."
-          )
-          : (
-            hostname
-              ? `Certificate for ${hostname} is still provisioning.`
-              : "Certificate for the preview hostname is still provisioning."
-          ),
+        certificateGateRequiredBeforeDeploy === true
+          ? "Certificate exists but is still provisioning. Deploy is held until the certificate is ACTIVE."
+          : "Runtime can deploy while HTTPS certificate provisioning continues.",
         certificateGateRequiredBeforeDeploy === true
           ? "This deploy mode requires an ACTIVE certificate before HTTPS-ready deploy can continue."
-          : "Runtime is deployed; wait for ManagedCertificate to become ACTIVE, then refresh readiness.",
+          : "Runtime can deploy while HTTPS certificate provisioning continues.",
       ];
+      if (runtimeReadyTlsPending === true) {
+        parts.push(
+          hostname
+            ? `Runtime reached the load balancer while certificate issuance continues for ${hostname}.`
+            : "Runtime reached the load balancer while certificate issuance continues for the preview hostname.",
+        );
+      }
       if (certificateReadinessState) {
         parts.push(`Certificate readiness state: ${certificateReadinessState}.`);
       }

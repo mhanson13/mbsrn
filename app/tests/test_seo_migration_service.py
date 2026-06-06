@@ -30,6 +30,7 @@ from app.integrations.seo_migration_github_publisher import (
     SEOMigrationGitHubDeployTarget,
     SEOMigrationGitHubImagePullSecretProvisionResult,
     SEOMigrationGitHubLiveRuntimeProbeResult,
+    SEOMigrationGitHubManagedCertificateReadinessResult,
     SEOMigrationGitHubManagedSiteDnsEnsureResult,
     SEOMigrationGitHubManagedSiteStaticIPEnsureResult,
     SEOMigrationGitHubPublishFile,
@@ -42,6 +43,7 @@ from app.integrations.seo_migration_github_publisher import (
     SEOMigrationGitHubRepositoryEnsureResult,
     SEOMigrationGitHubTargetReadinessResult,
     SEOMigrationGitHubWorkflowProvisionResult,
+    derive_site_preview_certificate_name,
     derive_site_preview_static_ip_name,
     resolve_managed_preview_endpoint_configuration,
 )
@@ -293,6 +295,20 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         ensure_dns_credential_source: str | None = None,
         ensure_dns_principal_email: str | None = None,
         ensure_dns_impersonated_service_account_email: str | None = None,
+        fail_managed_certificate_readiness: bool = False,
+        managed_certificate_readiness_error_code: str | None = None,
+        managed_certificate_readiness_error_message: str | None = None,
+        managed_certificate_readiness_error_stage: str | None = None,
+        managed_certificate_readiness_name: str | None = None,
+        managed_certificate_readiness_exists: bool = True,
+        managed_certificate_readiness_domain_matches_expected: bool | None = True,
+        managed_certificate_readiness_domains: tuple[str, ...] | list[str] | None = None,
+        managed_certificate_readiness_status: str | None = "ACTIVE",
+        managed_certificate_readiness_domain_status: str | None = "ACTIVE",
+        managed_certificate_readiness_reason_code: str | None = None,
+        managed_certificate_readiness_credential_source: str | None = None,
+        managed_certificate_readiness_principal_email: str | None = None,
+        managed_certificate_readiness_impersonated_service_account_email: str | None = None,
     ) -> None:
         self.existing_repository = existing_repository
         self.ensure_repository_error_code = ensure_repository_error_code
@@ -427,6 +443,24 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         self.ensure_dns_credential_source = ensure_dns_credential_source
         self.ensure_dns_principal_email = ensure_dns_principal_email
         self.ensure_dns_impersonated_service_account_email = ensure_dns_impersonated_service_account_email
+        self.fail_managed_certificate_readiness = fail_managed_certificate_readiness
+        self.managed_certificate_readiness_error_code = managed_certificate_readiness_error_code
+        self.managed_certificate_readiness_error_message = managed_certificate_readiness_error_message
+        self.managed_certificate_readiness_error_stage = managed_certificate_readiness_error_stage
+        self.managed_certificate_readiness_name = managed_certificate_readiness_name
+        self.managed_certificate_readiness_exists = managed_certificate_readiness_exists
+        self.managed_certificate_readiness_domain_matches_expected = (
+            managed_certificate_readiness_domain_matches_expected
+        )
+        self.managed_certificate_readiness_domains = tuple(managed_certificate_readiness_domains or ())
+        self.managed_certificate_readiness_status = managed_certificate_readiness_status
+        self.managed_certificate_readiness_domain_status = managed_certificate_readiness_domain_status
+        self.managed_certificate_readiness_reason_code = managed_certificate_readiness_reason_code
+        self.managed_certificate_readiness_credential_source = managed_certificate_readiness_credential_source
+        self.managed_certificate_readiness_principal_email = managed_certificate_readiness_principal_email
+        self.managed_certificate_readiness_impersonated_service_account_email = (
+            managed_certificate_readiness_impersonated_service_account_email
+        )
         self.publish_calls: list[
             tuple[SEOMigrationGitHubPublishTarget, list[SEOMigrationGitHubPublishFile], str, bool]
         ] = []
@@ -450,6 +484,17 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
             ]
         ] = []
         self.ensure_managed_site_dns_calls: list[tuple[str, str, str, str, str | None, int, bool]] = []
+        self.ensure_managed_certificate_readiness_calls: list[
+            tuple[
+                str,
+                str | None,
+                str,
+                str,
+                dict[str, object] | None,
+                str | None,
+                str | None,
+            ]
+        ] = []
         self.deploy_call_order: list[str] = []
         self.refresh_calls: list[tuple[SEOMigrationGitHubDeployTarget, int, str | None]] = []
         self.current_live_probe_calls: list[str] = []
@@ -911,6 +956,61 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
             gcp_credential_source=self.ensure_dns_credential_source,
             gcp_principal_email=self.ensure_dns_principal_email,
             gcp_impersonated_service_account_email=self.ensure_dns_impersonated_service_account_email,
+        )
+
+    def check_managed_certificate_readiness(
+        self,
+        *,
+        repo_name: str,
+        site_id: str | None,
+        preview_hostname: str,
+        kubernetes_namespace: str,
+        managed_gke_config: dict[str, object] | None,
+        gcp_deploy_key: str | None,
+        expected_managed_certificate_name: str | None = None,
+    ) -> SEOMigrationGitHubManagedCertificateReadinessResult:
+        self.ensure_managed_certificate_readiness_calls.append(
+            (
+                repo_name,
+                site_id,
+                preview_hostname,
+                kubernetes_namespace,
+                dict(managed_gke_config or {}) or None,
+                gcp_deploy_key,
+                expected_managed_certificate_name,
+            )
+        )
+        self.deploy_call_order.append("check_managed_certificate_readiness")
+        if self.fail_managed_certificate_readiness or self.managed_certificate_readiness_error_code:
+            raise SEOMigrationGitHubPublisherError(
+                code=self.managed_certificate_readiness_error_code or "managed_certificate_failed_not_visible",
+                safe_message=(
+                    self.managed_certificate_readiness_error_message
+                    or "Simulated managed certificate readiness check failure."
+                ),
+                stage=self.managed_certificate_readiness_error_stage or "certificate_readiness",
+            )
+        certificate_name = self.managed_certificate_readiness_name or expected_managed_certificate_name
+        if not certificate_name:
+            certificate_name, _ = derive_site_preview_certificate_name(repo_name=repo_name, site_id=site_id)
+        observed_domains = self.managed_certificate_readiness_domains
+        if not observed_domains and preview_hostname:
+            observed_domains = (preview_hostname,)
+        return SEOMigrationGitHubManagedCertificateReadinessResult(
+            managed_certificate_name=certificate_name or "site-web-preview-cert",
+            preview_hostname=preview_hostname,
+            kubernetes_namespace=kubernetes_namespace,
+            managed_certificate_exists=bool(self.managed_certificate_readiness_exists),
+            certificate_domain_matches_expected=self.managed_certificate_readiness_domain_matches_expected,
+            observed_managed_certificate_domains=tuple(observed_domains),
+            observed_managed_certificate_status=self.managed_certificate_readiness_status,
+            observed_managed_certificate_domain_status=self.managed_certificate_readiness_domain_status,
+            dispatch_service_reason_code=self.managed_certificate_readiness_reason_code,
+            gcp_credential_source=self.managed_certificate_readiness_credential_source,
+            gcp_principal_email=self.managed_certificate_readiness_principal_email,
+            gcp_impersonated_service_account_email=(
+                self.managed_certificate_readiness_impersonated_service_account_email
+            ),
         )
 
     def refresh_deploy_run_status(
@@ -6404,7 +6504,12 @@ def test_deploy_ensures_managed_site_dns_after_static_ip_and_before_dispatch(db_
     assert publisher.ensure_managed_site_static_ip_calls
     assert publisher.ensure_managed_site_dns_calls
     assert publisher.deploy_calls
-    assert publisher.deploy_call_order[:3] == ["ensure_static_ip", "ensure_dns", "dispatch_deploy"]
+    assert publisher.deploy_call_order[:4] == [
+        "ensure_static_ip",
+        "ensure_dns",
+        "check_managed_certificate_readiness",
+        "dispatch_deploy",
+    ]
     dns_call = publisher.ensure_managed_site_dns_calls[-1]
     assert dns_call[0].endswith(".site.mbsrn.com")
     assert dns_call[1] == "34.160.224.212"
@@ -6513,6 +6618,318 @@ def test_deploy_refreshes_static_ip_address_in_same_request_before_dns_ensure(db
     assert deploy_result.result.get("expected_static_ip_address") == "34.160.224.212"
     assert deploy_result.result.get("expected_dns_ip") == "34.160.224.212"
     assert deploy_result.result.get("dns_propagation_result") == "observed_expected_ip"
+
+
+def test_deploy_blocks_before_dispatch_when_https_required_certificate_is_provisioning(
+    db_session,
+    monkeypatch,
+) -> None:
+    publisher = _RecordingGitHubPublisher(
+        managed_certificate_readiness_reason_code="tls_certificate_provisioning",
+        managed_certificate_readiness_status="PROVISIONING",
+        managed_certificate_readiness_domain_status="PROVISIONING",
+        managed_certificate_readiness_credential_source="service_account_json",
+        managed_certificate_readiness_principal_email="mbsrn-api@mbsrn-prod.iam.gserviceaccount.com",
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    artifact = _prepare_published_artifact(service, business_id=business_id, site_id=site_id)
+    monkeypatch.setattr(seo_migration_module, "_resolve_hostname_ipv4_addresses", lambda _hostname: ["34.149.170.250"])
+
+    with pytest.raises(SEOMigrationValidationError, match="still provisioning"):
+        service.deploy_artifact_version(
+            business_id=business_id,
+            site_id=site_id,
+            artifact_version_id=artifact.id,
+            dry_run=False,
+            principal_id="principal-1",
+        )
+
+    assert publisher.ensure_managed_certificate_readiness_calls
+    assert publisher.deploy_calls == []
+    assert publisher.deploy_call_order[:3] == [
+        "ensure_static_ip",
+        "ensure_dns",
+        "check_managed_certificate_readiness",
+    ]
+    workspace = service.get_workspace(business_id=business_id, site_id=site_id)
+    latest = (workspace.deploy_history_json or [])[-1]
+    assert latest.get("failure_reason") == "tls_certificate_provisioning"
+    assert latest.get("dispatch_service_reason_code") == "tls_certificate_provisioning"
+    assert latest.get("dispatch_result_stage") == "certificate_readiness"
+
+    summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
+    deploy_readiness = summary.deploy_readiness or {}
+    assert deploy_readiness.get("certificate_readiness_state") == "certificate_provisioning_pending"
+    assert deploy_readiness.get("certificate_gate_required_before_deploy") is True
+    assert deploy_readiness.get("certificate_gate_blocked") is True
+    assert "deploy_certificate_readiness_pending" in (deploy_readiness.get("blocker_codes") or [])
+    assert "deploy is held until the certificate is active" in " ".join(
+        str(item).lower() for item in (deploy_readiness.get("reasons") or [])
+    )
+
+
+def test_deploy_allows_dispatch_when_managed_certificate_is_active(db_session, monkeypatch) -> None:
+    publisher = _RecordingGitHubPublisher(
+        managed_certificate_readiness_reason_code=None,
+        managed_certificate_readiness_status="ACTIVE",
+        managed_certificate_readiness_domain_status="ACTIVE",
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    artifact = _prepare_published_artifact(service, business_id=business_id, site_id=site_id)
+    monkeypatch.setattr(seo_migration_module, "_resolve_hostname_ipv4_addresses", lambda _hostname: ["34.149.170.250"])
+
+    deploy_result = service.deploy_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        principal_id="principal-1",
+    )
+
+    assert publisher.ensure_managed_certificate_readiness_calls
+    assert publisher.deploy_calls
+    assert publisher.deploy_call_order[:4] == [
+        "ensure_static_ip",
+        "ensure_dns",
+        "check_managed_certificate_readiness",
+        "dispatch_deploy",
+    ]
+    check_call = publisher.ensure_managed_certificate_readiness_calls[-1]
+    derived_name, _ = derive_site_preview_certificate_name(repo_name=check_call[0], site_id=check_call[1])
+    assert check_call[6] == derived_name
+    assert deploy_result.result.get("expected_managed_certificate_name") == derived_name
+
+
+def test_deploy_blocks_before_dispatch_when_managed_certificate_resource_is_missing(db_session, monkeypatch) -> None:
+    publisher = _RecordingGitHubPublisher(
+        managed_certificate_readiness_exists=False,
+        managed_certificate_readiness_domain_matches_expected=None,
+        managed_certificate_readiness_domains=(),
+        managed_certificate_readiness_status=None,
+        managed_certificate_readiness_domain_status=None,
+        managed_certificate_readiness_reason_code="managed_certificate_failed_not_visible",
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    artifact = _prepare_published_artifact(service, business_id=business_id, site_id=site_id)
+    monkeypatch.setattr(seo_migration_module, "_resolve_hostname_ipv4_addresses", lambda _hostname: ["34.149.170.250"])
+
+    with pytest.raises(SEOMigrationValidationError, match="not yet visible"):
+        service.deploy_artifact_version(
+            business_id=business_id,
+            site_id=site_id,
+            artifact_version_id=artifact.id,
+            dry_run=False,
+            principal_id="principal-1",
+        )
+
+    assert publisher.deploy_calls == []
+    workspace = service.get_workspace(business_id=business_id, site_id=site_id)
+    latest = (workspace.deploy_history_json or [])[-1]
+    assert latest.get("failure_reason") == "managed_certificate_failed_not_visible"
+    assert latest.get("dispatch_result_stage") == "certificate_readiness"
+
+    summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
+    deploy_readiness = summary.deploy_readiness or {}
+    assert deploy_readiness.get("certificate_readiness_state") == "certificate_resource_missing"
+    assert deploy_readiness.get("certificate_gate_blocked") is True
+    assert "deploy_certificate_readiness_pending" in (deploy_readiness.get("blocker_codes") or [])
+
+
+def test_deploy_blocks_before_dispatch_on_managed_certificate_domain_mismatch(db_session, monkeypatch) -> None:
+    publisher = _RecordingGitHubPublisher(
+        managed_certificate_readiness_exists=True,
+        managed_certificate_readiness_domain_matches_expected=False,
+        managed_certificate_readiness_domains=("wrong.site.mbsrn.com",),
+        managed_certificate_readiness_status="ACTIVE",
+        managed_certificate_readiness_domain_status="ACTIVE",
+        managed_certificate_readiness_reason_code="certificate_domain_mismatch",
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    artifact = _prepare_published_artifact(service, business_id=business_id, site_id=site_id)
+    monkeypatch.setattr(seo_migration_module, "_resolve_hostname_ipv4_addresses", lambda _hostname: ["34.149.170.250"])
+
+    with pytest.raises(SEOMigrationValidationError, match="does not match"):
+        service.deploy_artifact_version(
+            business_id=business_id,
+            site_id=site_id,
+            artifact_version_id=artifact.id,
+            dry_run=False,
+            principal_id="principal-1",
+        )
+
+    assert publisher.deploy_calls == []
+    workspace = service.get_workspace(business_id=business_id, site_id=site_id)
+    latest = (workspace.deploy_history_json or [])[-1]
+    assert latest.get("failure_reason") == "certificate_domain_mismatch"
+    assert latest.get("dispatch_result_stage") == "certificate_readiness"
+
+    summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
+    deploy_readiness = summary.deploy_readiness or {}
+    assert deploy_readiness.get("certificate_readiness_state") == "certificate_domain_mismatch"
+    assert deploy_readiness.get("certificate_gate_blocked") is True
+    assert "deploy_certificate_readiness_pending" in (deploy_readiness.get("blocker_codes") or [])
+
+
+def test_deploy_in_preview_shared_mode_allows_dispatch_while_certificate_provisions(db_session, monkeypatch) -> None:
+    publisher = _RecordingGitHubPublisher(
+        managed_certificate_readiness_reason_code="tls_certificate_provisioning",
+        managed_certificate_readiness_status="PROVISIONING",
+        managed_certificate_readiness_domain_status="PROVISIONING",
+        deploy_workflow_output={
+            "deploy_https_ready": "false",
+            "runtime_ready_tls_pending": "true",
+            "tls_certificate_status": "PROVISIONING",
+            "tls_domain_status": "PROVISIONING",
+            "observed_managed_certificate_status": "PROVISIONING",
+            "observed_managed_certificate_domain_status": "PROVISIONING",
+            "managed_certificate_exists": "true",
+            "managed_certificate_status": "PROVISIONING",
+            "host_reachable": "true",
+            "host_reachability_scheme": "https",
+        },
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    config = service.github_publish_config_service.get()
+    namespace_defaults = dict(config.namespace_isolation_defaults_json or {})
+    namespace_defaults["managed_preview_endpoint"] = {
+        "mode": "preview_shared_gateway",
+        "shared_preview_static_ip_name": "site-preview-shared-ip",
+    }
+    config.namespace_isolation_defaults_json = namespace_defaults
+    service.github_publish_config_service.repository.save(config)
+    service.session.commit()
+    artifact = _prepare_published_artifact(service, business_id=business_id, site_id=site_id)
+    monkeypatch.setattr(seo_migration_module, "_resolve_hostname_ipv4_addresses", lambda _hostname: ["34.149.170.250"])
+
+    deploy_result = service.deploy_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        principal_id="principal-1",
+    )
+
+    assert publisher.deploy_calls
+    assert deploy_result.result.get("runtime_ready_tls_pending") is True
+    summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
+    deploy_readiness = summary.deploy_readiness or {}
+    assert deploy_readiness.get("certificate_readiness_state") == "certificate_provisioning_pending"
+    assert deploy_readiness.get("runtime_ready_tls_pending") is True
+    assert deploy_readiness.get("certificate_gate_required_before_deploy") is False
+    assert deploy_readiness.get("certificate_gate_blocked") is False
+
+
+def test_deploy_replace_runtime_with_provisioning_certificate_is_not_classified_as_runtime_replace_failure(
+    db_session,
+    monkeypatch,
+) -> None:
+    publisher = _RecordingGitHubPublisher(
+        managed_certificate_readiness_reason_code="tls_certificate_provisioning",
+        managed_certificate_readiness_status="PROVISIONING",
+        managed_certificate_readiness_domain_status="PROVISIONING",
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    artifact = _prepare_published_artifact(service, business_id=business_id, site_id=site_id)
+    monkeypatch.setattr(seo_migration_module, "_resolve_hostname_ipv4_addresses", lambda _hostname: ["34.149.170.250"])
+
+    with pytest.raises(SEOMigrationValidationError):
+        service.deploy_artifact_version(
+            business_id=business_id,
+            site_id=site_id,
+            artifact_version_id=artifact.id,
+            dry_run=False,
+            replace_existing_runtime=True,
+            principal_id="principal-1",
+        )
+
+    workspace = service.get_workspace(business_id=business_id, site_id=site_id)
+    latest = (workspace.deploy_history_json or [])[-1]
+    assert latest.get("failure_reason") == "tls_certificate_provisioning"
+    assert latest.get("failure_reason") != "managed_site_runtime_replace_failed"
+
+
+def test_deploy_uses_stable_managed_certificate_name_across_attempts(db_session, monkeypatch) -> None:
+    publisher = _RecordingGitHubPublisher(
+        managed_certificate_readiness_reason_code=None,
+        managed_certificate_readiness_status="ACTIVE",
+        managed_certificate_readiness_domain_status="ACTIVE",
+        deploy_workflow_run_id=910500,
+        deploy_workflow_run_status="completed",
+        deploy_workflow_run_conclusion="success",
+        deploy_workflow_output={
+            "deploy_https_ready": "true",
+            "https_ready": "true",
+            "tls_certificate_status": "ACTIVE",
+            "tls_domain_status": "ACTIVE",
+            "managed_certificate_exists": "true",
+            "managed_certificate_status": "ACTIVE",
+        },
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    artifact = _prepare_published_artifact(service, business_id=business_id, site_id=site_id)
+    monkeypatch.setattr(seo_migration_module, "_resolve_hostname_ipv4_addresses", lambda _hostname: ["34.149.170.250"])
+
+    service.deploy_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        principal_id="principal-1",
+    )
+    service.deploy_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        principal_id="principal-1",
+    )
+
+    calls = publisher.ensure_managed_certificate_readiness_calls
+    assert len(calls) >= 2
+    expected_names = [str(item[6]) for item in calls if item[6]]
+    assert expected_names
+    assert len(set(expected_names)) == 1
+    derived_name, _ = derive_site_preview_certificate_name(repo_name=calls[0][0], site_id=calls[0][1])
+    assert expected_names[0] == derived_name
+    workspace = service.get_workspace(business_id=business_id, site_id=site_id)
+    deploy_entries = [item for item in (workspace.deploy_history_json or []) if item.get("status") == "deploy_requested"]
+    assert len(deploy_entries) >= 2
+    assert len({str(item.get("expected_managed_certificate_name")) for item in deploy_entries}) == 1
 
 
 def test_deploy_blocks_before_dns_ensure_when_static_ip_address_missing_after_refresh(db_session, caplog) -> None:
@@ -8253,7 +8670,7 @@ def test_refresh_deploy_status_tls_provisioning_with_static_ip_alignment_maps_to
     assert deploy_readiness.get("certificate_gate_required_before_deploy") is True
     assert deploy_readiness.get("certificate_gate_blocked") is True
     assert deploy_readiness.get("https_ready") is False
-    assert "wait for active before https-ready deploy" in " ".join(
+    assert "deploy is held until the certificate is active" in " ".join(
         str(item).lower() for item in (deploy_readiness.get("reasons") or [])
     )
     assert "reason=managed_certificate_provisioning" in str(deploy_readiness.get("https_probe_error_summary") or "")

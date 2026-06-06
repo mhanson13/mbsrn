@@ -44,6 +44,7 @@ from app.integrations.seo_migration_github_publisher import (
     SEOMigrationGitHubActionsSecretUpsertResult,
     SEOMigrationGitHubDeployTarget,
     SEOMigrationGitHubLiveRuntimeProbeResult,
+    SEOMigrationGitHubManagedCertificateReadinessResult,
     SEOMigrationGitHubManagedSiteDnsEnsureResult,
     SEOMigrationGitHubManagedSiteStaticIPEnsureResult,
     SEOMigrationGitHubRepoAdoptionResult,
@@ -57,6 +58,7 @@ from app.integrations.seo_migration_github_publisher import (
     SEOMigrationGitHubTargetReadinessResult,
     SEOMigrationGitHubWorkflowProvisionResult,
     derive_site_kubernetes_namespace,
+    derive_site_preview_certificate_name,
     derive_site_preview_hostname,
     derive_site_preview_static_ip_name,
     resolve_managed_preview_endpoint_configuration,
@@ -5059,6 +5061,16 @@ class SEOMigrationService:
         dns_propagation_observed_ips: list[str] = []
         dns_propagation_wait_seconds: int | None = None
         dns_propagation_attempts: int | None = None
+        expected_managed_certificate_name: str | None = None
+        managed_certificate_exists: bool | None = None
+        managed_certificate_status: str | None = None
+        observed_managed_certificate_domains: str | None = None
+        observed_managed_certificate_status: str | None = None
+        observed_managed_certificate_domain_status: str | None = None
+        managed_certificate_reconcile_note: str | None = None
+        managed_certificate_gcp_credential_source: str | None = None
+        managed_certificate_gcp_principal_email: str | None = None
+        managed_certificate_gcp_impersonated_service_account_email: str | None = None
         # Keep workflow_dispatch payload contract bounded to explicitly configured deploy inputs.
         # Implicit runtime metadata (site_id/artifact_version/ga_measurement_id/etc.) should not
         # be auto-injected because GitHub rejects undeclared workflow_dispatch inputs.
@@ -5986,6 +5998,9 @@ class SEOMigrationService:
                                 ),
                                 "dns_hostname": expected_dns_hostname,
                                 "dns_expected_ip_present": bool(_normalize_string(expected_dns_ip, max_length=64)),
+                                "managed_certificate_name": expected_managed_certificate_name,
+                                "managed_certificate_exists": managed_certificate_exists,
+                                "managed_certificate_status": managed_certificate_status,
                                 "stage": _normalize_string(stage, max_length=80),
                                 "reason_code": _normalize_string(reason_code, max_length=80),
                                 "deploy_trace_id": deploy_trace_id,
@@ -6588,6 +6603,162 @@ class SEOMigrationService:
                             stage="dns_propagation",
                         )
                     _emit_prerequisite_chain_log(stage="dns_propagation_succeeded")
+                    preview_endpoint_mode_for_dispatch = _normalize_string(
+                        workflow_resolution.get("preview_endpoint_mode"),
+                        max_length=60,
+                    ) or _MANAGED_PREVIEW_ENDPOINT_MODE_DEDICATED_STATIC_IP
+                    uses_shared_preview_gateway_for_dispatch = (
+                        bool(workflow_resolution.get("uses_shared_preview_gateway"))
+                        if isinstance(workflow_resolution.get("uses_shared_preview_gateway"), bool)
+                        else preview_endpoint_mode_for_dispatch == _MANAGED_PREVIEW_ENDPOINT_MODE_SHARED_GATEWAY
+                    )
+                    certificate_pending_allowed_before_dispatch = bool(
+                        preview_endpoint_mode_for_dispatch == _MANAGED_PREVIEW_ENDPOINT_MODE_SHARED_GATEWAY
+                        or uses_shared_preview_gateway_for_dispatch
+                    )
+                    preview_hostname_for_certificate = _normalize_string(expected_dns_hostname, max_length=253) or _normalize_string(
+                        target_readiness.preview_hostname if target_readiness is not None else None,
+                        max_length=253,
+                    ) or _normalize_string(
+                        workflow_resolution.get("preview_hostname"),
+                        max_length=253,
+                    )
+                    if not preview_hostname_for_certificate:
+                        derived_preview_hostname_for_certificate, _ = derive_site_preview_hostname(
+                            repo_name=deploy_target_for_dispatch.repo_name,
+                            site_id=site_id,
+                        )
+                        preview_hostname_for_certificate = _normalize_string(
+                            derived_preview_hostname_for_certificate,
+                            max_length=253,
+                        )
+                    certificate_namespace = _normalize_string(dispatch_namespace, max_length=63)
+                    if not certificate_namespace:
+                        certificate_namespace, _ = derive_site_kubernetes_namespace(
+                            repo_name=deploy_target_for_dispatch.repo_name,
+                            site_id=site_id,
+                        )
+                    expected_managed_certificate_name, _ = derive_site_preview_certificate_name(
+                        repo_name=deploy_target_for_dispatch.repo_name,
+                        site_id=site_id,
+                    )
+                    managed_certificate_reconcile_note = (
+                        "Existing ManagedCertificate resource is being reconciled; no new unique certificate name was generated."
+                    )
+                    _emit_prerequisite_chain_log(stage="managed_certificate_readiness_start")
+                    managed_certificate_readiness: SEOMigrationGitHubManagedCertificateReadinessResult | None = (
+                        self.github_publisher.check_managed_certificate_readiness(
+                            repo_name=deploy_target_for_dispatch.repo_name,
+                            site_id=site_id,
+                            preview_hostname=preview_hostname_for_certificate or "",
+                            kubernetes_namespace=certificate_namespace,
+                            managed_gke_config=managed_gke_config_for_dispatch,
+                            gcp_deploy_key=deploy_secret_value_for_control_plane,
+                            expected_managed_certificate_name=expected_managed_certificate_name,
+                        )
+                    )
+                    if managed_certificate_readiness is not None:
+                        expected_managed_certificate_name = _normalize_string(
+                            managed_certificate_readiness.managed_certificate_name,
+                            max_length=63,
+                        ) or expected_managed_certificate_name
+                        managed_certificate_exists = bool(managed_certificate_readiness.managed_certificate_exists)
+                        observed_certificate_domains: list[str] = []
+                        for raw_domain in tuple(managed_certificate_readiness.observed_managed_certificate_domains or ()):
+                            normalized_domain = _normalize_string(raw_domain, max_length=253)
+                            if normalized_domain:
+                                observed_certificate_domains.append(normalized_domain)
+                        observed_managed_certificate_domains = ",".join(_dedupe_strings(observed_certificate_domains)) or None
+                        observed_managed_certificate_status = _normalize_string(
+                            managed_certificate_readiness.observed_managed_certificate_status,
+                            max_length=64,
+                        )
+                        observed_managed_certificate_domain_status = _normalize_string(
+                            managed_certificate_readiness.observed_managed_certificate_domain_status,
+                            max_length=64,
+                        )
+                        managed_certificate_status = (
+                            observed_managed_certificate_status
+                            or observed_managed_certificate_domain_status
+                            or managed_certificate_status
+                        )
+                        managed_certificate_gcp_credential_source = _normalize_string(
+                            managed_certificate_readiness.gcp_credential_source,
+                            max_length=80,
+                        )
+                        managed_certificate_gcp_principal_email = _normalize_string(
+                            managed_certificate_readiness.gcp_principal_email,
+                            max_length=200,
+                        )
+                        managed_certificate_gcp_impersonated_service_account_email = _normalize_string(
+                            managed_certificate_readiness.gcp_impersonated_service_account_email,
+                            max_length=200,
+                        )
+                        normalized_certificate_reason = _normalize_dispatch_service_reason_code(
+                            managed_certificate_readiness.dispatch_service_reason_code
+                        )
+                        if normalized_certificate_reason in {None, _DEPLOY_DISPATCH_SERVICE_REASON_AVAILABLE}:
+                            _emit_prerequisite_chain_log(stage="managed_certificate_readiness_succeeded")
+                        elif normalized_certificate_reason == _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_PROVISIONING:
+                            if certificate_pending_allowed_before_dispatch:
+                                _emit_prerequisite_chain_log(
+                                    stage="managed_certificate_readiness_pending_allowed",
+                                    reason_code=normalized_certificate_reason,
+                                )
+                            else:
+                                dispatch_service_reason_code = normalized_certificate_reason
+                                _emit_prerequisite_chain_log(
+                                    stage="managed_certificate_readiness_blocked",
+                                    reason_code=normalized_certificate_reason,
+                                    level=logging.WARNING,
+                                )
+                                raise SEOMigrationGitHubPublisherError(
+                                    code=normalized_certificate_reason,
+                                    safe_message=(
+                                        "Managed certificate exists for this hostname but is still provisioning. "
+                                        "Wait for ACTIVE before HTTPS-required deploy."
+                                    ),
+                                    stage="certificate_readiness",
+                                )
+                        elif normalized_certificate_reason in {
+                            _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_FAILED_NOT_VISIBLE,
+                            _DEPLOY_DISPATCH_SERVICE_REASON_CERTIFICATE_DOMAIN_MISMATCH,
+                        }:
+                            dispatch_service_reason_code = normalized_certificate_reason
+                            _emit_prerequisite_chain_log(
+                                stage="managed_certificate_readiness_blocked",
+                                reason_code=normalized_certificate_reason,
+                                level=logging.WARNING,
+                            )
+                            safe_message = (
+                                "ManagedCertificate resource for the expected hostname is not yet visible. "
+                                "Provision or refresh certificate resources, then rerun deploy."
+                                if normalized_certificate_reason
+                                == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_FAILED_NOT_VISIBLE
+                                else (
+                                    "ManagedCertificate domain does not match the expected hostname for this site. "
+                                    "Reconcile certificate/ingress domain configuration before deploy."
+                                )
+                            )
+                            raise SEOMigrationGitHubPublisherError(
+                                code=normalized_certificate_reason,
+                                safe_message=safe_message,
+                                stage="certificate_readiness",
+                            )
+                        elif normalized_certificate_reason:
+                            dispatch_service_reason_code = normalized_certificate_reason
+                            _emit_prerequisite_chain_log(
+                                stage="managed_certificate_readiness_blocked",
+                                reason_code=normalized_certificate_reason,
+                                level=logging.WARNING,
+                            )
+                            raise SEOMigrationGitHubPublisherError(
+                                code=normalized_certificate_reason,
+                                safe_message=(
+                                    "ManagedCertificate readiness did not converge to ACTIVE before deploy dispatch."
+                                ),
+                                stage="certificate_readiness",
+                            )
                 if (
                     deploy_workflow_mode_for_dispatch == _DEPLOY_WORKFLOW_MODE_SITE_REPO_TEMPLATE_V1
                     and dispatch_namespace
@@ -6676,6 +6847,18 @@ class SEOMigrationService:
                     "observed_dns_ips": list(dns_propagation_observed_ips),
                     "dns_propagation_wait_seconds": dns_propagation_wait_seconds,
                     "dns_propagation_attempts": dns_propagation_attempts,
+                    "expected_managed_certificate_name": expected_managed_certificate_name,
+                    "managed_certificate_reconcile_note": managed_certificate_reconcile_note,
+                    "managed_certificate_exists": managed_certificate_exists,
+                    "observed_managed_certificate_domains": observed_managed_certificate_domains,
+                    "observed_managed_certificate_status": observed_managed_certificate_status,
+                    "observed_managed_certificate_domain_status": observed_managed_certificate_domain_status,
+                    "managed_certificate_status": managed_certificate_status,
+                    "managed_certificate_gcp_credential_source": managed_certificate_gcp_credential_source,
+                    "managed_certificate_gcp_principal_email": managed_certificate_gcp_principal_email,
+                    "managed_certificate_gcp_impersonated_service_account_email": (
+                        managed_certificate_gcp_impersonated_service_account_email
+                    ),
                     "post_conformance_stage": _POST_CONFORMANCE_STAGE_WORKFLOW_DISPATCH_ATTEMPTED,
                     "post_conformance_reason_text": "Workflow dispatch was attempted; awaiting run evidence.",
                     "deploy_trace_id": deploy_trace_id,
@@ -7034,6 +7217,18 @@ class SEOMigrationService:
                     "observed_dns_ips": list(dns_propagation_observed_ips),
                     "dns_propagation_wait_seconds": dns_propagation_wait_seconds,
                     "dns_propagation_attempts": dns_propagation_attempts,
+                    "expected_managed_certificate_name": expected_managed_certificate_name,
+                    "managed_certificate_reconcile_note": managed_certificate_reconcile_note,
+                    "managed_certificate_exists": managed_certificate_exists,
+                    "observed_managed_certificate_domains": observed_managed_certificate_domains,
+                    "observed_managed_certificate_status": observed_managed_certificate_status,
+                    "observed_managed_certificate_domain_status": observed_managed_certificate_domain_status,
+                    "managed_certificate_status": managed_certificate_status,
+                    "managed_certificate_gcp_credential_source": managed_certificate_gcp_credential_source,
+                    "managed_certificate_gcp_principal_email": managed_certificate_gcp_principal_email,
+                    "managed_certificate_gcp_impersonated_service_account_email": (
+                        managed_certificate_gcp_impersonated_service_account_email
+                    ),
                     "deploy_trace_id": deploy_trace_id,
                     "workflow_dispatch_supported": workflow_dispatch_supported,
                     "workflow_trigger_types": list(workflow_trigger_types),
@@ -7298,6 +7493,18 @@ class SEOMigrationService:
                     "observed_dns_ips": list(dns_propagation_observed_ips),
                     "dns_propagation_wait_seconds": dns_propagation_wait_seconds,
                     "dns_propagation_attempts": dns_propagation_attempts,
+                    "expected_managed_certificate_name": expected_managed_certificate_name,
+                    "managed_certificate_reconcile_note": managed_certificate_reconcile_note,
+                    "managed_certificate_exists": managed_certificate_exists,
+                    "observed_managed_certificate_domains": observed_managed_certificate_domains,
+                    "observed_managed_certificate_status": observed_managed_certificate_status,
+                    "observed_managed_certificate_domain_status": observed_managed_certificate_domain_status,
+                    "managed_certificate_status": managed_certificate_status,
+                    "managed_certificate_gcp_credential_source": managed_certificate_gcp_credential_source,
+                    "managed_certificate_gcp_principal_email": managed_certificate_gcp_principal_email,
+                    "managed_certificate_gcp_impersonated_service_account_email": (
+                        managed_certificate_gcp_impersonated_service_account_email
+                    ),
                 },
                 failure_category=failure_category,
                 failure_reason=failure_reason_for_log,
@@ -7436,6 +7643,18 @@ class SEOMigrationService:
                     "observed_dns_ips": list(dns_propagation_observed_ips),
                     "dns_propagation_wait_seconds": dns_propagation_wait_seconds,
                     "dns_propagation_attempts": dns_propagation_attempts,
+                    "expected_managed_certificate_name": expected_managed_certificate_name,
+                    "managed_certificate_reconcile_note": managed_certificate_reconcile_note,
+                    "managed_certificate_exists": managed_certificate_exists,
+                    "observed_managed_certificate_domains": observed_managed_certificate_domains,
+                    "observed_managed_certificate_status": observed_managed_certificate_status,
+                    "observed_managed_certificate_domain_status": observed_managed_certificate_domain_status,
+                    "managed_certificate_status": managed_certificate_status,
+                    "managed_certificate_gcp_credential_source": managed_certificate_gcp_credential_source,
+                    "managed_certificate_gcp_principal_email": managed_certificate_gcp_principal_email,
+                    "managed_certificate_gcp_impersonated_service_account_email": (
+                        managed_certificate_gcp_impersonated_service_account_email
+                    ),
                 },
                 fallback_message="seo_migration_deploy_dispatch_failed",
                 level=logging.WARNING,
@@ -7661,6 +7880,18 @@ class SEOMigrationService:
                 "observed_dns_ips": list(dns_propagation_observed_ips),
                 "dns_propagation_wait_seconds": dns_propagation_wait_seconds,
                 "dns_propagation_attempts": dns_propagation_attempts,
+                "expected_managed_certificate_name": expected_managed_certificate_name,
+                "managed_certificate_reconcile_note": managed_certificate_reconcile_note,
+                "managed_certificate_exists": managed_certificate_exists,
+                "observed_managed_certificate_domains": observed_managed_certificate_domains,
+                "observed_managed_certificate_status": observed_managed_certificate_status,
+                "observed_managed_certificate_domain_status": observed_managed_certificate_domain_status,
+                "managed_certificate_status": managed_certificate_status,
+                "managed_certificate_gcp_credential_source": managed_certificate_gcp_credential_source,
+                "managed_certificate_gcp_principal_email": managed_certificate_gcp_principal_email,
+                "managed_certificate_gcp_impersonated_service_account_email": (
+                    managed_certificate_gcp_impersonated_service_account_email
+                ),
                 "deploy_trace_id": deploy_trace_id,
                 "workflow_dispatch_supported": workflow_dispatch_supported,
                 "workflow_trigger_types": list(workflow_trigger_types),
@@ -8121,6 +8352,18 @@ class SEOMigrationService:
             "observed_dns_ips": list(dns_propagation_observed_ips),
             "dns_propagation_wait_seconds": dns_propagation_wait_seconds,
             "dns_propagation_attempts": dns_propagation_attempts,
+            "expected_managed_certificate_name": expected_managed_certificate_name,
+            "managed_certificate_reconcile_note": managed_certificate_reconcile_note,
+            "managed_certificate_exists": managed_certificate_exists,
+            "observed_managed_certificate_domains": observed_managed_certificate_domains,
+            "observed_managed_certificate_status": observed_managed_certificate_status,
+            "observed_managed_certificate_domain_status": observed_managed_certificate_domain_status,
+            "managed_certificate_status": managed_certificate_status,
+            "managed_certificate_gcp_credential_source": managed_certificate_gcp_credential_source,
+            "managed_certificate_gcp_principal_email": managed_certificate_gcp_principal_email,
+            "managed_certificate_gcp_impersonated_service_account_email": (
+                managed_certificate_gcp_impersonated_service_account_email
+            ),
             "workflow_integrity_status": workflow_integrity_status,
             "workflow_integrity_reason_code": workflow_integrity_reason_code,
             "workflow_run_id": getattr(deploy_result, "workflow_run_id", None),
@@ -8281,6 +8524,18 @@ class SEOMigrationService:
                 "observed_dns_ips": list(dns_propagation_observed_ips),
                 "dns_propagation_wait_seconds": dns_propagation_wait_seconds,
                 "dns_propagation_attempts": dns_propagation_attempts,
+                "expected_managed_certificate_name": expected_managed_certificate_name,
+                "managed_certificate_reconcile_note": managed_certificate_reconcile_note,
+                "managed_certificate_exists": managed_certificate_exists,
+                "observed_managed_certificate_domains": observed_managed_certificate_domains,
+                "observed_managed_certificate_status": observed_managed_certificate_status,
+                "observed_managed_certificate_domain_status": observed_managed_certificate_domain_status,
+                "managed_certificate_status": managed_certificate_status,
+                "managed_certificate_gcp_credential_source": managed_certificate_gcp_credential_source,
+                "managed_certificate_gcp_principal_email": managed_certificate_gcp_principal_email,
+                "managed_certificate_gcp_impersonated_service_account_email": (
+                    managed_certificate_gcp_impersonated_service_account_email
+                ),
                 "deploy_trace_id": deploy_trace_id,
                 "workflow_dispatch_supported": workflow_dispatch_supported,
                 "workflow_trigger_types": list(workflow_trigger_types),
@@ -10103,6 +10358,14 @@ class SEOMigrationService:
             "static_ip_users": _normalize_string(next_item.get("static_ip_users"), max_length=400),
             "tls_certificate_status": _normalize_string(next_item.get("tls_certificate_status"), max_length=64),
             "tls_domain_status": _normalize_string(next_item.get("tls_domain_status"), max_length=64),
+            "expected_managed_certificate_name": _normalize_string(
+                next_item.get("expected_managed_certificate_name"),
+                max_length=63,
+            ),
+            "managed_certificate_reconcile_note": _normalize_string(
+                next_item.get("managed_certificate_reconcile_note"),
+                max_length=240,
+            ),
             "observed_managed_certificate_domains": _normalize_string(
                 next_item.get("observed_managed_certificate_domains"),
                 max_length=255,
@@ -10181,6 +10444,18 @@ class SEOMigrationService:
             "managed_certificate_status": _normalize_string(
                 next_item.get("managed_certificate_status"),
                 max_length=64,
+            ),
+            "managed_certificate_gcp_credential_source": _normalize_string(
+                next_item.get("managed_certificate_gcp_credential_source"),
+                max_length=80,
+            ),
+            "managed_certificate_gcp_principal_email": _normalize_string(
+                next_item.get("managed_certificate_gcp_principal_email"),
+                max_length=200,
+            ),
+            "managed_certificate_gcp_impersonated_service_account_email": _normalize_string(
+                next_item.get("managed_certificate_gcp_impersonated_service_account_email"),
+                max_length=200,
             ),
             "https_ready": (
                 bool(next_item.get("https_ready"))
@@ -10711,6 +10986,14 @@ class SEOMigrationService:
             "static_ip_users": _normalize_string(history_item.get("static_ip_users"), max_length=400),
             "tls_certificate_status": _normalize_string(history_item.get("tls_certificate_status"), max_length=64),
             "tls_domain_status": _normalize_string(history_item.get("tls_domain_status"), max_length=64),
+            "expected_managed_certificate_name": _normalize_string(
+                history_item.get("expected_managed_certificate_name"),
+                max_length=63,
+            ),
+            "managed_certificate_reconcile_note": _normalize_string(
+                history_item.get("managed_certificate_reconcile_note"),
+                max_length=240,
+            ),
             "observed_managed_certificate_domains": _normalize_string(
                 history_item.get("observed_managed_certificate_domains"),
                 max_length=255,
@@ -10791,6 +11074,18 @@ class SEOMigrationService:
             "managed_certificate_status": _normalize_string(
                 history_item.get("managed_certificate_status"),
                 max_length=64,
+            ),
+            "managed_certificate_gcp_credential_source": _normalize_string(
+                history_item.get("managed_certificate_gcp_credential_source"),
+                max_length=80,
+            ),
+            "managed_certificate_gcp_principal_email": _normalize_string(
+                history_item.get("managed_certificate_gcp_principal_email"),
+                max_length=200,
+            ),
+            "managed_certificate_gcp_impersonated_service_account_email": _normalize_string(
+                history_item.get("managed_certificate_gcp_impersonated_service_account_email"),
+                max_length=200,
             ),
             "https_ready": (
                 bool(history_item.get("https_ready"))
@@ -18768,6 +19063,14 @@ class SEOMigrationService:
                 "static_ip_users": _normalize_string(item.get("static_ip_users"), max_length=400),
                 "tls_certificate_status": _normalize_string(item.get("tls_certificate_status"), max_length=64),
                 "tls_domain_status": _normalize_string(item.get("tls_domain_status"), max_length=64),
+                "expected_managed_certificate_name": _normalize_string(
+                    item.get("expected_managed_certificate_name"),
+                    max_length=63,
+                ),
+                "managed_certificate_reconcile_note": _normalize_string(
+                    item.get("managed_certificate_reconcile_note"),
+                    max_length=240,
+                ),
                 "observed_managed_certificate_domains": _normalize_string(
                     item.get("observed_managed_certificate_domains"),
                     max_length=255,
@@ -18845,6 +19148,18 @@ class SEOMigrationService:
                 "managed_certificate_status": _normalize_string(
                     item.get("managed_certificate_status"),
                     max_length=64,
+                ),
+                "managed_certificate_gcp_credential_source": _normalize_string(
+                    item.get("managed_certificate_gcp_credential_source"),
+                    max_length=80,
+                ),
+                "managed_certificate_gcp_principal_email": _normalize_string(
+                    item.get("managed_certificate_gcp_principal_email"),
+                    max_length=200,
+                ),
+                "managed_certificate_gcp_impersonated_service_account_email": _normalize_string(
+                    item.get("managed_certificate_gcp_impersonated_service_account_email"),
+                    max_length=200,
                 ),
                 "https_ready": _coerce_optional_bool(item.get("https_ready")),
                 "runtime_ready_tls_pending": _coerce_optional_bool(item.get("runtime_ready_tls_pending")),
@@ -20239,6 +20554,41 @@ class SEOMigrationService:
             target_summary.get("observed_managed_certificate_domain_status"),
             max_length=64,
         )
+        expected_managed_certificate_name = _normalize_string(
+            latest_traceability.get("expected_managed_certificate_name"),
+            max_length=63,
+        ) or _normalize_string(
+            target_summary.get("expected_managed_certificate_name"),
+            max_length=63,
+        )
+        managed_certificate_reconcile_note = _normalize_string(
+            latest_traceability.get("managed_certificate_reconcile_note"),
+            max_length=240,
+        ) or _normalize_string(
+            target_summary.get("managed_certificate_reconcile_note"),
+            max_length=240,
+        )
+        managed_certificate_gcp_credential_source = _normalize_string(
+            latest_traceability.get("managed_certificate_gcp_credential_source"),
+            max_length=80,
+        ) or _normalize_string(
+            target_summary.get("managed_certificate_gcp_credential_source"),
+            max_length=80,
+        )
+        managed_certificate_gcp_principal_email = _normalize_string(
+            latest_traceability.get("managed_certificate_gcp_principal_email"),
+            max_length=200,
+        ) or _normalize_string(
+            target_summary.get("managed_certificate_gcp_principal_email"),
+            max_length=200,
+        )
+        managed_certificate_gcp_impersonated_service_account_email = _normalize_string(
+            latest_traceability.get("managed_certificate_gcp_impersonated_service_account_email"),
+            max_length=200,
+        ) or _normalize_string(
+            target_summary.get("managed_certificate_gcp_impersonated_service_account_email"),
+            max_length=200,
+        )
         ingress_conflict_detected = (
             bool(latest_traceability.get("ingress_conflict_detected"))
             if isinstance(latest_traceability.get("ingress_conflict_detected"), bool)
@@ -20426,6 +20776,33 @@ class SEOMigrationService:
             target_summary.get("managed_certificate_status"),
             max_length=64,
         )
+        if expected_managed_certificate_name and not _normalize_string(
+            target_summary.get("expected_managed_certificate_name"),
+            max_length=63,
+        ):
+            target_summary["expected_managed_certificate_name"] = expected_managed_certificate_name
+        if managed_certificate_reconcile_note and not _normalize_string(
+            target_summary.get("managed_certificate_reconcile_note"),
+            max_length=240,
+        ):
+            target_summary["managed_certificate_reconcile_note"] = managed_certificate_reconcile_note
+        if managed_certificate_gcp_credential_source and not _normalize_string(
+            target_summary.get("managed_certificate_gcp_credential_source"),
+            max_length=80,
+        ):
+            target_summary["managed_certificate_gcp_credential_source"] = managed_certificate_gcp_credential_source
+        if managed_certificate_gcp_principal_email and not _normalize_string(
+            target_summary.get("managed_certificate_gcp_principal_email"),
+            max_length=200,
+        ):
+            target_summary["managed_certificate_gcp_principal_email"] = managed_certificate_gcp_principal_email
+        if managed_certificate_gcp_impersonated_service_account_email and not _normalize_string(
+            target_summary.get("managed_certificate_gcp_impersonated_service_account_email"),
+            max_length=200,
+        ):
+            target_summary["managed_certificate_gcp_impersonated_service_account_email"] = (
+                managed_certificate_gcp_impersonated_service_account_email
+            )
         https_ready_observed = (
             bool(latest_traceability.get("https_ready"))
             if isinstance(latest_traceability.get("https_ready"), bool)
@@ -20768,8 +21145,6 @@ class SEOMigrationService:
         cert_missing_reason_codes = {
             _DEPLOY_RUN_FAILURE_REASON_MANAGED_CERTIFICATE_METADATA_UNAVAILABLE,
             _DEPLOY_RUN_FAILURE_REASON_RUNTIME_MANAGED_CERTIFICATE_MISSING_AFTER_APPLY,
-        }
-        cert_failed_not_visible_reason_codes = {
             _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_FAILED_NOT_VISIBLE,
         }
         certificate_reason_candidates = set(reason_candidates)
@@ -20786,10 +21161,7 @@ class SEOMigrationService:
             certificate_readiness_state = _CERTIFICATE_READINESS_STATE_STALE_OR_LEGACY
         elif any(code in certificate_reason_candidates for code in cert_missing_reason_codes):
             certificate_readiness_state = _CERTIFICATE_READINESS_STATE_RESOURCE_MISSING
-        elif (
-            tls_provisioning_evidence
-            or any(code in certificate_reason_candidates for code in cert_failed_not_visible_reason_codes)
-        ):
+        elif tls_provisioning_evidence:
             certificate_readiness_state = _CERTIFICATE_READINESS_STATE_PROVISIONING_PENDING
         elif normalized_tls_status == "ACTIVE" and normalized_tls_domain_status == "ACTIVE":
             certificate_readiness_state = _CERTIFICATE_READINESS_STATE_ACTIVE
@@ -20844,6 +21216,7 @@ class SEOMigrationService:
             in {
                 _CERTIFICATE_READINESS_STATE_RESOURCE_MISSING,
                 _CERTIFICATE_READINESS_STATE_PROVISIONING_PENDING,
+                _CERTIFICATE_READINESS_STATE_DOMAIN_MISMATCH,
             }
         )
         if certificate_gate_blocked:
@@ -20852,10 +21225,15 @@ class SEOMigrationService:
                     "ManagedCertificate resource for the expected hostname is not yet visible. "
                     "Provision or refresh certificate resources, then rerun deploy."
                 )
+            elif certificate_readiness_state == _CERTIFICATE_READINESS_STATE_DOMAIN_MISMATCH:
+                reasons.append(
+                    "ManagedCertificate domain does not match the expected hostname for this site. "
+                    "Reconcile certificate/ingress domain configuration before deploy."
+                )
             else:
                 reasons.append(
                     "Certificate exists but is still provisioning. "
-                    "Wait for ACTIVE before HTTPS-ready deploy."
+                    "Deploy is held until the certificate is ACTIVE."
                 )
             blocker_codes.append(_DEPLOY_BLOCKER_CERTIFICATE_PENDING)
         blocker_codes = _dedupe_strings(blocker_codes)
@@ -20889,9 +21267,16 @@ class SEOMigrationService:
             "static_ip_users": static_ip_users,
             "tls_certificate_status": tls_certificate_status,
             "tls_domain_status": tls_domain_status,
+            "expected_managed_certificate_name": expected_managed_certificate_name,
+            "managed_certificate_reconcile_note": managed_certificate_reconcile_note,
             "observed_managed_certificate_domains": observed_managed_certificate_domains,
             "observed_managed_certificate_status": observed_managed_certificate_status,
             "observed_managed_certificate_domain_status": observed_managed_certificate_domain_status,
+            "managed_certificate_gcp_credential_source": managed_certificate_gcp_credential_source,
+            "managed_certificate_gcp_principal_email": managed_certificate_gcp_principal_email,
+            "managed_certificate_gcp_impersonated_service_account_email": (
+                managed_certificate_gcp_impersonated_service_account_email
+            ),
             "ingress_ip": ingress_ip,
             "ingress_status_ip": ingress_status_ip,
             "ingress_status_ip_matches_static_ip": ingress_status_ip_matches_static_ip,
@@ -21063,6 +21448,8 @@ class SEOMigrationService:
                 "dns_observed_ip": dns_observed_ip,
                 "tls_certificate_status": tls_certificate_status,
                 "tls_domain_status": tls_domain_status,
+                "expected_managed_certificate_name": expected_managed_certificate_name,
+                "managed_certificate_reconcile_note": managed_certificate_reconcile_note,
                 "ingress_ip": ingress_ip,
                 "ingress_conflict_detected": ingress_conflict_detected,
                 "cert_identity_valid": cert_identity_valid,
@@ -21076,6 +21463,14 @@ class SEOMigrationService:
                 "endpoints_ready": endpoints_ready,
                 "managed_certificate_exists": managed_certificate_exists,
                 "managed_certificate_status": managed_certificate_status,
+                "observed_managed_certificate_domains": observed_managed_certificate_domains,
+                "observed_managed_certificate_status": observed_managed_certificate_status,
+                "observed_managed_certificate_domain_status": observed_managed_certificate_domain_status,
+                "managed_certificate_gcp_credential_source": managed_certificate_gcp_credential_source,
+                "managed_certificate_gcp_principal_email": managed_certificate_gcp_principal_email,
+                "managed_certificate_gcp_impersonated_service_account_email": (
+                    managed_certificate_gcp_impersonated_service_account_email
+                ),
                 "preview_https_status": preview_https_status,
                 "preview_http_status": preview_http_status,
                 "preview_probe_attempt": preview_probe_attempt,
@@ -24211,6 +24606,9 @@ def _normalize_deploy_failure_reason_code(value: object) -> str | None:
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PERMISSION_DENIED,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_TRANSACTION_CONFLICT,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PROPAGATION_PENDING,
+        _DEPLOY_DISPATCH_SERVICE_REASON_CERTIFICATE_DOMAIN_MISMATCH,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_FAILED_NOT_VISIBLE,
+        _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_PROVISIONING,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_DOMAIN_DRIFT_REPAIR_FAILED,
         "github_target_not_found",
         "github_request_failed",
@@ -24262,6 +24660,7 @@ def _normalize_deploy_failure_stage(value: object) -> str | None:
         "static_ip_provision",
         "dns_provision",
         "dns_propagation",
+        "certificate_readiness",
     }:
         return normalized_lower
     return None
@@ -25293,8 +25692,8 @@ def _derive_managed_gke_dispatch_readiness_message(*, dispatch_service_reason_co
         )
     if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_PROVISIONING:
         return (
-            "Certificate exists but is still provisioning for this site hostname. "
-            "Wait for ACTIVE before HTTPS-ready deploy."
+            "Certificate exists but is still provisioning. "
+            "Deploy is held until the certificate is ACTIVE."
         )
     if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_DEPLOYED_CONTENT_IDENTITY_MISMATCH:
         return (
@@ -25563,8 +25962,8 @@ def _derive_deploy_failure_remediation_hint(
         )
     if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_PROVISIONING:
         return (
-            "ManagedCertificate is still provisioning for this hostname. "
-            "Treat this as TLS readiness pending and retry once ACTIVE status is observed."
+            "Certificate exists but is still provisioning. "
+            "Deploy is held until the certificate is ACTIVE."
         )
     if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_DEPLOYED_CONTENT_IDENTITY_MISMATCH:
         return (
@@ -25989,8 +26388,8 @@ def _derive_workflow_run_failure_hint(
         )
     if normalized_reason == _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_PROVISIONING:
         return (
-            "ManagedCertificate provisioning is still in progress. "
-            "Treat this as TLS readiness pending and wait for ACTIVE status."
+            "Certificate exists but is still provisioning. "
+            "Deploy is held until the certificate is ACTIVE."
         )
     if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_CLOUDSQL_INVALID_STATE:
         return (
