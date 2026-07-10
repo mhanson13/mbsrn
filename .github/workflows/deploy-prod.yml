@@ -194,6 +194,11 @@ jobs:
             exit 1
           fi
 
+          if ! grep -qx "seo-competitor-profile-retention: python -m app.cli.seo_competitor_profile_generation_retention_cleanup" Procfile; then
+            echo "Procfile retention process must run app.cli.seo_competitor_profile_generation_retention_cleanup" >&2
+            exit 1
+          fi
+
           if [[ "${DB_ALIGNMENT_MODE}" != "normal" && "${DB_ALIGNMENT_MODE}" != "baseline_existing" ]]; then
             echo "Invalid DB_ALIGNMENT_MODE: ${DB_ALIGNMENT_MODE}" >&2
             exit 1

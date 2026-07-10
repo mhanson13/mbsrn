@@ -52,7 +52,7 @@ Core outcomes:
 2. Manual job endpoint:
    - `POST /api/jobs/seo-competitor-profile-generation/cleanup` (tenant-scoped)
 3. Scheduled operational path:
-   - `python -m app.cli.seo_competitor_profile_generation_retention_cleanup`
+   - `/cnb/process/seo-competitor-profile-retention` (Procfile process: `python -m app.cli.seo_competitor_profile_generation_retention_cleanup`)
    - Global sweep across all businesses by default, optional `--business-id` and `--site-id`.
 4. Scheduling:
    - Kubernetes CronJob runs daily (`0 3 * * *`, UTC), `concurrencyPolicy: Forbid`.

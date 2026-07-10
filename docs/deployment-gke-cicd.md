@@ -824,6 +824,10 @@ Correlation guidance:
 Important separation:
 - `mbsrn-seo-competitor-profile-retention` `StartError` triage is a separate operational issue
   and should not be used as evidence for API rollout DB/proxy regressions.
+- CronJob `StartError` with `exec: "python"`/`exec: "python3": executable file not found in $PATH`
+  indicates command/runtime mismatch for the buildpack API image (not DB/proxy failure).
+  - production path uses Cloud Buildpacks + Procfile process shims; retention CronJob should run
+    `/cnb/process/seo-competitor-profile-retention`, not bare interpreter binaries.
 
 Production-authoritative path (`deploy-prod.yml` + `k8s/*`) injects `GOOGLE_PLACES_API_KEY` into
 Kubernetes Secret `mbsrn-api-auth`, and API runtime consumes it via

@@ -19,10 +19,7 @@ spec:
           containers:
             - name: retention-cleanup
               image: __API_IMAGE__
-              command:
-                - "python"
-                - "-m"
-                - "app.cli.seo_competitor_profile_generation_retention_cleanup"
+              command: ["/cnb/process/seo-competitor-profile-retention"]
               env:
                 - name: APP_ENV
                   value: production
