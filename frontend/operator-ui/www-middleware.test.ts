@@ -1,4 +1,16 @@
-type WwwMiddleware = typeof import("../www/middleware")["middleware"];
+type WwwMiddlewareRequest = {
+  method: string;
+  headers: Headers;
+  nextUrl: URL;
+};
+
+type WwwMiddlewareResponse = {
+  status: number;
+  headers: Headers;
+  text: () => Promise<string>;
+};
+
+type WwwMiddleware = (request: WwwMiddlewareRequest) => WwwMiddlewareResponse;
 let middleware: WwwMiddleware;
 
 function createNextServerMock() {
@@ -53,7 +65,7 @@ function createRequest(overrides?: {
     method,
     headers,
     nextUrl: new URL(url),
-  } as Parameters<typeof middleware>[0];
+  } as WwwMiddlewareRequest;
 }
 
 describe("mbsrn-www middleware POST guard", () => {
