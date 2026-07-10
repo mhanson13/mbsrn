@@ -513,12 +513,22 @@ Operator UI/runtime diagnostics hardening:
   - pathname when available
   - digest when available (or `unavailable`)
   - short message classification
-- Next middleware blocks unsupported non-API multipart mutating requests (`POST|PUT|PATCH`) with `400`:
-  - `/api` and `/api/*` multipart traffic is still allowed
 - Next middleware blocks stale non-API `next-action` mutating requests with `409` and bounded classification:
   - classification: `stale_server_action_build_mismatch`
   - operator recovery: refresh/reload the tab after deployment to pick up the current build
   - `/api` and `/api/*` requests are not remapped by this guard
+- Public WWW middleware blocks unsupported non-API mutating traffic before Next Server Action resolution:
+  - multipart (`POST|PUT|PATCH`) -> `415` with event `blocked_unsupported_multipart_request`
+  - non-multipart `POST` -> `405` with event `blocked_unsupported_public_post_request`
+  - `/api` and `/api/*` remain pass-through for runtime handlers
+- Controlled middleware rejections are expected to emit single-line structured stdout logs with stable fields (`component`, `event`, `method`, `pathname`, `classification`, and `app_version`; stale-action rejects include `refresh_required=true`).
+  - `stale_server_action_build_mismatch` is expected deploy/client skew and should be INFO (or WARN only with explicit rate context), not ERROR.
+  - `blocked_unsupported_multipart_request` on `mbsrn-www` is usually scanner/bot invalid traffic.
+- Native Next.js server-action lookup failures remain actionable until early blockers absorb the traffic:
+  - `Failed to find Server Action "...". This request might be from an older or newer deployment.`
+- Cloud Logging triage:
+  - controlled rejects should not page.
+  - native Next Server Action failures should be investigated.
 - Never log request/form bodies, auth headers, cookies, tokens, or provider payloads.
 
 ## Required GitHub Secrets/Variables

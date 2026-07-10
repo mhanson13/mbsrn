@@ -54,6 +54,7 @@ describe("operator-ui middleware multipart guard", () => {
   });
 
   it("blocks unsupported multipart POST requests outside /api", async () => {
+    const logSpy = jest.spyOn(console, "log").mockImplementation(() => undefined);
     const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => undefined);
     const request = createRequest({
       url: "https://operator.example/sites",
@@ -64,16 +65,23 @@ describe("operator-ui middleware multipart guard", () => {
     const response = middleware(request);
 
     expect(response.status).toBe(400);
+    expect(response.headers.get("x-middleware-next")).toBeNull();
     await expect(response.text()).resolves.toBe("Unsupported multipart request.");
-    expect(warnSpy).toHaveBeenCalledWith(
-      "[operator-ui] blocked_unsupported_multipart_request",
-      expect.objectContaining({
-        method: "POST",
-        pathname: "/sites",
-        has_boundary: true,
-      }),
-    );
+    expect(logSpy).toHaveBeenCalledTimes(1);
+    const logged = JSON.parse(String(logSpy.mock.calls[0]?.[0]));
+    expect(logged).toEqual(expect.objectContaining({
+      severity: "INFO",
+      component: "operator-ui",
+      event: "blocked_unsupported_multipart_request",
+      method: "POST",
+      pathname: "/sites",
+      classification: "unsupported_non_api_multipart_request",
+      app_version: "sha-test-build-1",
+      has_boundary: true,
+    }));
+    expect(warnSpy).not.toHaveBeenCalled();
 
+    logSpy.mockRestore();
     warnSpy.mockRestore();
   });
 
@@ -100,6 +108,7 @@ describe("operator-ui middleware multipart guard", () => {
   });
 
   it("blocks stale server-action requests outside /api with bounded diagnostics", async () => {
+    const logSpy = jest.spyOn(console, "log").mockImplementation(() => undefined);
     const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => undefined);
     const request = createRequest({
       url: "https://operator.example/sites",
@@ -110,22 +119,27 @@ describe("operator-ui middleware multipart guard", () => {
 
     const response = middleware(request);
     expect(response.status).toBe(409);
+    expect(response.headers.get("x-middleware-next")).toBeNull();
     await expect(response.text()).resolves.toContain("A new version of MBSRN was deployed");
     expect(response.headers.get("X-Operator-UI-Error-Classification")).toBe(
       "stale_server_action_build_mismatch",
     );
     expect(response.headers.get("X-Operator-UI-Refresh-Required")).toBe("true");
-    expect(warnSpy).toHaveBeenCalledWith(
-      "[operator-ui] blocked_stale_server_action_request",
-      expect.objectContaining({
-        method: "POST",
-        pathname: "/sites",
-        classification: "stale_server_action_build_mismatch",
-        app_version: "sha-test-build-1",
-        refresh_required: true,
-      }),
-    );
+    expect(logSpy).toHaveBeenCalledTimes(1);
+    const logged = JSON.parse(String(logSpy.mock.calls[0]?.[0]));
+    expect(logged).toEqual(expect.objectContaining({
+      severity: "INFO",
+      component: "operator-ui",
+      event: "blocked_stale_server_action_request",
+      method: "POST",
+      pathname: "/sites",
+      classification: "stale_server_action_build_mismatch",
+      app_version: "sha-test-build-1",
+      refresh_required: true,
+    }));
+    expect(warnSpy).not.toHaveBeenCalled();
 
+    logSpy.mockRestore();
     warnSpy.mockRestore();
   });
 
@@ -142,7 +156,7 @@ describe("operator-ui middleware multipart guard", () => {
   });
 
   it("throttles repeated stale server-action warnings while continuing to block requests", async () => {
-    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+    const logSpy = jest.spyOn(console, "log").mockImplementation(() => undefined);
     const nowSpy = jest.spyOn(Date, "now").mockReturnValue(1_700_000_000_000);
     try {
       const firstRequest = createRequest({
@@ -161,10 +175,10 @@ describe("operator-ui middleware multipart guard", () => {
       const secondResponse = middleware(secondRequest);
       expect(secondResponse.status).toBe(409);
 
-      expect(warnSpy).toHaveBeenCalledTimes(1);
+      expect(logSpy).toHaveBeenCalledTimes(1);
     } finally {
       nowSpy.mockRestore();
-      warnSpy.mockRestore();
+      logSpy.mockRestore();
     }
   });
 

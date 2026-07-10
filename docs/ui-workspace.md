@@ -55,6 +55,8 @@ Primary Site Workspace surfaces:
 - If a stale tab submits an old action payload after deployment, operator-ui classifies it as `stale_server_action_build_mismatch`.
 - Recovery path is deterministic: refresh/reload the tab, then retry the action.
 - Runtime diagnostics remain bounded and include safe route/app-version context only.
+- Controlled stale-action rejects are expected deploy/client skew signals and should log at INFO (or WARN only with explicit rate context), not ERROR.
+- Cloud Logging triage: controlled stale-action rejects should not page; native Next `Failed to find Server Action` errors should be investigated.
 
 Workflow ownership boundaries:
 - Site Analysis (`/automation`) is the primary analysis workflow surface. It orchestrates repeatable multi-step runs.

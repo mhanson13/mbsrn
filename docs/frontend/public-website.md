@@ -225,7 +225,12 @@ Open `https://www.mbsrn.com/` and verify:
 - Route works but missing styles/assets: verify `frontend/www/public/*` assets are present in image.
 - repeated `sharp-missing-in-production` logs: verify `frontend/www/package.json` includes `sharp` in `dependencies`, rebuild image, and rerun `npm run validate:standalone-runtime`.
 - repeated `Unexpected end of form` logs: usually malformed or aborted multipart traffic; treat as request-noise unless tied to a reproducible user submission path.
-  - website middleware blocks unsupported non-API multipart mutating requests (`POST|PUT|PATCH`) and returns `400`; `/api` paths remain allowed.
+  - website middleware blocks unsupported non-API multipart mutating requests (`POST|PUT|PATCH`) with `415`; `/api` paths remain allowed.
+- unsupported `POST /` or page-route `POST` logs (`blocked_unsupported_public_post_request`): usually bot/scanner invalid traffic; middleware returns `405` before Next Server Action resolution.
+- native Next log `Failed to find Server Action "...". This request might be from an older or newer deployment.`: treat as actionable until early middleware blockers catch the path.
+- Cloud Logging triage for WWW:
+  - controlled rejects (`blocked_unsupported_multipart_request`, `blocked_unsupported_public_post_request`) should not page.
+  - native Next Server Action errors should be investigated.
 - OAuth branding rejected: verify exact URLs and authorized domain in Google Cloud console.
 
 Managed certificate status commands:
