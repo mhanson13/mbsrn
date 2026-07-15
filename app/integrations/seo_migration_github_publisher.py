@@ -13807,7 +13807,7 @@ def _extract_workflow_trigger_types(workflow_file_payload: dict[str, object] | N
 def _workflow_dispatch_identifier_type(workflow_id: str) -> str:
     normalized = str(workflow_id or "").strip()
     if normalized.isdigit():
-        return "workflow_numeric_id"
+        return "workflow_id"
     if normalized.lower().startswith(".github/workflows/") or normalized.lower().startswith("github/workflows/"):
         return "workflow_file_path"
     if "/" in normalized:

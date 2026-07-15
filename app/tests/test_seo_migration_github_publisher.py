@@ -5865,6 +5865,11 @@ def test_check_managed_certificate_readiness_reports_active_state(monkeypatch) -
     assert result.dispatch_service_reason_code is None
 
 
+def test_workflow_dispatch_identifier_type_normalizes_numeric_ids_to_workflow_id() -> None:
+    assert github_publisher_module._workflow_dispatch_identifier_type("12345") == "workflow_id"
+    assert github_publisher_module._workflow_dispatch_identifier_type("deploy-prod.yml") == "workflow_file_path"
+
+
 def test_check_managed_certificate_readiness_reports_domain_mismatch(monkeypatch) -> None:
     _stub_managed_certificate_readiness_dependencies(
         monkeypatch,

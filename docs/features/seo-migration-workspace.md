@@ -1648,6 +1648,7 @@ Deploy behavior:
   - `workflow_identifier_requested` / `workflow_identifier_type_requested`
   - `workflow_identifier_used` / `workflow_identifier_type_used`
   - `workflow_dispatch_resolution_source` (`workflow_id`, `workflow_file_path`, `workflow_id_path_normalized`)
+  - outward workflow identifier types are normalized to `workflow_id` or `workflow_file_path`; legacy stored `workflow_numeric_id` is read compatibly and surfaced as `workflow_id`
   - when publish history contains a verified workflow file path, dispatch prefers the file-derived workflow identifier to avoid stale id drift
 - readiness/diagnostics include namespace model alignment metadata for managed templates:
   - `kubernetes_namespace`
@@ -2320,7 +2321,7 @@ Logged fields are safe metadata only:
 - deploy target readiness logs include:
   - `requested_ref`, `resolved_ref`, `ref_source`
   - `repo_exists`, `ref_exists`, `workflow_exists`, `workflow_dispatch_ready`
-  - `workflow_dispatch_supported`, `workflow_trigger_types`, `dispatch_identifier_type`
+  - `workflow_dispatch_supported`, `workflow_trigger_types`, `dispatch_identifier_type` (`workflow_id` or `workflow_file_path`; legacy `workflow_numeric_id` is normalized on read)
   - `workflow_conformance_checked`, `workflow_conformance_status`, `workflow_conformance_reasons`, `workflow_conformance_evidence_summary`
   - `workflow_identifier_requested`, `workflow_identifier_used`
   - `workflow_identifier_type_requested`, `workflow_identifier_type_used`
@@ -2412,6 +2413,7 @@ Verbose evidence remains available in `Show raw deploy diagnostics fields`:
 - remediation hint (`deploy_failure_remediation_hint`) derived deterministically from failure reason/stage evidence when a known mapping applies
 - post-conformance stage (`post_conformance_stage`) and reason text (`post_conformance_reason_text`)
 - concise post-conformance next-step guidance (`post_conformance_remediation_message`) to distinguish refresh/retry/log-inspection actions
+- operator UI should prefer backend remediation/guidance fields first and only fall back to local reason-code copy for older history records or missing backend hints
 
 Use this block to diagnose workflow-lookup failures without relying only on coarse `target invalid` category labels.
 
@@ -2496,7 +2498,8 @@ Resolve-live-url failure diagnostics are evidence-first:
   - `managed_deploy_workflow_template_stale` when managed template markers are missing (reprovision workflow/template from publish).
 - `mbsrn_managed_deploy_template_version` is diagnostics-only metadata and is not a publish/deploy execution gate by itself.
 - control-plane-ready but host-unreachable states are explicitly classified:
-  - `managed_certificate_provisioning` / `tls_certificate_provisioning` when static IP + ingress binding are aligned but ManagedCertificate is still `PROVISIONING`
+  - `certificate_provisioning_pending` when static IP + ingress binding are aligned but ManagedCertificate is still `PROVISIONING`
+    - legacy workflow-log/history aliases (`managed_certificate_provisioning`, `tls_certificate_provisioning`, `managed_certificate_pending`, `runtime_ready_tls_pending`) remain read-compatible
   - `https_probe_failed_after_control_plane_ready`
   - `https_probe_timeout`
   - `https_probe_empty_reply`
@@ -2528,8 +2531,8 @@ Blocking reason-code examples:
   - `ingress_status_ip_stale_or_mismatched` (advisory/non-blocking when DNS already matches reserved static IP)
   - after control-plane DNS ensure, these typically indicate propagation delay, resolver visibility lag, or out-of-band DNS mutation
 - TLS/certificate:
-  - `managed_certificate_provisioning` (explicit wait-state classification when certificate/domain status is still `PROVISIONING`)
-  - `tls_certificate_provisioning`
+  - `certificate_provisioning_pending` (current outward wait-state when certificate/domain status is still `PROVISIONING`)
+    - legacy workflow-log/history aliases may still appear internally: `managed_certificate_provisioning`, `tls_certificate_provisioning`, `managed_certificate_pending`, `runtime_ready_tls_pending`
   - `managed_certificate_failed_not_visible` (missing certificate object or visibility mismatch for the expected deterministic name; distinct from provisioning wait-state)
   - `managed_certificate_metadata_unavailable` (advisory: cluster metadata read failed/empty; if ingress annotation, DNS, and HTTPS cert identity checks pass, this alone does not block success)
   - `pre_shared_cert_metadata_mismatch` is advisory controller metadata only and does not override desired-state ManagedCertificate identity checks.
@@ -2805,8 +2808,9 @@ Pending-generation status (non-blocking in draft preflight):
 - if selected usable images were added after the currently selected artifact snapshot, draft input summary may show `selected_media_pending_generation`
 - operator copy should read: `X selected images will be included when you generate the next draft package.`
 - this pending-generation state is not treated as a post-generation materialization failure
-- selected-but-unused or changed-after-generation media is advisory only; generate a new draft package when you want those changes reflected in generated output
+- selected-but-unused (`selected_media_unused_by_generated_pages`) or changed-after-generation (`selected_media_changed_after_generation`) media is advisory only; generate a new draft package when you want those changes reflected in generated output
 - selected media not yet present in the selected artifact package is advisory only unless generated output references missing image paths
+- legacy advisory codes (`selected_media_available_not_referenced`, `selected_media_not_materialized`) remain read-compatible and are normalized to the current advisory set in API/UI output
 - media blockers are driven by broken generated output references (missing `assets/images/*`, unresolved `@image(...)`, unresolved `upl-...`, or non-deployable/private URL references)
 
 Readiness evidence notes:

@@ -35,6 +35,7 @@ Google OAuth branding URLs are served from the public website:
 - The API is the system of record for business logic.
 - The operator UI calls business-scoped API endpoints; it does not implement authorization logic.
 - Provider credentials and token operations are backend-only.
+- Migration publish/deploy diagnostics are normalized in the API first; the operator UI prefers backend remediation/guidance fields and only keeps local fallback copy for backward compatibility with older history payloads.
 
 ## Service Layering
 mbsrn follows a layered backend structure:

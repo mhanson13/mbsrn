@@ -1670,7 +1670,38 @@ function formatReasonCodeLabel(value: string | null): string {
   if (!value) {
     return "Not available";
   }
-  return value.replace(/_/g, " ");
+  return normalizeDeployReasonCode(value).replace(/_/g, " ");
+}
+
+const CERTIFICATE_PROVISIONING_PENDING_REASON = "certificate_provisioning_pending";
+const CERTIFICATE_PROVISIONING_REASON_ALIASES = new Set([
+  CERTIFICATE_PROVISIONING_PENDING_REASON,
+  "runtime_ready_tls_pending",
+  "tls_certificate_provisioning",
+  "managed_certificate_provisioning",
+  "managed_certificate_pending",
+]);
+
+function normalizeDeployReasonCode(value: string | null): string {
+  const normalized = (value || "").trim().toLowerCase();
+  if (!normalized) {
+    return "";
+  }
+  if (CERTIFICATE_PROVISIONING_REASON_ALIASES.has(normalized)) {
+    return CERTIFICATE_PROVISIONING_PENDING_REASON;
+  }
+  return normalized;
+}
+
+function normalizeWorkflowIdentifierType(value: string | null): string | null {
+  const normalized = (value || "").trim().toLowerCase();
+  if (!normalized) {
+    return null;
+  }
+  if (normalized === "workflow_numeric_id") {
+    return "workflow_id";
+  }
+  return normalized;
 }
 
 function formatDispatchStageLabel(value: string | null): string {
@@ -1776,7 +1807,7 @@ function toWorkflowRemediationOutcomeGuidance(value: string | null): string | nu
 }
 
 function toManagedGkeConfigGuidance(value: string | null): string | null {
-  const normalized = (value || "").trim().toLowerCase();
+  const normalized = normalizeDeployReasonCode(value);
   if (!normalized) {
     return null;
   }
@@ -1822,6 +1853,9 @@ function toManagedGkeConfigGuidance(value: string | null): string | null {
   if (normalized === "shared_static_ip_not_allowed_for_per_site_ingress" || normalized === "ingress_static_ip_conflict") {
     return "Ingress static IP annotation does not match the configured managed preview endpoint mode. After changing managed_preview_endpoint settings, run publish to reprovision managed workflow/manifests, then rerun deploy.";
   }
+  if (normalized === "expected_static_ip_not_bound_to_ingress") {
+    return "Ingress is missing the expected per-site static IP annotation binding. Republish managed ingress resources and retry deploy.";
+  }
   if (normalized === "shared_preview_gateway_missing") {
     return "Shared preview gateway mode is configured, but no shared preview static IP name is set. Admin must configure managed_preview_endpoint.shared_preview_static_ip_name, rerun publish/provisioning, then rerun deploy.";
   }
@@ -1846,7 +1880,7 @@ function toManagedGkeConfigGuidance(value: string | null): string | null {
   if (normalized === "address_value_missing_after_retry") {
     return "Google Cloud static IP resource was found, but the numeric address value was still missing after bounded retries/list fallback. Wait and retry deploy after address convergence.";
   }
-  if (normalized === "tls_certificate_provisioning" || normalized === "managed_certificate_provisioning") {
+  if (normalized === CERTIFICATE_PROVISIONING_PENDING_REASON) {
     return "Certificate exists but is still provisioning. Deploy is held until the certificate is ACTIVE.";
   }
   if (normalized === "generated_workflow_requires_missing_gcp_deploy_key") {
@@ -4922,6 +4956,12 @@ export function MigrationWorkspacePanel({
     asStringOrNull(deployTarget.workflow_id);
   const deployWorkflowIdentifierRequested =
     deployWorkflowIdentifierRequestedFromSelected || deployWorkflowIdentifierRequestedFromSummary;
+  const deployWorkflowIdentifierTypeRequested = normalizeWorkflowIdentifierType(
+    asStringOrNull(selectedDeployHistoryRecord.workflow_identifier_type_requested)
+    || asStringOrNull(deployReadiness.last_failure_workflow_identifier_type_requested)
+    || asStringOrNull(migrationDiagnostics.last_deploy_failure_workflow_identifier_type_requested)
+    || asStringOrNull(deployReadiness.workflow_identifier_type_requested),
+  ) || normalizeWorkflowIdentifierType(deployWorkflowIdentifierRequested);
   const deployWorkflowDispatchResolutionSourceFromSelected = asStringOrNull(
     selectedDeployHistoryRecord.workflow_dispatch_resolution_source,
   );
@@ -4938,6 +4978,12 @@ export function MigrationWorkspacePanel({
     asStringOrNull(deployReadiness.workflow_file_path) ||
     asStringOrNull(deployTarget.resolved_workflow_path);
   const deployWorkflowFilePath = deployWorkflowFilePathFromSelected || deployWorkflowFilePathFromSummary;
+  const deployWorkflowIdentifierTypeUsed = normalizeWorkflowIdentifierType(
+    asStringOrNull(selectedDeployHistoryRecord.workflow_identifier_type_used)
+    || asStringOrNull(deployReadiness.last_failure_workflow_identifier_type_used)
+    || asStringOrNull(migrationDiagnostics.last_deploy_failure_workflow_identifier_type_used)
+    || asStringOrNull(deployReadiness.workflow_identifier_type_used),
+  ) || normalizeWorkflowIdentifierType(deployWorkflowIdentifier || deployWorkflowFilePath);
   const deployResolvedWorkflowSource =
     asStringOrNull(selectedDeployHistoryRecord.resolved_workflow_source) ||
     asStringOrNull(deployTarget.resolved_workflow_source);
@@ -5024,6 +5070,17 @@ export function MigrationWorkspacePanel({
     asStringOrNull(migrationDiagnostics.last_deploy_failure_dispatch_service_reason_code) ||
     asStringOrNull(deployReadiness.dispatch_service_reason_code);
   const dispatchServiceReasonCode = dispatchServiceReasonCodeFromSelected || dispatchServiceReasonCodeFromSummary;
+  const deployDispatchIdentifierType = normalizeWorkflowIdentifierType(
+    asStringOrNull(selectedDeployHistoryRecord.dispatch_identifier_type)
+    || asStringOrNull(deployReadiness.dispatch_identifier_type),
+  ) || deployWorkflowIdentifierTypeUsed;
+  const actualDispatchIdentifierSent =
+    asStringOrNull(selectedDeployHistoryRecord.actual_dispatch_identifier_sent)
+    || asStringOrNull(deployReadiness.actual_dispatch_identifier_sent);
+  const actualDispatchIdentifierTypeSent = normalizeWorkflowIdentifierType(
+    asStringOrNull(selectedDeployHistoryRecord.actual_dispatch_identifier_type_sent)
+    || asStringOrNull(deployReadiness.actual_dispatch_identifier_type_sent),
+  ) || normalizeWorkflowIdentifierType(actualDispatchIdentifierSent);
   const managedGkeConfigDetails = asRecord(deployTarget.managed_gke_config_details);
   const deployAuthMode =
     asStringOrNull(selectedDeployHistoryRecord.deploy_auth_mode) ||
@@ -5441,9 +5498,9 @@ export function MigrationWorkspacePanel({
   const workflowIntegrityReasonCode =
     ((workflowIntegrityReasonCodeFromSelected || workflowIntegrityReasonCodeFromSummary || "").trim().toLowerCase() ||
       null);
-  const normalizedDispatchServiceReasonCode = (dispatchServiceReasonCode || "").trim().toLowerCase();
-  const normalizedDeployFailureReasonCode = (deployFailureReasonCode || "").trim().toLowerCase();
-  const normalizedDeployRunFailureReasonCode = (deployRunFailureReasonCode || "").trim().toLowerCase();
+  const normalizedDispatchServiceReasonCode = normalizeDeployReasonCode(dispatchServiceReasonCode);
+  const normalizedDeployFailureReasonCode = normalizeDeployReasonCode(deployFailureReasonCode);
+  const normalizedDeployRunFailureReasonCode = normalizeDeployReasonCode(deployRunFailureReasonCode);
   const normalizedDeployRunFailureStage = (deployRunFailureStage || "").trim().toLowerCase();
   const normalizedPostConformanceStage = (postConformanceStage || "").trim().toLowerCase();
   const normalizedTlsCertificateStatus = normalizeUpperOrNull(tlsCertificateStatus);
@@ -5502,6 +5559,7 @@ export function MigrationWorkspacePanel({
   const hasIngressConflictReason = Array.from(ingressConflictReasonCodes).some((code) =>
     hasDeployConsistencyReasonCode(code),
   );
+  const hasExpectedStaticIpBindingReason = hasDeployConsistencyReasonCode("expected_static_ip_not_bound_to_ingress");
   const tlsFailedNotVisible =
     normalizedTlsCertificateStatus === "FAILED_NOT_VISIBLE" ||
     normalizedTlsDomainStatus === "FAILED_NOT_VISIBLE" ||
@@ -5509,7 +5567,7 @@ export function MigrationWorkspacePanel({
   const tlsProvisioning =
     normalizedTlsCertificateStatus === "PROVISIONING" ||
     normalizedTlsDomainStatus === "PROVISIONING" ||
-    hasDeployConsistencyReasonCode("tls_certificate_provisioning");
+    hasDeployConsistencyReasonCode(CERTIFICATE_PROVISIONING_PENDING_REASON);
   const deployWorkflowConvergencePending =
     isPendingWorkflowRunStatus(workflowRunStatus) ||
     normalizedPostConformanceStage === "workflow_dispatch_attempted" ||
@@ -5646,23 +5704,36 @@ export function MigrationWorkspacePanel({
   })();
   const deployConsistencyRemediationHints = (() => {
     const hints = new Set<string>();
-    if (dnsMatchesIngressGateStatus === "blocked") {
-      hints.add("DNS mismatch: update DNS A record to the observed ingress IP.");
+    for (const value of [postConformanceGuidance, deployRunFailureHint, deployFailureRemediationHintDisplay]) {
+      const normalized = (value || "").trim();
+      if (normalized) {
+        hints.add(normalized);
+      }
     }
-    if (tlsFailedNotVisible) {
-      hints.add("FAILED_NOT_VISIBLE: DNS is not visible to Google certificate validation yet.");
-    }
-    if (tlsProvisioning && httpsProbeGateStatus !== "pass") {
-      hints.add("TLS provisioning pending: wait for ManagedCertificate status ACTIVE, then refresh/retry deploy.");
-    }
-    if (certificateIdentityGateStatus === "blocked" && hasCertIdentityMismatchReason) {
-      hints.add("Cert bound to wrong site: certificate identity mismatch or stale binding detected.");
-    }
-    if (ingressConflictGateStatus === "blocked") {
-      hints.add("Ingress conflict: static IP or ingress ownership conflict detected.");
-    }
-    if (httpsProbeGateStatus === "blocked") {
-      hints.add("HTTPS not ready: wait for DNS/TLS/LB convergence or inspect deploy evidence.");
+    if (hints.size === 0) {
+      if (managedGkeConfigGuidance) {
+        hints.add(managedGkeConfigGuidance);
+      }
+      if (hasExpectedStaticIpBindingReason) {
+        hints.add("Ingress is missing the expected per-site static IP annotation binding. Republish managed ingress resources and retry deploy.");
+      } else if (dnsMatchesIngressGateStatus === "blocked") {
+        hints.add("DNS mismatch: update DNS A record to the observed ingress IP.");
+      }
+      if (tlsFailedNotVisible) {
+        hints.add("FAILED_NOT_VISIBLE: DNS is not visible to Google certificate validation yet.");
+      }
+      if (tlsProvisioning && httpsProbeGateStatus !== "pass") {
+        hints.add("TLS provisioning pending: wait for ManagedCertificate status ACTIVE, then refresh/retry deploy.");
+      }
+      if (certificateIdentityGateStatus === "blocked" && hasCertIdentityMismatchReason) {
+        hints.add("Cert bound to wrong site: certificate identity mismatch or stale binding detected.");
+      }
+      if (ingressConflictGateStatus === "blocked" && !hasExpectedStaticIpBindingReason) {
+        hints.add("Ingress conflict: static IP or ingress ownership conflict detected.");
+      }
+      if (httpsProbeGateStatus === "blocked") {
+        hints.add("HTTPS not ready: wait for DNS/TLS/LB convergence or inspect deploy evidence.");
+      }
     }
     if (
       workflowIntegrityGateStatus === "warning" ||
@@ -6170,8 +6241,7 @@ export function MigrationWorkspacePanel({
       );
       const certificateProvisioningPending = (certificateReadinessState || "").trim().toLowerCase()
         === "certificate_provisioning_pending";
-      const hasTlsProvisioningReason =
-        reasonCodes.has("tls_certificate_provisioning") || reasonCodes.has("managed_certificate_provisioning");
+      const hasTlsProvisioningReason = reasonCodes.has(CERTIFICATE_PROVISIONING_PENDING_REASON);
       if (!hasTlsProvisioningReason && !tlsProvisioning && !certificateProvisioningPending && runtimeReadyTlsPending !== true) {
         return null;
       }
@@ -6186,10 +6256,10 @@ export function MigrationWorkspacePanel({
         certificateGateRequiredBeforeDeploy === true
           ? "Certificate exists but is still provisioning. Deploy is held until the certificate is ACTIVE."
           : "Runtime can deploy while HTTPS certificate provisioning continues.",
-        certificateGateRequiredBeforeDeploy === true
-          ? "This deploy mode requires an ACTIVE certificate before HTTPS-ready deploy can continue."
-          : "Runtime can deploy while HTTPS certificate provisioning continues.",
       ];
+      if (certificateGateRequiredBeforeDeploy === true) {
+        parts.push("This deploy mode requires an ACTIVE certificate before HTTPS-ready deploy can continue.");
+      }
       if (runtimeReadyTlsPending === true) {
         parts.push(
           hostname
@@ -10176,7 +10246,13 @@ export function MigrationWorkspacePanel({
                     <span className="hint">
                       Requested workflow identifier: {deployWorkflowIdentifierRequested || "Not available"}
                     </span>
+                    <span className="hint">
+                      Requested workflow identifier type: {deployWorkflowIdentifierTypeRequested || "Not available"}
+                    </span>
                     <span className="hint">Resolved workflow path: {deployWorkflowFilePath || "Not available"}</span>
+                    <span className="hint">
+                      Resolved workflow identifier type: {deployWorkflowIdentifierTypeUsed || "Not available"}
+                    </span>
                     <span className="hint">
                       Workflow exists:{" "}
                       {formatBooleanStateLabel(deployWorkflowExists, {
@@ -10189,6 +10265,9 @@ export function MigrationWorkspacePanel({
                     </span>
                     <span className="hint">
                       Dispatch service reason: {formatReasonCodeLabel(dispatchServiceReasonCode)}
+                    </span>
+                    <span className="hint">
+                      Dispatch identifier type: {deployDispatchIdentifierType || "Not available"}
                     </span>
                     <span className="hint">deploy_auth_mode: {deployAuthMode || "Not available"}</span>
                     <span className="hint">
@@ -10203,6 +10282,12 @@ export function MigrationWorkspacePanel({
                       {formatBooleanStateLabel(targetRepoDeploySecretPresent)}
                     </span>
                     <span className="hint">Dispatch ref sent: {dispatchRefSent || "Not available"}</span>
+                    <span className="hint">
+                      Actual dispatch identifier sent: {actualDispatchIdentifierSent || "Not available"}
+                    </span>
+                    <span className="hint">
+                      Actual dispatch identifier type: {actualDispatchIdentifierTypeSent || "Not available"}
+                    </span>
                     <span className="hint">
                       Workflow input keys (configured):{" "}
                       {workflowInputsConfiguredKeys.length > 0 ? workflowInputsConfiguredKeys.join(", ") : "None"}

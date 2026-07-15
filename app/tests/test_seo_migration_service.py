@@ -4954,7 +4954,7 @@ def test_generate_artifacts_flags_selected_media_not_materialized_when_storage_b
     assert isinstance(not_materialized[0], dict)
     assert not_materialized[0].get("reason_code") == "media_storage_read_failed"
     assert "selected_media_not_materialized" not in list(media_diagnostics.get("blocker_codes") or [])
-    assert "selected_media_available_not_referenced" in list(media_diagnostics.get("warning_codes") or [])
+    assert "selected_media_pending_generation" in list(media_diagnostics.get("warning_codes") or [])
     assert media_diagnostics.get("ready") is False
 
 
@@ -5025,7 +5025,7 @@ def test_deploy_readiness_does_not_block_on_selected_only_media_warning_state(db
     )
     assert "deploy_artifact_media_invalid" not in list(deploy_readiness.get("blocker_codes") or [])
     assert deploy_media.get("ready") is True
-    assert "selected_media_available_not_referenced" in list(deploy_media.get("warning_codes") or [])
+    assert "selected_media_pending_generation" in list(deploy_media.get("warning_codes") or [])
 
 
 def test_publish_and_deploy_readiness_block_when_generated_html_references_missing_assets_path(db_session) -> None:
@@ -5437,6 +5437,7 @@ def test_publish_media_readiness_uses_pending_generation_status_for_stale_artifa
     assert second_asset_id in list(publish_media.get("selected_media_pending_generation_ids") or [])
     assert "artifact_regeneration_required_after_media_selection" not in list(publish_media.get("blocker_codes") or [])
     assert "selected_media_not_materialized" not in list(publish_media.get("blocker_codes") or [])
+    assert "selected_media_pending_generation" in list(publish_media.get("warning_codes") or [])
     assert "selected_media_changed_after_generation" in list(publish_media.get("warning_codes") or [])
     assert "next draft package" in str(publish_media.get("selected_media_pending_generation_message") or "").lower()
 
@@ -5466,10 +5467,63 @@ def test_artifact_media_readiness_demotes_selected_not_materialized_to_warning_o
 
     assert readiness.get("ready") is True
     assert "selected_media_not_materialized" not in list(readiness.get("blocker_codes") or [])
-    assert "selected_media_available_not_referenced" in list(readiness.get("warning_codes") or [])
+    assert "selected_media_pending_generation" in list(readiness.get("warning_codes") or [])
     warnings = [str(item) for item in list(readiness.get("warnings") or [])]
     assert warnings
     assert "advisory" in warnings[0].lower()
+
+
+def test_artifact_media_readiness_keeps_pending_and_unused_warning_codes_distinct() -> None:
+    readiness = seo_migration_module._build_artifact_media_readiness_from_payload(
+        diagnostics_payload={
+            "selected_assets_count": 3,
+            "materialized_assets_count": 2,
+            "selected_not_materialized_count": 1,
+            "selected_not_materialized_asset_ids": ["upl-a"],
+            "unreferenced_materialized_media_paths_count": 1,
+            "warning_codes": ["selected_media_available_not_referenced"],
+        },
+        manifest_payload={
+            "selected_assets_count": 3,
+            "materialized_assets_count": 2,
+            "manifest": [],
+        },
+    )
+
+    assert "selected_media_pending_generation" in list(readiness.get("warning_codes") or [])
+    assert "selected_media_unused_by_generated_pages" in list(readiness.get("warning_codes") or [])
+
+
+def test_workflow_identifier_type_normalizes_numeric_ids_and_legacy_history_values() -> None:
+    diagnostics = seo_migration_module._resolve_workflow_dispatch_identifier(
+        workflow_id="12345",
+        workflow_path=None,
+    )
+
+    assert diagnostics.get("workflow_identifier_type_requested") == "workflow_id"
+    assert diagnostics.get("workflow_identifier_type_used") == "workflow_id"
+
+    traceability = SEOMigrationService._derive_latest_deploy_traceability(
+        artifact_version_id=None,
+        history=[
+            {
+                "action": "deploy",
+                "status": "failed",
+                "failure_reason": "workflow_not_dispatchable",
+                "failure_stage": "workflow_lookup",
+                "workflow_id": "12345",
+                "workflow_identifier_requested": "12345",
+                "workflow_identifier_used": "12345",
+                "workflow_identifier_type_requested": "workflow_numeric_id",
+                "workflow_identifier_type_used": "workflow_numeric_id",
+                "dispatch_identifier_type": "workflow_numeric_id",
+            }
+        ]
+    )
+
+    assert traceability.get("workflow_identifier_type_requested") == "workflow_id"
+    assert traceability.get("workflow_identifier_type_used") == "workflow_id"
+    assert traceability.get("dispatch_identifier_type") == "workflow_id"
 
 
 def test_generate_artifacts_rejection_emits_contract_diagnostics(db_session, caplog) -> None:
@@ -6658,8 +6712,8 @@ def test_deploy_blocks_before_dispatch_when_https_required_certificate_is_provis
     ]
     workspace = service.get_workspace(business_id=business_id, site_id=site_id)
     latest = (workspace.deploy_history_json or [])[-1]
-    assert latest.get("failure_reason") == "tls_certificate_provisioning"
-    assert latest.get("dispatch_service_reason_code") == "tls_certificate_provisioning"
+    assert latest.get("failure_reason") == "certificate_provisioning_pending"
+    assert latest.get("dispatch_service_reason_code") == "certificate_provisioning_pending"
     assert latest.get("dispatch_result_stage") == "certificate_readiness"
 
     summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
@@ -6874,7 +6928,7 @@ def test_deploy_replace_runtime_with_provisioning_certificate_is_not_classified_
 
     workspace = service.get_workspace(business_id=business_id, site_id=site_id)
     latest = (workspace.deploy_history_json or [])[-1]
-    assert latest.get("failure_reason") == "tls_certificate_provisioning"
+    assert latest.get("failure_reason") == "certificate_provisioning_pending"
     assert latest.get("failure_reason") != "managed_site_runtime_replace_failed"
 
 
@@ -8837,7 +8891,7 @@ def test_refresh_deploy_status_tls_provisioning_overrides_runtime_replace_failur
 
     summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
     deploy_readiness = summary.deploy_readiness or {}
-    assert deploy_readiness.get("selected_workflow_failure_reason") == "tls_certificate_provisioning"
+    assert deploy_readiness.get("selected_workflow_failure_reason") == "certificate_provisioning_pending"
     assert deploy_readiness.get("selected_workflow_failure_stage") == "ingress_evidence"
     assert deploy_readiness.get("runtime_ready_tls_pending") is True
 

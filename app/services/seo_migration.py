@@ -601,7 +601,7 @@ _DEPLOY_DISPATCH_SERVICE_REASON_LEGACY_RUNTIME_REPLACEMENT_REQUIRED = "legacy_ru
 _DEPLOY_DISPATCH_SERVICE_REASON_DNS_RECORD_MISMATCH = "dns_record_mismatch"
 _DEPLOY_DISPATCH_SERVICE_REASON_DNS_POINTS_TO_OLD_INGRESS_IP = "dns_points_to_old_ingress_ip"
 _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_IP_ASSIGNED_BUT_DNS_NOT_UPDATED = "ingress_ip_assigned_but_dns_not_updated"
-_DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_PROVISIONING = "tls_certificate_provisioning"
+_DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_PROVISIONING = "certificate_provisioning_pending"
 _DEPLOY_RUNTIME_REASON_MANAGED_SITE_RUNTIME_REPLACE_REQUESTED = "managed_site_runtime_replace_requested"
 _DEPLOY_RUNTIME_REASON_MANAGED_SITE_RUNTIME_REPLACE_COMPLETED = "managed_site_runtime_replace_completed"
 _DEPLOY_RUNTIME_REASON_MANAGED_SITE_RUNTIME_REPLACE_FAILED = "managed_site_runtime_replace_failed"
@@ -4927,13 +4927,13 @@ class SEOMigrationService:
             dispatch_identifier_diagnostics.get("workflow_identifier_used"),
             max_length=200,
         )
-        workflow_identifier_type_requested = _normalize_string(
+        workflow_identifier_type_requested = _normalize_workflow_identifier_type(
             dispatch_identifier_diagnostics.get("workflow_identifier_type_requested"),
-            max_length=80,
+            workflow_identifier=workflow_identifier_requested,
         )
-        workflow_identifier_type_used = _normalize_string(
+        workflow_identifier_type_used = _normalize_workflow_identifier_type(
             dispatch_identifier_diagnostics.get("workflow_identifier_type_used"),
-            max_length=80,
+            workflow_identifier=workflow_identifier_used,
         )
         workflow_dispatch_resolution_source = _normalize_string(
             dispatch_identifier_diagnostics.get("workflow_dispatch_resolution_source"),
@@ -5005,8 +5005,9 @@ class SEOMigrationService:
         workflow_conformance_status: str | None = None
         workflow_conformance_reasons: list[str] = []
         workflow_conformance_evidence_summary: str | None = None
-        dispatch_identifier_type: str | None = workflow_identifier_type_used or _infer_dispatch_identifier_type(
-            workflow_identifier_used or deploy_target.get("workflow_id")
+        dispatch_identifier_type: str | None = workflow_identifier_type_used or _normalize_workflow_identifier_type(
+            None,
+            workflow_identifier=workflow_identifier_used or deploy_target.get("workflow_id"),
         )
         actual_dispatch_identifier_sent: str | None = None
         actual_dispatch_identifier_type_sent: str | None = None
@@ -5810,17 +5811,22 @@ class SEOMigrationService:
                 workflow_dispatch_supported = target_readiness.workflow_dispatch_supported
                 workflow_trigger_types = target_readiness.workflow_trigger_types
                 dispatch_service_availability = target_readiness.dispatch_service_availability
-                dispatch_service_reason_code = target_readiness.dispatch_service_reason_code
+                dispatch_service_reason_code = _normalize_dispatch_service_reason_code(
+                    target_readiness.dispatch_service_reason_code
+                )
                 workflow_conformance_checked = target_readiness.workflow_conformance_checked
                 workflow_conformance_status = target_readiness.workflow_conformance_status
                 workflow_conformance_reasons = list(target_readiness.workflow_conformance_reasons or ())
                 workflow_conformance_evidence_summary = target_readiness.workflow_conformance_evidence_summary
-                dispatch_identifier_type = target_readiness.dispatch_identifier_type
+                dispatch_identifier_type = _normalize_workflow_identifier_type(
+                    target_readiness.dispatch_identifier_type,
+                    workflow_identifier=target_readiness.workflow_id,
+                )
                 workflow_identifier_used = _normalize_string(target_readiness.workflow_id, max_length=160)
                 if workflow_identifier_type_used is None:
-                    workflow_identifier_type_used = _normalize_string(
+                    workflow_identifier_type_used = _normalize_workflow_identifier_type(
                         target_readiness.dispatch_identifier_type,
-                        max_length=80,
+                        workflow_identifier=workflow_identifier_used or target_readiness.workflow_id,
                     )
                 workflow_file_path = (
                     _normalize_workflow_path_for_deploy(target_readiness.workflow_path) or workflow_file_path
@@ -6784,7 +6790,10 @@ class SEOMigrationService:
             ) or _normalize_string(deploy_target_for_dispatch.workflow_id, max_length=200)
             actual_dispatch_identifier_type_sent = _infer_dispatch_identifier_type(actual_dispatch_identifier_sent)
             if not actual_dispatch_identifier_type_sent:
-                actual_dispatch_identifier_type_sent = _normalize_string(dispatch_identifier_type, max_length=80)
+                actual_dispatch_identifier_type_sent = _normalize_workflow_identifier_type(
+                    dispatch_identifier_type,
+                    workflow_identifier=actual_dispatch_identifier_sent,
+                )
             dispatch_ref_sent = _normalize_string(deploy_target_for_dispatch.ref, max_length=120)
             self._emit_structured_service_log(
                 payload={
@@ -6978,7 +6987,12 @@ class SEOMigrationService:
                     if not workflow_conformance_reasons:
                         workflow_conformance_reasons = ["placeholder_workflow_content_detected"]
                 dispatch_identifier_type = (
-                    target_readiness.dispatch_identifier_type if target_readiness is not None else "workflow_id"
+                    _normalize_workflow_identifier_type(
+                        target_readiness.dispatch_identifier_type,
+                        workflow_identifier=target_readiness.workflow_id,
+                    )
+                    if target_readiness is not None
+                    else "workflow_id"
                 )
                 if dispatch_service_availability is None:
                     dispatch_service_availability = (
@@ -9121,14 +9135,17 @@ class SEOMigrationService:
             target_history_item.get("workflow_identifier_used"),
             max_length=200,
         ) or _normalize_string(target_history_item.get("workflow_id"), max_length=160)
-        workflow_identifier_type_requested = _normalize_string(
+        workflow_identifier_type_requested = _normalize_workflow_identifier_type(
             target_history_item.get("workflow_identifier_type_requested"),
-            max_length=80,
+            workflow_identifier=workflow_identifier_requested,
         ) or _infer_dispatch_identifier_type(workflow_identifier_requested)
-        workflow_identifier_type_used = _normalize_string(
+        workflow_identifier_type_used = _normalize_workflow_identifier_type(
             target_history_item.get("workflow_identifier_type_used"),
-            max_length=80,
-        ) or _normalize_string(target_history_item.get("dispatch_identifier_type"), max_length=80)
+            workflow_identifier=workflow_identifier_used,
+        ) or _normalize_workflow_identifier_type(
+            target_history_item.get("dispatch_identifier_type"),
+            workflow_identifier=workflow_identifier_used,
+        )
         workflow_dispatch_resolution_source = _normalize_string(
             target_history_item.get("workflow_dispatch_resolution_source"),
             max_length=80,
@@ -9189,7 +9206,10 @@ class SEOMigrationService:
         workflow_trigger_types = _normalize_workflow_trigger_types_for_summary(
             target_history_item.get("workflow_trigger_types")
         )
-        dispatch_identifier_type = _normalize_string(target_history_item.get("dispatch_identifier_type"), max_length=80)
+        dispatch_identifier_type = _normalize_workflow_identifier_type(
+            target_history_item.get("dispatch_identifier_type"),
+            workflow_identifier=workflow_identifier_used or workflow_identifier_requested,
+        )
         workflow_run_id = _coerce_int(target_history_item.get("workflow_run_id"))
         dispatch_verification_state = _derive_dispatch_verification_state(
             dispatch_attempted=dispatch_attempted,
@@ -10785,15 +10805,30 @@ class SEOMigrationService:
                 max_length=200,
             )
             or _normalize_string(history_item.get("workflow_id"), max_length=160),
-            "workflow_identifier_type_requested": _normalize_string(
+            "workflow_identifier_type_requested": _normalize_workflow_identifier_type(
                 history_item.get("workflow_identifier_type_requested"),
-                max_length=80,
+                workflow_identifier=_normalize_string(
+                    history_item.get("workflow_identifier_requested"),
+                    max_length=200,
+                )
+                or _normalize_string(history_item.get("workflow_id"), max_length=160),
             ),
-            "workflow_identifier_type_used": _normalize_string(
+            "workflow_identifier_type_used": _normalize_workflow_identifier_type(
                 history_item.get("workflow_identifier_type_used"),
-                max_length=80,
+                workflow_identifier=_normalize_string(
+                    history_item.get("workflow_identifier_used"),
+                    max_length=200,
+                )
+                or _normalize_string(history_item.get("workflow_id"), max_length=160),
             )
-            or _normalize_string(history_item.get("dispatch_identifier_type"), max_length=80),
+            or _normalize_workflow_identifier_type(
+                history_item.get("dispatch_identifier_type"),
+                workflow_identifier=_normalize_string(
+                    history_item.get("workflow_identifier_used"),
+                    max_length=200,
+                )
+                or _normalize_string(history_item.get("workflow_id"), max_length=160),
+            ),
             "workflow_dispatch_resolution_source": _normalize_string(
                 history_item.get("workflow_dispatch_resolution_source"),
                 max_length=80,
@@ -10905,7 +10940,14 @@ class SEOMigrationService:
             "dispatch_service_reason_code": _normalize_dispatch_service_reason_code(
                 history_item.get("dispatch_service_reason_code")
             ),
-            "dispatch_identifier_type": _normalize_string(history_item.get("dispatch_identifier_type"), max_length=80),
+            "dispatch_identifier_type": _normalize_workflow_identifier_type(
+                history_item.get("dispatch_identifier_type"),
+                workflow_identifier=_normalize_string(
+                    history_item.get("workflow_identifier_used"),
+                    max_length=200,
+                )
+                or _normalize_string(history_item.get("workflow_id"), max_length=160),
+            ),
             "dispatch_attempted": (
                 bool(history_item.get("dispatch_attempted"))
                 if isinstance(history_item.get("dispatch_attempted"), bool)
@@ -16498,7 +16540,10 @@ class SEOMigrationService:
                     normalized_trigger_types.append(normalized)
         if normalized_trigger_types:
             payload["workflow_trigger_types"] = normalized_trigger_types
-        normalized_identifier_type = _normalize_string(dispatch_identifier_type, max_length=80)
+        normalized_identifier_type = _normalize_workflow_identifier_type(
+            dispatch_identifier_type,
+            workflow_identifier=workflow_identifier_used or workflow_id,
+        )
         if normalized_identifier_type:
             payload["dispatch_identifier_type"] = normalized_identifier_type
         normalized_identifier_requested = _normalize_string(workflow_identifier_requested, max_length=200)
@@ -16507,10 +16552,16 @@ class SEOMigrationService:
         normalized_identifier_used = _normalize_string(workflow_identifier_used, max_length=200)
         if normalized_identifier_used:
             payload["workflow_identifier_used"] = normalized_identifier_used
-        normalized_identifier_type_requested = _normalize_string(workflow_identifier_type_requested, max_length=80)
+        normalized_identifier_type_requested = _normalize_workflow_identifier_type(
+            workflow_identifier_type_requested,
+            workflow_identifier=workflow_identifier_requested or workflow_id,
+        )
         if normalized_identifier_type_requested:
             payload["workflow_identifier_type_requested"] = normalized_identifier_type_requested
-        normalized_identifier_type_used = _normalize_string(workflow_identifier_type_used, max_length=80)
+        normalized_identifier_type_used = _normalize_workflow_identifier_type(
+            workflow_identifier_type_used,
+            workflow_identifier=workflow_identifier_used or workflow_id,
+        )
         if normalized_identifier_type_used:
             payload["workflow_identifier_type_used"] = normalized_identifier_type_used
         normalized_dispatch_resolution_source = _normalize_string(workflow_dispatch_resolution_source, max_length=80)
@@ -19074,16 +19125,19 @@ class SEOMigrationService:
                 ),
                 "workflow_identifier_requested": workflow_identifier_requested,
                 "workflow_identifier_used": workflow_identifier_used,
-                "workflow_identifier_type_requested": _normalize_string(
+                "workflow_identifier_type_requested": _normalize_workflow_identifier_type(
                     item.get("workflow_identifier_type_requested"),
-                    max_length=80,
+                    workflow_identifier=workflow_identifier_requested,
                 )
                 or _infer_dispatch_identifier_type(workflow_identifier_requested),
-                "workflow_identifier_type_used": _normalize_string(
+                "workflow_identifier_type_used": _normalize_workflow_identifier_type(
                     item.get("workflow_identifier_type_used"),
-                    max_length=80,
+                    workflow_identifier=workflow_identifier_used,
                 )
-                or _normalize_string(item.get("dispatch_identifier_type"), max_length=80)
+                or _normalize_workflow_identifier_type(
+                    item.get("dispatch_identifier_type"),
+                    workflow_identifier=workflow_identifier_used,
+                )
                 or _infer_dispatch_identifier_type(workflow_identifier_used),
                 "workflow_dispatch_resolution_source": _normalize_string(
                     item.get("workflow_dispatch_resolution_source"),
@@ -19119,7 +19173,10 @@ class SEOMigrationService:
                     item.get("workflow_conformance_evidence_summary"),
                     max_length=240,
                 ),
-                "dispatch_identifier_type": _normalize_string(item.get("dispatch_identifier_type"), max_length=80),
+                "dispatch_identifier_type": _normalize_workflow_identifier_type(
+                    item.get("dispatch_identifier_type"),
+                    workflow_identifier=workflow_identifier_used or workflow_identifier_requested,
+                ),
                 "dispatch_attempted": bool(dispatch_attempted) if isinstance(dispatch_attempted, bool) else None,
                 "dispatch_result_stage": _normalize_string(item.get("dispatch_result_stage"), max_length=40),
                 "dispatch_ref_sent": _normalize_string(item.get("dispatch_ref_sent"), max_length=120)
@@ -19976,9 +20033,10 @@ class SEOMigrationService:
                     or target.get("workflow_id"),
                     workflow_path=workflow_resolution.get("workflow_path"),
                 )
-                dispatch_identifier_type = _normalize_string(
+                dispatch_identifier_type = _normalize_workflow_identifier_type(
                     dispatch_identifier_diagnostics.get("workflow_identifier_type_used"),
-                    max_length=80,
+                    workflow_identifier=dispatch_identifier_diagnostics.get("workflow_identifier_used")
+                    or target.get("workflow_id"),
                 ) or _infer_dispatch_identifier_type(target.get("workflow_id"))
                 target_summary["workflow_identifier_requested"] = dispatch_identifier_diagnostics.get(
                     "workflow_identifier_requested"
@@ -20164,9 +20222,9 @@ class SEOMigrationService:
                         or dispatch_service_reason_code
                     )
                     dispatch_identifier_type = (
-                        _normalize_string(
+                        _normalize_workflow_identifier_type(
                             target_readiness.dispatch_identifier_type,
-                            max_length=80,
+                            workflow_identifier=target_readiness.workflow_id,
                         )
                         or dispatch_identifier_type
                     )
@@ -20179,8 +20237,13 @@ class SEOMigrationService:
                             "workflow_dispatch_supported": target_readiness.workflow_dispatch_supported,
                             "workflow_trigger_types": list(target_readiness.workflow_trigger_types or ()),
                             "dispatch_service_availability": target_readiness.dispatch_service_availability,
-                            "dispatch_service_reason_code": target_readiness.dispatch_service_reason_code,
-                            "dispatch_identifier_type": target_readiness.dispatch_identifier_type,
+                            "dispatch_service_reason_code": _normalize_dispatch_service_reason_code(
+                                target_readiness.dispatch_service_reason_code
+                            ),
+                            "dispatch_identifier_type": _normalize_workflow_identifier_type(
+                                target_readiness.dispatch_identifier_type,
+                                workflow_identifier=target_readiness.workflow_id,
+                            ),
                             "workflow_conformance_checked": target_readiness.workflow_conformance_checked,
                             "workflow_conformance_status": target_readiness.workflow_conformance_status,
                             "workflow_conformance_reasons": list(target_readiness.workflow_conformance_reasons or ()),
@@ -20302,14 +20365,20 @@ class SEOMigrationService:
             latest_traceability.get("workflow_identifier_used"),
             max_length=200,
         ) or _normalize_string(target_summary.get("workflow_identifier_used"), max_length=200)
-        workflow_identifier_type_requested = _normalize_string(
+        workflow_identifier_type_requested = _normalize_workflow_identifier_type(
             latest_traceability.get("workflow_identifier_type_requested"),
-            max_length=80,
-        ) or _normalize_string(target_summary.get("workflow_identifier_type_requested"), max_length=80)
-        workflow_identifier_type_used = _normalize_string(
+            workflow_identifier=workflow_identifier_requested,
+        ) or _normalize_workflow_identifier_type(
+            target_summary.get("workflow_identifier_type_requested"),
+            workflow_identifier=workflow_identifier_requested,
+        )
+        workflow_identifier_type_used = _normalize_workflow_identifier_type(
             latest_traceability.get("workflow_identifier_type_used"),
-            max_length=80,
-        ) or _normalize_string(target_summary.get("workflow_identifier_type_used"), max_length=80)
+            workflow_identifier=workflow_identifier_used,
+        ) or _normalize_workflow_identifier_type(
+            target_summary.get("workflow_identifier_type_used"),
+            workflow_identifier=workflow_identifier_used,
+        )
         workflow_dispatch_resolution_source = _normalize_string(
             latest_traceability.get("workflow_dispatch_resolution_source"),
             max_length=80,
@@ -22496,9 +22565,7 @@ class SEOMigrationService:
         )
         if selected_media_updated_after_artifact_created:
             readiness_payload["selected_media_pending_generation_message"] = (
-                f"{selected_media_pending_generation_count} selected image"
-                f"{'' if selected_media_pending_generation_count == 1 else 's'} "
-                "will be included when you generate the next draft package."
+                _selected_media_pending_generation_next_artifact_message(selected_media_pending_generation_count)
             )
             status_codes = _normalize_string_list(
                 readiness_payload.get("status_codes"),
@@ -22520,10 +22587,15 @@ class SEOMigrationService:
         ]
         readiness_payload["blocker_codes"] = _dedupe_strings(blocker_codes)
 
-        warning_codes = _normalize_string_list(
+        warning_codes = _normalize_selected_media_warning_codes(
             readiness_payload.get("warning_codes"),
+            selected_not_materialized_count=selected_media_pending_generation_count,
+            unreferenced_materialized_count=max(
+                0,
+                int(readiness_payload.get("unreferenced_materialized_media_paths_count") or 0),
+            ),
+            selected_media_pending_generation=selected_media_updated_after_artifact_created,
             max_items=20,
-            max_item_length=80,
         )
         warning_reasons = _normalize_string_list(
             readiness_payload.get("warnings"),
@@ -22532,6 +22604,8 @@ class SEOMigrationService:
         )
         if selected_media_updated_after_artifact_created:
             changed_count = len(selected_media_missing_from_manifest)
+            if "selected_media_pending_generation" not in warning_codes:
+                warning_codes.insert(0, "selected_media_pending_generation")
             warning_codes.insert(0, "selected_media_changed_after_generation")
             warning_reasons = [
                 item
@@ -22540,10 +22614,7 @@ class SEOMigrationService:
             ]
             warning_reasons.insert(
                 0,
-                (
-                    f"{changed_count} selected image(s) were chosen after this artifact was generated. "
-                    "Generate a new draft package to include those changes."
-                ),
+                _selected_media_changed_after_generation_warning_reason(changed_count),
             )
         readiness_payload["warning_codes"] = _dedupe_strings(warning_codes)
         readiness_payload["warnings"] = warning_reasons[:12]
@@ -23036,6 +23107,77 @@ def _derive_artifact_media_reference_diagnostics_from_generated_files(
     }
 
 
+def _selected_media_pending_generation_warning_reason(count: int) -> str:
+    return (
+        f"{count} selected image(s) are not in this artifact package yet. "
+        "This is advisory unless generated output references missing image paths."
+    )
+
+
+def _selected_media_pending_generation_next_artifact_message(count: int) -> str:
+    return (
+        f"{count} selected image"
+        f"{'' if count == 1 else 's'} will be included when you generate the next draft package."
+    )
+
+
+def _selected_media_changed_after_generation_warning_reason(count: int) -> str:
+    return (
+        f"{count} selected image(s) were chosen after this artifact was generated. "
+        "Generate a new draft package to include those changes."
+    )
+
+
+def _normalize_selected_media_warning_code(
+    code: object,
+    *,
+    selected_not_materialized_count: int = 0,
+    unreferenced_materialized_count: int = 0,
+    selected_media_pending_generation: bool = False,
+) -> str | None:
+    normalized = _normalize_string(code, max_length=80)
+    if not normalized:
+        return None
+    normalized_lower = normalized.lower()
+    if normalized_lower == "selected_media_not_materialized":
+        return "selected_media_pending_generation"
+    if normalized_lower == "selected_media_available_not_referenced":
+        if selected_not_materialized_count > 0 or selected_media_pending_generation:
+            return "selected_media_pending_generation"
+        if unreferenced_materialized_count > 0:
+            return "selected_media_unused_by_generated_pages"
+        return "selected_media_pending_generation"
+    return normalized_lower
+
+
+def _normalize_selected_media_warning_codes(
+    warning_codes: object,
+    *,
+    selected_not_materialized_count: int = 0,
+    unreferenced_materialized_count: int = 0,
+    selected_media_pending_generation: bool = False,
+    max_items: int = 12,
+) -> list[str]:
+    normalized_codes: list[str] = []
+    seen_codes: set[str] = set()
+    for code in _normalize_string_list(
+        warning_codes,
+        max_items=max_items,
+        max_item_length=80,
+    ):
+        normalized_code = _normalize_selected_media_warning_code(
+            code,
+            selected_not_materialized_count=selected_not_materialized_count,
+            unreferenced_materialized_count=unreferenced_materialized_count,
+            selected_media_pending_generation=selected_media_pending_generation,
+        )
+        if not normalized_code or normalized_code in seen_codes:
+            continue
+        seen_codes.add(normalized_code)
+        normalized_codes.append(normalized_code)
+    return normalized_codes
+
+
 def _build_artifact_media_diagnostics_payload(
     *,
     media_materialization: dict[str, object],
@@ -23088,18 +23230,16 @@ def _build_artifact_media_diagnostics_payload(
         max_items=12,
         max_item_length=80,
     )
-    warning_codes = _normalize_string_list(
+    warning_codes = _normalize_selected_media_warning_codes(
         media_reference_diagnostics.get("warning_codes"),
+        selected_not_materialized_count=len(selected_not_materialized),
+        unreferenced_materialized_count=len(unreferenced_materialized_media_paths),
+        selected_media_pending_generation=bool(selected_not_materialized),
         max_items=12,
-        max_item_length=80,
     )
-    if selected_not_materialized and "selected_media_available_not_referenced" not in {
-        item.lower() for item in warning_codes
-    }:
-        warning_codes.append("selected_media_available_not_referenced")
-    if unreferenced_materialized_media_paths and "selected_media_unused_by_generated_pages" not in {
-        item.lower() for item in warning_codes
-    }:
+    if selected_not_materialized and "selected_media_pending_generation" not in warning_codes:
+        warning_codes.append("selected_media_pending_generation")
+    if unreferenced_materialized_media_paths and "selected_media_unused_by_generated_pages" not in warning_codes:
         warning_codes.append("selected_media_unused_by_generated_pages")
 
     seen_blockers: set[str] = set()
@@ -23110,14 +23250,21 @@ def _build_artifact_media_diagnostics_payload(
             continue
         seen_blockers.add(key)
         normalized_blockers.append(item)
-    seen_warnings: set[str] = set()
-    normalized_warning_codes: list[str] = []
-    for item in warning_codes:
-        key = item.lower()
-        if key in seen_warnings:
-            continue
-        seen_warnings.add(key)
-        normalized_warning_codes.append(item)
+    normalized_warning_codes = _normalize_selected_media_warning_codes(
+        warning_codes,
+        selected_not_materialized_count=len(selected_not_materialized),
+        unreferenced_materialized_count=len(unreferenced_materialized_media_paths),
+        selected_media_pending_generation=bool(selected_not_materialized),
+        max_items=12,
+    )
+    warning_reasons: list[str] = []
+    if selected_not_materialized:
+        warning_reasons.append(_selected_media_pending_generation_warning_reason(len(selected_not_materialized)))
+    if unreferenced_materialized_media_paths:
+        warning_reasons.append(
+            f"{len(unreferenced_materialized_media_paths)} selected image asset(s) were not used by generated pages. "
+            "This is a warning only."
+        )
 
     return {
         "selected_assets_count": selected_assets_count,
@@ -23178,6 +23325,16 @@ def _build_artifact_media_diagnostics_payload(
         ),
         "blocker_codes": normalized_blockers,
         "warning_codes": normalized_warning_codes,
+        "warnings": warning_reasons[:12],
+        "media_warning_reasons": warning_reasons[:12],
+        "selected_media_pending_generation": bool(selected_not_materialized),
+        "selected_media_pending_generation_count": len(selected_not_materialized),
+        "selected_media_pending_generation_ids": selected_not_materialized_asset_ids[:_MIGRATION_ARTIFACT_MAX_MEDIA_FILES],
+        "selected_media_pending_generation_message": (
+            _selected_media_pending_generation_warning_reason(len(selected_not_materialized))
+            if selected_not_materialized
+            else None
+        ),
         "ready": len(normalized_blockers) == 0,
     }
 
@@ -23225,20 +23382,19 @@ def _build_artifact_media_readiness_from_payload(
         )
         if code.lower() != "selected_media_not_materialized"
     ]
-    warning_codes = _normalize_string_list(
+    warning_codes = _normalize_selected_media_warning_codes(
         diagnostics_payload.get("warning_codes"),
+        selected_not_materialized_count=selected_not_materialized_count,
         max_items=12,
-        max_item_length=80,
     )
     media_blocker_reasons: list[str] = []
     media_warning_reasons: list[str] = []
     if selected_not_materialized_count > 0:
         media_warning_reasons.append(
-            f"{selected_not_materialized_count} selected image(s) are not in this artifact package yet. "
-            "This is advisory unless generated output references missing image paths."
+            _selected_media_pending_generation_warning_reason(selected_not_materialized_count)
         )
-        if "selected_media_available_not_referenced" not in {code.lower() for code in warning_codes}:
-            warning_codes.append("selected_media_available_not_referenced")
+        if "selected_media_pending_generation" not in {code.lower() for code in warning_codes}:
+            warning_codes.append("selected_media_pending_generation")
     unresolved_internal_count = max(
         0,
         int(diagnostics_payload.get("unresolved_internal_media_ids_count") or 0),
@@ -23287,14 +23443,13 @@ def _build_artifact_media_readiness_from_payload(
             continue
         seen_codes.add(key)
         normalized_blocker_codes.append(code)
-    seen_warning_codes: set[str] = set()
-    normalized_warning_codes: list[str] = []
-    for code in warning_codes:
-        key = code.lower()
-        if key in seen_warning_codes:
-            continue
-        seen_warning_codes.add(key)
-        normalized_warning_codes.append(code)
+    normalized_warning_codes = _normalize_selected_media_warning_codes(
+        warning_codes,
+        selected_not_materialized_count=selected_not_materialized_count,
+        unreferenced_materialized_count=unreferenced_materialized_count,
+        selected_media_pending_generation=selected_not_materialized_count > 0,
+        max_items=12,
+    )
 
     selected_media_available_count = max(0, selected_assets_count - selected_not_materialized_count)
     selected_media_used_by_generated_pages_count = max(
@@ -23311,6 +23466,32 @@ def _build_artifact_media_readiness_from_payload(
         + invalid_reference_count,
     )
     missing_required_generated_image_assets_count = max(0, missing_referenced_count + unresolved_generated_count)
+
+    selected_media_pending_generation = (
+        bool(diagnostics_payload.get("selected_media_pending_generation"))
+        if isinstance(diagnostics_payload.get("selected_media_pending_generation"), bool)
+        else selected_not_materialized_count > 0
+    )
+    selected_media_pending_generation_count = max(
+        0,
+        int(
+            diagnostics_payload.get("selected_media_pending_generation_count")
+            or (selected_not_materialized_count if selected_media_pending_generation else 0)
+        ),
+    )
+    selected_media_pending_generation_ids = _normalize_string_list(
+        diagnostics_payload.get("selected_media_pending_generation_ids"),
+        max_items=_MIGRATION_ARTIFACT_MAX_MEDIA_FILES,
+        max_item_length=80,
+    ) or selected_not_materialized_asset_ids[:_MIGRATION_ARTIFACT_MAX_MEDIA_FILES]
+    selected_media_pending_generation_message = _normalize_string(
+        diagnostics_payload.get("selected_media_pending_generation_message"),
+        max_length=240,
+    )
+    if selected_media_pending_generation and not selected_media_pending_generation_message:
+        selected_media_pending_generation_message = _selected_media_pending_generation_warning_reason(
+            max(selected_media_pending_generation_count, selected_not_materialized_count)
+        )
 
     return {
         "ready": len(normalized_blocker_codes) == 0,
@@ -23376,10 +23557,10 @@ def _build_artifact_media_readiness_from_payload(
             max_item_length=240,
         ),
         "status_codes": normalized_warning_codes[:12],
-        "selected_media_pending_generation": False,
-        "selected_media_pending_generation_count": 0,
-        "selected_media_pending_generation_ids": [],
-        "selected_media_pending_generation_message": None,
+        "selected_media_pending_generation": selected_media_pending_generation,
+        "selected_media_pending_generation_count": selected_media_pending_generation_count,
+        "selected_media_pending_generation_ids": selected_media_pending_generation_ids,
+        "selected_media_pending_generation_message": selected_media_pending_generation_message,
     }
 
 
@@ -24685,11 +24866,30 @@ def _normalize_gcp_credential_diagnostics(value: object) -> dict[str, object] | 
     }
 
 
+def _normalize_certificate_wait_state_reason_code(value: object) -> str | None:
+    normalized = _normalize_string(value, max_length=80)
+    if not normalized:
+        return None
+    normalized_lower = normalized.lower()
+    if normalized_lower in {
+        _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_PROVISIONING,
+        "tls_certificate_provisioning",
+        "managed_certificate_provisioning",
+        "runtime_ready_tls_pending",
+        "managed_certificate_pending",
+    }:
+        return _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_PROVISIONING
+    return None
+
+
 def _normalize_deploy_failure_reason_code(value: object) -> str | None:
     normalized = _normalize_string(value, max_length=80)
     if not normalized:
         return None
     normalized_lower = normalized.lower()
+    normalized_certificate_wait_state = _normalize_certificate_wait_state_reason_code(normalized_lower)
+    if normalized_certificate_wait_state is not None:
+        return normalized_certificate_wait_state
     allowed = {
         _DEPLOY_TARGET_REASON_REPO_NOT_FOUND,
         _DEPLOY_TARGET_REASON_WORKFLOW_NOT_FOUND,
@@ -24790,6 +24990,9 @@ def _normalize_workflow_run_failure_reason_code(value: object) -> str | None:
     if not normalized:
         return None
     normalized_lower = normalized.lower()
+    normalized_certificate_wait_state = _normalize_certificate_wait_state_reason_code(normalized_lower)
+    if normalized_certificate_wait_state is not None:
+        return normalized_certificate_wait_state
     allowed = {
         _DEPLOY_RUN_FAILURE_REASON_GCP_AUTH,
         _DEPLOY_RUN_FAILURE_REASON_CLUSTER_CREDENTIALS,
@@ -24909,8 +25112,9 @@ def _normalize_dispatch_service_reason_code(value: object) -> str | None:
     if not normalized:
         return None
     normalized_lower = normalized.lower()
-    if normalized_lower in {"certificate_provisioning_pending", "runtime_ready_tls_pending"}:
-        return _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_PROVISIONING
+    normalized_certificate_wait_state = _normalize_certificate_wait_state_reason_code(normalized_lower)
+    if normalized_certificate_wait_state is not None:
+        return normalized_certificate_wait_state
     if normalized_lower in {
         _DEPLOY_DISPATCH_SERVICE_REASON_AVAILABLE,
         _DEPLOY_DISPATCH_SERVICE_REASON_RUNTIME_UNAVAILABLE,
@@ -25368,13 +25572,35 @@ def _infer_dispatch_identifier_type(workflow_id: object) -> str:
     if normalized_workflow_id is None:
         normalized_workflow_id = _normalize_string(workflow_id, max_length=160) or ""
     if normalized_workflow_id.isdigit():
-        return "workflow_numeric_id"
+        return "workflow_id"
     lowered_identifier = normalized_workflow_id.strip().lower()
     if lowered_identifier.endswith(".yml") or lowered_identifier.endswith(".yaml"):
         return "workflow_file_path"
     if "/" in normalized_workflow_id:
         return "workflow_file_path"
     return "workflow_id"
+
+
+def _normalize_workflow_identifier_type(
+    value: object,
+    *,
+    workflow_identifier: object = None,
+) -> str | None:
+    normalized = _normalize_string(value, max_length=80)
+    normalized_identifier = _normalize_workflow_path_for_deploy(workflow_identifier) or _normalize_workflow_id_for_deploy(
+        workflow_identifier
+    ) or _normalize_string(workflow_identifier, max_length=160)
+    inferred_identifier_type = _infer_dispatch_identifier_type(normalized_identifier) if normalized_identifier else None
+    if not normalized:
+        return inferred_identifier_type
+    normalized_lower = normalized.lower()
+    if normalized_lower == "workflow_numeric_id":
+        return "workflow_id"
+    if normalized_lower in {"workflow_id", "workflow_file_path"}:
+        return normalized_lower
+    if inferred_identifier_type in {"workflow_id", "workflow_file_path"}:
+        return inferred_identifier_type
+    return normalized_lower
 
 
 def _derive_dispatch_verification_state(
@@ -25461,6 +25687,9 @@ def _derive_dispatch_service_reason_code(
 ) -> str:
     if dispatch_service_availability:
         return _DEPLOY_DISPATCH_SERVICE_REASON_AVAILABLE
+    normalized_certificate_wait_state = _normalize_certificate_wait_state_reason_code(runtime_reason_code)
+    if normalized_certificate_wait_state is not None:
+        return normalized_certificate_wait_state
     runtime_reason = _normalize_string(runtime_reason_code, max_length=80)
     if runtime_reason:
         runtime_reason = runtime_reason.lower()

@@ -357,7 +357,8 @@ Important state:
   - list fallback succeeds only when exactly one address entry matches the expected name and includes a non-empty `address` value.
   - stale selected-attempt static-IP-missing failures remain historical context and must not override healthy current live HTTPS evidence.
 - Expected reason-code families include:
-  - `managed_certificate_provisioning` / `tls_certificate_provisioning` (static IP + ingress can be healthy while TLS still converges)
+  - `certificate_provisioning_pending` (static IP + ingress can be healthy while TLS still converges)
+    - legacy workflow-log/history aliases remain read-compatible: `managed_certificate_provisioning`, `tls_certificate_provisioning`, `managed_certificate_pending`, `runtime_ready_tls_pending`
   - `https_probe_failed_after_control_plane_ready`
   - `https_probe_timeout`
   - `https_probe_empty_reply`
@@ -370,7 +371,7 @@ Typical causes:
 - site runtime is not yet serving `/` successfully
 - external load balancer convergence lag
 
-`managed_certificate_provisioning` / `tls_certificate_provisioning` interpretation:
+`certificate_provisioning_pending` interpretation:
 - static IP can be `IN_USE` and ingress IP can already match the reserved address while certificate remains `PROVISIONING`.
 - in this state, HTTPS probe failures are usually a downstream symptom of TLS convergence and should not be classified as backend 502 or app runtime failure.
 - control plane probes the deterministic ManagedCertificate name for the site before workflow dispatch (`expected_managed_certificate_name`), and reconcile/apply remains idempotent for that same name across retries.
@@ -383,6 +384,7 @@ Typical causes:
 - HTTPS-required gate copy: `Certificate exists but is still provisioning. Deploy is held until the certificate is ACTIVE.`
 - when endpoint mode is preview-tolerant (`preview_shared_gateway`), runtime can remain deployable while TLS is pending; UI shows this as a wait-state, not as runtime-replace failure.
 - preview-tolerant copy: `Runtime can deploy while HTTPS certificate provisioning continues.`
+- missing ManagedCertificate objects, FAILED_NOT_VISIBLE states, certificate/domain mismatch, and DNS mismatch remain distinct blocker states and are not normalized into provisioning.
 - next action: wait for ManagedCertificate to reach `ACTIVE`, then refresh/rerun deploy.
 
 `ingress_backend_502` interpretation:
