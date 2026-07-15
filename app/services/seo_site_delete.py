@@ -42,6 +42,13 @@ _MBSRN_NETWORK_POLICY_NAMES = (
     "site-default-deny-ingress",
     "site-web-allow-managed-ingress",
 )
+_SITE_DELETE_EXTERNAL_VERIFICATION_LIMITED = "site_delete_external_verification_limited"
+_SITE_DELETE_GIT_REPO_VERIFICATION_LIMITED = "site_delete_git_repo_verification_limited"
+_SITE_DELETE_RUNTIME_VERIFICATION_LIMITED = "site_delete_runtime_verification_limited"
+_SITE_DELETE_STATIC_IP_VERIFICATION_LIMITED = "site_delete_static_ip_verification_limited"
+_SITE_DELETE_STATIC_IP_SHARED_GATEWAY_NOT_AUTO_DELETED = "site_delete_static_ip_shared_gateway_not_auto_deleted"
+_SITE_DELETE_DNS_VERIFICATION_LIMITED = "site_delete_dns_verification_limited"
+_SITE_DELETE_MANAGED_CERTIFICATE_VERIFICATION_LIMITED = "site_delete_managed_certificate_verification_limited"
 
 
 @dataclass(frozen=True)
@@ -248,7 +255,6 @@ class SEOSiteDeleteService:
         )
         runtime_resource, runtime_blockers, runtime_warnings = self._plan_runtime_resource(
             context=context,
-            site=site,
             gcp_deploy_key=gcp_deploy_key,
         )
         static_ip_resource, static_ip_blockers, static_ip_warnings = self._plan_static_ip_resource(
@@ -401,7 +407,6 @@ class SEOSiteDeleteService:
         runtime_result, runtime_issues = self._execute_runtime_cleanup(
             selected=delete_runtime_resources,
             context=context,
-            site=site,
             gcp_deploy_key=gcp_deploy_key,
         )
         external_resources.append(runtime_result)
@@ -422,7 +427,6 @@ class SEOSiteDeleteService:
             selected=delete_dns_resources,
             context=context,
             gcp_deploy_key=gcp_deploy_key,
-            runtime_selected=delete_runtime_resources,
         )
         external_resources.append(dns_result)
         blockers.extend(dns_issues.get("blockers", []))
@@ -742,7 +746,7 @@ class SEOSiteDeleteService:
             return (
                 None,
                 _issue(
-                    "site_delete_plan_ready",
+                    _SITE_DELETE_EXTERNAL_VERIFICATION_LIMITED,
                     "Managed deploy credentials configured in admin settings could not be loaded. Runtime cleanup checks may be limited.",
                 ),
             )
@@ -807,7 +811,7 @@ class SEOSiteDeleteService:
         except SEOMigrationGitHubPublisherError as exc:
             warnings.append(
                 _issue(
-                    "site_delete_plan_ready",
+                    _SITE_DELETE_GIT_REPO_VERIFICATION_LIMITED,
                     "GitHub repository ownership could not be verified during delete planning.",
                 )
             )
@@ -870,7 +874,6 @@ class SEOSiteDeleteService:
         self,
         *,
         context: _DeleteContext,
-        site: SEOSite,
         gcp_deploy_key: str | None,
     ) -> tuple[dict[str, Any], list[dict[str, str]], list[dict[str, str]]]:
         blockers: list[dict[str, str]] = []
@@ -889,13 +892,12 @@ class SEOSiteDeleteService:
         try:
             inspection = self._inspect_runtime_resources(
                 context=context,
-                site=site,
                 gcp_deploy_key=gcp_deploy_key,
             )
         except SEOMigrationGitHubPublisherError as exc:
             warnings.append(
                 _issue(
-                    "site_delete_plan_ready",
+                    _SITE_DELETE_RUNTIME_VERIFICATION_LIMITED,
                     "Managed runtime resources could not be verified during delete planning.",
                 )
             )
@@ -958,7 +960,7 @@ class SEOSiteDeleteService:
         if context.uses_shared_preview_gateway:
             warnings.append(
                 _issue(
-                    "site_delete_plan_ready",
+                    _SITE_DELETE_STATIC_IP_SHARED_GATEWAY_NOT_AUTO_DELETED,
                     "Shared preview gateway static IPs are not deleted automatically because they may be reused by other sites.",
                 )
             )
@@ -970,7 +972,7 @@ class SEOSiteDeleteService:
         except SEOMigrationGitHubPublisherError as exc:
             warnings.append(
                 _issue(
-                    "site_delete_plan_ready",
+                    _SITE_DELETE_STATIC_IP_VERIFICATION_LIMITED,
                     "Managed preview static IP could not be verified during delete planning.",
                 )
             )
@@ -1034,7 +1036,7 @@ class SEOSiteDeleteService:
         except SEOMigrationGitHubPublisherError as exc:
             warnings.append(
                 _issue(
-                    "site_delete_plan_ready",
+                    _SITE_DELETE_DNS_VERIFICATION_LIMITED,
                     "Managed preview DNS record could not be verified during delete planning.",
                 )
             )
@@ -1113,7 +1115,7 @@ class SEOSiteDeleteService:
         except SEOMigrationGitHubPublisherError as exc:
             warnings.append(
                 _issue(
-                    "site_delete_plan_ready",
+                    _SITE_DELETE_MANAGED_CERTIFICATE_VERIFICATION_LIMITED,
                     "Managed certificate ownership could not be verified during delete planning.",
                 )
             )
@@ -1176,7 +1178,6 @@ class SEOSiteDeleteService:
         *,
         selected: bool,
         context: _DeleteContext,
-        site: SEOSite,
         gcp_deploy_key: str | None,
     ) -> tuple[dict[str, Any], dict[str, list[dict[str, str]]]]:
         issues = {"blockers": [], "warnings": []}
@@ -1194,7 +1195,6 @@ class SEOSiteDeleteService:
         try:
             inspection = self._inspect_runtime_resources(
                 context=context,
-                site=site,
                 gcp_deploy_key=gcp_deploy_key,
             )
         except SEOMigrationGitHubPublisherError:
@@ -1517,9 +1517,7 @@ class SEOSiteDeleteService:
         selected: bool,
         context: _DeleteContext,
         gcp_deploy_key: str | None,
-        runtime_selected: bool,
     ) -> tuple[dict[str, Any], dict[str, list[dict[str, str]]]]:
-        del runtime_selected
         issues = {"blockers": [], "warnings": []}
         if not selected:
             return (
@@ -2100,10 +2098,8 @@ class SEOSiteDeleteService:
         self,
         *,
         context: _DeleteContext,
-        site: SEOSite,
         gcp_deploy_key: str | None,
     ) -> dict[str, Any]:
-        del site
         cluster_access = self._resolve_cluster_access(
             managed_gke_config=context.managed_gke_config,
             gcp_deploy_key=gcp_deploy_key,

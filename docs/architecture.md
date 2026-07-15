@@ -857,6 +857,10 @@ Observability additions:
   - verified managed GKE/runtime resource delete
   - verified managed DNS/static-IP/certificate delete
 - Delete remains irreversible once the execute step succeeds; external cleanup is not transactional with DB delete.
+- If delete returns `site_delete_db_failed_after_external_cleanup`:
+  - review `external_resources`, `blockers`, and `warnings` to confirm what changed before the DB failure
+  - verify the reported GitHub/GKE/DNS/static-IP/certificate state in the provider before retrying
+  - clear the remaining DB-side blocker, then rerun delete only for unfinished safe targets or reconcile the site manually
 
 ## Recommendation Presentation Compression (Sites Workspace)
 - Sites workspace recommendation rendering now follows a compressed read-model pattern:

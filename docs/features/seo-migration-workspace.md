@@ -1792,13 +1792,17 @@ Post-fix rollout for existing managed sites:
     - verified managed GKE/runtime resource delete
     - verified managed DNS/static-IP/certificate delete
   - external delete safety checks:
-    - repo delete is blocked for unmanaged/ambiguous repos and for `mhanson13/mbsrn`
+    - repo delete is blocked for unmanaged/ambiguous repos and for the configured protected control-plane repo
     - runtime delete only targets site-labeled managed resources
     - DNS delete requires exact expected record/value match
     - shared or in-use static IPs are skipped
     - ManagedCertificate delete requires exact namespace/name plus site ownership verification
   - admin permanent delete never auto-deletes the original customer/source website, arbitrary customer repos, unrelated cluster resources, or secret/raw prompt/raw media/private preview data
   - if DB delete fails after external cleanup has already changed state, result code `site_delete_db_failed_after_external_cleanup` is returned for manual remediation
+  - runbook for `site_delete_db_failed_after_external_cleanup`:
+    - review `external_resources`, `blockers`, and `warnings` first; they show what changed before the DB failure
+    - verify each reported GitHub/GKE/DNS/static-IP/certificate state in the provider before retrying cleanup
+    - clear the remaining DB-side blocker, then rerun delete only for unfinished safe targets or reconcile the site manually
 - required managed deploy configuration contract for real deploy execution:
   - admin-owned managed GKE settings in MBSRN GitHub publish configuration:
     - `managed_gke_cluster_name`

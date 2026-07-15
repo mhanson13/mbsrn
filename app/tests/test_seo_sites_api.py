@@ -11,7 +11,10 @@ from sqlalchemy import func, select
 
 from app.api.deps import TenantContext, get_db, get_seo_site_delete_service, get_tenant_context
 from app.api.routes.seo import router as seo_router
-from app.integrations.seo_migration_github_publisher import SEOMigrationGitHubPublishPreflightResult
+from app.integrations.seo_migration_github_publisher import (
+    SEOMigrationGitHubPublishPreflightResult,
+    SEOMigrationGitHubPublisherError,
+)
 from app.models.business import Business
 from app.models.principal import Principal, PrincipalRole
 from app.models.seo_action_chain_draft import SEOActionChainDraft
@@ -42,6 +45,7 @@ from app.models.seo_recommendation_narrative import SEORecommendationNarrative
 from app.models.seo_recommendation_run import SEORecommendationRun
 from app.repositories.business_repository import BusinessRepository
 from app.repositories.seo_site_repository import SEOSiteRepository
+from app.services.github_publish_config import GitHubPublishConfigSecretError
 from app.services.seo_site_delete import SEOSiteDeleteService
 
 
@@ -498,14 +502,23 @@ def _seed_site_owned_data(*, db_session, business_id: str, site_id: str, token: 
 
 
 class _StubGitHubPublishConfigService:
-    def __init__(self, *, repository: str = "mhanson13", managed_gcp_deploy_key: str | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        repository: str = "mhanson13",
+        managed_gcp_deploy_key: str | None = None,
+        managed_gcp_deploy_key_error: bool = False,
+    ) -> None:
         self.repository = repository
         self.managed_gcp_deploy_key = managed_gcp_deploy_key
+        self.managed_gcp_deploy_key_error = managed_gcp_deploy_key_error
 
     def get(self):
         return SimpleNamespace(repository=self.repository)
 
     def get_managed_gcp_deploy_key_value(self) -> str | None:
+        if self.managed_gcp_deploy_key_error:
+            raise GitHubPublishConfigSecretError("managed gcp deploy key unavailable")
         return self.managed_gcp_deploy_key
 
 
@@ -514,8 +527,12 @@ class _StubGitHubPublisher:
         self,
         *,
         preflight_result: SEOMigrationGitHubPublishPreflightResult | None = None,
+        preflight_error: SEOMigrationGitHubPublisherError | None = None,
+        managed_certificate_error: SEOMigrationGitHubPublisherError | None = None,
     ) -> None:
         self.preflight_result = preflight_result
+        self.preflight_error = preflight_error
+        self.managed_certificate_error = managed_certificate_error
         self.delete_calls: list[tuple[str, str]] = []
         self.timeout_seconds = 15
         self.managed_deploy_service_account_email = None
@@ -532,6 +549,8 @@ class _StubGitHubPublisher:
         expected_site_id: str | None = None,
     ) -> SEOMigrationGitHubPublishPreflightResult:
         del auto_create_enabled, expected_owner, expected_business_id, expected_site_id
+        if self.preflight_error is not None:
+            raise self.preflight_error
         if self.preflight_result is not None:
             return self.preflight_result
         return SEOMigrationGitHubPublishPreflightResult(
@@ -551,6 +570,8 @@ class _StubGitHubPublisher:
         )
 
     def check_managed_certificate_readiness(self, **_: object):
+        if self.managed_certificate_error is not None:
+            raise self.managed_certificate_error
         return None
 
     def delete_repository(
@@ -604,6 +625,13 @@ def _make_delete_service(
         seo_migration_service=migration_service,  # type: ignore[arg-type]
     )
     return service, publisher
+
+
+def _publisher_error(code: str, safe_message: str | None = None) -> SEOMigrationGitHubPublisherError:
+    return SEOMigrationGitHubPublisherError(
+        code=code,
+        safe_message=safe_message or code.replace("_", " "),
+    )
 
 
 def test_seo_site_crud_and_business_scoping(db_session, seeded_business) -> None:
@@ -1131,6 +1159,204 @@ def test_admin_site_delete_plan_returns_safe_summary_without_deleting(db_session
     assert "SECRET_TOKEN" not in payload_text
     assert "private-preview.internal/secret" not in payload_text
     assert "do-not-leak" not in payload_text
+
+
+def test_admin_site_delete_plan_uses_precise_warning_codes_for_limited_verification(
+    db_session, seeded_business
+) -> None:
+    admin_principal = _seed_admin_principal(db_session=db_session, business_id=seeded_business.id)
+    cleanup_summary = {
+        "workspace_id": None,
+        "publish_target": {
+            "repo_owner": "managed-owner",
+            "repo_name": "delete-me-site",
+            "branch": "main",
+        },
+        "deploy_target": {
+            "repo_owner": "managed-owner",
+            "repo_name": "delete-me-site",
+            "ref": "main",
+            "preview_hostname": "delete-me.preview.example.com",
+            "kubernetes_namespace": "site-delete-me",
+            "managed_certificate_name": "delete-me-cert",
+        },
+        "admin_deploy_metadata": {
+            "managed_gke_cluster_name": "cluster-1",
+            "managed_gke_cluster_location": "us-central1",
+            "managed_gke_project_id": "project-1",
+            "namespace_isolation_defaults": {},
+        },
+    }
+    publisher = _StubGitHubPublisher(
+        preflight_error=_publisher_error("repo_preflight_failed"),
+        managed_certificate_error=_publisher_error("managed_certificate_check_failed"),
+    )
+    delete_service, _ = _make_delete_service(
+        db_session,
+        cleanup_summary=cleanup_summary,
+        github_publisher=publisher,
+        github_publish_config_service=_StubGitHubPublishConfigService(managed_gcp_deploy_key_error=True),
+    )
+
+    def _raise_runtime_inspection(*, context, gcp_deploy_key):
+        del context, gcp_deploy_key
+        raise _publisher_error("runtime_inspection_failed")
+
+    delete_service._inspect_runtime_resources = _raise_runtime_inspection
+
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        principal_id=admin_principal.id,
+        dependency_overrides={get_seo_site_delete_service: lambda: delete_service},
+    )
+
+    create_response = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites",
+        json={"display_name": "Delete Me", "base_url": "https://delete-me.example.com/", "is_active": False},
+    )
+    assert create_response.status_code == 201
+    site_id = create_response.json()["id"]
+
+    plan_response = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/admin/sites/{site_id}/delete-plan",
+    )
+    assert plan_response.status_code == 200
+    payload = plan_response.json()
+    warning_codes = {item["reason_code"] for item in payload["warnings"]}
+    assert payload["reason_code"] == "site_delete_plan_ready"
+    assert "site_delete_plan_ready" not in warning_codes
+    assert "site_delete_external_verification_limited" in warning_codes
+    assert "site_delete_git_repo_verification_limited" in warning_codes
+    assert "site_delete_runtime_verification_limited" in warning_codes
+    assert "site_delete_managed_certificate_verification_limited" in warning_codes
+
+
+def test_admin_site_delete_plan_uses_precise_static_ip_warning_codes(db_session, seeded_business) -> None:
+    admin_principal = _seed_admin_principal(db_session=db_session, business_id=seeded_business.id)
+    cleanup_summary = {
+        "workspace_id": None,
+        "publish_target": {
+            "repo_owner": "managed-owner",
+            "repo_name": "delete-me-site",
+            "branch": "main",
+        },
+        "deploy_target": {
+            "repo_owner": "managed-owner",
+            "repo_name": "delete-me-site",
+            "ref": "main",
+            "expected_static_ip_name": "delete-me-ip",
+            "uses_shared_preview_gateway": True,
+        },
+        "admin_deploy_metadata": {
+            "managed_gke_project_id": "project-1",
+            "namespace_isolation_defaults": {},
+        },
+    }
+    delete_service, _ = _make_delete_service(
+        db_session,
+        cleanup_summary=cleanup_summary,
+        github_publish_config_service=_StubGitHubPublishConfigService(),
+    )
+
+    def _raise_static_ip_inspection(*, context, gcp_deploy_key):
+        del context, gcp_deploy_key
+        raise _publisher_error("static_ip_inspection_failed")
+
+    delete_service._inspect_static_ip = _raise_static_ip_inspection
+
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        principal_id=admin_principal.id,
+        dependency_overrides={get_seo_site_delete_service: lambda: delete_service},
+    )
+
+    create_response = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites",
+        json={"display_name": "Delete Me", "base_url": "https://delete-me.example.com/", "is_active": False},
+    )
+    assert create_response.status_code == 201
+    site_id = create_response.json()["id"]
+
+    plan_response = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/admin/sites/{site_id}/delete-plan",
+    )
+    assert plan_response.status_code == 200
+    warning_codes = {item["reason_code"] for item in plan_response.json()["warnings"]}
+    assert "site_delete_plan_ready" not in warning_codes
+    assert "site_delete_static_ip_shared_gateway_not_auto_deleted" in warning_codes
+    assert "site_delete_static_ip_verification_limited" in warning_codes
+
+
+def test_admin_site_delete_plan_uses_precise_dns_warning_codes(db_session, seeded_business) -> None:
+    admin_principal = _seed_admin_principal(db_session=db_session, business_id=seeded_business.id)
+    cleanup_summary = {
+        "workspace_id": None,
+        "publish_target": {
+            "repo_owner": "managed-owner",
+            "repo_name": "delete-me-site",
+            "branch": "main",
+        },
+        "deploy_target": {
+            "repo_owner": "managed-owner",
+            "repo_name": "delete-me-site",
+            "ref": "main",
+            "preview_hostname": "delete-me.preview.example.com",
+            "expected_static_ip_name": "delete-me-ip",
+            "expected_dns_managed_zone": "preview-zone",
+            "expected_dns_project_id": "dns-project-1",
+        },
+        "admin_deploy_metadata": {
+            "managed_gke_project_id": "project-1",
+            "namespace_isolation_defaults": {},
+        },
+    }
+    delete_service, _ = _make_delete_service(
+        db_session,
+        cleanup_summary=cleanup_summary,
+        github_publish_config_service=_StubGitHubPublishConfigService(),
+    )
+
+    def _return_static_ip_inspection(*, context, gcp_deploy_key):
+        del context, gcp_deploy_key
+        return {
+            "status": "ready",
+            "summary": "Managed preview static IP ownership is ready for cleanup.",
+            "details": {
+                "static_ip_name": "delete-me-ip",
+                "observed_address": "203.0.113.10",
+            },
+        }
+
+    def _raise_dns_inspection(*, context, gcp_deploy_key, expected_ip_address):
+        del context, gcp_deploy_key, expected_ip_address
+        raise _publisher_error("dns_inspection_failed")
+
+    delete_service._inspect_static_ip = _return_static_ip_inspection
+    delete_service._inspect_dns_record = _raise_dns_inspection
+
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        principal_id=admin_principal.id,
+        dependency_overrides={get_seo_site_delete_service: lambda: delete_service},
+    )
+
+    create_response = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites",
+        json={"display_name": "Delete Me", "base_url": "https://delete-me.example.com/", "is_active": False},
+    )
+    assert create_response.status_code == 201
+    site_id = create_response.json()["id"]
+
+    plan_response = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/admin/sites/{site_id}/delete-plan",
+    )
+    assert plan_response.status_code == 200
+    warning_codes = {item["reason_code"] for item in plan_response.json()["warnings"]}
+    assert "site_delete_plan_ready" not in warning_codes
+    assert "site_delete_dns_verification_limited" in warning_codes
 
 
 def test_admin_site_delete_execute_requires_exact_confirmation_phrase(db_session, seeded_business) -> None:

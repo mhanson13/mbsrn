@@ -481,13 +481,13 @@ Admin Site Registry permanent delete is now a separate guarded control-plane wor
   - verified managed GKE/runtime resource delete
   - verified managed DNS/static-IP/certificate delete
 - Ownership checks before external delete:
-  - GitHub repo must match configured owner/name, must not be `mhanson13/mbsrn`, and must have a valid MBSRN management/adoption marker for the selected business/site
+  - GitHub repo must match the configured owner/name, must not match the configured protected control-plane repo, and must have a valid MBSRN management/adoption marker for the selected business/site
   - runtime resources must be in the derived namespace and carry site labels such as `app.kubernetes.io/managed-by=mbsrn`, `mbsrn.io/site-id`, `mbsrn.io/repo`, and `mbsrn.io/preview-hostname`
   - DNS delete requires exact expected hostname/type/value match
   - static-IP delete is skipped when the address is shared or still attached elsewhere
   - ManagedCertificate delete requires exact namespace/name plus site ownership labels
 - The admin permanent-delete workflow does **not** automatically delete:
-  - the control-plane repo `mhanson13/mbsrn`
+  - the configured protected control-plane repo
   - arbitrary customer/unmanaged repos
   - unrelated cluster-wide resources
   - shared preview gateway static IPs
@@ -497,6 +497,10 @@ Admin Site Registry permanent delete is now a separate guarded control-plane wor
 - Failure behavior:
   - external cleanup is not transactional with database delete
   - if external cleanup partially succeeds and DB delete later fails, result code `site_delete_db_failed_after_external_cleanup` is returned and manual remediation is required
+  - runbook for `site_delete_db_failed_after_external_cleanup`:
+    - review the response `external_resources`, `blockers`, and `warnings` first; they describe what changed before the DB failure
+    - verify each reported GitHub/GKE/DNS/static-IP/certificate state in the provider before retrying any cleanup step
+    - clear the remaining DB-side blocker, then rerun delete only for unfinished safe targets or reconcile the site manually
   - per-resource results distinguish `deleted`, `skipped`, `blocked`, `failed`, `not_found`, and `not_checked`
 
 `SITE_WEB_IMAGE_TAG` diagnostics:
