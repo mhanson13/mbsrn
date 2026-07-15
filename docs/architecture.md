@@ -829,17 +829,34 @@ Observability additions:
 ## Admin Site Maintenance
 - Admin-only site maintenance endpoints are exposed under business-scoped SEO routes:
   - `PATCH /api/businesses/{business_id}/seo/admin/sites/{site_id}`
-  - `DELETE /api/businesses/{business_id}/seo/admin/sites/{site_id}`
-- Site maintenance is service-driven (`SEOSiteService`) and destructive deletion is centralized in `delete_site_permanently(...)`.
-- Permanent delete removes the site row and all site-owned SEO records in one transaction, including:
+  - `POST /api/businesses/{business_id}/seo/admin/sites/{site_id}/delete-plan`
+  - `POST /api/businesses/{business_id}/seo/admin/sites/{site_id}/delete`
+  - `DELETE /api/businesses/{business_id}/seo/admin/sites/{site_id}` (compatibility route that now returns `site_delete_confirmation_required`)
+- Site maintenance is service-driven:
+  - site edits remain in `SEOSiteService`
+  - destructive delete planning/execution lives in `SEOSiteDeleteService`
+- Permanent delete is a guarded hard-delete workflow:
+  1. build dry-run delete plan
+  2. admin reviews scope/blockers/warnings
+  3. exact confirmation phrase and acknowledgements are required
+  4. selected external cleanup runs with ownership checks
+  5. site-owned DB records are deleted transactionally
+- Local DB delete removes the site row and all direct site-owned SEO rows, including:
   - audit runs/pages/findings/summaries
   - competitor sets/domains/snapshot runs/snapshot pages/comparison runs/comparison findings/comparison summaries
+  - competitor domain feedback
   - recommendation runs/recommendations/narratives
   - automation configs/runs
+  - action-chain drafts/decisions/execution items
   - competitor profile generation runs/drafts
   - tuning preview events
   - competitor profile cleanup execution records scoped to the site
-- Delete is hard-delete behavior (no soft delete) and is intended to be irreversible once confirmed in admin UI.
+  - migration workspaces/artifact versions scoped to the site
+- External cleanup is optional and default-off:
+  - generated GitHub repo delete
+  - verified managed GKE/runtime resource delete
+  - verified managed DNS/static-IP/certificate delete
+- Delete remains irreversible once the execute step succeeds; external cleanup is not transactional with DB delete.
 
 ## Recommendation Presentation Compression (Sites Workspace)
 - Sites workspace recommendation rendering now follows a compressed read-model pattern:

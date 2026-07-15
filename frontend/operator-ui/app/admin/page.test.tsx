@@ -85,6 +85,8 @@ jest.mock("../../lib/api/client", () => ({
   deactivatePrincipalIdentity: jest.fn(),
   deactivatePrincipal: jest.fn(),
   deleteAdminSite: jest.fn(),
+  executeAdminSiteDelete: jest.fn(),
+  prepareAdminSiteDeletePlan: jest.fn(),
   queryGcpLogs: jest.fn(),
   updateAdminSite: jest.fn(),
   fetchGitHubPublishConfig: (...args: unknown[]) => mockFetchGitHubPublishConfig(...args),

@@ -1783,6 +1783,22 @@ Post-fix rollout for existing managed sites:
   - Readiness can surface `legacy_runtime_replacement_required` when stale legacy runtime evidence is detected and replace-runtime was not requested.
   - Cleanup scope is limited to managed runtime resources (`site-web` ingress/service/deployment, managed preview certificate/config resources, site-scoped networkpolicy) and does not delete artifacts/media/GitHub content/business data.
   - Publish readiness is unchanged; this is deploy-only behavior.
+- Admin Site Registry permanent delete is separate from this deploy-only cleanup path:
+  - deactivation/archive keeps the site and migration history intact
+  - permanent delete removes the site and site-owned control-plane records
+  - admin permanent delete always requires a delete plan, explicit acknowledgements, an exact confirmation phrase, and an explicit execute request
+  - external cleanup options default off and are opt-in for:
+    - generated GitHub repo delete
+    - verified managed GKE/runtime resource delete
+    - verified managed DNS/static-IP/certificate delete
+  - external delete safety checks:
+    - repo delete is blocked for unmanaged/ambiguous repos and for `mhanson13/mbsrn`
+    - runtime delete only targets site-labeled managed resources
+    - DNS delete requires exact expected record/value match
+    - shared or in-use static IPs are skipped
+    - ManagedCertificate delete requires exact namespace/name plus site ownership verification
+  - admin permanent delete never auto-deletes the original customer/source website, arbitrary customer repos, unrelated cluster resources, or secret/raw prompt/raw media/private preview data
+  - if DB delete fails after external cleanup has already changed state, result code `site_delete_db_failed_after_external_cleanup` is returned for manual remediation
 - required managed deploy configuration contract for real deploy execution:
   - admin-owned managed GKE settings in MBSRN GitHub publish configuration:
     - `managed_gke_cluster_name`

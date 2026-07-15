@@ -9,6 +9,8 @@ import type {
   PrincipalIdentityListResponse,
   PrincipalListResponse,
   SEOSite,
+  SEOSiteDeleteExecutionResult,
+  SEOSiteDeletePlan,
 } from "../../lib/api/types";
 import {
   COMPETITOR_DIRECTORY_PENALTY_MIN,
@@ -45,7 +47,8 @@ const mockActivatePrincipal = jest.fn<Promise<unknown>, unknown[]>();
 const mockDeactivatePrincipalIdentity = jest.fn<Promise<unknown>, unknown[]>();
 const mockActivatePrincipalIdentity = jest.fn<Promise<unknown>, unknown[]>();
 const mockUpdateAdminSite = jest.fn<Promise<SEOSite>, unknown[]>();
-const mockDeleteAdminSite = jest.fn<Promise<void>, unknown[]>();
+const mockPrepareAdminSiteDeletePlan = jest.fn<Promise<SEOSiteDeletePlan>, unknown[]>();
+const mockExecuteAdminSiteDelete = jest.fn<Promise<SEOSiteDeleteExecutionResult>, unknown[]>();
 const mockQueryGcpLogs = jest.fn<Promise<GCPLogsQueryResponse>, unknown[]>();
 const INVALID_CRAWL_BELOW_MIN = CRAWL_PAGE_LIMIT_MIN - 1;
 const INVALID_CRAWL_ABOVE_MAX = CRAWL_PAGE_LIMIT_MAX + 1;
@@ -83,7 +86,8 @@ jest.mock("../../lib/api/client", () => {
     deactivatePrincipalIdentity: (...args: unknown[]) => mockDeactivatePrincipalIdentity(...args),
     activatePrincipalIdentity: (...args: unknown[]) => mockActivatePrincipalIdentity(...args),
     updateAdminSite: (...args: unknown[]) => mockUpdateAdminSite(...args),
-    deleteAdminSite: (...args: unknown[]) => mockDeleteAdminSite(...args),
+    prepareAdminSiteDeletePlan: (...args: unknown[]) => mockPrepareAdminSiteDeletePlan(...args),
+    executeAdminSiteDelete: (...args: unknown[]) => mockExecuteAdminSiteDelete(...args),
     queryGcpLogs: (...args: unknown[]) => mockQueryGcpLogs(...args),
   };
 });
@@ -100,6 +104,116 @@ function buildSite(overrides: Partial<SEOSite> = {}): SEOSite {
     last_audit_run_id: null,
     last_audit_status: null,
     last_audit_completed_at: null,
+    ...overrides,
+  };
+}
+
+function buildSiteDeletePlan(overrides: Partial<SEOSiteDeletePlan> = {}): SEOSiteDeletePlan {
+  return {
+    reason_code: "site_delete_plan_ready",
+    site_id: "site-1",
+    site_name: "Main Site",
+    domain: "example.com",
+    is_active: false,
+    generated_repo_owner: "managed-owner",
+    generated_repo_name: "managed-site",
+    kubernetes_namespace: "managed-site",
+    preview_hostname: "preview.example.com",
+    static_ip_name: "managed-site-ip",
+    managed_certificate_name: "managed-site-cert",
+    dns_records_expected: [],
+    db_dependency_total: 12,
+    db_dependencies: [
+      {
+        category: "migration",
+        count: 4,
+        model_count: 2,
+        model_names: ["seo_migration_workspaces", "seo_migration_artifact_versions"],
+      },
+    ],
+    external_resources: [
+      {
+        resource_type: "github_repo",
+        status: "found",
+        reason_code: null,
+        summary: "Verified managed GitHub repository candidate for this site.",
+        details: {},
+      },
+      {
+        resource_type: "gke_runtime",
+        status: "not_checked",
+        reason_code: null,
+        summary: "Managed runtime namespace could not be derived for this site.",
+        details: {},
+      },
+      {
+        resource_type: "dns_record",
+        status: "not_checked",
+        reason_code: null,
+        summary: "Managed preview DNS record could not be fully verified during delete planning.",
+        details: {},
+      },
+      {
+        resource_type: "static_ip",
+        status: "not_checked",
+        reason_code: null,
+        summary: "Managed preview static IP configuration is incomplete for this site.",
+        details: {},
+      },
+      {
+        resource_type: "managed_certificate",
+        status: "not_checked",
+        reason_code: null,
+        summary: "Managed certificate naming or cluster context is incomplete for this site.",
+        details: {},
+      },
+    ],
+    blockers: [],
+    warnings: [],
+    required_confirmation_phrase: "DELETE Main Site example.com managed-owner/managed-site",
+    execution_defaults: {
+      delete_github_repo: false,
+      delete_runtime_resources: false,
+      delete_dns_resources: false,
+      force_delete_active: false,
+    },
+    ...overrides,
+  };
+}
+
+function buildSiteDeleteResult(
+  overrides: Partial<SEOSiteDeleteExecutionResult> = {},
+): SEOSiteDeleteExecutionResult {
+  return {
+    reason_code: "site_delete_completed",
+    message: "Site deleted from the control-plane database. External cleanup was not selected.",
+    site_id: "site-1",
+    site_name: "Main Site",
+    domain: "example.com",
+    db_deleted: true,
+    site_deleted: true,
+    external_cleanup_selected: false,
+    external_cleanup_partial: false,
+    db_dependency_total: 12,
+    db_dependencies: [
+      {
+        category: "migration",
+        count: 4,
+        model_count: 2,
+        model_names: ["seo_migration_workspaces", "seo_migration_artifact_versions"],
+      },
+    ],
+    external_resources: [
+      {
+        resource_type: "github_repo",
+        status: "skipped",
+        reason_code: "external_cleanup_not_selected",
+        summary: "GitHub repository cleanup was not selected.",
+        details: {},
+      },
+    ],
+    blockers: [],
+    warnings: [],
     ...overrides,
   };
 }
@@ -147,6 +261,8 @@ function buildBusinessSettings(overrides: Partial<BusinessSettings> = {}): Busin
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockPrepareAdminSiteDeletePlan.mockReset();
+  mockExecuteAdminSiteDelete.mockReset();
   mockUseOperatorContext.mockReturnValue(baseOperatorContext());
   mockUseAuth.mockReturnValue({
     principal: {
@@ -1192,7 +1308,7 @@ describe("admin page compatibility route", () => {
     expect(screen.getAllByText("Deployment/default fallback")).toHaveLength(3);
   });
 
-  it("renders admin site edit and permanent delete controls", async () => {
+  it("renders admin site edit and delete-plan controls", async () => {
     mockFetchPrincipals.mockResolvedValueOnce(principalsResponse(true));
     mockFetchPrincipalIdentities.mockResolvedValueOnce(identitiesResponse());
 
@@ -1204,10 +1320,10 @@ describe("admin page compatibility route", () => {
     expect(siteRow).not.toBeNull();
     const scoped = within(siteRow as HTMLTableRowElement);
     expect(scoped.getByRole("button", { name: "Save" })).toBeInTheDocument();
-    expect(scoped.getByRole("button", { name: "Delete Permanently" })).toBeInTheDocument();
+    expect(scoped.getByRole("button", { name: "Prepare delete plan" })).toBeInTheDocument();
   });
 
-  it("requires typed confirmation for permanent delete and removes the site from view", async () => {
+  it("requires a matching delete plan confirmation before execution and removes the site from view", async () => {
     mockFetchPrincipals.mockResolvedValueOnce(principalsResponse(true));
     mockFetchPrincipalIdentities.mockResolvedValueOnce(identitiesResponse());
     const contextValue = baseOperatorContext({ sites: [buildSite()] });
@@ -1216,17 +1332,191 @@ describe("admin page compatibility route", () => {
       return [];
     });
     mockUseOperatorContext.mockImplementation(() => contextValue);
-    mockDeleteAdminSite.mockResolvedValueOnce();
-    const promptSpy = jest.spyOn(window, "prompt").mockReturnValue("Main Site");
+    mockPrepareAdminSiteDeletePlan.mockResolvedValueOnce(buildSiteDeletePlan());
+    mockExecuteAdminSiteDelete.mockResolvedValueOnce(buildSiteDeleteResult());
+    const user = userEvent.setup();
 
     render(<UsersCompatibilityPage />);
 
     await screen.findByText("operator-1");
-    fireEvent.click(screen.getByRole("button", { name: "Delete Permanently" }));
+    await user.click(screen.getByRole("button", { name: "Prepare delete plan" }));
 
-    await waitFor(() => expect(mockDeleteAdminSite).toHaveBeenCalledWith("token-1", "biz-1", "site-1"));
+    await screen.findByText(/DELETE Main Site example\.com managed-owner\/managed-site/);
+    const executeButton = screen.getByRole("button", { name: "Execute permanent delete" });
+    expect(executeButton).toBeDisabled();
+    expect(screen.getByRole("checkbox", { name: /Delete generated GitHub repo/i })).not.toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /Delete verified managed GKE\/runtime resources/i })).not.toBeChecked();
+    expect(
+      screen.getByRole("checkbox", { name: /Delete verified managed DNS, static IP, and certificate resources/i }),
+    ).not.toBeChecked();
+
+    await user.click(
+      screen.getByRole("checkbox", {
+        name: /I acknowledge that MBSRN database records for this site will be permanently deleted/i,
+      }),
+    );
+    await user.type(
+      screen.getByLabelText("Confirmation phrase"),
+      "DELETE Main Site example.com managed-owner/managed-site",
+    );
+    expect(executeButton).toBeEnabled();
+    await user.click(executeButton);
+
+    await waitFor(() =>
+      expect(mockExecuteAdminSiteDelete).toHaveBeenCalledWith("token-1", "biz-1", "site-1", {
+        confirmation_phrase: "DELETE Main Site example.com managed-owner/managed-site",
+        acknowledge_delete_database_records: true,
+        delete_github_repo: false,
+        acknowledge_delete_github_repo: false,
+        delete_runtime_resources: false,
+        acknowledge_delete_runtime_resources: false,
+        delete_dns_resources: false,
+        acknowledge_delete_dns_resources: false,
+        force_delete_active: false,
+      }),
+    );
     await waitFor(() => expect(screen.getByText("No sites found for this business.")).toBeInTheDocument());
-    promptSpy.mockRestore();
+    expect(
+      screen.getAllByText("Site deleted from the control-plane database. External cleanup was not selected."),
+    ).toHaveLength(2);
+  });
+
+  it("shows unmanaged repo blockers while keeping external cleanup options off by default", async () => {
+    mockFetchPrincipals.mockResolvedValueOnce(principalsResponse(true));
+    mockFetchPrincipalIdentities.mockResolvedValueOnce(identitiesResponse());
+    mockPrepareAdminSiteDeletePlan.mockResolvedValueOnce(
+      buildSiteDeletePlan({
+        external_resources: [
+          {
+            resource_type: "github_repo",
+            status: "blocked",
+            reason_code: "github_repo_delete_unmanaged_repo_blocked",
+            summary: "GitHub repository exists, but it is not proven MBSRN-managed for this site.",
+            details: {},
+          },
+        ],
+        blockers: [
+          {
+            reason_code: "github_repo_delete_unmanaged_repo_blocked",
+            message: "GitHub repository exists, but it is not proven MBSRN-managed for this site.",
+          },
+        ],
+      }),
+    );
+
+    const user = userEvent.setup();
+    render(<UsersCompatibilityPage />);
+
+    await screen.findByText("operator-1");
+    await user.click(screen.getByRole("button", { name: "Prepare delete plan" }));
+
+    expect(
+      await screen.findByText("GitHub repository exists, but it is not proven MBSRN-managed for this site."),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: /Delete generated GitHub repo/i })).not.toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /Delete verified managed GKE\/runtime resources/i })).not.toBeChecked();
+    expect(
+      screen.getByRole("checkbox", { name: /Delete verified managed DNS, static IP, and certificate resources/i }),
+    ).not.toBeChecked();
+  });
+
+  it("shows an active-site blocker and force-delete control in the delete plan", async () => {
+    mockFetchPrincipals.mockResolvedValueOnce(principalsResponse(true));
+    mockFetchPrincipalIdentities.mockResolvedValueOnce(identitiesResponse());
+    mockPrepareAdminSiteDeletePlan.mockResolvedValueOnce(
+      buildSiteDeletePlan({
+        is_active: true,
+        blockers: [
+          {
+            reason_code: "site_delete_active_site_blocked",
+            message: "This site is active. Deactivate it first or enable force delete for active sites during execution.",
+          },
+        ],
+      }),
+    );
+
+    const user = userEvent.setup();
+    render(<UsersCompatibilityPage />);
+
+    await screen.findByText("operator-1");
+    await user.click(screen.getByRole("button", { name: "Prepare delete plan" }));
+
+    expect(
+      await screen.findByText(
+        "This site is active. Deactivate it first or enable force delete for active sites during execution.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Force delete active site" })).toBeInTheDocument();
+  });
+
+  it("shows partial external cleanup warnings after execution", async () => {
+    mockFetchPrincipals.mockResolvedValueOnce(principalsResponse(true));
+    mockFetchPrincipalIdentities.mockResolvedValueOnce(identitiesResponse());
+    const contextValue = baseOperatorContext({ sites: [buildSite()] });
+    contextValue.refreshSites.mockImplementation(async () => {
+      contextValue.sites = [];
+      return [];
+    });
+    mockUseOperatorContext.mockImplementation(() => contextValue);
+    mockPrepareAdminSiteDeletePlan.mockResolvedValueOnce(buildSiteDeletePlan());
+    mockExecuteAdminSiteDelete.mockResolvedValueOnce(
+      buildSiteDeleteResult({
+        message: "Site deleted from the control-plane database with partial external cleanup.",
+        external_cleanup_selected: true,
+        external_cleanup_partial: true,
+        external_resources: [
+          {
+            resource_type: "github_repo",
+            status: "blocked",
+            reason_code: "github_repo_delete_unmanaged_repo_blocked",
+            summary: "GitHub repo cleanup was skipped because the repo is not proven MBSRN-managed.",
+            details: {},
+          },
+          {
+            resource_type: "dns_record",
+            status: "deleted",
+            reason_code: "dns_record_deleted",
+            summary: "Deleted the verified managed preview DNS A record for this site.",
+            details: {},
+          },
+        ],
+        warnings: [
+          {
+            reason_code: "github_repo_delete_unmanaged_repo_blocked",
+            message: "GitHub repo cleanup was skipped because the repo is not proven MBSRN-managed.",
+          },
+        ],
+      }),
+    );
+
+    const user = userEvent.setup();
+    render(<UsersCompatibilityPage />);
+
+    await screen.findByText("operator-1");
+    await user.click(screen.getByRole("button", { name: "Prepare delete plan" }));
+    await user.click(screen.getByRole("checkbox", { name: /Delete generated GitHub repo/i }));
+    await user.click(
+      screen.getByRole("checkbox", {
+        name: /I acknowledge that GitHub repo deletion removes repository contents permanently/i,
+      }),
+    );
+    await user.click(
+      screen.getByRole("checkbox", {
+        name: /I acknowledge that MBSRN database records for this site will be permanently deleted/i,
+      }),
+    );
+    await user.type(
+      screen.getByLabelText("Confirmation phrase"),
+      "DELETE Main Site example.com managed-owner/managed-site",
+    );
+    await user.click(screen.getByRole("button", { name: "Execute permanent delete" }));
+
+    expect(
+      await screen.findByText("Selected external cleanup completed only partially. Review per-resource results below."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("GitHub repo cleanup was skipped because the repo is not proven MBSRN-managed."),
+    ).toBeInTheDocument();
   });
 
   it("renders the admin GCP logs query section with one sample filter", async () => {

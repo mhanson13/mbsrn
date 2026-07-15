@@ -331,6 +331,84 @@ export interface SEOSiteListResponse {
   total: number;
 }
 
+export interface SEOSiteDeleteIssue {
+  reason_code: string;
+  message: string;
+}
+
+export interface SEOSiteDeleteDependencySummary {
+  category: string;
+  count: number;
+  model_count: number;
+  model_names: string[];
+}
+
+export interface SEOSiteDeleteResource {
+  resource_type: string;
+  status: string;
+  reason_code: string | null;
+  summary: string;
+  details: Record<string, unknown>;
+}
+
+export interface SEOSiteDeleteExecutionDefaults {
+  delete_github_repo: boolean;
+  delete_runtime_resources: boolean;
+  delete_dns_resources: boolean;
+  force_delete_active: boolean;
+}
+
+export interface SEOSiteDeletePlan {
+  reason_code: string;
+  site_id: string;
+  site_name: string;
+  domain: string;
+  is_active: boolean;
+  generated_repo_owner: string | null;
+  generated_repo_name: string | null;
+  kubernetes_namespace: string | null;
+  preview_hostname: string | null;
+  static_ip_name: string | null;
+  managed_certificate_name: string | null;
+  dns_records_expected: Array<Record<string, unknown>>;
+  db_dependency_total: number;
+  db_dependencies: SEOSiteDeleteDependencySummary[];
+  external_resources: SEOSiteDeleteResource[];
+  blockers: SEOSiteDeleteIssue[];
+  warnings: SEOSiteDeleteIssue[];
+  required_confirmation_phrase: string;
+  execution_defaults: SEOSiteDeleteExecutionDefaults;
+}
+
+export interface SEOSiteDeleteExecuteRequest {
+  confirmation_phrase: string;
+  acknowledge_delete_database_records: boolean;
+  delete_github_repo?: boolean;
+  acknowledge_delete_github_repo?: boolean;
+  delete_runtime_resources?: boolean;
+  acknowledge_delete_runtime_resources?: boolean;
+  delete_dns_resources?: boolean;
+  acknowledge_delete_dns_resources?: boolean;
+  force_delete_active?: boolean;
+}
+
+export interface SEOSiteDeleteExecutionResult {
+  reason_code: string;
+  message: string;
+  site_id: string;
+  site_name: string;
+  domain: string;
+  db_deleted: boolean;
+  site_deleted: boolean;
+  external_cleanup_selected: boolean;
+  external_cleanup_partial: boolean;
+  db_dependency_total: number;
+  db_dependencies: SEOSiteDeleteDependencySummary[];
+  external_resources: SEOSiteDeleteResource[];
+  blockers: SEOSiteDeleteIssue[];
+  warnings: SEOSiteDeleteIssue[];
+}
+
 export interface MigrationOperatorRequirements {
   business_objectives: string[];
   requested_pages: string[];

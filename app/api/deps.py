@@ -125,6 +125,7 @@ from app.services.seo_recommendations import SEORecommendationService
 from app.services.action_chain_activation_service import ActionChainActivationService
 from app.services.action_lineage_service import ActionLineageService
 from app.services.seo_recommendation_narrative_prompt import SEO_RECOMMENDATION_NARRATIVE_PROMPT_VERSION
+from app.services.seo_site_delete import SEOSiteDeleteService
 from app.services.seo_sites import SEOSiteService
 from app.services.seo_analytics import SEOAnalyticsService, SEOAnalyticsServiceSettings
 from app.services.seo_summary import SEOSummaryService
@@ -1175,6 +1176,20 @@ def get_seo_migration_service(
         deploy_secret_git_token=settings.git_token,
         managed_site_private_image_auth_enabled=settings.migration_managed_site_private_image_auth_enabled,
         remote_image_import_enabled=settings.seo_migration_remote_image_import_enabled,
+    )
+
+
+def get_seo_site_delete_service(
+    db: Session = Depends(get_db),
+    business_repository: BusinessRepository = Depends(get_business_repository),
+    seo_site_repository: SEOSiteRepository = Depends(get_seo_site_repository),
+    seo_migration_service: SEOMigrationService = Depends(get_seo_migration_service),
+) -> SEOSiteDeleteService:
+    return SEOSiteDeleteService(
+        session=db,
+        business_repository=business_repository,
+        seo_site_repository=seo_site_repository,
+        seo_migration_service=seo_migration_service,
     )
 
 

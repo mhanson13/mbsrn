@@ -58,6 +58,9 @@ import type {
   SEOSite,
   SEOSiteCreateRequest,
   SEOSiteAdminUpdateRequest,
+  SEOSiteDeleteExecuteRequest,
+  SEOSiteDeleteExecutionResult,
+  SEOSiteDeletePlan,
   SEOSiteUpdateRequest,
   SEOSiteListResponse,
   GA4AccessibleAccountsResponse,
@@ -284,6 +287,30 @@ export async function deleteAdminSite(token: string, businessId: string, siteId:
   await apiRequest<void>(`/api/businesses/${businessId}/seo/admin/sites/${siteId}`, {
     method: "DELETE",
     token,
+  });
+}
+
+export async function prepareAdminSiteDeletePlan(
+  token: string,
+  businessId: string,
+  siteId: string,
+): Promise<SEOSiteDeletePlan> {
+  return apiRequest<SEOSiteDeletePlan>(`/api/businesses/${businessId}/seo/admin/sites/${siteId}/delete-plan`, {
+    method: "POST",
+    token,
+  });
+}
+
+export async function executeAdminSiteDelete(
+  token: string,
+  businessId: string,
+  siteId: string,
+  payload: SEOSiteDeleteExecuteRequest,
+): Promise<SEOSiteDeleteExecutionResult> {
+  return apiRequest<SEOSiteDeleteExecutionResult>(`/api/businesses/${businessId}/seo/admin/sites/${siteId}/delete`, {
+    method: "POST",
+    token,
+    body: JSON.stringify(payload),
   });
 }
 

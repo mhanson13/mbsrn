@@ -463,6 +463,42 @@ Scoped fresh redeploy (`replace_existing_runtime`) guidance:
   - missing ManagedCertificate object before dispatch is a certificate-resource blocker (`managed_certificate_failed_not_visible` / `certificate_resource_missing`) and is distinct from provisioning wait-state
   - missing `service/site-web` after apply is a runtime apply failure (not TLS pending)
 
+### Admin Permanent Site Delete
+
+Admin Site Registry permanent delete is now a separate guarded control-plane workflow and is distinct from deploy-time `replace_existing_runtime`.
+
+- Deactivate/archive vs permanent delete:
+  - deactivation keeps site, migration, audit, recommendation, and deploy metadata intact
+  - permanent delete hard-deletes the site row and site-owned control-plane records
+- Permanent delete flow is always multi-stage:
+  1. prepare delete plan
+  2. admin review
+  3. exact confirmation phrase entry
+  4. explicit execution request
+  5. per-resource result summary
+- External cleanup options default off:
+  - generated GitHub repo delete
+  - verified managed GKE/runtime resource delete
+  - verified managed DNS/static-IP/certificate delete
+- Ownership checks before external delete:
+  - GitHub repo must match configured owner/name, must not be `mhanson13/mbsrn`, and must have a valid MBSRN management/adoption marker for the selected business/site
+  - runtime resources must be in the derived namespace and carry site labels such as `app.kubernetes.io/managed-by=mbsrn`, `mbsrn.io/site-id`, `mbsrn.io/repo`, and `mbsrn.io/preview-hostname`
+  - DNS delete requires exact expected hostname/type/value match
+  - static-IP delete is skipped when the address is shared or still attached elsewhere
+  - ManagedCertificate delete requires exact namespace/name plus site ownership labels
+- The admin permanent-delete workflow does **not** automatically delete:
+  - the control-plane repo `mhanson13/mbsrn`
+  - arbitrary customer/unmanaged repos
+  - unrelated cluster-wide resources
+  - shared preview gateway static IPs
+  - source-site URLs or the original customer website
+- Active-site guardrail:
+  - active sites require deactivation first or an explicit `force_delete_active` confirmation during execution
+- Failure behavior:
+  - external cleanup is not transactional with database delete
+  - if external cleanup partially succeeds and DB delete later fails, result code `site_delete_db_failed_after_external_cleanup` is returned and manual remediation is required
+  - per-resource results distinguish `deleted`, `skipped`, `blocked`, `failed`, `not_found`, and `not_checked`
+
 `SITE_WEB_IMAGE_TAG` diagnostics:
 - empty `SITE_WEB_IMAGE_TAG` is allowed for managed workflows and falls back to `${GITHUB_SHA}`.
 - workflow outputs now include `site_runtime_image_tag_source` (`github_sha_fallback`, `configured_sha`, `configured_latest`, `configured_invalid_fallback_latest`) so rollout evidence shows the effective tag source.

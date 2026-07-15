@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 import re
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -142,3 +143,88 @@ class SEOSiteRead(BaseModel):
 class SEOSiteListResponse(BaseModel):
     items: list[SEOSiteRead]
     total: int
+
+
+class SEOSiteDeleteIssueRead(BaseModel):
+    reason_code: str = Field(min_length=1, max_length=120)
+    message: str = Field(min_length=1, max_length=500)
+
+
+class SEOSiteDeleteDependencySummaryRead(BaseModel):
+    category: str = Field(min_length=1, max_length=80)
+    count: int = Field(ge=0)
+    model_count: int = Field(ge=0)
+    model_names: list[str] = Field(default_factory=list)
+
+
+class SEOSiteDeleteResourceRead(BaseModel):
+    resource_type: str = Field(min_length=1, max_length=80)
+    status: str = Field(min_length=1, max_length=40)
+    reason_code: str | None = Field(default=None, max_length=120)
+    summary: str = Field(min_length=1, max_length=500)
+    details: dict[str, Any] = Field(default_factory=dict)
+
+
+class SEOSiteDeleteExecutionDefaultsRead(BaseModel):
+    delete_github_repo: bool = False
+    delete_runtime_resources: bool = False
+    delete_dns_resources: bool = False
+    force_delete_active: bool = False
+
+
+class SEOSiteDeletePlanRead(BaseModel):
+    reason_code: str = Field(min_length=1, max_length=120)
+    site_id: str = Field(min_length=1, max_length=36)
+    site_name: str = Field(min_length=1, max_length=255)
+    domain: str = Field(min_length=1, max_length=255)
+    is_active: bool
+    generated_repo_owner: str | None = Field(default=None, max_length=120)
+    generated_repo_name: str | None = Field(default=None, max_length=255)
+    kubernetes_namespace: str | None = Field(default=None, max_length=63)
+    preview_hostname: str | None = Field(default=None, max_length=253)
+    static_ip_name: str | None = Field(default=None, max_length=80)
+    managed_certificate_name: str | None = Field(default=None, max_length=63)
+    dns_records_expected: list[dict[str, Any]] = Field(default_factory=list)
+    db_dependency_total: int = Field(ge=0)
+    db_dependencies: list[SEOSiteDeleteDependencySummaryRead] = Field(default_factory=list)
+    external_resources: list[SEOSiteDeleteResourceRead] = Field(default_factory=list)
+    blockers: list[SEOSiteDeleteIssueRead] = Field(default_factory=list)
+    warnings: list[SEOSiteDeleteIssueRead] = Field(default_factory=list)
+    required_confirmation_phrase: str = Field(min_length=1, max_length=500)
+    execution_defaults: SEOSiteDeleteExecutionDefaultsRead = Field(
+        default_factory=SEOSiteDeleteExecutionDefaultsRead
+    )
+
+
+class SEOSiteDeleteExecuteRequest(BaseModel):
+    confirmation_phrase: str = Field(min_length=1, max_length=500)
+    acknowledge_delete_database_records: bool = False
+    delete_github_repo: bool = False
+    acknowledge_delete_github_repo: bool = False
+    delete_runtime_resources: bool = False
+    acknowledge_delete_runtime_resources: bool = False
+    delete_dns_resources: bool = False
+    acknowledge_delete_dns_resources: bool = False
+    force_delete_active: bool = False
+
+    @field_validator("confirmation_phrase", mode="before")
+    @classmethod
+    def _normalize_confirmation_phrase(cls, value: object) -> str:
+        return " ".join(str(value or "").split()).strip()
+
+
+class SEOSiteDeleteExecutionResultRead(BaseModel):
+    reason_code: str = Field(min_length=1, max_length=120)
+    message: str = Field(min_length=1, max_length=500)
+    site_id: str = Field(min_length=1, max_length=36)
+    site_name: str = Field(min_length=1, max_length=255)
+    domain: str = Field(min_length=1, max_length=255)
+    db_deleted: bool
+    site_deleted: bool
+    external_cleanup_selected: bool
+    external_cleanup_partial: bool
+    db_dependency_total: int = Field(ge=0)
+    db_dependencies: list[SEOSiteDeleteDependencySummaryRead] = Field(default_factory=list)
+    external_resources: list[SEOSiteDeleteResourceRead] = Field(default_factory=list)
+    blockers: list[SEOSiteDeleteIssueRead] = Field(default_factory=list)
+    warnings: list[SEOSiteDeleteIssueRead] = Field(default_factory=list)

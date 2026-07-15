@@ -579,6 +579,15 @@ class SEOMigrationGitHubPublisher:
         del repo_owner, repo_name, ref, business_id, site_id, principal_id, expected_owner
         raise NotImplementedError
 
+    def delete_repository(
+        self,
+        *,
+        repo_owner: str,
+        repo_name: str,
+    ) -> None:
+        del repo_owner, repo_name
+        raise NotImplementedError
+
     def dispatch_deploy(
         self,
         *,
@@ -799,6 +808,18 @@ class MisconfiguredSEOMigrationGitHubPublisher(SEOMigrationGitHubPublisher):
         expected_owner: str | None = None,
     ) -> SEOMigrationGitHubRepoAdoptionResult:
         del repo_owner, repo_name, ref, business_id, site_id, principal_id, expected_owner
+        raise SEOMigrationGitHubPublisherError(
+            code=self.reason_code,
+            safe_message=self.safe_message,
+        )
+
+    def delete_repository(
+        self,
+        *,
+        repo_owner: str,
+        repo_name: str,
+    ) -> None:
+        del repo_owner, repo_name
         raise SEOMigrationGitHubPublisherError(
             code=self.reason_code,
             safe_message=self.safe_message,
@@ -2086,6 +2107,27 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                     provider_message=_sanitize_github_error_message(exc.provider_message),
                 ) from exc
             raise
+
+    def delete_repository(
+        self,
+        *,
+        repo_owner: str,
+        repo_name: str,
+    ) -> None:
+        normalized_owner = self._normalize_repo_owner_or_raise(repo_owner)
+        normalized_repo = self._normalize_repo_name_or_raise(repo_name)
+        self._request_json(
+            method="DELETE",
+            path=f"/repos/{urllib.parse.quote(normalized_owner)}/{urllib.parse.quote(normalized_repo)}",
+            expected_statuses=(204,),
+            status_error_map={
+                401: ("github_repo_delete_failed", "GitHub repository deletion is not authorized."),
+                403: ("github_repo_delete_failed", "GitHub repository deletion is not authorized."),
+                404: ("github_target_not_found", "GitHub repository target was not found."),
+            },
+            error_stage="repo_delete",
+            expect_object=False,
+        )
 
     def publish_files(
         self,

@@ -27,13 +27,14 @@ import {
   ApiRequestError,
   createPrincipalIdentity,
   createPrincipal,
-  deleteAdminSite,
+  executeAdminSiteDelete,
   deactivatePrincipalIdentity,
   deactivatePrincipal,
   fetchBusinessSettings,
   fetchGitHubPublishConfig,
   fetchPrincipalIdentities,
   fetchPrincipals,
+  prepareAdminSiteDeletePlan,
   queryGcpLogs,
   updateAdminSite,
   updateBusinessSettings,
@@ -54,6 +55,9 @@ import type {
   PrincipalIdentity,
   PrincipalRole,
   SEOSite,
+  SEOSiteDeleteExecuteRequest,
+  SEOSiteDeleteExecutionResult,
+  SEOSiteDeletePlan,
 } from "../../lib/api/types";
 import {
   COMPETITOR_BIG_BOX_PENALTY_MAX,
@@ -233,6 +237,18 @@ interface SiteManagementDraft {
   url: string;
   searchConsolePropertyUrl: string;
   searchConsoleEnabled: boolean;
+}
+
+interface SiteDeleteFormState {
+  confirmationPhrase: string;
+  acknowledgeDeleteDatabaseRecords: boolean;
+  deleteGitHubRepo: boolean;
+  acknowledgeDeleteGitHubRepo: boolean;
+  deleteRuntimeResources: boolean;
+  acknowledgeDeleteRuntimeResources: boolean;
+  deleteDnsResources: boolean;
+  acknowledgeDeleteDnsResources: boolean;
+  forceDeleteActive: boolean;
 }
 
 interface GitHubPublishConfigValidationResult {
@@ -583,6 +599,80 @@ function apiErrorMessageContains(error: ApiRequestError, token: string): boolean
   return error.message.toLowerCase().includes(token.toLowerCase());
 }
 
+function apiErrorReasonCode(error: ApiRequestError): string | null {
+  const reasonCode = error.detail?.reason_code;
+  return typeof reasonCode === "string" && reasonCode.trim() ? reasonCode.trim() : null;
+}
+
+function apiErrorFirstIssueMessage(error: ApiRequestError): string | null {
+  const collections = [error.detail?.blockers, error.detail?.warnings];
+  for (const collection of collections) {
+    if (!Array.isArray(collection)) {
+      continue;
+    }
+    for (const item of collection) {
+      if (!item || typeof item !== "object") {
+        continue;
+      }
+      const message = (item as Record<string, unknown>).message;
+      if (typeof message === "string" && message.trim()) {
+        return message.trim();
+      }
+    }
+  }
+  return null;
+}
+
+function siteDeleteResourceLabel(resourceType: string): string {
+  switch (resourceType) {
+    case "github_repo":
+      return "GitHub repo";
+    case "gke_runtime":
+      return "GKE/runtime";
+    case "dns_record":
+      return "DNS record";
+    case "static_ip":
+      return "Static IP";
+    case "managed_certificate":
+      return "Managed certificate";
+    default:
+      return resourceType.replace(/_/g, " ");
+  }
+}
+
+function siteDeleteStatusLabel(status: string): string {
+  switch (status) {
+    case "found":
+      return "Found";
+    case "not_found":
+      return "Not found";
+    case "not_checked":
+      return "Not checked";
+    case "blocked":
+      return "Blocked";
+    case "skipped":
+      return "Skipped";
+    case "deleted":
+      return "Deleted";
+    case "failed":
+      return "Failed";
+    default:
+      return status;
+  }
+}
+
+const EMPTY_SITE_DELETE_FORM_STATE: SiteDeleteFormState = {
+  confirmationPhrase: "",
+  acknowledgeDeleteDatabaseRecords: false,
+  deleteGitHubRepo: false,
+  acknowledgeDeleteGitHubRepo: false,
+  deleteRuntimeResources: false,
+  acknowledgeDeleteRuntimeResources: false,
+  deleteDnsResources: false,
+  acknowledgeDeleteDnsResources: false,
+  forceDeleteActive: false,
+};
+
 function safeBusinessSettingsUpdateErrorMessage(error: unknown): string {
   if (error instanceof ApiRequestError) {
     if (error.status === 401) {
@@ -761,17 +851,46 @@ function searchConsolePropertyFormatHint(value: string): string | null {
 
 function safeAdminSiteDeleteErrorMessage(error: unknown): string {
   if (error instanceof ApiRequestError) {
+    const reasonCode = apiErrorReasonCode(error);
+    const issueMessage = apiErrorFirstIssueMessage(error);
     if (error.status === 401) {
       return "Session expired. Sign in again.";
     }
     if (error.status === 403) {
+      if (reasonCode === "site_delete_not_authorized") {
+        return "Only admin principals can permanently delete sites.";
+      }
       return "Only admin principals can permanently delete sites.";
     }
     if (error.status === 404) {
       return "Site not found in this business scope.";
     }
+    if (error.status === 409 && reasonCode === "site_delete_active_site_blocked") {
+      return issueMessage || "Active sites must be deactivated first or force-deleted with explicit confirmation.";
+    }
     if (error.status === 422) {
-      return "Permanent delete failed. Site data was not fully removed.";
+      if (reasonCode === "site_delete_confirmation_required") {
+        return issueMessage || "Prepare a delete plan and complete every delete acknowledgement before executing.";
+      }
+      if (reasonCode === "site_delete_confirmation_mismatch") {
+        return issueMessage || "Confirmation phrase did not match the required permanent delete phrase.";
+      }
+      if (reasonCode === "github_repo_delete_unmanaged_repo_blocked") {
+        return issueMessage || "Configured GitHub repo is not proven MBSRN-managed for this site.";
+      }
+      if (reasonCode === "github_repo_delete_adoption_required") {
+        return issueMessage || "GitHub repo delete is blocked until the repository has an MBSRN management marker.";
+      }
+      if (reasonCode === "site_delete_foreign_key_blocked") {
+        return issueMessage || "Permanent delete was blocked by dependent site records.";
+      }
+      if (reasonCode === "site_delete_db_failed_after_external_cleanup") {
+        return issueMessage || "External cleanup ran, but database deletion failed. Manual remediation is required.";
+      }
+      if (reasonCode === "site_delete_transaction_failed") {
+        return issueMessage || "Permanent delete failed before the database transaction completed.";
+      }
+      return issueMessage || "Permanent delete failed.";
     }
   }
   return "Failed to permanently delete site.";
@@ -1574,7 +1693,12 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
   const [siteManagementMessage, setSiteManagementMessage] = useState<string | null>(null);
   const [siteManagementError, setSiteManagementError] = useState<string | null>(null);
   const [updatingSiteId, setUpdatingSiteId] = useState<string | null>(null);
+  const [preparingSiteDeleteId, setPreparingSiteDeleteId] = useState<string | null>(null);
   const [deletingSiteId, setDeletingSiteId] = useState<string | null>(null);
+  const [siteDeletePlanSiteId, setSiteDeletePlanSiteId] = useState<string | null>(null);
+  const [siteDeletePlan, setSiteDeletePlan] = useState<SEOSiteDeletePlan | null>(null);
+  const [siteDeleteResult, setSiteDeleteResult] = useState<SEOSiteDeleteExecutionResult | null>(null);
+  const [siteDeleteForm, setSiteDeleteForm] = useState<SiteDeleteFormState>(EMPTY_SITE_DELETE_FORM_STATE);
   const [gcpLogsFilterInput, setGcpLogsFilterInput] = useState("");
   const [gcpLogsPageSize, setGcpLogsPageSize] = useState<number>(GCP_LOGS_PAGE_SIZE_DEFAULT);
   const [gcpLogsStartTimeInput, setGcpLogsStartTimeInput] = useState("");
@@ -1593,6 +1717,26 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
   const isAdmin = principal?.role === "admin";
   const showUserManagement = mode !== "admin";
   const showAdminSettings = mode !== "userMgmt";
+  const siteManagementBusy = Boolean(updatingSiteId || preparingSiteDeleteId || deletingSiteId);
+  const selectedDeleteSite = useMemo(
+    () => context.sites.find((site) => site.id === siteDeletePlanSiteId) ?? null,
+    [context.sites, siteDeletePlanSiteId],
+  );
+  const siteDeleteConfirmationPhraseMatches =
+    Boolean(siteDeletePlan?.required_confirmation_phrase) &&
+    siteDeleteForm.confirmationPhrase.trim() === (siteDeletePlan?.required_confirmation_phrase || "").trim();
+  const siteDeleteAcknowledgementsReady =
+    siteDeleteForm.acknowledgeDeleteDatabaseRecords &&
+    (!siteDeleteForm.deleteGitHubRepo || siteDeleteForm.acknowledgeDeleteGitHubRepo) &&
+    (!siteDeleteForm.deleteRuntimeResources || siteDeleteForm.acknowledgeDeleteRuntimeResources) &&
+    (!siteDeleteForm.deleteDnsResources || siteDeleteForm.acknowledgeDeleteDnsResources);
+  const siteDeleteExecuteEnabled =
+    Boolean(siteDeletePlan) &&
+    !preparingSiteDeleteId &&
+    !deletingSiteId &&
+    siteDeleteConfirmationPhraseMatches &&
+    siteDeleteAcknowledgementsReady &&
+    (!siteDeletePlan?.is_active || siteDeleteForm.forceDeleteActive);
   const githubPublishValidation = useMemo(
     () =>
       validateGitHubPublishConfigInputs({
@@ -2470,31 +2614,97 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
     }
   };
 
-  const handleDeleteSite = async (site: SEOSite) => {
-    const typedConfirmation = window.prompt(
-      `Type "${site.display_name}" to permanently delete this site and all site-owned SEO data.`,
-    );
-    if (typedConfirmation === null) {
-      return;
+  const handlePrepareDeletePlan = async (site: SEOSite) => {
+    setSiteManagementError(null);
+    setSiteManagementMessage(null);
+    setSiteDeleteResult(null);
+    setPreparingSiteDeleteId(site.id);
+    try {
+      const plan = await prepareAdminSiteDeletePlan(context.token, context.businessId, site.id);
+      setSiteDeletePlanSiteId(site.id);
+      setSiteDeletePlan(plan);
+      setSiteDeleteForm({
+        confirmationPhrase: "",
+        acknowledgeDeleteDatabaseRecords: false,
+        deleteGitHubRepo: plan.execution_defaults.delete_github_repo,
+        acknowledgeDeleteGitHubRepo: false,
+        deleteRuntimeResources: plan.execution_defaults.delete_runtime_resources,
+        acknowledgeDeleteRuntimeResources: false,
+        deleteDnsResources: plan.execution_defaults.delete_dns_resources,
+        acknowledgeDeleteDnsResources: false,
+        forceDeleteActive: plan.execution_defaults.force_delete_active,
+      });
+      setSiteManagementMessage(`Delete plan prepared for ${plan.site_name}.`);
+    } catch (err) {
+      setSiteManagementError(safeAdminSiteDeleteErrorMessage(err));
+    } finally {
+      setPreparingSiteDeleteId(null);
     }
-    if (typedConfirmation.trim() !== site.display_name) {
-      setSiteManagementError("Delete cancelled. Confirmation text did not match the site name.");
-      setSiteManagementMessage(null);
+  };
+
+  const handleSiteDeleteFormToggle = (field: keyof SiteDeleteFormState, checked: boolean) => {
+    setSiteDeleteForm((current) => {
+      const nextState: SiteDeleteFormState = {
+        ...current,
+        [field]: checked,
+      };
+      if (field === "deleteGitHubRepo" && !checked) {
+        nextState.acknowledgeDeleteGitHubRepo = false;
+      }
+      if (field === "deleteRuntimeResources" && !checked) {
+        nextState.acknowledgeDeleteRuntimeResources = false;
+      }
+      if (field === "deleteDnsResources" && !checked) {
+        nextState.acknowledgeDeleteDnsResources = false;
+      }
+      return nextState;
+    });
+  };
+
+  const handleExecuteSiteDelete = async () => {
+    if (!siteDeletePlan) {
       return;
     }
 
+    const payload: SEOSiteDeleteExecuteRequest = {
+      confirmation_phrase: siteDeleteForm.confirmationPhrase.trim(),
+      acknowledge_delete_database_records: siteDeleteForm.acknowledgeDeleteDatabaseRecords,
+      delete_github_repo: siteDeleteForm.deleteGitHubRepo,
+      acknowledge_delete_github_repo: siteDeleteForm.acknowledgeDeleteGitHubRepo,
+      delete_runtime_resources: siteDeleteForm.deleteRuntimeResources,
+      acknowledge_delete_runtime_resources: siteDeleteForm.acknowledgeDeleteRuntimeResources,
+      delete_dns_resources: siteDeleteForm.deleteDnsResources,
+      acknowledge_delete_dns_resources: siteDeleteForm.acknowledgeDeleteDnsResources,
+      force_delete_active: siteDeleteForm.forceDeleteActive,
+    };
+
     setSiteManagementError(null);
     setSiteManagementMessage(null);
-    setDeletingSiteId(site.id);
+    setDeletingSiteId(siteDeletePlan.site_id);
     try {
-      await deleteAdminSite(context.token, context.businessId, site.id);
-      await context.refreshSites();
-      setSiteManagementMessage(`Site ${site.display_name} permanently deleted.`);
+      const result = await executeAdminSiteDelete(
+        context.token,
+        context.businessId,
+        siteDeletePlan.site_id,
+        payload,
+      );
+      setSiteDeleteResult(result);
+      if (result.db_deleted) {
+        await context.refreshSites();
+      }
+      setSiteManagementMessage(result.message);
     } catch (err) {
       setSiteManagementError(safeAdminSiteDeleteErrorMessage(err));
     } finally {
       setDeletingSiteId(null);
     }
+  };
+
+  const handleDismissSiteDeletePlan = () => {
+    setSiteDeletePlanSiteId(null);
+    setSiteDeletePlan(null);
+    setSiteDeleteResult(null);
+    setSiteDeleteForm(EMPTY_SITE_DELETE_FORM_STATE);
   };
 
   const runGcpLogsQuery = async (pageToken: string | null = null) => {
@@ -4629,6 +4839,296 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
         <p className="hint warning">
           Site Registry changes affect active site records and destructive deletion behavior. Review before saving or deleting.
         </p>
+        {siteDeletePlan ? (
+          <div className="panel panel-compact stack-tight" data-testid="admin-site-delete-plan">
+            <h3>Permanent delete plan</h3>
+            {selectedDeleteSite ? (
+              <p className="hint muted">Prepared for {selectedDeleteSite.display_name}.</p>
+            ) : null}
+            <p className="hint warning">
+              Permanent delete is irreversible. Selected external cleanup can remove managed GitHub, runtime, and DNS resources.
+            </p>
+            <WorkspaceMetadataGrid>
+              <WorkspaceMetadataItem label="Site">
+                <code>{siteDeletePlan.site_name}</code>
+              </WorkspaceMetadataItem>
+              <WorkspaceMetadataItem label="Domain">
+                <code>{siteDeletePlan.domain}</code>
+              </WorkspaceMetadataItem>
+              <WorkspaceMetadataItem label="Active">
+                <span>{siteDeletePlan.is_active ? "Yes" : "No"}</span>
+              </WorkspaceMetadataItem>
+              <WorkspaceMetadataItem label="GitHub repo">
+                <code>
+                  {siteDeletePlan.generated_repo_owner && siteDeletePlan.generated_repo_name
+                    ? `${siteDeletePlan.generated_repo_owner}/${siteDeletePlan.generated_repo_name}`
+                    : "Not configured"}
+                </code>
+              </WorkspaceMetadataItem>
+              <WorkspaceMetadataItem label="Namespace">
+                <code>{siteDeletePlan.kubernetes_namespace || "Not derived"}</code>
+              </WorkspaceMetadataItem>
+              <WorkspaceMetadataItem label="Preview hostname">
+                <code>{siteDeletePlan.preview_hostname || "Not derived"}</code>
+              </WorkspaceMetadataItem>
+              <WorkspaceMetadataItem label="Static IP">
+                <code>{siteDeletePlan.static_ip_name || "Not derived"}</code>
+              </WorkspaceMetadataItem>
+              <WorkspaceMetadataItem label="Managed certificate">
+                <code>{siteDeletePlan.managed_certificate_name || "Not derived"}</code>
+              </WorkspaceMetadataItem>
+              <WorkspaceMetadataItem label="DB dependency total">
+                <span>{siteDeletePlan.db_dependency_total}</span>
+              </WorkspaceMetadataItem>
+            </WorkspaceMetadataGrid>
+
+            {siteDeletePlan.db_dependencies.length > 0 ? (
+              <div>
+                <p className="hint muted">Database dependency summary</p>
+                <ul className="compact-list">
+                  {siteDeletePlan.db_dependencies.map((dependency) => (
+                    <li key={dependency.category}>
+                      {dependency.category}: {dependency.count} records across {dependency.model_count} tables
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+
+            <div>
+              <p className="hint muted">External resource summary</p>
+              <ul className="compact-list">
+                {siteDeletePlan.external_resources.map((resource) => (
+                  <li key={resource.resource_type}>
+                    {siteDeleteResourceLabel(resource.resource_type)} — {siteDeleteStatusLabel(resource.status)}:{" "}
+                    {resource.summary}
+                  </li>
+                ))}
+              </ul>
+            </div>
+
+            {siteDeletePlan.blockers.length > 0 ? (
+              <div>
+                <p className="hint warning">Plan blockers</p>
+                <ul className="compact-list">
+                  {siteDeletePlan.blockers.map((issue) => (
+                    <li key={`${issue.reason_code}-${issue.message}`} className="hint warning">
+                      {issue.message}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+
+            {siteDeletePlan.warnings.length > 0 ? (
+              <div>
+                <p className="hint warning">Warnings</p>
+                <ul className="compact-list">
+                  {siteDeletePlan.warnings.map((issue) => (
+                    <li key={`${issue.reason_code}-${issue.message}`} className="hint warning">
+                      {issue.message}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+
+            <label htmlFor="admin-site-delete-confirmation-phrase">Confirmation phrase</label>
+            <input
+              id="admin-site-delete-confirmation-phrase"
+              value={siteDeleteForm.confirmationPhrase}
+              onChange={(event) =>
+                setSiteDeleteForm((current) => ({ ...current, confirmationPhrase: event.target.value }))
+              }
+              placeholder={siteDeletePlan.required_confirmation_phrase}
+              disabled={!!preparingSiteDeleteId || !!deletingSiteId}
+            />
+            <p className="hint muted">
+              Type <code>{siteDeletePlan.required_confirmation_phrase}</code> exactly.
+            </p>
+
+            <label>
+              <input
+                type="checkbox"
+                checked={siteDeleteForm.acknowledgeDeleteDatabaseRecords}
+                onChange={(event) =>
+                  handleSiteDeleteFormToggle("acknowledgeDeleteDatabaseRecords", event.target.checked)
+                }
+                disabled={!!preparingSiteDeleteId || !!deletingSiteId}
+              />{" "}
+              I acknowledge that MBSRN database records for this site will be permanently deleted.
+            </label>
+
+            <label>
+              <input
+                type="checkbox"
+                checked={siteDeleteForm.deleteGitHubRepo}
+                onChange={(event) => handleSiteDeleteFormToggle("deleteGitHubRepo", event.target.checked)}
+                disabled={!!preparingSiteDeleteId || !!deletingSiteId}
+              />{" "}
+              Delete generated GitHub repo if ownership verification passes.
+            </label>
+            {siteDeleteForm.deleteGitHubRepo ? (
+              <label>
+                <input
+                  type="checkbox"
+                  checked={siteDeleteForm.acknowledgeDeleteGitHubRepo}
+                  onChange={(event) =>
+                    handleSiteDeleteFormToggle("acknowledgeDeleteGitHubRepo", event.target.checked)
+                  }
+                  disabled={!!preparingSiteDeleteId || !!deletingSiteId}
+                />{" "}
+                I acknowledge that GitHub repo deletion removes repository contents permanently.
+              </label>
+            ) : null}
+
+            <label>
+              <input
+                type="checkbox"
+                checked={siteDeleteForm.deleteRuntimeResources}
+                onChange={(event) => handleSiteDeleteFormToggle("deleteRuntimeResources", event.target.checked)}
+                disabled={!!preparingSiteDeleteId || !!deletingSiteId}
+              />{" "}
+              Delete verified managed GKE/runtime resources.
+            </label>
+            {siteDeleteForm.deleteRuntimeResources ? (
+              <label>
+                <input
+                  type="checkbox"
+                  checked={siteDeleteForm.acknowledgeDeleteRuntimeResources}
+                  onChange={(event) =>
+                    handleSiteDeleteFormToggle("acknowledgeDeleteRuntimeResources", event.target.checked)
+                  }
+                  disabled={!!preparingSiteDeleteId || !!deletingSiteId}
+                />{" "}
+                I acknowledge that runtime cleanup can remove public preview availability immediately.
+              </label>
+            ) : null}
+
+            <label>
+              <input
+                type="checkbox"
+                checked={siteDeleteForm.deleteDnsResources}
+                onChange={(event) => handleSiteDeleteFormToggle("deleteDnsResources", event.target.checked)}
+                disabled={!!preparingSiteDeleteId || !!deletingSiteId}
+              />{" "}
+              Delete verified managed DNS, static IP, and certificate resources.
+            </label>
+            {siteDeleteForm.deleteDnsResources ? (
+              <label>
+                <input
+                  type="checkbox"
+                  checked={siteDeleteForm.acknowledgeDeleteDnsResources}
+                  onChange={(event) =>
+                    handleSiteDeleteFormToggle("acknowledgeDeleteDnsResources", event.target.checked)
+                  }
+                  disabled={!!preparingSiteDeleteId || !!deletingSiteId}
+                />{" "}
+                I acknowledge that DNS/static IP/certificate cleanup affects public preview routing and TLS.
+              </label>
+            ) : null}
+
+            {siteDeletePlan.is_active ? (
+              <>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={siteDeleteForm.forceDeleteActive}
+                    onChange={(event) => handleSiteDeleteFormToggle("forceDeleteActive", event.target.checked)}
+                    disabled={!!preparingSiteDeleteId || !!deletingSiteId}
+                  />{" "}
+                  Force delete active site
+                </label>
+                <p className="hint warning">
+                  This site is currently active. Force delete must be checked or the site must be deactivated first.
+                </p>
+              </>
+            ) : null}
+
+            {siteDeleteResult ? (
+              <div className="message-stack">
+                <p className={siteDeleteResult.db_deleted ? "hint" : "hint error"}>{siteDeleteResult.message}</p>
+                {siteDeleteResult.external_cleanup_partial ? (
+                  <p className="hint warning">
+                    Selected external cleanup completed only partially. Review per-resource results below.
+                  </p>
+                ) : null}
+                {siteDeleteResult.blockers.length > 0 ? (
+                  <ul className="compact-list">
+                    {siteDeleteResult.blockers.map((issue) => (
+                      <li key={`${issue.reason_code}-${issue.message}`} className="hint warning">
+                        {issue.message}
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+                {siteDeleteResult.warnings.length > 0 ? (
+                  <ul className="compact-list">
+                    {siteDeleteResult.warnings.map((issue) => (
+                      <li key={`${issue.reason_code}-${issue.message}`} className="hint warning">
+                        {issue.message}
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+                <ul className="compact-list">
+                  {siteDeleteResult.external_resources.map((resource) => (
+                    <li key={`result-${resource.resource_type}`}>
+                      {siteDeleteResourceLabel(resource.resource_type)} — {siteDeleteStatusLabel(resource.status)}:{" "}
+                      {resource.summary}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+
+            <div className="form-actions">
+              <button
+                type="button"
+                className="button button-danger"
+                disabled={!siteDeleteExecuteEnabled}
+                onClick={() => {
+                  void handleExecuteSiteDelete();
+                }}
+              >
+                {deletingSiteId === siteDeletePlan.site_id ? "Deleting..." : "Execute permanent delete"}
+              </button>
+              <button
+                type="button"
+                className="button button-secondary"
+                disabled={!!preparingSiteDeleteId || !!deletingSiteId}
+                onClick={handleDismissSiteDeletePlan}
+              >
+                Dismiss delete plan
+              </button>
+            </div>
+
+            <details className="workspace-details-shell" data-testid="admin-site-delete-diagnostics">
+              <summary className="hint muted">Advanced Diagnostics</summary>
+              <pre>
+                {JSON.stringify(
+                  {
+                    plan: {
+                      blockers: siteDeletePlan.blockers,
+                      warnings: siteDeletePlan.warnings,
+                      external_resources: siteDeletePlan.external_resources,
+                    },
+                    result: siteDeleteResult
+                      ? {
+                          reason_code: siteDeleteResult.reason_code,
+                          blockers: siteDeleteResult.blockers,
+                          warnings: siteDeleteResult.warnings,
+                          external_resources: siteDeleteResult.external_resources,
+                        }
+                      : null,
+                  },
+                  null,
+                  2,
+                )}
+              </pre>
+            </details>
+          </div>
+        ) : null}
         <div className="table-container">
           <table className="table">
             <thead>
@@ -4651,7 +5151,7 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                       aria-label={`Site Name ${site.id}`}
                       value={siteDraftsById[site.id]?.name ?? site.display_name}
                       onChange={(event) => handleSiteDraftChange(site.id, "name", event.target.value)}
-                      disabled={!!updatingSiteId || !!deletingSiteId}
+                      disabled={siteManagementBusy}
                     />
                   </td>
                   <td>
@@ -4659,7 +5159,7 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                       aria-label={`Site URL ${site.id}`}
                       value={siteDraftsById[site.id]?.url ?? site.base_url}
                       onChange={(event) => handleSiteDraftChange(site.id, "url", event.target.value)}
-                      disabled={!!updatingSiteId || !!deletingSiteId}
+                      disabled={siteManagementBusy}
                     />
                   </td>
                   <td>
@@ -4674,7 +5174,7 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                       value={searchConsolePropertyValue}
                       onChange={(event) => handleSiteDraftChange(site.id, "searchConsolePropertyUrl", event.target.value)}
                       placeholder="sc-domain:example.com"
-                      disabled={!!updatingSiteId || !!deletingSiteId}
+                      disabled={siteManagementBusy}
                     />
                           {formatHint ? <p className="hint warning">{formatHint}</p> : null}
                         </>
@@ -4687,7 +5187,7 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                       type="checkbox"
                       checked={siteDraftsById[site.id]?.searchConsoleEnabled ?? Boolean(site.search_console_enabled)}
                       onChange={(event) => handleSiteDraftToggle(site.id, event.target.checked)}
-                      disabled={!!updatingSiteId || !!deletingSiteId}
+                      disabled={siteManagementBusy}
                     />
                   </td>
                   <td className="table-cell-wrap">{site.normalized_domain}</td>
@@ -4696,7 +5196,7 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                     <button
                       type="button"
                       className="button button-secondary button-inline"
-                      disabled={!!updatingSiteId || !!deletingSiteId}
+                      disabled={siteManagementBusy}
                       onClick={() => {
                         void handleSaveSite(site);
                       }}
@@ -4708,12 +5208,16 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                     <button
                       type="button"
                       className="button button-danger button-inline"
-                      disabled={!!updatingSiteId || !!deletingSiteId}
+                      disabled={siteManagementBusy}
                       onClick={() => {
-                        void handleDeleteSite(site);
+                        void handlePrepareDeletePlan(site);
                       }}
                     >
-                      {deletingSiteId === site.id ? "Deleting..." : "Delete Permanently"}
+                      {preparingSiteDeleteId === site.id
+                        ? "Preparing..."
+                        : siteDeletePlanSiteId === site.id
+                          ? "Refresh delete plan"
+                          : "Prepare delete plan"}
                     </button>
                   </td>
                 </tr>

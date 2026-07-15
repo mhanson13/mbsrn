@@ -12,6 +12,7 @@ from app.api.deps import (
     get_action_automation_binding_service,
     get_action_automation_execution_service,
     get_action_chain_activation_service,
+    get_authenticated_principal,
     get_action_lineage_service,
     TenantContext,
     SEOCompetitorProfileGenerationRunExecutor,
@@ -28,6 +29,7 @@ from app.api.deps import (
     get_seo_competitor_service,
     get_seo_recommendation_service,
     get_seo_analytics_service,
+    get_seo_site_delete_service,
     get_seo_site_service,
     get_seo_summary_service,
     require_admin_rate_limit,
@@ -52,6 +54,9 @@ from app.schemas.seo_audit import (
 from app.schemas.seo_site import (
     SEOSiteAdminUpdateRequest,
     SEOSiteCreateRequest,
+    SEOSiteDeleteExecuteRequest,
+    SEOSiteDeleteExecutionResultRead,
+    SEOSiteDeletePlanRead,
     SEOSiteListResponse,
     SEOSiteRead,
     SEOSiteUpdateRequest,
@@ -234,6 +239,7 @@ from app.services.seo_sites import (
     SEOSiteValidationError,
     build_location_context,
 )
+from app.services.seo_site_delete import SEOSiteDeleteError, SEOSiteDeleteService
 from app.services.seo_summary import SEOSummaryNotFoundError, SEOSummaryService, SEOSummaryValidationError
 from app.services.seo_analytics import SEOAnalyticsService
 from app.schemas.seo_summary import SEOAuditSummaryRead
@@ -383,6 +389,20 @@ _RECOMMENDATION_DUPLICATE_GROUP_STATUS_RANKS: dict[str, int] = {
     "resolved": 1,
     "dismissed": 0,
 }
+
+
+def require_site_delete_admin_principal(
+    principal: Principal = Depends(get_authenticated_principal),
+) -> Principal:
+    if principal.role != PrincipalRole.ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "reason_code": "site_delete_not_authorized",
+                "message": "Only admin principals can permanently delete sites.",
+            },
+        )
+    return principal
 _COMPETITOR_QUALITY_MIN_READY_CANDIDATES = 2
 _COMPETITOR_QUALITY_REASON_VALID = "valid"
 _COMPETITOR_QUALITY_REASON_DUPLICATE_DOMAIN = "duplicate_domain"
@@ -4000,29 +4020,86 @@ def patch_admin_seo_site(
     return SEOSiteRead.model_validate(site)
 
 
-@router.delete("/admin/sites/{site_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/admin/sites/{site_id}", status_code=status.HTTP_422_UNPROCESSABLE_CONTENT)
 def delete_admin_seo_site(
     business_id: str,
     site_id: str,
     _: None = Depends(require_admin_rate_limit("seo_site_admin_delete")),
-    _admin_principal: Principal = Depends(require_credential_manager_principal),
+    _admin_principal: Principal = Depends(require_site_delete_admin_principal),
     tenant_context: TenantContext = Depends(get_tenant_context),
-    seo_site_service: SEOSiteService = Depends(get_seo_site_service),
 ) -> Response:
+    del site_id
+    resolve_tenant_business_id(
+        tenant_context=tenant_context,
+        requested_business_id=business_id,
+    )
+    raise HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        detail={
+            "reason_code": "site_delete_confirmation_required",
+            "message": "Permanent delete now requires a delete plan and an explicit confirmed execute request.",
+        },
+    )
+
+
+@router.post("/admin/sites/{site_id}/delete-plan", response_model=SEOSiteDeletePlanRead)
+def prepare_admin_seo_site_delete_plan(
+    business_id: str,
+    site_id: str,
+    _: None = Depends(require_admin_rate_limit("seo_site_admin_delete_plan")),
+    _admin_principal: Principal = Depends(require_site_delete_admin_principal),
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    seo_site_delete_service: SEOSiteDeleteService = Depends(get_seo_site_delete_service),
+) -> SEOSiteDeletePlanRead:
     scoped_business_id = resolve_tenant_business_id(
         tenant_context=tenant_context,
         requested_business_id=business_id,
     )
     try:
-        seo_site_service.delete_site_permanently(
+        plan = seo_site_delete_service.build_delete_plan(
             business_id=scoped_business_id,
             site_id=site_id,
         )
     except SEOSiteNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
-    except SEOSiteValidationError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+    except SEOSiteDeleteError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.to_detail()) from exc
+    return SEOSiteDeletePlanRead.model_validate(plan)
+
+
+@router.post("/admin/sites/{site_id}/delete", response_model=SEOSiteDeleteExecutionResultRead)
+def execute_admin_seo_site_delete(
+    business_id: str,
+    site_id: str,
+    payload: SEOSiteDeleteExecuteRequest,
+    _: None = Depends(require_admin_rate_limit("seo_site_admin_delete_execute")),
+    _admin_principal: Principal = Depends(require_site_delete_admin_principal),
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    seo_site_delete_service: SEOSiteDeleteService = Depends(get_seo_site_delete_service),
+) -> SEOSiteDeleteExecutionResultRead:
+    scoped_business_id = resolve_tenant_business_id(
+        tenant_context=tenant_context,
+        requested_business_id=business_id,
+    )
+    try:
+        result = seo_site_delete_service.execute_delete(
+            business_id=scoped_business_id,
+            site_id=site_id,
+            confirmation_phrase=payload.confirmation_phrase,
+            acknowledge_delete_database_records=payload.acknowledge_delete_database_records,
+            delete_github_repo=payload.delete_github_repo,
+            acknowledge_delete_github_repo=payload.acknowledge_delete_github_repo,
+            delete_runtime_resources=payload.delete_runtime_resources,
+            acknowledge_delete_runtime_resources=payload.acknowledge_delete_runtime_resources,
+            delete_dns_resources=payload.delete_dns_resources,
+            acknowledge_delete_dns_resources=payload.acknowledge_delete_dns_resources,
+            force_delete_active=payload.force_delete_active,
+        )
+    except SEOSiteNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except SEOSiteDeleteError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.to_detail()) from exc
+    return SEOSiteDeleteExecutionResultRead.model_validate(result)
 
 
 @router.post("/sites/{site_id}/deactivate", response_model=SEOSiteRead)

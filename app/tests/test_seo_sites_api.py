@@ -1,15 +1,22 @@
 from __future__ import annotations
 
+from copy import deepcopy
+import json
+from types import SimpleNamespace
 from uuid import uuid4
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
-from app.api.deps import TenantContext, get_db, get_tenant_context
+from app.api.deps import TenantContext, get_db, get_seo_site_delete_service, get_tenant_context
 from app.api.routes.seo import router as seo_router
+from app.integrations.seo_migration_github_publisher import SEOMigrationGitHubPublishPreflightResult
 from app.models.business import Business
 from app.models.principal import Principal, PrincipalRole
+from app.models.seo_action_chain_draft import SEOActionChainDraft
+from app.models.seo_action_decision import SEOActionDecision
+from app.models.seo_action_execution_item import SEOActionExecutionItem
 from app.models.seo_audit_finding import SEOAuditFinding
 from app.models.seo_audit_page import SEOAuditPage
 from app.models.seo_audit_run import SEOAuditRun
@@ -20,6 +27,7 @@ from app.models.seo_competitor_comparison_finding import SEOCompetitorComparison
 from app.models.seo_competitor_comparison_run import SEOCompetitorComparisonRun
 from app.models.seo_competitor_comparison_summary import SEOCompetitorComparisonSummary
 from app.models.seo_competitor_domain import SEOCompetitorDomain
+from app.models.seo_competitor_domain_feedback import SEOCompetitorDomainFeedback
 from app.models.seo_competitor_profile_cleanup_execution import SEOCompetitorProfileCleanupExecution
 from app.models.seo_competitor_profile_draft import SEOCompetitorProfileDraft
 from app.models.seo_competitor_profile_generation_run import SEOCompetitorProfileGenerationRun
@@ -27,9 +35,14 @@ from app.models.seo_competitor_set import SEOCompetitorSet
 from app.models.seo_competitor_snapshot_page import SEOCompetitorSnapshotPage
 from app.models.seo_competitor_snapshot_run import SEOCompetitorSnapshotRun
 from app.models.seo_competitor_tuning_preview_event import SEOCompetitorTuningPreviewEvent
+from app.models.seo_migration_artifact_version import SEOMigrationArtifactVersion
+from app.models.seo_migration_workspace import SEOMigrationWorkspace
 from app.models.seo_recommendation import SEORecommendation
 from app.models.seo_recommendation_narrative import SEORecommendationNarrative
 from app.models.seo_recommendation_run import SEORecommendationRun
+from app.repositories.business_repository import BusinessRepository
+from app.repositories.seo_site_repository import SEOSiteRepository
+from app.services.seo_site_delete import SEOSiteDeleteService
 
 
 def _override_tenant_context(
@@ -54,6 +67,7 @@ def _make_client(
     business_id: str,
     principal_id: str | None = None,
     principal_role: PrincipalRole | None = None,
+    dependency_overrides: dict[object, object] | None = None,
 ) -> TestClient:
     app = FastAPI()
     app.include_router(seo_router)
@@ -70,16 +84,22 @@ def _make_client(
         principal_id=principal_id,
         principal_role=principal_role,
     )
+    if dependency_overrides:
+        app.dependency_overrides.update(dependency_overrides)
     return TestClient(app)
 
 
 _SITE_OWNED_MODELS = (
+    SEOActionChainDraft,
+    SEOActionDecision,
+    SEOActionExecutionItem,
     SEOAuditRun,
     SEOAuditPage,
     SEOAuditFinding,
     SEOAuditSummary,
     SEOCompetitorSet,
     SEOCompetitorDomain,
+    SEOCompetitorDomainFeedback,
     SEOCompetitorSnapshotRun,
     SEOCompetitorSnapshotPage,
     SEOCompetitorComparisonRun,
@@ -94,6 +114,8 @@ _SITE_OWNED_MODELS = (
     SEOCompetitorProfileDraft,
     SEOCompetitorTuningPreviewEvent,
     SEOCompetitorProfileCleanupExecution,
+    SEOMigrationWorkspace,
+    SEOMigrationArtifactVersion,
 )
 
 
@@ -104,17 +126,32 @@ def _count_site_rows(*, db_session, model, business_id: str, site_id: str) -> in
     return int(db_session.scalar(stmt) or 0)
 
 
-def _seed_admin_principal(*, db_session, business_id: str, principal_id: str = "seo-admin") -> Principal:
+def _seed_principal(
+    *,
+    db_session,
+    business_id: str,
+    principal_id: str,
+    role: PrincipalRole,
+) -> Principal:
     principal = Principal(
         business_id=business_id,
         id=principal_id,
         display_name="SEO Admin",
-        role=PrincipalRole.ADMIN,
+        role=role,
         is_active=True,
     )
     db_session.add(principal)
     db_session.commit()
     return principal
+
+
+def _seed_admin_principal(*, db_session, business_id: str, principal_id: str = "seo-admin") -> Principal:
+    return _seed_principal(
+        db_session=db_session,
+        business_id=business_id,
+        principal_id=principal_id,
+        role=PrincipalRole.ADMIN,
+    )
 
 
 def _seed_site_owned_data(*, db_session, business_id: str, site_id: str, token: str) -> None:
@@ -381,7 +418,192 @@ def _seed_site_owned_data(*, db_session, business_id: str, site_id: str, token: 
             completed_at=audit_run.created_at,
         )
     )
+
+    action_draft = SEOActionChainDraft(
+        id=str(uuid4()),
+        business_id=business_id,
+        site_id=site_id,
+        source_action_id=f"{token}-source-action",
+        action_type="publish_update",
+        title="Chain draft",
+        description="Execute a managed follow-up action.",
+        priority="medium",
+        state="pending",
+        activation_state="pending",
+    )
+    db_session.add(action_draft)
+    db_session.flush()
+
+    db_session.add(
+        SEOActionDecision(
+            id=str(uuid4()),
+            business_id=business_id,
+            site_id=site_id,
+            action_id=action_draft.source_action_id,
+            decision="accepted",
+        )
+    )
+    db_session.add(
+        SEOActionExecutionItem(
+            id=str(uuid4()),
+            business_id=business_id,
+            site_id=site_id,
+            source_action_id=action_draft.source_action_id,
+            source_draft_id=action_draft.id,
+            action_type="publish_update",
+            title="Chain execution item",
+            description="Execute the managed action draft.",
+            priority="medium",
+            state="pending",
+        )
+    )
+    db_session.add(
+        SEOCompetitorDomainFeedback(
+            id=str(uuid4()),
+            business_id=business_id,
+            site_id=site_id,
+            domain=f"{token}-feedback.example.com",
+            feedback_status="approved",
+            display_name=f"{token} feedback",
+            operator_note="Approved competitor signal.",
+        )
+    )
+
+    workspace = SEOMigrationWorkspace(
+        id=str(uuid4()),
+        business_id=business_id,
+        site_id=site_id,
+        source_url=f"https://{token}.example.com/source",
+        migration_status="draft",
+        publish_status="not_ready",
+        deploy_status="not_ready",
+    )
+    db_session.add(workspace)
+    db_session.flush()
+
+    artifact_version = SEOMigrationArtifactVersion(
+        id=str(uuid4()),
+        business_id=business_id,
+        site_id=site_id,
+        workspace_id=workspace.id,
+        version=1,
+        status="completed",
+    )
+    db_session.add(artifact_version)
+    db_session.flush()
+
+    workspace.latest_generated_artifact_version_id = artifact_version.id
+    workspace.latest_generated_artifact_version_number = artifact_version.version
     db_session.commit()
+
+
+class _StubGitHubPublishConfigService:
+    def __init__(self, *, repository: str = "mhanson13", managed_gcp_deploy_key: str | None = None) -> None:
+        self.repository = repository
+        self.managed_gcp_deploy_key = managed_gcp_deploy_key
+
+    def get(self):
+        return SimpleNamespace(repository=self.repository)
+
+    def get_managed_gcp_deploy_key_value(self) -> str | None:
+        return self.managed_gcp_deploy_key
+
+
+class _StubGitHubPublisher:
+    def __init__(
+        self,
+        *,
+        preflight_result: SEOMigrationGitHubPublishPreflightResult | None = None,
+    ) -> None:
+        self.preflight_result = preflight_result
+        self.delete_calls: list[tuple[str, str]] = []
+        self.timeout_seconds = 15
+        self.managed_deploy_service_account_email = None
+
+    def run_publish_preflight(
+        self,
+        *,
+        repo_owner: str,
+        repo_name: str,
+        target_ref: str,
+        auto_create_enabled: bool,
+        expected_owner: str | None = None,
+        expected_business_id: str | None = None,
+        expected_site_id: str | None = None,
+    ) -> SEOMigrationGitHubPublishPreflightResult:
+        del auto_create_enabled, expected_owner, expected_business_id, expected_site_id
+        if self.preflight_result is not None:
+            return self.preflight_result
+        return SEOMigrationGitHubPublishPreflightResult(
+            repo_owner=repo_owner,
+            repo_name=repo_name,
+            target_ref=target_ref,
+            repo_exists=False,
+            repo_ensure_outcome="not_found",
+            target_ref_exists=False,
+            repo_initialized=False,
+            can_read_contents=False,
+            can_write_contents=False,
+            can_write_workflows=False,
+            would_auto_create_repo=False,
+            would_bootstrap_branch=False,
+            preflight_status="not_found",
+        )
+
+    def check_managed_certificate_readiness(self, **_: object):
+        return None
+
+    def delete_repository(
+        self,
+        *,
+        repo_owner: str,
+        repo_name: str,
+    ) -> None:
+        self.delete_calls.append((repo_owner, repo_name))
+
+
+class _StubSEOMigrationService:
+    def __init__(
+        self,
+        *,
+        cleanup_summary: dict[str, object] | None = None,
+        github_publisher: _StubGitHubPublisher | None = None,
+        github_publish_config_service: _StubGitHubPublishConfigService | None = None,
+    ) -> None:
+        self.cleanup_summary = cleanup_summary or {
+            "workspace_id": None,
+            "publish_target": {},
+            "deploy_target": {},
+            "admin_deploy_metadata": {},
+        }
+        self.github_publisher = github_publisher or _StubGitHubPublisher()
+        self.github_publish_config_service = github_publish_config_service
+
+    def get_site_cleanup_target_summary(self, *, business_id: str, site_id: str) -> dict[str, object]:
+        del business_id, site_id
+        return deepcopy(self.cleanup_summary)
+
+
+def _make_delete_service(
+    db_session,
+    *,
+    cleanup_summary: dict[str, object] | None = None,
+    github_publisher: _StubGitHubPublisher | None = None,
+    github_publish_config_service: _StubGitHubPublishConfigService | None = None,
+) -> tuple[SEOSiteDeleteService, _StubGitHubPublisher]:
+    publisher = github_publisher or _StubGitHubPublisher()
+    migration_service = _StubSEOMigrationService(
+        cleanup_summary=cleanup_summary,
+        github_publisher=publisher,
+        github_publish_config_service=github_publish_config_service,
+    )
+    service = SEOSiteDeleteService(
+        session=db_session,
+        business_repository=BusinessRepository(db_session),
+        seo_site_repository=SEOSiteRepository(db_session),
+        seo_migration_service=migration_service,  # type: ignore[arg-type]
+    )
+    return service, publisher
 
 
 def test_seo_site_crud_and_business_scoping(db_session, seeded_business) -> None:
@@ -813,17 +1035,196 @@ def test_admin_site_url_validation_rejects_invalid_url(db_session, seeded_busine
     assert "http or https" in patch_response.json()["detail"].lower()
 
 
-def test_admin_can_permanently_delete_site_and_site_owned_data(db_session, seeded_business) -> None:
+def test_operator_cannot_plan_or_execute_permanent_site_delete(db_session, seeded_business) -> None:
+    operator_principal = _seed_principal(
+        db_session=db_session,
+        business_id=seeded_business.id,
+        principal_id="seo-operator-delete",
+        role=PrincipalRole.OPERATOR,
+    )
+    client = _make_client(db_session, business_id=seeded_business.id, principal_id=operator_principal.id)
+
+    create_response = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites",
+        json={"display_name": "Protected Site", "base_url": "https://protected.example.com/", "is_active": False},
+    )
+    assert create_response.status_code == 201
+    site_id = create_response.json()["id"]
+
+    plan_response = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/admin/sites/{site_id}/delete-plan",
+    )
+    assert plan_response.status_code == 403
+    assert plan_response.json()["detail"]["reason_code"] == "site_delete_not_authorized"
+
+    execute_response = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/admin/sites/{site_id}/delete",
+        json={"confirmation_phrase": "DELETE protected"},
+    )
+    assert execute_response.status_code == 403
+    assert execute_response.json()["detail"]["reason_code"] == "site_delete_not_authorized"
+
+
+def test_admin_site_delete_plan_returns_safe_summary_without_deleting(db_session, seeded_business) -> None:
     admin_principal = _seed_admin_principal(db_session=db_session, business_id=seeded_business.id)
-    client = _make_client(db_session, business_id=seeded_business.id, principal_id=admin_principal.id)
+    cleanup_summary = {
+        "workspace_id": None,
+        "publish_target": {
+            "repo_owner": "managed-owner",
+            "repo_name": "delete-me-site",
+            "branch": "main",
+            "private_token": "do-not-leak",
+        },
+        "deploy_target": {
+            "repo_owner": "managed-owner",
+            "repo_name": "delete-me-site",
+            "ref": "main",
+            "preview_url": "https://private-preview.internal",
+            "private_preview_url": "https://private-preview.internal/secret",
+        },
+        "admin_deploy_metadata": {
+            "token": "SECRET_TOKEN",
+            "namespace_isolation_defaults": {},
+        },
+    }
+    delete_service, _publisher = _make_delete_service(
+        db_session,
+        cleanup_summary=cleanup_summary,
+        github_publish_config_service=_StubGitHubPublishConfigService(),
+    )
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        principal_id=admin_principal.id,
+        dependency_overrides={get_seo_site_delete_service: lambda: delete_service},
+    )
+
+    create_response = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites",
+        json={"display_name": "Delete Me", "base_url": "https://delete-me.example.com/", "is_active": False},
+    )
+    assert create_response.status_code == 201
+    site_id = create_response.json()["id"]
+    _seed_site_owned_data(
+        db_session=db_session,
+        business_id=seeded_business.id,
+        site_id=site_id,
+        token="delete-plan",
+    )
+
+    plan_response = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/admin/sites/{site_id}/delete-plan",
+    )
+    assert plan_response.status_code == 200
+    payload = plan_response.json()
+    assert payload["reason_code"] == "site_delete_plan_ready"
+    assert payload["site_id"] == site_id
+    assert payload["is_active"] is False
+    assert payload["generated_repo_owner"] == "managed-owner"
+    assert payload["generated_repo_name"] == "delete-me-site"
+    assert payload["db_dependency_total"] >= len(_SITE_OWNED_MODELS)
+    assert any(item["category"] == "migration" for item in payload["db_dependencies"])
+    assert any(item["category"] == "actions" for item in payload["db_dependencies"])
+    assert client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}").status_code == 200
+
+    payload_text = json.dumps(payload, sort_keys=True)
+    assert "SECRET_TOKEN" not in payload_text
+    assert "private-preview.internal/secret" not in payload_text
+    assert "do-not-leak" not in payload_text
+
+
+def test_admin_site_delete_execute_requires_exact_confirmation_phrase(db_session, seeded_business) -> None:
+    admin_principal = _seed_admin_principal(db_session=db_session, business_id=seeded_business.id)
+    delete_service, _publisher = _make_delete_service(db_session)
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        principal_id=admin_principal.id,
+        dependency_overrides={get_seo_site_delete_service: lambda: delete_service},
+    )
+
+    create_response = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites",
+        json={"display_name": "Delete Me", "base_url": "https://delete-me.example.com/", "is_active": False},
+    )
+    assert create_response.status_code == 201
+    site_id = create_response.json()["id"]
+
+    plan_response = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/admin/sites/{site_id}/delete-plan",
+    )
+    assert plan_response.status_code == 200
+
+    execute_response = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/admin/sites/{site_id}/delete",
+        json={
+            "confirmation_phrase": "DELETE wrong target",
+            "acknowledge_delete_database_records": True,
+        },
+    )
+    assert execute_response.status_code == 422
+    assert execute_response.json()["detail"]["reason_code"] == "site_delete_confirmation_mismatch"
+    assert client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}").status_code == 200
+
+
+def test_admin_site_delete_blocks_active_site_without_force_delete(db_session, seeded_business) -> None:
+    admin_principal = _seed_admin_principal(db_session=db_session, business_id=seeded_business.id)
+    delete_service, _publisher = _make_delete_service(db_session)
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        principal_id=admin_principal.id,
+        dependency_overrides={get_seo_site_delete_service: lambda: delete_service},
+    )
+
+    create_response = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites",
+        json={"display_name": "Active Delete", "base_url": "https://active-delete.example.com/"},
+    )
+    assert create_response.status_code == 201
+    site_id = create_response.json()["id"]
+
+    plan_response = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/admin/sites/{site_id}/delete-plan",
+    )
+    assert plan_response.status_code == 200
+    plan_payload = plan_response.json()
+    assert any(
+        blocker["reason_code"] == "site_delete_active_site_blocked"
+        for blocker in plan_payload["blockers"]
+    )
+
+    execute_response = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/admin/sites/{site_id}/delete",
+        json={
+            "confirmation_phrase": plan_payload["required_confirmation_phrase"],
+            "acknowledge_delete_database_records": True,
+            "force_delete_active": False,
+        },
+    )
+    assert execute_response.status_code == 409
+    assert execute_response.json()["detail"]["reason_code"] == "site_delete_active_site_blocked"
+
+
+def test_admin_can_execute_permanent_site_delete_and_remove_dynamic_site_owned_rows(
+    db_session, seeded_business
+) -> None:
+    admin_principal = _seed_admin_principal(db_session=db_session, business_id=seeded_business.id)
+    delete_service, _publisher = _make_delete_service(db_session)
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        principal_id=admin_principal.id,
+        dependency_overrides={get_seo_site_delete_service: lambda: delete_service},
+    )
 
     create_one = client.post(
         f"/api/businesses/{seeded_business.id}/seo/sites",
-        json={"display_name": "Delete Me", "base_url": "https://delete-me.example.com/"},
+        json={"display_name": "Delete Me", "base_url": "https://delete-me.example.com/", "is_active": False},
     )
     create_two = client.post(
         f"/api/businesses/{seeded_business.id}/seo/sites",
-        json={"display_name": "Keep Me", "base_url": "https://keep-me.example.com/"},
+        json={"display_name": "Keep Me", "base_url": "https://keep-me.example.com/", "is_active": False},
     )
     assert create_one.status_code == 201
     assert create_two.status_code == 201
@@ -854,10 +1255,27 @@ def test_admin_can_permanently_delete_site_and_site_owned_data(db_session, seede
             > 0
         )
 
-    delete_response = client.delete(
-        f"/api/businesses/{seeded_business.id}/seo/admin/sites/{delete_site_id}",
+    plan_response = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/admin/sites/{delete_site_id}/delete-plan",
     )
-    assert delete_response.status_code == 204
+    assert plan_response.status_code == 200
+    confirmation_phrase = plan_response.json()["required_confirmation_phrase"]
+
+    execute_response = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/admin/sites/{delete_site_id}/delete",
+        json={
+            "confirmation_phrase": confirmation_phrase,
+            "acknowledge_delete_database_records": True,
+        },
+    )
+    assert execute_response.status_code == 200
+    result = execute_response.json()
+    assert result["reason_code"] == "site_delete_completed"
+    assert result["db_deleted"] is True
+    assert result["site_deleted"] is True
+    assert result["external_cleanup_selected"] is False
+    assert result["external_cleanup_partial"] is False
+    assert all(item["reason_code"] == "external_cleanup_not_selected" for item in result["external_resources"])
 
     deleted_site_read = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{delete_site_id}")
     assert deleted_site_read.status_code == 404
@@ -884,3 +1302,110 @@ def test_admin_can_permanently_delete_site_and_site_owned_data(db_session, seede
 
     kept_site_read = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{keep_site_id}")
     assert kept_site_read.status_code == 200
+
+
+def test_admin_site_delete_reports_unmanaged_repo_blocker_without_deleting_repo(db_session, seeded_business) -> None:
+    admin_principal = _seed_admin_principal(db_session=db_session, business_id=seeded_business.id)
+    preflight_result = SEOMigrationGitHubPublishPreflightResult(
+        repo_owner="customer-owner",
+        repo_name="customer-repo",
+        target_ref="main",
+        repo_exists=True,
+        repo_ensure_outcome="existing",
+        target_ref_exists=True,
+        repo_initialized=True,
+        can_read_contents=True,
+        can_write_contents=True,
+        can_write_workflows=True,
+        would_auto_create_repo=False,
+        would_bootstrap_branch=False,
+        preflight_status="blocked",
+        preflight_blocker_code="github_repo_adoption_required",
+        repo_management_status="unmanaged",
+        repo_management_marker_present=False,
+        repo_management_marker_valid=False,
+        repo_management_marker_matches_site=False,
+    )
+    publisher = _StubGitHubPublisher(preflight_result=preflight_result)
+    delete_service, stub_publisher = _make_delete_service(
+        db_session,
+        cleanup_summary={
+            "workspace_id": None,
+            "publish_target": {
+                "repo_owner": "customer-owner",
+                "repo_name": "customer-repo",
+                "branch": "main",
+            },
+            "deploy_target": {
+                "repo_owner": "customer-owner",
+                "repo_name": "customer-repo",
+                "ref": "main",
+            },
+            "admin_deploy_metadata": {},
+        },
+        github_publisher=publisher,
+        github_publish_config_service=_StubGitHubPublishConfigService(repository="mhanson13"),
+    )
+    assert stub_publisher is publisher
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        principal_id=admin_principal.id,
+        dependency_overrides={get_seo_site_delete_service: lambda: delete_service},
+    )
+
+    create_response = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites",
+        json={"display_name": "Delete Repo Site", "base_url": "https://delete-repo.example.com/", "is_active": False},
+    )
+    assert create_response.status_code == 201
+    site_id = create_response.json()["id"]
+
+    plan_response = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/admin/sites/{site_id}/delete-plan",
+    )
+    assert plan_response.status_code == 200
+    plan_payload = plan_response.json()
+    github_plan_resource = next(
+        item for item in plan_payload["external_resources"] if item["resource_type"] == "github_repo"
+    )
+    assert github_plan_resource["status"] == "blocked"
+    assert github_plan_resource["reason_code"] == "github_repo_delete_adoption_required"
+
+    execute_response = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/admin/sites/{site_id}/delete",
+        json={
+            "confirmation_phrase": plan_payload["required_confirmation_phrase"],
+            "acknowledge_delete_database_records": True,
+            "delete_github_repo": True,
+            "acknowledge_delete_github_repo": True,
+        },
+    )
+    assert execute_response.status_code == 200
+    result = execute_response.json()
+    assert result["db_deleted"] is True
+    assert result["external_cleanup_selected"] is True
+    assert result["external_cleanup_partial"] is True
+    github_result = next(item for item in result["external_resources"] if item["resource_type"] == "github_repo")
+    assert github_result["status"] == "blocked"
+    assert github_result["reason_code"] == "github_repo_delete_adoption_required"
+    assert publisher.delete_calls == []
+    assert client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}").status_code == 404
+
+
+def test_legacy_admin_site_delete_endpoint_requires_plan_and_confirmation(db_session, seeded_business) -> None:
+    admin_principal = _seed_admin_principal(db_session=db_session, business_id=seeded_business.id)
+    client = _make_client(db_session, business_id=seeded_business.id, principal_id=admin_principal.id)
+
+    create_response = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites",
+        json={"display_name": "Legacy Delete", "base_url": "https://legacy-delete.example.com/", "is_active": False},
+    )
+    assert create_response.status_code == 201
+    site_id = create_response.json()["id"]
+
+    delete_response = client.delete(
+        f"/api/businesses/{seeded_business.id}/seo/admin/sites/{site_id}",
+    )
+    assert delete_response.status_code == 422
+    assert delete_response.json()["detail"]["reason_code"] == "site_delete_confirmation_required"

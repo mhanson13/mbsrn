@@ -17150,6 +17150,125 @@ class SEOMigrationService:
             "expected_dns_ttl": expected_dns_ttl,
         }
 
+    def get_site_cleanup_target_summary(self, *, business_id: str, site_id: str) -> dict[str, object]:
+        workspace = self.seo_migration_repository.get_workspace_for_business_site(business_id, site_id)
+        admin_deploy_metadata = self._resolve_admin_deploy_template_metadata()
+        publish_target = self._safe_effective_publish_target_summary(
+            workspace.publish_config_json if workspace is not None else None
+        )
+        if workspace is not None:
+            deploy_target = self._safe_deploy_target_summary(workspace=workspace)
+            deploy_target["managed_certificate_name"] = (
+                _normalize_string(
+                    deploy_target.get("managed_certificate_name"),
+                    max_length=63,
+                )
+                or derive_site_preview_certificate_name(
+                    repo_name=str(deploy_target.get("repo_name") or publish_target.get("repo_name") or "").strip(),
+                    site_id=site_id,
+                )[0]
+            )
+            return {
+                "workspace_id": workspace.id,
+                "publish_target": publish_target,
+                "deploy_target": deploy_target,
+                "admin_deploy_metadata": admin_deploy_metadata,
+            }
+
+        repo_name = str(publish_target.get("repo_name") or "").strip()
+        kubernetes_namespace, namespace_source = _safe_derive_kubernetes_namespace_for_summary(
+            repo_name=repo_name,
+            site_id=site_id,
+        )
+        preview_hostname, preview_hostname_source = _safe_derive_preview_hostname_for_summary(
+            repo_name=repo_name,
+            site_id=site_id,
+        )
+        expected_static_ip_name, expected_static_ip_name_source = _safe_derive_preview_static_ip_name_for_summary(
+            repo_name=repo_name,
+            site_id=site_id,
+        )
+        preview_endpoint_mode = _MANAGED_PREVIEW_ENDPOINT_MODE_DEDICATED_STATIC_IP
+        uses_shared_preview_gateway = False
+        shared_preview_static_ip_name: str | None = None
+        try:
+            preview_endpoint = resolve_managed_preview_endpoint_configuration(
+                repo_name=repo_name,
+                site_id=site_id,
+                preview_hostname=preview_hostname,
+                namespace_isolation_defaults=_normalize_json_dict(
+                    admin_deploy_metadata.get("namespace_isolation_defaults")
+                ),
+            )
+            preview_endpoint_mode = _normalize_string(
+                preview_endpoint.get("effective_mode"),
+                max_length=40,
+            ) or _MANAGED_PREVIEW_ENDPOINT_MODE_DEDICATED_STATIC_IP
+            uses_shared_preview_gateway = bool(preview_endpoint.get("uses_shared_preview_gateway"))
+            shared_preview_static_ip_name = _normalize_string(
+                preview_endpoint.get("shared_preview_static_ip_name"),
+                max_length=80,
+            )
+            expected_static_ip_name = _normalize_string(
+                preview_endpoint.get("expected_static_ip_name"),
+                max_length=80,
+            ) or expected_static_ip_name
+            expected_static_ip_name_source = _normalize_string(
+                preview_endpoint.get("expected_static_ip_name_source"),
+                max_length=80,
+            ) or expected_static_ip_name_source
+        except Exception:  # noqa: BLE001
+            pass
+        managed_certificate_name, _ = derive_site_preview_certificate_name(
+            repo_name=repo_name,
+            site_id=site_id,
+        )
+        deploy_target = {
+            "enabled": False,
+            "repo_owner": str(publish_target.get("repo_owner") or "").strip(),
+            "repo_name": repo_name,
+            "workflow_id": self.deploy_default_workflow_id,
+            "ref": str(publish_target.get("branch") or self.deploy_default_ref).strip(),
+            "deploy_workflow_mode": admin_deploy_metadata.get("deploy_workflow_mode"),
+            "target_environment_key": admin_deploy_metadata.get("target_environment_key"),
+            "target_environment_source": admin_deploy_metadata.get("target_environment_source"),
+            "managed_gke_cluster_name": admin_deploy_metadata.get("managed_gke_cluster_name"),
+            "managed_gke_cluster_location": admin_deploy_metadata.get("managed_gke_cluster_location"),
+            "managed_gke_project_id": admin_deploy_metadata.get("managed_gke_project_id"),
+            "site_workflow_file_path": None,
+            "kubernetes_namespace": kubernetes_namespace,
+            "namespace_source": namespace_source,
+            "namespace_model_status": "unknown",
+            "preview_hostname": preview_hostname,
+            "preview_hostname_source": preview_hostname_source,
+            "preview_url": f"https://{preview_hostname}" if preview_hostname else None,
+            "expected_static_ip_name": expected_static_ip_name,
+            "expected_static_ip_name_source": expected_static_ip_name_source,
+            "preview_endpoint_mode": preview_endpoint_mode,
+            "uses_shared_preview_gateway": uses_shared_preview_gateway,
+            "shared_preview_static_ip_name": shared_preview_static_ip_name,
+            "expected_dns_hostname": preview_hostname,
+            "expected_dns_hostname_source": preview_hostname_source,
+            "expected_dns_managed_zone": (
+                _normalize_string(admin_deploy_metadata.get("managed_site_dns_managed_zone"), max_length=120) or "sites"
+            ),
+            "expected_dns_project_id": _normalize_string(
+                admin_deploy_metadata.get("managed_site_dns_project_id"),
+                max_length=120,
+            ) or _normalize_string(
+                admin_deploy_metadata.get("managed_gke_project_id"),
+                max_length=120,
+            ),
+            "expected_dns_ttl": _coerce_int(admin_deploy_metadata.get("managed_site_dns_ttl")) or 300,
+            "managed_certificate_name": managed_certificate_name,
+        }
+        return {
+            "workspace_id": None,
+            "publish_target": publish_target,
+            "deploy_target": deploy_target,
+            "admin_deploy_metadata": admin_deploy_metadata,
+        }
+
     def _resolve_deploy_target_with_workflow_precedence(
         self,
         *,
