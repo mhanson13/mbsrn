@@ -533,6 +533,7 @@ class _StubGitHubPublisher:
         self.preflight_result = preflight_result
         self.preflight_error = preflight_error
         self.managed_certificate_error = managed_certificate_error
+        self.preflight_calls: list[tuple[str, str, str]] = []
         self.delete_calls: list[tuple[str, str]] = []
         self.timeout_seconds = 15
         self.managed_deploy_service_account_email = None
@@ -549,6 +550,7 @@ class _StubGitHubPublisher:
         expected_site_id: str | None = None,
     ) -> SEOMigrationGitHubPublishPreflightResult:
         del auto_create_enabled, expected_owner, expected_business_id, expected_site_id
+        self.preflight_calls.append((repo_owner, repo_name, target_ref))
         if self.preflight_error is not None:
             raise self.preflight_error
         if self.preflight_result is not None:
@@ -611,6 +613,7 @@ def _make_delete_service(
     cleanup_summary: dict[str, object] | None = None,
     github_publisher: _StubGitHubPublisher | None = None,
     github_publish_config_service: _StubGitHubPublishConfigService | None = None,
+    protected_control_plane_repository: str = "mhanson13/mbsrn",
 ) -> tuple[SEOSiteDeleteService, _StubGitHubPublisher]:
     publisher = github_publisher or _StubGitHubPublisher()
     migration_service = _StubSEOMigrationService(
@@ -623,6 +626,7 @@ def _make_delete_service(
         business_repository=BusinessRepository(db_session),
         seo_site_repository=SEOSiteRepository(db_session),
         seo_migration_service=migration_service,  # type: ignore[arg-type]
+        protected_control_plane_repository=protected_control_plane_repository,
     )
     return service, publisher
 
@@ -1615,6 +1619,162 @@ def test_admin_site_delete_reports_unmanaged_repo_blocker_without_deleting_repo(
     github_result = next(item for item in result["external_resources"] if item["resource_type"] == "github_repo")
     assert github_result["status"] == "blocked"
     assert github_result["reason_code"] == "github_repo_delete_adoption_required"
+    assert publisher.preflight_calls
+    assert all(call[:2] == ("customer-owner", "customer-repo") for call in publisher.preflight_calls)
+    assert publisher.delete_calls == []
+    assert client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}").status_code == 404
+
+
+def test_admin_site_delete_blocks_protected_control_plane_repo_without_preflight_or_delete(
+    db_session, seeded_business
+) -> None:
+    admin_principal = _seed_admin_principal(db_session=db_session, business_id=seeded_business.id)
+    publisher = _StubGitHubPublisher()
+    delete_service, _ = _make_delete_service(
+        db_session,
+        cleanup_summary={
+            "workspace_id": None,
+            "publish_target": {
+                "repo_owner": "mhanson13",
+                "repo_name": "mbsrn",
+                "branch": "main",
+            },
+            "deploy_target": {
+                "repo_owner": " MHanson13 ",
+                "repo_name": " MBSRN ",
+                "ref": "main",
+            },
+            "admin_deploy_metadata": {},
+        },
+        github_publisher=publisher,
+        github_publish_config_service=_StubGitHubPublishConfigService(repository="mhanson13"),
+        protected_control_plane_repository=" mhanson13 / mbsrn ",
+    )
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        principal_id=admin_principal.id,
+        dependency_overrides={get_seo_site_delete_service: lambda: delete_service},
+    )
+
+    create_response = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites",
+        json={"display_name": "Protected Repo Site", "base_url": "https://protected-repo.example.com/", "is_active": False},
+    )
+    assert create_response.status_code == 201
+    site_id = create_response.json()["id"]
+
+    plan_response = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/admin/sites/{site_id}/delete-plan",
+    )
+    assert plan_response.status_code == 200
+    plan_payload = plan_response.json()
+    github_plan_resource = next(
+        item for item in plan_payload["external_resources"] if item["resource_type"] == "github_repo"
+    )
+    assert github_plan_resource["status"] == "blocked"
+    assert github_plan_resource["reason_code"] == "github_repo_delete_protected_control_plane_repo_blocked"
+    assert (
+        github_plan_resource["summary"]
+        == "This repository is configured as the MBSRN control-plane source repo and cannot be deleted by site cleanup."
+    )
+    assert any(
+        blocker["reason_code"] == "github_repo_delete_protected_control_plane_repo_blocked"
+        and blocker["message"]
+        == "This repository is configured as the MBSRN control-plane source repo and cannot be deleted by site cleanup."
+        for blocker in plan_payload["blockers"]
+    )
+    assert publisher.preflight_calls == []
+
+    execute_response = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/admin/sites/{site_id}/delete",
+        json={
+            "confirmation_phrase": plan_payload["required_confirmation_phrase"],
+            "acknowledge_delete_database_records": True,
+            "delete_github_repo": True,
+            "acknowledge_delete_github_repo": True,
+        },
+    )
+    assert execute_response.status_code == 200
+    result = execute_response.json()
+    github_result = next(item for item in result["external_resources"] if item["resource_type"] == "github_repo")
+    assert github_result["status"] == "blocked"
+    assert github_result["reason_code"] == "github_repo_delete_protected_control_plane_repo_blocked"
+    assert publisher.preflight_calls == []
+    assert publisher.delete_calls == []
+    assert client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}").status_code == 404
+
+
+def test_admin_site_delete_fails_closed_when_protected_repo_guard_config_is_invalid(
+    db_session, seeded_business
+) -> None:
+    admin_principal = _seed_admin_principal(db_session=db_session, business_id=seeded_business.id)
+    publisher = _StubGitHubPublisher()
+    delete_service, _ = _make_delete_service(
+        db_session,
+        cleanup_summary={
+            "workspace_id": None,
+            "publish_target": {
+                "repo_owner": "managed-owner",
+                "repo_name": "delete-me-site",
+                "branch": "main",
+            },
+            "deploy_target": {
+                "repo_owner": "managed-owner",
+                "repo_name": "delete-me-site",
+                "ref": "main",
+            },
+            "admin_deploy_metadata": {},
+        },
+        github_publisher=publisher,
+        github_publish_config_service=_StubGitHubPublishConfigService(repository="managed-owner"),
+        protected_control_plane_repository="invalid-repo-name",
+    )
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        principal_id=admin_principal.id,
+        dependency_overrides={get_seo_site_delete_service: lambda: delete_service},
+    )
+
+    create_response = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites",
+        json={"display_name": "Invalid Guard Site", "base_url": "https://invalid-guard.example.com/", "is_active": False},
+    )
+    assert create_response.status_code == 201
+    site_id = create_response.json()["id"]
+
+    plan_response = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/admin/sites/{site_id}/delete-plan",
+    )
+    assert plan_response.status_code == 200
+    plan_payload = plan_response.json()
+    github_plan_resource = next(
+        item for item in plan_payload["external_resources"] if item["resource_type"] == "github_repo"
+    )
+    assert github_plan_resource["status"] == "blocked"
+    assert github_plan_resource["reason_code"] == "github_repo_delete_unmanaged_repo_blocked"
+    assert (
+        github_plan_resource["summary"]
+        == "GitHub repository deletion is blocked until the protected control-plane repository setting is a valid owner/repo value."
+    )
+    assert publisher.preflight_calls == []
+
+    execute_response = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/admin/sites/{site_id}/delete",
+        json={
+            "confirmation_phrase": plan_payload["required_confirmation_phrase"],
+            "acknowledge_delete_database_records": True,
+            "delete_github_repo": True,
+            "acknowledge_delete_github_repo": True,
+        },
+    )
+    assert execute_response.status_code == 200
+    result = execute_response.json()
+    github_result = next(item for item in result["external_resources"] if item["resource_type"] == "github_repo")
+    assert github_result["status"] == "blocked"
+    assert github_result["reason_code"] == "github_repo_delete_unmanaged_repo_blocked"
+    assert publisher.preflight_calls == []
     assert publisher.delete_calls == []
     assert client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}").status_code == 404
 

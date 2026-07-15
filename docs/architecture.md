@@ -36,6 +36,7 @@ Google OAuth branding URLs are served from the public website:
 - The operator UI calls business-scoped API endpoints; it does not implement authorization logic.
 - Provider credentials and token operations are backend-only.
 - Migration publish/deploy diagnostics are normalized in the API first; the operator UI prefers backend remediation/guidance fields and only keeps local fallback copy for backward compatibility with older history payloads.
+- Destructive site cleanup protects the control-plane source repo via config-driven runtime identity (`MBSRN_CONTROL_PLANE_REPOSITORY`), with compatibility fallback and fail-closed validation for malformed values.
 
 ## Service Layering
 mbsrn follows a layered backend structure:

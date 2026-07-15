@@ -10,6 +10,7 @@ _LOCALHOST_ALLOWED_APP_ENVS = {"local", "development", "dev", "test", "ci"}
 _PRODUCTION_LOCALHOST_ALLOWED_DB_CONNECTION_MODES = {"cloudsql_proxy"}
 _LOCALHOST_DATABASE_HOSTS = {"localhost", "127.0.0.1", "::1"}
 _LOCAL_DATABASE_URL_FALLBACK = "postgresql+psycopg://postgres:postgres@localhost:5432/mbsrn"
+_DEFAULT_PROTECTED_CONTROL_PLANE_REPOSITORY = "mhanson13/mbsrn"
 
 
 @dataclass(frozen=True)
@@ -115,6 +116,7 @@ class Settings:
     migration_publish_committer_email: str
     migration_deploy_default_workflow_id: str
     migration_deploy_default_ref: str
+    protected_control_plane_repository: str
     openai_api_base_url: str
     twilio_account_sid: str | None
     twilio_auth_token: str | None
@@ -194,6 +196,29 @@ def _normalize_app_env(raw_value: str | None) -> str:
 
 def _normalize_db_connection_mode(raw_value: str | None) -> str:
     return (raw_value or "").strip().lower()
+
+
+def _normalize_repo_full_name(value: object) -> str | None:
+    normalized = " ".join(str(value or "").split()).strip()
+    if not normalized:
+        return None
+    normalized = normalized.replace("\\", "/").strip().strip("/")
+    parts = [part.strip().lower() for part in normalized.split("/")]
+    if len(parts) != 2 or not parts[0] or not parts[1]:
+        return None
+    if any(" " in part for part in parts):
+        return None
+    return f"{parts[0]}/{parts[1]}"
+
+
+def _resolve_protected_control_plane_repository() -> str:
+    # Compatibility default preserves the current protected-repo guard until deployments
+    # explicitly configure MBSRN_CONTROL_PLANE_REPOSITORY.
+    raw_value = os.getenv("MBSRN_CONTROL_PLANE_REPOSITORY", _DEFAULT_PROTECTED_CONTROL_PLANE_REPOSITORY)
+    normalized = _normalize_repo_full_name(raw_value)
+    if normalized is None:
+        raise RuntimeError("MBSRN_CONTROL_PLANE_REPOSITORY must be in owner/repo format.")
+    return normalized
 
 
 def _is_localhost_allowed_for_app_env(app_env: str) -> bool:
@@ -501,6 +526,7 @@ def get_settings() -> Settings:
             os.getenv("MIGRATION_DEPLOY_DEFAULT_WORKFLOW_ID", "deploy-www-prod.yml").strip() or "deploy-www-prod.yml"
         ),
         migration_deploy_default_ref=(os.getenv("MIGRATION_DEPLOY_DEFAULT_REF", "main").strip() or "main"),
+        protected_control_plane_repository=_resolve_protected_control_plane_repository(),
         openai_api_base_url=os.getenv("OPENAI_API_BASE_URL", "https://api.openai.com/v1").strip(),
         twilio_account_sid=os.getenv("TWILIO_ACCOUNT_SID"),
         twilio_auth_token=os.getenv("TWILIO_AUTH_TOKEN"),

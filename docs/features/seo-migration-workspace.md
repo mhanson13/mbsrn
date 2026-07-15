@@ -1793,11 +1793,12 @@ Post-fix rollout for existing managed sites:
     - verified managed GKE/runtime resource delete
     - verified managed DNS/static-IP/certificate delete
   - external delete safety checks:
-    - repo delete is blocked for unmanaged/ambiguous repos and for the configured protected control-plane repo
+    - repo delete is blocked for unmanaged/ambiguous repos and for the protected control-plane repo configured by `MBSRN_CONTROL_PLANE_REPOSITORY`
     - runtime delete only targets site-labeled managed resources
     - DNS delete requires exact expected record/value match
     - shared or in-use static IPs are skipped
     - ManagedCertificate delete requires exact namespace/name plus site ownership verification
+  - the protected control-plane repo guard uses a config-driven `owner/repo` identity with compatibility fallback; malformed values fail closed before destructive cleanup can run
   - admin permanent delete never auto-deletes the original customer/source website, arbitrary customer repos, unrelated cluster resources, or secret/raw prompt/raw media/private preview data
   - if DB delete fails after external cleanup has already changed state, result code `site_delete_db_failed_after_external_cleanup` is returned for manual remediation
   - runbook for `site_delete_db_failed_after_external_cleanup`:

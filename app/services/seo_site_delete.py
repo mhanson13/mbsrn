@@ -33,7 +33,6 @@ from app.services.github_publish_config import GitHubPublishConfigSecretError
 from app.services.seo_migration import SEOMigrationService
 from app.services.seo_sites import SEOSiteNotFoundError
 
-_CONTROL_PLANE_REPO_FULL_NAME = "mhanson13/mbsrn"
 _MBSRN_MANAGED_LABEL = "mbsrn"
 _MBSRN_MANAGED_IMAGE_PULL_SECRET_NAME = "ghcr-pull-secret"
 _MBSRN_RESOURCE_QUOTA_NAME = "site-resources"
@@ -49,6 +48,9 @@ _SITE_DELETE_STATIC_IP_VERIFICATION_LIMITED = "site_delete_static_ip_verificatio
 _SITE_DELETE_STATIC_IP_SHARED_GATEWAY_NOT_AUTO_DELETED = "site_delete_static_ip_shared_gateway_not_auto_deleted"
 _SITE_DELETE_DNS_VERIFICATION_LIMITED = "site_delete_dns_verification_limited"
 _SITE_DELETE_MANAGED_CERTIFICATE_VERIFICATION_LIMITED = "site_delete_managed_certificate_verification_limited"
+_GITHUB_REPO_DELETE_PROTECTED_CONTROL_PLANE_REPO_BLOCKED = (
+    "github_repo_delete_protected_control_plane_repo_blocked"
+)
 
 
 @dataclass(frozen=True)
@@ -147,6 +149,19 @@ def _normalize_repo_owner(value: object) -> str | None:
     return normalized or None
 
 
+def _normalize_repo_full_name(value: object, *, max_length: int = 255) -> str | None:
+    normalized = _normalize_text(value, max_length=max_length)
+    if not normalized:
+        return None
+    normalized = normalized.replace("\\", "/").strip().strip("/")
+    parts = [part.strip().lower() for part in normalized.split("/")]
+    if len(parts) != 2 or not parts[0] or not parts[1]:
+        return None
+    if any(" " in part for part in parts):
+        return None
+    return f"{parts[0]}/{parts[1]}"
+
+
 def _normalize_hostname(value: object) -> str | None:
     normalized = _normalize_text(value, max_length=253)
     if not normalized:
@@ -214,11 +229,13 @@ class SEOSiteDeleteService:
         business_repository: BusinessRepository,
         seo_site_repository: SEOSiteRepository,
         seo_migration_service: SEOMigrationService,
+        protected_control_plane_repository: str,
     ) -> None:
         self.session = session
         self.business_repository = business_repository
         self.seo_site_repository = seo_site_repository
         self.seo_migration_service = seo_migration_service
+        self.protected_control_plane_repository = protected_control_plane_repository
 
     def build_delete_plan(
         self,
@@ -775,20 +792,53 @@ class SEOSiteDeleteService:
                 blockers,
                 warnings,
             )
-        full_name = f"{context.repo_owner}/{context.repo_name}".lower()
-        if full_name == _CONTROL_PLANE_REPO_FULL_NAME.lower():
+        full_name = _normalize_repo_full_name(f"{context.repo_owner}/{context.repo_name}")
+        protected_control_plane_repository = _normalize_repo_full_name(self.protected_control_plane_repository)
+        if protected_control_plane_repository is None:
+            # Fail closed if the injected guard config is malformed; destructive cleanup must
+            # never guess which repo is the protected control-plane source repository.
+            summary = (
+                "GitHub repository deletion is blocked until the protected control-plane repository setting "
+                "is a valid owner/repo value."
+            )
             blockers.append(
                 _issue(
                     "github_repo_delete_unmanaged_repo_blocked",
-                    "The control-plane repository is never eligible for permanent site deletion.",
+                    summary,
                 )
             )
             return (
                 _resource(
                     "github_repo",
                     "blocked",
-                    "The configured repository is the control-plane repository and will never be deleted automatically.",
+                    summary,
                     reason_code="github_repo_delete_unmanaged_repo_blocked",
+                    details={
+                        "repo_owner": context.repo_owner,
+                        "repo_name": context.repo_name,
+                        "repo_ref": context.repo_ref,
+                    },
+                ),
+                blockers,
+                warnings,
+            )
+        if full_name == protected_control_plane_repository:
+            summary = (
+                "This repository is configured as the MBSRN control-plane source repo and cannot be deleted "
+                "by site cleanup."
+            )
+            blockers.append(
+                _issue(
+                    _GITHUB_REPO_DELETE_PROTECTED_CONTROL_PLANE_REPO_BLOCKED,
+                    summary,
+                )
+            )
+            return (
+                _resource(
+                    "github_repo",
+                    "blocked",
+                    summary,
+                    reason_code=_GITHUB_REPO_DELETE_PROTECTED_CONTROL_PLANE_REPO_BLOCKED,
                     details={
                         "repo_owner": context.repo_owner,
                         "repo_name": context.repo_name,

@@ -1185,11 +1185,13 @@ def get_seo_site_delete_service(
     seo_site_repository: SEOSiteRepository = Depends(get_seo_site_repository),
     seo_migration_service: SEOMigrationService = Depends(get_seo_migration_service),
 ) -> SEOSiteDeleteService:
+    settings = get_settings()
     return SEOSiteDeleteService(
         session=db,
         business_repository=business_repository,
         seo_site_repository=seo_site_repository,
         seo_migration_service=seo_migration_service,
+        protected_control_plane_repository=settings.protected_control_plane_repository,
     )
 
 

@@ -168,3 +168,41 @@ def test_runtime_git_credentials_are_read_from_environment(monkeypatch: pytest.M
     assert settings.git_userid == "mhanson13"
     assert settings.git_email == "mhanson13@gmail.com"
     assert settings.git_token == "test-token-value"
+
+
+def test_protected_control_plane_repository_uses_compatibility_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ENVIRONMENT", "development")
+    monkeypatch.setenv("APP_ENV", "ci")
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://postgres:postgres@localhost:5432/mbsrn")
+    monkeypatch.delenv("MBSRN_CONTROL_PLANE_REPOSITORY", raising=False)
+
+    settings = get_settings()
+
+    assert settings.protected_control_plane_repository == "mhanson13/mbsrn"
+
+
+def test_protected_control_plane_repository_normalizes_owner_repo_input(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ENVIRONMENT", "development")
+    monkeypatch.setenv("APP_ENV", "ci")
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://postgres:postgres@localhost:5432/mbsrn")
+    monkeypatch.setenv("MBSRN_CONTROL_PLANE_REPOSITORY", " AcMe-Org / Control-Plane_App ")
+
+    settings = get_settings()
+
+    assert settings.protected_control_plane_repository == "acme-org/control-plane_app"
+
+
+def test_protected_control_plane_repository_rejects_invalid_format(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ENVIRONMENT", "development")
+    monkeypatch.setenv("APP_ENV", "ci")
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://postgres:postgres@localhost:5432/mbsrn")
+    monkeypatch.setenv("MBSRN_CONTROL_PLANE_REPOSITORY", "invalid-repo-name")
+
+    with pytest.raises(RuntimeError, match="MBSRN_CONTROL_PLANE_REPOSITORY must be in owner/repo format"):
+        get_settings()

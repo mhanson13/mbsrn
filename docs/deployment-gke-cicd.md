@@ -316,19 +316,19 @@ Operational implication:
 ### Platform-Owned Public Website Target (`www.mbsrn.com`)
 
 Repository/domain boundary:
-- control plane source repo remains `mhanson13/mbsrn`
+- control plane source repo comes from `MBSRN_CONTROL_PLANE_REPOSITORY` (`owner/repo`)
 - authenticated control plane host remains `app.mbsrn.com`
-- platform-owned public artifacts target repo is `mhanson13/mbsrn-www`
+- platform-owned public artifacts target repo remains a separate managed target repo from the control-plane source repo
 - public marketing host target is `www.mbsrn.com`
 
 Managed-site implications:
 - use existing migration per-site publish-target configuration (owner/account from Admin baseline, repo name from workspace target)
-- for the platform-owned public site target, repository name should be `mbsrn-www` on owner `mhanson13`
+- for the platform-owned public site target, use a dedicated artifacts repo rather than the configured control-plane source repo
 - preview validation continues on managed preview hostname (`*.site.mbsrn.com`) before DNS cutover
 - DNS cutover for `www.mbsrn.com` is manual and out of scope for migration publish/deploy actions
 
 Safety reminder:
-- publishing artifacts to `mhanson13/mbsrn-www` does not move control-plane source/ownership out of `mhanson13/mbsrn`
+- publishing artifacts to a public-site target repo does not move control-plane source/ownership out of the configured control-plane source repo
 - public artifact output must not contain control-plane routes, internal diagnostics, or secret-bearing content
 - media deploy blockers are evaluated from deployable generated-package references (`assets/images/*`, unresolved `@image(...)`, unresolved `upl-...`, private/non-deployable URLs), not from selected-image productivity state alone
 
@@ -483,11 +483,15 @@ Admin Site Registry permanent delete is now a separate guarded control-plane wor
   - verified managed GKE/runtime resource delete
   - verified managed DNS/static-IP/certificate delete
 - Ownership checks before external delete:
-  - GitHub repo must match the configured owner/name, must not match the configured protected control-plane repo, and must have a valid MBSRN management/adoption marker for the selected business/site
+  - GitHub repo must match the configured owner/name, must not match the protected control-plane repo from `MBSRN_CONTROL_PLANE_REPOSITORY`, and must have a valid MBSRN management/adoption marker for the selected business/site
   - runtime resources must be in the derived namespace and carry site labels such as `app.kubernetes.io/managed-by=mbsrn`, `mbsrn.io/site-id`, `mbsrn.io/repo`, and `mbsrn.io/preview-hostname`
   - DNS delete requires exact expected hostname/type/value match
   - static-IP delete is skipped when the address is shared or still attached elsewhere
   - ManagedCertificate delete requires exact namespace/name plus site ownership labels
+- Protected repo guard config:
+  - `MBSRN_CONTROL_PLANE_REPOSITORY` must be set to `owner/repo`
+  - if unset, runtime uses the current compatibility fallback so the existing protected control-plane repo remains blocked
+  - malformed values fail closed during runtime configuration validation
 - The admin permanent-delete workflow does **not** automatically delete:
   - the configured protected control-plane repo
   - arbitrary customer/unmanaged repos
