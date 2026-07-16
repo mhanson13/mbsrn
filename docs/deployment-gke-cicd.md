@@ -353,7 +353,7 @@ Important state:
 - if selected workflow evidence collection failed but current live HTTPS probe succeeds, operator UI should report current runtime as healthy while preserving the failed selected attempt in history/diagnostics.
 - preview endpoint-mode reconciliation rules:
   - `preview_shared_gateway`: deploy readiness validates shared preview gateway config and expected shared static-IP name for `*.site.mbsrn.com`; per-site static-IP ensure is not required.
-  - `dedicated_static_ip`: static-IP ensure/describe uses bounded re-describe + list fallback before classifying `static_ip_address_missing_after_retry`.
+  - `dedicated_static_ip`: static-IP ensure/describe uses bounded re-describe + list fallback before classifying `static_ip_address_missing_after_retry`; newly created per-site addresses are labeled at create time with GCP-safe ownership labels (`mbsrn-managed-by`, `mbsrn-site-id`, `mbsrn-preview-hostname`, `mbsrn-repo`).
   - list fallback succeeds only when exactly one address entry matches the expected name and includes a non-empty `address` value.
   - stale selected-attempt static-IP-missing failures remain historical context and must not override healthy current live HTTPS evidence.
 - Expected reason-code families include:
@@ -487,10 +487,12 @@ Admin Site Registry permanent delete is now a separate guarded control-plane wor
   - runtime resources must be in the derived namespace and carry site labels such as `app.kubernetes.io/managed-by=mbsrn`, `mbsrn.io/site-id`, `mbsrn.io/repo`, and `mbsrn.io/preview-hostname`
   - DNS delete requires exact expected hostname/type/value match
   - static-IP delete requires exact expected project/name plus verified site ownership before delete is attempted
-  - preferred static-IP ownership proof is exact MBSRN/site label match (`app.kubernetes.io/managed-by`, `mbsrn.io/site-id`, `mbsrn.io/repo`, `mbsrn.io/preview-hostname`) when present on the address
+  - preferred static-IP ownership proof is exact MBSRN/site label match when present on the address:
+    - legacy/compatibility keys: `app.kubernetes.io/managed-by`, `mbsrn.io/site-id`, `mbsrn.io/repo`, `mbsrn.io/preview-hostname`
+    - new GCP-safe address-label keys for create-time dedicated IP ownership: `mbsrn-managed-by`, `mbsrn-site-id`, `mbsrn-preview-hostname`, `mbsrn-repo`
   - legacy/unlabeled static IPs fall back only when the exact derived static-IP name, exact preview-hostname DNS A record, and exact observed IP all agree and no other site configuration references the same IP or preview hostname
   - shared preview gateway IPs, in-use IPs, conflicting references, and unverified ownership states are skipped rather than deleted during per-site cleanup
-  - deploy-time static-IP ensure/readiness behavior is unchanged in this pass; creation-time address labeling remains a separate follow-up
+  - existing static IPs are not backfilled or mutated in this pass; deploy-time static-IP ensure/readiness behavior is otherwise unchanged
   - ManagedCertificate delete requires exact namespace/name plus site ownership labels
 - Protected repo guard config:
   - `MBSRN_CONTROL_PLANE_REPOSITORY` must be set to `owner/repo`

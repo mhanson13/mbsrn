@@ -2710,12 +2710,26 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 gcp_principal_email=principal_email,
                 gcp_impersonated_service_account_email=impersonated_service_account_email,
             )
+        ownership_labels: dict[str, str] | None = None
+        if bool(preview_endpoint.get("requires_dedicated_static_ip")):
+            ownership_preview_hostname = _coerce_string(preview_endpoint.get("preview_hostname"))
+            if not ownership_preview_hostname:
+                ownership_preview_hostname, _ = derive_site_preview_hostname(
+                    repo_name=repo_name,
+                    site_id=site_id,
+                )
+            ownership_labels = build_managed_site_static_ip_labels(
+                repo_name=repo_name,
+                site_id=site_id,
+                preview_hostname=ownership_preview_hostname,
+            )
         try:
             ensure_result = _ensure_managed_site_global_static_ip(
                 gcp_deploy_key=_coerce_string(gcp_deploy_key),
                 project_id=project_id,
                 static_ip_name=static_ip_name,
                 timeout_seconds=self.timeout_seconds,
+                labels=ownership_labels,
                 gcp_credential_source=credential_source,
                 gcp_principal_email=principal_email,
                 gcp_impersonated_service_account_email=impersonated_service_account_email,
@@ -7455,12 +7469,20 @@ def _ensure_managed_site_global_static_ip(
     project_id: str,
     static_ip_name: str,
     timeout_seconds: int,
+    labels: dict[str, str] | None = None,
     gcp_credential_source: str | None = None,
     gcp_principal_email: str | None = None,
     gcp_impersonated_service_account_email: str | None = None,
 ) -> dict[str, object]:
     normalized_project_id = _coerce_string(project_id)
     normalized_static_ip_name = _coerce_string(static_ip_name)
+    normalized_labels: dict[str, str] = {}
+    if isinstance(labels, dict):
+        for raw_key, raw_value in labels.items():
+            normalized_key = _coerce_string(raw_key).strip()
+            normalized_value = _coerce_string(raw_value).strip()
+            if normalized_key and normalized_value:
+                normalized_labels[normalized_key] = normalized_value
     if not normalized_project_id or not normalized_static_ip_name:
         raise SEOMigrationGitHubPublisherError(
             code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFIG_MISSING,
@@ -7735,14 +7757,17 @@ def _ensure_managed_site_global_static_ip(
         }
 
     try:
+        create_payload: dict[str, object] = {
+            "name": normalized_static_ip_name,
+            "addressType": "EXTERNAL",
+            "ipVersion": "IPV4",
+        }
+        if normalized_labels:
+            create_payload["labels"] = dict(normalized_labels)
         _request_google_json(
             method="POST",
             url=create_url,
-            payload={
-                "name": normalized_static_ip_name,
-                "addressType": "EXTERNAL",
-                "ipVersion": "IPV4",
-            },
+            payload=create_payload,
             expected_statuses=(200, 201),
             **request_kwargs,
         )
@@ -9147,6 +9172,10 @@ _MBSRN_MANAGED_DEPLOY_TEMPLATE_VERSION_OUTPUT_KEY = "mbsrn_managed_deploy_templa
 _DEPLOY_RUNTIME_REASON_CODE_PRESENT_OUTPUT_KEY = "deploy_runtime_reason_code_present"
 _MANAGED_DEPLOY_TEMPLATE_MARKER_PRESENT_OUTPUT_KEY = "managed_deploy_template_marker_present"
 _MBSRN_MANAGED_LABEL = "mbsrn"
+_MBSRN_MANAGED_STATIC_IP_LABEL_MANAGED_BY = "mbsrn-managed-by"
+_MBSRN_MANAGED_STATIC_IP_LABEL_SITE_ID = "mbsrn-site-id"
+_MBSRN_MANAGED_STATIC_IP_LABEL_PREVIEW_HOSTNAME = "mbsrn-preview-hostname"
+_MBSRN_MANAGED_STATIC_IP_LABEL_REPO = "mbsrn-repo"
 _MBSRN_MANAGED_NAMESPACE_FILE_PATH = "k8s/namespace.yaml"
 _MBSRN_MANAGED_DEPLOYMENT_FILE_PATH = "k8s/deployment.yaml"
 _MBSRN_MANAGED_SERVICE_FILE_PATH = "k8s/service.yaml"
@@ -9401,6 +9430,37 @@ def _safe_identifier_fragment(value: object, *, fallback: str, max_length: int =
     if not cleaned:
         cleaned = fallback
     return cleaned[:max_length]
+
+
+def _normalize_managed_site_static_ip_label_value(value: object) -> str | None:
+    normalized = _safe_identifier_fragment(value, fallback="", max_length=63).strip("-")
+    return normalized or None
+
+
+def build_managed_site_static_ip_labels(
+    *,
+    repo_name: object,
+    site_id: object | None = None,
+    preview_hostname: object | None = None,
+) -> dict[str, str]:
+    normalized_preview_hostname = (_coerce_string(preview_hostname) or "").strip().lower().rstrip(".")
+    ownership_labels: dict[str, str] = {
+        _MBSRN_MANAGED_STATIC_IP_LABEL_MANAGED_BY: _MBSRN_MANAGED_LABEL,
+    }
+    normalized_site_id = _normalize_managed_site_static_ip_label_value(site_id)
+    normalized_preview_hostname_label = _normalize_managed_site_static_ip_label_value(
+        normalized_preview_hostname
+    )
+    normalized_repo_name = _normalize_managed_site_static_ip_label_value(repo_name)
+    if normalized_site_id:
+        ownership_labels[_MBSRN_MANAGED_STATIC_IP_LABEL_SITE_ID] = normalized_site_id
+    if normalized_preview_hostname_label:
+        ownership_labels[_MBSRN_MANAGED_STATIC_IP_LABEL_PREVIEW_HOSTNAME] = (
+            normalized_preview_hostname_label
+        )
+    if normalized_repo_name:
+        ownership_labels[_MBSRN_MANAGED_STATIC_IP_LABEL_REPO] = normalized_repo_name
+    return ownership_labels
 
 
 def derive_site_kubernetes_namespace(*, repo_name: object, site_id: object | None = None) -> tuple[str, str]:

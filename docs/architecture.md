@@ -846,7 +846,7 @@ Observability additions:
 - Destructive cloud cleanup is fail-closed when ownership proof is missing:
   - GitHub delete requires the configured repo identity plus MBSRN ownership/adoption proof
   - runtime/certificate delete requires exact site labels or namespace-scoped ownership proof
-  - static-IP delete requires verified site ownership from labels or exact DNS/name fallback evidence; shared, in-use, conflicting, and unverified IPs are skipped
+  - static-IP delete requires verified site ownership from labels or exact DNS/name fallback evidence; new dedicated per-site addresses carry create-time GCP-safe ownership labels, existing unlabeled addresses remain legacy fallback cases, and shared, in-use, conflicting, and unverified IPs are skipped
 - Local DB delete removes the site row and all direct site-owned SEO rows, including:
   - audit runs/pages/findings/summaries
   - competitor sets/domains/snapshot runs/snapshot pages/comparison runs/comparison findings/comparison summaries

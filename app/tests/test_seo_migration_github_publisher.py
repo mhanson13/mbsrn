@@ -32,6 +32,7 @@ from app.integrations.seo_migration_github_publisher import (
     _classify_rollout_blocker_hints_from_describe_outputs,
     _emit_structured_publisher_log,
     _resolve_google_credential_principal,
+    build_managed_site_static_ip_labels,
     resolve_managed_preview_endpoint_configuration,
     derive_site_kubernetes_namespace,
     derive_site_preview_certificate_name,
@@ -218,12 +219,18 @@ def _managed_repo_baseline_present_responses() -> list[_FakeHTTPResponse]:
     ]
 
 
-def _install_urlopen_stub(monkeypatch, responses, calls):
+def _install_urlopen_stub(monkeypatch, responses, calls, payloads=None):
     queue = list(responses)
 
     def _stub(request, timeout=None):
         del timeout
         calls.append((request.get_method(), request.full_url))
+        if payloads is not None:
+            request_body = getattr(request, "data", None)
+            if request_body is None:
+                payloads.append(None)
+            else:
+                payloads.append(json.loads(request_body.decode("utf-8")))
         next_item = queue.pop(0)
         if isinstance(next_item, Exception):
             raise next_item
@@ -4512,6 +4519,63 @@ def test_ensure_managed_site_static_ip_creates_missing_address_before_dispatch(m
     ]
 
 
+def test_ensure_managed_site_static_ip_create_payload_includes_gcp_safe_ownership_labels(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    payloads: list[dict[str, object] | None] = []
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _http_error(
+                "https://compute.googleapis.com/compute/v1/projects/mbsrn-prod/global/addresses/site-web-preview-ip-tnmfire",
+                status_code=404,
+                message="Not Found",
+            ),
+            _FakeHTTPResponse(status=200, body=json.dumps({"name": "operation-1"})),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps(
+                    {
+                        "name": "site-web-preview-ip-tnmfire",
+                        "address": "34.160.224.212",
+                    }
+                ),
+            ),
+        ],
+        calls,
+        payloads,
+    )
+    monkeypatch.setattr(
+        "app.integrations.seo_migration_github_publisher._resolve_google_access_token_from_service_account_json",
+        lambda **kwargs: "token",
+    )
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    result = publisher.ensure_managed_site_static_ip(
+        repo_owner="mhanson13",
+        repo_name="tnmfire",
+        site_id="site-1",
+        managed_gke_config={"project_id": "mbsrn-prod"},
+        gcp_deploy_key='{"type":"service_account"}',
+        preview_hostname="Preview.Site.MBSRN.com.",
+        dry_run=False,
+    )
+
+    assert result.static_ip_created is True
+    assert payloads == [
+        None,
+        {
+            "name": "site-web-preview-ip-tnmfire",
+            "addressType": "EXTERNAL",
+            "ipVersion": "IPV4",
+            "labels": build_managed_site_static_ip_labels(
+                repo_name="tnmfire",
+                site_id="site-1",
+                preview_hostname="Preview.Site.MBSRN.com.",
+            ),
+        },
+        None,
+    ]
+
+
 def test_ensure_managed_site_static_ip_describes_again_when_created_payload_lacks_address(monkeypatch) -> None:
     calls: list[tuple[str, str]] = []
     _install_urlopen_stub(
@@ -4578,6 +4642,65 @@ def test_ensure_managed_site_static_ip_describes_again_when_created_payload_lack
             "GET",
             "https://compute.googleapis.com/compute/v1/projects/mbsrn-prod/global/addresses/site-web-preview-ip-tnmfire",
         ),
+    ]
+
+
+def test_ensure_managed_site_static_ip_does_not_label_shared_preview_gateway_address_creation(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    payloads: list[dict[str, object] | None] = []
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _http_error(
+                "https://compute.googleapis.com/compute/v1/projects/mbsrn-prod/global/addresses/site-preview-shared-ip",
+                status_code=404,
+                message="Not Found",
+            ),
+            _FakeHTTPResponse(status=200, body=json.dumps({"name": "operation-1"})),
+            _FakeHTTPResponse(
+                status=200,
+                body=json.dumps(
+                    {
+                        "name": "site-preview-shared-ip",
+                        "address": "34.160.224.212",
+                    }
+                ),
+            ),
+        ],
+        calls,
+        payloads,
+    )
+    monkeypatch.setattr(
+        "app.integrations.seo_migration_github_publisher._resolve_google_access_token_from_service_account_json",
+        lambda **kwargs: "token",
+    )
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+    result = publisher.ensure_managed_site_static_ip(
+        repo_owner="mhanson13",
+        repo_name="tnmfire",
+        site_id="site-1",
+        managed_gke_config={"project_id": "mbsrn-prod"},
+        gcp_deploy_key='{"type":"service_account"}',
+        namespace_isolation_defaults={
+            "managed_preview_endpoint": {
+                "mode": "preview_shared_gateway",
+                "shared_preview_static_ip_name": "site-preview-shared-ip",
+            }
+        },
+        preview_hostname="tnmfire.site.mbsrn.com",
+        dry_run=False,
+    )
+
+    assert result.static_ip_name == "site-preview-shared-ip"
+    assert result.static_ip_created is True
+    assert payloads == [
+        None,
+        {
+            "name": "site-preview-shared-ip",
+            "addressType": "EXTERNAL",
+            "ipVersion": "IPV4",
+        },
+        None,
     ]
 
 
@@ -5124,6 +5247,13 @@ def test_ensure_managed_site_static_ip_permission_failure_during_describe_is_cla
 @pytest.mark.parametrize(
     ("status_code", "message", "expected_reason_code", "expected_category", "expected_error_code"),
     [
+        (
+            400,
+            "Invalid value for field 'resource.labels': 'mbsrn-preview-hostname'.",
+            "managed_site_static_ip_provisioning_failed",
+            "provisioning_failed",
+            "http_400",
+        ),
         (
             403,
             "SERVICE_DISABLED: Compute Engine API has not been used in project mbsrn-prod before.",
@@ -8419,6 +8549,21 @@ def test_resolve_managed_preview_endpoint_configuration_preserves_dedicated_mode
     assert resolved.get("expected_static_ip_name") != "site-preview-shared-ip"
     assert str(resolved.get("expected_static_ip_name") or "").startswith("site-web-preview-ip-")
     assert resolved.get("reason_code") is None
+
+
+def test_build_managed_site_static_ip_labels_normalizes_values() -> None:
+    labels = build_managed_site_static_ip_labels(
+        repo_name="My.Repo_Name",
+        site_id="Site 123_/Alpha",
+        preview_hostname="Preview.Site.MBSRN.com.",
+    )
+
+    assert labels == {
+        "mbsrn-managed-by": "mbsrn",
+        "mbsrn-site-id": "site-123-alpha",
+        "mbsrn-preview-hostname": "preview-site-mbsrn-com",
+        "mbsrn-repo": "my-repo-name",
+    }
 
 
 def test_rendered_managed_templates_preserve_dedicated_mode_static_ip_binding_when_explicit() -> None:

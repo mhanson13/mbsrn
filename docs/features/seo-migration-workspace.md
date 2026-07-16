@@ -1910,6 +1910,8 @@ Post-fix rollout for existing managed sites:
       - `dedicated_static_ip` (live/cutover or explicitly selected dedicated endpoint mode):
         - annotation: `kubernetes.io/ingress.global-static-ip-name: site-web-preview-ip-<normalized-site>` (or configured expected dedicated name)
         - control plane ensures the expected global address exists before workflow dispatch using admin-managed deploy credentials
+        - newly created per-site addresses are labeled at create time with GCP-safe ownership labels: `mbsrn-managed-by=mbsrn`, `mbsrn-site-id=<normalized site id>`, `mbsrn-preview-hostname=<label-safe preview hostname>`, `mbsrn-repo=<label-safe repo>`
+        - existing addresses are left unchanged; labels are not backfilled onto already-reserved IPs
       - `auto` mode resolves to `preview_shared_gateway` for `*.site.mbsrn.com` when shared preview static-IP config is present; otherwise it falls back to `dedicated_static_ip`
       - prerequisite chain remains ordered and fail-closed for the active endpoint mode:
         - static-IP/gateway validation -> DNS ensure (when applicable) -> DNS propagation gate -> workflow dispatch
@@ -2572,6 +2574,8 @@ Isolation rules:
 - After changing `managed_preview_endpoint` admin defaults, rerun publish/workflow provisioning and then rerun deploy so the generated target-repo workflow/manifests pick up the new mode.
 - Cross-site certificate bindings are blocked.
 - Control plane ensures expected static-IP/gateway prerequisites before dispatch; target workflow validates presence as a runtime safety check.
+- Admin permanent-delete static-IP verification now recognizes creation-time GCP-safe ownership labels on newly created dedicated IPs before considering legacy DNS/name fallback.
+- Legacy unlabeled or unverified IPs can still be skipped for manual review; shared preview gateway IPs are never treated as per-site delete candidates.
 - Control plane ensures preview-host DNS `A` record (`<normalized-site>.site.mbsrn.com`) before dispatch and updates only that exact hostname/type when DNS management is enabled for that mode.
 - Target repositories do not create or mutate Cloud DNS records.
 - Conflicting DNS record types at the same hostname (for example CNAME) block deploy before dispatch.

@@ -18,9 +18,14 @@ import app.models
 from app.db.base import Base
 from app.integrations.seo_migration_github_publisher import (
     SEOMigrationGitHubPublisherError,
+    build_managed_site_static_ip_labels,
     derive_site_preview_backend_config_name,
     derive_site_preview_certificate_name,
     derive_site_preview_frontend_config_name,
+    _MBSRN_MANAGED_STATIC_IP_LABEL_MANAGED_BY,
+    _MBSRN_MANAGED_STATIC_IP_LABEL_PREVIEW_HOSTNAME,
+    _MBSRN_MANAGED_STATIC_IP_LABEL_REPO,
+    _MBSRN_MANAGED_STATIC_IP_LABEL_SITE_ID,
     _request_google_json,
     _request_kubernetes_json,
     _resolve_google_access_token_for_managed_deploy_operations,
@@ -2540,6 +2545,33 @@ class SEOSiteDeleteService:
             observed_labels["mbsrn.io/repo"] = repo
         if preview_hostname:
             observed_labels["mbsrn.io/preview-hostname"] = preview_hostname
+        static_ip_managed_by = _normalize_text(
+            labels.get(_MBSRN_MANAGED_STATIC_IP_LABEL_MANAGED_BY),
+            max_length=80,
+        )
+        static_ip_site_id = _identifier_fragment(
+            labels.get(_MBSRN_MANAGED_STATIC_IP_LABEL_SITE_ID),
+            fallback="",
+            max_length=63,
+        )
+        static_ip_repo = _identifier_fragment(
+            labels.get(_MBSRN_MANAGED_STATIC_IP_LABEL_REPO),
+            fallback="",
+            max_length=63,
+        )
+        static_ip_preview_hostname = _identifier_fragment(
+            labels.get(_MBSRN_MANAGED_STATIC_IP_LABEL_PREVIEW_HOSTNAME),
+            fallback="",
+            max_length=63,
+        )
+        if static_ip_managed_by:
+            observed_labels[_MBSRN_MANAGED_STATIC_IP_LABEL_MANAGED_BY] = static_ip_managed_by
+        if static_ip_site_id:
+            observed_labels[_MBSRN_MANAGED_STATIC_IP_LABEL_SITE_ID] = static_ip_site_id
+        if static_ip_repo:
+            observed_labels[_MBSRN_MANAGED_STATIC_IP_LABEL_REPO] = static_ip_repo
+        if static_ip_preview_hostname:
+            observed_labels[_MBSRN_MANAGED_STATIC_IP_LABEL_PREVIEW_HOSTNAME] = static_ip_preview_hostname
         return observed_labels
 
     def _labels_indicate_site_ownership(self, *, labels: object, context: _DeleteContext) -> bool:
@@ -2550,11 +2582,20 @@ class SEOSiteDeleteService:
         preview_label = _normalize_hostname(observed_labels.get("mbsrn.io/preview-hostname"))
         expected_repo_label = _identifier_fragment(context.repo_name or "", fallback="", max_length=80) or None
         expected_site_label = _identifier_fragment(context.site_id, fallback="", max_length=80)
-        return (
+        if (
             managed_by == _MBSRN_MANAGED_LABEL
             and site_label == expected_site_label
             and (expected_repo_label is None or repo_label == expected_repo_label)
             and (context.preview_hostname is None or preview_label == context.preview_hostname)
+        ):
+            return True
+        return all(
+            _normalize_text(observed_labels.get(label_key), max_length=80) == expected_value
+            for label_key, expected_value in build_managed_site_static_ip_labels(
+                repo_name=context.repo_name or "",
+                site_id=context.site_id,
+                preview_hostname=context.preview_hostname,
+            ).items()
         )
 
     def _inspect_dns_record(
