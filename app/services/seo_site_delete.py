@@ -1013,14 +1013,18 @@ class SEOSiteDeleteService:
         warnings: list[dict[str, str]] = []
         if not context.static_ip_name or not context.managed_gke_config.get("project_id"):
             return (
-                _resource(
-                    "static_ip",
-                    "not_checked",
-                    "Managed preview static IP configuration is incomplete for this site.",
-                    details={
-                        "static_ip_name": context.static_ip_name,
-                        "gcp_project_id": context.managed_gke_config.get("project_id"),
-                    },
+                self._decorate_static_ip_resource(
+                    _resource(
+                        "static_ip",
+                        "not_checked",
+                        "Managed preview static IP configuration is incomplete for this site.",
+                        details={
+                            "static_ip_name": context.static_ip_name,
+                            "gcp_project_id": context.managed_gke_config.get("project_id"),
+                        },
+                    ),
+                    delete_selected=False,
+                    delete_attempted=False,
                 ),
                 blockers,
                 warnings,
@@ -1039,6 +1043,7 @@ class SEOSiteDeleteService:
             )
         except SEOMigrationGitHubPublisherError as exc:
             recovered_details = self._base_static_ip_details(context=context)
+            recovered_details["ownership_status"] = "unknown"
             try:
                 raw_inspection = self._inspect_static_ip(
                     context=context,
@@ -1055,27 +1060,35 @@ class SEOSiteDeleteService:
                 )
             )
             return (
-                _resource(
-                    "static_ip",
-                    "not_checked",
-                    "Managed preview static IP could not be verified during delete planning.",
-                    reason_code=_STATIC_IP_DELETE_SKIPPED_UNVERIFIED_OWNERSHIP,
-                    details={
-                        **recovered_details,
-                        "publisher_reason_code": exc.code,
-                    },
+                self._decorate_static_ip_resource(
+                    _resource(
+                        "static_ip",
+                        "not_checked",
+                        "Managed preview static IP could not be verified during delete planning.",
+                        reason_code=_STATIC_IP_DELETE_SKIPPED_UNVERIFIED_OWNERSHIP,
+                        details={
+                            **recovered_details,
+                            "publisher_reason_code": exc.code,
+                        },
+                    ),
+                    delete_selected=False,
+                    delete_attempted=False,
                 ),
                 blockers,
                 warnings,
             )
 
         return (
-            _resource(
-                "static_ip",
-                inspection["status"],
-                inspection["summary"],
-                reason_code=inspection.get("reason_code"),
-                details=inspection["details"],
+            self._decorate_static_ip_resource(
+                _resource(
+                    "static_ip",
+                    inspection["status"],
+                    inspection["summary"],
+                    reason_code=inspection.get("reason_code"),
+                    details=inspection["details"],
+                ),
+                delete_selected=False,
+                delete_attempted=False,
             ),
             blockers,
             warnings,
@@ -1799,12 +1812,16 @@ class SEOSiteDeleteService:
         issues = {"blockers": [], "warnings": []}
         if not selected:
             return (
-                _resource(
-                    "static_ip",
-                    "skipped",
-                    "Managed static IP cleanup was not selected.",
-                    reason_code="external_cleanup_not_selected",
-                    details={"static_ip_name": context.static_ip_name},
+                self._decorate_static_ip_resource(
+                    _resource(
+                        "static_ip",
+                        "skipped",
+                        "Managed static IP cleanup was not selected.",
+                        reason_code="external_cleanup_not_selected",
+                        details={"static_ip_name": context.static_ip_name},
+                    ),
+                    delete_selected=False,
+                    delete_attempted=False,
                 ),
                 issues,
             )
@@ -1817,15 +1834,19 @@ class SEOSiteDeleteService:
                 )
             )
             return (
-                _resource(
-                    "static_ip",
-                    "skipped",
-                    summary,
-                    reason_code=_STATIC_IP_DELETE_SKIPPED_SHARED_GATEWAY,
-                    details={
-                        **self._base_static_ip_details(context=context),
-                        "ownership_status": "shared",
-                    },
+                self._decorate_static_ip_resource(
+                    _resource(
+                        "static_ip",
+                        "skipped",
+                        summary,
+                        reason_code=_STATIC_IP_DELETE_SKIPPED_SHARED_GATEWAY,
+                        details={
+                            **self._base_static_ip_details(context=context),
+                            "ownership_status": "shared",
+                        },
+                    ),
+                    delete_selected=True,
+                    delete_attempted=False,
                 ),
                 issues,
             )
@@ -1840,22 +1861,30 @@ class SEOSiteDeleteService:
                 )
             )
             return (
-                _resource(
-                    "static_ip",
-                    "skipped",
-                    summary,
-                    reason_code=_STATIC_IP_DELETE_SKIPPED_UNVERIFIED_OWNERSHIP,
-                    details=self._base_static_ip_details(context=context),
+                self._decorate_static_ip_resource(
+                    _resource(
+                        "static_ip",
+                        "skipped",
+                        summary,
+                        reason_code=_STATIC_IP_DELETE_SKIPPED_UNVERIFIED_OWNERSHIP,
+                        details=self._base_static_ip_details(context=context),
+                    ),
+                    delete_selected=True,
+                    delete_attempted=False,
                 ),
                 issues,
             )
         if inspection["status"] == "not_found":
             return (
-                _resource(
-                    "static_ip",
-                    "not_found",
-                    "No managed preview static IP was found for the expected project/name.",
-                    details=inspection["details"],
+                self._decorate_static_ip_resource(
+                    _resource(
+                        "static_ip",
+                        "not_found",
+                        "No managed preview static IP was found for the expected project/name.",
+                        details=inspection["details"],
+                    ),
+                    delete_selected=True,
+                    delete_attempted=False,
                 ),
                 issues,
             )
@@ -1872,12 +1901,16 @@ class SEOSiteDeleteService:
                 )
             )
             return (
-                _resource(
-                    "static_ip",
-                    "skipped",
-                    summary,
-                    reason_code=reason_code,
-                    details=inspection["details"],
+                self._decorate_static_ip_resource(
+                    _resource(
+                        "static_ip",
+                        "skipped",
+                        summary,
+                        reason_code=reason_code,
+                        details=inspection["details"],
+                    ),
+                    delete_selected=True,
+                    delete_attempted=False,
                 ),
                 issues,
             )
@@ -1894,12 +1927,16 @@ class SEOSiteDeleteService:
                 )
             )
             return (
-                _resource(
-                    "static_ip",
-                    "failed",
-                    "Managed preview static IP deletion credentials could not be resolved.",
-                    reason_code=_STATIC_IP_DELETE_FAILED,
-                    details=inspection["details"],
+                self._decorate_static_ip_resource(
+                    _resource(
+                        "static_ip",
+                        "failed",
+                        "Managed preview static IP deletion credentials could not be resolved.",
+                        reason_code=_STATIC_IP_DELETE_FAILED,
+                        details=inspection["details"],
+                    ),
+                    delete_selected=True,
+                    delete_attempted=False,
                 ),
                 issues,
             )
@@ -1930,25 +1967,107 @@ class SEOSiteDeleteService:
                 )
             )
             return (
-                _resource(
-                    "static_ip",
-                    "failed",
-                    "Managed preview static IP deletion request failed.",
-                    reason_code=_STATIC_IP_DELETE_FAILED,
-                    details=inspection["details"],
+                self._decorate_static_ip_resource(
+                    _resource(
+                        "static_ip",
+                        "failed",
+                        "Managed preview static IP deletion request failed.",
+                        reason_code=_STATIC_IP_DELETE_FAILED,
+                        details=inspection["details"],
+                    ),
+                    delete_selected=True,
+                    delete_attempted=True,
                 ),
                 issues,
             )
         return (
-            _resource(
-                "static_ip",
-                "deleted",
-                "Deleted the verified managed preview static IP reservation for this site.",
-                reason_code=_STATIC_IP_DELETED,
-                details=inspection["details"],
+            self._decorate_static_ip_resource(
+                _resource(
+                    "static_ip",
+                    "deleted",
+                    "Deleted the verified managed preview static IP reservation for this site.",
+                    reason_code=_STATIC_IP_DELETED,
+                    details=inspection["details"],
+                ),
+                delete_selected=True,
+                delete_attempted=True,
             ),
             issues,
         )
+
+    def _decorate_static_ip_resource(
+        self,
+        resource: dict[str, Any],
+        *,
+        delete_selected: bool,
+        delete_attempted: bool,
+    ) -> dict[str, Any]:
+        if resource.get("resource_type") != "static_ip":
+            return resource
+        details = dict(resource.get("details") or {})
+        ownership_status = self._surface_static_ip_ownership_status(details=details)
+        ownership_method = self._surface_static_ip_ownership_method(
+            details=details,
+            ownership_status=ownership_status,
+            resource_status=_normalize_text(resource.get("status"), max_length=40),
+        )
+        delete_reason_code = _normalize_text(resource.get("reason_code"), max_length=120)
+        safe_summary = _normalize_text(resource.get("summary"), max_length=500) or "Managed preview static IP diagnostics unavailable."
+        surfaced_details = {
+            **details,
+            "static_ip_ownership_status": ownership_status,
+            "static_ip_ownership_method": ownership_method,
+            "static_ip_delete_attempted": bool(delete_attempted),
+            "static_ip_delete_selected": bool(delete_selected),
+            "static_ip_delete_reason_code": delete_reason_code,
+            "static_ip_delete_safe_summary": safe_summary,
+        }
+        return {
+            **resource,
+            "details": surfaced_details,
+            "static_ip_ownership_status": ownership_status,
+            "static_ip_ownership_method": ownership_method,
+            "static_ip_delete_attempted": bool(delete_attempted),
+            "static_ip_delete_selected": bool(delete_selected),
+            "static_ip_delete_reason_code": delete_reason_code,
+            "static_ip_delete_safe_summary": safe_summary,
+        }
+
+    def _surface_static_ip_ownership_status(self, *, details: dict[str, Any]) -> str:
+        ownership_status = _normalize_text(
+            details.get("static_ip_ownership_status") or details.get("ownership_status"),
+            max_length=80,
+        )
+        if ownership_status in {
+            "verified",
+            "unverified",
+            "shared",
+            "in_use",
+            "conflicting_reference",
+            "not_found",
+            "unknown",
+        }:
+            return ownership_status
+        return "unknown"
+
+    def _surface_static_ip_ownership_method(
+        self,
+        *,
+        details: dict[str, Any],
+        ownership_status: str,
+        resource_status: str | None,
+    ) -> str:
+        raw_method = _normalize_text(
+            details.get("static_ip_ownership_method") or details.get("ownership_verification_method"),
+            max_length=80,
+        )
+        if raw_method == "dns_name_fallback":
+            raw_method = "dns_fallback"
+        if ownership_status == "verified" and raw_method in {"labels", "dns_fallback"}:
+            return raw_method
+        if ownership_status == "unknown" or resource_status == "not_checked":
+            return "not_applicable"
+        return "none"
 
     def _execute_github_cleanup(
         self,
@@ -2455,7 +2574,7 @@ class SEOSiteDeleteService:
             "observed_purpose": None,
             "observed_labels": {},
             "label_fingerprint_present": False,
-            "ownership_status": "unverified",
+            "ownership_status": "unknown",
             "ownership_verification_method": None,
             "delete_eligible": False,
             "conflicting_reference_count": 0,

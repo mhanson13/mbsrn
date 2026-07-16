@@ -348,6 +348,12 @@ export interface SEOSiteDeleteResource {
   status: string;
   reason_code: string | null;
   summary: string;
+  static_ip_ownership_status?: string | null;
+  static_ip_ownership_method?: string | null;
+  static_ip_delete_attempted?: boolean | null;
+  static_ip_delete_selected?: boolean | null;
+  static_ip_delete_reason_code?: string | null;
+  static_ip_delete_safe_summary?: string | null;
   details: Record<string, unknown>;
 }
 

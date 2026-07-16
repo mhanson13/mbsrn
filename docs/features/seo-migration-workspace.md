@@ -2576,6 +2576,12 @@ Isolation rules:
 - Control plane ensures expected static-IP/gateway prerequisites before dispatch; target workflow validates presence as a runtime safety check.
 - Admin permanent-delete static-IP verification now recognizes creation-time GCP-safe ownership labels on newly created dedicated IPs before considering legacy DNS/name fallback.
 - Legacy unlabeled or unverified IPs can still be skipped for manual review; shared preview gateway IPs are never treated as per-site delete candidates.
+- Admin delete-plan/result diagnostics now surface concise static-IP verification states:
+  - `Verified by labels.` means delete ownership proof came from exact managed address labels.
+  - `Verified by DNS/name fallback.` means labels were absent and legacy DNS/name evidence matched exactly.
+  - `Skipped: ownership unverified.`, `Skipped: shared preview gateway.`, `Skipped: IP is in use.`, and `Skipped: referenced by another site/config.` are safe operator-facing skip reasons.
+  - `Not found.` means no matching address was present in the expected project/name scope.
+  - `Delete failed.` means ownership verified, revalidation passed, but the delete operation itself failed.
 - Control plane ensures preview-host DNS `A` record (`<normalized-site>.site.mbsrn.com`) before dispatch and updates only that exact hostname/type when DNS management is enabled for that mode.
 - Target repositories do not create or mutate Cloud DNS records.
 - Conflicting DNS record types at the same hostname (for example CNAME) block deploy before dispatch.

@@ -492,6 +492,15 @@ Admin Site Registry permanent delete is now a separate guarded control-plane wor
     - new GCP-safe address-label keys for create-time dedicated IP ownership: `mbsrn-managed-by`, `mbsrn-site-id`, `mbsrn-preview-hostname`, `mbsrn-repo`
   - legacy/unlabeled static IPs fall back only when the exact derived static-IP name, exact preview-hostname DNS A record, and exact observed IP all agree and no other site configuration references the same IP or preview hostname
   - shared preview gateway IPs, in-use IPs, conflicting references, and unverified ownership states are skipped rather than deleted during per-site cleanup
+  - admin delete-plan and execution results surface safe static-IP diagnostics for operator review:
+    - `static_ip_ownership_status`: `verified`, `unverified`, `shared`, `in_use`, `conflicting_reference`, `not_found`, `unknown`
+    - `static_ip_ownership_method`: `labels`, `dns_fallback`, `none`, `not_applicable`
+    - `static_ip_delete_selected`, `static_ip_delete_attempted`, `static_ip_delete_reason_code`, `static_ip_delete_safe_summary`
+  - admin UI copy is intentionally concise:
+    - `Verified by labels.` is the preferred ownership proof path
+    - `Verified by DNS/name fallback.` is legacy compatibility evidence only
+    - `Skipped: ownership unverified.`, `Skipped: shared preview gateway.`, `Skipped: IP is in use.`, and `Skipped: referenced by another site/config.` explain why delete was not attempted
+    - `Not found.` and `Delete failed.` are surfaced separately in per-resource execution results
   - existing static IPs are not backfilled or mutated in this pass; deploy-time static-IP ensure/readiness behavior is otherwise unchanged
   - ManagedCertificate delete requires exact namespace/name plus site ownership labels
 - Protected repo guard config:

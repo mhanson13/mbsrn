@@ -58,6 +58,7 @@ import type {
   SEOSiteDeleteExecuteRequest,
   SEOSiteDeleteExecutionResult,
   SEOSiteDeletePlan,
+  SEOSiteDeleteResource,
 } from "../../lib/api/types";
 import {
   COMPETITOR_BIG_BOX_PENALTY_MAX,
@@ -659,6 +660,80 @@ function siteDeleteStatusLabel(status: string): string {
     default:
       return status;
   }
+}
+
+function staticIpOwnershipStatus(resource: SEOSiteDeleteResource): string | null {
+  if (typeof resource.static_ip_ownership_status === "string" && resource.static_ip_ownership_status.trim()) {
+    return resource.static_ip_ownership_status.trim();
+  }
+  const candidate = resource.details.static_ip_ownership_status ?? resource.details.ownership_status;
+  if (typeof candidate === "string" && candidate.trim()) {
+    return candidate.trim();
+  }
+  return null;
+}
+
+function staticIpOwnershipMethod(resource: SEOSiteDeleteResource): string | null {
+  if (typeof resource.static_ip_ownership_method === "string" && resource.static_ip_ownership_method.trim()) {
+    return resource.static_ip_ownership_method.trim();
+  }
+  const candidate =
+    resource.details.static_ip_ownership_method ?? resource.details.ownership_verification_method;
+  if (typeof candidate === "string" && candidate.trim()) {
+    return candidate.trim() === "dns_name_fallback" ? "dns_fallback" : candidate.trim();
+  }
+  return null;
+}
+
+function staticIpVerificationCopy(resource: SEOSiteDeleteResource): string | null {
+  if (resource.resource_type !== "static_ip") {
+    return null;
+  }
+  const ownershipStatus = staticIpOwnershipStatus(resource);
+  const ownershipMethod = staticIpOwnershipMethod(resource);
+  if (resource.reason_code === "external_cleanup_not_selected") {
+    return "Cleanup not selected.";
+  }
+  if (resource.status === "failed") {
+    if (ownershipStatus === "verified" && ownershipMethod === "labels") {
+      return "Delete failed after label verification.";
+    }
+    if (ownershipStatus === "verified" && ownershipMethod === "dns_fallback") {
+      return "Delete failed after DNS/name fallback verification.";
+    }
+    return "Delete failed.";
+  }
+  switch (ownershipStatus) {
+    case "verified":
+      if (ownershipMethod === "labels") {
+        return "Verified by labels.";
+      }
+      if (ownershipMethod === "dns_fallback") {
+        return "Verified by DNS/name fallback.";
+      }
+      return "Verified.";
+    case "unverified":
+      return "Skipped: ownership unverified.";
+    case "shared":
+      return "Skipped: shared preview gateway.";
+    case "in_use":
+      return "Skipped: IP is in use.";
+    case "conflicting_reference":
+      return "Skipped: referenced by another site/config.";
+    case "not_found":
+      return "Not found.";
+    case "unknown":
+      return "Verification unavailable.";
+    default:
+      if (resource.status === "not_checked") {
+        return "Verification unavailable.";
+      }
+      return null;
+  }
+}
+
+function siteDeleteResourceSummary(resource: SEOSiteDeleteResource): string {
+  return staticIpVerificationCopy(resource) ?? resource.summary;
 }
 
 const EMPTY_SITE_DELETE_FORM_STATE: SiteDeleteFormState = {
@@ -1737,6 +1812,10 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
     siteDeleteConfirmationPhraseMatches &&
     siteDeleteAcknowledgementsReady &&
     (!siteDeletePlan?.is_active || siteDeleteForm.forceDeleteActive);
+  const siteDeletePlanStaticIpResource = useMemo(
+    () => siteDeletePlan?.external_resources.find((resource) => resource.resource_type === "static_ip") ?? null,
+    [siteDeletePlan],
+  );
   const githubPublishValidation = useMemo(
     () =>
       validateGitHubPublishConfigInputs({
@@ -4874,6 +4953,11 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
               <WorkspaceMetadataItem label="Static IP">
                 <code>{siteDeletePlan.static_ip_name || "Not derived"}</code>
               </WorkspaceMetadataItem>
+              {siteDeletePlanStaticIpResource ? (
+                <WorkspaceMetadataItem label="Static IP verification">
+                  <span>{siteDeleteResourceSummary(siteDeletePlanStaticIpResource)}</span>
+                </WorkspaceMetadataItem>
+              ) : null}
               <WorkspaceMetadataItem label="Managed certificate">
                 <code>{siteDeletePlan.managed_certificate_name || "Not derived"}</code>
               </WorkspaceMetadataItem>
@@ -4901,7 +4985,7 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                 {siteDeletePlan.external_resources.map((resource) => (
                   <li key={resource.resource_type}>
                     {siteDeleteResourceLabel(resource.resource_type)} — {siteDeleteStatusLabel(resource.status)}:{" "}
-                    {resource.summary}
+                    {siteDeleteResourceSummary(resource)}
                   </li>
                 ))}
               </ul>
@@ -5075,7 +5159,7 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                   {siteDeleteResult.external_resources.map((resource) => (
                     <li key={`result-${resource.resource_type}`}>
                       {siteDeleteResourceLabel(resource.resource_type)} — {siteDeleteStatusLabel(resource.status)}:{" "}
-                      {resource.summary}
+                      {siteDeleteResourceSummary(resource)}
                     </li>
                   ))}
                 </ul>

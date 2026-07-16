@@ -35,6 +35,8 @@ const mockFetchBusinessSettings = jest.fn();
 const mockUpdateBusinessSettings = jest.fn();
 const mockFetchGitHubPublishConfig = jest.fn();
 const mockUpdateGitHubPublishConfig = jest.fn();
+const mockPrepareAdminSiteDeletePlan = jest.fn();
+const mockExecuteAdminSiteDelete = jest.fn();
 
 const DEFAULT_MIGRATION_GENERATION_BUDGET = {
   migration_context_budget_chars: 90000,
@@ -85,8 +87,8 @@ jest.mock("../../lib/api/client", () => ({
   deactivatePrincipalIdentity: jest.fn(),
   deactivatePrincipal: jest.fn(),
   deleteAdminSite: jest.fn(),
-  executeAdminSiteDelete: jest.fn(),
-  prepareAdminSiteDeletePlan: jest.fn(),
+  executeAdminSiteDelete: (...args: unknown[]) => mockExecuteAdminSiteDelete(...args),
+  prepareAdminSiteDeletePlan: (...args: unknown[]) => mockPrepareAdminSiteDeletePlan(...args),
   queryGcpLogs: jest.fn(),
   updateAdminSite: jest.fn(),
   fetchGitHubPublishConfig: (...args: unknown[]) => mockFetchGitHubPublishConfig(...args),
@@ -97,6 +99,108 @@ jest.mock("../../lib/api/client", () => ({
   fetchBusinessSettings: (...args: unknown[]) => mockFetchBusinessSettings(...args),
 }));
 
+type StaticIpDeleteResourceOptions = {
+  status?: string;
+  reasonCode?: string | null;
+  summary?: string;
+  ownershipStatus?: string;
+  ownershipMethod?: string;
+  deleteAttempted?: boolean;
+  deleteSelected?: boolean;
+};
+
+function buildStaticIpDeleteResource({
+  status = "found",
+  reasonCode = "static_ip_delete_ownership_verified",
+  summary = "Verified managed preview static IP ownership for this site.",
+  ownershipStatus = "verified",
+  ownershipMethod = "labels",
+  deleteAttempted = false,
+  deleteSelected = false,
+}: StaticIpDeleteResourceOptions = {}) {
+  const detailOwnershipMethod = ownershipMethod === "dns_fallback" ? "dns_name_fallback" : ownershipMethod;
+  return {
+    resource_type: "static_ip",
+    status,
+    reason_code: reasonCode,
+    summary,
+    static_ip_ownership_status: ownershipStatus,
+    static_ip_ownership_method: ownershipMethod,
+    static_ip_delete_attempted: deleteAttempted,
+    static_ip_delete_selected: deleteSelected,
+    static_ip_delete_reason_code: reasonCode,
+    static_ip_delete_safe_summary: summary,
+    details: {
+      ownership_status: ownershipStatus,
+      ownership_verification_method: detailOwnershipMethod,
+      static_ip_ownership_status: ownershipStatus,
+      static_ip_ownership_method: ownershipMethod,
+      static_ip_delete_attempted: deleteAttempted,
+      static_ip_delete_selected: deleteSelected,
+      static_ip_delete_reason_code: reasonCode,
+      static_ip_delete_safe_summary: summary,
+    },
+  };
+}
+
+function buildAdminSiteDeletePlan(staticIpResource: ReturnType<typeof buildStaticIpDeleteResource>) {
+  return {
+    reason_code: "site_delete_plan_ready",
+    site_id: "site-1",
+    site_name: "Site One",
+    domain: "site-one.example",
+    is_active: false,
+    generated_repo_owner: "managed-owner",
+    generated_repo_name: "site-one-repo",
+    kubernetes_namespace: "site-one",
+    preview_hostname: "site-one.preview.example.com",
+    static_ip_name: "site-one-ip",
+    managed_certificate_name: "site-one-cert",
+    dns_records_expected: [],
+    db_dependency_total: 0,
+    db_dependencies: [],
+    external_resources: [staticIpResource],
+    blockers: [],
+    warnings: [],
+    required_confirmation_phrase: "DELETE site-one.example",
+    execution_defaults: {
+      delete_github_repo: false,
+      delete_runtime_resources: false,
+      delete_dns_resources: false,
+      force_delete_active: false,
+    },
+  };
+}
+
+function buildAdminSiteDeleteResult(
+  staticIpResource: ReturnType<typeof buildStaticIpDeleteResource>,
+  overrides: Partial<{
+    reason_code: string;
+    message: string;
+    db_deleted: boolean;
+    site_deleted: boolean;
+    external_cleanup_selected: boolean;
+    external_cleanup_partial: boolean;
+  }> = {},
+) {
+  return {
+    reason_code: overrides.reason_code ?? "site_delete_completed",
+    message: overrides.message ?? "Site deleted from the control-plane database with partial external cleanup.",
+    site_id: "site-1",
+    site_name: "Site One",
+    domain: "site-one.example",
+    db_deleted: overrides.db_deleted ?? true,
+    site_deleted: overrides.site_deleted ?? true,
+    external_cleanup_selected: overrides.external_cleanup_selected ?? true,
+    external_cleanup_partial: overrides.external_cleanup_partial ?? false,
+    db_dependency_total: 0,
+    db_dependencies: [],
+    external_resources: [staticIpResource],
+    blockers: [],
+    warnings: [],
+  };
+}
+
 describe("admin route", () => {
   const expectHeadingOrder = (firstHeading: string, secondHeading: string) => {
     const first = screen.getByRole("heading", { name: firstHeading });
@@ -105,10 +209,49 @@ describe("admin route", () => {
     expect(relation & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   };
 
+  const setAdminSiteDeleteContext = () => {
+    mockUseAuth.mockReturnValue({
+      principal: {
+        business_id: "biz-1",
+        principal_id: "admin-delete-1",
+        display_name: "Admin Delete",
+        role: "admin",
+        is_active: true,
+      },
+    });
+    mockUseOperatorContext.mockReturnValue({
+      loading: false,
+      error: null,
+      token: "token-1",
+      businessId: "biz-1",
+      sites: [
+        {
+          id: "site-1",
+          business_id: "biz-1",
+          display_name: "Site One",
+          base_url: "https://site-one.example",
+          normalized_domain: "site-one.example",
+          search_console_property_url: null,
+          search_console_enabled: false,
+          is_active: false,
+          is_primary: true,
+          last_audit_run_id: null,
+          last_audit_status: null,
+          last_audit_completed_at: null,
+        },
+      ],
+      selectedSiteId: "site-1",
+      setSelectedSiteId: jest.fn(),
+      refreshSites: jest.fn(),
+    });
+  };
+
   beforeEach(() => {
     mockUpdateBusinessSettings.mockReset();
     mockFetchGitHubPublishConfig.mockReset();
     mockUpdateGitHubPublishConfig.mockReset();
+    mockPrepareAdminSiteDeletePlan.mockReset();
+    mockExecuteAdminSiteDelete.mockReset();
     mockFetchPrincipals.mockResolvedValue({ items: [], total: 0 });
     mockFetchPrincipalIdentities.mockResolvedValue({ items: [], total: 0 });
     mockFetchBusinessSettings.mockResolvedValue({
@@ -1400,6 +1543,172 @@ describe("admin route", () => {
     fireEvent.change(screen.getByLabelText("Provider timeout seconds"), { target: { value: "420" } });
     expect(preview).toHaveTextContent("420s / 300s / Yes");
     expect(preview).toHaveTextContent("Differences before save indicate pending edits.");
+  });
+
+  it.each([
+    [
+      "labels verification",
+      buildStaticIpDeleteResource(),
+      "Verified by labels.",
+      "static_ip_delete_ownership_verified",
+    ],
+    [
+      "DNS/name fallback verification",
+      buildStaticIpDeleteResource({
+        ownershipMethod: "dns_fallback",
+      }),
+      "Verified by DNS/name fallback.",
+      "static_ip_delete_ownership_verified",
+    ],
+    [
+      "unverified ownership",
+      buildStaticIpDeleteResource({
+        status: "blocked",
+        reasonCode: "static_ip_delete_skipped_unverified_ownership",
+        summary: "MBSRN could not prove that this static IP is managed by the selected site.",
+        ownershipStatus: "unverified",
+        ownershipMethod: "none",
+      }),
+      "Skipped: ownership unverified.",
+      "static_ip_delete_skipped_unverified_ownership",
+    ],
+    [
+      "shared preview gateway",
+      buildStaticIpDeleteResource({
+        status: "blocked",
+        reasonCode: "static_ip_delete_skipped_shared_gateway",
+        summary: "This static IP is configured as a shared preview gateway IP.",
+        ownershipStatus: "shared",
+        ownershipMethod: "none",
+      }),
+      "Skipped: shared preview gateway.",
+      "static_ip_delete_skipped_shared_gateway",
+    ],
+    [
+      "IP in use",
+      buildStaticIpDeleteResource({
+        status: "blocked",
+        reasonCode: "static_ip_delete_skipped_in_use",
+        summary: "This static IP is still in use by Google Cloud resources.",
+        ownershipStatus: "in_use",
+        ownershipMethod: "none",
+      }),
+      "Skipped: IP is in use.",
+      "static_ip_delete_skipped_in_use",
+    ],
+    [
+      "conflicting references",
+      buildStaticIpDeleteResource({
+        status: "blocked",
+        reasonCode: "static_ip_delete_skipped_conflicting_reference",
+        summary: "Another site configuration references this static IP or preview hostname.",
+        ownershipStatus: "conflicting_reference",
+        ownershipMethod: "none",
+      }),
+      "Skipped: referenced by another site/config.",
+      "static_ip_delete_skipped_conflicting_reference",
+    ],
+    [
+      "missing static IP",
+      buildStaticIpDeleteResource({
+        status: "not_found",
+        reasonCode: null,
+        summary: "No managed preview static IP was found for the expected project/name.",
+        ownershipStatus: "not_found",
+        ownershipMethod: "none",
+      }),
+      "Not found.",
+      null,
+    ],
+  ])(
+    "renders concise static-IP delete-plan diagnostics for %s",
+    async (_label, staticIpResource, expectedCopy, expectedReasonCode) => {
+      setAdminSiteDeleteContext();
+      mockPrepareAdminSiteDeletePlan.mockResolvedValue(buildAdminSiteDeletePlan(staticIpResource));
+
+      render(<AdminPage />);
+
+      await screen.findByLabelText("GitHub account/owner");
+      fireEvent.click(screen.getByRole("button", { name: "Prepare delete plan" }));
+
+      await waitFor(() => {
+        expect(mockPrepareAdminSiteDeletePlan).toHaveBeenCalledWith("token-1", "biz-1", "site-1");
+      });
+      expect(await screen.findByRole("heading", { name: "Permanent delete plan" })).toBeInTheDocument();
+      expect(screen.getAllByText(expectedCopy).length).toBeGreaterThanOrEqual(1);
+      expect(screen.getByText("Static IP verification")).toBeInTheDocument();
+      expect(screen.getByTestId("admin-site-delete-diagnostics")).toHaveTextContent(
+        `"static_ip_ownership_status": "${staticIpResource.static_ip_ownership_status}"`,
+      );
+      if (expectedReasonCode) {
+        expect(screen.getByTestId("admin-site-delete-diagnostics")).toHaveTextContent(expectedReasonCode);
+      }
+    },
+  );
+
+  it("preserves delete execution confirmation flow and renders static-IP failure diagnostics", async () => {
+    setAdminSiteDeleteContext();
+    const plan = buildAdminSiteDeletePlan(buildStaticIpDeleteResource());
+    mockPrepareAdminSiteDeletePlan.mockResolvedValue(plan);
+    mockExecuteAdminSiteDelete.mockResolvedValue(
+      buildAdminSiteDeleteResult(
+        buildStaticIpDeleteResource({
+          status: "failed",
+          reasonCode: "static_ip_delete_failed",
+          summary: "Managed preview static IP deletion request failed.",
+          deleteAttempted: true,
+          deleteSelected: true,
+        }),
+        {
+          external_cleanup_partial: true,
+        },
+      ),
+    );
+
+    render(<AdminPage />);
+
+    await screen.findByLabelText("GitHub account/owner");
+    fireEvent.click(screen.getByRole("button", { name: "Prepare delete plan" }));
+    expect(await screen.findByRole("heading", { name: "Permanent delete plan" })).toBeInTheDocument();
+
+    const executeButton = screen.getByRole("button", { name: "Execute permanent delete" });
+    expect(executeButton).toBeDisabled();
+
+    fireEvent.change(screen.getByLabelText("Confirmation phrase"), {
+      target: { value: plan.required_confirmation_phrase },
+    });
+    fireEvent.click(
+      screen.getByLabelText(/database records for this site will be permanently deleted/i),
+    );
+    expect(executeButton).toBeEnabled();
+
+    fireEvent.click(
+      screen.getByLabelText(/Delete verified managed DNS, static IP, and certificate resources/i),
+    );
+    expect(executeButton).toBeDisabled();
+
+    fireEvent.click(
+      screen.getByLabelText(/DNS\/static IP\/certificate cleanup affects public preview routing and TLS/i),
+    );
+    expect(executeButton).toBeEnabled();
+
+    fireEvent.click(executeButton);
+
+    await waitFor(() => {
+      expect(mockExecuteAdminSiteDelete).toHaveBeenCalledWith(
+        "token-1",
+        "biz-1",
+        "site-1",
+        expect.objectContaining({
+          confirmation_phrase: plan.required_confirmation_phrase,
+          acknowledge_delete_database_records: true,
+          delete_dns_resources: true,
+          acknowledge_delete_dns_resources: true,
+        }),
+      );
+    });
+    expect(await screen.findByText(/Delete failed after label verification\./)).toBeInTheDocument();
+    expect(screen.getByTestId("admin-site-delete-diagnostics")).toHaveTextContent("static_ip_delete_failed");
   });
 
   it("keeps /users as a compatibility route", async () => {

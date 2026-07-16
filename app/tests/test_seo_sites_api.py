@@ -779,6 +779,29 @@ def _install_static_ip_google_api(
     return calls
 
 
+def _assert_static_ip_diagnostic_surface(
+    resource,
+    *,
+    ownership_status: str,
+    ownership_method: str,
+    delete_selected: bool,
+    delete_attempted: bool,
+    delete_reason_code: str | None,
+) -> None:
+    assert resource["static_ip_ownership_status"] == ownership_status
+    assert resource["static_ip_ownership_method"] == ownership_method
+    assert resource["static_ip_delete_selected"] is delete_selected
+    assert resource["static_ip_delete_attempted"] is delete_attempted
+    assert resource["static_ip_delete_reason_code"] == delete_reason_code
+    assert resource["static_ip_delete_safe_summary"] == resource["summary"]
+    assert resource["details"]["static_ip_ownership_status"] == ownership_status
+    assert resource["details"]["static_ip_ownership_method"] == ownership_method
+    assert resource["details"]["static_ip_delete_selected"] is delete_selected
+    assert resource["details"]["static_ip_delete_attempted"] is delete_attempted
+    assert resource["details"]["static_ip_delete_reason_code"] == delete_reason_code
+    assert resource["details"]["static_ip_delete_safe_summary"] == resource["summary"]
+
+
 def test_seo_site_crud_and_business_scoping(db_session, seeded_business) -> None:
     other_business = Business(
         id=str(uuid4()),
@@ -1554,6 +1577,385 @@ def test_admin_site_delete_plan_blocks_unverified_static_ip_cleanup(
     assert static_ip_resource["details"]["ownership_status"] == "unverified"
     assert static_ip_resource["details"]["delete_eligible"] is False
     assert static_ip_resource["details"]["observed_address"] == "203.0.113.10"
+    _assert_static_ip_diagnostic_surface(
+        static_ip_resource,
+        ownership_status="unverified",
+        ownership_method="none",
+        delete_selected=False,
+        delete_attempted=False,
+        delete_reason_code="static_ip_delete_skipped_unverified_ownership",
+    )
+
+
+def test_admin_site_delete_plan_surfaces_label_verified_static_ip_diagnostics(
+    db_session, seeded_business, monkeypatch
+) -> None:
+    admin_principal = _seed_admin_principal(db_session=db_session, business_id=seeded_business.id)
+    delete_service, _ = _make_delete_service(
+        db_session,
+        cleanup_summary=_managed_static_ip_cleanup_summary(
+            repo_name="delete-me-site",
+            preview_hostname="delete-me.preview.example.com",
+            static_ip_name="delete-me-ip",
+        ),
+    )
+    delete_service._resolve_google_access_token = lambda **_: ("token", 15)
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        principal_id=admin_principal.id,
+        dependency_overrides={get_seo_site_delete_service: lambda: delete_service},
+    )
+
+    create_response = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites",
+        json={"display_name": "Delete Me", "base_url": "https://delete-me.example.com/", "is_active": False},
+    )
+    assert create_response.status_code == 201
+    site_id = create_response.json()["id"]
+    _install_static_ip_google_api(
+        monkeypatch,
+        address_payload={
+            "name": "delete-me-ip",
+            "address": "203.0.113.11",
+            "status": "RESERVED",
+            "addressType": "EXTERNAL",
+            "ipVersion": "IPV4",
+            "users": [],
+            "labels": {
+                "mbsrn-managed-by": "mbsrn",
+                "mbsrn-site-id": site_id,
+                "mbsrn-repo": "delete-me-site",
+                "mbsrn-preview-hostname": "delete-me-preview-example-com",
+            },
+            "labelFingerprint": "fingerprint-1",
+        },
+    )
+
+    plan_response = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/admin/sites/{site_id}/delete-plan",
+    )
+    assert plan_response.status_code == 200
+    static_ip_resource = next(
+        item for item in plan_response.json()["external_resources"] if item["resource_type"] == "static_ip"
+    )
+    assert static_ip_resource["status"] == "found"
+    assert static_ip_resource["reason_code"] == "static_ip_delete_ownership_verified"
+    assert static_ip_resource["details"]["ownership_status"] == "verified"
+    assert static_ip_resource["details"]["ownership_verification_method"] == "labels"
+    assert static_ip_resource["details"]["delete_eligible"] is True
+    _assert_static_ip_diagnostic_surface(
+        static_ip_resource,
+        ownership_status="verified",
+        ownership_method="labels",
+        delete_selected=False,
+        delete_attempted=False,
+        delete_reason_code="static_ip_delete_ownership_verified",
+    )
+
+
+def test_admin_site_delete_plan_surfaces_dns_fallback_static_ip_diagnostics(
+    db_session, seeded_business, monkeypatch
+) -> None:
+    admin_principal = _seed_admin_principal(db_session=db_session, business_id=seeded_business.id)
+    delete_service, _ = _make_delete_service(
+        db_session,
+        cleanup_summary=_managed_static_ip_cleanup_summary(
+            repo_name="delete-me-site",
+            preview_hostname="delete-me.preview.example.com",
+            static_ip_name="delete-me-ip",
+            dns_managed_zone="preview-zone",
+            dns_project_id="dns-project-1",
+        ),
+    )
+    delete_service._resolve_google_access_token = lambda **_: ("token", 15)
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        principal_id=admin_principal.id,
+        dependency_overrides={get_seo_site_delete_service: lambda: delete_service},
+    )
+
+    create_response = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites",
+        json={"display_name": "Delete Me", "base_url": "https://delete-me.example.com/", "is_active": False},
+    )
+    assert create_response.status_code == 201
+    site_id = create_response.json()["id"]
+    _install_static_ip_google_api(
+        monkeypatch,
+        address_payload={
+            "name": "delete-me-ip",
+            "address": "203.0.113.12",
+            "status": "RESERVED",
+            "addressType": "EXTERNAL",
+            "ipVersion": "IPV4",
+            "users": [],
+        },
+        dns_a_rrset={
+            "name": "delete-me.preview.example.com.",
+            "type": "A",
+            "ttl": 300,
+            "rrdatas": ["203.0.113.12"],
+        },
+    )
+
+    plan_response = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/admin/sites/{site_id}/delete-plan",
+    )
+    assert plan_response.status_code == 200
+    static_ip_resource = next(
+        item for item in plan_response.json()["external_resources"] if item["resource_type"] == "static_ip"
+    )
+    assert static_ip_resource["status"] == "found"
+    assert static_ip_resource["reason_code"] == "static_ip_delete_ownership_verified"
+    assert static_ip_resource["details"]["ownership_status"] == "verified"
+    assert static_ip_resource["details"]["ownership_verification_method"] == "dns_name_fallback"
+    assert static_ip_resource["details"]["delete_eligible"] is True
+    _assert_static_ip_diagnostic_surface(
+        static_ip_resource,
+        ownership_status="verified",
+        ownership_method="dns_fallback",
+        delete_selected=False,
+        delete_attempted=False,
+        delete_reason_code="static_ip_delete_ownership_verified",
+    )
+
+
+def test_admin_site_delete_plan_reports_shared_static_ip_cleanup_state(
+    db_session, seeded_business, monkeypatch
+) -> None:
+    admin_principal = _seed_admin_principal(db_session=db_session, business_id=seeded_business.id)
+    delete_service, _ = _make_delete_service(
+        db_session,
+        cleanup_summary=_managed_static_ip_cleanup_summary(
+            repo_name="delete-me-site",
+            static_ip_name="shared-preview-ip",
+            shared_preview_static_ip_name="shared-preview-ip",
+            uses_shared_preview_gateway=True,
+        ),
+    )
+    delete_service._resolve_google_access_token = lambda **_: ("token", 15)
+    _install_static_ip_google_api(
+        monkeypatch,
+        address_payload={
+            "name": "shared-preview-ip",
+            "address": "203.0.113.14",
+            "status": "RESERVED",
+            "addressType": "EXTERNAL",
+            "ipVersion": "IPV4",
+            "users": [],
+        },
+    )
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        principal_id=admin_principal.id,
+        dependency_overrides={get_seo_site_delete_service: lambda: delete_service},
+    )
+
+    create_response = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites",
+        json={"display_name": "Delete Me", "base_url": "https://delete-me.example.com/", "is_active": False},
+    )
+    assert create_response.status_code == 201
+    site_id = create_response.json()["id"]
+
+    plan_response = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/admin/sites/{site_id}/delete-plan",
+    )
+    assert plan_response.status_code == 200
+    static_ip_resource = next(
+        item for item in plan_response.json()["external_resources"] if item["resource_type"] == "static_ip"
+    )
+    assert static_ip_resource["status"] == "blocked"
+    assert static_ip_resource["reason_code"] == "static_ip_delete_skipped_shared_gateway"
+    assert static_ip_resource["details"]["ownership_status"] == "shared"
+    assert static_ip_resource["details"]["delete_eligible"] is False
+    _assert_static_ip_diagnostic_surface(
+        static_ip_resource,
+        ownership_status="shared",
+        ownership_method="none",
+        delete_selected=False,
+        delete_attempted=False,
+        delete_reason_code="static_ip_delete_skipped_shared_gateway",
+    )
+
+
+def test_admin_site_delete_plan_reports_in_use_static_ip_cleanup_state(
+    db_session, seeded_business, monkeypatch
+) -> None:
+    admin_principal = _seed_admin_principal(db_session=db_session, business_id=seeded_business.id)
+    delete_service, _ = _make_delete_service(
+        db_session,
+        cleanup_summary=_managed_static_ip_cleanup_summary(
+            repo_name="delete-me-site",
+            static_ip_name="delete-me-ip",
+        ),
+    )
+    delete_service._resolve_google_access_token = lambda **_: ("token", 15)
+    _install_static_ip_google_api(
+        monkeypatch,
+        address_payload={
+            "name": "delete-me-ip",
+            "address": "203.0.113.13",
+            "status": "IN_USE",
+            "addressType": "EXTERNAL",
+            "ipVersion": "IPV4",
+            "users": ["https://compute.googleapis.com/compute/v1/projects/project-1/global/forwardingRules/site-web"],
+        },
+    )
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        principal_id=admin_principal.id,
+        dependency_overrides={get_seo_site_delete_service: lambda: delete_service},
+    )
+
+    create_response = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites",
+        json={"display_name": "Delete Me", "base_url": "https://delete-me.example.com/", "is_active": False},
+    )
+    assert create_response.status_code == 201
+    site_id = create_response.json()["id"]
+
+    plan_response = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/admin/sites/{site_id}/delete-plan",
+    )
+    assert plan_response.status_code == 200
+    static_ip_resource = next(
+        item for item in plan_response.json()["external_resources"] if item["resource_type"] == "static_ip"
+    )
+    assert static_ip_resource["status"] == "blocked"
+    assert static_ip_resource["reason_code"] == "static_ip_delete_skipped_in_use"
+    assert static_ip_resource["details"]["ownership_status"] == "in_use"
+    assert static_ip_resource["details"]["delete_eligible"] is False
+    _assert_static_ip_diagnostic_surface(
+        static_ip_resource,
+        ownership_status="in_use",
+        ownership_method="none",
+        delete_selected=False,
+        delete_attempted=False,
+        delete_reason_code="static_ip_delete_skipped_in_use",
+    )
+
+
+def test_admin_site_delete_plan_reports_conflicting_static_ip_cleanup_state(
+    db_session, seeded_business, monkeypatch
+) -> None:
+    admin_principal = _seed_admin_principal(db_session=db_session, business_id=seeded_business.id)
+    delete_service, _ = _make_delete_service(db_session)
+    delete_service._resolve_google_access_token = lambda **_: ("token", 15)
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        principal_id=admin_principal.id,
+        dependency_overrides={get_seo_site_delete_service: lambda: delete_service},
+    )
+
+    create_one = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites",
+        json={"display_name": "Delete Me", "base_url": "https://delete-me.example.com/", "is_active": False},
+    )
+    create_two = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites",
+        json={"display_name": "Keep Me", "base_url": "https://keep-me.example.com/", "is_active": False},
+    )
+    assert create_one.status_code == 201
+    assert create_two.status_code == 201
+    delete_site_id = create_one.json()["id"]
+    keep_site_id = create_two.json()["id"]
+    delete_service.seo_migration_service.cleanup_summaries_by_site_id = {
+        delete_site_id: _managed_static_ip_cleanup_summary(
+            repo_name="delete-me-site",
+            preview_hostname="delete-me.preview.example.com",
+            static_ip_name="shared-delete-ip",
+        ),
+        keep_site_id: _managed_static_ip_cleanup_summary(
+            repo_name="keep-me-site",
+            preview_hostname="keep-me.preview.example.com",
+            static_ip_name="shared-delete-ip",
+        ),
+    }
+    _install_static_ip_google_api(
+        monkeypatch,
+        address_payload={
+            "name": "shared-delete-ip",
+            "address": "203.0.113.15",
+            "status": "RESERVED",
+            "addressType": "EXTERNAL",
+            "ipVersion": "IPV4",
+            "users": [],
+        },
+    )
+
+    plan_response = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/admin/sites/{delete_site_id}/delete-plan",
+    )
+    assert plan_response.status_code == 200
+    static_ip_resource = next(
+        item for item in plan_response.json()["external_resources"] if item["resource_type"] == "static_ip"
+    )
+    assert static_ip_resource["status"] == "blocked"
+    assert static_ip_resource["reason_code"] == "static_ip_delete_skipped_conflicting_reference"
+    assert static_ip_resource["details"]["ownership_status"] == "conflicting_reference"
+    assert static_ip_resource["details"]["conflicting_reference_count"] == 1
+    _assert_static_ip_diagnostic_surface(
+        static_ip_resource,
+        ownership_status="conflicting_reference",
+        ownership_method="none",
+        delete_selected=False,
+        delete_attempted=False,
+        delete_reason_code="static_ip_delete_skipped_conflicting_reference",
+    )
+
+
+def test_admin_site_delete_plan_reports_missing_static_ip_cleanup_state(
+    db_session, seeded_business, monkeypatch
+) -> None:
+    admin_principal = _seed_admin_principal(db_session=db_session, business_id=seeded_business.id)
+    delete_service, _ = _make_delete_service(
+        db_session,
+        cleanup_summary=_managed_static_ip_cleanup_summary(
+            repo_name="delete-me-site",
+            static_ip_name="delete-me-ip",
+        ),
+    )
+    delete_service._resolve_google_access_token = lambda **_: ("token", 15)
+    _install_static_ip_google_api(monkeypatch)
+    client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        principal_id=admin_principal.id,
+        dependency_overrides={get_seo_site_delete_service: lambda: delete_service},
+    )
+
+    create_response = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites",
+        json={"display_name": "Delete Me", "base_url": "https://delete-me.example.com/", "is_active": False},
+    )
+    assert create_response.status_code == 201
+    site_id = create_response.json()["id"]
+
+    plan_response = client.post(
+        f"/api/businesses/{seeded_business.id}/seo/admin/sites/{site_id}/delete-plan",
+    )
+    assert plan_response.status_code == 200
+    static_ip_resource = next(
+        item for item in plan_response.json()["external_resources"] if item["resource_type"] == "static_ip"
+    )
+    assert static_ip_resource["status"] == "not_found"
+    assert static_ip_resource["reason_code"] is None
+    assert static_ip_resource["details"]["ownership_status"] == "not_found"
+    assert static_ip_resource["details"]["delete_eligible"] is False
+    _assert_static_ip_diagnostic_surface(
+        static_ip_resource,
+        ownership_status="not_found",
+        ownership_method="none",
+        delete_selected=False,
+        delete_attempted=False,
+        delete_reason_code=None,
+    )
 
 
 def test_admin_site_delete_execute_deletes_label_verified_static_ip(
@@ -1629,6 +2031,14 @@ def test_admin_site_delete_execute_deletes_label_verified_static_ip(
     assert static_ip_result["details"]["ownership_status"] == "verified"
     assert static_ip_result["details"]["ownership_verification_method"] == "labels"
     assert static_ip_result["details"]["delete_eligible"] is True
+    _assert_static_ip_diagnostic_surface(
+        static_ip_result,
+        ownership_status="verified",
+        ownership_method="labels",
+        delete_selected=True,
+        delete_attempted=True,
+        delete_reason_code="static_ip_deleted",
+    )
     assert google_calls["delete_urls"]
     assert client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}").status_code == 404
 
@@ -1703,6 +2113,14 @@ def test_admin_site_delete_execute_deletes_static_ip_with_dns_fallback(
     assert static_ip_result["reason_code"] == "static_ip_deleted"
     assert static_ip_result["details"]["ownership_status"] == "verified"
     assert static_ip_result["details"]["ownership_verification_method"] == "dns_name_fallback"
+    _assert_static_ip_diagnostic_surface(
+        static_ip_result,
+        ownership_status="verified",
+        ownership_method="dns_fallback",
+        delete_selected=True,
+        delete_attempted=True,
+        delete_reason_code="static_ip_deleted",
+    )
     assert google_calls["delete_urls"]
 
 
@@ -1768,6 +2186,14 @@ def test_admin_site_delete_execute_skips_static_ip_when_in_use(
     assert static_ip_result["reason_code"] == "static_ip_delete_skipped_in_use"
     assert static_ip_result["details"]["ownership_status"] == "in_use"
     assert static_ip_result["details"]["delete_eligible"] is False
+    _assert_static_ip_diagnostic_surface(
+        static_ip_result,
+        ownership_status="in_use",
+        ownership_method="none",
+        delete_selected=True,
+        delete_attempted=False,
+        delete_reason_code="static_ip_delete_skipped_in_use",
+    )
     assert google_calls["delete_urls"] == []
 
 
@@ -1834,6 +2260,14 @@ def test_admin_site_delete_execute_skips_shared_gateway_static_ip(
     assert static_ip_result["status"] == "skipped"
     assert static_ip_result["reason_code"] == "static_ip_delete_skipped_shared_gateway"
     assert static_ip_result["details"]["ownership_status"] == "shared"
+    _assert_static_ip_diagnostic_surface(
+        static_ip_result,
+        ownership_status="shared",
+        ownership_method="none",
+        delete_selected=True,
+        delete_attempted=False,
+        delete_reason_code="static_ip_delete_skipped_shared_gateway",
+    )
     assert int(google_calls["address_get_count"]) == plan_get_count + 1
     assert google_calls["delete_urls"] == []
 
@@ -1912,6 +2346,14 @@ def test_admin_site_delete_execute_skips_conflicting_static_ip_reference(
     assert static_ip_result["details"]["ownership_status"] == "conflicting_reference"
     assert static_ip_result["details"]["conflicting_reference_count"] == 1
     assert "static_ip_name" in static_ip_result["details"]["conflicting_reference_types"]
+    _assert_static_ip_diagnostic_surface(
+        static_ip_result,
+        ownership_status="conflicting_reference",
+        ownership_method="none",
+        delete_selected=True,
+        delete_attempted=False,
+        delete_reason_code="static_ip_delete_skipped_conflicting_reference",
+    )
     assert google_calls["delete_urls"] == []
     assert client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{keep_site_id}").status_code == 200
 
@@ -2004,6 +2446,14 @@ def test_admin_site_delete_execute_revalidates_static_ip_before_delete(
     assert static_ip_result["status"] == "skipped"
     assert static_ip_result["reason_code"] == "static_ip_delete_skipped_in_use"
     assert static_ip_result["details"]["ownership_status"] == "in_use"
+    _assert_static_ip_diagnostic_surface(
+        static_ip_result,
+        ownership_status="in_use",
+        ownership_method="none",
+        delete_selected=True,
+        delete_attempted=False,
+        delete_reason_code="static_ip_delete_skipped_in_use",
+    )
     assert int(google_calls["address_get_count"]) == 2
     assert google_calls["delete_urls"] == []
 
@@ -2078,6 +2528,14 @@ def test_admin_site_delete_execute_reports_static_ip_delete_failure_after_verifi
     assert static_ip_result["status"] == "failed"
     assert static_ip_result["reason_code"] == "static_ip_delete_failed"
     assert "publisher_reason_code" not in static_ip_result["details"]
+    _assert_static_ip_diagnostic_surface(
+        static_ip_result,
+        ownership_status="verified",
+        ownership_method="labels",
+        delete_selected=True,
+        delete_attempted=True,
+        delete_reason_code="static_ip_delete_failed",
+    )
     assert google_calls["delete_urls"]
 
 
@@ -2224,6 +2682,15 @@ def test_admin_can_execute_permanent_site_delete_and_remove_dynamic_site_owned_r
     assert result["external_cleanup_selected"] is False
     assert result["external_cleanup_partial"] is False
     assert all(item["reason_code"] == "external_cleanup_not_selected" for item in result["external_resources"])
+    static_ip_result = next(item for item in result["external_resources"] if item["resource_type"] == "static_ip")
+    _assert_static_ip_diagnostic_surface(
+        static_ip_result,
+        ownership_status="unknown",
+        ownership_method="not_applicable",
+        delete_selected=False,
+        delete_attempted=False,
+        delete_reason_code="external_cleanup_not_selected",
+    )
 
     deleted_site_read = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{delete_site_id}")
     assert deleted_site_read.status_code == 404

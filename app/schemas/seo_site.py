@@ -162,6 +162,12 @@ class SEOSiteDeleteResourceRead(BaseModel):
     status: str = Field(min_length=1, max_length=40)
     reason_code: str | None = Field(default=None, max_length=120)
     summary: str = Field(min_length=1, max_length=500)
+    static_ip_ownership_status: str | None = Field(default=None, max_length=40)
+    static_ip_ownership_method: str | None = Field(default=None, max_length=40)
+    static_ip_delete_attempted: bool | None = None
+    static_ip_delete_selected: bool | None = None
+    static_ip_delete_reason_code: str | None = Field(default=None, max_length=120)
+    static_ip_delete_safe_summary: str | None = Field(default=None, max_length=500)
     details: dict[str, Any] = Field(default_factory=dict)
 
 
