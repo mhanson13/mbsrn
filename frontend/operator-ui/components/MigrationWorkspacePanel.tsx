@@ -4447,6 +4447,10 @@ export function MigrationWorkspacePanel({
     }
     return true;
   });
+  const artifactMediaHasPrivateUrlBlocker = artifactMediaBlockingReasonsForDraftInput.some((item) => {
+    const normalized = item.trim().toLowerCase();
+    return normalized.includes("private app/control-plane") || normalized.includes("private or signed storage");
+  });
   const artifactMediaHasRealBlocker =
     artifactMediaBlockingCodesForDraftInput.length > 0 || artifactMediaBlockingReasonsForDraftInput.length > 0;
   const mediaRequirementSatisfied =
@@ -8135,7 +8139,7 @@ export function MigrationWorkspacePanel({
           You do not need to paste manual @image references for normal image usage.
         </span>
         <span className="hint muted" data-testid="migration-requirements-image-reference-hint-secondary">
-          Use requirements text for placement intent only (for example, hero vs gallery). Generated HTML must use
+          Use requirements text for placement intent only (for example, hero vs gallery). Generated output must use
           artifact paths such as <code>assets/images/&lt;filename&gt;</code>.
         </span>
         <div className="migration-requirement-grid">
@@ -8714,7 +8718,9 @@ export function MigrationWorkspacePanel({
         ) : null}
         {artifactMediaUnresolvedReferencesCount > 0 ? (
           <span className="hint warning" data-testid="migration-artifact-media-unresolved-warning">
-            Generated HTML still contains unresolved image references. Publish/deploy remains blocked until resolved.
+            {artifactMediaHasPrivateUrlBlocker
+              ? "Generated output references private app/control-plane or storage media URLs. Publish/deploy remains blocked until those references use artifact paths."
+              : "Generated output still contains unresolved image references. Publish/deploy remains blocked until resolved."}
           </span>
         ) : null}
         {artifactMediaSelectedUnusedCount > 0 || artifactMediaUnreferencedMaterializedCount > 0 ? (

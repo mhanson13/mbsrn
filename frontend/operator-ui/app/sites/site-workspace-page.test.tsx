@@ -3023,6 +3023,47 @@ describe("site migration workflow route", () => {
     expect(screen.queryByTestId("migration-artifact-media-readiness-blockers")).not.toBeInTheDocument();
   });
 
+  it("shows private generated-media URL blockers without exposing raw URLs", async () => {
+    const summary = buildMigrationWorkspaceSummary();
+    summary.context_summary = {
+      ...summary.context_summary,
+      draft_input_summary: {
+        artifact_media_selected_assets_count: 2,
+        artifact_media_materialized_assets_count: 2,
+        artifact_media_referenced_paths_count: 2,
+        artifact_media_unresolved_references_count: 2,
+        artifact_media_selected_not_materialized_count: 0,
+        artifact_media_unreferenced_materialized_count: 0,
+        artifact_media_ready_for_publish_deploy: false,
+        artifact_media_blocker_codes: ["artifact_media_reference_not_deployable"],
+        artifact_media_blocker_reasons: [
+          "Generated output references private app/control-plane preview or media URLs. Use artifact paths such as assets/images/<filename>.",
+          "Generated output references private or signed storage media URLs. Use artifact paths such as assets/images/<filename>.",
+        ],
+      },
+    };
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(summary);
+    mockFetchMigrationArtifactVersions.mockResolvedValueOnce({
+      items: [summary.latest_artifact as MigrationArtifactVersion],
+      total: 1,
+    });
+
+    render(<SiteMigrationWorkflowPage />);
+
+    expect(await screen.findByTestId("migration-artifact-media-unresolved-warning")).toHaveTextContent(
+      "Generated output references private app/control-plane or storage media URLs.",
+    );
+    expect(screen.getByTestId("migration-artifact-media-readiness-blockers")).toHaveTextContent(
+      "private app/control-plane preview or media URLs.",
+    );
+    expect(
+      screen.queryByText(
+        "https://app.mbsrn.com/api/businesses/biz-1/seo/sites/site-1/migration/media/assets/upl-1/preview",
+      ),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/X-Goog-Signature/i)).not.toBeInTheDocument();
+  });
+
   it("renders Section D as a single Draft Artifact Review surface with top action row and quality directly below", async () => {
     render(<SiteMigrationWorkflowPage />);
 
@@ -4330,7 +4371,7 @@ describe("site migration workflow route", () => {
       "Selected usable Site Images are included automatically in draft context and materialized into artifact assets.",
     );
     expect(within(requirements).getByTestId("migration-requirements-image-reference-hint-secondary")).toHaveTextContent(
-      "Generated HTML must use artifact paths such as assets/images/<filename>.",
+      "Generated output must use artifact paths such as assets/images/<filename>.",
     );
   });
 

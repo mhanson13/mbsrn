@@ -2806,16 +2806,16 @@ Required behavior:
 - provider context supplies canonical `artifact_path` values for selected media, and generated output is normalized to that path convention
 - generated image references like `assets/<filename>` are normalized to canonical `assets/images/<filename>` when they match selected media
 - approved artifacts with stale media diagnostics can be repaired deterministically during publish preparation (materialize selected media + normalize references) when bytes are still available; operator should not need manual filename mapping
-- generated HTML must reference deployable artifact paths, not internal media IDs (`upl-...`) and not unresolved `@image(...)` placeholders
+- generated output must reference deployable artifact paths, not internal media IDs (`upl-...`), unresolved `@image(...)` placeholders, app/control-plane preview URLs, or storage/signed media URLs
 - publish payloads include both generated HTML/CSS and the materialized image files
 - artifact read payloads remain bounded and do not expose raw base64 media blobs directly in API JSON responses
 
 Readiness/cutover blockers now include:
-- unresolved internal media references remain in generated HTML (`src=\"upl-...\"`)
-- unresolved `@image(...)` references remain in generated HTML
+- unresolved internal media references remain in generated output (`src=\"upl-...\"`)
+- unresolved `@image(...)` references remain in generated output
 - unresolved generated image paths that do not map to materialized artifact files
-- generated HTML references image paths that are missing from artifact files
-- generated HTML references internal/private media routes or unsafe paths
+- generated output references image paths that are missing from artifact files
+- generated output references private app/control-plane preview/media URLs, storage/signed media URLs, or other unsafe local/private paths
 
 Pending-generation status (non-blocking in draft preflight):
 - if selected usable images were added after the currently selected artifact snapshot, draft input summary may show `selected_media_pending_generation`
@@ -2825,6 +2825,7 @@ Pending-generation status (non-blocking in draft preflight):
 - selected media not yet present in the selected artifact package is advisory only unless generated output references missing image paths
 - legacy advisory codes (`selected_media_available_not_referenced`, `selected_media_not_materialized`) remain read-compatible and are normalized to the current advisory set in API/UI output
 - media blockers are driven by broken generated output references (missing `assets/images/*`, unresolved `@image(...)`, unresolved `upl-...`, or non-deployable/private URL references)
+- private generated-output URLs are redacted in API/UI diagnostics; readiness surfaces expose blocker categories and remediation text, not raw private URLs
 
 Readiness evidence notes:
 - media readiness is artifact-version-specific and includes selected-media IDs, expected artifact paths, matched artifact paths, and missing artifact paths

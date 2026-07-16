@@ -13,6 +13,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.core.config import get_settings
 from app.core.time import utc_now
 from app.integrations.seo_migration_artifact_provider import (
     OpenAISEOMigrationArtifactGenerationProvider,
@@ -1622,7 +1623,11 @@ def _seed_reused_context_records(db_session, *, business_id: str, site_id: str) 
     db_session.commit()
 
 
-def _build_publishable_output(*, index_content: str | None = None) -> SEOMigrationArtifactGenerationOutput:
+def _build_publishable_output(
+    *,
+    index_content: str | None = None,
+    styles_content: str | None = None,
+) -> SEOMigrationArtifactGenerationOutput:
     return SEOMigrationArtifactGenerationOutput(
         strategy_summary="Draft strategy",
         page_map=[{"path": "/", "title": "Home"}],
@@ -1642,7 +1647,7 @@ def _build_publishable_output(*, index_content: str | None = None) -> SEOMigrati
             SEOMigrationGeneratedFileOutput(
                 path="styles.css",
                 media_type="text/css",
-                content="body { color: #111; }",
+                content=styles_content or "body { color: #111; }",
             ),
         ],
         provider_name="mock",
@@ -4904,6 +4909,86 @@ def test_publish_and_deploy_readiness_block_when_artifact_media_references_are_u
     assert isinstance(deploy_media, dict)
     assert deploy_media.get("ready") is False
     assert "deploy_artifact_media_invalid" in list(deploy_readiness.get("blocker_codes") or [])
+
+
+def test_publish_and_deploy_readiness_block_when_generated_output_uses_private_app_and_storage_media_urls(
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("API_CORS_ALLOWED_ORIGINS", "https://operator.internal.example")
+    get_settings.cache_clear()
+    try:
+        business_id, site_id = _seed_business_and_site(db_session)
+        preview_media_url = (
+            "https://operator.internal.example"
+            f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/media/assets/upl-private-preview/preview"
+        )
+        storage_media_url = (
+            "https://storage.googleapis.com/private-bucket/hero.png"
+            "?X-Goog-Algorithm=GOOG4-RSA-SHA256"
+            "&X-Goog-Credential=test%2Fcredential"
+            "&X-Goog-Signature=secret-signature"
+        )
+        provider = _StaticMigrationProvider(
+            _build_publishable_output(
+                index_content=(
+                    "<html><head><!-- ANALYTICS_PLACEHOLDER --></head><body>"
+                    f"<img src=\"{preview_media_url}\" alt=\"preview\" />"
+                    "</body></html>"
+                ),
+                styles_content=f"body {{ background-image: url('{storage_media_url}'); }}",
+            )
+        )
+        service = _build_service(db_session, provider)
+        _seed_workspace(service, business_id=business_id, site_id=site_id)
+        _configure_publish_target(service, business_id=business_id, site_id=site_id)
+        _configure_deploy_target(service, business_id=business_id, site_id=site_id)
+
+        artifact = service.generate_draft_artifacts(
+            business_id=business_id,
+            site_id=site_id,
+            principal_id="principal-1",
+        )
+        service.approve_artifact_version(
+            business_id=business_id,
+            site_id=site_id,
+            artifact_version_id=artifact.id,
+            approval_notes=None,
+            principal_id="principal-1",
+        )
+        summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
+        publish_readiness = summary.publish_readiness if isinstance(summary.publish_readiness, dict) else {}
+        deploy_readiness = summary.deploy_readiness if isinstance(summary.deploy_readiness, dict) else {}
+        publish_media = publish_readiness.get("artifact_media_readiness")
+        deploy_media = deploy_readiness.get("artifact_media_readiness")
+
+        assert isinstance(publish_media, dict)
+        assert publish_media.get("ready") is False
+        assert "artifact_media_reference_not_deployable" in list(publish_media.get("blocker_codes") or [])
+        reason_counts = publish_media.get("invalid_media_reference_reason_counts")
+        assert isinstance(reason_counts, dict)
+        assert reason_counts.get("artifact_media_app_private_url") == 1
+        assert reason_counts.get("artifact_media_private_storage_url") == 1
+        blocker_reasons = [str(item).lower() for item in (publish_media.get("reasons") or [])]
+        assert any("private app/control-plane preview or media urls" in item for item in blocker_reasons)
+        assert any("private or signed storage media urls" in item for item in blocker_reasons)
+        invalid_references = [str(item).lower() for item in (publish_media.get("invalid_media_references") or [])]
+        assert "private app/control-plane media url" in invalid_references
+        assert "private or signed storage media url" in invalid_references
+        serialized_publish_media = json.dumps(publish_media).lower()
+        assert "operator.internal.example" not in serialized_publish_media
+        assert "storage.googleapis.com" not in serialized_publish_media
+        assert "x-goog-signature" not in serialized_publish_media
+        assert "publish_artifact_media_invalid" in list(publish_readiness.get("blocker_codes") or [])
+
+        assert isinstance(deploy_media, dict)
+        assert deploy_media.get("ready") is False
+        assert "deploy_artifact_media_invalid" in list(deploy_readiness.get("blocker_codes") or [])
+        serialized_deploy_media = json.dumps(deploy_media).lower()
+        assert "operator.internal.example" not in serialized_deploy_media
+        assert "storage.googleapis.com" not in serialized_deploy_media
+    finally:
+        get_settings.cache_clear()
 
 
 def test_generate_artifacts_flags_selected_media_not_materialized_when_storage_bytes_missing(db_session) -> None:

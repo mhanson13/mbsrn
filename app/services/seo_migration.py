@@ -22,6 +22,7 @@ from uuid import uuid4
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.core.log_sanitizer import sanitize_log_payload
 from app.core.time import utc_now
 from app.core.runtime_metadata import get_runtime_build_metadata
@@ -298,6 +299,42 @@ _ARTIFACT_IMAGE_TOKEN_PATTERN = re.compile(r"@image\(([^)]+)\)", re.IGNORECASE)
 _ARTIFACT_IMAGE_SRC_PATTERN = re.compile(
     r"""(<(?:img|source)\b[^>]*?\bsrc\s*=\s*)(["'])([^"']+)\2""",
     re.IGNORECASE,
+)
+_ARTIFACT_CSS_URL_PATTERN = re.compile(
+    r"""url\(\s*(?:"([^"]+)"|'([^']+)'|([^)"']+))\s*\)""",
+    re.IGNORECASE,
+)
+_ARTIFACT_MEDIA_INVALID_REFERENCE_APP_PRIVATE_URL = "artifact_media_app_private_url"
+_ARTIFACT_MEDIA_INVALID_REFERENCE_PRIVATE_STORAGE_URL = "artifact_media_private_storage_url"
+_ARTIFACT_MEDIA_INVALID_REFERENCE_NON_DEPLOYABLE_URL = "artifact_media_non_deployable_url"
+_ARTIFACT_CONTROL_PLANE_DEFAULT_HOSTS = {"app.mbsrn.com"}
+_ARTIFACT_SIGNED_STORAGE_QUERY_KEYS = {
+    "x-goog-algorithm",
+    "x-goog-credential",
+    "x-goog-date",
+    "x-goog-expires",
+    "x-goog-signature",
+    "x-amz-algorithm",
+    "x-amz-credential",
+    "x-amz-date",
+    "x-amz-expires",
+    "x-amz-signature",
+    "googleaccessid",
+    "signature",
+    "sig",
+}
+_ARTIFACT_PRIVATE_STORAGE_HOSTS = {
+    "storage.googleapis.com",
+    "storage.cloud.google.com",
+    "s3.amazonaws.com",
+}
+_ARTIFACT_PRIVATE_STORAGE_HOST_SUFFIXES = (
+    ".storage.googleapis.com",
+    ".storage-download.googleapis.com",
+    ".blob.core.windows.net",
+    ".digitaloceanspaces.com",
+    ".r2.cloudflarestorage.com",
+    ".s3.amazonaws.com",
 )
 _ANALYTICS_SCRIPT_PATTERN = re.compile(
     r"<script[^>]*>(?:(?!</script>).)*(googletagmanager|google-analytics|gtag|analytics)[\s\S]*?</script>",
@@ -22138,6 +22175,7 @@ class SEOMigrationService:
         unresolved_internal_ids: set[str] = set()
         unresolved_image_tokens: set[str] = set()
         invalid_media_references: set[str] = set()
+        invalid_media_reference_reason_counts: dict[str, int] = {}
         referenced_media_paths: set[str] = set()
         unresolved_generated_media_paths: set[str] = set()
         for raw_item in generated_files:
@@ -22146,66 +22184,57 @@ class SEOMigrationService:
             if path is None:
                 continue
             content = _normalize_generated_content(item.get("content"))
-            if content is None or not path.lower().endswith(".html"):
+            if content is None:
                 rewritten.append(item)
                 continue
+            updated_content = content
+            if path.lower().endswith(".html"):
 
-            def _replace_src(match: re.Match[str]) -> str:
-                prefix, quote_char, raw_src = match.group(1), match.group(2), match.group(3)
-                replacement_path = _resolve_media_reference_path(
-                    raw_reference=raw_src,
-                    html_path=path,
-                    asset_path_by_id=asset_path_by_id,
-                    asset_aliases=asset_aliases,
+                def _replace_src(match: re.Match[str]) -> str:
+                    prefix, quote_char, raw_src = match.group(1), match.group(2), match.group(3)
+                    replacement_path = _resolve_media_reference_path(
+                        raw_reference=raw_src,
+                        html_path=path,
+                        asset_path_by_id=asset_path_by_id,
+                        asset_aliases=asset_aliases,
+                    )
+                    if replacement_path is None:
+                        return match.group(0)
+                    relative_reference = _relative_artifact_path(from_path=path, to_path=replacement_path)
+                    return f"{prefix}{quote_char}{relative_reference}{quote_char}"
+
+                updated_content = _ARTIFACT_IMAGE_SRC_PATTERN.sub(_replace_src, updated_content)
+
+                def _replace_image_token(match: re.Match[str]) -> str:
+                    token_value = _normalize_media_reference_token(match.group(1))
+                    if token_value is None:
+                        return match.group(0)
+                    replacement_path = asset_aliases.get(token_value)
+                    if replacement_path is None:
+                        return match.group(0)
+                    return _relative_artifact_path(from_path=path, to_path=replacement_path)
+
+                updated_content = _ARTIFACT_IMAGE_TOKEN_PATTERN.sub(_replace_image_token, updated_content)
+                updated_item = dict(item)
+                updated_item["content"] = updated_content
+                updated_item["size_bytes"] = len(updated_content.encode("utf-8"))
+                rewritten.append(updated_item)
+            else:
+                rewritten.append(item)
+
+            if _supports_generated_media_reference_scan(path):
+                _accumulate_generated_media_reference_diagnostics(
+                    base_path=path,
+                    content=updated_content,
+                    available_paths=available_paths,
+                    referenced_media_paths=referenced_media_paths,
+                    unresolved_generated_media_paths=unresolved_generated_media_paths,
+                    unresolved_internal_ids=unresolved_internal_ids,
+                    unresolved_image_tokens=unresolved_image_tokens,
+                    invalid_media_references=invalid_media_references,
+                    invalid_media_reference_reason_counts=invalid_media_reference_reason_counts,
+                    include_missing_in_referenced_paths=False,
                 )
-                if replacement_path is None:
-                    normalized_src = _normalize_media_reference_token(raw_src)
-                    if normalized_src and _ARTIFACT_INTERNAL_MEDIA_ID_PATTERN.fullmatch(normalized_src):
-                        unresolved_internal_ids.add(normalized_src)
-                    if "@image(" in (raw_src or "").lower():
-                        unresolved_image_tokens.add(raw_src.strip())
-                    if _is_non_deployable_media_reference(raw_src):
-                        invalid_media_references.add(raw_src.strip())
-                    resolved_candidate = _resolve_artifact_reference_path(base_path=path, reference=raw_src)
-                    if resolved_candidate and (
-                        resolved_candidate.startswith("assets/") or _is_likely_image_path(resolved_candidate)
-                    ):
-                        if resolved_candidate in available_paths:
-                            referenced_media_paths.add(resolved_candidate)
-                        else:
-                            unresolved_generated_media_paths.add(resolved_candidate)
-                    return match.group(0)
-                referenced_media_paths.add(replacement_path)
-                relative_reference = _relative_artifact_path(from_path=path, to_path=replacement_path)
-                return f"{prefix}{quote_char}{relative_reference}{quote_char}"
-
-            updated_content = _ARTIFACT_IMAGE_SRC_PATTERN.sub(_replace_src, content)
-
-            def _replace_image_token(match: re.Match[str]) -> str:
-                token_value = _normalize_media_reference_token(match.group(1))
-                if token_value is None:
-                    unresolved_image_tokens.add(match.group(0))
-                    return match.group(0)
-                replacement_path = asset_aliases.get(token_value)
-                if replacement_path is None:
-                    unresolved_image_tokens.add(match.group(0))
-                    return match.group(0)
-                referenced_media_paths.add(replacement_path)
-                return _relative_artifact_path(from_path=path, to_path=replacement_path)
-
-            updated_content = _ARTIFACT_IMAGE_TOKEN_PATTERN.sub(_replace_image_token, updated_content)
-            for src_value in _extract_image_src_values(updated_content):
-                normalized_src = _normalize_media_reference_token(src_value)
-                if normalized_src and _ARTIFACT_INTERNAL_MEDIA_ID_PATTERN.fullmatch(normalized_src):
-                    unresolved_internal_ids.add(normalized_src)
-                if "@image(" in src_value.lower():
-                    unresolved_image_tokens.add(src_value.strip())
-                if _is_non_deployable_media_reference(src_value):
-                    invalid_media_references.add(src_value.strip())
-            updated_item = dict(item)
-            updated_item["content"] = updated_content
-            updated_item["size_bytes"] = len(updated_content.encode("utf-8"))
-            rewritten.append(updated_item)
 
         missing_referenced_paths = sorted(path for path in referenced_media_paths if path not in available_paths)
         unresolved_generated_media_paths_sorted = sorted(unresolved_generated_media_paths)
@@ -22229,8 +22258,10 @@ class SEOMigrationService:
             "unresolved_internal_media_ids": sorted(unresolved_internal_ids)[:80],
             "unresolved_image_token_references_count": len(unresolved_image_tokens),
             "unresolved_image_token_references": sorted(unresolved_image_tokens)[:80],
-            "invalid_media_references_count": len(invalid_media_references),
+            "invalid_media_references_count": sum(invalid_media_reference_reason_counts.values()),
             "invalid_media_references": sorted(invalid_media_references)[:80],
+            "invalid_media_reference_reason_codes": sorted(invalid_media_reference_reason_counts.keys())[:12],
+            "invalid_media_reference_reason_counts": invalid_media_reference_reason_counts,
             "blocker_codes": blocker_codes,
         }
         return rewritten, diagnostics
@@ -23014,20 +23045,114 @@ def _resolve_artifact_reference_path(*, base_path: str, reference: str) -> str |
     return normalized
 
 
-def _is_non_deployable_media_reference(value: object) -> bool:
+def _artifact_control_plane_origin_hosts() -> set[str]:
+    hosts = set(_ARTIFACT_CONTROL_PLANE_DEFAULT_HOSTS)
+    try:
+        settings = get_settings()
+    except Exception:
+        return hosts
+    for origin in getattr(settings, "api_cors_allowed_origins", ()) or ():
+        parsed = urlsplit(str(origin or "").strip())
+        normalized_host = _normalize_string(parsed.hostname, max_length=253)
+        if not normalized_host:
+            continue
+        lowered = normalized_host.lower()
+        if lowered.startswith("www."):
+            continue
+        hosts.add(lowered)
+    return hosts
+
+
+def _is_private_ip_host(hostname: str) -> bool:
+    try:
+        address = ipaddress.ip_address(hostname)
+    except ValueError:
+        return False
+    return bool(address.is_private or address.is_loopback or address.is_link_local)
+
+
+def _is_app_private_media_path(path: str) -> bool:
+    normalized = str(path or "").strip().lower()
+    if not normalized.startswith("/api/"):
+        return False
+    return True
+
+
+def _is_private_storage_host(hostname: str) -> bool:
+    normalized = str(hostname or "").strip().lower()
+    if not normalized:
+        return False
+    if normalized in _ARTIFACT_PRIVATE_STORAGE_HOSTS:
+        return True
+    if any(normalized.endswith(suffix) for suffix in _ARTIFACT_PRIVATE_STORAGE_HOST_SUFFIXES):
+        return True
+    return ".s3." in normalized and normalized.endswith(".amazonaws.com")
+
+
+def _has_signed_storage_query(query: str) -> bool:
+    if not query:
+        return False
+    for raw_key, _ in urllib.parse.parse_qsl(query, keep_blank_values=True):
+        normalized_key = str(raw_key or "").strip().lower()
+        if normalized_key in _ARTIFACT_SIGNED_STORAGE_QUERY_KEYS:
+            return True
+    return False
+
+
+def _classify_non_deployable_media_reference(value: object) -> dict[str, str] | None:
     reference = _normalize_string(value, max_length=2048)
     if reference is None:
-        return False
+        return None
     lowered = reference.strip().lower()
     if not lowered:
-        return False
-    if lowered.startswith(("file://", "file:", "c:\\", "\\\\", "/api/", "/var/", "/tmp/", "var/")):
-        return True
+        return None
+    if _is_app_private_media_path(lowered):
+        return {
+            "code": _ARTIFACT_MEDIA_INVALID_REFERENCE_APP_PRIVATE_URL,
+            "label": "private app/control-plane media URL",
+        }
+    if lowered.startswith(("file://", "file:", "c:\\", "\\\\", "/var/", "/tmp/", "var/")):
+        return {
+            "code": _ARTIFACT_MEDIA_INVALID_REFERENCE_NON_DEPLOYABLE_URL,
+            "label": "non-deployable local media reference",
+        }
     if "localhost" in lowered or "127.0.0.1" in lowered or "metadata.google.internal" in lowered:
-        return True
+        return {
+            "code": _ARTIFACT_MEDIA_INVALID_REFERENCE_NON_DEPLOYABLE_URL,
+            "label": "non-deployable local media reference",
+        }
     if "169.254.169.254" in lowered:
-        return True
-    return False
+        return {
+            "code": _ARTIFACT_MEDIA_INVALID_REFERENCE_NON_DEPLOYABLE_URL,
+            "label": "non-deployable local media reference",
+        }
+    split_result = urlsplit(reference)
+    normalized_scheme = str(split_result.scheme or "").strip().lower()
+    if normalized_scheme not in {"http", "https"}:
+        return None
+    hostname = str(split_result.hostname or "").strip().lower()
+    if not hostname:
+        return None
+    if hostname in {"localhost", "127.0.0.1", "metadata.google.internal"} or _is_private_ip_host(hostname):
+        return {
+            "code": _ARTIFACT_MEDIA_INVALID_REFERENCE_NON_DEPLOYABLE_URL,
+            "label": "non-deployable local media reference",
+        }
+    if hostname in _artifact_control_plane_origin_hosts():
+        return {
+            "code": _ARTIFACT_MEDIA_INVALID_REFERENCE_APP_PRIVATE_URL,
+            "label": "private app/control-plane media URL",
+        }
+    if _is_private_storage_host(hostname) or _has_signed_storage_query(str(split_result.query or "")):
+        return {
+            "code": _ARTIFACT_MEDIA_INVALID_REFERENCE_PRIVATE_STORAGE_URL,
+            "label": "private or signed storage media URL",
+        }
+    return None
+
+
+def _is_non_deployable_media_reference(value: object) -> bool:
+    return _classify_non_deployable_media_reference(value) is not None
 
 
 def _extract_image_src_values(content: str) -> list[str]:
@@ -23042,6 +23167,130 @@ def _extract_image_src_values(content: str) -> list[str]:
     return values
 
 
+def _extract_css_url_values(content: str) -> list[str]:
+    values: list[str] = []
+    for match in _ARTIFACT_CSS_URL_PATTERN.finditer(content or ""):
+        raw_value = _normalize_string(match.group(1) or match.group(2) or match.group(3), max_length=2048)
+        if raw_value is None:
+            continue
+        values.append(raw_value)
+        if len(values) >= 240:
+            break
+    return values
+
+
+def _supports_generated_media_reference_scan(path: str) -> bool:
+    lowered = str(path or "").strip().lower()
+    return lowered.endswith(".html") or lowered.endswith(".css")
+
+
+def _extract_generated_media_reference_values(*, path: str, content: str) -> list[str]:
+    values: list[str] = []
+    seen_values: set[str] = set()
+    extractors: list[object] = []
+    lowered = str(path or "").strip().lower()
+    if lowered.endswith(".html"):
+        extractors.append(_extract_image_src_values)
+    if lowered.endswith(".html") or lowered.endswith(".css"):
+        extractors.append(_extract_css_url_values)
+    for extractor in extractors:
+        for raw_value in extractor(content or ""):
+            normalized_value = _normalize_string(raw_value, max_length=2048)
+            if not normalized_value:
+                continue
+            lowered_value = normalized_value.lower()
+            if lowered_value in seen_values:
+                continue
+            seen_values.add(lowered_value)
+            values.append(normalized_value)
+            if len(values) >= 240:
+                return values
+    return values
+
+
+def _record_generated_media_reference(
+    *,
+    base_path: str,
+    reference: str,
+    available_paths: set[str],
+    referenced_media_paths: set[str],
+    unresolved_generated_media_paths: set[str],
+    unresolved_internal_ids: set[str],
+    unresolved_image_tokens: set[str],
+    invalid_media_references: set[str],
+    invalid_media_reference_reason_counts: dict[str, int],
+    include_missing_in_referenced_paths: bool,
+) -> None:
+    normalized_src = _normalize_media_reference_token(reference)
+    if normalized_src and _ARTIFACT_INTERNAL_MEDIA_ID_PATTERN.fullmatch(normalized_src):
+        unresolved_internal_ids.add(normalized_src)
+    if "@image(" in reference.lower():
+        unresolved_image_tokens.add(reference.strip())
+    invalid_reference = _classify_non_deployable_media_reference(reference)
+    if invalid_reference is not None:
+        invalid_media_references.add(str(invalid_reference.get("label") or "").strip())
+        reason_code = _normalize_string(invalid_reference.get("code"), max_length=80)
+        if reason_code:
+            invalid_media_reference_reason_counts[reason_code] = (
+                invalid_media_reference_reason_counts.get(reason_code, 0) + 1
+            )
+    resolved_candidate = _resolve_artifact_reference_path(base_path=base_path, reference=reference)
+    if resolved_candidate and (
+        resolved_candidate.startswith("assets/") or _is_likely_image_path(resolved_candidate)
+    ):
+        if resolved_candidate in available_paths:
+            referenced_media_paths.add(resolved_candidate)
+            return
+        if include_missing_in_referenced_paths:
+            referenced_media_paths.add(resolved_candidate)
+        unresolved_generated_media_paths.add(resolved_candidate)
+
+
+def _accumulate_generated_media_reference_diagnostics(
+    *,
+    base_path: str,
+    content: str,
+    available_paths: set[str],
+    referenced_media_paths: set[str],
+    unresolved_generated_media_paths: set[str],
+    unresolved_internal_ids: set[str],
+    unresolved_image_tokens: set[str],
+    invalid_media_references: set[str],
+    invalid_media_reference_reason_counts: dict[str, int],
+    include_missing_in_referenced_paths: bool,
+) -> None:
+    for reference in _extract_generated_media_reference_values(path=base_path, content=content):
+        _record_generated_media_reference(
+            base_path=base_path,
+            reference=reference,
+            available_paths=available_paths,
+            referenced_media_paths=referenced_media_paths,
+            unresolved_generated_media_paths=unresolved_generated_media_paths,
+            unresolved_internal_ids=unresolved_internal_ids,
+            unresolved_image_tokens=unresolved_image_tokens,
+            invalid_media_references=invalid_media_references,
+            invalid_media_reference_reason_counts=invalid_media_reference_reason_counts,
+            include_missing_in_referenced_paths=include_missing_in_referenced_paths,
+        )
+    for token_match in _ARTIFACT_IMAGE_TOKEN_PATTERN.findall(content):
+        token_value = _normalize_string(token_match, max_length=120)
+        if token_value:
+            unresolved_image_tokens.add(f"@image({token_value})")
+
+
+def _normalize_invalid_media_reference_reason_counts(value: object, *, max_items: int = 12) -> dict[str, int]:
+    normalized_counts: dict[str, int] = {}
+    for raw_key, raw_value in _normalize_json_dict(value).items():
+        normalized_key = _normalize_string(raw_key, max_length=80)
+        normalized_count = _coerce_int(raw_value)
+        if not normalized_key or normalized_count is None or normalized_count <= 0:
+            continue
+        normalized_counts[normalized_key.lower()] = max(0, int(normalized_count))
+        if len(normalized_counts) >= max_items:
+            break
+    return normalized_counts
+
+
 def _derive_artifact_media_reference_diagnostics_from_generated_files(
     generated_files: list[dict[str, object]],
 ) -> dict[str, object]:
@@ -23052,40 +23301,40 @@ def _derive_artifact_media_reference_diagnostics_from_generated_files(
     }
     available_paths = {path for path in available_paths if path}
     referenced_media_paths: set[str] = set()
+    unresolved_generated_media_paths: set[str] = set()
     unresolved_internal_ids: set[str] = set()
     unresolved_image_tokens: set[str] = set()
     invalid_media_references: set[str] = set()
+    invalid_media_reference_reason_counts: dict[str, int] = {}
     for item in generated_files:
         payload = _normalize_json_dict(item)
         path = _normalize_generated_path(payload.get("path"))
-        if path is None or not path.lower().endswith(".html"):
+        if path is None or not _supports_generated_media_reference_scan(path):
             continue
         content = _normalize_generated_content(payload.get("content"))
         if content is None:
             continue
-        for src_value in _extract_image_src_values(content):
-            normalized_src = _normalize_media_reference_token(src_value)
-            if normalized_src and _ARTIFACT_INTERNAL_MEDIA_ID_PATTERN.fullmatch(normalized_src):
-                unresolved_internal_ids.add(normalized_src)
-            if "@image(" in src_value.lower():
-                unresolved_image_tokens.add(src_value.strip())
-            if _is_non_deployable_media_reference(src_value):
-                invalid_media_references.add(src_value.strip())
-            resolved_path = _resolve_artifact_reference_path(base_path=path, reference=src_value)
-            if resolved_path and (resolved_path.startswith("assets/") or _is_likely_image_path(resolved_path)):
-                referenced_media_paths.add(resolved_path)
-        for token_match in _ARTIFACT_IMAGE_TOKEN_PATTERN.findall(content):
-            token_value = _normalize_string(token_match, max_length=120)
-            if token_value:
-                unresolved_image_tokens.add(f"@image({token_value})")
+        _accumulate_generated_media_reference_diagnostics(
+            base_path=path,
+            content=content,
+            available_paths=available_paths,
+            referenced_media_paths=referenced_media_paths,
+            unresolved_generated_media_paths=unresolved_generated_media_paths,
+            unresolved_internal_ids=unresolved_internal_ids,
+            unresolved_image_tokens=unresolved_image_tokens,
+            invalid_media_references=invalid_media_references,
+            invalid_media_reference_reason_counts=invalid_media_reference_reason_counts,
+            include_missing_in_referenced_paths=True,
+        )
 
     missing_referenced_paths = sorted(path for path in referenced_media_paths if path not in available_paths)
+    unresolved_generated_media_paths_sorted = sorted(unresolved_generated_media_paths)
     blocker_codes: list[str] = []
     if unresolved_internal_ids:
         blocker_codes.append("artifact_internal_media_ids_unresolved")
     if unresolved_image_tokens:
         blocker_codes.append("artifact_image_tokens_unresolved")
-    if missing_referenced_paths:
+    if missing_referenced_paths or unresolved_generated_media_paths_sorted:
         blocker_codes.append("artifact_referenced_media_file_missing")
     if invalid_media_references:
         blocker_codes.append("artifact_media_reference_not_deployable")
@@ -23094,14 +23343,16 @@ def _derive_artifact_media_reference_diagnostics_from_generated_files(
         "referenced_media_paths": sorted(referenced_media_paths)[:80],
         "missing_referenced_media_paths_count": len(missing_referenced_paths),
         "missing_referenced_media_paths": missing_referenced_paths[:80],
-        "unresolved_generated_media_paths_count": len(missing_referenced_paths),
-        "unresolved_generated_media_paths": missing_referenced_paths[:80],
+        "unresolved_generated_media_paths_count": len(unresolved_generated_media_paths_sorted),
+        "unresolved_generated_media_paths": unresolved_generated_media_paths_sorted[:80],
         "unresolved_internal_media_ids_count": len(unresolved_internal_ids),
         "unresolved_internal_media_ids": sorted(unresolved_internal_ids)[:80],
         "unresolved_image_token_references_count": len(unresolved_image_tokens),
         "unresolved_image_token_references": sorted(unresolved_image_tokens)[:80],
-        "invalid_media_references_count": len(invalid_media_references),
+        "invalid_media_references_count": sum(invalid_media_reference_reason_counts.values()),
         "invalid_media_references": sorted(invalid_media_references)[:80],
+        "invalid_media_reference_reason_codes": sorted(invalid_media_reference_reason_counts.keys())[:12],
+        "invalid_media_reference_reason_counts": invalid_media_reference_reason_counts,
         "blocker_codes": blocker_codes,
         "ready": len(blocker_codes) == 0,
     }
@@ -23265,6 +23516,9 @@ def _build_artifact_media_diagnostics_payload(
             f"{len(unreferenced_materialized_media_paths)} selected image asset(s) were not used by generated pages. "
             "This is a warning only."
         )
+    invalid_media_reference_reason_counts = _normalize_invalid_media_reference_reason_counts(
+        media_reference_diagnostics.get("invalid_media_reference_reason_counts")
+    )
 
     return {
         "selected_assets_count": selected_assets_count,
@@ -23323,6 +23577,13 @@ def _build_artifact_media_diagnostics_payload(
             max_items=160,
             max_item_length=240,
         ),
+        "invalid_media_reference_reason_codes": _normalize_string_list(
+            media_reference_diagnostics.get("invalid_media_reference_reason_codes"),
+            max_items=12,
+            max_item_length=80,
+        )
+        or sorted(invalid_media_reference_reason_counts.keys())[:12],
+        "invalid_media_reference_reason_counts": invalid_media_reference_reason_counts,
         "blocker_codes": normalized_blockers,
         "warning_codes": normalized_warning_codes,
         "warnings": warning_reasons[:12],
@@ -23419,14 +23680,47 @@ def _build_artifact_media_readiness_from_payload(
         0,
         int(diagnostics_payload.get("invalid_media_references_count") or 0),
     )
+    invalid_media_reference_reason_counts = _normalize_invalid_media_reference_reason_counts(
+        diagnostics_payload.get("invalid_media_reference_reason_counts")
+    )
+    invalid_media_reference_reason_codes = _normalize_string_list(
+        diagnostics_payload.get("invalid_media_reference_reason_codes"),
+        max_items=12,
+        max_item_length=80,
+    ) or sorted(invalid_media_reference_reason_counts.keys())[:12]
     if unresolved_internal_count > 0:
-        media_blocker_reasons.append("Generated HTML still references internal media IDs.")
+        media_blocker_reasons.append("Generated output still references internal media IDs.")
     if unresolved_token_count > 0:
-        media_blocker_reasons.append("Generated HTML still contains unresolved @image(...) references.")
+        media_blocker_reasons.append("Generated output still contains unresolved @image(...) references.")
     if missing_referenced_count > 0 or unresolved_generated_count > 0:
-        media_blocker_reasons.append("Generated HTML references media files that are missing from artifact output.")
-    if invalid_reference_count > 0:
-        media_blocker_reasons.append("Generated HTML includes non-deployable media references.")
+        media_blocker_reasons.append("Generated output references media files that are missing from artifact output.")
+    if invalid_media_reference_reason_counts.get(_ARTIFACT_MEDIA_INVALID_REFERENCE_APP_PRIVATE_URL, 0) > 0:
+        media_blocker_reasons.append(
+            "Generated output references private app/control-plane preview or media URLs. "
+            "Use artifact paths such as assets/images/<filename>."
+        )
+    if invalid_media_reference_reason_counts.get(_ARTIFACT_MEDIA_INVALID_REFERENCE_PRIVATE_STORAGE_URL, 0) > 0:
+        media_blocker_reasons.append(
+            "Generated output references private or signed storage media URLs. "
+            "Use artifact paths such as assets/images/<filename>."
+        )
+    if invalid_media_reference_reason_counts.get(_ARTIFACT_MEDIA_INVALID_REFERENCE_NON_DEPLOYABLE_URL, 0) > 0:
+        media_blocker_reasons.append(
+            "Generated output includes non-deployable media references. "
+            "Use artifact paths such as assets/images/<filename>."
+        )
+    if invalid_reference_count > 0 and not any(
+        code in invalid_media_reference_reason_codes
+        for code in (
+            _ARTIFACT_MEDIA_INVALID_REFERENCE_APP_PRIVATE_URL,
+            _ARTIFACT_MEDIA_INVALID_REFERENCE_PRIVATE_STORAGE_URL,
+            _ARTIFACT_MEDIA_INVALID_REFERENCE_NON_DEPLOYABLE_URL,
+        )
+    ):
+        media_blocker_reasons.append(
+            "Generated output includes non-deployable media references. "
+            "Use artifact paths such as assets/images/<filename>."
+        )
     if unreferenced_materialized_count > 0:
         media_warning_reasons.append(
             f"{unreferenced_materialized_count} selected image asset(s) were not used by generated pages. "
@@ -23556,6 +23850,8 @@ def _build_artifact_media_readiness_from_payload(
             max_items=80,
             max_item_length=240,
         ),
+        "invalid_media_reference_reason_codes": invalid_media_reference_reason_codes,
+        "invalid_media_reference_reason_counts": invalid_media_reference_reason_counts,
         "status_codes": normalized_warning_codes[:12],
         "selected_media_pending_generation": selected_media_pending_generation,
         "selected_media_pending_generation_count": selected_media_pending_generation_count,

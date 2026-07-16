@@ -910,7 +910,11 @@ def _tiny_png_payload() -> bytes:
     )
 
 
-def _build_migration_artifact_output(*, index_content: str | None = None) -> SEOMigrationArtifactGenerationOutput:
+def _build_migration_artifact_output(
+    *,
+    index_content: str | None = None,
+    styles_content: str | None = None,
+) -> SEOMigrationArtifactGenerationOutput:
     return SEOMigrationArtifactGenerationOutput(
         strategy_summary="Draft strategy",
         page_map=[{"path": "/", "title": "Home"}],
@@ -930,7 +934,7 @@ def _build_migration_artifact_output(*, index_content: str | None = None) -> SEO
             SEOMigrationGeneratedFileOutput(
                 path="styles.css",
                 media_type="text/css",
-                content="body { color: #111; }",
+                content=styles_content or "body { color: #111; }",
             ),
         ],
         provider_name="mock",
@@ -2327,6 +2331,87 @@ def test_migration_summary_contract_includes_readiness_and_history_shapes(db_ses
     assert "last_deploy_status" in migration_diagnostics
     assert isinstance(payload.get("publish_history"), list)
     assert isinstance(payload.get("deploy_history"), list)
+
+
+def test_migration_summary_redacts_private_generated_media_urls_in_readiness_payload(
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    business_id = "11111111-1111-1111-1111-111111111111"
+    site_id = "22222222-2222-2222-2222-222222222222"
+    _seed_business_and_site(db_session, business_id=business_id, site_id=site_id)
+    monkeypatch.setenv("API_CORS_ALLOWED_ORIGINS", "https://operator.internal.example")
+    get_settings.cache_clear()
+    try:
+        preview_media_url = (
+            "https://operator.internal.example"
+            f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/media/assets/upl-private-preview/preview"
+        )
+        storage_media_url = (
+            "https://storage.googleapis.com/private-bucket/hero.png"
+            "?X-Goog-Algorithm=GOOG4-RSA-SHA256"
+            "&X-Goog-Credential=test%2Fcredential"
+            "&X-Goog-Signature=secret-signature"
+        )
+        provider = _StaticMigrationArtifactProvider(
+            _build_migration_artifact_output(
+                index_content=(
+                    "<html><head><!-- ANALYTICS_PLACEHOLDER --></head><body>"
+                    f"<img src=\"{preview_media_url}\" alt=\"preview\" />"
+                    "</body></html>"
+                ),
+                styles_content=f"body {{ background-image: url('{storage_media_url}'); }}",
+            )
+        )
+        client = _make_client(db_session, business_id=business_id, artifact_provider=provider)
+
+        workspace_response = client.put(
+            f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/workspace",
+            json={"source_url": "https://legacy.example"},
+        )
+        assert workspace_response.status_code == 200
+        _prepare_workspace_for_draft_generation(client, business_id=business_id, site_id=site_id)
+
+        generate_response = client.post(
+            f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/generate-draft-artifacts",
+            json={"force_new_version": False},
+        )
+        assert generate_response.status_code == 201
+        artifact_id = generate_response.json()["id"]
+
+        approve_response = client.post(
+            f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/artifact-versions/{artifact_id}/approve",
+            json={"approval_notes": None},
+        )
+        assert approve_response.status_code == 200
+
+        summary_response = client.get(f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/summary")
+        assert summary_response.status_code == 200
+        payload = summary_response.json()
+        publish_readiness = payload.get("publish_readiness") or {}
+        deploy_readiness = payload.get("deploy_readiness") or {}
+        publish_media = publish_readiness.get("artifact_media_readiness") or {}
+        deploy_media = deploy_readiness.get("artifact_media_readiness") or {}
+
+        assert publish_media.get("ready") is False
+        assert deploy_media.get("ready") is False
+        publish_reasons = [str(item).lower() for item in (publish_media.get("reasons") or [])]
+        assert any("private app/control-plane preview or media urls" in item for item in publish_reasons)
+        assert any("private or signed storage media urls" in item for item in publish_reasons)
+        publish_reason_counts = publish_media.get("invalid_media_reference_reason_counts") or {}
+        assert publish_reason_counts.get("artifact_media_app_private_url") == 1
+        assert publish_reason_counts.get("artifact_media_private_storage_url") == 1
+
+        serialized_publish_media = json.dumps(publish_media).lower()
+        serialized_deploy_media = json.dumps(deploy_media).lower()
+        assert "operator.internal.example" not in serialized_publish_media
+        assert "storage.googleapis.com" not in serialized_publish_media
+        assert "x-goog-signature" not in serialized_publish_media
+        assert "operator.internal.example" not in serialized_deploy_media
+        assert "storage.googleapis.com" not in serialized_deploy_media
+        assert "x-goog-signature" not in serialized_deploy_media
+    finally:
+        get_settings.cache_clear()
 
 
 def test_migration_summary_prefers_deploy_anchor_for_ga4_outcome_snapshot(db_session) -> None:

@@ -331,6 +331,7 @@ Safety reminder:
 - publishing artifacts to a public-site target repo does not move control-plane source/ownership out of the configured control-plane source repo
 - public artifact output must not contain control-plane routes, internal diagnostics, or secret-bearing content
 - media deploy blockers are evaluated from deployable generated-package references (`assets/images/*`, unresolved `@image(...)`, unresolved `upl-...`, private/non-deployable URLs), not from selected-image productivity state alone
+- when generated output includes private app/control-plane preview URLs or signed storage URLs, readiness blocks publish/deploy and diagnostics stay redacted to safe blocker categories/remediation text
 
 ### Managed Site HTTPS Readiness Diagnostics
 
