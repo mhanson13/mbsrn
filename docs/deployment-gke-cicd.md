@@ -486,7 +486,11 @@ Admin Site Registry permanent delete is now a separate guarded control-plane wor
   - GitHub repo must match the configured owner/name, must not match the protected control-plane repo from `MBSRN_CONTROL_PLANE_REPOSITORY`, and must have a valid MBSRN management/adoption marker for the selected business/site
   - runtime resources must be in the derived namespace and carry site labels such as `app.kubernetes.io/managed-by=mbsrn`, `mbsrn.io/site-id`, `mbsrn.io/repo`, and `mbsrn.io/preview-hostname`
   - DNS delete requires exact expected hostname/type/value match
-  - static-IP delete is skipped when the address is shared or still attached elsewhere
+  - static-IP delete requires exact expected project/name plus verified site ownership before delete is attempted
+  - preferred static-IP ownership proof is exact MBSRN/site label match (`app.kubernetes.io/managed-by`, `mbsrn.io/site-id`, `mbsrn.io/repo`, `mbsrn.io/preview-hostname`) when present on the address
+  - legacy/unlabeled static IPs fall back only when the exact derived static-IP name, exact preview-hostname DNS A record, and exact observed IP all agree and no other site configuration references the same IP or preview hostname
+  - shared preview gateway IPs, in-use IPs, conflicting references, and unverified ownership states are skipped rather than deleted during per-site cleanup
+  - deploy-time static-IP ensure/readiness behavior is unchanged in this pass; creation-time address labeling remains a separate follow-up
   - ManagedCertificate delete requires exact namespace/name plus site ownership labels
 - Protected repo guard config:
   - `MBSRN_CONTROL_PLANE_REPOSITORY` must be set to `owner/repo`

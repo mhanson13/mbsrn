@@ -51,6 +51,13 @@ _SITE_DELETE_MANAGED_CERTIFICATE_VERIFICATION_LIMITED = "site_delete_managed_cer
 _GITHUB_REPO_DELETE_PROTECTED_CONTROL_PLANE_REPO_BLOCKED = (
     "github_repo_delete_protected_control_plane_repo_blocked"
 )
+_STATIC_IP_DELETE_SKIPPED_UNVERIFIED_OWNERSHIP = "static_ip_delete_skipped_unverified_ownership"
+_STATIC_IP_DELETE_SKIPPED_SHARED_GATEWAY = "static_ip_delete_skipped_shared_gateway"
+_STATIC_IP_DELETE_SKIPPED_IN_USE = "static_ip_delete_skipped_in_use"
+_STATIC_IP_DELETE_SKIPPED_CONFLICTING_REFERENCE = "static_ip_delete_skipped_conflicting_reference"
+_STATIC_IP_DELETE_OWNERSHIP_VERIFIED = "static_ip_delete_ownership_verified"
+_STATIC_IP_DELETED = "static_ip_deleted"
+_STATIC_IP_DELETE_FAILED = "static_ip_delete_failed"
 
 
 @dataclass(frozen=True)
@@ -87,6 +94,7 @@ class _DeleteContext:
     kubernetes_namespace: str | None
     preview_hostname: str | None
     static_ip_name: str | None
+    shared_preview_static_ip_name: str | None
     managed_certificate_name: str | None
     dns_record_name: str | None
     dns_managed_zone: str | None
@@ -695,6 +703,10 @@ class SEOSiteDeleteService:
 
         preview_hostname = _normalize_hostname(deploy_target.get("preview_hostname"))
         static_ip_name = _normalize_text(deploy_target.get("expected_static_ip_name"), max_length=80)
+        shared_preview_static_ip_name = _normalize_text(
+            deploy_target.get("shared_preview_static_ip_name"),
+            max_length=80,
+        )
         uses_shared_preview_gateway = bool(deploy_target.get("uses_shared_preview_gateway"))
         managed_certificate_name = _normalize_text(
             deploy_target.get("managed_certificate_name"),
@@ -718,6 +730,7 @@ class SEOSiteDeleteService:
             kubernetes_namespace=_normalize_text(deploy_target.get("kubernetes_namespace"), max_length=63),
             preview_hostname=preview_hostname,
             static_ip_name=static_ip_name,
+            shared_preview_static_ip_name=shared_preview_static_ip_name,
             managed_certificate_name=managed_certificate_name,
             dns_record_name=dns_record_name,
             dns_managed_zone=_normalize_text(deploy_target.get("expected_dns_managed_zone"), max_length=120),
@@ -1007,7 +1020,7 @@ class SEOSiteDeleteService:
                 blockers,
                 warnings,
             )
-        if context.uses_shared_preview_gateway:
+        if self._static_ip_is_shared_gateway(context=context):
             warnings.append(
                 _issue(
                     _SITE_DELETE_STATIC_IP_SHARED_GATEWAY_NOT_AUTO_DELETED,
@@ -1015,11 +1028,21 @@ class SEOSiteDeleteService:
                 )
             )
         try:
-            inspection = self._inspect_static_ip(
+            inspection = self._assess_static_ip_delete_candidate(
                 context=context,
                 gcp_deploy_key=gcp_deploy_key,
             )
         except SEOMigrationGitHubPublisherError as exc:
+            recovered_details = self._base_static_ip_details(context=context)
+            try:
+                raw_inspection = self._inspect_static_ip(
+                    context=context,
+                    gcp_deploy_key=gcp_deploy_key,
+                )
+            except SEOMigrationGitHubPublisherError:
+                raw_inspection = None
+            if isinstance(raw_inspection, dict):
+                recovered_details.update(dict(raw_inspection.get("details") or {}))
             warnings.append(
                 _issue(
                     _SITE_DELETE_STATIC_IP_VERIFICATION_LIMITED,
@@ -1031,8 +1054,9 @@ class SEOSiteDeleteService:
                     "static_ip",
                     "not_checked",
                     "Managed preview static IP could not be verified during delete planning.",
+                    reason_code=_STATIC_IP_DELETE_SKIPPED_UNVERIFIED_OWNERSHIP,
                     details={
-                        "static_ip_name": context.static_ip_name,
+                        **recovered_details,
                         "publisher_reason_code": exc.code,
                     },
                 ),
@@ -1045,6 +1069,7 @@ class SEOSiteDeleteService:
                 "static_ip",
                 inspection["status"],
                 inspection["summary"],
+                reason_code=inspection.get("reason_code"),
                 details=inspection["details"],
             ),
             blockers,
@@ -1060,7 +1085,11 @@ class SEOSiteDeleteService:
     ) -> tuple[dict[str, Any], list[dict[str, str]], list[dict[str, str]]]:
         blockers: list[dict[str, str]] = []
         warnings: list[dict[str, str]] = []
-        expected_ip = _normalize_text((static_ip_resource.get("details") or {}).get("observed_address"), max_length=80)
+        static_ip_details = static_ip_resource.get("details") or {}
+        expected_ip = _normalize_text(static_ip_details.get("expected_ip_address"), max_length=80) or _normalize_text(
+            static_ip_details.get("observed_address"),
+            max_length=80,
+        )
         if not context.dns_record_name or not context.dns_managed_zone or not context.dns_project_id or not expected_ip:
             return (
                 _resource(
@@ -1774,39 +1803,44 @@ class SEOSiteDeleteService:
                 ),
                 issues,
             )
-        if context.uses_shared_preview_gateway:
+        if self._static_ip_is_shared_gateway(context=context):
+            summary = "Managed preview static IP deletion was skipped because this address is configured as a shared preview gateway IP."
             issues["warnings"].append(
                 _issue(
-                    "static_ip_delete_skipped_in_use",
-                    "Shared preview gateway static IPs are not deleted automatically.",
+                    _STATIC_IP_DELETE_SKIPPED_SHARED_GATEWAY,
+                    summary,
                 )
             )
             return (
                 _resource(
                     "static_ip",
                     "skipped",
-                    "Shared preview gateway static IPs are not deleted automatically.",
-                    reason_code="static_ip_delete_skipped_in_use",
-                    details={"static_ip_name": context.static_ip_name},
+                    summary,
+                    reason_code=_STATIC_IP_DELETE_SKIPPED_SHARED_GATEWAY,
+                    details={
+                        **self._base_static_ip_details(context=context),
+                        "ownership_status": "shared",
+                    },
                 ),
                 issues,
             )
         try:
-            inspection = self._inspect_static_ip(context=context, gcp_deploy_key=gcp_deploy_key)
+            inspection = self._assess_static_ip_delete_candidate(context=context, gcp_deploy_key=gcp_deploy_key)
         except SEOMigrationGitHubPublisherError:
+            summary = "Managed preview static IP deletion was skipped because ownership could not be re-verified."
             issues["warnings"].append(
                 _issue(
-                    "static_ip_delete_failed",
-                    "Managed preview static IP could not be verified for deletion.",
+                    _STATIC_IP_DELETE_SKIPPED_UNVERIFIED_OWNERSHIP,
+                    summary,
                 )
             )
             return (
                 _resource(
                     "static_ip",
-                    "failed",
-                    "Managed preview static IP could not be verified for deletion.",
-                    reason_code="static_ip_delete_failed",
-                    details={"static_ip_name": context.static_ip_name},
+                    "skipped",
+                    summary,
+                    reason_code=_STATIC_IP_DELETE_SKIPPED_UNVERIFIED_OWNERSHIP,
+                    details=self._base_static_ip_details(context=context),
                 ),
                 issues,
             )
@@ -1820,20 +1854,24 @@ class SEOSiteDeleteService:
                 ),
                 issues,
             )
-        observed_users = list(inspection["details"].get("observed_users") or [])
-        if observed_users:
+        if inspection["status"] != "found" or not bool((inspection["details"] or {}).get("delete_eligible")):
+            summary = str(
+                inspection.get("summary")
+                or "Managed preview static IP deletion was skipped because ownership verification did not pass."
+            )
+            reason_code = str(inspection.get("reason_code") or _STATIC_IP_DELETE_SKIPPED_UNVERIFIED_OWNERSHIP)
             issues["warnings"].append(
                 _issue(
-                    "static_ip_delete_skipped_in_use",
-                    "Managed preview static IP deletion was skipped because the address is still in use.",
+                    reason_code,
+                    summary,
                 )
             )
             return (
                 _resource(
                     "static_ip",
                     "skipped",
-                    "Managed preview static IP deletion was skipped because the address is still in use.",
-                    reason_code="static_ip_delete_skipped_in_use",
+                    summary,
+                    reason_code=reason_code,
                     details=inspection["details"],
                 ),
                 issues,
@@ -1846,7 +1884,7 @@ class SEOSiteDeleteService:
         except SEOMigrationGitHubPublisherError:
             issues["warnings"].append(
                 _issue(
-                    "static_ip_delete_failed",
+                    _STATIC_IP_DELETE_FAILED,
                     "Managed preview static IP deletion credentials could not be resolved.",
                 )
             )
@@ -1855,7 +1893,7 @@ class SEOSiteDeleteService:
                     "static_ip",
                     "failed",
                     "Managed preview static IP deletion credentials could not be resolved.",
-                    reason_code="static_ip_delete_failed",
+                    reason_code=_STATIC_IP_DELETE_FAILED,
                     details=inspection["details"],
                 ),
                 issues,
@@ -1882,7 +1920,7 @@ class SEOSiteDeleteService:
         except SEOMigrationGitHubPublisherError:
             issues["warnings"].append(
                 _issue(
-                    "static_ip_delete_failed",
+                    _STATIC_IP_DELETE_FAILED,
                     "Managed preview static IP deletion request failed.",
                 )
             )
@@ -1891,7 +1929,7 @@ class SEOSiteDeleteService:
                     "static_ip",
                     "failed",
                     "Managed preview static IP deletion request failed.",
-                    reason_code="static_ip_delete_failed",
+                    reason_code=_STATIC_IP_DELETE_FAILED,
                     details=inspection["details"],
                 ),
                 issues,
@@ -1901,7 +1939,7 @@ class SEOSiteDeleteService:
                 "static_ip",
                 "deleted",
                 "Deleted the verified managed preview static IP reservation for this site.",
-                reason_code="static_ip_deleted",
+                reason_code=_STATIC_IP_DELETED,
                 details=inspection["details"],
             ),
             issues,
@@ -2255,15 +2293,14 @@ class SEOSiteDeleteService:
             safe_message_on_failure="Managed static IP lookup failed during delete planning.",
             safe_message_on_timeout="Managed static IP lookup timed out during delete planning.",
         )
+        base_details = self._base_static_ip_details(context=context)
         if not isinstance(payload, dict):
             return {
                 "status": "not_found",
                 "summary": "No managed preview static IP was found for the expected project/name.",
                 "details": {
-                    "static_ip_name": context.static_ip_name,
-                    "gcp_project_id": project_id,
-                    "observed_address": None,
-                    "observed_users": [],
+                    **base_details,
+                    "ownership_status": "not_found",
                 },
             }
         observed_users = []
@@ -2273,16 +2310,252 @@ class SEOSiteDeleteService:
                 candidate = _normalize_text(item, max_length=500)
                 if candidate:
                     observed_users.append(candidate)
+        observed_address = _normalize_text(payload.get("address"), max_length=80)
         return {
             "status": "found",
             "summary": "Managed preview static IP candidate was found for this site.",
             "details": {
-                "static_ip_name": context.static_ip_name,
-                "gcp_project_id": project_id,
-                "observed_address": _normalize_text(payload.get("address"), max_length=80),
+                **base_details,
+                "expected_ip_address": observed_address,
+                "observed_address": observed_address,
                 "observed_users": observed_users,
+                "observed_status": _normalize_text(payload.get("status"), max_length=80),
+                "observed_address_type": _normalize_text(payload.get("addressType"), max_length=80),
+                "observed_ip_version": _normalize_text(payload.get("ipVersion"), max_length=40),
+                "observed_network_tier": _normalize_text(payload.get("networkTier"), max_length=80),
+                "observed_purpose": _normalize_text(payload.get("purpose"), max_length=80),
+                "observed_labels": self._sanitize_managed_site_labels(payload.get("labels")),
+                "label_fingerprint_present": bool(
+                    _normalize_text(payload.get("labelFingerprint"), max_length=500)
+                ),
             },
         }
+
+    def _assess_static_ip_delete_candidate(
+        self,
+        *,
+        context: _DeleteContext,
+        gcp_deploy_key: str | None,
+    ) -> dict[str, Any]:
+        inspection = self._inspect_static_ip(context=context, gcp_deploy_key=gcp_deploy_key)
+        details = {
+            **self._base_static_ip_details(context=context),
+            **dict(inspection.get("details") or {}),
+        }
+        if inspection["status"] == "not_found":
+            details["ownership_status"] = "not_found"
+            details["delete_eligible"] = False
+            return {
+                "status": "not_found",
+                "summary": "No managed preview static IP was found for the expected project/name.",
+                "reason_code": None,
+                "details": details,
+            }
+        if self._static_ip_is_shared_gateway(context=context):
+            details["ownership_status"] = "shared"
+            details["delete_eligible"] = False
+            return {
+                "status": "blocked",
+                "summary": "This static IP is configured as a shared preview gateway IP.",
+                "reason_code": _STATIC_IP_DELETE_SKIPPED_SHARED_GATEWAY,
+                "details": details,
+            }
+        observed_status = _normalize_text(details.get("observed_status"), max_length=80)
+        observed_users = list(details.get("observed_users") or [])
+        if observed_users or (observed_status or "").upper() == "IN_USE":
+            details["ownership_status"] = "in_use"
+            details["delete_eligible"] = False
+            return {
+                "status": "blocked",
+                "summary": "This static IP is still in use by Google Cloud resources.",
+                "reason_code": _STATIC_IP_DELETE_SKIPPED_IN_USE,
+                "details": details,
+            }
+        if not self._static_ip_has_expected_managed_shape(details=details):
+            details["ownership_status"] = "unverified"
+            details["delete_eligible"] = False
+            return {
+                "status": "blocked",
+                "summary": "MBSRN could not prove that this static IP matches the expected managed preview IP shape.",
+                "reason_code": _STATIC_IP_DELETE_SKIPPED_UNVERIFIED_OWNERSHIP,
+                "details": details,
+            }
+        conflicts = self._inspect_static_ip_reference_conflicts(context=context)
+        details["conflicting_reference_count"] = conflicts["count"]
+        details["conflicting_reference_types"] = conflicts["types"]
+        if conflicts["count"] > 0:
+            details["ownership_status"] = "conflicting_reference"
+            details["delete_eligible"] = False
+            return {
+                "status": "blocked",
+                "summary": "Another site configuration references this static IP or preview hostname.",
+                "reason_code": _STATIC_IP_DELETE_SKIPPED_CONFLICTING_REFERENCE,
+                "details": details,
+            }
+        if self._labels_indicate_site_ownership(labels=details.get("observed_labels"), context=context):
+            details["ownership_status"] = "verified"
+            details["ownership_verification_method"] = "labels"
+            details["delete_eligible"] = True
+            return {
+                "status": "found",
+                "summary": "Verified managed preview static IP ownership for this site.",
+                "reason_code": _STATIC_IP_DELETE_OWNERSHIP_VERIFIED,
+                "details": details,
+            }
+        expected_ip_address = _normalize_text(details.get("observed_address"), max_length=80)
+        if context.dns_record_name and context.dns_managed_zone and context.dns_project_id and expected_ip_address:
+            dns_inspection = self._inspect_dns_record(
+                context=context,
+                gcp_deploy_key=gcp_deploy_key,
+                expected_ip_address=expected_ip_address,
+            )
+            dns_details = dns_inspection.get("details") or {}
+            details["dns_record_status"] = dns_inspection["status"]
+            details["dns_record_name"] = _normalize_text(dns_details.get("record_name"), max_length=300)
+            details["dns_expected_ip"] = _normalize_text(dns_details.get("expected_ip"), max_length=80)
+            details["dns_observed_ips"] = list(dns_details.get("observed_ips") or [])
+            if dns_inspection["status"] == "found":
+                details["ownership_status"] = "verified"
+                details["ownership_verification_method"] = "dns_name_fallback"
+                details["delete_eligible"] = True
+                return {
+                    "status": "found",
+                    "summary": "Verified managed preview static IP ownership for this site.",
+                    "reason_code": _STATIC_IP_DELETE_OWNERSHIP_VERIFIED,
+                    "details": details,
+                }
+        details["ownership_status"] = "unverified"
+        details["delete_eligible"] = False
+        return {
+            "status": "blocked",
+            "summary": "MBSRN could not prove that this static IP is managed by the selected site.",
+            "reason_code": _STATIC_IP_DELETE_SKIPPED_UNVERIFIED_OWNERSHIP,
+            "details": details,
+        }
+
+    def _base_static_ip_details(self, *, context: _DeleteContext) -> dict[str, Any]:
+        return {
+            "static_ip_name": context.static_ip_name,
+            "gcp_project_id": context.managed_gke_config.get("project_id"),
+            "preview_hostname": context.preview_hostname,
+            "shared_preview_static_ip_name": context.shared_preview_static_ip_name,
+            "configured_shared_preview_gateway": bool(context.uses_shared_preview_gateway),
+            "expected_ip_address": None,
+            "observed_address": None,
+            "observed_users": [],
+            "observed_status": None,
+            "observed_address_type": None,
+            "observed_ip_version": None,
+            "observed_network_tier": None,
+            "observed_purpose": None,
+            "observed_labels": {},
+            "label_fingerprint_present": False,
+            "ownership_status": "unverified",
+            "ownership_verification_method": None,
+            "delete_eligible": False,
+            "conflicting_reference_count": 0,
+            "conflicting_reference_types": [],
+            "dns_record_status": "not_checked",
+            "dns_record_name": context.dns_record_name,
+            "dns_expected_ip": None,
+            "dns_observed_ips": [],
+        }
+
+    def _static_ip_is_shared_gateway(self, *, context: _DeleteContext) -> bool:
+        static_ip_name = _normalize_text(context.static_ip_name, max_length=80)
+        shared_preview_static_ip_name = _normalize_text(context.shared_preview_static_ip_name, max_length=80)
+        return bool(
+            context.uses_shared_preview_gateway
+            or (
+                static_ip_name
+                and shared_preview_static_ip_name
+                and static_ip_name.lower() == shared_preview_static_ip_name.lower()
+            )
+        )
+
+    def _static_ip_has_expected_managed_shape(self, *, details: dict[str, Any]) -> bool:
+        observed_address_type = _normalize_text(details.get("observed_address_type"), max_length=80)
+        observed_ip_version = _normalize_text(details.get("observed_ip_version"), max_length=40)
+        return (
+            (observed_address_type is None or observed_address_type.upper() == "EXTERNAL")
+            and (observed_ip_version is None or observed_ip_version.upper() == "IPV4")
+        )
+
+    def _inspect_static_ip_reference_conflicts(self, *, context: _DeleteContext) -> dict[str, Any]:
+        static_ip_name = _normalize_text(context.static_ip_name, max_length=80)
+        preview_hostname = _normalize_hostname(context.preview_hostname)
+        if not static_ip_name and not preview_hostname:
+            return {"count": 0, "types": []}
+        conflicting_reference_count = 0
+        conflicting_reference_types: set[str] = set()
+        stmt = select(SEOSite).where(SEOSite.id != context.site_id)
+        for other_site in self.session.scalars(stmt):
+            summary = self.seo_migration_service.get_site_cleanup_target_summary(
+                business_id=other_site.business_id,
+                site_id=other_site.id,
+            )
+            deploy_target = summary.get("deploy_target") if isinstance(summary.get("deploy_target"), dict) else {}
+            other_static_ip_name = _normalize_text(deploy_target.get("expected_static_ip_name"), max_length=80)
+            other_shared_preview_static_ip_name = _normalize_text(
+                deploy_target.get("shared_preview_static_ip_name"),
+                max_length=80,
+            )
+            other_preview_hostname = _normalize_hostname(deploy_target.get("preview_hostname"))
+            other_conflict_types: set[str] = set()
+            if (
+                static_ip_name
+                and other_static_ip_name
+                and static_ip_name.lower() == other_static_ip_name.lower()
+            ):
+                other_conflict_types.add("static_ip_name")
+            if (
+                static_ip_name
+                and other_shared_preview_static_ip_name
+                and static_ip_name.lower() == other_shared_preview_static_ip_name.lower()
+            ):
+                other_conflict_types.add("shared_preview_static_ip_name")
+            if preview_hostname and other_preview_hostname and preview_hostname == other_preview_hostname:
+                other_conflict_types.add("preview_hostname")
+            if other_conflict_types:
+                conflicting_reference_count += 1
+                conflicting_reference_types.update(other_conflict_types)
+        return {
+            "count": conflicting_reference_count,
+            "types": sorted(conflicting_reference_types),
+        }
+
+    def _sanitize_managed_site_labels(self, labels: object) -> dict[str, str]:
+        if not isinstance(labels, dict):
+            return {}
+        observed_labels: dict[str, str] = {}
+        managed_by = _normalize_text(labels.get("app.kubernetes.io/managed-by"), max_length=80)
+        site_id = _normalize_text(labels.get("mbsrn.io/site-id"), max_length=80)
+        repo = _normalize_text(labels.get("mbsrn.io/repo"), max_length=80)
+        preview_hostname = _normalize_hostname(labels.get("mbsrn.io/preview-hostname"))
+        if managed_by:
+            observed_labels["app.kubernetes.io/managed-by"] = managed_by
+        if site_id:
+            observed_labels["mbsrn.io/site-id"] = site_id
+        if repo:
+            observed_labels["mbsrn.io/repo"] = repo
+        if preview_hostname:
+            observed_labels["mbsrn.io/preview-hostname"] = preview_hostname
+        return observed_labels
+
+    def _labels_indicate_site_ownership(self, *, labels: object, context: _DeleteContext) -> bool:
+        observed_labels = self._sanitize_managed_site_labels(labels)
+        managed_by = _normalize_text(observed_labels.get("app.kubernetes.io/managed-by"), max_length=80)
+        site_label = _normalize_text(observed_labels.get("mbsrn.io/site-id"), max_length=80)
+        repo_label = _normalize_text(observed_labels.get("mbsrn.io/repo"), max_length=80)
+        preview_label = _normalize_hostname(observed_labels.get("mbsrn.io/preview-hostname"))
+        expected_repo_label = _identifier_fragment(context.repo_name or "", fallback="", max_length=80) or None
+        expected_site_label = _identifier_fragment(context.site_id, fallback="", max_length=80)
+        return (
+            managed_by == _MBSRN_MANAGED_LABEL
+            and site_label == expected_site_label
+            and (expected_repo_label is None or repo_label == expected_repo_label)
+            and (context.preview_hostname is None or preview_label == context.preview_hostname)
+        )
 
     def _inspect_dns_record(
         self,
@@ -2402,18 +2675,4 @@ class SEOSiteDeleteService:
         metadata = payload.get("metadata")
         if not isinstance(metadata, dict):
             return False
-        labels = metadata.get("labels")
-        if not isinstance(labels, dict):
-            return False
-        managed_by = _normalize_text(labels.get("app.kubernetes.io/managed-by"), max_length=80)
-        site_label = _normalize_text(labels.get("mbsrn.io/site-id"), max_length=80)
-        repo_label = _normalize_text(labels.get("mbsrn.io/repo"), max_length=80)
-        preview_label = _normalize_hostname(labels.get("mbsrn.io/preview-hostname"))
-        expected_repo_label = _identifier_fragment(context.repo_name or "", fallback="", max_length=80) or None
-        expected_site_label = _identifier_fragment(context.site_id, fallback="", max_length=80)
-        return (
-            managed_by == _MBSRN_MANAGED_LABEL
-            and site_label == expected_site_label
-            and (expected_repo_label is None or repo_label == expected_repo_label)
-            and (context.preview_hostname is None or preview_label == context.preview_hostname)
-        )
+        return self._labels_indicate_site_ownership(labels=metadata.get("labels"), context=context)

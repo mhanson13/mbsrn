@@ -1796,7 +1796,9 @@ Post-fix rollout for existing managed sites:
     - repo delete is blocked for unmanaged/ambiguous repos and for the protected control-plane repo configured by `MBSRN_CONTROL_PLANE_REPOSITORY`
     - runtime delete only targets site-labeled managed resources
     - DNS delete requires exact expected record/value match
-    - shared or in-use static IPs are skipped
+    - the delete plan reports static-IP ownership as `verified`, `unverified`, `shared`, `in_use`, `conflicting_reference`, or `not_found`
+    - static-IP delete proceeds only after verified site ownership; label proof is preferred and legacy DNS/name fallback is used only when exact signals agree
+    - shared, in-use, conflicting, and unverified static IPs are intentionally skipped rather than deleted
     - ManagedCertificate delete requires exact namespace/name plus site ownership verification
   - the protected control-plane repo guard uses a config-driven `owner/repo` identity with compatibility fallback; malformed values fail closed before destructive cleanup can run
   - admin permanent delete never auto-deletes the original customer/source website, arbitrary customer repos, unrelated cluster resources, or secret/raw prompt/raw media/private preview data
