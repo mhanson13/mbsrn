@@ -198,6 +198,11 @@ def _normalize_db_connection_mode(raw_value: str | None) -> str:
     return (raw_value or "").strip().lower()
 
 
+def _normalize_ai_model_name(raw_value: str | None) -> str | None:
+    normalized = (raw_value or "").strip().lower()
+    return normalized or None
+
+
 def _normalize_repo_full_name(value: object) -> str | None:
     normalized = " ".join(str(value or "").split()).strip()
     if not normalized:
@@ -470,7 +475,7 @@ def get_settings() -> Settings:
         email_provider=os.getenv("EMAIL_PROVIDER", "mock").strip().lower(),
         ai_provider_api_key=os.getenv("AI_PROVIDER_API_KEY"),
         ai_provider_name=(os.getenv("AI_PROVIDER_NAME", "openai").strip().lower() or "openai"),
-        ai_model_name=(os.getenv("AI_MODEL_NAME", "gpt-4o-mini").strip() or "gpt-4o-mini"),
+        ai_model_name=(_normalize_ai_model_name(os.getenv("AI_MODEL_NAME")) or "gpt-4o-mini"),
         ai_timeout_value=_env_int("AI_TIMEOUT_VALUE", 30, min_value=1),
         ai_prompt_text_competitor=competitor_prompt_resolution.prompt_text,
         ai_prompt_text_competitor_source=competitor_prompt_resolution.prompt_source,

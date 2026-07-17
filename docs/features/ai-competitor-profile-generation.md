@@ -644,9 +644,11 @@ Operator-facing contract summary:
 ## Configuration
 
 ### AI provider/config
+Competitor generation now resolves through the central Phase 1 AI task registry. The `competitor_analysis` task alias remains compatibility-mapped to the shared legacy runtime model path until a later routing phase.
+
 - `AI_PROVIDER_API_KEY` (required secret; no default)
 - `AI_PROVIDER_NAME` (default: `openai`)
-- `AI_MODEL_NAME` (default: `gpt-4o-mini`)
+- `AI_MODEL_NAME` (legacy shared deployment fallback; existing manifests may still use `gpt-4o-mini` until explicitly updated)
 - `AI_TIMEOUT_VALUE` (default: `30`)
 - `AI_PROMPT_TEXT_COMPETITOR` (default: empty)
 - `AI_PROMPT_TEXT_RECOMMENDATIONS` (default: empty; used by recommendation narratives, not competitor discovery)
@@ -657,9 +659,14 @@ These AI runtime settings are shared with recommendation narrative generation (`
 
 Runtime model resolution precedence:
 1. explicit/requested model (when provided by the current run path)
-2. business admin default model (`businesses.default_ai_model`, managed from Admin settings)
-3. deployment env default (`AI_MODEL_NAME`)
+2. business admin legacy/global default model (`businesses.default_ai_model`, managed from Admin settings)
+3. deployment env legacy/shared default (`AI_MODEL_NAME`)
 4. provider/runtime fallback
+
+Phase 1 guardrails:
+- deprecated or blocked raw model strings are rejected for new explicit/admin updates;
+- current runtime workflows remain compatibility-mapped to the shared legacy path until a later task-routing cutover;
+- no local model training, fine-tuning, or self-hosting is introduced.
 
 Prompt behavior notes:
 - dynamic location/industry context comes from persisted site fields (not runtime retrieval);

@@ -855,6 +855,15 @@ function safePromptSettingsUpdateErrorMessage(error: unknown): string {
       return "Business settings were not found in this tenant scope.";
     }
     if (error.status === 422) {
+      if (
+        apiErrorMessageContains(error, "default_ai_model") &&
+        (apiErrorMessageContains(error, "deprecated") || apiErrorMessageContains(error, "blocked"))
+      ) {
+        return "Legacy/global AI model cannot use a deprecated or blocked value. Use a current supported model or clear the field.";
+      }
+      if (apiErrorMessageContains(error, "default_ai_model")) {
+        return "Unable to save the legacy/global AI model fallback. Check the configured value.";
+      }
       return "Unable to save AI prompt overrides. Keep each prompt under 20,000 characters.";
     }
   }
@@ -3474,20 +3483,20 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
         >
           <SectionHeader
             title="AI Provider & Prompt Governance"
-            subtitle="Control the default model and governance behavior used when an AI run does not provide an explicit model."
+            subtitle="Control the legacy/global fallback model used while task aliases remain on the shared compatibility path."
             headingLevel={2}
             variant="support"
           />
           <div className="panel panel-compact stack-tight">
             <p className="hint muted">
-              Default model governance applies across AI-backed workflows unless a run explicitly specifies a model.
+              Phase 1 task aliases exist centrally, but current runtime workflows still resolve through the legacy/global shared model path.
             </p>
             <div className="admin-grid-two">
               <div className="stack-tight">
                 <label htmlFor="default-ai-model">
                   <AdminLabelWithHelp
-                    label="Default AI model"
-                    helpText="Controls fallback model selection when no run-specific model is provided. Resolution order: explicit request, business admin default, deployment default, provider fallback. Changing this may affect cost, latency, output style, and compatibility."
+                    label="Legacy/global AI model"
+                    helpText="Controls the legacy/global fallback model while task aliases remain compatibility-mapped. Resolution order: explicit request, business legacy/global default, deployment default, provider fallback. Deprecated models are rejected on new admin updates. Changing this may affect cost, latency, output style, and compatibility."
                     testId="admin-help-default-ai-model"
                   />
                 </label>
@@ -3497,14 +3506,14 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                   value={defaultAiModelInput}
                   onChange={(event) => setDefaultAiModelInput(event.target.value)}
                   disabled={businessSettingsLoading || promptOverrideSubmitting}
-                  placeholder="gpt-4o-mini"
+                  placeholder="gpt-5-mini"
                 />
                 <p className="hint muted">
                   Current source:{" "}
                   <strong>
                     {businessSettings?.default_ai_model
-                      ? "Business admin override"
-                      : "Deployment/default fallback"}
+                      ? "Business legacy/global override"
+                      : "Deployment legacy/global fallback"}
                   </strong>
                 </p>
               </div>

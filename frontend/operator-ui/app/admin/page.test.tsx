@@ -496,8 +496,8 @@ describe("admin route", () => {
     expect(screen.queryByRole("button", { name: "Create and Link Identity" })).not.toBeInTheDocument();
     const providerGovernanceCard = screen.getByTestId("admin-card-ai-provider-governance");
     const promptOverridesCard = screen.getByTestId("admin-card-ai-prompt-overrides");
-    expect(within(providerGovernanceCard).getByLabelText("Default AI model")).toBeInTheDocument();
-    expect(within(promptOverridesCard).queryByLabelText("Default AI model")).not.toBeInTheDocument();
+    expect(within(providerGovernanceCard).getByLabelText("Legacy/global AI model")).toBeInTheDocument();
+    expect(within(promptOverridesCard).queryByLabelText("Legacy/global AI model")).not.toBeInTheDocument();
     expect(within(promptOverridesCard).getByLabelText("Competitor Prompt")).toBeInTheDocument();
     expect(within(promptOverridesCard).getByLabelText("Recommendations Prompt")).toBeInTheDocument();
     expect(screen.queryByLabelText("Migration Draft Timeout (seconds)")).not.toBeInTheDocument();
@@ -704,7 +704,7 @@ describe("admin route", () => {
     );
   });
 
-  it("loads and saves business default AI model in admin settings", async () => {
+  it("loads and saves the legacy/global AI model in admin settings", async () => {
     mockFetchBusinessSettings.mockResolvedValueOnce({
       id: "biz-1",
       name: "Biz",
@@ -748,7 +748,7 @@ describe("admin route", () => {
       migration_draft_timeout_seconds: 240,
       ai_prompt_text_competitor: null,
       ai_prompt_text_recommendations: null,
-      default_ai_model: "gpt-4o-mini",
+      default_ai_model: "gpt-5-mini",
       timezone: "UTC",
       created_at: "2026-01-01T00:00:00Z",
       updated_at: "2026-01-01T00:00:00Z",
@@ -767,23 +767,78 @@ describe("admin route", () => {
 
     const providerGovernanceCard = await screen.findByTestId("admin-card-ai-provider-governance");
     const promptOverridesCard = await screen.findByTestId("admin-card-ai-prompt-overrides");
-    const defaultModelInput = within(providerGovernanceCard).getByLabelText("Default AI model");
-    expect(within(promptOverridesCard).queryByLabelText("Default AI model")).not.toBeInTheDocument();
+    const defaultModelInput = within(providerGovernanceCard).getByLabelText("Legacy/global AI model");
+    expect(within(promptOverridesCard).queryByLabelText("Legacy/global AI model")).not.toBeInTheDocument();
     await waitFor(() => {
       expect(defaultModelInput).toHaveValue("gpt-4.1-mini");
     });
 
-    fireEvent.change(defaultModelInput, { target: { value: "gpt-4o-mini" } });
+    fireEvent.change(defaultModelInput, { target: { value: "gpt-5-mini" } });
     fireEvent.click(screen.getByRole("button", { name: "Save Prompt Overrides" }));
 
     await waitFor(() => {
     expect(mockUpdateBusinessSettings).toHaveBeenCalled();
     });
     expect(mockUpdateBusinessSettings.mock.calls.at(-1)?.[2]).toMatchObject({
-      default_ai_model: "gpt-4o-mini",
+      default_ai_model: "gpt-5-mini",
     });
-    expect(await screen.findByLabelText("Default AI model")).toHaveValue("gpt-4o-mini");
+    expect(await screen.findByLabelText("Legacy/global AI model")).toHaveValue("gpt-5-mini");
     expect(screen.queryByLabelText("Migration Draft Timeout (seconds)")).not.toBeInTheDocument();
+  });
+
+  it("shows a deprecated-model error for the legacy/global AI model field", async () => {
+    const { ApiRequestError } = jest.requireMock("../../lib/api/client");
+
+    mockFetchBusinessSettings.mockResolvedValueOnce({
+      id: "biz-1",
+      name: "Biz",
+      notification_phone: null,
+      notification_email: null,
+      sms_enabled: false,
+      email_enabled: false,
+      customer_auto_ack_enabled: false,
+      contractor_alerts_enabled: false,
+      seo_audit_crawl_max_pages: 200,
+      competitor_candidate_min_relevance_score: 30,
+      competitor_candidate_big_box_penalty: 20,
+      competitor_candidate_directory_penalty: 20,
+      competitor_candidate_local_alignment_bonus: 10,
+      competitor_primary_timeout_seconds: null,
+      competitor_degraded_timeout_seconds: null,
+      migration_draft_timeout_seconds: 180,
+      ai_prompt_text_competitor: null,
+      ai_prompt_text_recommendations: null,
+      default_ai_model: null,
+      timezone: "UTC",
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+    });
+    mockUpdateBusinessSettings.mockRejectedValueOnce(
+      new ApiRequestError("default_ai_model cannot use deprecated or blocked model values.", 422),
+    );
+    mockUseAuth.mockReturnValue({
+      principal: {
+        business_id: "biz-1",
+        principal_id: "admin-model-1",
+        display_name: "Admin Model",
+        role: "admin",
+        is_active: true,
+      },
+    });
+
+    render(<AdminPage />);
+
+    const providerGovernanceCard = await screen.findByTestId("admin-card-ai-provider-governance");
+    const defaultModelInput = within(providerGovernanceCard).getByLabelText("Legacy/global AI model");
+
+    fireEvent.change(defaultModelInput, { target: { value: "gpt-4o-mini" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save Prompt Overrides" }));
+
+    expect(
+      await screen.findByText(
+        "Legacy/global AI model cannot use a deprecated or blocked value. Use a current supported model or clear the field.",
+      ),
+    ).toBeInTheDocument();
   });
 
   it("loads and saves GitHub publish configuration in admin settings", async () => {

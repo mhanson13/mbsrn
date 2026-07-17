@@ -144,6 +144,14 @@ def test_ai_provider_config_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.seo_competitor_profile_rejected_draft_retention_days == 60
 
 
+def test_ai_provider_config_normalizes_model_name_casing(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AI_MODEL_NAME", " GPT-5-MINI ")
+
+    settings = get_settings()
+
+    assert settings.ai_model_name == "gpt-5-mini"
+
+
 def test_ai_provider_config_uses_legacy_prompt_text_as_split_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("AI_PROMPT_TEXT_COMPETITOR", raising=False)
     monkeypatch.delenv("AI_PROMPT_TEXT_RECOMMENDATIONS", raising=False)

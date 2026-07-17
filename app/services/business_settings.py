@@ -13,6 +13,7 @@ from app.repositories.seo_competitor_profile_generation_repository import (
     SEOCompetitorProfileGenerationRepository,
 )
 from app.schemas.business import BusinessSettingsUpdateRequest
+from app.services.ai_model_settings import AIModelValidationError, ensure_ai_model_identifier_allowed
 
 _EMAIL_REGEX = re.compile(r"^[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}$", re.IGNORECASE)
 _E164_REGEX = re.compile(r"^\+[1-9]\d{9,14}$")
@@ -297,6 +298,8 @@ class BusinessSettingsService:
             self._validate_competitor_timeout_settings(effective)
         if _MIGRATION_DRAFT_TIMEOUT_SETTING_FIELDS.intersection(updates.keys()):
             self._validate_migration_draft_timeout_settings(effective)
+        if "default_ai_model" in updates:
+            self._validate_default_ai_model_setting(effective)
 
     def _validate_notification_settings(self, effective: dict) -> None:
         sms_enabled = bool(effective["sms_enabled"])
@@ -433,6 +436,17 @@ class BusinessSettingsService:
                     f"{_MIGRATION_DRAFT_TIMEOUT_SECONDS_MIN} and {_MIGRATION_DRAFT_TIMEOUT_SECONDS_MAX}."
                 )
             )
+
+    def _validate_default_ai_model_setting(self, effective: dict) -> None:
+        try:
+            ensure_ai_model_identifier_allowed(
+                effective.get("default_ai_model"),
+                field_name="default_ai_model",
+                model_source="admin_config",
+                allow_compatibility_legacy=False,
+            )
+        except AIModelValidationError as exc:
+            raise BusinessSettingsValidationError(str(exc)) from exc
 
     def _is_valid_email(self, value: str | None) -> bool:
         if not value:

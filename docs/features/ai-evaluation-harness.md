@@ -85,12 +85,16 @@ python -m app.cli.seo_ai_quality_eval --mode mock --pipeline all --json --output
 ## Real-Provider Preflight Checklist
 Use this checklist before running non-prod real-provider evaluation.
 
+Phase 1 note:
+- the harness now has a reserved `evaluation_harness` task alias, but real-provider runs still use the shared compatibility model path until later routing phases;
+- no local model training, fine-tuning, or self-hosting is introduced.
+
 1. Required env vars
    - `AI_PROVIDER_NAME=openai`
    - `AI_PROVIDER_API_KEY=<provider-secret>`
    - `AI_EVAL_ALLOW_REAL_PROVIDER=true`
 2. Recommended non-secret vars
-   - `AI_MODEL_NAME` (default: `gpt-4o-mini`)
+   - `AI_MODEL_NAME` (legacy shared deployment fallback; existing manifests may still use `gpt-4o-mini` until explicitly updated)
    - `AI_TIMEOUT_VALUE` (default: `30`)
    - `OPENAI_API_BASE_URL` (default: `https://api.openai.com/v1`)
 3. Environment safety guard

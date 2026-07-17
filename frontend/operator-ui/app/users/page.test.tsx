@@ -1305,7 +1305,8 @@ describe("admin page compatibility route", () => {
       }),
     );
     await screen.findByText("AI prompt overrides cleared. Deployment fallback/default is now active.");
-    expect(screen.getAllByText("Deployment/default fallback")).toHaveLength(3);
+    expect(screen.getAllByText("Deployment/default fallback")).toHaveLength(2);
+    expect(screen.getByText("Deployment legacy/global fallback")).toBeInTheDocument();
   });
 
   it("renders admin site edit and delete-plan controls", async () => {

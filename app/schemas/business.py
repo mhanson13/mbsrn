@@ -72,8 +72,8 @@ class BusinessSettingsUpdateRequest(BaseModel):
         default=None,
         max_length=128,
         description=(
-            "Business-scoped default AI model. Blank/whitespace values are treated as unset and "
-            "fall back to deployment/default model configuration."
+            "Business-scoped legacy/global AI model fallback. Blank/whitespace values are treated "
+            "as unset and fall back to deployment/default model configuration."
         ),
     )
     competitor_tuning_preview_event_id: str | None = Field(default=None, min_length=1, max_length=36)
@@ -124,10 +124,15 @@ class BusinessSettingsUpdateRequest(BaseModel):
     def normalize_preview_event_id(cls, value: str | None) -> str | None:
         return _clean_optional_text(value)
 
-    @field_validator("ai_prompt_text_competitor", "ai_prompt_text_recommendations", "default_ai_model", mode="before")
+    @field_validator("ai_prompt_text_competitor", "ai_prompt_text_recommendations", mode="before")
     @classmethod
     def normalize_ai_prompt_text_overrides(cls, value: str | None) -> str | None:
         return _clean_optional_text(value)
+
+    @field_validator("default_ai_model", mode="before")
+    @classmethod
+    def normalize_default_ai_model(cls, value: str | None) -> str | None:
+        return _normalize_optional_model_name(value)
 
 
 def _clean_optional_text(value: str | None) -> str | None:
@@ -137,6 +142,15 @@ def _clean_optional_text(value: str | None) -> str | None:
     if cleaned == "":
         return None
     return cleaned
+
+
+def _normalize_optional_model_name(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip().lower()
+    if normalized == "":
+        return None
+    return normalized
 
 
 def _normalize_us_phone(value: str) -> str | None:

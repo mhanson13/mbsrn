@@ -84,7 +84,7 @@ from app.services.ai_response_contract_evaluator import (
     AIResponseContractEvaluation,
     evaluate_migration_artifact_response,
 )
-from app.services.ai_model_settings import resolve_ai_model_name
+from app.services.ai_model_settings import resolve_ai_model_for_task
 from app.services.github_publish_config import GitHubPublishConfigSecretError, GitHubPublishConfigService
 from app.services.seo_migration_context import SEOMigrationContextAssembler
 from app.services.seo_migration_artifact_quality import evaluate_migration_artifact_quality
@@ -14668,12 +14668,15 @@ class SEOMigrationService:
         return runtime_provider_model or self._configured_provider_model_name
 
     def _resolve_migration_model_name(self, business: Business, *, requested_model_name: str | None = None) -> str:
-        resolved = resolve_ai_model_name(
+        resolved = resolve_ai_model_for_task(
+            task_alias="migration_site_generation",
             requested_model_name=requested_model_name,
             admin_default_model_name=getattr(business, "default_ai_model", None),
             env_default_model_name=self._env_default_model_name,
             provider_fallback_model_name=self._provider_model_fallback_name(),
         )
+        if resolved.model_name is None:
+            raise ValueError("Migration site generation task alias did not resolve a provider model.")
         return resolved.model_name
 
     def _resolve_migration_draft_timeout_seconds(

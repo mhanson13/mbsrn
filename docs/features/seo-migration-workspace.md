@@ -856,9 +856,14 @@ Compatibility decisions are now request-shape matrix driven (migration-specific)
 
 Resolved migration model precedence before compatibility evaluation and provider invocation:
 1. explicit/requested model (when provided by current workflow)
-2. business admin default (`businesses.default_ai_model`)
-3. deployment env default (`AI_MODEL_NAME`)
+2. business admin legacy/global default (`businesses.default_ai_model`)
+3. deployment env legacy/shared default (`AI_MODEL_NAME`)
 4. provider/runtime fallback
+
+Phase 1 AI task registry notes:
+- migration draft generation resolves through the `migration_site_generation` task alias;
+- task aliases exist centrally, but current runtime behavior remains compatibility-mapped to the shared legacy model path until a later cutover phase;
+- deprecated or blocked raw model strings are rejected for new explicit/admin updates, while legacy stored/admin/env/provider defaults can continue under compatibility mapping until they are migrated.
 
 Operational implication:
 - changing the admin default model can immediately change compatibility outcomes for migration draft generation without changing provider routing.

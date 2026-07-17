@@ -164,12 +164,12 @@ def test_patch_business_settings_accepts_and_clears_default_ai_model(db_session,
     save_response = client.patch(
         f"/api/businesses/{seeded_business.id}/settings",
         json={
-            "default_ai_model": "  gpt-4.1-mini  ",
+            "default_ai_model": "  GPT-5-MINI  ",
         },
     )
     assert save_response.status_code == 200
     save_payload = save_response.json()
-    assert save_payload["default_ai_model"] == "gpt-4.1-mini"
+    assert save_payload["default_ai_model"] == "gpt-5-mini"
 
     clear_response = client.patch(
         f"/api/businesses/{seeded_business.id}/settings",
@@ -180,6 +180,22 @@ def test_patch_business_settings_accepts_and_clears_default_ai_model(db_session,
     assert clear_response.status_code == 200
     clear_payload = clear_response.json()
     assert clear_payload["default_ai_model"] is None
+
+
+def test_patch_business_settings_rejects_deprecated_default_ai_model(db_session, seeded_business) -> None:
+    client = _make_client(db_session, business_id=seeded_business.id)
+
+    response = client.patch(
+        f"/api/businesses/{seeded_business.id}/settings",
+        json={
+            "default_ai_model": " gpt-4o-mini ",
+        },
+    )
+
+    assert response.status_code == 422
+    detail = str(response.json()["detail"]).lower()
+    assert "default_ai_model" in detail
+    assert "deprecated" in detail
 
 
 def test_patch_business_settings_accepts_and_clears_migration_draft_timeout_seconds(

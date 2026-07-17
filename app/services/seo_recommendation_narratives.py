@@ -34,7 +34,7 @@ from app.services.ai_response_contract_evaluator import (
     summarize_recommendation_response_contract,
 )
 from app.services.competitors.normalizer import normalize_competitor_response
-from app.services.ai_model_settings import resolve_ai_model_name
+from app.services.ai_model_settings import resolve_ai_model_for_task
 from app.services.ai_prompt_settings import ResolvedAIPromptText, resolve_ai_prompt_text
 from app.services.seo_competitor_profile_candidate_quality import (
     BIG_BOX_PENALTY_MAX,
@@ -764,12 +764,15 @@ class SEORecommendationNarrativeService:
         return current or self._configured_provider_model_name
 
     def _resolve_recommendation_model_name(self, business: Business, *, requested_model_name: str | None = None) -> str:
-        resolved = resolve_ai_model_name(
+        resolved = resolve_ai_model_for_task(
+            task_alias="recommendation_explanation",
             requested_model_name=requested_model_name,
             admin_default_model_name=getattr(business, "default_ai_model", None),
             env_default_model_name=self._env_default_model_name,
             provider_fallback_model_name=self._provider_model_fallback_name(),
         )
+        if resolved.model_name is None:
+            raise ValueError("Recommendation explanation task alias did not resolve a provider model.")
         return resolved.model_name
 
     def _apply_resolved_recommendation_model_settings(

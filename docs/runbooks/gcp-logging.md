@@ -233,7 +233,7 @@ Interpretation:
 - `reason_code` identifies the stable compatibility failure class (for example `unsupported_model_configuration`).
 - inspect `model`, `endpoint_path`, `execution_mode`, `response_format_mode`, and `request_body_mode` together as the effective request-shape key.
 - for summary payload troubleshooting, also inspect `context_summary.migration_diagnostics.draft_provider_compatibility_admin_summary` for sanitized matrix decision detail.
-- model resolution precedence for compatibility checks is: explicit/requested -> business admin default (`default_ai_model`) -> env fallback (`AI_MODEL_NAME`) -> provider fallback.
+- model resolution precedence for compatibility checks is: explicit/requested -> business admin legacy/global default (`default_ai_model`) -> env legacy/shared fallback (`AI_MODEL_NAME`) -> provider fallback.
 
 Current migration request-shape examples:
 - supported: `gpt-5.1*` + `/responses` + `full` + `json_schema` + `responses_text_format_json_schema`
