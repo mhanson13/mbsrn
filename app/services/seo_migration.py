@@ -84,7 +84,13 @@ from app.services.ai_response_contract_evaluator import (
     AIResponseContractEvaluation,
     evaluate_migration_artifact_response,
 )
-from app.services.ai_model_settings import resolve_ai_model_for_task
+from app.services.ai_model_settings import (
+    AIModelValidationError,
+    ResolvedAIModelForTask,
+    ensure_ai_model_capabilities_for_task,
+    resolve_ai_model_for_task,
+    resolve_ai_model_name,
+)
 from app.services.github_publish_config import GitHubPublishConfigSecretError, GitHubPublishConfigService
 from app.services.seo_migration_context import SEOMigrationContextAssembler
 from app.services.seo_migration_artifact_quality import evaluate_migration_artifact_quality
@@ -172,6 +178,7 @@ _MIGRATION_MEDIA_REASON_UNSUPPORTED_IMAGE_TYPE = "unsupported_image_type"
 _MIGRATION_MEDIA_REASON_IMAGE_TOO_LARGE = "image_too_large"
 _MIGRATION_MEDIA_REASON_PROVIDER_UNAVAILABLE = "provider_unavailable"
 _MIGRATION_MEDIA_REASON_PROVIDER_RESPONSE_INVALID = "provider_response_invalid"
+_MIGRATION_MEDIA_REASON_MODEL_INCOMPATIBLE = "image_metadata_model_incompatible"
 _MIGRATION_MEDIA_REASON_ASSET_NOT_FOUND = "media_asset_not_found"
 _MIGRATION_MEDIA_REASON_ASSET_NOT_AUTHORIZED = "media_asset_not_authorized"
 _MIGRATION_MEDIA_REASON_BATCH_LIMIT_REACHED = "media_suggestion_batch_limit_reached"
@@ -716,6 +723,7 @@ _REQUIREMENTS_SUGGESTION_REASON_COMPLETED = "requirements_suggestion_completed"
 _REQUIREMENTS_SUGGESTION_REASON_NOT_AVAILABLE = "requirements_suggestion_not_available"
 _REQUIREMENTS_SUGGESTION_REASON_PROVIDER_UNAVAILABLE = "requirements_suggestion_provider_unavailable"
 _REQUIREMENTS_SUGGESTION_REASON_PROVIDER_INVALID = "requirements_suggestion_provider_invalid"
+_REQUIREMENTS_SUGGESTION_REASON_MODEL_INCOMPATIBLE = "requirements_suggestion_model_incompatible"
 _REQUIREMENTS_SUGGESTION_REASON_CONTEXT_UNAVAILABLE = "requirements_suggestion_context_unavailable"
 _REQUIREMENTS_SUGGESTION_REASON_FIELD_UNSUPPORTED = "requirements_suggestion_field_unsupported"
 _REQUIREMENTS_SUGGESTION_REASON_BUDGET_REJECTED = "requirements_suggestion_budget_rejected"
@@ -2126,11 +2134,34 @@ class SEOMigrationService:
             "usage_note": _normalize_string(media_asset.get("usage_note"), max_length=400),
             "page_assignment": _normalize_string(media_asset.get("page_assignment"), max_length=120),
         }
+        business = self._load_business_for_ai_task_resolution(business_id)
+        model_diagnostics: dict[str, object] | None = None
         try:
+            resolved_model = self._resolve_ai_task_model(
+                business,
+                task_alias="media_metadata_helper",
+                enforce_capabilities=True,
+            )
+            model_diagnostics = self._build_ai_task_model_diagnostics(
+                task_alias="media_metadata_helper",
+                business=business,
+                resolved_model=resolved_model,
+            )
             suggestion = self._request_media_metadata_suggestion(
                 image_bytes=image_bytes,
                 content_type=sniffed_content_type,
                 asset_metadata=provider_payload,
+                resolved_model=resolved_model,
+            )
+        except AIModelValidationError as exc:
+            return _build_media_metadata_suggestion_payload(
+                suggestion_status=_MIGRATION_MEDIA_SUGGESTION_STATUS_FAILED,
+                reason_code=_MIGRATION_MEDIA_REASON_MODEL_INCOMPATIBLE,
+                model_diagnostics=self._build_ai_task_model_diagnostics(
+                    task_alias="media_metadata_helper",
+                    business=business,
+                    message=str(exc),
+                ),
             )
         except SEOMigrationValidationError as exc:
             reason_code = (
@@ -2144,6 +2175,7 @@ class SEOMigrationService:
             return _build_media_metadata_suggestion_payload(
                 suggestion_status=suggestion_status,
                 reason_code=reason_code,
+                model_diagnostics=model_diagnostics,
             )
 
         return _build_media_metadata_suggestion_payload(
@@ -2155,6 +2187,7 @@ class SEOMigrationService:
             suggested_usage_note=suggestion.get("suggested_usage_note"),
             suggested_page_assignment=suggestion.get("suggested_page_assignment"),
             confidence=suggestion.get("confidence"),
+            model_diagnostics=model_diagnostics,
         )
 
     def import_selected_discovered_media_assets(
@@ -2803,6 +2836,7 @@ class SEOMigrationService:
         del principal_id
         workspace = self.get_workspace(business_id=business_id, site_id=site_id)
         site = self._require_site(business_id=business_id, site_id=site_id)
+        business = self._load_business_for_ai_task_resolution(business_id)
         normalized_field = (_normalize_string(field, max_length=80) or "").lower()
         if normalized_field not in _REQUIREMENTS_SUGGESTION_SUPPORTED_FIELDS:
             return {
@@ -2848,12 +2882,39 @@ class SEOMigrationService:
             media_assets_payload=media_assets_payload,
         )
 
+        model_diagnostics: dict[str, object] | None = None
         try:
+            resolved_model = self._resolve_ai_task_model(
+                business,
+                task_alias="requirements_helper",
+                enforce_capabilities=True,
+            )
+            model_diagnostics = self._build_ai_task_model_diagnostics(
+                task_alias="requirements_helper",
+                business=business,
+                resolved_model=resolved_model,
+            )
             suggestion_value = self._request_requirement_field_suggestion(
                 field=normalized_field,
                 current_value=normalized_current_value,
                 suggestion_context=suggestion_context,
+                resolved_model=resolved_model,
             )
+        except AIModelValidationError as exc:
+            return {
+                "field": normalized_field,
+                "suggestion_status": _REQUIREMENTS_SUGGESTION_STATUS_FAILED,
+                "suggested_value": None,
+                "reason_code": _REQUIREMENTS_SUGGESTION_REASON_MODEL_INCOMPATIBLE,
+                "context_sources_used": context_sources_used,
+                "retryable": False,
+                "generated_at": None,
+                "model_diagnostics": self._build_ai_task_model_diagnostics(
+                    task_alias="requirements_helper",
+                    business=business,
+                    message=str(exc),
+                ),
+            }
         except SEOMigrationValidationError as exc:
             error_code = _normalize_string(exc.error_code, max_length=80) or ""
             reason_code = (
@@ -2866,6 +2927,7 @@ class SEOMigrationService:
                     _REQUIREMENTS_SUGGESTION_REASON_CONTEXT_UNAVAILABLE,
                     _REQUIREMENTS_SUGGESTION_REASON_FIELD_UNSUPPORTED,
                     _REQUIREMENTS_SUGGESTION_REASON_BUDGET_REJECTED,
+                    _REQUIREMENTS_SUGGESTION_REASON_MODEL_INCOMPATIBLE,
                 }
                 else _REQUIREMENTS_SUGGESTION_REASON_PROVIDER_UNAVAILABLE
             )
@@ -2887,6 +2949,7 @@ class SEOMigrationService:
                 "context_sources_used": context_sources_used,
                 "retryable": bool(exc.retryable),
                 "generated_at": None,
+                "model_diagnostics": model_diagnostics,
             }
 
         normalized_suggestion_value = self._normalize_requirement_suggestion_value(
@@ -2902,6 +2965,7 @@ class SEOMigrationService:
                 "context_sources_used": context_sources_used,
                 "retryable": False,
                 "generated_at": None,
+                "model_diagnostics": model_diagnostics,
             }
         return {
             "field": normalized_field,
@@ -2911,6 +2975,7 @@ class SEOMigrationService:
             "context_sources_used": context_sources_used,
             "retryable": False,
             "generated_at": utc_now().isoformat(),
+            "model_diagnostics": model_diagnostics,
         }
 
     def _build_requirement_suggestion_context(
@@ -3104,6 +3169,7 @@ class SEOMigrationService:
         field: str,
         current_value: str | list[str] | None,
         suggestion_context: dict[str, object],
+        resolved_model: ResolvedAIModelForTask,
     ) -> object:
         provider_name = (_normalize_string(self.provider_name, max_length=64) or "").lower()
         if provider_name.startswith("mock"):
@@ -3124,6 +3190,7 @@ class SEOMigrationService:
             field=field,
             current_value=current_value,
             suggestion_context=suggestion_context,
+            resolved_model=resolved_model,
         )
 
     def _request_openai_requirement_field_suggestion(
@@ -3132,15 +3199,11 @@ class SEOMigrationService:
         field: str,
         current_value: str | list[str] | None,
         suggestion_context: dict[str, object],
+        resolved_model: ResolvedAIModelForTask,
     ) -> object:
         api_key = _normalize_string(getattr(self.artifact_provider, "api_key", None), max_length=300)
         api_base_url = _normalize_string(getattr(self.artifact_provider, "api_base_url", None), max_length=300)
-        model_name = _normalize_string(
-            getattr(self.artifact_provider, "model_name", None), max_length=128
-        ) or _normalize_string(
-            self.provider_model_name,
-            max_length=128,
-        )
+        model_name = _normalize_string(resolved_model.model_name, max_length=128)
         timeout_seconds_raw = getattr(self.artifact_provider, "timeout_seconds", None)
         timeout_seconds = max(1, int(timeout_seconds_raw)) if isinstance(timeout_seconds_raw, int) else 30
         if api_key is None:
@@ -3154,7 +3217,13 @@ class SEOMigrationService:
         if api_base_url is None:
             api_base_url = "https://api.openai.com/v1"
         if model_name is None:
-            model_name = "gpt-4o-mini"
+            raise SEOMigrationValidationError(
+                "AI provider model is unavailable for requirement suggestion.",
+                failure_category="config_missing",
+                failure_reason="unsupported_configuration",
+                error_code=_REQUIREMENTS_SUGGESTION_REASON_PROVIDER_UNAVAILABLE,
+                retryable=False,
+            )
 
         schema = {
             "type": "object",
@@ -14667,13 +14736,74 @@ class SEOMigrationService:
         runtime_provider_model = _normalize_string(getattr(self.artifact_provider, "model_name", None), max_length=128)
         return runtime_provider_model or self._configured_provider_model_name
 
-    def _resolve_migration_model_name(self, business: Business, *, requested_model_name: str | None = None) -> str:
+    def _load_business_for_ai_task_resolution(self, business_id: str) -> Business:
+        business = self.business_repository.get(business_id)
+        if business is None:
+            raise SEOMigrationNotFoundError("Business not found")
+        return business
+
+    def _resolve_ai_task_model(
+        self,
+        business: Business,
+        *,
+        task_alias: str,
+        requested_model_name: str | None = None,
+        enforce_capabilities: bool = False,
+    ) -> ResolvedAIModelForTask:
         resolved = resolve_ai_model_for_task(
-            task_alias="migration_site_generation",
+            task_alias=task_alias,
             requested_model_name=requested_model_name,
             admin_default_model_name=getattr(business, "default_ai_model", None),
             env_default_model_name=self._env_default_model_name,
             provider_fallback_model_name=self._provider_model_fallback_name(),
+        )
+        if enforce_capabilities and resolved.model_name is not None:
+            ensure_ai_model_capabilities_for_task(
+                task_alias=resolved.task_alias,
+                model_name=resolved.model_name,
+                model_source=resolved.model_source,
+            )
+        return resolved
+
+    def _build_ai_task_model_diagnostics(
+        self,
+        *,
+        task_alias: str,
+        business: Business,
+        resolved_model: ResolvedAIModelForTask | None = None,
+        message: str | None = None,
+    ) -> dict[str, object]:
+        task_name = _normalize_string(task_alias, max_length=80) or "unknown_task"
+        if resolved_model is not None:
+            diagnostics: dict[str, object] = {
+                "task_alias": task_name,
+                "source": _normalize_string(resolved_model.model_source, max_length=40) or "provider_fallback",
+                "fallback_used": bool(resolved_model.fallback_used),
+                "compatibility_mapped": bool(resolved_model.compatibility_mapped),
+                "legacy_compatibility_mode": bool(resolved_model.legacy_compatibility_mode),
+            }
+        else:
+            resolved_name = resolve_ai_model_name(
+                requested_model_name=None,
+                admin_default_model_name=getattr(business, "default_ai_model", None),
+                env_default_model_name=self._env_default_model_name,
+                provider_fallback_model_name=self._provider_model_fallback_name(),
+            )
+            diagnostics = {
+                "task_alias": task_name,
+                "source": _normalize_string(resolved_name.model_source, max_length=40) or "provider_fallback",
+                "fallback_used": resolved_name.model_source in {"env", "provider_fallback"},
+            }
+        normalized_message = _normalize_string(message, max_length=240)
+        if normalized_message is not None:
+            diagnostics["message"] = normalized_message
+        return diagnostics
+
+    def _resolve_migration_model_name(self, business: Business, *, requested_model_name: str | None = None) -> str:
+        resolved = self._resolve_ai_task_model(
+            business,
+            task_alias="migration_site_generation",
+            requested_model_name=requested_model_name,
         )
         if resolved.model_name is None:
             raise ValueError("Migration site generation task alias did not resolve a provider model.")
@@ -15563,6 +15693,7 @@ class SEOMigrationService:
         image_bytes: bytes,
         content_type: str,
         asset_metadata: dict[str, object],
+        resolved_model: ResolvedAIModelForTask,
     ) -> dict[str, object]:
         provider_name = (_normalize_string(self.provider_name, max_length=64) or "").lower()
         if provider_name.startswith("mock"):
@@ -15579,6 +15710,7 @@ class SEOMigrationService:
             image_bytes=image_bytes,
             content_type=content_type,
             asset_metadata=asset_metadata,
+            resolved_model=resolved_model,
         )
 
     def _request_openai_media_metadata_suggestion(
@@ -15587,13 +15719,11 @@ class SEOMigrationService:
         image_bytes: bytes,
         content_type: str,
         asset_metadata: dict[str, object],
+        resolved_model: ResolvedAIModelForTask,
     ) -> dict[str, object]:
         api_key = _normalize_string(getattr(self.artifact_provider, "api_key", None), max_length=300)
         api_base_url = _normalize_string(getattr(self.artifact_provider, "api_base_url", None), max_length=300)
-        model_name = _normalize_string(
-            getattr(self.artifact_provider, "model_name", None),
-            max_length=128,
-        ) or _normalize_string(self.provider_model_name, max_length=128)
+        model_name = _normalize_string(resolved_model.model_name, max_length=128)
         timeout_seconds_raw = getattr(self.artifact_provider, "timeout_seconds", None)
         timeout_seconds = max(1, int(timeout_seconds_raw)) if isinstance(timeout_seconds_raw, int) else 30
         if api_key is None:
@@ -15607,7 +15737,13 @@ class SEOMigrationService:
         if api_base_url is None:
             api_base_url = "https://api.openai.com/v1"
         if model_name is None:
-            model_name = "gpt-4o-mini"
+            raise SEOMigrationValidationError(
+                "AI provider model is unavailable for image metadata suggestion.",
+                failure_category="config_missing",
+                failure_reason="unsupported_configuration",
+                error_code=_MIGRATION_MEDIA_REASON_PROVIDER_UNAVAILABLE,
+                retryable=False,
+            )
 
         image_data_url = "data:" + content_type + ";base64," + base64.b64encode(image_bytes).decode("ascii")
         user_context_json = json.dumps(
@@ -24669,6 +24805,7 @@ def _normalize_media_metadata_suggestion(value: object) -> dict[str, object]:
         "suggestion_status": status,
         "reason_code": reason_code,
         "generated_at": _normalize_string(payload.get("generated_at"), max_length=80),
+        "model_diagnostics": _normalize_ai_task_model_diagnostics(payload.get("model_diagnostics")),
     }
 
 
@@ -24682,6 +24819,7 @@ def _build_media_metadata_suggestion_payload(
     suggested_usage_note: object = None,
     suggested_page_assignment: object = None,
     confidence: object = None,
+    model_diagnostics: dict[str, object] | None = None,
 ) -> dict[str, object]:
     return {
         "suggested_category": _normalize_media_category(suggested_category),
@@ -24694,6 +24832,7 @@ def _build_media_metadata_suggestion_payload(
         "suggestion_status": suggestion_status,
         "reason_code": _normalize_string(reason_code, max_length=80),
         "generated_at": utc_now().isoformat(),
+        "model_diagnostics": _normalize_ai_task_model_diagnostics(model_diagnostics),
     }
 
 
@@ -25179,6 +25318,37 @@ def _normalize_certificate_wait_state_reason_code(value: object) -> str | None:
     }:
         return _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_PROVISIONING
     return None
+
+
+def _normalize_ai_task_model_diagnostics(value: object) -> dict[str, object] | None:
+    payload = _normalize_json_dict(value)
+    task_alias = _normalize_string(payload.get("task_alias"), max_length=80)
+    source = _normalize_string(payload.get("source"), max_length=40)
+    message = _normalize_string(payload.get("message"), max_length=240)
+    compatibility_mapped = payload.get("compatibility_mapped")
+    legacy_compatibility_mode = payload.get("legacy_compatibility_mode")
+    fallback_used = payload.get("fallback_used")
+    if (
+        task_alias is None
+        and source is None
+        and message is None
+        and not isinstance(compatibility_mapped, bool)
+        and not isinstance(legacy_compatibility_mode, bool)
+        and not isinstance(fallback_used, bool)
+    ):
+        return None
+    normalized: dict[str, object] = {
+        "task_alias": task_alias,
+        "source": source,
+        "fallback_used": bool(fallback_used),
+    }
+    if isinstance(compatibility_mapped, bool):
+        normalized["compatibility_mapped"] = compatibility_mapped
+    if isinstance(legacy_compatibility_mode, bool):
+        normalized["legacy_compatibility_mode"] = legacy_compatibility_mode
+    if message is not None:
+        normalized["message"] = message
+    return normalized
 
 
 def _normalize_deploy_failure_reason_code(value: object) -> str | None:

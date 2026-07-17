@@ -329,12 +329,14 @@ Suggestion API:
   - `context_sources_used`
   - `retryable`
   - `generated_at`
+  - optional `model_diagnostics` (`task_alias`, `source`, `fallback_used`, compatibility flags, optional safe message)
 
 Stable reason codes:
 - `requirements_suggestion_completed`
 - `requirements_suggestion_not_available`
 - `requirements_suggestion_provider_unavailable`
 - `requirements_suggestion_provider_invalid`
+- `requirements_suggestion_model_incompatible`
 - `requirements_suggestion_context_unavailable`
 - `requirements_suggestion_field_unsupported`
 - `requirements_suggestion_budget_rejected`
@@ -344,6 +346,7 @@ Suggestion safety constraints:
 - no live Google API calls required
 - no forced Google OAuth reconnect for suggestion requests
 - no secrets/tokens/storage keys/raw media bytes/base64 in suggestion responses
+- requirements suggestions now resolve through task alias `requirements_helper`; default runtime behavior remains compatibility-mapped to the shared legacy model chain until helper-specific model choices are configured
 - local tests mock provider behavior; no real provider calls are required for test runs
 
 Operator requirements import/export:
@@ -478,6 +481,7 @@ AI-assisted media metadata suggestions (2026-05):
   - `suggestion_status` (`pending|completed|failed|not_available`)
   - optional `reason_code`
   - optional `generated_at`
+  - optional `model_diagnostics` (`task_alias`, `source`, `fallback_used`, compatibility flags, optional safe message)
 - operator-authored values are never overwritten automatically
 - operator can explicitly apply a completed suggestion via media update payload:
   - `apply_suggested_metadata: true`
@@ -499,6 +503,7 @@ AI-assisted media metadata suggestions (2026-05):
   - no storage keys
   - no raw bytes/base64
   - no auth tokens/headers/cookies
+- media metadata suggestions now resolve through task alias `media_metadata_helper`; default runtime behavior remains compatibility-mapped to the shared legacy model chain until helper-specific model choices are configured
 - local automated tests for this capability mock provider responses; no real provider calls are required for test runs
 
 Error contract highlights:
@@ -531,6 +536,7 @@ Suggestion reason codes:
 - `image_too_large`
 - `provider_unavailable`
 - `provider_response_invalid`
+- `image_metadata_model_incompatible`
 - `media_asset_not_found`
 - `media_asset_not_authorized`
 - `media_suggestion_batch_limit_reached`
@@ -862,6 +868,8 @@ Resolved migration model precedence before compatibility evaluation and provider
 
 Phase 1 AI task registry notes:
 - migration draft generation resolves through the `migration_site_generation` task alias;
+- requirements suggestion helper resolves through `requirements_helper`;
+- media metadata suggestion helper resolves through `media_metadata_helper`;
 - task aliases exist centrally, but current runtime behavior remains compatibility-mapped to the shared legacy model path until a later cutover phase;
 - deprecated or blocked raw model strings are rejected for new explicit/admin updates, while legacy stored/admin/env/provider defaults can continue under compatibility mapping until they are migrated.
 

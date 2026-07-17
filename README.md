@@ -12,7 +12,7 @@ MBSRN (My Business Sucks Right Now) is a FastAPI + Next.js platform for SEO oper
 - AI-assisted competitor profile draft generation with strict review gating
 - Structured AI competitor profile review surface (compact summary strip, primary pipeline table, and secondary debug details)
 - Deterministic recommendation runs with AI narrative overlays and bounded tuning suggestions
-- Central AI task registry with Phase 1 compatibility-shared routing and deprecated-model guard; MBSRN continues using external provider APIs only (no training, fine-tuning, or self-hosted model runtime added here)
+- Central AI task registry with compatibility-shared routing, helper task-alias resolution for migration requirements/media metadata, and deprecated-model guard; MBSRN continues using external provider APIs only (no training, fine-tuning, or self-hosted model runtime added here)
 - Business-admin legacy/global AI model fallback (`default_ai_model`) with deterministic runtime precedence (`explicit/requested -> admin default -> AI_MODEL_NAME env fallback -> provider fallback`)
 - Controlled migration workspace for weak incumbent SMB sites (bounded source ingest, operator overrides, draft artifact generation, explicit approval, GitHub publish, and explicit deploy request)
 - Dedicated migration workflow route (`/sites/[site_id]/migration`) with run-bound draft/publish/deploy diagnostics, full draft preview navigation, and safe draft deletion for eligible unpublished artifacts

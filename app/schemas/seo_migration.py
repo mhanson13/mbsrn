@@ -333,6 +333,7 @@ class SEOMigrationRequirementsSuggestionRead(BaseModel):
     context_sources_used: list[str] = Field(default_factory=list)
     retryable: bool = False
     generated_at: str | None = None
+    model_diagnostics: dict[str, object] | None = None
 
 
 class SEOMigrationMediaAssetUpdateRequest(BaseModel):
@@ -501,6 +502,7 @@ class SEOMigrationMediaMetadataSuggestionRead(BaseModel):
     suggestion_status: str | None = None
     reason_code: str | None = None
     generated_at: str | None = None
+    model_diagnostics: dict[str, object] | None = None
 
 
 class SEOMigrationArtifactFileRead(BaseModel):

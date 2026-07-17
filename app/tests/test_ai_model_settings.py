@@ -4,6 +4,7 @@ import pytest
 
 from app.services.ai_model_settings import (
     AIModelValidationError,
+    ensure_ai_model_capabilities_for_task,
     get_ai_task_registry,
     resolve_ai_model_for_task,
     resolve_ai_model_name,
@@ -154,6 +155,35 @@ def test_resolve_ai_model_for_task_allows_legacy_admin_default_in_phase1_compati
     assert resolved.compatibility_mapped is True
     assert resolved.legacy_compatibility_mode is True
     assert "compatibility-mapped" in resolved.safe_diagnostic_message
+
+
+def test_ensure_ai_model_capabilities_for_requirements_helper_rejects_embedding_models() -> None:
+    with pytest.raises(
+        AIModelValidationError,
+        match=(
+            "Configured AI model for task alias 'requirements_helper' does not satisfy required "
+            "capabilities: structured_json."
+        ),
+    ):
+        ensure_ai_model_capabilities_for_task(
+            task_alias="requirements_helper",
+            model_name="text-embedding-3-small",
+            model_source="admin_config",
+        )
+
+
+def test_ensure_ai_model_capabilities_for_media_metadata_helper_requires_multimodal_models() -> None:
+    with pytest.raises(AIModelValidationError) as exc_info:
+        ensure_ai_model_capabilities_for_task(
+            task_alias="media_metadata_helper",
+            model_name="text-embedding-3-small",
+            model_source="explicit",
+        )
+
+    message = str(exc_info.value)
+    assert "Requested AI model for task alias 'media_metadata_helper'" in message
+    assert "structured_json" in message
+    assert "multimodal" in message
 
 
 def test_resolve_ai_model_for_task_rejects_unknown_alias() -> None:

@@ -56,6 +56,21 @@ _DEPRECATED_PREFIX_MODELS: Final[tuple[str, ...]] = (
     "gpt-4o-mini-",
     "codex-",
 )
+_GENERATIVE_MODEL_CAPABILITIES: Final[tuple[AIModelCapability, ...]] = (
+    "text",
+    "structured_json",
+    "multimodal",
+    "web_search",
+    "code_generation",
+)
+_EMBEDDING_MODEL_CAPABILITIES: Final[tuple[AIModelCapability, ...]] = (
+    "text",
+    "embeddings",
+)
+_MODERATION_MODEL_CAPABILITIES: Final[tuple[AIModelCapability, ...]] = (
+    "text",
+    "moderation",
+)
 
 
 class AIModelValidationError(ValueError):
@@ -452,6 +467,31 @@ def resolve_ai_model_for_task(
     )
 
 
+def ensure_ai_model_capabilities_for_task(
+    *,
+    task_alias: str,
+    model_name: str | None,
+    model_source: ResolvedModelSource = "explicit",
+) -> None:
+    normalized_model = normalize_ai_model_identifier(model_name)
+    if normalized_model is None:
+        return
+    task = get_ai_task_definition(task_alias)
+    known_capabilities = _resolve_known_ai_model_capabilities(normalized_model)
+    if known_capabilities is None:
+        return
+    missing_capabilities = tuple(capability for capability in task.capabilities if capability not in known_capabilities)
+    if not missing_capabilities:
+        return
+    raise AIModelValidationError(
+        _build_capability_mismatch_message(
+            task_alias=task.task_alias,
+            model_source=model_source,
+            missing_capabilities=missing_capabilities,
+        )
+    )
+
+
 def _match_deprecated_ai_model_identifier(model_name: str | None) -> str | None:
     if model_name is None:
         return None
@@ -494,3 +534,30 @@ def _build_blocked_model_message(
     if task_alias is not None:
         return f"Configured AI model for task alias '{task_alias}' cannot use deprecated or blocked model values."
     return "Configured AI model cannot use deprecated or blocked model values."
+
+
+def _resolve_known_ai_model_capabilities(model_name: str) -> tuple[AIModelCapability, ...] | None:
+    if model_name == "mock" or model_name.startswith("mock-"):
+        return _GENERATIVE_MODEL_CAPABILITIES
+    if (
+        model_name.startswith("gpt-5")
+        or model_name.startswith("gpt-4o")
+        or model_name.startswith("gpt-4.1")
+    ):
+        return _GENERATIVE_MODEL_CAPABILITIES
+    if model_name.startswith("text-embedding-"):
+        return _EMBEDDING_MODEL_CAPABILITIES
+    if model_name == "omni-moderation-latest" or model_name.startswith("omni-moderation-"):
+        return _MODERATION_MODEL_CAPABILITIES
+    return None
+
+
+def _build_capability_mismatch_message(
+    *,
+    task_alias: str,
+    model_source: ResolvedModelSource,
+    missing_capabilities: tuple[AIModelCapability, ...],
+) -> str:
+    required = ", ".join(missing_capabilities)
+    prefix = "Requested" if model_source == "explicit" else "Configured"
+    return f"{prefix} AI model for task alias '{task_alias}' does not satisfy required capabilities: {required}."

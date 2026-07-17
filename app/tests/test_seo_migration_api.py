@@ -999,6 +999,10 @@ def test_requirements_suggestion_endpoint_returns_completed_payload_for_supporte
     assert isinstance(payload.get("suggested_value"), list)
     assert payload.get("retryable") is False
     assert isinstance(payload.get("context_sources_used"), list)
+    diagnostics = payload.get("model_diagnostics") or {}
+    assert diagnostics.get("task_alias") == "requirements_helper"
+    assert diagnostics.get("source") in {"env", "provider_fallback"}
+    assert diagnostics.get("fallback_used") is True
     payload_json = json.dumps(payload).lower()
     assert "database_url" not in payload_json
     assert "storage_key" not in payload_json
@@ -1068,6 +1072,43 @@ def test_requirements_suggestion_endpoint_maps_provider_unavailable_without_goog
     assert payload.get("suggestion_status") == "failed"
     assert payload.get("suggested_value") is None
     assert payload.get("reason_code") == "requirements_suggestion_provider_unavailable"
+
+
+def test_requirements_suggestion_endpoint_fails_safely_for_incompatible_default_model(db_session) -> None:
+    business_id = "11111111-1111-1111-1111-111111111111"
+    site_id = "22222222-2222-2222-2222-222222222222"
+    _seed_business_and_site(db_session, business_id=business_id, site_id=site_id)
+    business = db_session.get(Business, business_id)
+    assert business is not None
+    business.default_ai_model = "text-embedding-3-small"
+    db_session.add(business)
+    db_session.commit()
+
+    client = _make_client(db_session, business_id=business_id)
+    workspace_response = client.put(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/workspace",
+        json={"source_url": "https://legacy.example"},
+    )
+    assert workspace_response.status_code == 200
+    _prepare_workspace_for_draft_generation(client, business_id=business_id, site_id=site_id)
+
+    response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/requirements/suggest",
+        json={
+            "field": "must_include",
+            "current_value": None,
+            "force_refresh": False,
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload.get("suggestion_status") == "failed"
+    assert payload.get("reason_code") == "requirements_suggestion_model_incompatible"
+    diagnostics = payload.get("model_diagnostics") or {}
+    assert diagnostics.get("task_alias") == "requirements_helper"
+    assert diagnostics.get("source") == "admin_config"
+    assert diagnostics.get("fallback_used") is False
+    assert "structured_json" in str(diagnostics.get("message") or "")
 
 
 def test_migration_api_happy_path_workflow(db_session) -> None:
@@ -3531,6 +3572,10 @@ def test_migration_media_routes_scope_assets_and_sanitize_payloads(db_session) -
     suggestion = suggested_asset.get("metadata_suggestion") or {}
     assert suggestion.get("suggestion_status") == "completed"
     assert suggestion.get("reason_code") == "image_metadata_suggested"
+    diagnostics = suggestion.get("model_diagnostics") or {}
+    assert diagnostics.get("task_alias") == "media_metadata_helper"
+    assert diagnostics.get("source") in {"env", "provider_fallback"}
+    assert diagnostics.get("fallback_used") is True
     suggested_json = json.dumps(suggested_asset).lower()
     for forbidden in (
         "storage_key",
@@ -3787,6 +3832,8 @@ def test_migration_media_batch_suggest_metadata_succeeds_for_selected_uploaded_a
         assert result.get("suggestion_status") == "completed"
         assert result.get("reason_code") == "image_metadata_suggested"
         assert isinstance(result.get("retryable"), bool)
+        diagnostics = ((result.get("metadata_suggestion") or {}).get("model_diagnostics") or {})
+        assert diagnostics.get("task_alias") == "media_metadata_helper"
     serialized = json.dumps(payload).lower()
     for forbidden in (
         "storage_key",

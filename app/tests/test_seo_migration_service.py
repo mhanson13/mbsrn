@@ -2303,6 +2303,125 @@ def test_workspace_media_metadata_suggestions_are_stored_separately_and_apply_on
     assert applied.get("page_assignment") == "/"
 
 
+def test_workspace_media_metadata_suggestion_routes_through_helper_task_alias(
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("MIGRATION_MEDIA_STORAGE_ROOT", str(tmp_path))
+    service = _build_service(db_session, _StaticMigrationProvider(_build_publishable_output()))
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+
+    uploaded = service.upload_workspace_media_asset(
+        business_id=business_id,
+        site_id=site_id,
+        filename="helper-path.png",
+        content_type="image/png",
+        payload=_tiny_png_payload(),
+        selected_for_draft=True,
+        category=None,
+        alt_text=None,
+        description=None,
+        usage_note=None,
+        page_assignment=None,
+        principal_id="principal-1",
+    )
+    uploaded_asset_id = str(uploaded.get("asset_id") or "")
+    assert uploaded_asset_id
+
+    captured: dict[str, object] = {}
+
+    def _capture_suggestion_request(**kwargs) -> dict[str, object]:  # noqa: ANN003
+        resolved_model = kwargs.get("resolved_model")
+        captured["task_alias"] = getattr(resolved_model, "task_alias", None)
+        captured["model_name"] = getattr(resolved_model, "model_name", None)
+        captured["model_source"] = getattr(resolved_model, "model_source", None)
+        return {
+            "suggested_category": "hero",
+            "suggested_alt_text": "AI helper alt text",
+            "suggested_description": "AI helper description",
+            "suggested_usage_note": "AI helper usage",
+            "suggested_page_assignment": "/",
+            "confidence": 0.73,
+        }
+
+    monkeypatch.setattr(service, "_request_media_metadata_suggestion", _capture_suggestion_request)
+
+    suggested = service.suggest_media_asset_metadata(
+        business_id=business_id,
+        site_id=site_id,
+        asset_id=uploaded_asset_id,
+        force_refresh=True,
+        principal_id="principal-1",
+    )
+
+    assert captured == {
+        "task_alias": "media_metadata_helper",
+        "model_name": "mock-seo-migration-v1",
+        "model_source": "provider_fallback",
+    }
+    suggestion = suggested.get("metadata_suggestion") or {}
+    diagnostics = suggestion.get("model_diagnostics") or {}
+    assert diagnostics.get("task_alias") == "media_metadata_helper"
+    assert diagnostics.get("source") == "provider_fallback"
+    assert diagnostics.get("fallback_used") is True
+    serialized = json.dumps(suggested).lower()
+    assert "base64" not in serialized
+    assert "data:image" not in serialized
+
+
+def test_workspace_media_metadata_suggestion_fails_safely_for_incompatible_configured_model(
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("MIGRATION_MEDIA_STORAGE_ROOT", str(tmp_path))
+    service = _build_service(db_session, _StaticMigrationProvider(_build_publishable_output()))
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+
+    business = db_session.get(Business, business_id)
+    assert business is not None
+    business.default_ai_model = "text-embedding-3-small"
+    db_session.add(business)
+    db_session.commit()
+
+    uploaded = service.upload_workspace_media_asset(
+        business_id=business_id,
+        site_id=site_id,
+        filename="incompatible-model.png",
+        content_type="image/png",
+        payload=_tiny_png_payload(),
+        selected_for_draft=True,
+        category=None,
+        alt_text=None,
+        description=None,
+        usage_note=None,
+        page_assignment=None,
+        principal_id="principal-1",
+    )
+    uploaded_asset_id = str(uploaded.get("asset_id") or "")
+    assert uploaded_asset_id
+
+    suggested = service.suggest_media_asset_metadata(
+        business_id=business_id,
+        site_id=site_id,
+        asset_id=uploaded_asset_id,
+        force_refresh=True,
+        principal_id="principal-1",
+    )
+
+    suggestion = suggested.get("metadata_suggestion") or {}
+    assert suggestion.get("suggestion_status") == "failed"
+    assert suggestion.get("reason_code") == "image_metadata_model_incompatible"
+    diagnostics = suggestion.get("model_diagnostics") or {}
+    assert diagnostics.get("task_alias") == "media_metadata_helper"
+    assert diagnostics.get("source") == "admin_config"
+    assert diagnostics.get("fallback_used") is False
+    assert "multimodal" in str(diagnostics.get("message") or "")
+
+
 @pytest.mark.parametrize("provider_reason_code", ["provider_unavailable", "provider_response_invalid"])
 def test_workspace_media_metadata_suggestion_normalizes_provider_failure_reason_codes(
     db_session,
@@ -3355,6 +3474,83 @@ def test_requirements_suggestion_returns_completed_for_supported_fields_with_moc
     assert "storage_key" not in payload_json
     assert "raw_token" not in payload_json
     assert "image_base64" not in payload_json
+
+
+def test_requirements_helper_routes_through_task_alias_and_preserves_admin_precedence(
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = _build_service(db_session, _StaticMigrationProvider(_build_publishable_output()))
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _seed_reused_context_records(db_session, business_id=business_id, site_id=site_id)
+
+    business = db_session.get(Business, business_id)
+    assert business is not None
+    business.default_ai_model = "gpt-admin-default"
+    db_session.add(business)
+    db_session.commit()
+
+    captured: dict[str, object] = {}
+
+    def _capture_request(**kwargs) -> list[str]:  # noqa: ANN003
+        resolved_model = kwargs.get("resolved_model")
+        captured["task_alias"] = getattr(resolved_model, "task_alias", None)
+        captured["model_name"] = getattr(resolved_model, "model_name", None)
+        captured["model_source"] = getattr(resolved_model, "model_source", None)
+        return ["Bounded operator requirement"]
+
+    monkeypatch.setattr(service, "_request_requirement_field_suggestion", _capture_request)
+
+    suggestion = service.suggest_operator_requirement_field(
+        business_id=business_id,
+        site_id=site_id,
+        field="must_include",
+        current_value=None,
+        force_refresh=False,
+        principal_id="principal-1",
+    )
+
+    assert captured == {
+        "task_alias": "requirements_helper",
+        "model_name": "gpt-admin-default",
+        "model_source": "admin_config",
+    }
+    diagnostics = suggestion.get("model_diagnostics") or {}
+    assert diagnostics.get("task_alias") == "requirements_helper"
+    assert diagnostics.get("source") == "admin_config"
+    assert diagnostics.get("fallback_used") is False
+
+
+def test_requirements_helper_fails_safely_for_incompatible_configured_model(db_session) -> None:
+    service = _build_service(db_session, _StaticMigrationProvider(_build_publishable_output()))
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _seed_reused_context_records(db_session, business_id=business_id, site_id=site_id)
+
+    business = db_session.get(Business, business_id)
+    assert business is not None
+    business.default_ai_model = "text-embedding-3-small"
+    db_session.add(business)
+    db_session.commit()
+
+    suggestion = service.suggest_operator_requirement_field(
+        business_id=business_id,
+        site_id=site_id,
+        field="must_include",
+        current_value=None,
+        force_refresh=False,
+        principal_id="principal-1",
+    )
+
+    assert suggestion.get("suggestion_status") == "failed"
+    assert suggestion.get("reason_code") == "requirements_suggestion_model_incompatible"
+    assert suggestion.get("retryable") is False
+    diagnostics = suggestion.get("model_diagnostics") or {}
+    assert diagnostics.get("task_alias") == "requirements_helper"
+    assert diagnostics.get("source") == "admin_config"
+    assert diagnostics.get("fallback_used") is False
+    assert "structured_json" in str(diagnostics.get("message") or "")
 
 
 def test_requirements_suggestion_returns_not_available_for_unsupported_field(db_session) -> None:
