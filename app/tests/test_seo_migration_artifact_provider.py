@@ -221,6 +221,26 @@ def test_openai_migration_provider_compatibility_supports_known_responses_json_s
     assert compatibility.request_body_mode == "responses_text_format_json_schema"
 
 
+def test_openai_migration_provider_compatibility_supports_known_responses_json_schema_shape_for_gpt_5_6_terra() -> None:
+    provider = OpenAISEOMigrationArtifactGenerationProvider(
+        api_key="test-key",
+        model_name="gpt-5.6-terra",
+        timeout_seconds=5,
+    )
+
+    compatibility = provider.evaluate_compatibility()
+    assert compatibility.supported is True
+    assert compatibility.reason_code == "supported"
+    assert compatibility.provider_name == "openai"
+    assert compatibility.model_name == "gpt-5.6-terra"
+    assert compatibility.endpoint_path == "/responses"
+    assert compatibility.execution_mode == "full"
+    assert compatibility.web_search_enabled is False
+    assert compatibility.degraded_mode is False
+    assert compatibility.response_format_mode == "json_schema"
+    assert compatibility.request_body_mode == "responses_text_format_json_schema"
+
+
 def test_openai_migration_provider_compatibility_rejects_chat_json_schema_shape_for_gpt_4o_mini() -> None:
     provider = OpenAISEOMigrationArtifactGenerationProvider(
         api_key="test-key",
@@ -319,6 +339,32 @@ def test_openai_migration_provider_responses_payload_matches_known_good_contract
     assert isinstance(schema_payload, dict)
     assert _count_non_false_additional_properties(schema_payload) == 0
     assert _count_object_nodes_missing_full_required(schema_payload) == 0
+
+
+def test_openai_migration_provider_gpt_5_6_terra_uses_responses_request_contract(monkeypatch) -> None:
+    provider = OpenAISEOMigrationArtifactGenerationProvider(
+        api_key="test-key",
+        model_name="gpt-5.6-terra",
+        timeout_seconds=5,
+    )
+    captured_payload: dict[str, object] = {}
+
+    def _capture_request(request, timeout):  # noqa: ANN001
+        del timeout
+        captured_payload.update(json.loads(request.data.decode("utf-8")))
+        return _FakeResponse(_build_responses_api_response(json_dumps(_build_success_assistant_payload())))
+
+    monkeypatch.setattr(urllib.request, "urlopen", _capture_request)
+    output = provider.generate_artifacts(migration_context=_build_migration_context())
+    assert output.generated_files
+
+    assert captured_payload.get("model") == "gpt-5.6-terra"
+    assert sorted(captured_payload.keys()) == ["input", "model", "text"]
+    assert "messages" not in captured_payload
+    assert "response_format" not in captured_payload
+    assert "tools" not in captured_payload
+    assert isinstance(captured_payload.get("input"), str)
+    assert captured_payload["text"]["format"]["type"] == "json_schema"
 
     redacted_snapshot = provider.build_redacted_request_snapshot(payload=captured_payload)
     serialized_snapshot = provider.serialize_redacted_request_snapshot(payload=captured_payload)
@@ -1133,12 +1179,15 @@ def test_openai_migration_provider_request_logs_include_request_shape_metadata(m
     assert start_events
     assert failure_events
     start = start_events[-1]
+    assert start.get("task_alias") == "migration_site_generation"
     assert start.get("endpoint_path") == "/responses"
     assert start.get("execution_mode") == "full"
     assert start.get("web_search_enabled") is False
     assert start.get("degraded_mode") is False
     assert start.get("response_format_mode") == "json_schema"
     assert start.get("request_body_mode") == "responses_text_format_json_schema"
+    assert start.get("request_shape_adjusted") is True
+    assert start.get("request_shape_adjustment_reason") == "ai_model_request_shape_unsupported"
     assert start.get("timeout_seconds") == 5
     assert start.get("timeout_source") == "default"
     assert start.get("request_fingerprint_model") == "gpt-5.1"
@@ -1165,12 +1214,15 @@ def test_openai_migration_provider_request_logs_include_request_shape_metadata(m
     assert "raw_payload" not in start
 
     failure = failure_events[-1]
+    assert failure.get("task_alias") == "migration_site_generation"
     assert failure.get("endpoint_path") == "/responses"
     assert failure.get("execution_mode") == "full"
     assert failure.get("web_search_enabled") is False
     assert failure.get("degraded_mode") is False
     assert failure.get("response_format_mode") == "json_schema"
     assert failure.get("request_body_mode") == "responses_text_format_json_schema"
+    assert failure.get("request_shape_adjusted") is True
+    assert failure.get("request_shape_adjustment_reason") == "ai_model_request_shape_unsupported"
     assert failure.get("failure_reason") == "malformed_response"
     assert failure.get("timeout_seconds") == 5
     assert failure.get("timeout_source") == "default"

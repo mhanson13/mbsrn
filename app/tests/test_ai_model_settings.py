@@ -9,6 +9,7 @@ from app.services.ai_model_settings import (
     list_admin_configurable_ai_task_definitions,
     resolve_ai_model_for_task,
     resolve_ai_model_name,
+    resolve_openai_non_tool_structured_output_profile,
     UnknownAITaskAliasError,
 )
 
@@ -242,6 +243,30 @@ def test_ensure_ai_model_capabilities_for_requirements_helper_rejects_embedding_
             model_name="text-embedding-3-small",
             model_source="business_default",
         )
+
+
+def test_resolve_openai_non_tool_structured_output_profile_prefers_responses_for_gpt_5_family() -> None:
+    profile = resolve_openai_non_tool_structured_output_profile(" GPT-5.6-TERRA ")
+
+    assert profile.model_name == "gpt-5.6-terra"
+    assert profile.endpoint_path == "/responses"
+    assert profile.response_format_mode == "json_schema"
+    assert profile.request_body_mode == "responses_text_format_json_schema"
+    assert profile.supports_temperature_override is False
+    assert profile.temperature_default_only is True
+    assert profile.request_shape_adjusted is True
+
+
+def test_resolve_openai_non_tool_structured_output_profile_keeps_chat_path_for_non_gpt_5_models() -> None:
+    profile = resolve_openai_non_tool_structured_output_profile(" gpt-4.1-mini ")
+
+    assert profile.model_name == "gpt-4.1-mini"
+    assert profile.endpoint_path == "/chat/completions"
+    assert profile.response_format_mode == "json_schema"
+    assert profile.request_body_mode == "chat_json_schema"
+    assert profile.supports_temperature_override is True
+    assert profile.temperature_default_only is False
+    assert profile.request_shape_adjusted is False
 
 
 def test_resolve_ai_model_for_task_rejects_luna_for_media_metadata_helper() -> None:

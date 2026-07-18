@@ -153,6 +153,17 @@ class AIModelSelectableValue:
     capabilities: tuple[AIModelCapability, ...]
 
 
+@dataclass(frozen=True)
+class OpenAINonToolStructuredOutputProfile:
+    model_name: str
+    endpoint_path: str
+    response_format_mode: str
+    request_body_mode: str
+    supports_temperature_override: bool
+    temperature_default_only: bool
+    request_shape_adjusted: bool
+
+
 _AI_TASK_REGISTRY: Final[dict[str, AITaskDefinition]] = {
     "requirements_helper": AITaskDefinition(
         task_alias="requirements_helper",
@@ -441,6 +452,29 @@ def normalize_ai_model_identifier(value: str | None) -> str | None:
         return None
     normalized = value.strip().lower()
     return normalized or None
+
+
+def resolve_openai_non_tool_structured_output_profile(model_name: str | None) -> OpenAINonToolStructuredOutputProfile:
+    normalized = normalize_ai_model_identifier(model_name) or "unknown"
+    if normalized.startswith("gpt-5"):
+        return OpenAINonToolStructuredOutputProfile(
+            model_name=normalized,
+            endpoint_path="/responses",
+            response_format_mode="json_schema",
+            request_body_mode="responses_text_format_json_schema",
+            supports_temperature_override=False,
+            temperature_default_only=True,
+            request_shape_adjusted=True,
+        )
+    return OpenAINonToolStructuredOutputProfile(
+        model_name=normalized,
+        endpoint_path="/chat/completions",
+        response_format_mode="json_schema",
+        request_body_mode="chat_json_schema",
+        supports_temperature_override=True,
+        temperature_default_only=False,
+        request_shape_adjusted=False,
+    )
 
 
 def is_deprecated_ai_model_identifier(model_name: str | None) -> bool:

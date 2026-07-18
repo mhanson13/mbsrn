@@ -4540,6 +4540,102 @@ def test_generate_artifacts_allows_supported_openai_gpt_5_1_shape_and_calls_prov
     assert isinstance(diagnostics.get("last_draft_execution_duration_ms"), int)
 
 
+def test_generate_artifacts_allows_supported_openai_gpt_5_6_terra_shape_and_calls_provider(
+    db_session,
+    monkeypatch,
+) -> None:
+    provider = OpenAISEOMigrationArtifactGenerationProvider(
+        api_key="test-key",
+        model_name="gpt-5.6-terra",
+        timeout_seconds=5,
+    )
+    service = _build_service(db_session, provider)
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+
+    outbound_call_count = {"count": 0}
+
+    class _FakeResponse:
+        def __init__(self, body: str) -> None:
+            self._body = body.encode("utf-8")
+            self.headers: dict[str, str] = {}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            del exc_type, exc, tb
+            return False
+
+        def read(self) -> bytes:
+            return self._body
+
+    def _valid_urlopen(request, timeout):  # noqa: ANN001
+        del timeout
+        outbound_call_count["count"] += 1
+        assert request.full_url.endswith("/responses")
+        payload = json.loads(request.data.decode("utf-8"))
+        assert payload["model"] == "gpt-5.6-terra"
+        assert "messages" not in payload
+        assert "response_format" not in payload
+        return _FakeResponse(
+            json.dumps(
+                {
+                    "model": "gpt-5.6-terra-2026-01-01",
+                    "output_text": json.dumps(
+                        {
+                            "generated_files": [
+                                {
+                                    "path": "index.html",
+                                    "content": "<html><body>hello</body></html>",
+                                }
+                            ],
+                        },
+                        ensure_ascii=True,
+                    ),
+                },
+                ensure_ascii=True,
+            )
+        )
+
+    monkeypatch.setattr(urllib.request, "urlopen", _valid_urlopen)
+
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+
+    assert outbound_call_count["count"] == 1
+    assert artifact.status == "completed"
+    assert artifact.model_name == "gpt-5.6-terra-2026-01-01"
+    summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
+    compatibility = (summary.context_summary or {}).get("draft_provider_compatibility") or {}
+    assert compatibility.get("supported") is True
+    assert compatibility.get("model_name") == "gpt-5.6-terra"
+    assert compatibility.get("endpoint_path") == "/responses"
+    assert compatibility.get("response_format_mode") == "json_schema"
+    assert compatibility.get("request_body_mode") == "responses_text_format_json_schema"
+    diagnostics = (summary.context_summary or {}).get("migration_diagnostics") or {}
+    assert diagnostics.get("draft_model_requested") is None
+    assert diagnostics.get("draft_model_resolved") == "gpt-5.6-terra"
+    assert diagnostics.get("draft_model_used") == "gpt-5.6-terra-2026-01-01"
+    ai_execution = (summary.context_summary or {}).get("ai_execution") or {}
+    assert ai_execution.get("model_requested") is None
+    assert ai_execution.get("model_resolved") == "gpt-5.6-terra"
+    assert ai_execution.get("model_used") == "gpt-5.6-terra-2026-01-01"
+    assert ai_execution.get("endpoint_path") == "/responses"
+    assert ai_execution.get("request_body_mode") == "responses_text_format_json_schema"
+    assert ai_execution.get("compatibility_decision") == "allowed"
+    assert ai_execution.get("request_contract_status") == "accepted"
+    assert ai_execution.get("provider_execution_status") == "accepted"
+    assert ai_execution.get("artifact_status") == "completed"
+    assert ai_execution.get("artifact_result") == "succeeded"
+    assert isinstance(ai_execution.get("duration_ms"), int)
+    assert ai_execution.get("timeout_seconds") == 300
+    assert ai_execution.get("timeout_source") == "default"
+
+
 def test_draft_provider_compatibility_summary_and_log_are_emitted(db_session, caplog) -> None:
     provider = _CompatibilityTrackingMigrationProvider(
         compatibility=SEOMigrationProviderCompatibilityResult(
@@ -4587,6 +4683,7 @@ def test_draft_provider_compatibility_summary_and_log_are_emitted(db_session, ca
     assert latest.get("business_id") == business_id
     assert latest.get("site_id") == site_id
     assert latest.get("workspace_id")
+    assert latest.get("task_alias") == "migration_site_generation"
     assert latest.get("supported") is True
     assert latest.get("reason_code") == "supported"
     assert latest.get("endpoint_path") == "/responses"

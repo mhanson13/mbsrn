@@ -915,7 +915,8 @@ Common compatibility reason codes:
 - `unknown_provider_capability`
 
 Known supported request shape (current allowlist example):
-- `model=gpt-5.1*` with `endpoint_path=/responses`, `execution_mode=full`, `response_format_mode=json_schema`, and `request_body_mode=responses_text_format_json_schema`.
+- `model=gpt-5*` with `endpoint_path=/responses`, `execution_mode=full`, `response_format_mode=json_schema`, and `request_body_mode=responses_text_format_json_schema`.
+- current Admin starting point for `migration_site_generation` remains `gpt-5.6`; resolved `gpt-5.6*` task models use this same `/responses` structured-output profile.
 
 Migration `/responses` request contract is now locked to a known-good structured-output shape:
 - top-level keys: `model`, `input`, `text`
@@ -933,10 +934,15 @@ Runtime contract guard:
 - blocking drift (for example non-string `input`, extra top-level keys, text-format/schema strictness drift) is blocked locally with `unsupported_request_shape_contract_drift` before outbound provider call.
 
 Known unsupported request shapes (blocked locally):
-- `model=gpt-5.1*` with `endpoint_path=/chat/completions`, `execution_mode=full`, `response_format_mode=json_schema`, and `request_body_mode=chat_json_schema` is treated as `unsupported_request_shape`.
+- `model=gpt-5*` with `endpoint_path=/chat/completions`, `execution_mode=full`, `response_format_mode=json_schema`, and `request_body_mode=chat_json_schema` is treated as `unsupported_request_shape`.
 - fallback/default model paths (for example `gpt-4o-mini` using migration chat/json_schema request construction) are blocked unless that exact request shape is explicitly allowlisted and validated.
 
 Unknown/unlisted model/request-shape combinations default to local block (`unsupported_model_configuration`) so parseable-but-unsupported shapes do not reach provider execution.
+
+Admin model-routing compatibility notes:
+- task/model compatibility is validated before outbound draft generation.
+- GPT-5-family non-tool structured-output requests prefer the modern `/responses` JSON-schema contract.
+- when a request shape is auto-adjusted for compatibility, logs expose only sanitized markers (`request_shape_adjusted`, `request_shape_adjustment_reason`) and never raw prompt text.
 
 Behavior:
 - if compatibility is unsupported, draft generation fails fast locally
@@ -994,6 +1000,7 @@ Structured logging:
   - `dropped_optional_blocks` (trim order evidence)
 - compatibility evaluation emits `event=seo_migration_provider_compatibility_evaluation`
 - includes identifiers and request-shape metadata (`business_id`, `site_id`, `workspace_id`, `provider_name`, `model`, `endpoint_path`, `execution_mode`, `web_search_enabled`, `degraded_mode`, `response_format_mode`, `request_body_mode`, `supported`, `reason_code`, `retryable`)
+- request-shape logs also include `task_alias`, `request_shape_adjusted`, and `request_shape_adjustment_reason` so Admin routing changes are traceable without exposing raw payloads
 - migration summary diagnostics also expose `draft_provider_compatibility_admin_summary` (sanitized admin hint from compatibility decision) for operator/admin troubleshooting
 - compatibility logs include `decision`:
   - `blocked_local_preflight` for local preflight block

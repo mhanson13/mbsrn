@@ -26,6 +26,7 @@ from app.integrations.seo_summary_provider import (
 from app.models.seo_site import SEOSite
 from app.core.runtime_metadata import get_runtime_build_metadata
 from app.services.competitors.normalizer import normalize_competitor_response
+from app.services.ai_model_settings import resolve_openai_non_tool_structured_output_profile
 from app.services.seo_competitor_profile_prompt import (
     SEO_COMPETITOR_PROFILE_PROMPT_VERSION,
     build_seo_competitor_profile_prompt,
@@ -91,6 +92,10 @@ _TIMEOUT_TYPE_VALUES = {
     _TIMEOUT_TYPE_OVERALL,
     _TIMEOUT_TYPE_UNKNOWN,
 }
+_COMPETITOR_TASK_ALIAS = "competitor_analysis"
+_FAILURE_REASON_AI_MODEL_REQUEST_PARAMETER_UNSUPPORTED = "ai_model_request_parameter_unsupported"
+_FAILURE_REASON_AI_MODEL_REQUEST_SHAPE_UNSUPPORTED = "ai_model_request_shape_unsupported"
+_FAILURE_REASON_AI_MODEL_TOOL_TIMEOUT_FALLBACK_SHAPE_ADJUSTED = "ai_model_tool_timeout_fallback_shape_adjusted"
 _PROMPT_VERSION_MARKER_PATTERN = re.compile(r"(?mi)^\s*PROMPT_VERSION:\s*([^\r\n]+)\s*$")
 _INVALID_FIELD_DIAGNOSTIC_MAX_ITEMS = 32
 _CANDIDATE_SCHEMA_PROPERTY_KEYS = (
@@ -200,6 +205,16 @@ class SEOCompetitorProfileProviderError(RuntimeError):
 class _OpenAICompletionResponse:
     body_text: str
     request_duration_ms: int
+
+
+@dataclass(frozen=True)
+class _OpenAIRequestContract:
+    endpoint_path: str
+    use_responses_api: bool
+    request_shape_adjusted: bool
+    request_shape_adjustment_reason: str | None
+    supports_temperature_override: bool
+    temperature_default_only: bool
 
 
 @dataclass(frozen=True)
@@ -391,7 +406,7 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             attempt_number=attempt_number,
         )
         self._log_prompt_telemetry(request_debug)
-        allow_legacy_responses_fallback = (
+        allow_non_tool_request_fallback = (
             provider_call_type is None
             and web_search_enabled is None
             and normalized_provider_call_type == _PROVIDER_CALL_TYPE_TOOL_ENABLED
@@ -413,7 +428,7 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                     endpoint_path=self._endpoint_path_for_provider_call_type(normalized_provider_call_type),
                     request_debug=request_debug,
                 )
-            if not allow_legacy_responses_fallback or not self._should_fallback_to_chat_completions(exc):
+            if not allow_non_tool_request_fallback or not self._should_fallback_to_non_tool_request(exc):
                 raise
             fallback_call_type = _PROVIDER_CALL_TYPE_NON_TOOL
             fallback_request_debug = self._build_request_debug_metadata(
@@ -430,7 +445,7 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             logger.warning(
                 (
                     "SEO competitor provider responses path reported unsupported web search; "
-                    "falling back to chat completions "
+                    "falling back to a compatible non-tool request shape "
                     "provider_name=%s model_name=%s provider_call_type=%s execution_mode=%s endpoint=%s "
                     "error_code=%s safe_message=%s "
                     "prompt_total_chars=%s context_json_chars=%s prompt_size_risk=%s"
@@ -474,12 +489,25 @@ class OpenAISEOCompetitorProfileGenerationProvider:
         timeout_seconds: int,
         resolved_prompt_version: str,
     ) -> SEOCompetitorProfileGenerationOutput:
-        endpoint_path = self._endpoint_path_for_provider_call_type(provider_call_type)
-        if provider_call_type == _PROVIDER_CALL_TYPE_TOOL_ENABLED:
+        request_contract = self._resolve_request_contract(
+            provider_call_type=provider_call_type,
+            execution_mode=(request_debug or {}).get("execution_mode") if isinstance(request_debug, dict) else None,
+        )
+        endpoint_path = request_contract.endpoint_path
+        if isinstance(request_debug, dict):
+            request_debug["task_alias"] = _COMPETITOR_TASK_ALIAS
+            request_debug["request_shape_adjusted"] = request_contract.request_shape_adjusted
+            request_debug["request_shape_adjustment_reason"] = request_contract.request_shape_adjustment_reason
+            request_debug["temperature_omitted_due_to_model_default_only"] = bool(
+                request_contract.temperature_default_only and provider_call_type == _PROVIDER_CALL_TYPE_NON_TOOL
+            )
+
+        if request_contract.use_responses_api:
             payload = self._build_responses_request_payload(
                 system_prompt=prompt.system_prompt,
                 user_prompt=prompt.user_prompt,
                 candidate_count=candidate_count,
+                include_web_search=provider_call_type == _PROVIDER_CALL_TYPE_TOOL_ENABLED,
             )
             extract_assistant_content = self._extract_assistant_content_from_responses
         else:
@@ -1387,6 +1415,7 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                     minimum=0,
                     maximum=1000,
                 ),
+                "task_alias": _clean_optional_value(debug.get("task_alias")) or _COMPETITOR_TASK_ALIAS,
                 "execution_mode": _clean_optional_value(debug.get("execution_mode")),
                 "provider_call_type": _clean_optional_value(debug.get("provider_call_type")),
                 "endpoint_path": endpoint_path,
@@ -1395,6 +1424,11 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                 "model": self.model_name,
                 "web_search_enabled": debug.get("web_search_enabled"),
                 "degraded_mode": bool(debug.get("degraded_mode")),
+                "request_shape_adjusted": bool(debug.get("request_shape_adjusted")),
+                "request_shape_adjustment_reason": _clean_optional_value(debug.get("request_shape_adjustment_reason")),
+                "temperature_omitted_due_to_model_default_only": bool(
+                    debug.get("temperature_omitted_due_to_model_default_only")
+                ),
                 "reduced_context_mode": bool(debug.get("reduced_context_mode")),
                 "response_format_name": _clean_optional_value(debug.get("response_format_name")),
                 "schema_name": _clean_optional_value(debug.get("schema_name")),
@@ -1428,6 +1462,7 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                 minimum=0,
                 maximum=1000,
             ),
+            "task_alias": _clean_optional_value(debug.get("task_alias")) or _COMPETITOR_TASK_ALIAS,
             "execution_mode": _clean_optional_value(debug.get("execution_mode")),
             "provider_call_type": _clean_optional_value(debug.get("provider_call_type")),
             "endpoint_path": endpoint_path,
@@ -1441,6 +1476,11 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             "model": self.model_name,
             "web_search_enabled": debug.get("web_search_enabled"),
             "degraded_mode": bool(debug.get("degraded_mode")),
+            "request_shape_adjusted": bool(debug.get("request_shape_adjusted")),
+            "request_shape_adjustment_reason": _clean_optional_value(debug.get("request_shape_adjustment_reason")),
+            "temperature_omitted_due_to_model_default_only": bool(
+                debug.get("temperature_omitted_due_to_model_default_only")
+            ),
             "reduced_context_mode": bool(debug.get("reduced_context_mode")),
             "response_format_name": _clean_optional_value(debug.get("response_format_name")),
             "schema_name": _clean_optional_value(debug.get("schema_name")),
@@ -1493,6 +1533,7 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                 minimum=0,
                 maximum=1000,
             ),
+            "task_alias": _clean_optional_value(debug.get("task_alias")) or _COMPETITOR_TASK_ALIAS,
             "execution_mode": _clean_optional_value(debug.get("execution_mode")),
             "provider_call_type": _clean_optional_value(debug.get("provider_call_type")),
             "endpoint_path": endpoint_path,
@@ -1506,6 +1547,11 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             "model": self.model_name,
             "web_search_enabled": debug.get("web_search_enabled"),
             "degraded_mode": bool(debug.get("degraded_mode")),
+            "request_shape_adjusted": bool(debug.get("request_shape_adjusted")),
+            "request_shape_adjustment_reason": _clean_optional_value(debug.get("request_shape_adjustment_reason")),
+            "temperature_omitted_due_to_model_default_only": bool(
+                debug.get("temperature_omitted_due_to_model_default_only")
+            ),
             "reduced_context_mode": bool(debug.get("reduced_context_mode")),
             "response_format_name": _clean_optional_value(debug.get("response_format_name")),
             "schema_name": _clean_optional_value(debug.get("schema_name")),
@@ -1836,31 +1882,38 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                     normalized_retryable=normalized_retryable,
                     attempt_count=max(1, int(exc.attempt_count)),
                 ) from exc
+            if schema_invalid:
+                provider_request_safe_message = (
+                    "Competitor profile generation is blocked by a local provider schema configuration issue."
+                )
+            elif normalized_failure_reason == _FAILURE_REASON_AI_MODEL_REQUEST_PARAMETER_UNSUPPORTED:
+                provider_request_safe_message = (
+                    "Competitor profile generation request uses a model parameter that is unsupported for the configured model."
+                )
+            elif normalized_failure_reason == _FAILURE_REASON_AI_MODEL_REQUEST_SHAPE_UNSUPPORTED:
+                provider_request_safe_message = (
+                    "Competitor profile generation request shape is incompatible with the configured model."
+                )
+            elif normalized_failure_reason == "provider_request_contract_invalid":
+                provider_request_safe_message = (
+                    "Competitor profile generation request uses an invalid provider request contract."
+                )
+            elif normalized_failure_reason == "provider_tool_request_invalid":
+                provider_request_safe_message = "Competitor profile generation request uses an invalid tool request shape."
+            elif normalized_failure_reason == "provider_invalid_request_unknown":
+                provider_request_safe_message = "Competitor profile generation request is invalid for the configured provider."
+            elif (
+                failure_category == "local_validation_failure"
+                and exc.normalized_failure.reason in {"request_too_large", "request_too_large_or_complex"}
+            ):
+                provider_request_safe_message = (
+                    "Competitor profile generation request is too large or complex for synchronous generation."
+                )
+            else:
+                provider_request_safe_message = "Competitor profile generation provider request failed."
             raise self._provider_error(
                 code=_PROVIDER_ERROR_REQUEST,
-                safe_message=(
-                    "Competitor profile generation is blocked by a local provider schema configuration issue."
-                    if schema_invalid
-                    else (
-                        "Competitor profile generation request uses an invalid provider request contract."
-                        if normalized_failure_reason == "provider_request_contract_invalid"
-                        else (
-                            "Competitor profile generation request uses an invalid tool request shape."
-                            if normalized_failure_reason == "provider_tool_request_invalid"
-                            else (
-                                "Competitor profile generation request is invalid for the configured provider."
-                                if normalized_failure_reason == "provider_invalid_request_unknown"
-                                else (
-                                    "Competitor profile generation request is too large or complex for synchronous generation."
-                                    if failure_category == "local_validation_failure"
-                                    and exc.normalized_failure.reason
-                                    in {"request_too_large", "request_too_large_or_complex"}
-                                    else "Competitor profile generation provider request failed."
-                                )
-                            )
-                        )
-                    )
-                ),
+                safe_message=provider_request_safe_message,
                 raw_output=self._build_request_failure_debug_payload(
                     endpoint_path=normalized_endpoint,
                     failure_kind="provider_request",
@@ -1880,7 +1933,7 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                 attempt_count=max(1, int(exc.attempt_count)),
             ) from exc
 
-    def _should_fallback_to_chat_completions(
+    def _should_fallback_to_non_tool_request(
         self,
         error: SEOCompetitorProfileProviderError,
     ) -> bool:
@@ -1930,10 +1983,10 @@ class OpenAISEOCompetitorProfileGenerationProvider:
         system_prompt: str,
         user_prompt: str,
         candidate_count: int,
+        include_web_search: bool,
     ) -> dict[str, object]:
-        return {
+        payload: dict[str, object] = {
             "model": self.model_name,
-            "tools": [{"type": "web_search"}],
             "text": {
                 "format": {
                     "type": "json_schema",
@@ -1947,6 +2000,9 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                 {"role": "user", "content": user_prompt},
             ],
         }
+        if include_web_search:
+            payload["tools"] = [{"type": "web_search"}]
+        return payload
 
     def _build_chat_completions_request_payload(
         self,
@@ -1975,7 +2031,8 @@ class OpenAISEOCompetitorProfileGenerationProvider:
         return payload
 
     def _model_supports_temperature(self) -> bool:
-        return not self.model_name.strip().lower().startswith("gpt-5-mini")
+        profile = resolve_openai_non_tool_structured_output_profile(self.model_name)
+        return profile.supports_temperature_override
 
     def _normalize_provider_call_type(
         self,
@@ -2006,10 +2063,9 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             return _EXECUTION_MODE_FAST_PATH
         return _EXECUTION_MODE_FULL
 
-    @staticmethod
-    def _endpoint_path_for_provider_call_type(provider_call_type: str) -> str:
+    def _endpoint_path_for_provider_call_type(self, provider_call_type: str) -> str:
         if provider_call_type == _PROVIDER_CALL_TYPE_NON_TOOL:
-            return "/chat/completions"
+            return resolve_openai_non_tool_structured_output_profile(self.model_name).endpoint_path
         return "/responses"
 
     @staticmethod
@@ -2114,6 +2170,14 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             provider_error_body=provider_error_body,
         ):
             return "provider_schema_invalid"
+        if self._is_temperature_parameter_unsupported_error(
+            http_status=http_status,
+            error_type=error_type,
+            error_code=error_code,
+            error_message=error_message,
+            provider_error_body=provider_error_body,
+        ):
+            return _FAILURE_REASON_AI_MODEL_REQUEST_PARAMETER_UNSUPPORTED
         if any(token in combined for token in _PROVIDER_INVALID_TOOL_REQUEST_TOKENS):
             return "provider_tool_request_invalid"
         if any(token in combined for token in _PROVIDER_INVALID_REQUEST_CONTRACT_TOKENS):
@@ -2281,7 +2345,11 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             degraded_mode=degraded_mode,
             reduced_context_mode=reduced_context_mode,
         )
-        normalized_endpoint = self._endpoint_path_for_provider_call_type(normalized_provider_call_type)
+        request_contract = self._resolve_request_contract(
+            provider_call_type=normalized_provider_call_type,
+            execution_mode=normalized_execution_mode,
+        )
+        normalized_endpoint = request_contract.endpoint_path
         normalized_run_id = _clean_optional_value(run_id)
         normalized_attempt_number = _coerce_optional_bounded_int(
             attempt_number,
@@ -2295,6 +2363,13 @@ class OpenAISEOCompetitorProfileGenerationProvider:
             "execution_mode": normalized_execution_mode,
             "provider_call_type": normalized_provider_call_type,
             "endpoint_path": normalized_endpoint,
+            "task_alias": _COMPETITOR_TASK_ALIAS,
+            "request_shape_adjusted": request_contract.request_shape_adjusted,
+            "request_shape_adjustment_reason": request_contract.request_shape_adjustment_reason,
+            "temperature_omitted_due_to_model_default_only": bool(
+                request_contract.temperature_default_only
+                and normalized_provider_call_type == _PROVIDER_CALL_TYPE_NON_TOOL
+            ),
             "response_format_name": _COMPETITOR_RESPONSE_FORMAT_NAME,
             "schema_name": _COMPETITOR_RESPONSE_SCHEMA_NAME,
             "candidate_count": max(1, int(candidate_count)),
@@ -2359,7 +2434,13 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                 "attempt_number": request_debug.get("attempt_number"),
                 "execution_mode": request_debug.get("execution_mode"),
                 "provider_call_type": request_debug.get("provider_call_type"),
+                "task_alias": request_debug.get("task_alias"),
                 "degraded_mode": request_debug.get("degraded_mode"),
+                "request_shape_adjusted": request_debug.get("request_shape_adjusted"),
+                "request_shape_adjustment_reason": request_debug.get("request_shape_adjustment_reason"),
+                "temperature_omitted_due_to_model_default_only": request_debug.get(
+                    "temperature_omitted_due_to_model_default_only"
+                ),
                 "response_format_name": request_debug.get("response_format_name"),
                 "schema_name": request_debug.get("schema_name"),
                 "candidate_count": request_debug.get("candidate_count"),
@@ -2418,6 +2499,80 @@ class OpenAISEOCompetitorProfileGenerationProvider:
         if "timeout" in normalized_reason:
             return _TIMEOUT_TYPE_OVERALL
         return _TIMEOUT_TYPE_UNKNOWN
+
+    def _resolve_request_contract(
+        self,
+        *,
+        provider_call_type: str,
+        execution_mode: str | None,
+    ) -> _OpenAIRequestContract:
+        normalized_provider_call_type = self._normalize_provider_call_type(
+            provider_call_type=provider_call_type,
+            web_search_enabled=None,
+        )
+        if normalized_provider_call_type == _PROVIDER_CALL_TYPE_TOOL_ENABLED:
+            return _OpenAIRequestContract(
+                endpoint_path="/responses",
+                use_responses_api=True,
+                request_shape_adjusted=False,
+                request_shape_adjustment_reason=None,
+                supports_temperature_override=False,
+                temperature_default_only=False,
+            )
+        profile = resolve_openai_non_tool_structured_output_profile(self.model_name)
+        normalized_execution_mode = _clean_optional_value(execution_mode)
+        adjustment_reason = None
+        if profile.request_shape_adjusted:
+            adjustment_reason = (
+                _FAILURE_REASON_AI_MODEL_TOOL_TIMEOUT_FALLBACK_SHAPE_ADJUSTED
+                if normalized_execution_mode == _EXECUTION_MODE_DEGRADED
+                else _FAILURE_REASON_AI_MODEL_REQUEST_SHAPE_UNSUPPORTED
+            )
+        return _OpenAIRequestContract(
+            endpoint_path=profile.endpoint_path,
+            use_responses_api=profile.endpoint_path == "/responses",
+            request_shape_adjusted=profile.request_shape_adjusted,
+            request_shape_adjustment_reason=adjustment_reason,
+            supports_temperature_override=profile.supports_temperature_override,
+            temperature_default_only=profile.temperature_default_only,
+        )
+
+    def _is_temperature_parameter_unsupported_error(
+        self,
+        *,
+        http_status: int | None,
+        error_type: str | None,
+        error_code: str | None,
+        error_message: str | None,
+        provider_error_body: str | None,
+    ) -> bool:
+        if http_status != 400:
+            return False
+        normalized_type = (error_type or "").strip().lower()
+        if normalized_type != "invalid_request_error":
+            return False
+        normalized_code = (error_code or "").strip().lower()
+        normalized_message = (error_message or "").strip().lower()
+        normalized_body = (provider_error_body or "").strip().lower()
+        combined = "\n".join(
+            part
+            for part in (
+                normalized_type,
+                normalized_code,
+                normalized_message,
+                normalized_body,
+            )
+            if part
+        )
+        if "temperature" not in combined:
+            return False
+        return (
+            "unsupported value" in combined
+            or "unsupported parameter" in combined
+            or "does not support 0 with this model" in combined
+            or "only the default (1) value is supported" in combined
+            or "temperature is not supported" in combined
+        )
 
     def _extract_assistant_content(self, response_json: dict[str, object]) -> str:
         choices = response_json.get("choices")

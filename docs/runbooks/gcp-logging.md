@@ -127,6 +127,7 @@ Normalized category meanings:
 Operator/admin guidance:
 - retry only when the normalized category/reason indicates retryable remote conditions.
 - avoid blind retries for `configuration_*` and `local_validation_failure` until configuration or contract issues are corrected.
+- `configuration_invalid` with `normalized_failure_reason=ai_model_request_parameter_unsupported` or `normalized_failure_reason=ai_model_request_shape_unsupported` indicates a preventable local model/request-shape mismatch, not an auth failure.
 
 Timeout vs request-too-large interpretation:
 - `normalized_failure_category=remote_timeout` + `normalized_failure_reason=provider_timeout`
@@ -196,6 +197,7 @@ Useful fields:
 - `supported`
 - `reason_code`
 - `decision`
+- `task_alias`
 - `provider_name`
 - `model`
 - `endpoint_path`
@@ -204,6 +206,8 @@ Useful fields:
 - `degraded_mode`
 - `response_format_mode`
 - `request_body_mode`
+- `request_shape_adjusted`
+- `request_shape_adjustment_reason`
 - request fingerprint fields:
   - `request_fingerprint_model`
   - `request_fingerprint_endpoint_path`
@@ -243,8 +247,8 @@ Interpretation:
 - routing diagnostics are sanitized; raw provider payloads, raw env values, tokens, and prompts are not emitted in operator-facing migration diagnostics.
 
 Current migration request-shape examples:
-- supported: `gpt-5.1*` + `/responses` + `full` + `json_schema` + `responses_text_format_json_schema`
-- blocked locally: `gpt-5.1*` + `/chat/completions` + `full` + `json_schema` + `chat_json_schema`
+- supported: `gpt-5*` + `/responses` + `full` + `json_schema` + `responses_text_format_json_schema`
+- blocked locally: `gpt-5*` + `/chat/completions` + `full` + `json_schema` + `chat_json_schema`
 - blocked locally: fallback chat/json_schema shapes unless explicitly allowlisted
 - blocked locally: `/responses` + `responses_text_format_json_schema` when request `input` is array/object instead of string
 - contract drift indicator: `request_fingerprint_schema_object_nodes_non_false_additional_properties>0` indicates schema strictness drift versus the known-good migration `/responses` contract.
@@ -252,6 +256,7 @@ Current migration request-shape examples:
 - contract drift indicator: `request_fingerprint_schema_object_nodes_missing_required>0` indicates strict-schema object required coverage drift.
 - contract drift indicator: `request_fingerprint_has_extra_request_options=true` indicates unexpected top-level request options were added.
 - contract drift indicator: `request_fingerprint_has_null_optional_fields=true` indicates null-valued request fields leaked into payload.
+- `request_shape_adjusted=true` indicates the runtime selected a compatible structured-output request shape for the resolved model family without exposing raw request content.
 - runtime guard event interpretation:
   - `seo_migration_draft_provider_request_contract_guard` with `blocking_codes=[]` and non-empty `warning_codes` means request was allowed with warnings.
   - non-empty `blocking_codes` means the request was blocked locally before provider invocation.

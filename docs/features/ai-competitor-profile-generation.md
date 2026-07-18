@@ -118,6 +118,7 @@ Production triage notes:
 
 `invalid_request_error` failure-reason classes:
 - `provider_schema_invalid`
+- `ai_model_request_parameter_unsupported`
 - `provider_request_contract_invalid`
 - `provider_tool_request_invalid`
 - `prompt_override_contract_invalid`
@@ -162,6 +163,16 @@ Competitor-specific behavior remains feature-bounded:
 - deterministic degraded/fallback paths remain in competitor orchestration
 - no fabricated competitor intelligence beyond existing deterministic fallback rules
 - review/accept trust gate remains unchanged
+
+GPT-5 family request-shape notes:
+- tool-enabled competitor discovery continues to prefer `/responses` with `web_search` and strict JSON schema.
+- non-tool structured-output attempts for `gpt-5*` models also use `/responses`; legacy `/chat/completions` JSON-schema fallback remains for non-`gpt-5` models.
+- when a selected model only accepts default temperature, the adapter omits `temperature` entirely and emits safe diagnostics:
+  - `task_alias`
+  - `request_shape_adjusted`
+  - `request_shape_adjustment_reason`
+  - `temperature_omitted_due_to_model_default_only`
+- raw request bodies and prompt text are still not logged.
 
 Maintainer tuning guidance:
 - competitor adapter budget policy is defined in `app/integrations/seo_competitor_profile_generation_provider.py`:
@@ -714,6 +725,10 @@ Behavior notes:
   - run marked `failed`,
   - safe `error_summary` returned to operator surfaces,
   - normalized `failure_category` stored for observability.
+- Preventable model/request compatibility mismatches:
+  - unsupported default-only parameter usage is normalized as `ai_model_request_parameter_unsupported`
+  - degraded GPT-5-family non-tool retries may switch to a compatible `/responses` request shape instead of legacy chat/json-schema fallback
+  - these remain configuration-invalid compatibility issues, not auth failures
 - Local structured-schema configuration mismatch:
   - classified as `provider_schema_invalid`
   - surfaced as configuration-blocked quality state (not `provider_returned_empty`)

@@ -17,6 +17,7 @@ from app.integrations.ai_execution_core import (
     apply_request_budget,
     execute_json_request,
 )
+from app.services.ai_model_settings import resolve_openai_non_tool_structured_output_profile
 from app.services.seo_migration_prompt import SEO_MIGRATION_PROMPT_VERSION, build_seo_migration_prompt
 
 
@@ -77,6 +78,8 @@ _MIGRATION_COMPAT_EXECUTION_MODE_FULL = "full"
 _MIGRATION_COMPAT_RESPONSE_FORMAT_JSON_SCHEMA = "json_schema"
 _MIGRATION_REQUEST_BODY_MODE_CHAT_JSON_SCHEMA = "chat_json_schema"
 _MIGRATION_REQUEST_BODY_MODE_RESPONSES_TEXT_FORMAT_JSON_SCHEMA = "responses_text_format_json_schema"
+_MIGRATION_TASK_ALIAS = "migration_site_generation"
+_COMPAT_REASON_AI_MODEL_REQUEST_SHAPE_UNSUPPORTED = "ai_model_request_shape_unsupported"
 _PROVIDER_LOG_EVENT_REQUEST_START = "seo_migration_draft_provider_request_start"
 _PROVIDER_LOG_EVENT_REQUEST_COMPLETE = "seo_migration_draft_provider_request_complete"
 _PROVIDER_LOG_EVENT_REQUEST_FAILURE = "seo_migration_draft_provider_request_failure"
@@ -284,7 +287,10 @@ class _MigrationRequestShapeMatrixRule:
         if not self.model_prefixes:
             return True
         return any(
-            shape.model_name == prefix or shape.model_name.startswith(f"{prefix}-") for prefix in self.model_prefixes
+            shape.model_name == prefix
+            or shape.model_name.startswith(f"{prefix}-")
+            or shape.model_name.startswith(f"{prefix}.")
+            for prefix in self.model_prefixes
         )
 
     def to_decision(self, *, shape: _MigrationRequestShape) -> _MigrationRequestShapeCompatibilityDecision:
@@ -302,12 +308,12 @@ class _MigrationRequestShapeMatrixRule:
 
 _MIGRATION_REQUEST_SHAPE_COMPATIBILITY_MATRIX = (
     _MigrationRequestShapeMatrixRule(
-        rule_id="supported_gpt_5_1_responses_json_schema",
+        rule_id="supported_gpt_5_family_responses_json_schema",
         endpoint_path=_MIGRATION_COMPAT_ENDPOINT_RESPONSES,
         execution_mode=_MIGRATION_COMPAT_EXECUTION_MODE_FULL,
         response_format_mode=_MIGRATION_COMPAT_RESPONSE_FORMAT_JSON_SCHEMA,
         request_body_mode=_MIGRATION_REQUEST_BODY_MODE_RESPONSES_TEXT_FORMAT_JSON_SCHEMA,
-        model_prefixes=("gpt-5.1",),
+        model_prefixes=("gpt-5",),
         supported=True,
         reason_code=_COMPAT_REASON_SUPPORTED,
         operator_message=_COMPAT_OPERATOR_MESSAGE_SUPPORTED,
@@ -603,8 +609,11 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
         self.prompt_text_recommendations = prompt_text_recommendations or ""
 
     def get_request_profile(self) -> dict[str, object]:
+        model_profile = resolve_openai_non_tool_structured_output_profile(
+            _clean_optional_value(self.model_name) or "unknown",
+        )
         shape = self._resolve_request_shape_for_model(
-            model_name=_clean_optional_value(self.model_name) or "unknown",
+            model_name=model_profile.model_name,
         )
         return {
             "endpoint_path": shape.endpoint_path,
@@ -613,6 +622,11 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
             "degraded_mode": False,
             "response_format_mode": shape.response_format_mode,
             "request_body_mode": shape.request_body_mode,
+            "task_alias": _MIGRATION_TASK_ALIAS,
+            "request_shape_adjusted": bool(model_profile.request_shape_adjusted),
+            "request_shape_adjustment_reason": (
+                _COMPAT_REASON_AI_MODEL_REQUEST_SHAPE_UNSUPPORTED if model_profile.request_shape_adjusted else None
+            ),
         }
 
     def evaluate_compatibility(self) -> SEOMigrationProviderCompatibilityResult:
@@ -1096,21 +1110,13 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
 
     @staticmethod
     def _resolve_request_shape_for_model(*, model_name: str) -> _MigrationRequestShape:
-        normalized_model = (model_name or "").strip().lower() or "unknown"
-        if normalized_model == "gpt-5.1" or normalized_model.startswith("gpt-5.1-"):
-            return _MigrationRequestShape(
-                model_name=normalized_model,
-                endpoint_path=_MIGRATION_COMPAT_ENDPOINT_RESPONSES,
-                execution_mode=_MIGRATION_COMPAT_EXECUTION_MODE_FULL,
-                response_format_mode=_MIGRATION_COMPAT_RESPONSE_FORMAT_JSON_SCHEMA,
-                request_body_mode=_MIGRATION_REQUEST_BODY_MODE_RESPONSES_TEXT_FORMAT_JSON_SCHEMA,
-            )
+        profile = resolve_openai_non_tool_structured_output_profile(model_name)
         return _MigrationRequestShape(
-            model_name=normalized_model,
-            endpoint_path=_MIGRATION_COMPAT_ENDPOINT_CHAT_COMPLETIONS,
+            model_name=profile.model_name,
+            endpoint_path=profile.endpoint_path,
             execution_mode=_MIGRATION_COMPAT_EXECUTION_MODE_FULL,
-            response_format_mode=_MIGRATION_COMPAT_RESPONSE_FORMAT_JSON_SCHEMA,
-            request_body_mode=_MIGRATION_REQUEST_BODY_MODE_CHAT_JSON_SCHEMA,
+            response_format_mode=profile.response_format_mode,
+            request_body_mode=profile.request_body_mode,
         )
 
     @staticmethod
@@ -1924,11 +1930,14 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
                 "site_id": _clean_optional_value(context.get("site_id")),
                 "workspace_id": _clean_optional_value(context.get("workspace_id")),
                 "model": self.model_name,
+                "task_alias": _clean_optional_value(context.get("task_alias")) or _MIGRATION_TASK_ALIAS,
                 "prompt_version": self.prompt_version,
                 "endpoint_path": _clean_optional_value(context.get("endpoint_path")),
                 "execution_mode": _clean_optional_value(context.get("execution_mode")) or "full",
                 "response_format_mode": _clean_optional_value(context.get("response_format_mode")),
                 "request_body_mode": _clean_optional_value(context.get("request_body_mode")),
+                "request_shape_adjusted": bool(context.get("request_shape_adjusted")),
+                "request_shape_adjustment_reason": _clean_optional_value(context.get("request_shape_adjustment_reason")),
                 "blocking_codes": list(blocking_codes),
                 "warning_codes": list(warning_codes),
                 **self._request_fingerprint_log_fields(request_fingerprint),
@@ -2972,6 +2981,7 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
             "workspace_id": _clean_optional_value(workspace_payload.get("workspace_id")),
             "provider_name": self.provider_name,
             "model": self.model_name,
+            "task_alias": _clean_optional_value(request_profile.get("task_alias")) or _MIGRATION_TASK_ALIAS,
             "prompt_version": self.prompt_version,
             "endpoint_path": _clean_optional_value(request_profile.get("endpoint_path")),
             "execution_mode": _clean_optional_value(request_profile.get("execution_mode")) or "full",
@@ -2987,16 +2997,21 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
             ),
             "response_format_mode": _clean_optional_value(request_profile.get("response_format_mode")),
             "request_body_mode": _clean_optional_value(request_profile.get("request_body_mode")),
+            "request_shape_adjusted": bool(request_profile.get("request_shape_adjusted")),
+            "request_shape_adjustment_reason": _clean_optional_value(request_profile.get("request_shape_adjustment_reason")),
         }
 
     @staticmethod
     def _request_shape_details(*, request_context: dict[str, object] | None) -> dict[str, object]:
         context = request_context or {}
         return {
+            "task_alias": _clean_optional_value(context.get("task_alias")) or _MIGRATION_TASK_ALIAS,
             "endpoint_path": _clean_optional_value(context.get("endpoint_path")),
             "execution_mode": _clean_optional_value(context.get("execution_mode")) or "full",
             "response_format_mode": _clean_optional_value(context.get("response_format_mode")),
             "request_body_mode": _clean_optional_value(context.get("request_body_mode")),
+            "request_shape_adjusted": bool(context.get("request_shape_adjusted")),
+            "request_shape_adjustment_reason": _clean_optional_value(context.get("request_shape_adjustment_reason")),
         }
 
     def _build_request_fingerprint(
@@ -3345,6 +3360,7 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
                 "site_id": _clean_optional_value(context.get("site_id")),
                 "workspace_id": _clean_optional_value(context.get("workspace_id")),
                 "model": self.model_name,
+                "task_alias": _clean_optional_value(context.get("task_alias")) or _MIGRATION_TASK_ALIAS,
                 "prompt_version": self.prompt_version,
                 "endpoint_path": endpoint_path,
                 "execution_mode": _clean_optional_value(context.get("execution_mode")) or "full",
@@ -3358,6 +3374,8 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
                 ),
                 "response_format_mode": _clean_optional_value(context.get("response_format_mode")),
                 "request_body_mode": _clean_optional_value(context.get("request_body_mode")),
+                "request_shape_adjusted": bool(context.get("request_shape_adjusted")),
+                "request_shape_adjustment_reason": _clean_optional_value(context.get("request_shape_adjustment_reason")),
                 "timeout_seconds": int(self.timeout_seconds),
                 "timeout_source": _clean_optional_value(getattr(self, "timeout_source", None)) or "default",
                 **self._request_fingerprint_log_fields(request_fingerprint),
@@ -3382,6 +3400,7 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
                 "site_id": _clean_optional_value(context.get("site_id")),
                 "workspace_id": _clean_optional_value(context.get("workspace_id")),
                 "model": self.model_name,
+                "task_alias": _clean_optional_value(context.get("task_alias")) or _MIGRATION_TASK_ALIAS,
                 "prompt_version": self.prompt_version,
                 "endpoint_path": endpoint_path,
                 "execution_mode": _clean_optional_value(context.get("execution_mode")) or "full",
@@ -3395,6 +3414,8 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
                 ),
                 "response_format_mode": _clean_optional_value(context.get("response_format_mode")),
                 "request_body_mode": _clean_optional_value(context.get("request_body_mode")),
+                "request_shape_adjusted": bool(context.get("request_shape_adjusted")),
+                "request_shape_adjustment_reason": _clean_optional_value(context.get("request_shape_adjustment_reason")),
                 "duration_ms": max(0, int(duration_ms)),
                 "correlation_id": _clean_optional_value(correlation_id),
                 "timeout_seconds": int(self.timeout_seconds),
@@ -3434,6 +3455,7 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
                 "site_id": _clean_optional_value(context.get("site_id")),
                 "workspace_id": _clean_optional_value(context.get("workspace_id")),
                 "model": self.model_name,
+                "task_alias": _clean_optional_value(context.get("task_alias")) or _MIGRATION_TASK_ALIAS,
                 "prompt_version": self.prompt_version,
                 "endpoint_path": _clean_optional_value(context.get("endpoint_path")),
                 "execution_mode": _clean_optional_value(context.get("execution_mode")) or "full",
@@ -3447,6 +3469,8 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
                 ),
                 "response_format_mode": _clean_optional_value(context.get("response_format_mode")),
                 "request_body_mode": _clean_optional_value(context.get("request_body_mode")),
+                "request_shape_adjusted": bool(context.get("request_shape_adjusted")),
+                "request_shape_adjustment_reason": _clean_optional_value(context.get("request_shape_adjustment_reason")),
                 "failure_reason": normalized_reason,
                 "failure_source": normalized_failure_source,
                 "retryable": retryable,
@@ -3484,12 +3508,15 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
                 "site_id": _clean_optional_value(context.get("site_id")),
                 "workspace_id": _clean_optional_value(context.get("workspace_id")),
                 "model": self.model_name,
+                "task_alias": _clean_optional_value(context.get("task_alias")) or _MIGRATION_TASK_ALIAS,
                 "prompt_version": self.prompt_version,
                 "status": normalized_status,
                 "endpoint_path": _clean_optional_value(context.get("endpoint_path")),
                 "execution_mode": _clean_optional_value(context.get("execution_mode")) or "full",
                 "response_format_mode": _clean_optional_value(context.get("response_format_mode")),
                 "request_body_mode": _clean_optional_value(context.get("request_body_mode")),
+                "request_shape_adjusted": bool(context.get("request_shape_adjusted")),
+                "request_shape_adjustment_reason": _clean_optional_value(context.get("request_shape_adjustment_reason")),
                 "raw_length": max(0, int(raw_length)),
                 "parsed_candidate_count": max(0, int(parsed_candidate_count)),
                 "salvaged_candidate_count": max(0, int(salvaged_candidate_count)),

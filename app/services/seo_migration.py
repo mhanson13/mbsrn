@@ -14137,6 +14137,7 @@ class SEOMigrationService:
             "site_id": site_id,
             "workspace_id": workspace_id,
             "migration_workspace_id": workspace_id,
+            "task_alias": "migration_site_generation",
             "provider_name": compatibility.provider_name,
             "model": compatibility.model_name,
             "endpoint_path": compatibility.endpoint_path,

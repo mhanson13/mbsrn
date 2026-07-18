@@ -556,6 +556,50 @@ def test_fallback_to_chat_completions_on_error(monkeypatch) -> None:
     ]
 
 
+def test_gpt_5_6_non_tool_request_uses_responses_without_temperature(monkeypatch) -> None:
+    call_urls: list[str] = []
+    captured_payload: dict[str, object] | None = None
+
+    def _fake_urlopen(request: urllib.request.Request, timeout: int):  # noqa: ANN001
+        nonlocal captured_payload
+        del timeout
+        call_urls.append(request.full_url)
+        assert request.full_url.endswith("/responses")
+        captured_payload = json.loads(request.data.decode("utf-8")) if isinstance(request.data, bytes) else {}
+        assert captured_payload["text"]["format"]["type"] == "json_schema"
+        assert "tools" not in captured_payload
+        assert "temperature" not in captured_payload
+        assert "response_format" not in captured_payload
+        return _FakeHTTPResponse(json.dumps(_responses_api_payload(model="gpt-5.6-terra-2026-01-01")))
+
+    monkeypatch.setattr(urllib.request, "urlopen", _fake_urlopen)
+    provider = OpenAISEOCompetitorProfileGenerationProvider(
+        api_key="sk-test",
+        model_name="gpt-5.6-terra",
+        timeout_seconds=20,
+    )
+
+    output = provider.generate_competitor_profiles(
+        site=_site(),
+        existing_domains=["known.example"],
+        candidate_count=1,
+        degraded_mode=True,
+        execution_mode="degraded",
+        provider_call_type="non_tool",
+        web_search_enabled=False,
+    )
+
+    assert output.model_name == "gpt-5.6-terra-2026-01-01"
+    assert output.endpoint_path == "/responses"
+    assert output.web_search_enabled is False
+    assert call_urls == ["https://api.openai.com/v1/responses"]
+    assert captured_payload is not None
+    input_items = captured_payload["input"]
+    assert isinstance(input_items, list)
+    assert input_items[0]["role"] == "system"
+    assert input_items[1]["role"] == "user"
+
+
 def test_openai_provider_timeout_is_normalized(monkeypatch) -> None:
     def _timeout_urlopen(request: urllib.request.Request, timeout: int):  # noqa: ANN001
         del request, timeout
@@ -670,7 +714,7 @@ def test_openai_provider_invalid_json_schema_is_classified_as_local_configuratio
     assert payload["normalized_failure_source"] == "local_configuration"
 
 
-def test_openai_provider_invalid_request_contract_is_classified(monkeypatch) -> None:
+def test_openai_provider_unsupported_temperature_is_classified(monkeypatch) -> None:
     def _invalid_contract_urlopen(request: urllib.request.Request, timeout: int):  # noqa: ANN001
         del timeout
         raise urllib.error.HTTPError(
@@ -701,7 +745,7 @@ def test_openai_provider_invalid_request_contract_is_classified(monkeypatch) -> 
         provider.generate_competitor_profiles(site=_site(), existing_domains=[], candidate_count=1)
 
     assert exc_info.value.code == "provider_request"
-    assert exc_info.value.normalized_failure_reason == "provider_request_contract_invalid"
+    assert exc_info.value.normalized_failure_reason == "ai_model_request_parameter_unsupported"
     assert exc_info.value.normalized_failure_source == "local_configuration"
     assert exc_info.value.normalized_retryable is False
 
@@ -1246,6 +1290,7 @@ def test_openai_provider_logs_bounded_provider_error_details(monkeypatch, caplog
     raw_debug_payload = json.loads(exc_info.value.raw_output)
     assert raw_debug_payload["failure_kind"] == "provider_request"
     assert raw_debug_payload["endpoint_path"] == "/responses"
+    assert raw_debug_payload["normalized_failure_reason"] == "ai_model_request_parameter_unsupported"
     assert "SEO competitor provider HTTP error status=400" in caplog.text
     assert "model_name=gpt-5-mini" in caplog.text
     assert "endpoint=/responses" in caplog.text
@@ -1293,6 +1338,7 @@ def test_non_web_search_request_error_does_not_fallback_to_chat(monkeypatch) -> 
         )
 
     assert exc_info.value.code == "provider_request"
+    assert exc_info.value.normalized_failure_reason == "ai_model_request_parameter_unsupported"
     assert call_urls == ["https://api.openai.com/v1/responses"]
 
 
@@ -1627,20 +1673,80 @@ def test_structured_provider_logs_allow_attempt_zero_non_tool_fast_path(monkeypa
 
     assert start_event["run_id"] == "run-fast-path-0"
     assert start_event["attempt_number"] == 0
+    assert start_event["task_alias"] == "competitor_analysis"
     assert start_event["execution_mode"] == "fast_path"
     assert start_event["provider_call_type"] == "non_tool"
     assert start_event["endpoint_path"] == "/chat/completions"
     assert start_event["web_search_enabled"] is False
+    assert start_event["request_shape_adjusted"] is False
+    assert start_event["temperature_omitted_due_to_model_default_only"] is False
 
     assert complete_event["run_id"] == "run-fast-path-0"
     assert complete_event["attempt_number"] == 0
+    assert complete_event["task_alias"] == "competitor_analysis"
     assert complete_event["execution_mode"] == "fast_path"
     assert complete_event["provider_call_type"] == "non_tool"
     assert complete_event["endpoint_path"] == "/chat/completions"
     assert complete_event["web_search_enabled"] is False
+    assert complete_event["request_shape_adjusted"] is False
+    assert complete_event["temperature_omitted_due_to_model_default_only"] is False
     assert complete_event["duration_ms"] >= 0
     assert success_event["run_id"] == "run-fast-path-0"
     assert success_event["provider_call_type"] == "non_tool"
+
+
+def test_structured_provider_logs_report_adjusted_gpt_5_family_non_tool_shape(monkeypatch, caplog) -> None:
+    def _valid_urlopen(request: urllib.request.Request, timeout: int):  # noqa: ANN001
+        assert timeout == 30
+        assert request.full_url.endswith("/responses")
+        payload = json.loads(request.data.decode("utf-8")) if isinstance(request.data, bytes) else {}
+        assert "tools" not in payload
+        assert "temperature" not in payload
+        return _FakeHTTPResponse(json.dumps(_responses_api_payload(model="gpt-5.6-terra-2026-01-01")))
+
+    monkeypatch.setattr(urllib.request, "urlopen", _valid_urlopen)
+    provider = OpenAISEOCompetitorProfileGenerationProvider(
+        api_key="sk-test",
+        model_name="gpt-5.6-terra",
+    )
+
+    with caplog.at_level(logging.INFO):
+        provider.generate_competitor_profiles(
+            site=_site(),
+            existing_domains=[],
+            candidate_count=1,
+            reduced_context_mode=True,
+            run_id="run-gpt-5-adjusted",
+            attempt_number=2,
+            degraded_mode=True,
+            execution_mode="degraded",
+            provider_call_type="non_tool",
+            web_search_enabled=False,
+        )
+
+    structured_events = _structured_event_records(caplog)
+    start_event = next(item for item in structured_events if item.get("event") == "competitor_provider_request_start")
+    complete_event = next(
+        item for item in structured_events if item.get("event") == "competitor_provider_request_complete"
+    )
+
+    assert start_event["run_id"] == "run-gpt-5-adjusted"
+    assert start_event["task_alias"] == "competitor_analysis"
+    assert start_event["provider_call_type"] == "non_tool"
+    assert start_event["endpoint_path"] == "/responses"
+    assert start_event["web_search_enabled"] is False
+    assert start_event["request_shape_adjusted"] is True
+    assert start_event["request_shape_adjustment_reason"] == "ai_model_tool_timeout_fallback_shape_adjusted"
+    assert start_event["temperature_omitted_due_to_model_default_only"] is True
+
+    assert complete_event["run_id"] == "run-gpt-5-adjusted"
+    assert complete_event["task_alias"] == "competitor_analysis"
+    assert complete_event["provider_call_type"] == "non_tool"
+    assert complete_event["endpoint_path"] == "/responses"
+    assert complete_event["request_shape_adjusted"] is True
+    assert complete_event["request_shape_adjustment_reason"] == "ai_model_tool_timeout_fallback_shape_adjusted"
+    assert complete_event["temperature_omitted_due_to_model_default_only"] is True
+    assert complete_event["duration_ms"] >= 0
 
 
 def test_structured_candidate_pipeline_log_reports_raw_valid_and_dropped_counts(monkeypatch, caplog) -> None:
