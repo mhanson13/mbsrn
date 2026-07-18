@@ -2,12 +2,42 @@ from __future__ import annotations
 
 from datetime import datetime
 import re
+from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, TypeAdapter, ValidationError, field_validator
 
 _EMAIL_FALLBACK_REGEX = re.compile(r"^[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}$", re.IGNORECASE)
 _E164_REGEX = re.compile(r"^\+[1-9]\d{9,14}$")
+
+AIBusinessModelSource = Literal[
+    "explicit",
+    "task_override",
+    "business_default",
+    "env_default",
+    "provider_fallback",
+    "deterministic",
+]
+AIBusinessModelValidationStatus = Literal["allowed", "compatibility_allowed", "deterministic", "invalid"]
+
+
+class BusinessAIModelSelectableValueRead(BaseModel):
+    model: str
+    label: str
+    capability_note: str
+
+
+class BusinessAITaskModelRoutingRead(BaseModel):
+    task_alias: str
+    task_label: str
+    capability_note: str
+    capabilities: list[str] = Field(default_factory=list)
+    override_model: str | None
+    effective_model: str | None
+    source: AIBusinessModelSource
+    fallback_used: bool
+    validation_status: AIBusinessModelValidationStatus
+    validation_error: str | None = None
 
 
 class BusinessSettingsRead(BaseModel):
@@ -32,6 +62,9 @@ class BusinessSettingsRead(BaseModel):
     ai_prompt_text_competitor: str | None
     ai_prompt_text_recommendations: str | None
     default_ai_model: str | None
+    ai_model_overrides: dict[str, str] | None = None
+    ai_model_routing: list[BusinessAITaskModelRoutingRead] = Field(default_factory=list)
+    ai_model_selectable_values: list[BusinessAIModelSelectableValueRead] = Field(default_factory=list)
     timezone: str
     created_at: datetime
     updated_at: datetime
@@ -74,6 +107,13 @@ class BusinessSettingsUpdateRequest(BaseModel):
         description=(
             "Business-scoped legacy/global AI model fallback. Blank/whitespace values are treated "
             "as unset and fall back to deployment/default model configuration."
+        ),
+    )
+    ai_model_overrides: dict[str, str | None] | None = Field(
+        default=None,
+        description=(
+            "Business-scoped AI task model overrides keyed by task alias. Blank/whitespace values are "
+            "treated as inherit/clear for that alias."
         ),
     )
     competitor_tuning_preview_event_id: str | None = Field(default=None, min_length=1, max_length=36)
@@ -133,6 +173,25 @@ class BusinessSettingsUpdateRequest(BaseModel):
     @classmethod
     def normalize_default_ai_model(cls, value: str | None) -> str | None:
         return _normalize_optional_model_name(value)
+
+    @field_validator("ai_model_overrides", mode="before")
+    @classmethod
+    def normalize_ai_model_overrides(cls, value: object) -> dict[str, str | None] | None:
+        if value is None:
+            return None
+        if not isinstance(value, dict):
+            raise ValueError("ai_model_overrides must be an object mapping task aliases to model identifiers or null.")
+        normalized: dict[str, str | None] = {}
+        for raw_key, raw_value in value.items():
+            if not isinstance(raw_key, str):
+                raise ValueError("ai_model_overrides keys must be non-empty task alias strings.")
+            alias = raw_key.strip().lower()
+            if alias == "":
+                raise ValueError("ai_model_overrides keys must be non-empty task alias strings.")
+            if raw_value is not None and not isinstance(raw_value, str):
+                raise ValueError("ai_model_overrides values must be strings or null.")
+            normalized[alias] = _normalize_optional_model_name(raw_value)
+        return normalized
 
 
 def _clean_optional_text(value: str | None) -> str | None:

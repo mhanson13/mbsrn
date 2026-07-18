@@ -94,6 +94,9 @@ def test_get_business_settings_endpoint(db_session, seeded_business) -> None:
     assert payload["ai_prompt_text_competitor"] is None
     assert payload["ai_prompt_text_recommendations"] is None
     assert payload["default_ai_model"] is None
+    assert payload["ai_model_overrides"] == {}
+    assert any(item["task_alias"] == "requirements_helper" for item in payload["ai_model_routing"])
+    assert any(item["model"] == "gpt-5.6-terra" for item in payload["ai_model_selectable_values"])
 
 
 def test_patch_business_settings_valid_partial_update_succeeds(db_session, seeded_business) -> None:
@@ -193,9 +196,121 @@ def test_patch_business_settings_rejects_deprecated_default_ai_model(db_session,
     )
 
     assert response.status_code == 422
-    detail = str(response.json()["detail"]).lower()
-    assert "default_ai_model" in detail
-    assert "deprecated" in detail
+    detail = response.json()["detail"]
+    assert detail["reason_code"] == "ai_model_deprecated"
+    assert detail["field"] == "default_ai_model"
+    assert "deprecated" in str(detail["message"]).lower()
+
+
+def test_patch_business_settings_accepts_and_clears_ai_model_overrides(db_session, seeded_business) -> None:
+    client = _make_client(db_session, business_id=seeded_business.id)
+
+    save_response = client.patch(
+        f"/api/businesses/{seeded_business.id}/settings",
+        json={
+            "ai_model_overrides": {
+                "requirements_helper": "  GPT-5.6-LUNA  ",
+                "media_metadata_helper": "gpt-5.6-terra",
+                "embeddings": " deterministic ",
+            }
+        },
+    )
+    assert save_response.status_code == 200
+    save_payload = save_response.json()
+    assert save_payload["ai_model_overrides"] == {
+        "requirements_helper": "gpt-5.6-luna",
+        "media_metadata_helper": "gpt-5.6-terra",
+        "embeddings": "deterministic",
+    }
+    routing_by_alias = {item["task_alias"]: item for item in save_payload["ai_model_routing"]}
+    assert routing_by_alias["requirements_helper"]["source"] == "task_override"
+    assert routing_by_alias["requirements_helper"]["effective_model"] == "gpt-5.6-luna"
+    assert routing_by_alias["requirements_helper"]["validation_status"] == "allowed"
+    assert routing_by_alias["embeddings"]["source"] == "deterministic"
+    assert routing_by_alias["embeddings"]["effective_model"] == "deterministic"
+    assert routing_by_alias["embeddings"]["validation_status"] == "deterministic"
+
+    clear_response = client.patch(
+        f"/api/businesses/{seeded_business.id}/settings",
+        json={
+            "ai_model_overrides": {
+                "requirements_helper": " \n\t ",
+                "media_metadata_helper": None,
+                "embeddings": None,
+            }
+        },
+    )
+    assert clear_response.status_code == 200
+    clear_payload = clear_response.json()
+    assert clear_payload["ai_model_overrides"] == {}
+
+
+def test_patch_business_settings_rejects_unknown_ai_model_override_alias(db_session, seeded_business) -> None:
+    client = _make_client(db_session, business_id=seeded_business.id)
+
+    response = client.patch(
+        f"/api/businesses/{seeded_business.id}/settings",
+        json={
+            "ai_model_overrides": {
+                "unknown_task": "gpt-5.6-luna",
+            }
+        },
+    )
+
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert detail["reason_code"] == "ai_model_task_alias_unknown"
+    assert detail["field"] == "ai_model_overrides"
+    assert detail["task_alias"] == "unknown_task"
+
+
+def test_patch_business_settings_rejects_deprecated_ai_model_override(db_session, seeded_business) -> None:
+    client = _make_client(db_session, business_id=seeded_business.id)
+
+    response = client.patch(
+        f"/api/businesses/{seeded_business.id}/settings",
+        json={
+            "ai_model_overrides": {
+                "requirements_helper": "gpt-4o-mini",
+            }
+        },
+    )
+
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert detail["reason_code"] == "ai_model_deprecated"
+    assert detail["field"] == "ai_model_overrides"
+    assert detail["task_alias"] == "requirements_helper"
+
+
+def test_patch_business_settings_rejects_invalid_ai_model_override_without_partial_persist(
+    db_session,
+    seeded_business,
+) -> None:
+    seeded_business.ai_model_overrides = {"requirements_helper": "gpt-5.6-luna"}
+    db_session.add(seeded_business)
+    db_session.commit()
+
+    client = _make_client(db_session, business_id=seeded_business.id)
+
+    response = client.patch(
+        f"/api/businesses/{seeded_business.id}/settings",
+        json={
+            "ai_model_overrides": {
+                "requirements_helper": "gpt-5.6-terra",
+                "media_metadata_helper": "gpt-5.6-luna",
+            }
+        },
+    )
+
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert detail["reason_code"] == "ai_model_capability_mismatch"
+    assert detail["field"] == "ai_model_overrides"
+    assert detail["task_alias"] == "media_metadata_helper"
+
+    db_session.refresh(seeded_business)
+    assert seeded_business.ai_model_overrides == {"requirements_helper": "gpt-5.6-luna"}
 
 
 def test_patch_business_settings_accepts_and_clears_migration_draft_timeout_seconds(

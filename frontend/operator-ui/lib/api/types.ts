@@ -96,9 +96,45 @@ export interface BusinessSettings {
   ai_prompt_text_competitor: string | null;
   ai_prompt_text_recommendations: string | null;
   default_ai_model: string | null;
+  ai_model_overrides?: Record<string, string> | null;
+  ai_model_routing?: BusinessAiTaskModelRouting[];
+  ai_model_selectable_values?: BusinessAiModelSelectableValue[];
   timezone: string;
   created_at: string;
   updated_at: string;
+}
+
+export type BusinessAiModelRoutingSource =
+  | "explicit"
+  | "task_override"
+  | "business_default"
+  | "env_default"
+  | "provider_fallback"
+  | "deterministic";
+
+export type BusinessAiModelValidationStatus =
+  | "allowed"
+  | "compatibility_allowed"
+  | "deterministic"
+  | "invalid";
+
+export interface BusinessAiModelSelectableValue {
+  model: string;
+  label: string;
+  capability_note: string;
+}
+
+export interface BusinessAiTaskModelRouting {
+  task_alias: string;
+  task_label: string;
+  capability_note: string;
+  capabilities: string[];
+  override_model: string | null;
+  effective_model: string | null;
+  source: BusinessAiModelRoutingSource;
+  fallback_used: boolean;
+  validation_status: BusinessAiModelValidationStatus;
+  validation_error?: string | null;
 }
 
 export interface BusinessSettingsUpdateRequest {
@@ -119,6 +155,7 @@ export interface BusinessSettingsUpdateRequest {
   ai_prompt_text_competitor?: string | null;
   ai_prompt_text_recommendations?: string | null;
   default_ai_model?: string | null;
+  ai_model_overrides?: Record<string, string | null> | null;
   competitor_tuning_preview_event_id?: string;
   timezone?: string | null;
 }

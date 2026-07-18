@@ -767,7 +767,8 @@ class SEORecommendationNarrativeService:
         resolved = resolve_ai_model_for_task(
             task_alias="recommendation_explanation",
             requested_model_name=requested_model_name,
-            admin_default_model_name=getattr(business, "default_ai_model", None),
+            task_override_model_name=((getattr(business, "ai_model_overrides", None) or {}).get("recommendation_explanation")),
+            business_default_model_name=getattr(business, "default_ai_model", None),
             env_default_model_name=self._env_default_model_name,
             provider_fallback_model_name=self._provider_model_fallback_name(),
         )

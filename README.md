@@ -12,8 +12,8 @@ MBSRN (My Business Sucks Right Now) is a FastAPI + Next.js platform for SEO oper
 - AI-assisted competitor profile draft generation with strict review gating
 - Structured AI competitor profile review surface (compact summary strip, primary pipeline table, and secondary debug details)
 - Deterministic recommendation runs with AI narrative overlays and bounded tuning suggestions
-- Central AI task registry with compatibility-shared routing, helper task-alias resolution for migration requirements/media metadata, and deprecated-model guard; MBSRN continues using external provider APIs only (no training, fine-tuning, or self-hosted model runtime added here)
-- Business-admin legacy/global AI model fallback (`default_ai_model`) with deterministic runtime precedence (`explicit/requested -> admin default -> AI_MODEL_NAME env fallback -> provider fallback`)
+- Central AI task registry with Admin-configurable per-task routing (`ai_model_overrides`), helper task-alias resolution, and deprecated-model guard; MBSRN continues using external provider APIs only (no training, fine-tuning, or self-hosted model runtime added here)
+- Business-admin legacy/global AI model fallback (`default_ai_model`) remains in place with deterministic runtime precedence (`explicit/requested -> task override -> legacy/global fallback -> AI_MODEL_NAME env fallback -> provider fallback`)
 - Controlled migration workspace for weak incumbent SMB sites (bounded source ingest, operator overrides, draft artifact generation, explicit approval, GitHub publish, and explicit deploy request)
 - Dedicated migration workflow route (`/sites/[site_id]/migration`) with run-bound draft/publish/deploy diagnostics, full draft preview navigation, and safe draft deletion for eligible unpublished artifacts
 - Automation lifecycle/outcome visibility across Automation, Sites workspace, and Recommendation run surfaces (including step-level status and linked recommendation artifact navigation when available)
@@ -53,6 +53,24 @@ Competitor trust semantics:
 - `unverified` competitors remain operator-visible but are excluded from trusted comparison/recommendation evidence paths.
 - Recommendation competitor linkage exposes explicit trust tiers via `competitor_evidence_links[].trust_tier` (`trusted_verified`, `informational_unverified`, `informational_candidate`) so operators can distinguish trusted evidence from informational context.
 - Workspace competitor review includes a `Hide synthetic scaffolds` visibility toggle; it defaults ON only when 5+ non-synthetic drafts exist and never removes synthetic data from API/state.
+
+## Admin AI Model Routing
+- Per-task overrides are business-scoped and stored in `businesses.ai_model_overrides`; `businesses.default_ai_model` remains the legacy/global fallback only.
+- Admin settings now expose `AI Task Model Routing` plus the legacy field labeled `Legacy/global fallback model.`.
+- Resolver precedence is:
+  - explicit/requested model
+  - Admin task override
+  - Admin legacy/global fallback
+  - `AI_MODEL_NAME` deployment fallback
+  - provider fallback
+- Deprecated or blocked values such as `gpt-4o-mini`, `gpt-4.1-mini`, `gpt-5.1`, and unapproved `codex-*` identifiers are rejected for new Admin updates.
+- Common starting points when you choose to override manually:
+  - `requirements_helper`, `validation_explainer`: `gpt-5.6-luna`
+  - `media_metadata_helper`, `recommendation_explanation`, `competitor_analysis`, `migration_site_plan`, `migration_section_repair`: `gpt-5.6-terra`
+  - `migration_site_generation`: `gpt-5.6`
+  - `moderation`: `omni-moderation`
+  - `embeddings`: `text-embedding-3-small`
+- Clearing a task override rolls that alias back to the compatibility chain; changing an override only changes routing and does not train, fine-tune, or locally host a model.
 
 ## Repository Structure
 ```text

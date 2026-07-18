@@ -97,7 +97,7 @@ def test_ai_provider_config_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
 
     assert settings.ai_provider_api_key is None
     assert settings.ai_provider_name == "openai"
-    assert settings.ai_model_name == "gpt-4o-mini"
+    assert settings.ai_model_name == "gpt-5.6-terra"
     assert settings.ai_timeout_value == 30
     assert settings.ai_prompt_text_competitor == ""
     assert settings.ai_prompt_text_competitor_source == "empty"

@@ -1001,7 +1001,7 @@ def test_requirements_suggestion_endpoint_returns_completed_payload_for_supporte
     assert isinstance(payload.get("context_sources_used"), list)
     diagnostics = payload.get("model_diagnostics") or {}
     assert diagnostics.get("task_alias") == "requirements_helper"
-    assert diagnostics.get("source") in {"env", "provider_fallback"}
+    assert diagnostics.get("source") in {"env_default", "provider_fallback"}
     assert diagnostics.get("fallback_used") is True
     payload_json = json.dumps(payload).lower()
     assert "database_url" not in payload_json
@@ -1106,7 +1106,7 @@ def test_requirements_suggestion_endpoint_fails_safely_for_incompatible_default_
     assert payload.get("reason_code") == "requirements_suggestion_model_incompatible"
     diagnostics = payload.get("model_diagnostics") or {}
     assert diagnostics.get("task_alias") == "requirements_helper"
-    assert diagnostics.get("source") == "admin_config"
+    assert diagnostics.get("source") == "business_default"
     assert diagnostics.get("fallback_used") is False
     assert "structured_json" in str(diagnostics.get("message") or "")
 
@@ -2675,12 +2675,12 @@ def test_generate_draft_is_blocked_when_provider_compatibility_is_unsupported(db
     assert diagnostics.get("last_draft_failure_response_format_mode") == "json_schema"
     assert diagnostics.get("last_draft_failure_request_body_mode") == "chat_json_schema"
     assert diagnostics.get("last_draft_failure_model_requested") is None
-    assert diagnostics.get("last_draft_failure_model_resolved") == "gpt-4o-mini"
+    assert diagnostics.get("last_draft_failure_model_resolved") == "gpt-5.6-terra"
     assert diagnostics.get("last_draft_failure_model_used") == "gpt-4o-mini"
     assert "unsupported_request_shape" in str(diagnostics.get("draft_provider_compatibility_admin_summary") or "")
     ai_execution = context_summary.get("ai_execution") or {}
     assert ai_execution.get("model_requested") is None
-    assert ai_execution.get("model_resolved") == "gpt-4o-mini"
+    assert ai_execution.get("model_resolved") == "gpt-5.6-terra"
     assert ai_execution.get("model_used") == "gpt-4o-mini"
     assert ai_execution.get("endpoint_path") == "/chat/completions"
     assert ai_execution.get("request_body_mode") == "chat_json_schema"
@@ -2888,7 +2888,7 @@ def test_generate_draft_timeout_returns_structured_error_and_persisted_diagnosti
     assert diagnostics.get("last_draft_failure_artifact_version_id") == versions[0].get("id")
     assert diagnostics.get("last_draft_failure_source") == "remote_provider"
     assert diagnostics.get("last_draft_failure_model_requested") is None
-    assert diagnostics.get("last_draft_failure_model_resolved") == "gpt-4o-mini"
+    assert diagnostics.get("last_draft_failure_model_resolved") == "gpt-5.6-terra"
     assert diagnostics.get("last_draft_failure_model_used") == "gpt-4o-mini"
     assert diagnostics.get("last_draft_failure_timeout_seconds") == 300
     assert diagnostics.get("last_draft_failure_timeout_source") == "default"
@@ -2896,7 +2896,7 @@ def test_generate_draft_timeout_returns_structured_error_and_persisted_diagnosti
     assert diagnostics.get("draft_timeout_source") == "default"
     ai_execution = summary_response.json().get("context_summary", {}).get("ai_execution") or {}
     assert ai_execution.get("model_requested") is None
-    assert ai_execution.get("model_resolved") == "gpt-4o-mini"
+    assert ai_execution.get("model_resolved") == "gpt-5.6-terra"
     assert ai_execution.get("model_used") == "gpt-4o-mini"
     assert ai_execution.get("request_contract_status") == "rejected"
     assert ai_execution.get("provider_execution_status") == "rejected"
@@ -3574,7 +3574,7 @@ def test_migration_media_routes_scope_assets_and_sanitize_payloads(db_session) -
     assert suggestion.get("reason_code") == "image_metadata_suggested"
     diagnostics = suggestion.get("model_diagnostics") or {}
     assert diagnostics.get("task_alias") == "media_metadata_helper"
-    assert diagnostics.get("source") in {"env", "provider_fallback"}
+    assert diagnostics.get("source") in {"env_default", "provider_fallback"}
     assert diagnostics.get("fallback_used") is True
     suggested_json = json.dumps(suggested_asset).lower()
     for forbidden in (

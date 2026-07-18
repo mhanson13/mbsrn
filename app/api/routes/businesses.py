@@ -81,7 +81,7 @@ def get_business(
         business = business_settings_service.get(business_id=scoped_business_id)
     except BusinessSettingsNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
-    return BusinessSettingsRead.model_validate(business)
+    return business_settings_service.build_read_model(business)
 
 
 @router.patch("/{business_id}/settings", response_model=BusinessSettingsRead)
@@ -101,8 +101,8 @@ def patch_business_settings(
     except BusinessSettingsNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     except BusinessSettingsValidationError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
-    return BusinessSettingsRead.model_validate(business)
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=exc.detail) from exc
+    return business_settings_service.build_read_model(business)
 
 
 @router.post("/{business_id}/gcp/logs/query", response_model=GCPLogsQueryResponse)

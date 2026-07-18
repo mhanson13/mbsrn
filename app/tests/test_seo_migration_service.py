@@ -2417,7 +2417,7 @@ def test_workspace_media_metadata_suggestion_fails_safely_for_incompatible_confi
     assert suggestion.get("reason_code") == "image_metadata_model_incompatible"
     diagnostics = suggestion.get("model_diagnostics") or {}
     assert diagnostics.get("task_alias") == "media_metadata_helper"
-    assert diagnostics.get("source") == "admin_config"
+    assert diagnostics.get("source") == "business_default"
     assert diagnostics.get("fallback_used") is False
     assert "multimodal" in str(diagnostics.get("message") or "")
 
@@ -3514,11 +3514,11 @@ def test_requirements_helper_routes_through_task_alias_and_preserves_admin_prece
     assert captured == {
         "task_alias": "requirements_helper",
         "model_name": "gpt-admin-default",
-        "model_source": "admin_config",
+        "model_source": "business_default",
     }
     diagnostics = suggestion.get("model_diagnostics") or {}
     assert diagnostics.get("task_alias") == "requirements_helper"
-    assert diagnostics.get("source") == "admin_config"
+    assert diagnostics.get("source") == "business_default"
     assert diagnostics.get("fallback_used") is False
 
 
@@ -3548,7 +3548,7 @@ def test_requirements_helper_fails_safely_for_incompatible_configured_model(db_s
     assert suggestion.get("retryable") is False
     diagnostics = suggestion.get("model_diagnostics") or {}
     assert diagnostics.get("task_alias") == "requirements_helper"
-    assert diagnostics.get("source") == "admin_config"
+    assert diagnostics.get("source") == "business_default"
     assert diagnostics.get("fallback_used") is False
     assert "structured_json" in str(diagnostics.get("message") or "")
 

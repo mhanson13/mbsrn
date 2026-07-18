@@ -6,6 +6,7 @@ from app.services.ai_model_settings import (
     AIModelValidationError,
     ensure_ai_model_capabilities_for_task,
     get_ai_task_registry,
+    list_admin_configurable_ai_task_definitions,
     resolve_ai_model_for_task,
     resolve_ai_model_name,
     UnknownAITaskAliasError,
@@ -37,6 +38,26 @@ def test_ai_task_registry_contains_expected_aliases() -> None:
     assert registry["migration_site_generation"].capabilities == ("text", "structured_json", "code_generation")
 
 
+def test_admin_configurable_ai_tasks_match_expected_aliases() -> None:
+    aliases = {task.task_alias for task in list_admin_configurable_ai_task_definitions()}
+
+    assert aliases == {
+        "requirements_helper",
+        "media_metadata_helper",
+        "recommendation_explanation",
+        "competitor_analysis",
+        "migration_site_plan",
+        "migration_site_generation",
+        "migration_section_repair",
+        "validation_explainer",
+        "moderation",
+        "embeddings",
+        "evaluation_harness",
+        "migration_live_contract_validation",
+        "maintenance_cleanup",
+    }
+
+
 def test_ai_task_registry_marks_mock_only_aliases() -> None:
     registry = get_ai_task_registry()
 
@@ -50,7 +71,8 @@ def test_ai_task_registry_marks_mock_only_aliases() -> None:
 def test_resolve_ai_model_name_prefers_explicit_override() -> None:
     resolved = resolve_ai_model_name(
         requested_model_name="  gpt-requested  ",
-        admin_default_model_name="gpt-admin",
+        task_override_model_name="gpt-task",
+        business_default_model_name="gpt-business",
         env_default_model_name="gpt-env",
         provider_fallback_model_name="gpt-provider",
     )
@@ -59,34 +81,50 @@ def test_resolve_ai_model_name_prefers_explicit_override() -> None:
     assert resolved.model_source == "explicit"
 
 
-def test_resolve_ai_model_name_uses_admin_default_when_explicit_missing() -> None:
+def test_resolve_ai_model_name_uses_task_override_when_explicit_missing() -> None:
     resolved = resolve_ai_model_name(
         requested_model_name="  ",
-        admin_default_model_name=" gpt-admin-default ",
+        task_override_model_name=" gpt-task-default ",
+        business_default_model_name="gpt-business-default",
         env_default_model_name="gpt-env-default",
         provider_fallback_model_name="gpt-provider-fallback",
     )
 
-    assert resolved.model_name == "gpt-admin-default"
-    assert resolved.model_source == "admin_config"
+    assert resolved.model_name == "gpt-task-default"
+    assert resolved.model_source == "task_override"
 
 
-def test_resolve_ai_model_name_uses_env_default_when_admin_missing() -> None:
+def test_resolve_ai_model_name_uses_business_default_when_task_override_missing() -> None:
     resolved = resolve_ai_model_name(
         requested_model_name=None,
-        admin_default_model_name=None,
+        task_override_model_name=None,
+        business_default_model_name=" gpt-business-default ",
+        env_default_model_name="gpt-env-default",
+        provider_fallback_model_name="gpt-provider-fallback",
+    )
+
+    assert resolved.model_name == "gpt-business-default"
+    assert resolved.model_source == "business_default"
+
+
+def test_resolve_ai_model_name_uses_env_default_when_business_missing() -> None:
+    resolved = resolve_ai_model_name(
+        requested_model_name=None,
+        task_override_model_name=None,
+        business_default_model_name=None,
         env_default_model_name=" gpt-env-default ",
         provider_fallback_model_name="gpt-provider-fallback",
     )
 
     assert resolved.model_name == "gpt-env-default"
-    assert resolved.model_source == "env"
+    assert resolved.model_source == "env_default"
 
 
-def test_resolve_ai_model_name_uses_provider_fallback_when_admin_and_env_missing() -> None:
+def test_resolve_ai_model_name_uses_provider_fallback_when_business_and_env_missing() -> None:
     resolved = resolve_ai_model_name(
         requested_model_name=None,
-        admin_default_model_name="",
+        task_override_model_name=None,
+        business_default_model_name="",
         env_default_model_name=" ",
         provider_fallback_model_name=" gpt-provider-fallback ",
     )
@@ -98,7 +136,8 @@ def test_resolve_ai_model_name_uses_provider_fallback_when_admin_and_env_missing
 def test_resolve_ai_model_name_uses_final_fallback_when_all_sources_are_missing() -> None:
     resolved = resolve_ai_model_name(
         requested_model_name=None,
-        admin_default_model_name=None,
+        task_override_model_name=None,
+        business_default_model_name=None,
         env_default_model_name=None,
         provider_fallback_model_name=None,
         final_fallback_model_name="gpt-hardcoded",
@@ -108,23 +147,53 @@ def test_resolve_ai_model_name_uses_final_fallback_when_all_sources_are_missing(
     assert resolved.model_source == "provider_fallback"
 
 
-def test_resolve_ai_model_for_task_preserves_current_precedence_for_allowed_models() -> None:
+def test_resolve_ai_model_for_task_uses_task_override_before_business_default() -> None:
     resolved = resolve_ai_model_for_task(
         task_alias="competitor_analysis",
         requested_model_name=None,
-        admin_default_model_name=" GPT-5-MINI ",
+        task_override_model_name=" GPT-5.6-TERRA ",
+        business_default_model_name="gpt-business-default",
         env_default_model_name="gpt-env-default",
         provider_fallback_model_name="gpt-provider-fallback",
     )
 
     assert resolved.task_alias == "competitor_analysis"
-    assert resolved.model_name == "gpt-5-mini"
-    assert resolved.model_source == "admin_config"
+    assert resolved.model_name == "gpt-5.6-terra"
+    assert resolved.model_source == "task_override"
     assert resolved.model_alias == "compatibility_shared"
     assert resolved.tier == "mid_reasoning"
     assert resolved.compatibility_mapped is True
     assert resolved.legacy_compatibility_mode is False
+    assert resolved.validation_status == "allowed"
     assert resolved.fallback_used is False
+
+
+def test_resolve_ai_model_for_task_explicit_request_still_beats_task_override() -> None:
+    resolved = resolve_ai_model_for_task(
+        task_alias="migration_site_generation",
+        requested_model_name=" gpt-5.6 ",
+        task_override_model_name="gpt-5.6-terra",
+        business_default_model_name="gpt-business-default",
+        env_default_model_name="gpt-env-default",
+        provider_fallback_model_name="gpt-provider-fallback",
+    )
+
+    assert resolved.model_name == "gpt-5.6"
+    assert resolved.model_source == "explicit"
+
+
+def test_resolve_ai_model_for_task_cleared_task_override_inherits_business_default() -> None:
+    resolved = resolve_ai_model_for_task(
+        task_alias="requirements_helper",
+        requested_model_name=None,
+        task_override_model_name=" \n\t ",
+        business_default_model_name=" GPT-5-MINI ",
+        env_default_model_name="gpt-env-default",
+        provider_fallback_model_name="gpt-provider-fallback",
+    )
+
+    assert resolved.model_name == "gpt-5-mini"
+    assert resolved.model_source == "business_default"
 
 
 def test_resolve_ai_model_for_task_rejects_deprecated_explicit_model() -> None:
@@ -135,25 +204,28 @@ def test_resolve_ai_model_for_task_rejects_deprecated_explicit_model() -> None:
         resolve_ai_model_for_task(
             task_alias="recommendation_explanation",
             requested_model_name=" GPT-4O-MINI ",
-            admin_default_model_name="gpt-5-mini",
+            task_override_model_name=None,
+            business_default_model_name="gpt-5-mini",
             env_default_model_name="gpt-env-default",
             provider_fallback_model_name="gpt-provider-fallback",
         )
 
 
-def test_resolve_ai_model_for_task_allows_legacy_admin_default_in_phase1_compatibility_mode() -> None:
+def test_resolve_ai_model_for_task_allows_legacy_business_default_in_phase1_compatibility_mode() -> None:
     resolved = resolve_ai_model_for_task(
         task_alias="migration_site_generation",
         requested_model_name=None,
-        admin_default_model_name=" GPT-4O-MINI ",
+        task_override_model_name=None,
+        business_default_model_name=" GPT-4O-MINI ",
         env_default_model_name="gpt-env-default",
         provider_fallback_model_name="gpt-provider-fallback",
     )
 
     assert resolved.model_name == "gpt-4o-mini"
-    assert resolved.model_source == "admin_config"
+    assert resolved.model_source == "business_default"
     assert resolved.compatibility_mapped is True
     assert resolved.legacy_compatibility_mode is True
+    assert resolved.validation_status == "compatibility_allowed"
     assert "compatibility-mapped" in resolved.safe_diagnostic_message
 
 
@@ -168,21 +240,24 @@ def test_ensure_ai_model_capabilities_for_requirements_helper_rejects_embedding_
         ensure_ai_model_capabilities_for_task(
             task_alias="requirements_helper",
             model_name="text-embedding-3-small",
-            model_source="admin_config",
+            model_source="business_default",
         )
 
 
-def test_ensure_ai_model_capabilities_for_media_metadata_helper_requires_multimodal_models() -> None:
+def test_resolve_ai_model_for_task_rejects_luna_for_media_metadata_helper() -> None:
     with pytest.raises(AIModelValidationError) as exc_info:
-        ensure_ai_model_capabilities_for_task(
+        resolve_ai_model_for_task(
             task_alias="media_metadata_helper",
-            model_name="text-embedding-3-small",
-            model_source="explicit",
+            requested_model_name=None,
+            task_override_model_name="gpt-5.6-luna",
+            business_default_model_name=None,
+            env_default_model_name="gpt-env-default",
+            provider_fallback_model_name="gpt-provider-fallback",
         )
 
     message = str(exc_info.value)
-    assert "Requested AI model for task alias 'media_metadata_helper'" in message
-    assert "structured_json" in message
+    assert "Configured AI model for task alias 'media_metadata_helper'" in message
+    assert "structured_json" not in message
     assert "multimodal" in message
 
 
@@ -191,28 +266,47 @@ def test_resolve_ai_model_for_task_rejects_unknown_alias() -> None:
         resolve_ai_model_for_task(
             task_alias="unknown_task",
             requested_model_name=None,
-            admin_default_model_name=None,
+            task_override_model_name=None,
+            business_default_model_name=None,
             env_default_model_name="gpt-env-default",
             provider_fallback_model_name="gpt-provider-fallback",
         )
 
 
-def test_resolve_ai_model_for_task_does_not_require_provider_for_mock_only_alias() -> None:
+def test_resolve_ai_model_for_task_keeps_non_admin_mock_only_alias_deterministic() -> None:
     resolved = resolve_ai_model_for_task(
         task_alias="seo_audit_summary",
         requested_model_name="gpt-5-mini",
-        admin_default_model_name="gpt-admin-default",
+        task_override_model_name="gpt-5.6-terra",
+        business_default_model_name="gpt-business-default",
         env_default_model_name="gpt-env-default",
         provider_fallback_model_name="gpt-provider-fallback",
     )
 
     assert resolved.model_name is None
-    assert resolved.model_source == "task_default"
+    assert resolved.model_source == "deterministic"
     assert resolved.model_alias is None
     assert resolved.allow_real_provider is False
     assert resolved.mock_only_for_now is True
     assert resolved.compatibility_mapped is False
+    assert resolved.validation_status == "deterministic"
     assert "deterministic/mock-only" in resolved.safe_diagnostic_message
+
+
+def test_resolve_ai_model_for_task_allows_deterministic_override_for_embeddings() -> None:
+    resolved = resolve_ai_model_for_task(
+        task_alias="embeddings",
+        requested_model_name=None,
+        task_override_model_name=" deterministic ",
+        business_default_model_name="gpt-business-default",
+        env_default_model_name="gpt-env-default",
+        provider_fallback_model_name="gpt-provider-fallback",
+    )
+
+    assert resolved.model_name is None
+    assert resolved.model_source == "deterministic"
+    assert resolved.validation_status == "deterministic"
+    assert resolved.fallback_used is False
 
 
 def test_resolve_ai_model_for_task_rejects_codex_family() -> None:
@@ -223,7 +317,8 @@ def test_resolve_ai_model_for_task_rejects_codex_family() -> None:
         resolve_ai_model_for_task(
             task_alias="evaluation_harness",
             requested_model_name=" codex-latest ",
-            admin_default_model_name=None,
+            task_override_model_name=None,
+            business_default_model_name=None,
             env_default_model_name="gpt-env-default",
             provider_fallback_model_name="gpt-provider-fallback",
         )

@@ -41,6 +41,10 @@ import {
   updateGitHubPublishConfig,
 } from "../../lib/api/client";
 import type {
+  BusinessAiModelRoutingSource,
+  BusinessAiModelSelectableValue,
+  BusinessAiTaskModelRouting,
+  BusinessAiModelValidationStatus,
   BusinessSettings,
   GCPLogEntry,
   GitHubPublishConfig,
@@ -859,10 +863,10 @@ function safePromptSettingsUpdateErrorMessage(error: unknown): string {
         apiErrorMessageContains(error, "default_ai_model") &&
         (apiErrorMessageContains(error, "deprecated") || apiErrorMessageContains(error, "blocked"))
       ) {
-        return "Legacy/global AI model cannot use a deprecated or blocked value. Use a current supported model or clear the field.";
+        return "Legacy/global fallback model cannot use a deprecated or blocked value. Use a current supported model or clear the field.";
       }
       if (apiErrorMessageContains(error, "default_ai_model")) {
-        return "Unable to save the legacy/global AI model fallback. Check the configured value.";
+        return "Unable to save the legacy/global fallback model. Check the configured value.";
       }
       return "Unable to save AI prompt overrides. Keep each prompt under 20,000 characters.";
     }
@@ -1018,6 +1022,88 @@ function normalizeDefaultModelInput(value: string): string | null {
     return null;
   }
   return normalized;
+}
+
+function buildAiTaskModelRoutingInputs(settings: BusinessSettings): Record<string, string> {
+  const overrides = settings.ai_model_overrides || {};
+  const routing = settings.ai_model_routing || [];
+  const draft: Record<string, string> = {};
+  routing.forEach((item) => {
+    draft[item.task_alias] = overrides[item.task_alias] || item.override_model || "";
+  });
+  Object.entries(overrides).forEach(([taskAlias, modelName]) => {
+    draft[taskAlias] = modelName;
+  });
+  return draft;
+}
+
+function normalizeAiModelRoutingInputs(inputs: Record<string, string>): Record<string, string | null> {
+  const payload: Record<string, string | null> = {};
+  Object.entries(inputs).forEach(([taskAlias, modelName]) => {
+    payload[taskAlias] = normalizeDefaultModelInput(modelName);
+  });
+  return payload;
+}
+
+function aiTaskRoutingSourceLabel(source: BusinessAiModelRoutingSource | null | undefined): string {
+  switch (source) {
+    case "explicit":
+      return "Explicit request";
+    case "task_override":
+      return "Task override";
+    case "business_default":
+      return "Legacy/global fallback";
+    case "env_default":
+      return "Deployment fallback";
+    case "provider_fallback":
+      return "Provider fallback";
+    case "deterministic":
+      return "Deterministic";
+    default:
+      return "Unknown";
+  }
+}
+
+function aiTaskRoutingValidationLabel(status: BusinessAiModelValidationStatus | null | undefined): string {
+  switch (status) {
+    case "allowed":
+      return "Valid";
+    case "compatibility_allowed":
+      return "Legacy compatibility";
+    case "deterministic":
+      return "Deterministic";
+    case "invalid":
+      return "Invalid";
+    default:
+      return "Unknown";
+  }
+}
+
+function safeTaskModelRoutingUpdateErrorMessage(error: unknown): string {
+  if (error instanceof ApiRequestError) {
+    if (error.status === 401) {
+      return "Session expired. Sign in again.";
+    }
+    if (error.status === 403) {
+      return "Only admin principals can update AI task model routing.";
+    }
+    if (error.status === 404) {
+      return "Business settings were not found in this tenant scope.";
+    }
+    if (error.status === 422) {
+      const reasonCode = apiErrorReasonCode(error);
+      if (
+        reasonCode === "ai_model_task_alias_unknown" ||
+        reasonCode === "ai_model_deprecated" ||
+        reasonCode === "ai_model_capability_mismatch" ||
+        reasonCode === "ai_model_value_invalid"
+      ) {
+        return error.message;
+      }
+      return "Unable to save AI task model routing. Review the configured values.";
+    }
+  }
+  return "Failed to update AI task model routing.";
 }
 
 function normalizeGitHubPublishBasePath(value: string): string {
@@ -1736,10 +1822,16 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
   const [promptOverrideSubmitting, setPromptOverrideSubmitting] = useState(false);
   const [promptOverrideMessage, setPromptOverrideMessage] = useState<string | null>(null);
   const [promptOverrideError, setPromptOverrideError] = useState<string | null>(null);
+  const [aiModelRoutingInputs, setAiModelRoutingInputs] = useState<Record<string, string>>({});
+  const [aiModelRoutingSubmitting, setAiModelRoutingSubmitting] = useState(false);
+  const [aiModelRoutingMessage, setAiModelRoutingMessage] = useState<string | null>(null);
+  const [aiModelRoutingError, setAiModelRoutingError] = useState<string | null>(null);
   const competitorPromptContractWarning = useMemo(
     () => assessCompetitorPromptOverrideContract(competitorPromptOverrideInput),
     [competitorPromptOverrideInput],
   );
+  const aiModelRoutingRows: BusinessAiTaskModelRouting[] = businessSettings?.ai_model_routing || [];
+  const aiModelSelectableValues: BusinessAiModelSelectableValue[] = businessSettings?.ai_model_selectable_values || [];
   const [githubPublishOwnerInput, setGitHubPublishOwnerInput] = useState("");
   const [githubPublishDefaultBranchInput, setGitHubPublishDefaultBranchInput] = useState("main");
   const [githubPublishBasePathInput, setGitHubPublishBasePathInput] = useState("/");
@@ -2023,6 +2115,7 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
           setCompetitorPromptOverrideInput(settings.ai_prompt_text_competitor || "");
           setRecommendationsPromptOverrideInput(settings.ai_prompt_text_recommendations || "");
           setDefaultAiModelInput(settings.default_ai_model || "");
+          setAiModelRoutingInputs(buildAiTaskModelRoutingInputs(settings));
         } else {
           setBusinessSettingsLoadError(safeBusinessSettingsErrorMessage(settingsResult.reason));
         }
@@ -2361,6 +2454,8 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
     event.preventDefault();
     setPromptOverrideMessage(null);
     setPromptOverrideError(null);
+    setAiModelRoutingMessage(null);
+    setAiModelRoutingError(null);
     setCrawlPageLimitMessage(null);
     setCandidateQualityMessage(null);
     setCompetitorTimeoutMessage(null);
@@ -2387,6 +2482,8 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
   const handleClearPromptOverrides = async () => {
     setPromptOverrideMessage(null);
     setPromptOverrideError(null);
+    setAiModelRoutingMessage(null);
+    setAiModelRoutingError(null);
     setCrawlPageLimitMessage(null);
     setCandidateQualityMessage(null);
     setCompetitorTimeoutMessage(null);
@@ -2405,6 +2502,31 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
       setPromptOverrideError(safePromptSettingsUpdateErrorMessage(err));
     } finally {
       setPromptOverrideSubmitting(false);
+    }
+  };
+
+  const handleSaveAiModelRouting = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setAiModelRoutingMessage(null);
+    setAiModelRoutingError(null);
+    setPromptOverrideMessage(null);
+    setPromptOverrideError(null);
+    setCrawlPageLimitMessage(null);
+    setCandidateQualityMessage(null);
+    setCompetitorTimeoutMessage(null);
+
+    setAiModelRoutingSubmitting(true);
+    try {
+      const updated = await updateBusinessSettings(context.token, context.businessId, {
+        ai_model_overrides: normalizeAiModelRoutingInputs(aiModelRoutingInputs),
+      });
+      setBusinessSettings(updated);
+      setAiModelRoutingInputs(buildAiTaskModelRoutingInputs(updated));
+      setAiModelRoutingMessage("AI task model routing updated.");
+    } catch (err) {
+      setAiModelRoutingError(safeTaskModelRoutingUpdateErrorMessage(err));
+    } finally {
+      setAiModelRoutingSubmitting(false);
     }
   };
 
@@ -3483,20 +3605,20 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
         >
           <SectionHeader
             title="AI Provider & Prompt Governance"
-            subtitle="Control the legacy/global fallback model used while task aliases remain on the shared compatibility path."
+            subtitle="Control the legacy/global fallback model used when a task does not have an explicit request or task-specific override."
             headingLevel={2}
             variant="support"
           />
           <div className="panel panel-compact stack-tight">
             <p className="hint muted">
-              Phase 1 task aliases exist centrally, but current runtime workflows still resolve through the legacy/global shared model path.
+              Task-specific overrides take precedence when set. Shared fallback remains explicit request, task override, legacy/global fallback, deployment fallback, then provider fallback.
             </p>
             <div className="admin-grid-two">
               <div className="stack-tight">
                 <label htmlFor="default-ai-model">
                   <AdminLabelWithHelp
-                    label="Legacy/global AI model"
-                    helpText="Controls the legacy/global fallback model while task aliases remain compatibility-mapped. Resolution order: explicit request, business legacy/global default, deployment default, provider fallback. Deprecated models are rejected on new admin updates. Changing this may affect cost, latency, output style, and compatibility."
+                    label="Legacy/global fallback model."
+                    helpText="Controls the legacy/global fallback model used only when no explicit request or task-specific override is set. Resolution order: explicit request, task override, business legacy/global fallback, deployment fallback, provider fallback. Deprecated models are rejected on new admin updates. Changing this may affect cost, latency, output style, and compatibility."
                     testId="admin-help-default-ai-model"
                   />
                 </label>
@@ -3506,7 +3628,7 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                   value={defaultAiModelInput}
                   onChange={(event) => setDefaultAiModelInput(event.target.value)}
                   disabled={businessSettingsLoading || promptOverrideSubmitting}
-                  placeholder="gpt-5-mini"
+                  placeholder="gpt-5.6-terra"
                 />
                 <p className="hint muted">
                   Current source:{" "}
@@ -3519,6 +3641,103 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
               </div>
             </div>
           </div>
+        </SectionCard>
+        <SectionCard
+          variant="summary"
+          className="role-surface-support"
+          data-testid="admin-card-ai-task-model-routing"
+        >
+          <SectionHeader
+            title="AI Task Model Routing"
+            subtitle="Configure per-task AI model overrides. Leave a row blank to inherit the legacy/global fallback or deterministic default."
+            headingLevel={2}
+            variant="support"
+          />
+          <FormContainer className="form-container-full-width" onSubmit={(event) => void handleSaveAiModelRouting(event)} noValidate>
+            <p className="hint muted">
+              Task model changes affect routing only for the selected alias. They do not train, fine-tune, or locally host a model.
+            </p>
+            {aiModelRoutingRows.length === 0 && businessSettingsLoading ? (
+              <p className="hint muted">Loading task model routing...</p>
+            ) : null}
+            <div className="panel panel-compact stack-tight">
+              {aiModelRoutingRows.map((route) => (
+                <div
+                  key={route.task_alias}
+                  className="panel panel-compact stack-tight"
+                  data-testid={`ai-task-model-row-${route.task_alias}`}
+                >
+                  <div className="admin-grid-two">
+                    <div className="stack-tight">
+                      <label htmlFor={`ai-task-model-${route.task_alias}`}>{route.task_label}</label>
+                      <input
+                        id={`ai-task-model-${route.task_alias}`}
+                        list="ai-task-model-options"
+                        type="text"
+                        value={aiModelRoutingInputs[route.task_alias] ?? ""}
+                        onChange={(event) =>
+                          setAiModelRoutingInputs((current) => ({
+                            ...current,
+                            [route.task_alias]: event.target.value,
+                          }))
+                        }
+                        disabled={businessSettingsLoading || aiModelRoutingSubmitting}
+                        placeholder={route.source === "deterministic" ? "deterministic" : "inherit fallback"}
+                      />
+                      <p className="hint muted">{route.capability_note}</p>
+                    </div>
+                    <div className="stack-tight">
+                      <p className="hint muted">
+                        Effective model: <strong>{route.effective_model || "Not resolved"}</strong>
+                      </p>
+                      <p className="hint muted">
+                        Effective source: <strong>{aiTaskRoutingSourceLabel(route.source)}</strong>
+                      </p>
+                      <p
+                        className={`hint ${route.validation_status === "invalid" ? "error" : "muted"}`}
+                      >
+                        Validation: <strong>{aiTaskRoutingValidationLabel(route.validation_status)}</strong>
+                        {route.validation_error ? ` — ${route.validation_error}` : ""}
+                      </p>
+                      <span className="admin-action-help-inline">
+                        <button
+                          className="button button-tertiary"
+                          type="button"
+                          onClick={() =>
+                            setAiModelRoutingInputs((current) => ({
+                              ...current,
+                              [route.task_alias]: "",
+                            }))
+                          }
+                          disabled={businessSettingsLoading || aiModelRoutingSubmitting}
+                        >
+                          Inherit fallback
+                        </button>
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <datalist id="ai-task-model-options">
+              {aiModelSelectableValues.map((option) => (
+                <option key={option.model} value={option.model}>
+                  {option.label}
+                </option>
+              ))}
+            </datalist>
+            <div className="form-actions">
+              <button
+                className="button button-primary"
+                type="submit"
+                disabled={businessSettingsLoading || aiModelRoutingSubmitting}
+              >
+                {aiModelRoutingSubmitting ? "Saving..." : "Save Task Routing"}
+              </button>
+            </div>
+            {aiModelRoutingMessage ? <p className="hint">{aiModelRoutingMessage}</p> : null}
+            {aiModelRoutingError ? <p className="hint error">{aiModelRoutingError}</p> : null}
+          </FormContainer>
         </SectionCard>
         <SectionCard
           variant="summary"

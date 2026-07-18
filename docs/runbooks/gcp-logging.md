@@ -233,7 +233,14 @@ Interpretation:
 - `reason_code` identifies the stable compatibility failure class (for example `unsupported_model_configuration`).
 - inspect `model`, `endpoint_path`, `execution_mode`, `response_format_mode`, and `request_body_mode` together as the effective request-shape key.
 - for summary payload troubleshooting, also inspect `context_summary.migration_diagnostics.draft_provider_compatibility_admin_summary` for sanitized matrix decision detail.
-- model resolution precedence for compatibility checks is: explicit/requested -> business admin legacy/global default (`default_ai_model`) -> env legacy/shared fallback (`AI_MODEL_NAME`) -> provider fallback.
+- model resolution precedence for compatibility checks is: explicit/requested -> Admin task override (`ai_model_overrides`) -> business admin legacy/global fallback (`default_ai_model`) -> env legacy/shared fallback (`AI_MODEL_NAME`) -> provider fallback.
+- safe routing diagnostics now use:
+  - `task_alias`
+  - `source` (`explicit`, `task_override`, `business_default`, `env_default`, `provider_fallback`, or `deterministic`)
+  - `model`
+  - `fallback_used`
+  - `validation_status`
+- routing diagnostics are sanitized; raw provider payloads, raw env values, tokens, and prompts are not emitted in operator-facing migration diagnostics.
 
 Current migration request-shape examples:
 - supported: `gpt-5.1*` + `/responses` + `full` + `json_schema` + `responses_text_format_json_schema`

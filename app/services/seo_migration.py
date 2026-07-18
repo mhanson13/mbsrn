@@ -14753,9 +14753,11 @@ class SEOMigrationService:
         resolved = resolve_ai_model_for_task(
             task_alias=task_alias,
             requested_model_name=requested_model_name,
-            admin_default_model_name=getattr(business, "default_ai_model", None),
+            task_override_model_name=((getattr(business, "ai_model_overrides", None) or {}).get(task_alias)),
+            business_default_model_name=getattr(business, "default_ai_model", None),
             env_default_model_name=self._env_default_model_name,
             provider_fallback_model_name=self._provider_model_fallback_name(),
+            enforce_capabilities=False,
         )
         if enforce_capabilities and resolved.model_name is not None:
             ensure_ai_model_capabilities_for_task(
@@ -14778,22 +14780,53 @@ class SEOMigrationService:
             diagnostics: dict[str, object] = {
                 "task_alias": task_name,
                 "source": _normalize_string(resolved_model.model_source, max_length=40) or "provider_fallback",
+                "model": _normalize_string(
+                    resolved_model.model_name if resolved_model.model_name is not None else "deterministic",
+                    max_length=128,
+                ),
                 "fallback_used": bool(resolved_model.fallback_used),
+                "validation_status": _normalize_string(resolved_model.validation_status, max_length=40) or "allowed",
                 "compatibility_mapped": bool(resolved_model.compatibility_mapped),
                 "legacy_compatibility_mode": bool(resolved_model.legacy_compatibility_mode),
             }
         else:
-            resolved_name = resolve_ai_model_name(
-                requested_model_name=None,
-                admin_default_model_name=getattr(business, "default_ai_model", None),
-                env_default_model_name=self._env_default_model_name,
-                provider_fallback_model_name=self._provider_model_fallback_name(),
-            )
-            diagnostics = {
-                "task_alias": task_name,
-                "source": _normalize_string(resolved_name.model_source, max_length=40) or "provider_fallback",
-                "fallback_used": resolved_name.model_source in {"env", "provider_fallback"},
-            }
+            try:
+                fallback_resolved = resolve_ai_model_for_task(
+                    task_alias=task_alias,
+                    requested_model_name=None,
+                    task_override_model_name=((getattr(business, "ai_model_overrides", None) or {}).get(task_alias)),
+                    business_default_model_name=getattr(business, "default_ai_model", None),
+                    env_default_model_name=self._env_default_model_name,
+                    provider_fallback_model_name=self._provider_model_fallback_name(),
+                )
+                diagnostics = {
+                    "task_alias": task_name,
+                    "source": _normalize_string(fallback_resolved.model_source, max_length=40) or "provider_fallback",
+                    "model": _normalize_string(
+                        fallback_resolved.model_name if fallback_resolved.model_name is not None else "deterministic",
+                        max_length=128,
+                    ),
+                    "fallback_used": bool(fallback_resolved.fallback_used),
+                    "validation_status": _normalize_string(fallback_resolved.validation_status, max_length=40)
+                    or "allowed",
+                    "compatibility_mapped": bool(fallback_resolved.compatibility_mapped),
+                    "legacy_compatibility_mode": bool(fallback_resolved.legacy_compatibility_mode),
+                }
+            except AIModelValidationError:
+                resolved_name = resolve_ai_model_name(
+                    requested_model_name=None,
+                    task_override_model_name=((getattr(business, "ai_model_overrides", None) or {}).get(task_alias)),
+                    business_default_model_name=getattr(business, "default_ai_model", None),
+                    env_default_model_name=self._env_default_model_name,
+                    provider_fallback_model_name=self._provider_model_fallback_name(),
+                )
+                diagnostics = {
+                    "task_alias": task_name,
+                    "source": _normalize_string(resolved_name.model_source, max_length=40) or "provider_fallback",
+                    "model": _normalize_string(resolved_name.model_name, max_length=128),
+                    "fallback_used": resolved_name.model_source in {"env_default", "provider_fallback"},
+                    "validation_status": "invalid",
+                }
         normalized_message = _normalize_string(message, max_length=240)
         if normalized_message is not None:
             diagnostics["message"] = normalized_message
@@ -25324,14 +25357,18 @@ def _normalize_ai_task_model_diagnostics(value: object) -> dict[str, object] | N
     payload = _normalize_json_dict(value)
     task_alias = _normalize_string(payload.get("task_alias"), max_length=80)
     source = _normalize_string(payload.get("source"), max_length=40)
+    model = _normalize_string(payload.get("model"), max_length=128)
     message = _normalize_string(payload.get("message"), max_length=240)
+    validation_status = _normalize_string(payload.get("validation_status"), max_length=40)
     compatibility_mapped = payload.get("compatibility_mapped")
     legacy_compatibility_mode = payload.get("legacy_compatibility_mode")
     fallback_used = payload.get("fallback_used")
     if (
         task_alias is None
         and source is None
+        and model is None
         and message is None
+        and validation_status is None
         and not isinstance(compatibility_mapped, bool)
         and not isinstance(legacy_compatibility_mode, bool)
         and not isinstance(fallback_used, bool)
@@ -25340,8 +25377,11 @@ def _normalize_ai_task_model_diagnostics(value: object) -> dict[str, object] | N
     normalized: dict[str, object] = {
         "task_alias": task_alias,
         "source": source,
+        "model": model,
         "fallback_used": bool(fallback_used),
     }
+    if validation_status is not None:
+        normalized["validation_status"] = validation_status
     if isinstance(compatibility_mapped, bool):
         normalized["compatibility_mapped"] = compatibility_mapped
     if isinstance(legacy_compatibility_mode, bool):

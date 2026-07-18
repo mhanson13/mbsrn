@@ -475,7 +475,7 @@ def get_settings() -> Settings:
         email_provider=os.getenv("EMAIL_PROVIDER", "mock").strip().lower(),
         ai_provider_api_key=os.getenv("AI_PROVIDER_API_KEY"),
         ai_provider_name=(os.getenv("AI_PROVIDER_NAME", "openai").strip().lower() or "openai"),
-        ai_model_name=(_normalize_ai_model_name(os.getenv("AI_MODEL_NAME")) or "gpt-4o-mini"),
+        ai_model_name=(_normalize_ai_model_name(os.getenv("AI_MODEL_NAME")) or "gpt-5.6-terra"),
         ai_timeout_value=_env_int("AI_TIMEOUT_VALUE", 30, min_value=1),
         ai_prompt_text_competitor=competitor_prompt_resolution.prompt_text,
         ai_prompt_text_competitor_source=competitor_prompt_resolution.prompt_source,

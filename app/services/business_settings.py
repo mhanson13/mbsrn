@@ -12,8 +12,18 @@ from app.repositories.business_repository import BusinessRepository
 from app.repositories.seo_competitor_profile_generation_repository import (
     SEOCompetitorProfileGenerationRepository,
 )
-from app.schemas.business import BusinessSettingsUpdateRequest
-from app.services.ai_model_settings import AIModelValidationError, ensure_ai_model_identifier_allowed
+from app.schemas.business import BusinessSettingsRead, BusinessSettingsUpdateRequest
+from app.services.ai_model_settings import (
+    AIModelValidationError,
+    UnknownAITaskAliasError,
+    ensure_ai_model_capabilities_for_task,
+    ensure_ai_model_identifier_allowed,
+    list_admin_configurable_ai_task_definitions,
+    list_ai_model_selectable_values,
+    normalize_ai_model_identifier,
+    resolve_ai_model_for_task,
+    resolve_ai_model_name,
+)
 
 _EMAIL_REGEX = re.compile(r"^[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}$", re.IGNORECASE)
 _E164_REGEX = re.compile(r"^\+[1-9]\d{9,14}$")
@@ -67,7 +77,14 @@ class BusinessSettingsNotFoundError(ValueError):
 
 
 class BusinessSettingsValidationError(ValueError):
-    pass
+    def __init__(self, detail: str | dict[str, object]) -> None:
+        self.detail = detail
+        if isinstance(detail, str):
+            message = detail
+        else:
+            raw_message = detail.get("message")
+            message = str(raw_message) if raw_message else "Business settings validation failed."
+        super().__init__(message)
 
 
 class BusinessSettingsService:
@@ -77,16 +94,33 @@ class BusinessSettingsService:
         session: Session,
         business_repository: BusinessRepository,
         seo_competitor_profile_generation_repository: SEOCompetitorProfileGenerationRepository,
+        env_default_model_name: str | None = None,
     ) -> None:
         self.session = session
         self.business_repository = business_repository
         self.seo_competitor_profile_generation_repository = seo_competitor_profile_generation_repository
+        self._env_default_model_name = normalize_ai_model_identifier(env_default_model_name)
 
     def get(self, *, business_id: str) -> Business:
         business = self.business_repository.get(business_id)
         if not business:
             raise BusinessSettingsNotFoundError("Business not found")
         return business
+
+    def build_read_model(self, business: Business) -> BusinessSettingsRead:
+        payload = BusinessSettingsRead.model_validate(business).model_dump()
+        overrides = self._current_ai_model_overrides(business)
+        payload["ai_model_overrides"] = overrides
+        payload["ai_model_routing"] = self._build_ai_model_routing_rows(business=business, overrides=overrides)
+        payload["ai_model_selectable_values"] = [
+            {
+                "model": option.model_name,
+                "label": option.label,
+                "capability_note": option.capability_note,
+            }
+            for option in list_ai_model_selectable_values()
+        ]
+        return BusinessSettingsRead.model_validate(payload)
 
     def update_settings(self, *, business_id: str, payload: BusinessSettingsUpdateRequest) -> Business:
         business = self.get(business_id=business_id)
@@ -104,6 +138,8 @@ class BusinessSettingsService:
         # Validate only the setting sections touched by this PATCH payload so one
         # invalid section cannot poison updates to unrelated admin controls.
         self._validate_effective_settings(updates=updates, effective=effective)
+        if "ai_model_overrides" in updates:
+            updates["ai_model_overrides"] = self._persistable_ai_model_overrides(updates.get("ai_model_overrides"))
 
         for field_name, value in updates.items():
             setattr(business, field_name, value)
@@ -284,6 +320,10 @@ class BusinessSettingsService:
                 "default_ai_model",
                 business.default_ai_model,
             ),
+            "ai_model_overrides": updates.get(
+                "ai_model_overrides",
+                business.ai_model_overrides,
+            ),
             "timezone": updates.get("timezone", business.timezone),
         }
 
@@ -300,6 +340,8 @@ class BusinessSettingsService:
             self._validate_migration_draft_timeout_settings(effective)
         if "default_ai_model" in updates:
             self._validate_default_ai_model_setting(effective)
+        if "ai_model_overrides" in updates:
+            self._validate_ai_model_overrides_setting(effective)
 
     def _validate_notification_settings(self, effective: dict) -> None:
         sms_enabled = bool(effective["sms_enabled"])
@@ -438,15 +480,201 @@ class BusinessSettingsService:
             )
 
     def _validate_default_ai_model_setting(self, effective: dict) -> None:
+        model_name = effective.get("default_ai_model")
         try:
             ensure_ai_model_identifier_allowed(
-                effective.get("default_ai_model"),
+                model_name,
                 field_name="default_ai_model",
-                model_source="admin_config",
+                model_source="business_default",
                 allow_compatibility_legacy=False,
             )
         except AIModelValidationError as exc:
-            raise BusinessSettingsValidationError(str(exc)) from exc
+            self._raise_ai_model_settings_validation_error(
+                message=str(exc),
+                reason_code=exc.reason_code,
+                field_name="default_ai_model",
+                model_name=model_name,
+            )
+
+    def _validate_ai_model_overrides_setting(self, effective: dict) -> None:
+        raw_overrides = effective.get("ai_model_overrides")
+        if raw_overrides is None:
+            return
+        if not isinstance(raw_overrides, dict):
+            self._raise_ai_model_settings_validation_error(
+                message="ai_model_overrides must be an object mapping task aliases to model identifiers or null.",
+                reason_code="ai_model_value_invalid",
+                field_name="ai_model_overrides",
+            )
+        for raw_task_alias, raw_model_name in raw_overrides.items():
+            normalized_task_alias = str(raw_task_alias).strip().lower()
+            try:
+                task = next(
+                    definition
+                    for definition in list_admin_configurable_ai_task_definitions()
+                    if definition.task_alias == normalized_task_alias
+                )
+            except StopIteration:
+                try:
+                    raise UnknownAITaskAliasError(normalized_task_alias)
+                except UnknownAITaskAliasError as exc:
+                    self._raise_ai_model_settings_validation_error(
+                        message=str(exc),
+                        reason_code=exc.reason_code,
+                        field_name="ai_model_overrides",
+                        task_alias=normalized_task_alias,
+                    )
+            if raw_model_name is None:
+                continue
+            try:
+                normalized_model_name = ensure_ai_model_identifier_allowed(
+                    raw_model_name,
+                    field_name="ai_model_overrides",
+                    task_alias=task.task_alias,
+                    model_source="task_override",
+                    allow_compatibility_legacy=False,
+                    allow_deterministic=True,
+                )
+                ensure_ai_model_capabilities_for_task(
+                    task_alias=task.task_alias,
+                    model_name=normalized_model_name,
+                    model_source="task_override",
+                )
+            except AIModelValidationError as exc:
+                self._raise_ai_model_settings_validation_error(
+                    message=str(exc),
+                    reason_code=exc.reason_code,
+                    field_name="ai_model_overrides",
+                    task_alias=task.task_alias,
+                    model_name=raw_model_name,
+                )
+
+    def _build_ai_model_routing_rows(
+        self,
+        *,
+        business: Business,
+        overrides: dict[str, str],
+    ) -> list[dict[str, object]]:
+        rows: list[dict[str, object]] = []
+        for task in list_admin_configurable_ai_task_definitions():
+            override_model = overrides.get(task.task_alias)
+            try:
+                resolved = resolve_ai_model_for_task(
+                    task_alias=task.task_alias,
+                    requested_model_name=None,
+                    task_override_model_name=override_model,
+                    business_default_model_name=getattr(business, "default_ai_model", None),
+                    env_default_model_name=self._env_default_model_name,
+                    provider_fallback_model_name=None,
+                )
+                rows.append(
+                    {
+                        "task_alias": task.task_alias,
+                        "task_label": task.admin_label,
+                        "capability_note": task.capability_note,
+                        "capabilities": list(task.capabilities),
+                        "override_model": override_model,
+                        "effective_model": self._effective_model_name(
+                            model_name=resolved.model_name,
+                            model_source=resolved.model_source,
+                        ),
+                        "source": resolved.model_source,
+                        "fallback_used": resolved.fallback_used,
+                        "validation_status": resolved.validation_status,
+                        "validation_error": None,
+                    }
+                )
+            except AIModelValidationError as exc:
+                resolved_name = resolve_ai_model_name(
+                    requested_model_name=None,
+                    task_override_model_name=override_model,
+                    business_default_model_name=getattr(business, "default_ai_model", None),
+                    env_default_model_name=self._env_default_model_name,
+                    provider_fallback_model_name=None,
+                )
+                rows.append(
+                    {
+                        "task_alias": task.task_alias,
+                        "task_label": task.admin_label,
+                        "capability_note": task.capability_note,
+                        "capabilities": list(task.capabilities),
+                        "override_model": override_model,
+                        "effective_model": self._effective_model_name(
+                            model_name=resolved_name.model_name,
+                            model_source=resolved_name.model_source,
+                        ),
+                        "source": resolved_name.model_source,
+                        "fallback_used": resolved_name.model_source in {"env_default", "provider_fallback"},
+                        "validation_status": "invalid",
+                        "validation_error": str(exc),
+                    }
+                )
+        return rows
+
+    def _current_ai_model_overrides(self, business: Business) -> dict[str, str]:
+        raw_overrides = getattr(business, "ai_model_overrides", None)
+        if not isinstance(raw_overrides, dict):
+            return {}
+        supported_aliases = {task.task_alias for task in list_admin_configurable_ai_task_definitions()}
+        normalized: dict[str, str] = {}
+        for raw_task_alias, raw_model_name in raw_overrides.items():
+            if not isinstance(raw_task_alias, str):
+                continue
+            task_alias = raw_task_alias.strip().lower()
+            if task_alias not in supported_aliases:
+                continue
+            if not isinstance(raw_model_name, str):
+                continue
+            model_name = normalize_ai_model_identifier(raw_model_name)
+            if model_name is None:
+                continue
+            normalized[task_alias] = model_name
+        return normalized
+
+    @staticmethod
+    def _persistable_ai_model_overrides(raw_overrides: dict[str, str | None] | None) -> dict[str, str] | None:
+        if not isinstance(raw_overrides, dict):
+            return None
+        normalized: dict[str, str] = {}
+        for raw_task_alias, raw_model_name in raw_overrides.items():
+            if not isinstance(raw_task_alias, str):
+                continue
+            task_alias = raw_task_alias.strip().lower()
+            if task_alias == "":
+                continue
+            model_name = normalize_ai_model_identifier(raw_model_name)
+            if model_name is None:
+                continue
+            normalized[task_alias] = model_name
+        return normalized or None
+
+    @staticmethod
+    def _effective_model_name(*, model_name: str | None, model_source: str) -> str | None:
+        if model_source == "deterministic":
+            return "deterministic"
+        return normalize_ai_model_identifier(model_name)
+
+    def _raise_ai_model_settings_validation_error(
+        self,
+        *,
+        message: str,
+        reason_code: str | None,
+        field_name: str,
+        task_alias: str | None = None,
+        model_name: str | None = None,
+    ) -> None:
+        detail: dict[str, object] = {
+            "message": message,
+            "reason_code": reason_code or "ai_model_value_invalid",
+            "field": field_name,
+        }
+        normalized_task_alias = str(task_alias).strip().lower() if task_alias else None
+        if normalized_task_alias:
+            detail["task_alias"] = normalized_task_alias
+        normalized_model_name = normalize_ai_model_identifier(model_name)
+        if normalized_model_name is not None:
+            detail["model"] = normalized_model_name
+        raise BusinessSettingsValidationError(detail)
 
     def _is_valid_email(self, value: str | None) -> bool:
         if not value:

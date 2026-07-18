@@ -401,10 +401,12 @@ def get_business_settings_service(
         get_seo_competitor_profile_generation_repository
     ),
 ) -> BusinessSettingsService:
+    settings = get_settings()
     return BusinessSettingsService(
         session=db,
         business_repository=business_repository,
         seo_competitor_profile_generation_repository=seo_competitor_profile_generation_repository,
+        env_default_model_name=settings.ai_model_name,
     )
 
 
@@ -567,14 +569,14 @@ def get_seo_competitor_profile_generation_provider() -> SEOCompetitorProfileGene
             )
             return MisconfiguredSEOCompetitorProfileGenerationProvider(
                 provider_name="openai",
-                model_name=model_name or "gpt-4o-mini",
+                model_name=model_name or "gpt-5.6-terra",
                 prompt_version="seo-competitor-profile-v1",
                 safe_message="AI provider credentials are not configured for competitor profile generation.",
             )
         try:
             return OpenAISEOCompetitorProfileGenerationProvider(
                 api_key=api_key,
-                model_name=model_name or "gpt-4o-mini",
+                model_name=model_name or "gpt-5.6-terra",
                 timeout_seconds=settings.ai_timeout_value,
                 api_base_url=settings.openai_api_base_url,
                 prompt_version="seo-competitor-profile-v1",
@@ -587,7 +589,7 @@ def get_seo_competitor_profile_generation_provider() -> SEOCompetitorProfileGene
             logger.warning("Failed to initialize OpenAI competitor profile provider: %s", str(exc))
             return MisconfiguredSEOCompetitorProfileGenerationProvider(
                 provider_name="openai",
-                model_name=model_name or "gpt-4o-mini",
+                model_name=model_name or "gpt-5.6-terra",
                 prompt_version="seo-competitor-profile-v1",
                 safe_message="AI provider configuration is invalid for competitor profile generation.",
             )
@@ -686,14 +688,14 @@ def get_seo_recommendation_narrative_provider() -> SEORecommendationNarrativePro
             )
             return MisconfiguredSEORecommendationNarrativeProvider(
                 provider_name="openai",
-                model_name=model_name or "gpt-4o-mini",
+                model_name=model_name or "gpt-5.6-terra",
                 prompt_version=prompt_version,
                 safe_message="AI provider credentials are not configured for recommendation narrative generation.",
             )
         try:
             return OpenAISEORecommendationNarrativeProvider(
                 api_key=api_key,
-                model_name=model_name or "gpt-4o-mini",
+                model_name=model_name or "gpt-5.6-terra",
                 timeout_seconds=settings.ai_timeout_value,
                 api_base_url=settings.openai_api_base_url,
                 prompt_version=prompt_version,
@@ -706,7 +708,7 @@ def get_seo_recommendation_narrative_provider() -> SEORecommendationNarrativePro
             logger.warning("Failed to initialize OpenAI recommendation narrative provider: %s", str(exc))
             return MisconfiguredSEORecommendationNarrativeProvider(
                 provider_name="openai",
-                model_name=model_name or "gpt-4o-mini",
+                model_name=model_name or "gpt-5.6-terra",
                 prompt_version=prompt_version,
                 safe_message="AI provider configuration is invalid for recommendation narrative generation.",
             )
@@ -762,14 +764,14 @@ def get_seo_migration_artifact_provider() -> SEOMigrationArtifactGenerationProvi
             )
             return MisconfiguredSEOMigrationArtifactGenerationProvider(
                 provider_name="openai",
-                model_name=model_name or "gpt-4o-mini",
+                model_name=model_name or "gpt-5.6-terra",
                 prompt_version=prompt_version,
                 safe_message="AI provider credentials are not configured for migration draft generation.",
             )
         try:
             return OpenAISEOMigrationArtifactGenerationProvider(
                 api_key=api_key,
-                model_name=model_name or "gpt-4o-mini",
+                model_name=model_name or "gpt-5.6-terra",
                 timeout_seconds=settings.ai_timeout_value,
                 api_base_url=settings.openai_api_base_url,
                 prompt_version=prompt_version,
@@ -779,7 +781,7 @@ def get_seo_migration_artifact_provider() -> SEOMigrationArtifactGenerationProvi
             logger.warning("Failed to initialize OpenAI migration artifact provider: %s", str(exc))
             return MisconfiguredSEOMigrationArtifactGenerationProvider(
                 provider_name="openai",
-                model_name=model_name or "gpt-4o-mini",
+                model_name=model_name or "gpt-5.6-terra",
                 prompt_version=prompt_version,
                 safe_message="AI provider configuration is invalid for migration draft generation.",
             )

@@ -113,12 +113,12 @@ The site workspace now surfaces the latest completed recommendation run, determi
 - Business/site scoping is enforced in routes, services, and repositories.
 
 ## Configuration
-AI narrative provider wiring now resolves through the central Phase 1 AI task registry. The `recommendation_explanation` task alias remains compatibility-mapped to the shared legacy runtime model path until a later cutover phase.
+AI narrative provider wiring now resolves through the central AI task registry, and Admin can optionally set a task-specific override for `recommendation_explanation` in `AI Task Model Routing`. If no override is set, recommendation narratives continue to inherit the legacy/global fallback chain.
 
 AI narrative provider wiring uses existing AI runtime settings:
 - `AI_PROVIDER_API_KEY` (secret; required for OpenAI in production/staging)
 - `AI_PROVIDER_NAME` (`openai` or `mock`)
-- `AI_MODEL_NAME` (legacy shared deployment fallback; existing manifests may still use `gpt-4o-mini` until explicitly updated)
+- `AI_MODEL_NAME` (legacy deployment/bootstrap fallback only; current default is `gpt-5.6-terra`)
 - `AI_TIMEOUT_VALUE` (default `30`)
 - `AI_PROMPT_TEXT_RECOMMENDATIONS` (optional supplemental recommendation narrative text)
 - `AI_PROMPT_TEXT_COMPETITOR` (used by competitor discovery, not narrative generation)
@@ -127,14 +127,17 @@ AI narrative provider wiring uses existing AI runtime settings:
 
 Runtime model resolution precedence:
 1. explicit/requested model (when provided by the current run path)
-2. business admin legacy/global default model (`businesses.default_ai_model`, managed from Admin settings)
-3. deployment env legacy/shared default (`AI_MODEL_NAME`)
-4. provider/runtime fallback
+2. Admin task override for `recommendation_explanation` (`businesses.ai_model_overrides`)
+3. business admin legacy/global fallback model (`businesses.default_ai_model`, managed from Admin settings)
+4. deployment env legacy/shared fallback (`AI_MODEL_NAME`)
+5. provider/runtime fallback
 
 Phase 1 guardrails:
 - deprecated or blocked raw model strings are rejected for new explicit/admin updates;
 - legacy stored/admin/env/provider defaults can remain compatibility-mapped for current runtime workflows until later migration phases;
 - no local model training, fine-tuning, or self-hosting is introduced.
+- practical starting point when overriding manually: `recommendation_explanation -> gpt-5.6-terra`;
+- rollback is explicit: clear the task override row to return to the fallback chain.
 
 Behavior:
 - `openai` + valid key -> real provider.

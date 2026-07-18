@@ -329,7 +329,7 @@ Suggestion API:
   - `context_sources_used`
   - `retryable`
   - `generated_at`
-  - optional `model_diagnostics` (`task_alias`, `source`, `fallback_used`, compatibility flags, optional safe message)
+  - optional `model_diagnostics` (`task_alias`, `source`, `model`, `fallback_used`, `validation_status`, compatibility flags, optional safe message)
 
 Stable reason codes:
 - `requirements_suggestion_completed`
@@ -481,7 +481,7 @@ AI-assisted media metadata suggestions (2026-05):
   - `suggestion_status` (`pending|completed|failed|not_available`)
   - optional `reason_code`
   - optional `generated_at`
-  - optional `model_diagnostics` (`task_alias`, `source`, `fallback_used`, compatibility flags, optional safe message)
+  - optional `model_diagnostics` (`task_alias`, `source`, `model`, `fallback_used`, `validation_status`, compatibility flags, optional safe message)
 - operator-authored values are never overwritten automatically
 - operator can explicitly apply a completed suggestion via media update payload:
   - `apply_suggested_metadata: true`
@@ -862,19 +862,33 @@ Compatibility decisions are now request-shape matrix driven (migration-specific)
 
 Resolved migration model precedence before compatibility evaluation and provider invocation:
 1. explicit/requested model (when provided by current workflow)
-2. business admin legacy/global default (`businesses.default_ai_model`)
-3. deployment env legacy/shared default (`AI_MODEL_NAME`)
-4. provider/runtime fallback
+2. Admin task override for the current task alias (`businesses.ai_model_overrides`)
+3. business admin legacy/global fallback (`businesses.default_ai_model`)
+4. deployment env bootstrap/shared fallback (`AI_MODEL_NAME`)
+5. provider/runtime fallback
 
 Phase 1 AI task registry notes:
 - migration draft generation resolves through the `migration_site_generation` task alias;
+- migration planning/repair/explainer paths resolve through `migration_site_plan`, `migration_section_repair`, `validation_explainer`, `migration_live_contract_validation`, and `maintenance_cleanup` when those flows execute;
 - requirements suggestion helper resolves through `requirements_helper`;
 - media metadata suggestion helper resolves through `media_metadata_helper`;
-- task aliases exist centrally, but current runtime behavior remains compatibility-mapped to the shared legacy model path until a later cutover phase;
+- Admin can set per-task values from the `AI Task Model Routing` section without changing deploy manifests;
+- `default_ai_model` remains the legacy/global fallback field and `AI_MODEL_NAME` remains bootstrap fallback only;
+- task aliases exist centrally, but current runtime behavior remains compatibility-mapped to the shared legacy model path until a later cutover phase unless an Admin task override is set;
 - deprecated or blocked raw model strings are rejected for new explicit/admin updates, while legacy stored/admin/env/provider defaults can continue under compatibility mapping until they are migrated.
 
 Operational implication:
-- changing the admin default model can immediately change compatibility outcomes for migration draft generation without changing provider routing.
+- changing a task override can change one migration task alias immediately without changing other aliases;
+- changing the legacy/global fallback can still affect migration compatibility/readiness for aliases that inherit it.
+
+### Admin AI task routing for migration
+- Relevant migration/admin aliases include `requirements_helper`, `media_metadata_helper`, `migration_site_plan`, `migration_site_generation`, `migration_section_repair`, `validation_explainer`, `migration_live_contract_validation`, and `maintenance_cleanup`.
+- Practical starting points when you choose to override manually:
+  - `requirements_helper`, `validation_explainer`: `gpt-5.6-luna`
+  - `media_metadata_helper`, `migration_site_plan`, `migration_section_repair`: `gpt-5.6-terra`
+  - `migration_site_generation`: `gpt-5.6`
+- Clearing a row in Admin rolls that alias back to the legacy/global fallback chain.
+- Routing changes affect model selection and readiness diagnostics only; they do not train, fine-tune, or locally host a model.
 
 Compatibility payload (in `context_summary.draft_provider_compatibility`):
 - `supported`

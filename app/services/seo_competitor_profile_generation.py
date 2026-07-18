@@ -3730,7 +3730,8 @@ class SEOCompetitorProfileGenerationService:
         resolved = resolve_ai_model_for_task(
             task_alias="competitor_analysis",
             requested_model_name=requested_model_name,
-            admin_default_model_name=getattr(business, "default_ai_model", None),
+            task_override_model_name=((getattr(business, "ai_model_overrides", None) or {}).get("competitor_analysis")),
+            business_default_model_name=getattr(business, "default_ai_model", None),
             env_default_model_name=self._env_default_model_name,
             provider_fallback_model_name=self._provider_model_fallback_name(),
         )

@@ -63,6 +63,95 @@ const DEFAULT_MIGRATION_GENERATION_SAFETY = {
   migration_compact_recommendation_limit: 8,
 };
 
+const DEFAULT_AI_MODEL_SELECTABLE_VALUES = [
+  { model: "gpt-5.6-luna", label: "GPT-5.6 Luna", capability_note: "Structured JSON helper and explainer tasks." },
+  { model: "gpt-5.6-terra", label: "GPT-5.6 Terra", capability_note: "General generation, multimodal, and web-search tasks." },
+  { model: "gpt-5.6", label: "GPT-5.6", capability_note: "High-cost full generation and code-output tasks." },
+  { model: "omni-moderation", label: "Omni Moderation", capability_note: "Dedicated moderation tasks." },
+  { model: "text-embedding-3-small", label: "Text Embedding 3 Small", capability_note: "Embedding and retrieval tasks." },
+  { model: "deterministic", label: "Deterministic", capability_note: "No provider call; use deterministic/manual handling." },
+];
+
+function buildAiModelRouting({
+  defaultAiModel = null,
+  overrides = {},
+}: {
+  defaultAiModel?: string | null;
+  overrides?: Record<string, string>;
+} = {}) {
+  return [
+    {
+      task_alias: "requirements_helper",
+      task_label: "Requirements Helper",
+      capability_note: "Structured JSON helper tasks.",
+      capabilities: ["text", "structured_json"],
+      override_model: overrides.requirements_helper || null,
+      effective_model: overrides.requirements_helper || defaultAiModel || "gpt-5.6-terra",
+      source: overrides.requirements_helper ? "task_override" : defaultAiModel ? "business_default" : "env_default",
+      fallback_used: !overrides.requirements_helper && !defaultAiModel,
+      validation_status: "allowed",
+      validation_error: null,
+    },
+    {
+      task_alias: "media_metadata_helper",
+      task_label: "Media Metadata Helper",
+      capability_note: "Multimodal + structured JSON image tasks.",
+      capabilities: ["text", "structured_json", "multimodal"],
+      override_model: overrides.media_metadata_helper || null,
+      effective_model: overrides.media_metadata_helper || defaultAiModel || "gpt-5.6-terra",
+      source: overrides.media_metadata_helper ? "task_override" : defaultAiModel ? "business_default" : "env_default",
+      fallback_used: !overrides.media_metadata_helper && !defaultAiModel,
+      validation_status: "allowed",
+      validation_error: null,
+    },
+    {
+      task_alias: "embeddings",
+      task_label: "Embeddings",
+      capability_note: "Embedding model or deterministic fallback.",
+      capabilities: ["text", "embeddings"],
+      override_model: overrides.embeddings || null,
+      effective_model: overrides.embeddings || "deterministic",
+      source: overrides.embeddings === "deterministic" ? "deterministic" : overrides.embeddings ? "task_override" : "deterministic",
+      fallback_used: false,
+      validation_status: overrides.embeddings === "deterministic" || !overrides.embeddings ? "deterministic" : "allowed",
+      validation_error: null,
+    },
+  ];
+}
+
+function buildBusinessSettings(overrides: Record<string, unknown> = {}) {
+  const defaultAiModel = (overrides.default_ai_model as string | null | undefined) ?? null;
+  const aiModelOverrides = (overrides.ai_model_overrides as Record<string, string> | undefined) || {};
+  return {
+    id: "biz-1",
+    name: "Biz",
+    notification_phone: null,
+    notification_email: null,
+    sms_enabled: false,
+    email_enabled: false,
+    customer_auto_ack_enabled: false,
+    contractor_alerts_enabled: false,
+    seo_audit_crawl_max_pages: 200,
+    competitor_candidate_min_relevance_score: 30,
+    competitor_candidate_big_box_penalty: 20,
+    competitor_candidate_directory_penalty: 20,
+    competitor_candidate_local_alignment_bonus: 10,
+    competitor_primary_timeout_seconds: null,
+    competitor_degraded_timeout_seconds: null,
+    migration_draft_timeout_seconds: null,
+    ai_prompt_text_competitor: null,
+    ai_prompt_text_recommendations: null,
+    default_ai_model: defaultAiModel,
+    ai_model_overrides: aiModelOverrides,
+    ai_model_routing: buildAiModelRouting({ defaultAiModel, overrides: aiModelOverrides }),
+    ai_model_selectable_values: DEFAULT_AI_MODEL_SELECTABLE_VALUES,
+    timezone: "UTC",
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+    ...overrides,
+  };
+}
+
 jest.mock("../../components/useOperatorContext", () => ({
   useOperatorContext: () => mockUseOperatorContext(),
 }));
@@ -74,10 +163,12 @@ jest.mock("../../components/AuthProvider", () => ({
 jest.mock("../../lib/api/client", () => ({
   ApiRequestError: class extends Error {
     status: number;
+    detail: Record<string, unknown> | null;
 
-    constructor(message: string, status = 500) {
+    constructor(message: string, status = 500, detail: Record<string, unknown> | null = null) {
       super(message);
       this.status = status;
+      this.detail = detail;
     }
   },
   activatePrincipalIdentity: jest.fn(),
@@ -254,30 +345,7 @@ describe("admin route", () => {
     mockExecuteAdminSiteDelete.mockReset();
     mockFetchPrincipals.mockResolvedValue({ items: [], total: 0 });
     mockFetchPrincipalIdentities.mockResolvedValue({ items: [], total: 0 });
-    mockFetchBusinessSettings.mockResolvedValue({
-      id: "biz-1",
-      name: "Biz",
-      notification_phone: null,
-      notification_email: null,
-      sms_enabled: false,
-      email_enabled: false,
-      customer_auto_ack_enabled: false,
-      contractor_alerts_enabled: false,
-      seo_audit_crawl_max_pages: 200,
-      competitor_candidate_min_relevance_score: 30,
-      competitor_candidate_big_box_penalty: 20,
-      competitor_candidate_directory_penalty: 20,
-      competitor_candidate_local_alignment_bonus: 10,
-      competitor_primary_timeout_seconds: null,
-      competitor_degraded_timeout_seconds: null,
-      migration_draft_timeout_seconds: null,
-      ai_prompt_text_competitor: null,
-      ai_prompt_text_recommendations: null,
-      default_ai_model: null,
-      timezone: "UTC",
-      created_at: "2026-01-01T00:00:00Z",
-      updated_at: "2026-01-01T00:00:00Z",
-    });
+    mockFetchBusinessSettings.mockResolvedValue(buildBusinessSettings());
     mockFetchGitHubPublishConfig.mockResolvedValue({
       id: 1,
       owner: "",
@@ -390,30 +458,7 @@ describe("admin route", () => {
       created_at: "2026-01-01T00:00:00Z",
       updated_at: "2026-01-01T00:00:00Z",
     });
-    mockUpdateBusinessSettings.mockResolvedValue({
-      id: "biz-1",
-      name: "Biz",
-      notification_phone: null,
-      notification_email: null,
-      sms_enabled: false,
-      email_enabled: false,
-      customer_auto_ack_enabled: false,
-      contractor_alerts_enabled: false,
-      seo_audit_crawl_max_pages: 200,
-      competitor_candidate_min_relevance_score: 30,
-      competitor_candidate_big_box_penalty: 20,
-      competitor_candidate_directory_penalty: 20,
-      competitor_candidate_local_alignment_bonus: 10,
-      competitor_primary_timeout_seconds: null,
-      competitor_degraded_timeout_seconds: null,
-      migration_draft_timeout_seconds: null,
-      ai_prompt_text_competitor: null,
-      ai_prompt_text_recommendations: null,
-      default_ai_model: null,
-      timezone: "UTC",
-      created_at: "2026-01-01T00:00:00Z",
-      updated_at: "2026-01-01T00:00:00Z",
-    });
+    mockUpdateBusinessSettings.mockResolvedValue(buildBusinessSettings());
     mockUseOperatorContext.mockReturnValue({
       loading: false,
       error: null,
@@ -469,6 +514,7 @@ describe("admin route", () => {
       "AI Competitor Candidate Quality",
       "AI Competitor Generation Timeouts",
       "AI Provider & Prompt Governance",
+      "AI Task Model Routing",
       "AI Prompt Overrides",
       "Publish & Deployment Configuration",
       "GitHub Publish Configuration",
@@ -486,7 +532,8 @@ describe("admin route", () => {
 
     expectHeadingOrder("Audit & Crawl Settings", "SEO Crawl Settings");
     expectHeadingOrder("Competitor Generation Settings", "AI Competitor Candidate Quality");
-    expectHeadingOrder("AI Provider & Prompt Governance", "AI Prompt Overrides");
+    expectHeadingOrder("AI Provider & Prompt Governance", "AI Task Model Routing");
+    expectHeadingOrder("AI Task Model Routing", "AI Prompt Overrides");
     expectHeadingOrder("Publish & Deployment Configuration", "GitHub Publish Configuration");
     expectHeadingOrder("Site Registry Management", "Site Management");
     expectHeadingOrder("Diagnostics & Logs", "GCP Logs Query");
@@ -495,9 +542,11 @@ describe("admin route", () => {
     expect(screen.queryByRole("button", { name: "Create User" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Create and Link Identity" })).not.toBeInTheDocument();
     const providerGovernanceCard = screen.getByTestId("admin-card-ai-provider-governance");
+    const taskRoutingCard = screen.getByTestId("admin-card-ai-task-model-routing");
     const promptOverridesCard = screen.getByTestId("admin-card-ai-prompt-overrides");
-    expect(within(providerGovernanceCard).getByLabelText("Legacy/global AI model")).toBeInTheDocument();
-    expect(within(promptOverridesCard).queryByLabelText("Legacy/global AI model")).not.toBeInTheDocument();
+    expect(within(providerGovernanceCard).getByLabelText("Legacy/global fallback model.")).toBeInTheDocument();
+    expect(await within(taskRoutingCard).findByLabelText("Requirements Helper")).toBeInTheDocument();
+    expect(within(promptOverridesCard).queryByLabelText("Legacy/global fallback model.")).not.toBeInTheDocument();
     expect(within(promptOverridesCard).getByLabelText("Competitor Prompt")).toBeInTheDocument();
     expect(within(promptOverridesCard).getByLabelText("Recommendations Prompt")).toBeInTheDocument();
     expect(screen.queryByLabelText("Migration Draft Timeout (seconds)")).not.toBeInTheDocument();
@@ -697,6 +746,7 @@ describe("admin route", () => {
     expect(competitorPromptHelp).toHaveAttribute("data-help-text", expect.stringContaining("strict JSON output contract"));
     expect(recommendationsPromptHelp).toHaveAttribute("data-help-text", expect.stringContaining("required JSON/schema fields"));
     expect(defaultModelHelp).toHaveAttribute("data-help-text", expect.stringContaining("Resolution order: explicit request"));
+    expect(defaultModelHelp).toHaveAttribute("data-help-text", expect.stringContaining("task override"));
     expect(defaultModelHelp).toHaveAttribute("data-help-text", expect.stringContaining("cost, latency, output style, and compatibility"));
     expect(fallbackHelp).toHaveAttribute(
       "data-help-text",
@@ -705,54 +755,18 @@ describe("admin route", () => {
   });
 
   it("loads and saves the legacy/global AI model in admin settings", async () => {
-    mockFetchBusinessSettings.mockResolvedValueOnce({
-      id: "biz-1",
-      name: "Biz",
-      notification_phone: null,
-      notification_email: null,
-      sms_enabled: false,
-      email_enabled: false,
-      customer_auto_ack_enabled: false,
-      contractor_alerts_enabled: false,
-      seo_audit_crawl_max_pages: 200,
-      competitor_candidate_min_relevance_score: 30,
-      competitor_candidate_big_box_penalty: 20,
-      competitor_candidate_directory_penalty: 20,
-      competitor_candidate_local_alignment_bonus: 10,
-      competitor_primary_timeout_seconds: null,
-      competitor_degraded_timeout_seconds: null,
-      migration_draft_timeout_seconds: 180,
-      ai_prompt_text_competitor: null,
-      ai_prompt_text_recommendations: null,
-      default_ai_model: "gpt-4.1-mini",
-      timezone: "UTC",
-      created_at: "2026-01-01T00:00:00Z",
-      updated_at: "2026-01-01T00:00:00Z",
-    });
-    mockUpdateBusinessSettings.mockResolvedValueOnce({
-      id: "biz-1",
-      name: "Biz",
-      notification_phone: null,
-      notification_email: null,
-      sms_enabled: false,
-      email_enabled: false,
-      customer_auto_ack_enabled: false,
-      contractor_alerts_enabled: false,
-      seo_audit_crawl_max_pages: 200,
-      competitor_candidate_min_relevance_score: 30,
-      competitor_candidate_big_box_penalty: 20,
-      competitor_candidate_directory_penalty: 20,
-      competitor_candidate_local_alignment_bonus: 10,
-      competitor_primary_timeout_seconds: null,
-      competitor_degraded_timeout_seconds: null,
-      migration_draft_timeout_seconds: 240,
-      ai_prompt_text_competitor: null,
-      ai_prompt_text_recommendations: null,
-      default_ai_model: "gpt-5-mini",
-      timezone: "UTC",
-      created_at: "2026-01-01T00:00:00Z",
-      updated_at: "2026-01-01T00:00:00Z",
-    });
+    mockFetchBusinessSettings.mockResolvedValueOnce(
+      buildBusinessSettings({
+        migration_draft_timeout_seconds: 180,
+        default_ai_model: "gpt-4.1-mini",
+      }),
+    );
+    mockUpdateBusinessSettings.mockResolvedValueOnce(
+      buildBusinessSettings({
+        migration_draft_timeout_seconds: 240,
+        default_ai_model: "gpt-5-mini",
+      }),
+    );
     mockUseAuth.mockReturnValue({
       principal: {
         business_id: "biz-1",
@@ -767,8 +781,8 @@ describe("admin route", () => {
 
     const providerGovernanceCard = await screen.findByTestId("admin-card-ai-provider-governance");
     const promptOverridesCard = await screen.findByTestId("admin-card-ai-prompt-overrides");
-    const defaultModelInput = within(providerGovernanceCard).getByLabelText("Legacy/global AI model");
-    expect(within(promptOverridesCard).queryByLabelText("Legacy/global AI model")).not.toBeInTheDocument();
+    const defaultModelInput = within(providerGovernanceCard).getByLabelText("Legacy/global fallback model.");
+    expect(within(promptOverridesCard).queryByLabelText("Legacy/global fallback model.")).not.toBeInTheDocument();
     await waitFor(() => {
       expect(defaultModelInput).toHaveValue("gpt-4.1-mini");
     });
@@ -782,37 +796,18 @@ describe("admin route", () => {
     expect(mockUpdateBusinessSettings.mock.calls.at(-1)?.[2]).toMatchObject({
       default_ai_model: "gpt-5-mini",
     });
-    expect(await screen.findByLabelText("Legacy/global AI model")).toHaveValue("gpt-5-mini");
+    expect(await screen.findByLabelText("Legacy/global fallback model.")).toHaveValue("gpt-5-mini");
     expect(screen.queryByLabelText("Migration Draft Timeout (seconds)")).not.toBeInTheDocument();
   });
 
   it("shows a deprecated-model error for the legacy/global AI model field", async () => {
     const { ApiRequestError } = jest.requireMock("../../lib/api/client");
 
-    mockFetchBusinessSettings.mockResolvedValueOnce({
-      id: "biz-1",
-      name: "Biz",
-      notification_phone: null,
-      notification_email: null,
-      sms_enabled: false,
-      email_enabled: false,
-      customer_auto_ack_enabled: false,
-      contractor_alerts_enabled: false,
-      seo_audit_crawl_max_pages: 200,
-      competitor_candidate_min_relevance_score: 30,
-      competitor_candidate_big_box_penalty: 20,
-      competitor_candidate_directory_penalty: 20,
-      competitor_candidate_local_alignment_bonus: 10,
-      competitor_primary_timeout_seconds: null,
-      competitor_degraded_timeout_seconds: null,
-      migration_draft_timeout_seconds: 180,
-      ai_prompt_text_competitor: null,
-      ai_prompt_text_recommendations: null,
-      default_ai_model: null,
-      timezone: "UTC",
-      created_at: "2026-01-01T00:00:00Z",
-      updated_at: "2026-01-01T00:00:00Z",
-    });
+    mockFetchBusinessSettings.mockResolvedValueOnce(
+      buildBusinessSettings({
+        migration_draft_timeout_seconds: 180,
+      }),
+    );
     mockUpdateBusinessSettings.mockRejectedValueOnce(
       new ApiRequestError("default_ai_model cannot use deprecated or blocked model values.", 422),
     );
@@ -829,14 +824,163 @@ describe("admin route", () => {
     render(<AdminPage />);
 
     const providerGovernanceCard = await screen.findByTestId("admin-card-ai-provider-governance");
-    const defaultModelInput = within(providerGovernanceCard).getByLabelText("Legacy/global AI model");
+    const defaultModelInput = within(providerGovernanceCard).getByLabelText("Legacy/global fallback model.");
 
     fireEvent.change(defaultModelInput, { target: { value: "gpt-4o-mini" } });
     fireEvent.click(screen.getByRole("button", { name: "Save Prompt Overrides" }));
 
     expect(
       await screen.findByText(
-        "Legacy/global AI model cannot use a deprecated or blocked value. Use a current supported model or clear the field.",
+        "Legacy/global fallback model cannot use a deprecated or blocked value. Use a current supported model or clear the field.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("renders AI task model routing rows with effective source details", async () => {
+    mockUseAuth.mockReturnValue({
+      principal: {
+        business_id: "biz-1",
+        principal_id: "admin-routing-1",
+        display_name: "Admin Routing",
+        role: "admin",
+        is_active: true,
+      },
+    });
+
+    render(<AdminPage />);
+
+    const routingCard = await screen.findByTestId("admin-card-ai-task-model-routing");
+    const requirementsRow = await within(routingCard).findByTestId("ai-task-model-row-requirements_helper");
+
+    expect(within(requirementsRow).getByLabelText("Requirements Helper")).toBeInTheDocument();
+    expect(within(requirementsRow).getByText("Effective source:", { exact: false })).toBeInTheDocument();
+    expect(within(requirementsRow).getByText("Deployment fallback")).toBeInTheDocument();
+  });
+
+  it("saves and clears task-specific AI model overrides", async () => {
+    mockUseAuth.mockReturnValue({
+      principal: {
+        business_id: "biz-1",
+        principal_id: "admin-routing-2",
+        display_name: "Admin Routing",
+        role: "admin",
+        is_active: true,
+      },
+    });
+    mockUpdateBusinessSettings.mockResolvedValueOnce(
+      buildBusinessSettings({
+        ai_model_overrides: {
+          requirements_helper: "gpt-5.6-luna",
+        },
+      }),
+    );
+    mockUpdateBusinessSettings.mockResolvedValueOnce(
+      buildBusinessSettings({
+        default_ai_model: "gpt-5.6-terra",
+        ai_model_overrides: {},
+      }),
+    );
+
+    render(<AdminPage />);
+
+    const routingCard = await screen.findByTestId("admin-card-ai-task-model-routing");
+    const requirementsRow = await within(routingCard).findByTestId("ai-task-model-row-requirements_helper");
+    const requirementsInput = within(requirementsRow).getByLabelText("Requirements Helper");
+
+    fireEvent.change(requirementsInput, { target: { value: "gpt-5.6-luna" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save Task Routing" }));
+
+    await waitFor(() => {
+      expect(mockUpdateBusinessSettings).toHaveBeenCalled();
+    });
+    expect(mockUpdateBusinessSettings.mock.calls.at(-1)?.[2]).toMatchObject({
+      ai_model_overrides: {
+        requirements_helper: "gpt-5.6-luna",
+        media_metadata_helper: null,
+        embeddings: null,
+      },
+    });
+    expect(await screen.findByText("AI task model routing updated.")).toBeInTheDocument();
+    expect(within(requirementsRow).getByDisplayValue("gpt-5.6-luna")).toBeInTheDocument();
+    expect(within(requirementsRow).getByText("Task override")).toBeInTheDocument();
+
+    fireEvent.click(within(requirementsRow).getByRole("button", { name: "Inherit fallback" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save Task Routing" }));
+
+    await waitFor(() => {
+      expect(mockUpdateBusinessSettings).toHaveBeenCalledTimes(2);
+    });
+    expect(mockUpdateBusinessSettings.mock.calls.at(-1)?.[2]).toMatchObject({
+      ai_model_overrides: {
+        requirements_helper: null,
+        media_metadata_helper: null,
+        embeddings: null,
+      },
+    });
+    expect(within(requirementsRow).getByText("Legacy/global fallback")).toBeInTheDocument();
+  });
+
+  it("shows backend task-routing errors for deprecated and capability-mismatch values", async () => {
+    const { ApiRequestError } = jest.requireMock("../../lib/api/client");
+    mockUseAuth.mockReturnValue({
+      principal: {
+        business_id: "biz-1",
+        principal_id: "admin-routing-3",
+        display_name: "Admin Routing",
+        role: "admin",
+        is_active: true,
+      },
+    });
+    mockUpdateBusinessSettings.mockRejectedValueOnce(
+      new ApiRequestError(
+        "Configured AI model for task alias 'requirements_helper' cannot use deprecated or blocked model values.",
+        422,
+        {
+          reason_code: "ai_model_deprecated",
+          message: "Configured AI model for task alias 'requirements_helper' cannot use deprecated or blocked model values.",
+          field: "ai_model_overrides",
+          task_alias: "requirements_helper",
+        },
+      ),
+    );
+    mockUpdateBusinessSettings.mockRejectedValueOnce(
+      new ApiRequestError(
+        "Configured AI model for task alias 'media_metadata_helper' does not satisfy required capabilities: multimodal.",
+        422,
+        {
+          reason_code: "ai_model_capability_mismatch",
+          message:
+            "Configured AI model for task alias 'media_metadata_helper' does not satisfy required capabilities: multimodal.",
+          field: "ai_model_overrides",
+          task_alias: "media_metadata_helper",
+        },
+      ),
+    );
+
+    render(<AdminPage />);
+
+    const routingCard = await screen.findByTestId("admin-card-ai-task-model-routing");
+    const requirementsRow = await within(routingCard).findByTestId("ai-task-model-row-requirements_helper");
+    fireEvent.change(within(requirementsRow).getByLabelText("Requirements Helper"), {
+      target: { value: "gpt-4o-mini" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save Task Routing" }));
+
+    expect(
+      await screen.findByText(
+        "Configured AI model for task alias 'requirements_helper' cannot use deprecated or blocked model values.",
+      ),
+    ).toBeInTheDocument();
+
+    const mediaRow = await within(routingCard).findByTestId("ai-task-model-row-media_metadata_helper");
+    fireEvent.change(within(mediaRow).getByLabelText("Media Metadata Helper"), {
+      target: { value: "gpt-5.6-luna" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save Task Routing" }));
+
+    expect(
+      await screen.findByText(
+        "Configured AI model for task alias 'media_metadata_helper' does not satisfy required capabilities: multimodal.",
       ),
     ).toBeInTheDocument();
   });
