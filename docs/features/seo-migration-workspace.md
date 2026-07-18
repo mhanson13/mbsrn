@@ -2835,21 +2835,22 @@ Rollback pattern:
 Selected media is only deploy-ready when it is materialized into artifact files and referenced by deployable static paths.
 
 Required behavior:
+- MBSRN source/import/upload storage is the pre-publish source of truth for referenced media; GitHub is the publish destination, not the pre-publish media source of truth
 - selected/imported/uploaded media used by a generated draft is exported into artifact output under stable relative paths (for example `assets/images/...`)
 - selected usable media marked `included in draft` is materialized automatically during draft generation, even when the provider does not reference every selected image
 - provider context supplies canonical `artifact_path` values for selected media, and generated output is normalized to that path convention
-- generated image references like `assets/<filename>` are normalized to canonical `assets/images/<filename>` when they match selected media
-- approved artifacts with stale media diagnostics can be repaired deterministically during publish preparation (materialize selected media + normalize references) when bytes are still available; operator should not need manual filename mapping
+- generated image references like `assets/<filename>` and matching CSS `url(...)` references are normalized to canonical `assets/images/<filename>` when they match selected media
+- approved artifacts with stale media diagnostics can be repaired deterministically during publish preparation (materialize selected media + normalize references) when bytes are still available; operator should not need manual filename mapping or manual GitHub image copy/rename steps
 - generated output must reference deployable artifact paths, not internal media IDs (`upl-...`), unresolved `@image(...)` placeholders, app/control-plane preview URLs, or storage/signed media URLs
-- publish payloads include both generated HTML/CSS and the materialized image files
+- publish payloads include both generated HTML/CSS and the materialized image files, and referenced image files are overwritten in GitHub on every publish
 - artifact read payloads remain bounded and do not expose raw base64 media blobs directly in API JSON responses
 
 Readiness/cutover blockers now include:
-- unresolved internal media references remain in generated output (`src=\"upl-...\"`)
-- unresolved `@image(...)` references remain in generated output
-- unresolved generated image paths that do not map to materialized artifact files
-- generated output references image paths that are missing from artifact files
+- generated output references image paths that MBSRN cannot resolve to approved/source media (`generated_media_source_missing`)
+- generated output references image paths whose approved/source bytes are unavailable for materialization (`generated_media_source_bytes_missing`)
+- unresolved internal media references remain in generated output (`src=\"upl-...\"`) or unresolved `@image(...)` references remain (`generated_media_reference_unresolved`)
 - generated output references private app/control-plane preview/media URLs, storage/signed media URLs, or other unsafe local/private paths
+- generated output references image assets that cannot be included in the local GitHub publish payload (`generated_media_publish_payload_missing`)
 
 Pending-generation status (non-blocking in draft preflight):
 - if selected usable images were added after the currently selected artifact snapshot, draft input summary may show `selected_media_pending_generation`
@@ -2858,7 +2859,7 @@ Pending-generation status (non-blocking in draft preflight):
 - selected-but-unused (`selected_media_unused_by_generated_pages`) or changed-after-generation (`selected_media_changed_after_generation`) media is advisory only; generate a new draft package when you want those changes reflected in generated output
 - selected media not yet present in the selected artifact package is advisory only unless generated output references missing image paths
 - legacy advisory codes (`selected_media_available_not_referenced`, `selected_media_not_materialized`) remain read-compatible and are normalized to the current advisory set in API/UI output
-- media blockers are driven by broken generated output references (missing `assets/images/*`, unresolved `@image(...)`, unresolved `upl-...`, or non-deployable/private URL references)
+- media blockers are driven by broken generated output references and publish-payload materialization failures, not by GitHub remote image presence
 - private generated-output URLs are redacted in API/UI diagnostics; readiness surfaces expose blocker categories and remediation text, not raw private URLs
 
 Readiness evidence notes:

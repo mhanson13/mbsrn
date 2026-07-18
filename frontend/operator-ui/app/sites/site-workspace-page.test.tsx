@@ -3652,12 +3652,19 @@ describe("site migration workflow route", () => {
   });
 
   it("prioritizes current publish readiness blockers over stale publish failure summaries", async () => {
+    const user = userEvent.setup();
     mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(
       buildMigrationWorkspaceSummary({
         publish_readiness: {
           ready: false,
-          reasons: ["Generated HTML references media files that are missing from artifact output."],
+          reasons: ["Generated output references image paths that MBSRN cannot resolve to approved/source media."],
+          failure_category: "media_materialization",
+          last_failure_category: "provider_error",
           last_failure_message: "Deploy workflow provisioning could not be verified.",
+          artifact_media_readiness: {
+            ready: false,
+            blocker_reason_codes: ["generated_media_source_missing"],
+          },
           target: {
             enabled: true,
             repo_owner: "mhanson13",
@@ -3673,9 +3680,16 @@ describe("site migration workflow route", () => {
 
     const publishReadiness = await screen.findByTestId("migration-publish-readiness");
     expect(publishReadiness).toHaveTextContent(
-      "Blocker: Generated HTML references media files that are missing from artifact output.",
+      "Blocker: Generated output references image paths that MBSRN cannot resolve to approved/source media.",
     );
     expect(publishReadiness).not.toHaveTextContent("Blocker: Deploy workflow provisioning could not be verified.");
+    expect(publishReadiness).toHaveTextContent("Failure category: media materialization");
+    expect(publishReadiness).not.toHaveTextContent("Failure category: provider error");
+
+    const destinationDiagnostics = await openFullDestinationDiagnostics(user);
+    expect(destinationDiagnostics).toHaveTextContent(
+      "Artifact media reason codes: generated_media_source_missing",
+    );
   });
 
   it("shows repository ownership guidance in destination diagnostics when mbsrn.key is missing", async () => {

@@ -2436,6 +2436,8 @@ def test_migration_summary_redacts_private_generated_media_urls_in_readiness_pay
 
         assert publish_media.get("ready") is False
         assert deploy_media.get("ready") is False
+        assert publish_readiness.get("failure_category") == "media_materialization"
+        assert "generated_media_reference_private_url" in list(publish_media.get("blocker_reason_codes") or [])
         publish_reasons = [str(item).lower() for item in (publish_media.get("reasons") or [])]
         assert any("private app/control-plane preview or media urls" in item for item in publish_reasons)
         assert any("private or signed storage media urls" in item for item in publish_reasons)

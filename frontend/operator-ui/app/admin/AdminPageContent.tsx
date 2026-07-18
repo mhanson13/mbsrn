@@ -874,6 +874,33 @@ function safePromptSettingsUpdateErrorMessage(error: unknown): string {
   return "Failed to update AI prompt overrides.";
 }
 
+function safeDefaultAiModelUpdateErrorMessage(error: unknown): string {
+  if (error instanceof ApiRequestError) {
+    if (error.status === 401) {
+      return "Session expired. Sign in again.";
+    }
+    if (error.status === 403) {
+      return "Only admin principals can update the legacy/global fallback model.";
+    }
+    if (error.status === 404) {
+      return "Business settings were not found in this tenant scope.";
+    }
+    if (error.status === 422) {
+      if (
+        apiErrorMessageContains(error, "default_ai_model")
+        && (apiErrorMessageContains(error, "deprecated") || apiErrorMessageContains(error, "blocked"))
+      ) {
+        return "Legacy/global fallback model cannot use a deprecated or blocked value. Use a current supported model or clear the field.";
+      }
+      if (apiErrorMessageContains(error, "default_ai_model")) {
+        return "Unable to save the legacy/global fallback model. Check the configured value.";
+      }
+      return "Unable to save the legacy/global fallback model. Check the configured value.";
+    }
+  }
+  return "Failed to update the legacy/global fallback model.";
+}
+
 function parseAdminSiteUrl(input: string): string {
   const normalized = input.trim();
   let parsed: URL;
@@ -1819,6 +1846,9 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
   const [competitorPromptOverrideInput, setCompetitorPromptOverrideInput] = useState("");
   const [recommendationsPromptOverrideInput, setRecommendationsPromptOverrideInput] = useState("");
   const [defaultAiModelInput, setDefaultAiModelInput] = useState("");
+  const [defaultAiModelSubmitting, setDefaultAiModelSubmitting] = useState(false);
+  const [defaultAiModelMessage, setDefaultAiModelMessage] = useState<string | null>(null);
+  const [defaultAiModelError, setDefaultAiModelError] = useState<string | null>(null);
   const [promptOverrideSubmitting, setPromptOverrideSubmitting] = useState(false);
   const [promptOverrideMessage, setPromptOverrideMessage] = useState<string | null>(null);
   const [promptOverrideError, setPromptOverrideError] = useState<string | null>(null);
@@ -2452,6 +2482,8 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
 
   const handleSavePromptOverrides = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    setDefaultAiModelMessage(null);
+    setDefaultAiModelError(null);
     setPromptOverrideMessage(null);
     setPromptOverrideError(null);
     setAiModelRoutingMessage(null);
@@ -2465,13 +2497,12 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
       const updated = await updateBusinessSettings(context.token, context.businessId, {
         ai_prompt_text_competitor: normalizePromptOverrideInput(competitorPromptOverrideInput),
         ai_prompt_text_recommendations: normalizePromptOverrideInput(recommendationsPromptOverrideInput),
-        default_ai_model: normalizeDefaultModelInput(defaultAiModelInput),
       });
       setBusinessSettings(updated);
       setCompetitorPromptOverrideInput(updated.ai_prompt_text_competitor || "");
       setRecommendationsPromptOverrideInput(updated.ai_prompt_text_recommendations || "");
       setDefaultAiModelInput(updated.default_ai_model || "");
-      setPromptOverrideMessage("AI prompt/default model settings updated.");
+      setPromptOverrideMessage("AI prompt overrides updated.");
     } catch (err) {
       setPromptOverrideError(safePromptSettingsUpdateErrorMessage(err));
     } finally {
@@ -2480,6 +2511,8 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
   };
 
   const handleClearPromptOverrides = async () => {
+    setDefaultAiModelMessage(null);
+    setDefaultAiModelError(null);
     setPromptOverrideMessage(null);
     setPromptOverrideError(null);
     setAiModelRoutingMessage(null);
@@ -2505,8 +2538,41 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
     }
   };
 
+  const handleSaveDefaultAiModel = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setDefaultAiModelMessage(null);
+    setDefaultAiModelError(null);
+    setPromptOverrideMessage(null);
+    setPromptOverrideError(null);
+    setAiModelRoutingMessage(null);
+    setAiModelRoutingError(null);
+    setCrawlPageLimitMessage(null);
+    setCandidateQualityMessage(null);
+    setCompetitorTimeoutMessage(null);
+
+    setDefaultAiModelSubmitting(true);
+    try {
+      const updated = await updateBusinessSettings(context.token, context.businessId, {
+        default_ai_model: normalizeDefaultModelInput(defaultAiModelInput),
+      });
+      setBusinessSettings(updated);
+      setDefaultAiModelInput(updated.default_ai_model || "");
+      setDefaultAiModelMessage(
+        updated.default_ai_model
+          ? "Legacy/global fallback model updated."
+          : "Legacy/global fallback model cleared. Deployment fallback is now active.",
+      );
+    } catch (err) {
+      setDefaultAiModelError(safeDefaultAiModelUpdateErrorMessage(err));
+    } finally {
+      setDefaultAiModelSubmitting(false);
+    }
+  };
+
   const handleSaveAiModelRouting = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    setDefaultAiModelMessage(null);
+    setDefaultAiModelError(null);
     setAiModelRoutingMessage(null);
     setAiModelRoutingError(null);
     setPromptOverrideMessage(null);
@@ -3609,38 +3675,52 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
             headingLevel={2}
             variant="support"
           />
-          <div className="panel panel-compact stack-tight">
-            <p className="hint muted">
-              Task-specific overrides take precedence when set. Shared fallback remains explicit request, task override, legacy/global fallback, deployment fallback, then provider fallback.
-            </p>
-            <div className="admin-grid-two">
-              <div className="stack-tight">
-                <label htmlFor="default-ai-model">
-                  <AdminLabelWithHelp
-                    label="Legacy/global fallback model."
-                    helpText="Controls the legacy/global fallback model used only when no explicit request or task-specific override is set. Resolution order: explicit request, task override, business legacy/global fallback, deployment fallback, provider fallback. Deprecated models are rejected on new admin updates. Changing this may affect cost, latency, output style, and compatibility."
-                    testId="admin-help-default-ai-model"
+          <FormContainer className="form-container-full-width" onSubmit={(event) => void handleSaveDefaultAiModel(event)} noValidate>
+            <div className="panel panel-compact stack-tight">
+              <p className="hint muted">
+                Task-specific overrides take precedence when set. Shared fallback remains explicit request, task override, legacy/global fallback, deployment fallback, then provider fallback.
+              </p>
+              <div className="admin-grid-two">
+                <div className="stack-tight">
+                  <label htmlFor="default-ai-model">
+                    <AdminLabelWithHelp
+                      label="Legacy/global fallback model."
+                      helpText="Controls the legacy/global fallback model used only when no explicit request or task-specific override is set. Resolution order: explicit request, task override, business legacy/global fallback, deployment fallback, provider fallback. Deprecated models are rejected on new admin updates. Changing this may affect cost, latency, output style, and compatibility. Leave the field blank and save to clear the business override."
+                      testId="admin-help-default-ai-model"
+                    />
+                  </label>
+                  <input
+                    id="default-ai-model"
+                    type="text"
+                    value={defaultAiModelInput}
+                    onChange={(event) => setDefaultAiModelInput(event.target.value)}
+                    disabled={businessSettingsLoading || promptOverrideSubmitting || defaultAiModelSubmitting}
+                    placeholder="gpt-5.6-terra"
                   />
-                </label>
-                <input
-                  id="default-ai-model"
-                  type="text"
-                  value={defaultAiModelInput}
-                  onChange={(event) => setDefaultAiModelInput(event.target.value)}
-                  disabled={businessSettingsLoading || promptOverrideSubmitting}
-                  placeholder="gpt-5.6-terra"
-                />
-                <p className="hint muted">
-                  Current source:{" "}
-                  <strong>
-                    {businessSettings?.default_ai_model
-                      ? "Business legacy/global override"
-                      : "Deployment legacy/global fallback"}
-                  </strong>
-                </p>
+                  <p className="hint muted">
+                    Current source:{" "}
+                    <strong>
+                      {businessSettings?.default_ai_model
+                        ? "Business legacy/global override"
+                        : "Deployment legacy/global fallback"}
+                    </strong>
+                  </p>
+                  <p className="hint muted">Leave blank and save to clear the business override.</p>
+                </div>
               </div>
             </div>
-          </div>
+            <div className="form-actions">
+              <button
+                className="button button-primary"
+                type="submit"
+                disabled={businessSettingsLoading || promptOverrideSubmitting || defaultAiModelSubmitting}
+              >
+                {defaultAiModelSubmitting ? "Saving..." : "Save Legacy Fallback Model"}
+              </button>
+            </div>
+            {defaultAiModelMessage ? <p className="hint">{defaultAiModelMessage}</p> : null}
+            {defaultAiModelError ? <p className="hint error">{defaultAiModelError}</p> : null}
+          </FormContainer>
         </SectionCard>
         <SectionCard
           variant="summary"
@@ -3841,7 +3921,7 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
                 </button>
                 <AdminHelpIcon
                   label="Use Deployment Fallbacks"
-                  helpText="Clears business-level prompt and default-model overrides so deployment defaults are used. This does not delete deployment configuration."
+                  helpText="Clears business-level prompt overrides so deployment defaults are used. Use the legacy/global fallback model save action to clear the business default-model override."
                   testId="admin-help-use-deployment-fallbacks"
                 />
               </span>

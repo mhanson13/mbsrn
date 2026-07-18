@@ -4134,6 +4134,7 @@ export function MigrationWorkspacePanel({
   const sourceSnapshot = summary?.source_snapshot || null;
   const publishReadiness = asRecord(summary?.publish_readiness || {});
   const deployReadiness = asRecord(summary?.deploy_readiness || {});
+  const publishArtifactMediaReadiness = asRecord(publishReadiness.artifact_media_readiness);
   const workspacePublishConfig = asRecord(workspaceRecord.publish_config_json || {});
   const selectedArtifactVersionIdTrimmed = selectedArtifactVersionId.trim();
   const publishReadinessArtifactVersionId = asString(publishReadiness.approved_artifact_version_id);
@@ -4211,8 +4212,17 @@ export function MigrationWorkspacePanel({
     : !adminPublishEnabled
       ? "Admin has disabled GitHub publishing."
       : "Admin publish target is configured and enabled.";
-  const publishFailureCategory = asString(publishReadiness.last_failure_category || publishReadiness.failure_category) || null;
+  const publishFailureCategory = (() => {
+    const currentFailureCategory = asStringOrNull(publishReadiness.failure_category);
+    const lastFailureCategory = asStringOrNull(publishReadiness.last_failure_category);
+    if (!Boolean(publishReadiness.ready) && currentFailureCategory) {
+      return currentFailureCategory;
+    }
+    return lastFailureCategory || currentFailureCategory;
+  })();
   const publishFailureMessage = asString(publishReadiness.last_failure_message) || null;
+  const publishArtifactMediaReasonCodes = asStringList(publishArtifactMediaReadiness.blocker_reason_codes);
+  const publishArtifactMediaReady = asBooleanOrNull(publishArtifactMediaReadiness.ready);
   const deployFailureMessage = asString(deployReadiness.last_failure_message) || null;
   const publishRuntimeStatusLabel = toRuntimeConfigLabel(publishConfigPrerequisites);
   const deployRuntimeStatusLabel = toRuntimeConfigLabel(deployConfigPrerequisites);
@@ -9804,6 +9814,16 @@ export function MigrationWorkspacePanel({
                       <span className="hint">Draft entry file: {destinationSummary.draftPreviewEntryPath || "Not available"}</span>
                       <span className="hint">Publish runtime: {publishRuntimeStatusLabel}</span>
                       <span className="hint">Deploy runtime: {deployRuntimeStatusLabel}</span>
+                      {publishArtifactMediaReady !== null ? (
+                        <span className="hint">
+                          Artifact media readiness: {publishArtifactMediaReady ? "Ready" : "Blocked"}
+                        </span>
+                      ) : null}
+                      {publishArtifactMediaReasonCodes.length > 0 ? (
+                        <span className="hint warning">
+                          Artifact media reason codes: {publishArtifactMediaReasonCodes.join(", ")}
+                        </span>
+                      ) : null}
                     </div>
                     <div className="panel panel-compact stack-tight migration-diagnostic-group-card">
                       <strong>Repository / workflow</strong>

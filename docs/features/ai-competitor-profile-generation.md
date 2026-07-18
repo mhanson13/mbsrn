@@ -675,6 +675,12 @@ Runtime model resolution precedence:
 4. deployment env legacy/shared fallback (`AI_MODEL_NAME`)
 5. provider/runtime fallback
 
+Admin save boundary:
+- the Admin governance card saves `default_ai_model` separately via `Save Legacy Fallback Model`
+- `Save Prompt Overrides` no longer mutates `default_ai_model`
+- `Save Task Routing` only updates `ai_model_overrides`
+- leaving the legacy/global fallback field blank and saving clears the business override so the deployment fallback is used
+
 Phase 1 guardrails:
 - deprecated or blocked raw model strings are rejected for new explicit/admin updates;
 - current runtime workflows remain compatibility-mapped to the shared legacy path until a task override is explicitly set;

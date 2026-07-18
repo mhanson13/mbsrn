@@ -545,6 +545,7 @@ describe("admin route", () => {
     const taskRoutingCard = screen.getByTestId("admin-card-ai-task-model-routing");
     const promptOverridesCard = screen.getByTestId("admin-card-ai-prompt-overrides");
     expect(within(providerGovernanceCard).getByLabelText("Legacy/global fallback model.")).toBeInTheDocument();
+    expect(within(providerGovernanceCard).getByRole("button", { name: "Save Legacy Fallback Model" })).toBeInTheDocument();
     expect(await within(taskRoutingCard).findByLabelText("Requirements Helper")).toBeInTheDocument();
     expect(within(promptOverridesCard).queryByLabelText("Legacy/global fallback model.")).not.toBeInTheDocument();
     expect(within(promptOverridesCard).getByLabelText("Competitor Prompt")).toBeInTheDocument();
@@ -750,7 +751,7 @@ describe("admin route", () => {
     expect(defaultModelHelp).toHaveAttribute("data-help-text", expect.stringContaining("cost, latency, output style, and compatibility"));
     expect(fallbackHelp).toHaveAttribute(
       "data-help-text",
-      "Clears business-level prompt and default-model overrides so deployment defaults are used. This does not delete deployment configuration.",
+      "Clears business-level prompt overrides so deployment defaults are used. Use the legacy/global fallback model save action to clear the business default-model override.",
     );
   });
 
@@ -758,13 +759,13 @@ describe("admin route", () => {
     mockFetchBusinessSettings.mockResolvedValueOnce(
       buildBusinessSettings({
         migration_draft_timeout_seconds: 180,
-        default_ai_model: "gpt-4.1-mini",
+        default_ai_model: "gpt-5.1",
       }),
     );
     mockUpdateBusinessSettings.mockResolvedValueOnce(
       buildBusinessSettings({
         migration_draft_timeout_seconds: 240,
-        default_ai_model: "gpt-5-mini",
+        default_ai_model: "gpt-5.6-terra",
       }),
     );
     mockUseAuth.mockReturnValue({
@@ -784,19 +785,20 @@ describe("admin route", () => {
     const defaultModelInput = within(providerGovernanceCard).getByLabelText("Legacy/global fallback model.");
     expect(within(promptOverridesCard).queryByLabelText("Legacy/global fallback model.")).not.toBeInTheDocument();
     await waitFor(() => {
-      expect(defaultModelInput).toHaveValue("gpt-4.1-mini");
+      expect(defaultModelInput).toHaveValue("gpt-5.1");
     });
 
-    fireEvent.change(defaultModelInput, { target: { value: "gpt-5-mini" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save Prompt Overrides" }));
+    fireEvent.change(defaultModelInput, { target: { value: "gpt-5.6-terra" } });
+    fireEvent.click(within(providerGovernanceCard).getByRole("button", { name: "Save Legacy Fallback Model" }));
 
     await waitFor(() => {
-    expect(mockUpdateBusinessSettings).toHaveBeenCalled();
+      expect(mockUpdateBusinessSettings).toHaveBeenCalled();
     });
-    expect(mockUpdateBusinessSettings.mock.calls.at(-1)?.[2]).toMatchObject({
-      default_ai_model: "gpt-5-mini",
+    expect(mockUpdateBusinessSettings.mock.calls.at(-1)?.[2]).toEqual({
+      default_ai_model: "gpt-5.6-terra",
     });
-    expect(await screen.findByLabelText("Legacy/global fallback model.")).toHaveValue("gpt-5-mini");
+    expect(await screen.findByText("Legacy/global fallback model updated.")).toBeInTheDocument();
+    expect(await screen.findByLabelText("Legacy/global fallback model.")).toHaveValue("gpt-5.6-terra");
     expect(screen.queryByLabelText("Migration Draft Timeout (seconds)")).not.toBeInTheDocument();
   });
 
@@ -826,14 +828,15 @@ describe("admin route", () => {
     const providerGovernanceCard = await screen.findByTestId("admin-card-ai-provider-governance");
     const defaultModelInput = within(providerGovernanceCard).getByLabelText("Legacy/global fallback model.");
 
-    fireEvent.change(defaultModelInput, { target: { value: "gpt-4o-mini" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save Prompt Overrides" }));
+    fireEvent.change(defaultModelInput, { target: { value: "gpt-5.1" } });
+    fireEvent.click(within(providerGovernanceCard).getByRole("button", { name: "Save Legacy Fallback Model" }));
 
     expect(
       await screen.findByText(
         "Legacy/global fallback model cannot use a deprecated or blocked value. Use a current supported model or clear the field.",
       ),
     ).toBeInTheDocument();
+    expect(defaultModelInput).toHaveValue("gpt-5.1");
   });
 
   it("renders AI task model routing rows with effective source details", async () => {
@@ -883,10 +886,13 @@ describe("admin route", () => {
 
     render(<AdminPage />);
 
+    const providerGovernanceCard = await screen.findByTestId("admin-card-ai-provider-governance");
+    const defaultModelInput = within(providerGovernanceCard).getByLabelText("Legacy/global fallback model.");
     const routingCard = await screen.findByTestId("admin-card-ai-task-model-routing");
     const requirementsRow = await within(routingCard).findByTestId("ai-task-model-row-requirements_helper");
     const requirementsInput = within(requirementsRow).getByLabelText("Requirements Helper");
 
+    fireEvent.change(defaultModelInput, { target: { value: "gpt-5.1" } });
     fireEvent.change(requirementsInput, { target: { value: "gpt-5.6-luna" } });
     fireEvent.click(screen.getByRole("button", { name: "Save Task Routing" }));
 
@@ -900,6 +906,7 @@ describe("admin route", () => {
         embeddings: null,
       },
     });
+    expect(mockUpdateBusinessSettings.mock.calls.at(-1)?.[2]).not.toHaveProperty("default_ai_model");
     expect(await screen.findByText("AI task model routing updated.")).toBeInTheDocument();
     expect(within(requirementsRow).getByDisplayValue("gpt-5.6-luna")).toBeInTheDocument();
     expect(within(requirementsRow).getByText("Task override")).toBeInTheDocument();
@@ -917,7 +924,53 @@ describe("admin route", () => {
         embeddings: null,
       },
     });
+    expect(mockUpdateBusinessSettings.mock.calls.at(-1)?.[2]).not.toHaveProperty("default_ai_model");
     expect(within(requirementsRow).getByText("Legacy/global fallback")).toBeInTheDocument();
+  });
+
+  it("saves prompt overrides without overwriting the legacy/global fallback model", async () => {
+    mockFetchBusinessSettings.mockResolvedValueOnce(
+      buildBusinessSettings({
+        default_ai_model: "gpt-5.6-terra",
+      }),
+    );
+    mockUpdateBusinessSettings.mockResolvedValueOnce(
+      buildBusinessSettings({
+        default_ai_model: "gpt-5.6-terra",
+        ai_prompt_text_competitor: "Use current local-market competitors only.",
+      }),
+    );
+    mockUseAuth.mockReturnValue({
+      principal: {
+        business_id: "biz-1",
+        principal_id: "admin-prompt-1",
+        display_name: "Admin Prompt",
+        role: "admin",
+        is_active: true,
+      },
+    });
+
+    render(<AdminPage />);
+
+    const providerGovernanceCard = await screen.findByTestId("admin-card-ai-provider-governance");
+    const promptOverridesCard = await screen.findByTestId("admin-card-ai-prompt-overrides");
+    const defaultModelInput = within(providerGovernanceCard).getByLabelText("Legacy/global fallback model.");
+    const competitorPromptInput = within(promptOverridesCard).getByLabelText("Competitor Prompt");
+
+    fireEvent.change(defaultModelInput, { target: { value: "gpt-5.1" } });
+    fireEvent.change(competitorPromptInput, { target: { value: "Use current local-market competitors only." } });
+    fireEvent.click(within(promptOverridesCard).getByRole("button", { name: "Save Prompt Overrides" }));
+
+    await waitFor(() => {
+      expect(mockUpdateBusinessSettings).toHaveBeenCalled();
+    });
+    expect(mockUpdateBusinessSettings.mock.calls.at(-1)?.[2]).toEqual({
+      ai_prompt_text_competitor: "Use current local-market competitors only.",
+      ai_prompt_text_recommendations: null,
+    });
+    expect(mockUpdateBusinessSettings.mock.calls.at(-1)?.[2]).not.toHaveProperty("default_ai_model");
+    expect(await screen.findByText("AI prompt overrides updated.")).toBeInTheDocument();
+    expect(defaultModelInput).toHaveValue("gpt-5.6-terra");
   });
 
   it("shows backend task-routing errors for deprecated and capability-mismatch values", async () => {
