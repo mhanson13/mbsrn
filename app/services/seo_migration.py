@@ -607,6 +607,9 @@ _DEPLOY_DISPATCH_SERVICE_REASON_IMAGE_PULL_SECRET_MISSING = "image_pull_secret_m
 _DEPLOY_DISPATCH_SERVICE_REASON_IMAGE_PULL_SECRET_NOT_REFERENCED = "image_pull_secret_not_referenced"
 _DEPLOY_DISPATCH_SERVICE_REASON_CERTIFICATE_DOMAIN_MISMATCH = "certificate_domain_mismatch"
 _DEPLOY_DISPATCH_SERVICE_REASON_STALE_MANAGED_CERTIFICATE_PRESENT = "stale_managed_certificate_present"
+_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_OWNERSHIP_UNVERIFIED = (
+    "managed_certificate_ownership_unverified"
+)
 _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_CERTIFICATE_MISMATCH = "ingress_certificate_mismatch"
 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_IDENTITY_MISMATCH = "managed_certificate_identity_mismatch"
 _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_CERTIFICATE_ANNOTATION_MISMATCH = "ingress_certificate_annotation_mismatch"
@@ -6876,6 +6879,7 @@ class SEOMigrationService:
                         elif normalized_certificate_reason in {
                             _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_FAILED_NOT_VISIBLE,
                             _DEPLOY_DISPATCH_SERVICE_REASON_CERTIFICATE_DOMAIN_MISMATCH,
+                            _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_OWNERSHIP_UNVERIFIED,
                         }:
                             dispatch_service_reason_code = normalized_certificate_reason
                             _emit_prerequisite_chain_log(
@@ -6889,8 +6893,14 @@ class SEOMigrationService:
                                 if normalized_certificate_reason
                                 == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_FAILED_NOT_VISIBLE
                                 else (
-                                    "ManagedCertificate domain does not match the expected hostname for this site. "
-                                    "Reconcile certificate/ingress domain configuration before deploy."
+                                    "ManagedCertificate ownership labels do not verify this site identity. "
+                                    "Inspect existing certificate metadata and reconcile ownership before deploy."
+                                    if normalized_certificate_reason
+                                    == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_OWNERSHIP_UNVERIFIED
+                                    else (
+                                        "ManagedCertificate domain does not match the expected hostname for this site. "
+                                        "Reconcile certificate/ingress domain configuration before deploy."
+                                    )
                                 )
                             )
                             raise SEOMigrationGitHubPublisherError(
@@ -21606,6 +21616,7 @@ class SEOMigrationService:
         cert_stale_or_legacy_reason_codes = {
             _DEPLOY_DISPATCH_SERVICE_REASON_STALE_PRE_SHARED_CERT_BINDING,
             _DEPLOY_DISPATCH_SERVICE_REASON_STALE_MANAGED_CERTIFICATE_PRESENT,
+            _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_OWNERSHIP_UNVERIFIED,
         }
         cert_missing_reason_codes = {
             _DEPLOY_RUN_FAILURE_REASON_MANAGED_CERTIFICATE_METADATA_UNAVAILABLE,
@@ -25756,6 +25767,7 @@ def _normalize_deploy_failure_reason_code(value: object) -> str | None:
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_TRANSACTION_CONFLICT,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PROPAGATION_PENDING,
         _DEPLOY_DISPATCH_SERVICE_REASON_CERTIFICATE_DOMAIN_MISMATCH,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_OWNERSHIP_UNVERIFIED,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_FAILED_NOT_VISIBLE,
         _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_PROVISIONING,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_DOMAIN_DRIFT_REPAIR_FAILED,
@@ -25891,6 +25903,7 @@ def _normalize_workflow_run_failure_reason_code(value: object) -> str | None:
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PROPAGATION_PENDING,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_MISSING,
         _DEPLOY_DISPATCH_SERVICE_REASON_EXPECTED_STATIC_IP_NOT_BOUND_TO_INGRESS,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_OWNERSHIP_UNVERIFIED,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_DOMAIN_DRIFT_REPAIRED,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_DOMAIN_DRIFT_REPAIR_FAILED,
         _DEPLOY_DISPATCH_SERVICE_REASON_STALE_PRE_SHARED_CERT_BINDING,
@@ -25959,6 +25972,7 @@ def _normalize_dispatch_service_reason_code(value: object) -> str | None:
         _DEPLOY_DISPATCH_SERVICE_REASON_IMAGE_PULL_SECRET_NOT_REFERENCED,
         _DEPLOY_DISPATCH_SERVICE_REASON_CERTIFICATE_DOMAIN_MISMATCH,
         _DEPLOY_DISPATCH_SERVICE_REASON_STALE_MANAGED_CERTIFICATE_PRESENT,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_OWNERSHIP_UNVERIFIED,
         _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_CERTIFICATE_MISMATCH,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_IDENTITY_MISMATCH,
         _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_CERTIFICATE_ANNOTATION_MISMATCH,
@@ -26813,6 +26827,11 @@ def _derive_managed_gke_dispatch_readiness_message(*, dispatch_service_reason_co
             "A previous site's certificate is still present in this environment. "
             "Redeploy or remove stale managed certificates after admin verification."
         )
+    if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_OWNERSHIP_UNVERIFIED:
+        return (
+            "ManagedCertificate exists, but its ownership labels do not verify this site identity. "
+            "Inspect managed certificate labels/metadata and reconcile ownership before retry."
+        )
     if normalized_dispatch_reason in {
         _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_CERTIFICATE_MISMATCH,
         _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_CERTIFICATE_ANNOTATION_MISMATCH,
@@ -27077,6 +27096,11 @@ def _derive_deploy_failure_remediation_hint(
             "A previous site's certificate is still present in this environment. "
             "Remove stale managed certificates and redeploy this site."
         )
+    if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_OWNERSHIP_UNVERIFIED:
+        return (
+            "ManagedCertificate ownership labels do not verify this site identity. "
+            "Inspect the existing ManagedCertificate metadata, reconcile ownership, and retry deploy."
+        )
     if normalized_dispatch_reason in {
         _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_CERTIFICATE_MISMATCH,
         _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_CERTIFICATE_ANNOTATION_MISMATCH,
@@ -27298,6 +27322,11 @@ def _derive_workflow_run_failure_hint(
             "Ingress references a ManagedCertificate, but the ManagedCertificate object is missing after apply. "
             "This is a manifest/apply failure, not TLS provisioning."
         )
+    if normalized_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_OWNERSHIP_UNVERIFIED:
+        return (
+            "ManagedCertificate exists, but its ownership labels do not verify this site identity. "
+            "Inspect the existing certificate metadata before retry."
+        )
     if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_RUNTIME_FRONTEND_CONFIG_MISSING_AFTER_APPLY:
         return (
             "Ingress references a FrontendConfig, but the FrontendConfig object is missing after apply. "
@@ -27326,7 +27355,7 @@ def _derive_workflow_run_failure_hint(
     if normalized_reason == _DEPLOY_RUNTIME_REASON_MANAGED_SITE_RUNTIME_REPLACE_FAILED:
         return (
             "Scoped managed-site runtime replacement failed before manifest apply. "
-            "Verify Kubernetes RBAC/resource permissions for ingress, managedcertificate, frontendconfig, "
+            "Verify Kubernetes RBAC/resource permissions for ingress, frontendconfig, "
             "backendconfig, service, deployment, and site-scoped networkpolicy cleanup in the target namespace."
         )
     if normalized_reason == _DEPLOY_RUNTIME_REASON_MANAGED_SITE_RUNTIME_REPLACE_REQUESTED:

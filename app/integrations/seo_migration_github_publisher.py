@@ -3132,6 +3132,12 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                         observed_domains.append(normalized_domain)
         observed_domains = _dedupe_strings(observed_domains)
         certificate_domain_matches_expected = normalized_preview_hostname in observed_domains if observed_domains else False
+        ownership_verified = _managed_certificate_ownership_is_verified(
+            managed_certificate_payload=managed_certificate_payload,
+            repo_name=repo_name,
+            site_id=site_id,
+            preview_hostname=normalized_preview_hostname,
+        )
         status_payload = managed_certificate_payload.get("status")
         observed_certificate_status = ""
         observed_domain_status = ""
@@ -3159,6 +3165,8 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         dispatch_service_reason_code: str | None = None
         if certificate_domain_matches_expected is False:
             dispatch_service_reason_code = _DEPLOY_DISPATCH_SERVICE_REASON_CERTIFICATE_DOMAIN_MISMATCH
+        elif ownership_verified is not True:
+            dispatch_service_reason_code = _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_OWNERSHIP_UNVERIFIED
         elif "FAILEDNOTVISIBLE" in {normalized_certificate_status, normalized_domain_status} or "FAILED_NOT_VISIBLE" in {
             normalized_certificate_status,
             normalized_domain_status,
@@ -3182,6 +3190,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 "managed_certificate_name": managed_certificate_name,
                 "managed_certificate_exists": True,
                 "certificate_domain_matches_expected": certificate_domain_matches_expected,
+                "managed_certificate_ownership_verified": ownership_verified,
                 "observed_managed_certificate_domains": list(observed_domains),
                 "observed_managed_certificate_status": observed_certificate_status or None,
                 "observed_managed_certificate_domain_status": observed_domain_status or None,
@@ -9269,6 +9278,9 @@ _DEPLOY_DISPATCH_SERVICE_REASON_IMAGE_PULL_SECRET_MISSING = "image_pull_secret_m
 _DEPLOY_DISPATCH_SERVICE_REASON_IMAGE_PULL_SECRET_NOT_REFERENCED = "image_pull_secret_not_referenced"
 _DEPLOY_DISPATCH_SERVICE_REASON_CERTIFICATE_DOMAIN_MISMATCH = "certificate_domain_mismatch"
 _DEPLOY_DISPATCH_SERVICE_REASON_STALE_MANAGED_CERTIFICATE_PRESENT = "stale_managed_certificate_present"
+_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_OWNERSHIP_UNVERIFIED = (
+    "managed_certificate_ownership_unverified"
+)
 _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_CERTIFICATE_MISMATCH = "ingress_certificate_mismatch"
 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_IDENTITY_MISMATCH = "managed_certificate_identity_mismatch"
 _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_CERTIFICATE_ANNOTATION_MISMATCH = "ingress_certificate_annotation_mismatch"
@@ -9461,6 +9473,58 @@ def build_managed_site_static_ip_labels(
     if normalized_repo_name:
         ownership_labels[_MBSRN_MANAGED_STATIC_IP_LABEL_REPO] = normalized_repo_name
     return ownership_labels
+
+
+def build_managed_certificate_ownership_labels(
+    *,
+    repo_name: object,
+    site_id: object | None = None,
+    preview_hostname: object | None = None,
+) -> dict[str, str]:
+    normalized_preview_hostname = (_coerce_string(preview_hostname) or "").strip().lower().rstrip(".")
+    normalized_repo_name = (_coerce_string(repo_name) or "").strip()
+    if "/" in normalized_repo_name:
+        normalized_repo_name = normalized_repo_name.rsplit("/", 1)[-1]
+    ownership_labels: dict[str, str] = {
+        "app.kubernetes.io/managed-by": _MBSRN_MANAGED_LABEL,
+        "app.kubernetes.io/name": "site-web",
+    }
+    normalized_site_id = _safe_identifier_fragment(site_id, fallback="", max_length=60).strip("-")
+    normalized_repo_fragment = _safe_identifier_fragment(normalized_repo_name, fallback="", max_length=40).strip("-")
+    if normalized_repo_fragment:
+        ownership_labels["mbsrn.io/repo"] = normalized_repo_fragment
+    if normalized_site_id:
+        ownership_labels["mbsrn.io/site-id"] = normalized_site_id
+    if normalized_preview_hostname:
+        ownership_labels["mbsrn.io/preview-hostname"] = normalized_preview_hostname
+    return ownership_labels
+
+
+def _managed_certificate_ownership_is_verified(
+    *,
+    managed_certificate_payload: dict[str, object],
+    repo_name: object,
+    site_id: object | None = None,
+    preview_hostname: object | None = None,
+) -> bool:
+    expected_labels = build_managed_certificate_ownership_labels(
+        repo_name=repo_name,
+        site_id=site_id,
+        preview_hostname=preview_hostname,
+    )
+    metadata_payload = managed_certificate_payload.get("metadata")
+    labels_payload = metadata_payload.get("labels") if isinstance(metadata_payload, dict) else None
+    if not isinstance(labels_payload, dict):
+        return False
+    for key, expected_value in expected_labels.items():
+        observed_value = _coerce_string(labels_payload.get(key))
+        if not observed_value:
+            return False
+        normalized_observed_value = observed_value.strip().lower().rstrip(".")
+        normalized_expected_value = expected_value.strip().lower().rstrip(".")
+        if normalized_observed_value != normalized_expected_value:
+            return False
+    return True
 
 
 def derive_site_kubernetes_namespace(*, repo_name: object, site_id: object | None = None) -> tuple[str, str]:
@@ -10101,12 +10165,205 @@ def _render_managed_deploy_workflow_yaml(
         "      - name: Ensure namespace exists\n"
         "        run: kubectl apply -f k8s/namespace.yaml\n"
         f"{verify_pull_secret_step}"
+        "      - name: Ensure managed-site endpoint prerequisites\n"
+        "        id: ensure_managed_endpoint_prerequisites\n"
+        "        run: |\n"
+        "          set -euo pipefail\n"
+        '          endpoint_prerequisite_resource_kinds="managedcertificate,dns_record,global_static_ip"\n'
+        '          runtime_resource_kinds="ingress,frontendconfig,backendconfig,service,deployment,networkpolicy"\n'
+        "          fail_endpoint_prerequisite() {\n"
+        '            local reason_code="$1"\n'
+        '            local reason_message="$2"\n'
+        '            local managed_certificate_state="${3:-unknown}"\n'
+        '            local managed_certificate_status="${4:-}"\n'
+        '            echo "deploy_runtime_reason_code=${reason_code}"\n'
+        '            echo "deploy_runtime_reason_message=${reason_message}"\n'
+        '            echo "deploy_runtime_failure_stage=ingress_verify"\n'
+        '            echo "k8s_namespace=$K8S_NAMESPACE"\n'
+        '            echo "ingress_name=site-web"\n'
+        '            echo "preview_hostname=$MBSRN_PREVIEW_HOSTNAME"\n'
+        '            echo "preview_endpoint_mode=$MBSRN_PREVIEW_ENDPOINT_MODE"\n'
+        '            echo "expected_managed_certificate_name=$MBSRN_PREVIEW_CERTIFICATE_NAME"\n'
+        '            echo "endpoint_prerequisite_resource_kinds=$endpoint_prerequisite_resource_kinds"\n'
+        '            echo "runtime_resource_kinds=$runtime_resource_kinds"\n'
+        '            echo "resolve_live_url_state_service_exists=unknown"\n'
+        '            echo "resolve_live_url_state_endpoints_ready=unknown"\n'
+        '            echo "resolve_live_url_state_managed_certificate_exists=$managed_certificate_state"\n'
+        '            if [ -n "$managed_certificate_status" ]; then\n'
+        '              echo "resolve_live_url_state_managed_certificate_status=$managed_certificate_status"\n'
+        "            fi\n"
+        '            echo "resolve_live_url_state_runtime_ready=false"\n'
+        '            echo "resolve_live_url_state_ingress_address_resolved=false"\n'
+        '            echo "resolve_live_url_state_deploy_https_ready=false"\n'
+        '            echo "resolve_live_url_state_https_ready=false"\n'
+        '            echo "resolve_live_url_state_runtime_ready_tls_pending=false"\n'
+        '            echo "resolve_live_url_state_deploy_runtime_failure_stage=ingress_verify"\n'
+        '            echo "resolve_live_url_state_deploy_runtime_reason_message=$reason_message"\n'
+        f'            echo "resolve_live_url_state_{_MBSRN_MANAGED_DEPLOY_TEMPLATE_VERSION_OUTPUT_KEY}={_MBSRN_MANAGED_TEMPLATE_VERSION}"\n'
+        "            exit 1\n"
+        "          }\n"
+        "          wait_for_endpoint_prerequisite() {\n"
+        '            local resource_kind="$1"\n'
+        '            local resource_name="$2"\n'
+        '            local max_attempts="$3"\n'
+        '            local sleep_seconds="$4"\n'
+        '            local reason_code="$5"\n'
+        '            local reason_message="$6"\n'
+        '            local managed_certificate_state="${7:-unknown}"\n'
+        '            local managed_certificate_status="${8:-}"\n'
+        '            local attempt=1\n'
+        '            while [ "$attempt" -le "$max_attempts" ]; do\n'
+        '              if kubectl get "$resource_kind" "$resource_name" --namespace "$K8S_NAMESPACE" >/dev/null 2>&1; then\n'
+        "                return 0\n"
+        "              fi\n"
+        '              if [ "$attempt" -lt "$max_attempts" ]; then\n'
+        '                sleep "$sleep_seconds"\n'
+        "              fi\n"
+        '              attempt=$((attempt + 1))\n'
+        "            done\n"
+        '            fail_endpoint_prerequisite "$reason_code" "$reason_message" "$managed_certificate_state" "$managed_certificate_status"\n'
+        "          }\n"
+        '          ingress_references_managed_certificate=false\n'
+        '          if [ -f k8s/ingress.yaml ] && grep -q "networking.gke.io/managed-certificates:" k8s/ingress.yaml; then\n'
+        '            ingress_references_managed_certificate=true\n'
+        "          fi\n"
+        '          if [ "$ingress_references_managed_certificate" != "true" ]; then\n'
+        '            echo "managed_certificate_action=not_required" >> "$GITHUB_OUTPUT"\n'
+        "            exit 0\n"
+        "          fi\n"
+        '          if [ ! -f k8s/managedcertificate.yaml ]; then\n'
+        '            fail_endpoint_prerequisite "runtime_managed_certificate_missing_after_apply" "Ingress references a ManagedCertificate, but k8s/managedcertificate.yaml is missing from the managed runtime bundle." "false" "MISSING"\n'
+        "          fi\n"
+        '          managed_certificate_json="$(kubectl get managedcertificate "$MBSRN_PREVIEW_CERTIFICATE_NAME" --namespace "$K8S_NAMESPACE" -o json 2>/dev/null || true)"\n'
+        '          if [ -z "$managed_certificate_json" ]; then\n'
+        '            if ! kubectl apply -f k8s/managedcertificate.yaml; then\n'
+        '              fail_endpoint_prerequisite "runtime_managed_certificate_missing_after_apply" "ManagedCertificate ensure could not create the expected preview certificate resource." "false" "MISSING"\n'
+        "            fi\n"
+        '            wait_for_endpoint_prerequisite "managedcertificate" "$MBSRN_PREVIEW_CERTIFICATE_NAME" 10 3 "runtime_managed_certificate_missing_after_apply" "ManagedCertificate referenced by ingress is missing after endpoint-prerequisite ensure." "false" "MISSING"\n'
+        '            echo "managed_certificate_action=created" >> "$GITHUB_OUTPUT"\n'
+        "            exit 0\n"
+        "          fi\n"
+        '          cert_eval_output="$(MANAGED_CERTIFICATE_JSON="$managed_certificate_json" EXPECTED_PREVIEW_HOST="$MBSRN_PREVIEW_HOSTNAME" EXPECTED_CERT_NAME="$MBSRN_PREVIEW_CERTIFICATE_NAME" EXPECTED_SITE_ID="$MBSRN_SITE_IDENTITY" EXPECTED_REPO_NAME="$GITHUB_REPOSITORY" python - <<\'PY\'\n'
+        "          import json\n"
+        "          import os\n"
+        "\n"
+        "          def normalize_fragment(value: str, max_length: int) -> str:\n"
+        "              cleaned = ''.join(character.lower() if character.isalnum() else '-' for character in value)\n"
+        "              while '--' in cleaned:\n"
+        "                  cleaned = cleaned.replace('--', '-')\n"
+        "              cleaned = cleaned.strip('-')\n"
+        "              return cleaned[:max_length]\n"
+        "\n"
+        "          raw = str(os.environ.get('MANAGED_CERTIFICATE_JSON') or '').strip()\n"
+        "          expected_host = str(os.environ.get('EXPECTED_PREVIEW_HOST') or '').strip().lower().rstrip('.')\n"
+        "          expected_cert_name = str(os.environ.get('EXPECTED_CERT_NAME') or '').strip().lower()\n"
+        "          expected_site_id = normalize_fragment(str(os.environ.get('EXPECTED_SITE_ID') or '').strip(), 60)\n"
+        "          expected_repo_name = str(os.environ.get('EXPECTED_REPO_NAME') or '').strip()\n"
+        "          if '/' in expected_repo_name:\n"
+        "              expected_repo_name = expected_repo_name.rsplit('/', 1)[-1]\n"
+        "          expected_repo_label = normalize_fragment(expected_repo_name, 40)\n"
+        "          payload = json.loads(raw) if raw else {}\n"
+        "          metadata = payload.get('metadata') if isinstance(payload.get('metadata'), dict) else {}\n"
+        "          labels_payload = metadata.get('labels') if isinstance(metadata.get('labels'), dict) else {}\n"
+        "          resource_name = str(metadata.get('name') or '').strip().lower()\n"
+        "          spec_domains = [\n"
+        "              str(item).strip().lower().rstrip('.')\n"
+        "              for item in (payload.get('spec', {}).get('domains') or [])\n"
+        "              if str(item).strip()\n"
+        "          ]\n"
+        "          resource_name_matches_expected = bool(resource_name and expected_cert_name and resource_name == expected_cert_name)\n"
+        "          domain_exact_match = bool(expected_host) and len(spec_domains) == 1 and spec_domains[0] == expected_host\n"
+        "          observed_managed_by = str(labels_payload.get('app.kubernetes.io/managed-by') or '').strip().lower()\n"
+        "          observed_name_label = str(labels_payload.get('app.kubernetes.io/name') or '').strip().lower()\n"
+        "          observed_repo_label = str(labels_payload.get('mbsrn.io/repo') or '').strip().lower()\n"
+        "          observed_site_id_label = str(labels_payload.get('mbsrn.io/site-id') or '').strip().lower()\n"
+        "          observed_preview_hostname_label = str(labels_payload.get('mbsrn.io/preview-hostname') or '').strip().lower().rstrip('.')\n"
+        "          ownership_checks = [\n"
+        "              observed_managed_by == 'mbsrn',\n"
+        "              observed_name_label == 'site-web',\n"
+        "              observed_preview_hostname_label == expected_host,\n"
+        "          ]\n"
+        "          if expected_repo_label:\n"
+        "              ownership_checks.append(observed_repo_label == expected_repo_label)\n"
+        "          if expected_site_id:\n"
+        "              ownership_checks.append(observed_site_id_label == expected_site_id)\n"
+        "          ownership_verified = all(ownership_checks)\n"
+        "          print('domain_exact_match=' + ('true' if domain_exact_match else 'false'))\n"
+        "          print('resource_name_matches_expected=' + ('true' if resource_name_matches_expected else 'false'))\n"
+        "          print('managed_certificate_ownership_verified=' + ('true' if ownership_verified else 'false'))\n"
+        "          print('spec_domains=' + ','.join(spec_domains))\n"
+        "          print(f'observed_managed_by={observed_managed_by}')\n"
+        "          print(f'observed_name_label={observed_name_label}')\n"
+        "          print(f'observed_repo_label={observed_repo_label}')\n"
+        "          print(f'observed_site_id_label={observed_site_id_label}')\n"
+        "          print(f'observed_preview_hostname_label={observed_preview_hostname_label}')\n"
+        "          PY\n"
+        '          )"\n'
+        "          domain_exact_match=false\n"
+        "          resource_name_matches_expected=false\n"
+        "          managed_certificate_ownership_verified=false\n"
+        '          observed_managed_certificate_domains=""\n'
+        '          observed_managed_by=""\n'
+        '          observed_name_label=""\n'
+        '          observed_repo_label=""\n'
+        '          observed_site_id_label=""\n'
+        '          observed_preview_hostname_label=""\n'
+        "          while IFS='=' read -r key value; do\n"
+        '            case "$key" in\n'
+        "              domain_exact_match)\n"
+        '                domain_exact_match="$value"\n'
+        "                ;;\n"
+        "              resource_name_matches_expected)\n"
+        '                resource_name_matches_expected="$value"\n'
+        "                ;;\n"
+        "              managed_certificate_ownership_verified)\n"
+        '                managed_certificate_ownership_verified="$value"\n'
+        "                ;;\n"
+        "              spec_domains)\n"
+        '                observed_managed_certificate_domains="$value"\n'
+        "                ;;\n"
+        "              observed_managed_by)\n"
+        '                observed_managed_by="$value"\n'
+        "                ;;\n"
+        "              observed_name_label)\n"
+        '                observed_name_label="$value"\n'
+        "                ;;\n"
+        "              observed_repo_label)\n"
+        '                observed_repo_label="$value"\n'
+        "                ;;\n"
+        "              observed_site_id_label)\n"
+        '                observed_site_id_label="$value"\n'
+        "                ;;\n"
+        "              observed_preview_hostname_label)\n"
+        '                observed_preview_hostname_label="$value"\n'
+        "                ;;\n"
+        "            esac\n"
+        '          done <<< "$cert_eval_output"\n'
+        '          if [ "$resource_name_matches_expected" != "true" ]; then\n'
+        '            echo "observed_managed_certificate_domains=$observed_managed_certificate_domains"\n'
+        '            fail_endpoint_prerequisite "stale_managed_certificate_present" "ManagedCertificate resource identity does not match the expected deterministic certificate name." "true" "UNKNOWN"\n'
+        "          fi\n"
+        '          if [ "$managed_certificate_ownership_verified" != "true" ]; then\n'
+        '            echo "observed_managed_by=$observed_managed_by"\n'
+        '            echo "observed_name_label=$observed_name_label"\n'
+        '            echo "observed_repo_label=$observed_repo_label"\n'
+        '            echo "observed_site_id_label=$observed_site_id_label"\n'
+        '            echo "observed_preview_hostname_label=$observed_preview_hostname_label"\n'
+        '            fail_endpoint_prerequisite "managed_certificate_ownership_unverified" "ManagedCertificate ownership labels do not verify this site identity." "true" "UNKNOWN"\n'
+        "          fi\n"
+        '          if [ "$domain_exact_match" != "true" ]; then\n'
+        '            echo "observed_managed_certificate_domains=$observed_managed_certificate_domains"\n'
+        '            fail_endpoint_prerequisite "certificate_domain_mismatch" "ManagedCertificate spec.domains does not match the expected preview hostname." "true" "UNKNOWN"\n'
+        "          fi\n"
+        '          echo "managed_certificate_action=reused" >> "$GITHUB_OUTPUT"\n'
         "      - name: Replace existing managed-site runtime resources (optional)\n"
         "        id: replace_managed_runtime\n"
         "        run: |\n"
         "          set -euo pipefail\n"
         '          replace_requested="$(echo "${MBSRN_REPLACE_EXISTING_RUNTIME:-false}" | tr \'[:upper:]\' \'[:lower:]\' | tr -d \'[:space:]\')"\n'
         '          scope_summary="namespace=${K8S_NAMESPACE};site_id=${MBSRN_SITE_IDENTITY};repo=${GITHUB_REPOSITORY}"\n'
+        '          endpoint_prerequisite_resource_kinds="managedcertificate,dns_record,global_static_ip"\n'
+        '          runtime_resource_kinds="ingress,frontendconfig,backendconfig,service,deployment,networkpolicy"\n'
         '          deleted_kinds="none"\n'
         "          append_deleted_kind() {\n"
         '            local next_kind="$1"\n'
@@ -10149,9 +10406,10 @@ def _render_managed_deploy_workflow_yaml(
         "            exit 0\n"
         "          fi\n"
         '          echo "deploy_runtime_reason_code=managed_site_runtime_replace_requested"\n'
+        '          echo "endpoint_prerequisite_resource_kinds=$endpoint_prerequisite_resource_kinds"\n'
+        '          echo "runtime_resource_kinds=$runtime_resource_kinds"\n'
         '          echo "Replacing managed runtime resources in namespace ${K8S_NAMESPACE} for site ${MBSRN_SITE_IDENTITY}."\n'
         '          delete_named_resource "ingress" "site-web"\n'
-        '          delete_named_resource "managedcertificate" "$MBSRN_PREVIEW_CERTIFICATE_NAME"\n'
         '          delete_named_resource "frontendconfig" "$MBSRN_FRONTEND_CONFIG_NAME"\n'
         '          delete_named_resource "backendconfig" "$MBSRN_BACKEND_CONFIG_NAME"\n'
         '          delete_named_resource "service" "site-web"\n'
@@ -10260,13 +10518,6 @@ def _render_managed_deploy_workflow_yaml(
         '          wait_for_named_resource \"service\" \"site-web\" 10 3 \"runtime_service_missing_after_apply\" \"Service site-web is missing after managed manifest apply.\" \"false\" \"unknown\" \"unknown\"\n'
         '          apply_manifest_if_present \"k8s/deployment.yaml\"\n'
         '          apply_manifest_if_present \"k8s/frontendconfig.yaml\"\n'
-        '          if [ \"$ingress_references_managed_certificate\" = true ]; then\n'
-        '            if [ ! -f k8s/managedcertificate.yaml ]; then\n'
-        '              fail_apply_resource \"runtime_managed_certificate_missing_after_apply\" \"Ingress references a ManagedCertificate, but k8s/managedcertificate.yaml is missing from the managed runtime bundle.\" \"true\" \"unknown\" \"false\" \"MISSING\"\n'
-        "            fi\n"
-        '            apply_manifest_if_present \"k8s/managedcertificate.yaml\"\n'
-        '            wait_for_named_resource \"managedcertificate\" \"$MBSRN_PREVIEW_CERTIFICATE_NAME\" 10 3 \"runtime_managed_certificate_missing_after_apply\" \"ManagedCertificate referenced by ingress is missing after managed manifest apply.\" \"true\" \"unknown\" \"false\" \"MISSING\"\n'
-        "          fi\n"
         '          if [ \"$ingress_manifest_present\" = true ]; then\n'
         '            apply_manifest_if_present \"k8s/ingress.yaml\"\n'
         "          fi\n"
@@ -11663,17 +11914,31 @@ def _render_managed_deploy_workflow_yaml(
         "          fi\n"
         "          evaluate_managed_certificate() {\n"
         '            local managed_certificate_payload="$1"\n'
-        '            MANAGED_CERTIFICATE_JSON="$managed_certificate_payload" EXPECTED_PREVIEW_HOST="$preview_host" EXPECTED_CERT_NAME="$expected_cert_name" python - <<\'PY\'\n'
+        '            MANAGED_CERTIFICATE_JSON="$managed_certificate_payload" EXPECTED_PREVIEW_HOST="$preview_host" EXPECTED_CERT_NAME="$expected_cert_name" EXPECTED_SITE_ID="$MBSRN_SITE_IDENTITY" EXPECTED_REPO_NAME="$GITHUB_REPOSITORY" python - <<\'PY\'\n'
         "          import json\n"
         "          import os\n"
         "\n"
+        "          def normalize_fragment(value: str, max_length: int) -> str:\n"
+        "              cleaned = ''.join(character.lower() if character.isalnum() else '-' for character in value)\n"
+        "              while '--' in cleaned:\n"
+        "                  cleaned = cleaned.replace('--', '-')\n"
+        "              cleaned = cleaned.strip('-')\n"
+        "              return cleaned[:max_length]\n"
+        "\n"
         "          raw = str(os.environ.get('MANAGED_CERTIFICATE_JSON') or '').strip()\n"
-        "          expected_host = str(os.environ.get('EXPECTED_PREVIEW_HOST') or '').strip().lower()\n"
+        "          expected_host = str(os.environ.get('EXPECTED_PREVIEW_HOST') or '').strip().lower().rstrip('.')\n"
         "          expected_cert_name = str(os.environ.get('EXPECTED_CERT_NAME') or '').strip().lower()\n"
+        "          expected_site_id = normalize_fragment(str(os.environ.get('EXPECTED_SITE_ID') or '').strip(), 60)\n"
+        "          expected_repo_name = str(os.environ.get('EXPECTED_REPO_NAME') or '').strip()\n"
+        "          if '/' in expected_repo_name:\n"
+        "              expected_repo_name = expected_repo_name.rsplit('/', 1)[-1]\n"
+        "          expected_repo_label = normalize_fragment(expected_repo_name, 40)\n"
         "          payload = json.loads(raw) if raw else {}\n"
-        "          resource_name = str((payload.get('metadata') or {}).get('name') or '').strip().lower()\n"
+        "          metadata = payload.get('metadata') if isinstance(payload.get('metadata'), dict) else {}\n"
+        "          labels_payload = metadata.get('labels') if isinstance(metadata.get('labels'), dict) else {}\n"
+        "          resource_name = str(metadata.get('name') or '').strip().lower()\n"
         "          spec_domains = [\n"
-        "              str(item).strip().lower()\n"
+        "              str(item).strip().lower().rstrip('.')\n"
         "              for item in (payload.get('spec', {}).get('domains') or [])\n"
         "              if str(item).strip()\n"
         "          ]\n"
@@ -11685,13 +11950,13 @@ def _render_managed_deploy_workflow_yaml(
         "              for item in domain_status_payload:\n"
         "                  if not isinstance(item, dict):\n"
         "                      continue\n"
-        "                  domain = str(item.get('domain') or '').strip().lower()\n"
+        "                  domain = str(item.get('domain') or '').strip().lower().rstrip('.')\n"
         "                  status = str(item.get('status') or '').strip().upper()\n"
         "                  if domain:\n"
         "                      domain_status_map[domain] = status\n"
         "          elif isinstance(domain_status_payload, dict):\n"
         "              for key, value in domain_status_payload.items():\n"
-        "                  domain = str(key or '').strip().lower()\n"
+        "                  domain = str(key or '').strip().lower().rstrip('.')\n"
         "                  if not domain:\n"
         "                      continue\n"
         "                  if isinstance(value, dict):\n"
@@ -11703,21 +11968,48 @@ def _render_managed_deploy_workflow_yaml(
         "          domain_status = domain_status_map.get(expected_host, '')\n"
         "          domain_exact_match = len(spec_domains) == 1 and spec_domains[0] == expected_host\n"
         "          resource_name_matches_expected = bool(resource_name and expected_cert_name and resource_name == expected_cert_name)\n"
+        "          observed_managed_by = str(labels_payload.get('app.kubernetes.io/managed-by') or '').strip().lower()\n"
+        "          observed_name_label = str(labels_payload.get('app.kubernetes.io/name') or '').strip().lower()\n"
+        "          observed_repo_label = str(labels_payload.get('mbsrn.io/repo') or '').strip().lower()\n"
+        "          observed_site_id_label = str(labels_payload.get('mbsrn.io/site-id') or '').strip().lower()\n"
+        "          observed_preview_hostname_label = str(labels_payload.get('mbsrn.io/preview-hostname') or '').strip().lower().rstrip('.')\n"
+        "          ownership_checks = [\n"
+        "              observed_managed_by == 'mbsrn',\n"
+        "              observed_name_label == 'site-web',\n"
+        "              observed_preview_hostname_label == expected_host,\n"
+        "          ]\n"
+        "          if expected_repo_label:\n"
+        "              ownership_checks.append(observed_repo_label == expected_repo_label)\n"
+        "          if expected_site_id:\n"
+        "              ownership_checks.append(observed_site_id_label == expected_site_id)\n"
+        "          ownership_verified = all(ownership_checks)\n"
         "          print(f'cert_status={cert_status}')\n"
         "          print(f'domain_status={domain_status}')\n"
         "          print('domain_exact_match=' + ('true' if domain_exact_match else 'false'))\n"
         "          print(f'resource_name={resource_name}')\n"
         "          print('resource_name_matches_expected=' + ('true' if resource_name_matches_expected else 'false'))\n"
+        "          print('managed_certificate_ownership_verified=' + ('true' if ownership_verified else 'false'))\n"
         "          print('domain_count=' + str(len(spec_domains)))\n"
         "          print('spec_domains=' + ','.join(spec_domains))\n"
+        "          print(f'observed_managed_by={observed_managed_by}')\n"
+        "          print(f'observed_name_label={observed_name_label}')\n"
+        "          print(f'observed_repo_label={observed_repo_label}')\n"
+        "          print(f'observed_site_id_label={observed_site_id_label}')\n"
+        "          print(f'observed_preview_hostname_label={observed_preview_hostname_label}')\n"
         "          PY\n"
         "          }\n"
         "          apply_managed_certificate_eval_output() {\n"
         '            local cert_eval_payload="$1"\n'
         "            domain_exact_match=false\n"
         "            resource_name_matches_expected=false\n"
+        "            managed_certificate_ownership_verified=false\n"
         '            cert_resource_name=""\n'
         '            observed_managed_certificate_domains=""\n'
+        '            observed_managed_by=""\n'
+        '            observed_name_label=""\n'
+        '            observed_repo_label=""\n'
+        '            observed_site_id_label=""\n'
+        '            observed_preview_hostname_label=""\n'
         "            while IFS='=' read -r key value; do\n"
         '              case "$key" in\n'
         "                cert_status)\n"
@@ -11735,8 +12027,26 @@ def _render_managed_deploy_workflow_yaml(
         "                resource_name_matches_expected)\n"
         '                  resource_name_matches_expected="$value"\n'
         "                  ;;\n"
+        "                managed_certificate_ownership_verified)\n"
+        '                  managed_certificate_ownership_verified="$value"\n'
+        "                  ;;\n"
         "                spec_domains)\n"
         '                  observed_managed_certificate_domains="$value"\n'
+        "                  ;;\n"
+        "                observed_managed_by)\n"
+        '                  observed_managed_by="$value"\n'
+        "                  ;;\n"
+        "                observed_name_label)\n"
+        '                  observed_name_label="$value"\n'
+        "                  ;;\n"
+        "                observed_repo_label)\n"
+        '                  observed_repo_label="$value"\n'
+        "                  ;;\n"
+        "                observed_site_id_label)\n"
+        '                  observed_site_id_label="$value"\n'
+        "                  ;;\n"
+        "                observed_preview_hostname_label)\n"
+        '                  observed_preview_hostname_label="$value"\n'
         "                  ;;\n"
         "              esac\n"
         '            done <<< "$cert_eval_payload"\n'
@@ -11760,9 +12070,31 @@ def _render_managed_deploy_workflow_yaml(
         '          if [ -n "$observed_managed_certificate_domains" ] || [ -n "$observed_managed_certificate_status" ] || [ -n "$observed_managed_certificate_domain_status" ]; then\n'
         "            managed_certificate_metadata_available=true\n"
         "          fi\n"
+        '          if [ "$resource_name_matches_expected" != "true" ]; then\n'
+        "            cert_identity_valid=false\n"
+        '            if [ "$pre_shared_cert_controller_cross_site_evidence" = true ]; then\n'
+        '              echo "deploy_runtime_reason_code=stale_pre_shared_cert_binding_detected"\n'
+        "            fi\n"
+        '            echo "deploy_runtime_reason_code=stale_managed_certificate_present"\n'
+        '            echo "deploy_runtime_reason_code=managed_certificate_identity_mismatch"\n'
+        '            echo "deploy_runtime_reason_message=ManagedCertificate resource identity does not match expected deterministic certificate name."\n'
+        "            exit 1\n"
+        "          fi\n"
+        '          if [ "$managed_certificate_ownership_verified" != "true" ]; then\n'
+        "            cert_identity_valid=false\n"
+        '            echo "observed_managed_by=$observed_managed_by"\n'
+        '            echo "observed_name_label=$observed_name_label"\n'
+        '            echo "observed_repo_label=$observed_repo_label"\n'
+        '            echo "observed_site_id_label=$observed_site_id_label"\n'
+        '            echo "observed_preview_hostname_label=$observed_preview_hostname_label"\n'
+        '            echo "deploy_runtime_reason_code=managed_certificate_ownership_unverified"\n'
+        '            echo "deploy_runtime_reason_message=ManagedCertificate ownership labels do not verify this site identity."\n'
+        "            exit 1\n"
+        "          fi\n"
         '          if [ "$domain_exact_match" != "true" ]; then\n'
         "            cert_identity_valid=false\n"
         '            if [ "$managed_certificate_metadata_available" != "true" ] \\\n'
+        '              && [ "$managed_certificate_ownership_verified" = "true" ] \\\n'
         '              && [ "$host_reachable" = true ] \\\n'
         '              && [ "$host_reachability_scheme" = "https" ] \\\n'
         '              && [ "$dns_record_matches_ingress" = "true" ] \\\n'
@@ -11771,71 +12103,15 @@ def _render_managed_deploy_workflow_yaml(
         '              echo "deploy_runtime_reason_code=managed_certificate_metadata_unavailable"\n'
         '              echo "deploy_runtime_reason_message=ManagedCertificate metadata unavailable from cluster API; HTTPS certificate identity and ingress annotation evidence are valid."\n'
         "            else\n"
-        '              if [ "$resource_name_matches_expected" != "true" ]; then\n'
-        '                if [ "$pre_shared_cert_controller_cross_site_evidence" = true ]; then\n'
-        '                  echo "deploy_runtime_reason_code=stale_pre_shared_cert_binding_detected"\n'
-        "                fi\n"
-        '                echo "deploy_runtime_reason_code=tls_certificate_bound_to_wrong_site"\n'
-        '                echo "deploy_runtime_reason_message=ManagedCertificate resource identity does not match expected deterministic certificate name."\n'
-        "                exit 1\n"
+        '              if [ "$pre_shared_cert_controller_cross_site_evidence" = true ]; then\n'
+        '                echo "deploy_runtime_reason_code=stale_pre_shared_cert_binding_detected"\n'
         "              fi\n"
-        '              echo "deploy_runtime_reason_code=managed_certificate_domain_drift_repaired"\n'
-        '              echo "deploy_runtime_reason_message=ManagedCertificate domain drift detected for expected certificate resource; attempting safe delete/recreate repair."\n'
-        '              if ! kubectl delete managedcertificate "$MBSRN_PREVIEW_CERTIFICATE_NAME" --namespace "$K8S_NAMESPACE" --ignore-not-found=true; then\n'
-        '                if [ "$pre_shared_cert_controller_cross_site_evidence" = true ]; then\n'
-        '                  echo "deploy_runtime_reason_code=stale_pre_shared_cert_binding_detected"\n'
-        "                fi\n"
-        '                echo "deploy_runtime_reason_code=managed_certificate_domain_drift_repair_failed"\n'
-        '                echo "deploy_runtime_reason_code=tls_certificate_bound_to_wrong_site"\n'
-        '                echo "deploy_runtime_reason_message=ManagedCertificate domain drift repair could not delete expected certificate resource."\n'
-        "                exit 1\n"
-        "              fi\n"
-        '              if ! kubectl apply -f k8s/managedcertificate.yaml --namespace "$K8S_NAMESPACE"; then\n'
-        '                if [ "$pre_shared_cert_controller_cross_site_evidence" = true ]; then\n'
-        '                  echo "deploy_runtime_reason_code=stale_pre_shared_cert_binding_detected"\n'
-        "                fi\n"
-        '                echo "deploy_runtime_reason_code=managed_certificate_domain_drift_repair_failed"\n'
-        '                echo "deploy_runtime_reason_code=tls_certificate_bound_to_wrong_site"\n'
-        '                echo "deploy_runtime_reason_message=ManagedCertificate domain drift repair could not re-apply expected certificate manifest."\n'
-        "                exit 1\n"
-        "              fi\n"
-        '              kubectl apply -f k8s/ingress.yaml --namespace "$K8S_NAMESPACE" >/dev/null 2>&1 || true\n'
-        "              repair_attempt=1\n"
-        "              repair_max_attempts=20\n"
-        "              repair_sleep_seconds=15\n"
-        "              repair_converged=false\n"
-        '              while [ "$repair_attempt" -le "$repair_max_attempts" ]; do\n'
-        '                managed_certificate_json="$(kubectl get managedcertificate "$MBSRN_PREVIEW_CERTIFICATE_NAME" --namespace "$K8S_NAMESPACE" -o json 2>/dev/null || true)"\n'
-        '                if [ -n "$managed_certificate_json" ]; then\n'
-        '                  cert_eval_output="$(evaluate_managed_certificate "$managed_certificate_json")"\n'
-        '                  apply_managed_certificate_eval_output "$cert_eval_output"\n'
-        '                  if [ -n "$observed_managed_certificate_domains" ] || [ -n "$observed_managed_certificate_status" ] || [ -n "$observed_managed_certificate_domain_status" ]; then\n'
-        "                    managed_certificate_metadata_available=true\n"
-        "                  fi\n"
-        '                  if [ "$domain_exact_match" = "true" ]; then\n'
-        "                    repair_converged=true\n"
-        "                    break\n"
-        "                  fi\n"
-        "                fi\n"
-        '                if [ "$repair_attempt" -lt "$repair_max_attempts" ]; then\n'
-        '                  sleep "$repair_sleep_seconds"\n'
-        "                fi\n"
-        "                repair_attempt=$((repair_attempt + 1))\n"
-        "              done\n"
-        '              if [ "$repair_converged" != "true" ]; then\n'
-        '                if [ "$pre_shared_cert_controller_cross_site_evidence" = true ]; then\n'
-        '                  echo "deploy_runtime_reason_code=stale_pre_shared_cert_binding_detected"\n'
-        "                fi\n"
-        '                echo "deploy_runtime_reason_code=managed_certificate_domain_drift_repair_failed"\n'
-        '                echo "deploy_runtime_reason_code=tls_certificate_bound_to_wrong_site"\n'
-        '                echo "deploy_runtime_reason_message=ManagedCertificate domain drift persisted after safe repair attempt."\n'
-        "                exit 1\n"
-        "              fi\n"
+        '              echo "deploy_runtime_reason_code=certificate_domain_mismatch"\n'
+        '              echo "deploy_runtime_reason_message=ManagedCertificate spec.domains does not match the expected preview hostname."\n'
+        "              exit 1\n"
         "            fi\n"
         "          fi\n"
-        '          if [ "$domain_exact_match" = "true" ]; then\n'
-        "            cert_identity_valid=true\n"
-        "          fi\n"
+        "          cert_identity_valid=true\n"
         '          if [ "$managed_certificate_metadata_available" = "true" ] && ( [ "$normalized_domain_status" = "FAILED_NOT_VISIBLE" ] || [ "$normalized_cert_status" = "FAILED_NOT_VISIBLE" ] ); then\n'
         '            echo "deploy_runtime_reason_code=managed_certificate_failed_not_visible"\n'
         '            echo "deploy_runtime_reason_message=ManagedCertificate is not visible; verify DNS and load balancer exposure."\n'
@@ -12925,6 +13201,12 @@ def _classify_cloudsql_proxy_failure_from_log_text(
         return _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_PROVISIONING, "ingress_evidence"
     if "deploy_runtime_reason_code=runtime_ready_tls_pending" in normalized:
         return _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_PROVISIONING, "ingress_evidence"
+    if "deploy_runtime_reason_code=certificate_domain_mismatch" in normalized:
+        return _DEPLOY_DISPATCH_SERVICE_REASON_CERTIFICATE_DOMAIN_MISMATCH, "ingress_evidence"
+    if "deploy_runtime_reason_code=stale_managed_certificate_present" in normalized:
+        return _DEPLOY_DISPATCH_SERVICE_REASON_STALE_MANAGED_CERTIFICATE_PRESENT, "ingress_evidence"
+    if "deploy_runtime_reason_code=managed_certificate_ownership_unverified" in normalized:
+        return _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_OWNERSHIP_UNVERIFIED, "ingress_evidence"
     if "deploy_runtime_reason_code=managed_certificate_domain_drift_repair_failed" in normalized:
         return _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_DOMAIN_DRIFT_REPAIR_FAILED, "ingress_evidence"
     if "deploy_runtime_reason_code=tls_certificate_bound_to_wrong_site" in normalized:
@@ -13143,6 +13425,9 @@ def _derive_https_probe_error_summary_for_failure(
         _DEPLOY_RUNTIME_REASON_INGRESS_BACKEND_502: "ingress_backend_502",
         _DEPLOY_RUNTIME_REASON_REACHABLE_BUT_TLS_MISMATCH: "cert_not_ready",
         _DEPLOY_RUNTIME_REASON_RUNTIME_MANAGED_CERTIFICATE_MISSING_AFTER_APPLY: "cert_not_ready",
+        _DEPLOY_DISPATCH_SERVICE_REASON_CERTIFICATE_DOMAIN_MISMATCH: "cert_not_ready",
+        _DEPLOY_DISPATCH_SERVICE_REASON_STALE_MANAGED_CERTIFICATE_PRESENT: "cert_not_ready",
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_OWNERSHIP_UNVERIFIED: "cert_not_ready",
         _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_BOUND_TO_WRONG_SITE: "cert_not_ready",
         _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_CERTIFICATE_ANNOTATION_MISMATCH: "cert_not_ready",
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_IDENTITY_MISMATCH: "cert_not_ready",

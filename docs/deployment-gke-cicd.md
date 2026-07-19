@@ -432,22 +432,36 @@ Endpoint mode/template guidance:
 
 Scoped fresh redeploy (`replace_existing_runtime`) guidance:
 - deploy UI exposes an explicit per-attempt option: `Replace existing managed-site runtime before deploy`.
-- when enabled, managed workflow runs namespace/site-scoped cleanup before `kubectl apply` and then recreates runtime resources from current managed manifests.
-- recreate/apply order is explicit for ingress-managed resources: `BackendConfig` → `Service` → `Deployment` → `FrontendConfig` → `ManagedCertificate` → `Ingress`.
-- if cleanup deleted the preview `ManagedCertificate`, workflow recreates it and verifies the deterministic certificate name before ingress-address or HTTPS/TLS readiness probing continues.
+- managed deploy now treats endpoint prerequisites and runtime resources separately:
+  - `endpoint_prerequisite_resource`: preview `ManagedCertificate`, deterministic preview static IP, and preview DNS record
+  - `runtime_resource`: `ingress/site-web`, `service/site-web`, `deployment/site-web`, `backendconfig`, `frontendconfig`, site-scoped `networkpolicy`
+  - `frontendconfig` remains runtime-managed so ingress/runtime resets stay aligned
+- workflow order is explicit:
+  1. ensure namespace
+  2. ensure endpoint prerequisites (including preview `ManagedCertificate`)
+  3. optionally replace runtime resources
+  4. apply runtime resources
+  5. verify service/endpoints/certificate/ingress
+  6. wait for DNS/TLS/HTTPS readiness
+- `ManagedCertificate` is a long-lived preview endpoint prerequisite:
+  - if missing, workflow creates it once from `k8s/managedcertificate.yaml`
+  - if present with verified MBSRN ownership labels and the expected preview hostname, workflow reuses it
+  - if present but ownership is ambiguous, workflow blocks with `managed_certificate_ownership_unverified`
+  - if present but `spec.domains` does not match the expected preview hostname, workflow blocks with `certificate_domain_mismatch`
 - after apply (and before ingress/TLS wait loops), workflow now verifies required runtime resources exist:
   - required always: `deployment/site-web`, `service/site-web`
   - required when rendered/referenced by manifests: `ingress/site-web`, `ManagedCertificate`, `FrontendConfig`, `BackendConfig`
   - if `service/site-web` exists but has no ready endpoint addresses after bounded convergence wait, workflow fails before ingress readiness with an explicit endpoint-missing reason.
 - scoped cleanup targets managed runtime resources only:
   - `ingress/site-web`
-  - preview `managedcertificate`
   - preview `frontendconfig`
   - preview `backendconfig`
   - `service/site-web`
   - `deployment/site-web`
   - site-scoped `networkpolicy` (selector: `app.kubernetes.io/managed-by=mbsrn,mbsrn.io/site-id=<site-id>`)
 - this option does **not** delete:
+  - preview `ManagedCertificate`
+  - preview DNS records or deterministic preview static IP resources
   - GitHub repositories or published artifact commits
   - migration artifacts/media/business/site records
   - global static IP resources (manual/admin cleanup remains separate)
@@ -465,6 +479,9 @@ Scoped fresh redeploy (`replace_existing_runtime`) guidance:
   - `runtime_service_endpoints_missing_after_apply`
 - classification distinction:
   - missing ManagedCertificate object after apply is a manifest/apply failure
+  - existing ManagedCertificate with wrong domain is `certificate_domain_mismatch`
+  - existing ManagedCertificate with stale/incorrect identity is `stale_managed_certificate_present`
+  - existing ManagedCertificate with ambiguous ownership labels/metadata is `managed_certificate_ownership_unverified`
   - ManagedCertificate `PROVISIONING` is TLS convergence pending (not missing-resource failure)
   - missing ManagedCertificate object before dispatch is a certificate-resource blocker (`managed_certificate_failed_not_visible` / `certificate_resource_missing`) and is distinct from provisioning wait-state
   - missing `service/site-web` after apply is a runtime apply failure (not TLS pending)

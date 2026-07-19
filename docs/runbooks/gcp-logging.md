@@ -422,7 +422,7 @@ UI-to-log troubleshooting mapping (Deploy consistency block):
   - logs: `seo_migration_target_readiness_check`, `seo_migration_workflow_run_result_captured`, deploy failure entries with the same reason code
 - `Managed certificate active` and `Certificate identity valid`:
   - UI fields: `tls_certificate_status`, `tls_domain_status`, `cert_identity_valid`
-  - reason codes: `tls_certificate_provisioning`, `managed_certificate_failed_not_visible`, `managed_certificate_domain_drift_repaired` (advisory), `managed_certificate_domain_drift_repair_failed`, `tls_certificate_bound_to_wrong_site`, `managed_certificate_identity_mismatch`, `ingress_certificate_mismatch`
+  - reason codes: `tls_certificate_provisioning`, `managed_certificate_failed_not_visible`, `certificate_domain_mismatch`, `stale_managed_certificate_present`, `managed_certificate_ownership_unverified`, `tls_certificate_bound_to_wrong_site`, `managed_certificate_identity_mismatch`, `ingress_certificate_mismatch`
   - logs: `seo_migration_target_readiness_check`, ingress-evidence failure records, `dispatch_service_reason_code`
 - `Ingress/static IP conflict check`:
   - UI field: `ingress_conflict_detected`
@@ -1131,16 +1131,18 @@ Managed certificate mismatch reason-code interpretation:
 - `workflow_run_failure_reason_code=managed_certificate_metadata_unavailable`
   - advisory: workflow could not read/parse ManagedCertificate metadata from cluster API in that attempt.
   - if ingress managed-certificate annotation matches expected name and HTTPS certificate hostname verification succeeds, this reason alone should not block deploy success.
-- `workflow_run_failure_reason_code=managed_certificate_domain_drift_repaired`
-  - advisory only: expected deterministic ManagedCertificate name existed, but `spec.domains` drifted.
-  - workflow attempted safe repair by deleting/recreating only that ManagedCertificate resource and re-checking bounded convergence.
-- `dispatch_service_reason_code=managed_certificate_domain_drift_repair_failed`
-  - blocking: ManagedCertificate domain drift repair could not converge for the expected deterministic certificate resource.
+- `dispatch_service_reason_code=certificate_domain_mismatch`
+  - blocking: existing ManagedCertificate `spec.domains` does not match the expected preview hostname.
   - inspect `observed_managed_certificate_domains`, `observed_managed_certificate_status`, and `observed_managed_certificate_domain_status` in workflow diagnostics.
+- `dispatch_service_reason_code=stale_managed_certificate_present`
+  - blocking: ManagedCertificate identity evidence is stale or cross-site for the expected deterministic certificate resource.
+- `dispatch_service_reason_code=managed_certificate_ownership_unverified`
+  - blocking: ManagedCertificate exists, but its ownership labels/metadata do not verify this site identity.
+  - inspect `app.kubernetes.io/managed-by`, `mbsrn.io/repo`, `mbsrn.io/site-id`, and `mbsrn.io/preview-hostname` on the namespace-scoped resource.
 - `dispatch_service_reason_code=ingress_certificate_annotation_mismatch`
   - ingress managed-certificate annotation does not match the expected site-scoped certificate name.
 - `workflow_run_failure_reason_code=runtime_managed_certificate_missing_after_apply`
-  - blocking: ingress references the deterministic ManagedCertificate name, but the resource is missing after apply/recreate verification.
+  - blocking: ingress references the deterministic ManagedCertificate name, but the resource is missing after ensure/apply verification.
   - treat preview HTTPS failures such as Firefox `PR_END_OF_FILE_ERROR` as certificate/ingress readiness failures first; inspect `k8s_namespace`, `ingress_name`, `expected_managed_certificate_name`, and preview-host diagnostics before chasing stale ingress Translate events.
 - `dispatch_service_reason_code=managed_certificate_identity_mismatch`
   - ingress annotation references multiple certificates and includes stale cross-site names.
@@ -1231,8 +1233,7 @@ Safe namespace-scoped verification commands:
 - `kubectl describe managedcertificate <expected-or-stale-cert-name> -n <site-namespace>`
 - `kubectl describe ingress site-web -n <site-namespace>`
 
-Safe cleanup command (manual admin action, never automatic):
-- `kubectl delete managedcertificate <old-cert-name> -n <site-namespace>`
+Managed-site deploy workflow never auto-deletes `ManagedCertificate` during `replace_existing_runtime`; manual cleanup remains an explicit admin remediation path only after ownership verification.
 
 If TLS is valid but preview URL returns HTTP 502:
 1. Confirm `BackendConfig` exists in the namespace:

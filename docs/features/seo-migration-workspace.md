@@ -1799,15 +1799,24 @@ Post-fix rollout for existing managed sites:
 - Optional scoped fresh redeploy path:
   - Deploy controls include `Replace existing managed-site runtime before deploy` for a single deploy attempt.
   - This is intended for legacy-runtime cleanup during endpoint-mode/runtime transitions.
+  - Managed deploy treats endpoint prerequisites separately from runtime resources:
+    - `endpoint_prerequisite_resource`: preview `ManagedCertificate`, deterministic preview static IP, preview DNS record
+    - `runtime_resource`: `ingress/site-web`, `service/site-web`, `deployment/site-web`, `backendconfig`, `frontendconfig`, site-scoped `networkpolicy`
+    - `frontendconfig` stays runtime-managed so ingress/runtime resets remain coherent
+  - Workflow order is: ensure namespace → ensure endpoint prerequisites → optional runtime replace → apply runtime resources → verify service/endpoints/certificate/ingress → wait for DNS/TLS readiness.
   - When selected, workflow performs scoped namespace/site cleanup before apply and emits:
     - `managed_site_runtime_replace_requested`
     - `managed_site_runtime_replace_completed`
     - `managed_site_runtime_replace_failed`
+  - Preview `ManagedCertificate` is a long-lived endpoint prerequisite:
+    - if missing, deploy creates it once from the managed manifest bundle
+    - if present with verified MBSRN ownership labels and the expected hostname, deploy reuses it
+    - if present but ownership is ambiguous, deploy blocks with `managed_certificate_ownership_unverified`
+    - if present but `spec.domains` does not match the expected preview hostname, deploy blocks with `certificate_domain_mismatch`
   - After apply and before ingress/TLS readiness loops, workflow verifies required runtime resources exist:
     - `deployment/site-web`, `service/site-web`
     - plus rendered/referenced ingress resources (`ingress`, `ManagedCertificate`, `FrontendConfig`, `BackendConfig`)
-  - managed runtime apply order is explicit for ingress dependencies: `BackendConfig` → `Service` → `Deployment` → `FrontendConfig` → `ManagedCertificate` → `Ingress`.
-  - if replace-runtime cleanup removed the preview `ManagedCertificate`, deploy recreates it and verifies the deterministic certificate resource before ingress-address/TLS readiness checks continue.
+  - managed runtime apply order is explicit for runtime-managed ingress dependencies: `BackendConfig` → `Service` → `Deployment` → `FrontendConfig` → `Ingress`.
   - explicit missing-resource codes:
     - `runtime_deployment_missing_after_apply`
     - `runtime_service_missing_after_apply`
@@ -1816,10 +1825,10 @@ Post-fix rollout for existing managed sites:
     - `runtime_frontend_config_missing_after_apply`
     - `runtime_backend_config_missing_after_apply`
     - `runtime_service_endpoints_missing_after_apply`
-  - missing ManagedCertificate object after apply is treated as manifest/apply failure; `PROVISIONING` is treated as TLS pending only after required objects exist.
+  - missing ManagedCertificate object after apply is treated as manifest/apply failure; wrong-domain certs surface `certificate_domain_mismatch`; stale/incorrect identity surfaces `stale_managed_certificate_present`; ownership ambiguity surfaces `managed_certificate_ownership_unverified`; `PROVISIONING` is treated as TLS pending only after required objects exist.
   - if `service/site-web` exists but ingress still reports a stale Translate event, deploy favors current Service/Endpoint evidence and bounded convergence checks rather than failing on stale event history alone.
   - Readiness can surface `legacy_runtime_replacement_required` when stale legacy runtime evidence is detected and replace-runtime was not requested.
-  - Cleanup scope is limited to managed runtime resources (`site-web` ingress/service/deployment, managed preview certificate/config resources, site-scoped networkpolicy) and does not delete artifacts/media/GitHub content/business data.
+  - Cleanup scope is limited to managed runtime resources (`site-web` ingress/service/deployment, frontend/backend config resources, site-scoped networkpolicy) and does not delete the preview `ManagedCertificate`, artifacts/media/GitHub content/business data.
   - Publish readiness is unchanged; this is deploy-only behavior.
 - Admin Site Registry permanent delete is separate from this deploy-only cleanup path:
   - deactivation/archive keeps the site and migration history intact
@@ -2579,8 +2588,9 @@ Blocking reason-code examples:
   - `managed_certificate_failed_not_visible` (missing certificate object or visibility mismatch for the expected deterministic name; distinct from provisioning wait-state)
   - `managed_certificate_metadata_unavailable` (advisory: cluster metadata read failed/empty; if ingress annotation, DNS, and HTTPS cert identity checks pass, this alone does not block success)
   - `pre_shared_cert_metadata_mismatch` is advisory controller metadata only and does not override desired-state ManagedCertificate identity checks.
-  - `managed_certificate_domain_drift_repaired` (advisory: expected ManagedCertificate name had stale `spec.domains`; workflow attempted safe delete/recreate repair)
-  - `managed_certificate_domain_drift_repair_failed` (blocking: domain drift persisted or repair could not converge)
+  - `certificate_domain_mismatch` (blocking: existing ManagedCertificate `spec.domains` does not match the expected preview hostname)
+  - `stale_managed_certificate_present` (blocking: ManagedCertificate identity evidence is stale or cross-site)
+  - `managed_certificate_ownership_unverified` (blocking: ownership labels/metadata do not verify this site)
   - `tls_certificate_bound_to_wrong_site`
 - Ingress isolation:
   - `shared_preview_gateway_missing`

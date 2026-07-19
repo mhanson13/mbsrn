@@ -7361,6 +7361,47 @@ def test_deploy_blocks_before_dispatch_on_managed_certificate_domain_mismatch(db
     assert "deploy_certificate_readiness_pending" in (deploy_readiness.get("blocker_codes") or [])
 
 
+def test_deploy_blocks_before_dispatch_on_managed_certificate_ownership_unverified(
+    db_session, monkeypatch
+) -> None:
+    publisher = _RecordingGitHubPublisher(
+        managed_certificate_readiness_exists=True,
+        managed_certificate_readiness_domain_matches_expected=True,
+        managed_certificate_readiness_domains=("tnmfire.site.mbsrn.com",),
+        managed_certificate_readiness_status="ACTIVE",
+        managed_certificate_readiness_domain_status="ACTIVE",
+        managed_certificate_readiness_reason_code="managed_certificate_ownership_unverified",
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    artifact = _prepare_published_artifact(service, business_id=business_id, site_id=site_id)
+    monkeypatch.setattr(seo_migration_module, "_resolve_hostname_ipv4_addresses", lambda _hostname: ["34.149.170.250"])
+
+    with pytest.raises(SEOMigrationValidationError, match="ownership labels"):
+        service.deploy_artifact_version(
+            business_id=business_id,
+            site_id=site_id,
+            artifact_version_id=artifact.id,
+            dry_run=False,
+            principal_id="principal-1",
+        )
+
+    assert publisher.deploy_calls == []
+    workspace = service.get_workspace(business_id=business_id, site_id=site_id)
+    latest = (workspace.deploy_history_json or [])[-1]
+    assert latest.get("failure_reason") == "managed_certificate_ownership_unverified"
+    assert latest.get("dispatch_result_stage") == "certificate_readiness"
+
+    summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
+    deploy_readiness = summary.deploy_readiness or {}
+    assert deploy_readiness.get("certificate_readiness_state") == "certificate_stale_or_legacy"
+    assert deploy_readiness.get("certificate_gate_blocked") is False
+
+
 def test_deploy_in_preview_shared_mode_allows_dispatch_while_certificate_provisions(db_session, monkeypatch) -> None:
     publisher = _RecordingGitHubPublisher(
         managed_certificate_readiness_reason_code="tls_certificate_provisioning",
@@ -9543,6 +9584,47 @@ def test_refresh_deploy_status_missing_managed_certificate_evidence_overrides_an
     assert deploy_readiness.get("runtime_ready_tls_pending") is False
 
 
+def test_refresh_deploy_status_managed_certificate_ownership_unverified_sets_stale_state(
+    db_session,
+) -> None:
+    publisher = _RecordingGitHubPublisher(
+        deploy_workflow_run_id=910148,
+        deploy_workflow_run_status="in_progress",
+        refresh_workflow_run_id=910148,
+        refresh_workflow_run_status="completed",
+        refresh_workflow_run_conclusion="failure",
+        refresh_workflow_run_failure_reason_code="managed_certificate_ownership_unverified",
+        refresh_workflow_run_failure_stage="ingress_evidence",
+        refresh_workflow_run_failure_step="Resolve live URL from ingress status",
+        refresh_workflow_output={
+            "deploy_https_ready": "false",
+            "managed_certificate_exists": "true",
+            "managed_certificate_status": "ACTIVE",
+        },
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    artifact = _prepare_and_request_deploy(service, business_id=business_id, site_id=site_id)
+
+    refresh_result = service.refresh_deploy_run_status(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        principal_id="principal-1",
+    )
+
+    summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
+    deploy_readiness = summary.deploy_readiness or {}
+    assert deploy_readiness.get("selected_workflow_failure_reason") == "managed_certificate_ownership_unverified"
+    assert deploy_readiness.get("certificate_readiness_state") == "certificate_stale_or_legacy"
+    assert deploy_readiness.get("runtime_ready_tls_pending") is False
+    assert "ownership labels" in str(refresh_result.result.get("workflow_run_failure_hint") or "").lower()
+
+
 def test_refresh_deploy_status_generic_failure_with_template_marker_maps_to_runtime_unknown_failure(db_session) -> None:
     publisher = _RecordingGitHubPublisher(
         deploy_workflow_run_id=910145,
@@ -9961,6 +10043,40 @@ def test_managed_certificate_domain_drift_reason_code_hint_mappings() -> None:
         in str(
             seo_migration_module._derive_workflow_run_failure_hint(
                 failure_reason="managed_certificate_domain_drift_repair_failed",
+                post_dispatch_state=None,
+            )
+            or ""
+        ).lower()
+    )
+
+
+def test_managed_certificate_ownership_unverified_hint_mappings() -> None:
+    assert (
+        "ownership labels"
+        in str(
+            seo_migration_module._derive_managed_gke_dispatch_readiness_message(
+                dispatch_service_reason_code="managed_certificate_ownership_unverified"
+            )
+            or ""
+        ).lower()
+    )
+    assert (
+        "reconcile ownership"
+        in str(
+            seo_migration_module._derive_deploy_failure_remediation_hint(
+                failure_reason=None,
+                failure_stage=None,
+                workflow_exists=None,
+                dispatch_service_reason_code="managed_certificate_ownership_unverified",
+            )
+            or ""
+        ).lower()
+    )
+    assert (
+        "ownership labels"
+        in str(
+            seo_migration_module._derive_workflow_run_failure_hint(
+                failure_reason="managed_certificate_ownership_unverified",
                 post_dispatch_state=None,
             )
             or ""
