@@ -21619,13 +21619,19 @@ class SEOMigrationService:
             }
         )
         certificate_reason_candidates = {item for item in certificate_reason_candidates if item}
+        normalized_managed_certificate_status = (managed_certificate_status or "").strip().upper()
+        managed_certificate_missing_evidence = bool(
+            managed_certificate_exists is False
+            or normalized_managed_certificate_status in {"MISSING", "NOT_FOUND"}
+            or any(code in certificate_reason_candidates for code in cert_missing_reason_codes)
+        )
         certificate_readiness_state: str | None = None
-        if any(code in certificate_reason_candidates for code in cert_domain_mismatch_reason_codes):
+        if managed_certificate_missing_evidence:
+            certificate_readiness_state = _CERTIFICATE_READINESS_STATE_RESOURCE_MISSING
+        elif any(code in certificate_reason_candidates for code in cert_domain_mismatch_reason_codes):
             certificate_readiness_state = _CERTIFICATE_READINESS_STATE_DOMAIN_MISMATCH
         elif any(code in certificate_reason_candidates for code in cert_stale_or_legacy_reason_codes):
             certificate_readiness_state = _CERTIFICATE_READINESS_STATE_STALE_OR_LEGACY
-        elif any(code in certificate_reason_candidates for code in cert_missing_reason_codes):
-            certificate_readiness_state = _CERTIFICATE_READINESS_STATE_RESOURCE_MISSING
         elif tls_provisioning_evidence:
             certificate_readiness_state = _CERTIFICATE_READINESS_STATE_PROVISIONING_PENDING
         elif normalized_tls_status == "ACTIVE" and normalized_tls_domain_status == "ACTIVE":

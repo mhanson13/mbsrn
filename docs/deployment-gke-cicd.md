@@ -433,10 +433,12 @@ Endpoint mode/template guidance:
 Scoped fresh redeploy (`replace_existing_runtime`) guidance:
 - deploy UI exposes an explicit per-attempt option: `Replace existing managed-site runtime before deploy`.
 - when enabled, managed workflow runs namespace/site-scoped cleanup before `kubectl apply` and then recreates runtime resources from current managed manifests.
+- recreate/apply order is explicit for ingress-managed resources: `BackendConfig` → `Service` → `Deployment` → `FrontendConfig` → `ManagedCertificate` → `Ingress`.
+- if cleanup deleted the preview `ManagedCertificate`, workflow recreates it and verifies the deterministic certificate name before ingress-address or HTTPS/TLS readiness probing continues.
 - after apply (and before ingress/TLS wait loops), workflow now verifies required runtime resources exist:
   - required always: `deployment/site-web`, `service/site-web`
   - required when rendered/referenced by manifests: `ingress/site-web`, `ManagedCertificate`, `FrontendConfig`, `BackendConfig`
-  - if `service/site-web` exists but has no ready endpoint addresses after apply/rollout, workflow fails before ingress readiness with an explicit endpoint-missing reason.
+  - if `service/site-web` exists but has no ready endpoint addresses after bounded convergence wait, workflow fails before ingress readiness with an explicit endpoint-missing reason.
 - scoped cleanup targets managed runtime resources only:
   - `ingress/site-web`
   - preview `managedcertificate`
@@ -466,6 +468,7 @@ Scoped fresh redeploy (`replace_existing_runtime`) guidance:
   - ManagedCertificate `PROVISIONING` is TLS convergence pending (not missing-resource failure)
   - missing ManagedCertificate object before dispatch is a certificate-resource blocker (`managed_certificate_failed_not_visible` / `certificate_resource_missing`) and is distinct from provisioning wait-state
   - missing `service/site-web` after apply is a runtime apply failure (not TLS pending)
+  - Firefox preview failures such as `PR_END_OF_FILE_ERROR` usually map to missing/unready `ManagedCertificate` or ingress TLS readiness, not a generic runtime crash
 
 ### Admin Permanent Site Delete
 

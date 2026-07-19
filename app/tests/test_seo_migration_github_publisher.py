@@ -6843,6 +6843,15 @@ def test_derive_https_probe_error_summary_for_failure_maps_tls_provisioning_reas
     )
 
 
+def test_derive_https_probe_error_summary_for_failure_maps_missing_managed_certificate_reason() -> None:
+    summary = _derive_https_probe_error_summary_for_failure(
+        reason_code="runtime_managed_certificate_missing_after_apply",
+        failure_stage="ingress_evidence",
+    )
+
+    assert summary == "reason=cert_not_ready;detail=certificate_identity_or_status_not_ready"
+
+
 def test_derive_https_probe_error_summary_for_failure_falls_back_for_ingress_stage_unknown_reason() -> None:
     summary = _derive_https_probe_error_summary_for_failure(
         reason_code="unknown_ingress_reason",
@@ -8057,7 +8066,31 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "MIGRATION_GITHUB_TOKEN" not in workflow_yaml
     assert "kubectl create secret docker-registry ghcr-pull-secret" not in workflow_yaml
     assert "Apply managed manifests" in workflow_yaml
-    assert "kubectl apply -f k8s/deployment.yaml" in workflow_yaml
+    assert "apply_manifest_if_present() {" in workflow_yaml
+    assert "wait_for_named_resource() {" in workflow_yaml
+    assert 'apply_manifest_if_present "k8s/backendconfig.yaml"' in workflow_yaml
+    assert 'apply_manifest_if_present "k8s/service.yaml"' in workflow_yaml
+    assert (
+        'wait_for_named_resource "service" "site-web" 10 3 "runtime_service_missing_after_apply" '
+        '"Service site-web is missing after managed manifest apply."'
+        in workflow_yaml
+    )
+    assert 'apply_manifest_if_present "k8s/deployment.yaml"' in workflow_yaml
+    assert 'apply_manifest_if_present "k8s/frontendconfig.yaml"' in workflow_yaml
+    assert 'if [ ! -f k8s/managedcertificate.yaml ]; then' in workflow_yaml
+    assert (
+        'fail_apply_resource "runtime_managed_certificate_missing_after_apply" '
+        '"Ingress references a ManagedCertificate, but k8s/managedcertificate.yaml is missing from the managed runtime bundle."'
+        in workflow_yaml
+    )
+    assert 'apply_manifest_if_present "k8s/managedcertificate.yaml"' in workflow_yaml
+    assert (
+        'wait_for_named_resource "managedcertificate" "$MBSRN_PREVIEW_CERTIFICATE_NAME" 10 3 '
+        '"runtime_managed_certificate_missing_after_apply" '
+        '"ManagedCertificate referenced by ingress is missing after managed manifest apply."'
+        in workflow_yaml
+    )
+    assert 'apply_manifest_if_present "k8s/ingress.yaml"' in workflow_yaml
     assert "Verify required resources after apply" in workflow_yaml
     assert 'fail_missing_resource "runtime_deployment_missing_after_apply"' in workflow_yaml
     assert 'fail_missing_resource "runtime_service_missing_after_apply"' in workflow_yaml
@@ -8143,7 +8176,7 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
         in workflow_yaml
     )
     assert "url: ${{ steps.resolve_live_url.outputs.resolved_live_url }}" in workflow_yaml
-    assert "kubectl apply -f k8s/" in workflow_yaml
+    assert 'kubectl apply -f k8s/\n' not in workflow_yaml
     assert "kubectl rollout status deployment/site-web" in workflow_yaml
     assert "site-web rollout timed out in namespace $K8S_NAMESPACE; collecting bounded diagnostics." in workflow_yaml
     assert 'kubectl get rs --namespace "$K8S_NAMESPACE" -o wide || true' in workflow_yaml
@@ -8224,6 +8257,14 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     )
     assert "probe_max_attempts=20" in workflow_yaml
     assert "probe_sleep_seconds=15" in workflow_yaml
+    assert "endpoint_wait_max_attempts=20" in workflow_yaml
+    assert "endpoint_wait_sleep_seconds=15" in workflow_yaml
+    assert 'while [ "$endpoint_wait_attempt" -le "$endpoint_wait_max_attempts" ]; do' in workflow_yaml
+    assert (
+        "Service endpoints not ready on attempt ${endpoint_wait_attempt}/${endpoint_wait_max_attempts}; "
+        "retrying in ${endpoint_wait_sleep_seconds}s."
+        in workflow_yaml
+    )
     assert 'while [ "$probe_attempt" -le "$probe_max_attempts" ]; do' in workflow_yaml
     assert 'if [ "$probe_attempt" -lt "$probe_max_attempts" ]; then' in workflow_yaml
     assert 'sleep "$probe_sleep_seconds"' in workflow_yaml
@@ -8786,13 +8827,17 @@ def test_rendered_managed_workflow_yaml_parses_embedded_certificate_evaluation_s
     dns_collect_index = run_script.index("dns_observed_ip=")
     https_failed_index = run_script.index("deploy_runtime_reason_code=https_probe_failed")
     cert_collect_index = run_script.index("managed_certificate_json=")
+    cert_missing_index = run_script.index("deploy_runtime_reason_code=runtime_managed_certificate_missing_after_apply")
     cert_reason_index = run_script.index("deploy_runtime_reason_code=tls_certificate_bound_to_wrong_site")
     assert static_ip_collect_index < tls_failure_index
     assert dns_collect_index < https_failed_index
+    assert cert_collect_index < cert_missing_index
     assert cert_collect_index < cert_reason_index
     annotation_mismatch_index = run_script.index("deploy_runtime_reason_code=ingress_certificate_annotation_mismatch")
     drift_repair_index = run_script.index("deploy_runtime_reason_code=managed_certificate_domain_drift_repaired")
     assert annotation_mismatch_index < drift_repair_index
+    assert 'tls_certificate_status="MISSING"' in run_script
+    assert 'expected_managed_certificate_name=$MBSRN_PREVIEW_CERTIFICATE_NAME' in run_script
     assert (
         "Neither ingress status IP nor reserved static IP address is available for DNS/TLS validation yet."
         in run_script
@@ -9214,7 +9259,8 @@ def test_ensure_deploy_workflow_uses_production_template_for_unknown_mode(monkey
     assert "workflow_dispatch" in rendered_workflow
     assert "google-github-actions/auth@v2" in rendered_workflow
     assert "google-github-actions/get-gke-credentials@v2" in rendered_workflow
-    assert "kubectl apply -f k8s/" in rendered_workflow
+    assert 'apply_manifest_if_present "k8s/managedcertificate.yaml"' in rendered_workflow
+    assert 'kubectl apply -f k8s/\n' not in rendered_workflow
     assert "resolved_live_url" in rendered_workflow
     assert "placeholder deploy" not in rendered_workflow.lower()
     assert "provisioned in mode" not in rendered_workflow.lower()

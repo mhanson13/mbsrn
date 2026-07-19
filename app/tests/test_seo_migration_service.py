@@ -9501,6 +9501,48 @@ def test_refresh_deploy_status_runtime_managed_certificate_missing_after_apply_s
     )
 
 
+def test_refresh_deploy_status_missing_managed_certificate_evidence_overrides_annotation_mismatch_state(
+    db_session,
+) -> None:
+    publisher = _RecordingGitHubPublisher(
+        deploy_workflow_run_id=910147,
+        deploy_workflow_run_status="in_progress",
+        refresh_workflow_run_id=910147,
+        refresh_workflow_run_status="completed",
+        refresh_workflow_run_conclusion="failure",
+        refresh_workflow_run_failure_reason_code="ingress_certificate_annotation_mismatch",
+        refresh_workflow_run_failure_stage="ingress_evidence",
+        refresh_workflow_run_failure_step="Resolve live URL from ingress status",
+        refresh_workflow_output={
+            "deploy_https_ready": "false",
+            "deploy_runtime_reason_code_present": "true",
+            "managed_deploy_template_marker_present": "true",
+            "mbsrn_managed_deploy_template_version": "site_repo_template_v1",
+            "managed_certificate_exists": "false",
+            "managed_certificate_status": "MISSING",
+        },
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    artifact = _prepare_and_request_deploy(service, business_id=business_id, site_id=site_id)
+
+    service.refresh_deploy_run_status(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        principal_id="principal-1",
+    )
+
+    summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
+    deploy_readiness = summary.deploy_readiness or {}
+    assert deploy_readiness.get("certificate_readiness_state") == "certificate_resource_missing"
+    assert deploy_readiness.get("runtime_ready_tls_pending") is False
+
+
 def test_refresh_deploy_status_generic_failure_with_template_marker_maps_to_runtime_unknown_failure(db_session) -> None:
     publisher = _RecordingGitHubPublisher(
         deploy_workflow_run_id=910145,

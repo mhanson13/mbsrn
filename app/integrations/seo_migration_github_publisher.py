@@ -10169,24 +10169,146 @@ def _render_managed_deploy_workflow_yaml(
         "      - name: Apply managed manifests\n"
         "        run: |\n"
         "          set -euo pipefail\n"
-        "          kubectl apply -f k8s/deployment.yaml\n"
-        "          kubectl apply -f k8s/\n"
+        "          apply_manifest_if_present() {\n"
+        '            local manifest_path=\"$1\"\n'
+        "            if [ -f \"$manifest_path\" ]; then\n"
+        '              kubectl apply -f \"$manifest_path\"\n'
+        "            fi\n"
+        "          }\n"
+        "          emit_apply_failure_state() {\n"
+        '            local reason_message=\"$1\"\n'
+        '            local service_state=\"${2:-unknown}\"\n'
+        '            local endpoints_state=\"${3:-unknown}\"\n'
+        '            local managed_certificate_state=\"${4:-unknown}\"\n'
+        '            local managed_certificate_status=\"${5:-}\"\n'
+        '            echo \"resolve_live_url_state_service_exists=$service_state\"\n'
+        '            echo \"resolve_live_url_state_endpoints_ready=$endpoints_state\"\n'
+        '            echo \"resolve_live_url_state_managed_certificate_exists=$managed_certificate_state\"\n'
+        '            if [ -n \"$managed_certificate_status\" ]; then\n'
+        '              echo \"resolve_live_url_state_managed_certificate_status=$managed_certificate_status\"\n'
+        "            fi\n"
+        '            echo \"resolve_live_url_state_runtime_ready=false\"\n'
+        '            echo \"resolve_live_url_state_ingress_address_resolved=false\"\n'
+        '            echo \"resolve_live_url_state_deploy_https_ready=false\"\n'
+        '            echo \"resolve_live_url_state_https_ready=false\"\n'
+        '            echo \"resolve_live_url_state_runtime_ready_tls_pending=false\"\n'
+        '            echo \"resolve_live_url_state_deploy_runtime_failure_stage=ingress_verify\"\n'
+        '            echo \"resolve_live_url_state_deploy_runtime_reason_message=$reason_message\"\n'
+        f'            echo \"resolve_live_url_state_{_MBSRN_MANAGED_DEPLOY_TEMPLATE_VERSION_OUTPUT_KEY}={_MBSRN_MANAGED_TEMPLATE_VERSION}\"\n'
+        "          }\n"
+        "          fail_apply_resource() {\n"
+        '            local reason_code=\"$1\"\n'
+        '            local reason_message=\"$2\"\n'
+        '            local service_state=\"${3:-unknown}\"\n'
+        '            local endpoints_state=\"${4:-unknown}\"\n'
+        '            local managed_certificate_state=\"${5:-unknown}\"\n'
+        '            local managed_certificate_status=\"${6:-}\"\n'
+        '            echo \"deploy_runtime_reason_code=${reason_code}\"\n'
+        '            echo \"deploy_runtime_reason_message=${reason_message}\"\n'
+        '            echo \"deploy_runtime_failure_stage=ingress_verify\"\n'
+        '            echo \"k8s_namespace=$K8S_NAMESPACE\"\n'
+        '            echo \"ingress_name=site-web\"\n'
+        '            echo \"preview_hostname=$MBSRN_PREVIEW_HOSTNAME\"\n'
+        '            echo \"preview_endpoint_mode=$MBSRN_PREVIEW_ENDPOINT_MODE\"\n'
+        '            echo \"expected_managed_certificate_name=$MBSRN_PREVIEW_CERTIFICATE_NAME\"\n'
+        '            emit_apply_failure_state \"$reason_message\" \"$service_state\" \"$endpoints_state\" \"$managed_certificate_state\" \"$managed_certificate_status\"\n'
+        "            exit 1\n"
+        "          }\n"
+        "          wait_for_named_resource() {\n"
+        '            local resource_kind=\"$1\"\n'
+        '            local resource_name=\"$2\"\n'
+        '            local max_attempts=\"$3\"\n'
+        '            local sleep_seconds=\"$4\"\n'
+        '            local reason_code=\"$5\"\n'
+        '            local reason_message=\"$6\"\n'
+        '            local service_state=\"${7:-unknown}\"\n'
+        '            local endpoints_state=\"${8:-unknown}\"\n'
+        '            local managed_certificate_state=\"${9:-unknown}\"\n'
+        '            local managed_certificate_status=\"${10:-}\"\n'
+        '            local attempt=1\n'
+        '            while [ \"$attempt\" -le \"$max_attempts\" ]; do\n'
+        '              if kubectl get \"$resource_kind\" \"$resource_name\" --namespace \"$K8S_NAMESPACE\" >/dev/null 2>&1; then\n'
+        "                return 0\n"
+        "              fi\n"
+        '              if [ \"$attempt\" -lt \"$max_attempts\" ]; then\n'
+        '                sleep \"$sleep_seconds\"\n'
+        "              fi\n"
+        '              attempt=$((attempt + 1))\n'
+        "            done\n"
+        '            fail_apply_resource \"$reason_code\" \"$reason_message\" \"$service_state\" \"$endpoints_state\" \"$managed_certificate_state\" \"$managed_certificate_status\"\n'
+        "          }\n"
+        '          ingress_manifest_present=false\n'
+        '          ingress_references_managed_certificate=false\n'
+        '          if [ -f k8s/ingress.yaml ]; then\n'
+        '            ingress_manifest_present=true\n'
+        '            if grep -q \"networking.gke.io/managed-certificates:\" k8s/ingress.yaml; then\n'
+        '              ingress_references_managed_certificate=true\n'
+        "            fi\n"
+        "          fi\n"
+        '          apply_manifest_if_present \"k8s/resourcequota.yaml\"\n'
+        '          apply_manifest_if_present \"k8s/limitrange.yaml\"\n'
+        '          apply_manifest_if_present \"k8s/networkpolicy.yaml\"\n'
+        "          while IFS= read -r manifest_path; do\n"
+        '            [ -n \"$manifest_path\" ] || continue\n'
+        '            kubectl apply -f \"$manifest_path\"\n'
+        "          done < <(\n"
+        "            find k8s -maxdepth 1 -type f -name '*.yaml' | sort \\\n"
+        "              | grep -Ev '^k8s/(namespace|deployment|service|backendconfig|frontendconfig|managedcertificate|ingress|resourcequota|limitrange|networkpolicy)\\.yaml$' || true\n"
+        "          )\n"
+        '          apply_manifest_if_present \"k8s/backendconfig.yaml\"\n'
+        '          apply_manifest_if_present \"k8s/service.yaml\"\n'
+        '          wait_for_named_resource \"service\" \"site-web\" 10 3 \"runtime_service_missing_after_apply\" \"Service site-web is missing after managed manifest apply.\" \"false\" \"unknown\" \"unknown\"\n'
+        '          apply_manifest_if_present \"k8s/deployment.yaml\"\n'
+        '          apply_manifest_if_present \"k8s/frontendconfig.yaml\"\n'
+        '          if [ \"$ingress_references_managed_certificate\" = true ]; then\n'
+        '            if [ ! -f k8s/managedcertificate.yaml ]; then\n'
+        '              fail_apply_resource \"runtime_managed_certificate_missing_after_apply\" \"Ingress references a ManagedCertificate, but k8s/managedcertificate.yaml is missing from the managed runtime bundle.\" \"true\" \"unknown\" \"false\" \"MISSING\"\n'
+        "            fi\n"
+        '            apply_manifest_if_present \"k8s/managedcertificate.yaml\"\n'
+        '            wait_for_named_resource \"managedcertificate\" \"$MBSRN_PREVIEW_CERTIFICATE_NAME\" 10 3 \"runtime_managed_certificate_missing_after_apply\" \"ManagedCertificate referenced by ingress is missing after managed manifest apply.\" \"true\" \"unknown\" \"false\" \"MISSING\"\n'
+        "          fi\n"
+        '          if [ \"$ingress_manifest_present\" = true ]; then\n'
+        '            apply_manifest_if_present \"k8s/ingress.yaml\"\n'
+        "          fi\n"
         "      - name: Verify required resources after apply\n"
         "        run: |\n"
         "          set -euo pipefail\n"
         "          fail_missing_resource() {\n"
         '            local reason_code=\"$1\"\n'
         '            local reason_message=\"$2\"\n'
+        '            local service_state=\"${3:-unknown}\"\n'
+        '            local endpoints_state=\"${4:-unknown}\"\n'
+        '            local managed_certificate_state=\"${5:-unknown}\"\n'
+        '            local managed_certificate_status=\"${6:-}\"\n'
         '            echo \"deploy_runtime_reason_code=${reason_code}\"\n'
         '            echo \"deploy_runtime_reason_message=${reason_message}\"\n'
         '            echo \"deploy_runtime_failure_stage=ingress_verify\"\n'
+        '            echo \"k8s_namespace=$K8S_NAMESPACE\"\n'
+        '            echo \"ingress_name=site-web\"\n'
+        '            echo \"preview_hostname=$MBSRN_PREVIEW_HOSTNAME\"\n'
+        '            echo \"preview_endpoint_mode=$MBSRN_PREVIEW_ENDPOINT_MODE\"\n'
+        '            echo \"expected_managed_certificate_name=$MBSRN_PREVIEW_CERTIFICATE_NAME\"\n'
+        '            echo \"resolve_live_url_state_service_exists=$service_state\"\n'
+        '            echo \"resolve_live_url_state_endpoints_ready=$endpoints_state\"\n'
+        '            echo \"resolve_live_url_state_managed_certificate_exists=$managed_certificate_state\"\n'
+        '            if [ -n \"$managed_certificate_status\" ]; then\n'
+        '              echo \"resolve_live_url_state_managed_certificate_status=$managed_certificate_status\"\n'
+        "            fi\n"
+        '            echo \"resolve_live_url_state_runtime_ready=false\"\n'
+        '            echo \"resolve_live_url_state_ingress_address_resolved=false\"\n'
+        '            echo \"resolve_live_url_state_deploy_https_ready=false\"\n'
+        '            echo \"resolve_live_url_state_https_ready=false\"\n'
+        '            echo \"resolve_live_url_state_runtime_ready_tls_pending=false\"\n'
+        '            echo \"resolve_live_url_state_deploy_runtime_failure_stage=ingress_verify\"\n'
+        '            echo \"resolve_live_url_state_deploy_runtime_reason_message=$reason_message\"\n'
+        f'            echo \"resolve_live_url_state_{_MBSRN_MANAGED_DEPLOY_TEMPLATE_VERSION_OUTPUT_KEY}={_MBSRN_MANAGED_TEMPLATE_VERSION}\"\n'
         "            exit 1\n"
         "          }\n"
         '          if ! kubectl get deployment site-web --namespace \"$K8S_NAMESPACE\" >/dev/null 2>&1; then\n'
-        '            fail_missing_resource \"runtime_deployment_missing_after_apply\" \"Deployment site-web is missing after managed manifest apply.\"\n'
+        '            fail_missing_resource \"runtime_deployment_missing_after_apply\" \"Deployment site-web is missing after managed manifest apply.\" \"unknown\" \"unknown\" \"unknown\"\n'
         "          fi\n"
         '          if ! kubectl get service site-web --namespace \"$K8S_NAMESPACE\" >/dev/null 2>&1; then\n'
-        '            fail_missing_resource \"runtime_service_missing_after_apply\" \"Service site-web is missing after managed manifest apply.\"\n'
+        '            fail_missing_resource \"runtime_service_missing_after_apply\" \"Service site-web is missing after managed manifest apply.\" \"false\" \"unknown\" \"unknown\"\n'
         "          fi\n"
         '          ingress_manifest_present=false\n'
         '          if [ -f k8s/ingress.yaml ]; then\n'
@@ -10194,7 +10316,7 @@ def _render_managed_deploy_workflow_yaml(
         "          fi\n"
         '          if [ \"$ingress_manifest_present\" = true ] \\\n'
         '            && ! kubectl get ingress site-web --namespace \"$K8S_NAMESPACE\" >/dev/null 2>&1; then\n'
-        '            fail_missing_resource \"runtime_ingress_missing_after_apply\" \"Ingress site-web is missing after managed manifest apply.\"\n'
+        '            fail_missing_resource \"runtime_ingress_missing_after_apply\" \"Ingress site-web is missing after managed manifest apply.\" \"true\" \"unknown\" \"unknown\"\n'
         "          fi\n"
         '          ingress_references_managed_certificate=false\n'
         '          ingress_references_frontend_config=false\n'
@@ -10208,11 +10330,11 @@ def _render_managed_deploy_workflow_yaml(
         "          fi\n"
         '          if [ \"$ingress_references_managed_certificate\" = true ] \\\n'
         '            && ! kubectl get managedcertificate \"$MBSRN_PREVIEW_CERTIFICATE_NAME\" --namespace \"$K8S_NAMESPACE\" >/dev/null 2>&1; then\n'
-        '            fail_missing_resource \"runtime_managed_certificate_missing_after_apply\" \"ManagedCertificate referenced by ingress is missing after managed manifest apply.\"\n'
+        '            fail_missing_resource \"runtime_managed_certificate_missing_after_apply\" \"ManagedCertificate referenced by ingress is missing after managed manifest apply.\" \"true\" \"unknown\" \"false\" \"MISSING\"\n'
         "          fi\n"
         '          if [ \"$ingress_references_frontend_config\" = true ] \\\n'
         '            && ! kubectl get frontendconfig \"$MBSRN_FRONTEND_CONFIG_NAME\" --namespace \"$K8S_NAMESPACE\" >/dev/null 2>&1; then\n'
-        '            fail_missing_resource \"runtime_frontend_config_missing_after_apply\" \"FrontendConfig referenced by ingress is missing after managed manifest apply.\"\n'
+        '            fail_missing_resource \"runtime_frontend_config_missing_after_apply\" \"FrontendConfig referenced by ingress is missing after managed manifest apply.\" \"true\" \"unknown\" \"unknown\"\n'
         "          fi\n"
         '          service_references_backend_config=false\n'
         '          if [ -f k8s/service.yaml ] && grep -q \"cloud.google.com/backend-config\" k8s/service.yaml; then\n'
@@ -10220,7 +10342,7 @@ def _render_managed_deploy_workflow_yaml(
         "          fi\n"
         '          if [ \"$service_references_backend_config\" = true ] \\\n'
         '            && ! kubectl get backendconfig \"$MBSRN_BACKEND_CONFIG_NAME\" --namespace \"$K8S_NAMESPACE\" >/dev/null 2>&1; then\n'
-        '            fail_missing_resource \"runtime_backend_config_missing_after_apply\" \"BackendConfig referenced by service is missing after managed manifest apply.\"\n'
+        '            fail_missing_resource \"runtime_backend_config_missing_after_apply\" \"BackendConfig referenced by service is missing after managed manifest apply.\" \"true\" \"unknown\" \"unknown\"\n'
         "          fi\n"
         "      - name: Resolve managed site runtime image\n"
         "        id: resolve_site_runtime_image\n"
@@ -10450,7 +10572,26 @@ def _render_managed_deploy_workflow_yaml(
         '          kubectl describe ingress site-web --namespace "$K8S_NAMESPACE" || true\n'
         '          kubectl describe managedcertificate "$MBSRN_PREVIEW_CERTIFICATE_NAME" --namespace "$K8S_NAMESPACE" || true\n'
         '          kubectl describe backendconfig "$MBSRN_BACKEND_CONFIG_NAME" --namespace "$K8S_NAMESPACE" || true\n'
-        "          endpoint_count=\"$(kubectl get endpoints site-web --namespace \"$K8S_NAMESPACE\" -o jsonpath='{range .subsets[*].addresses[*]}x{end}' 2>/dev/null | wc -c | tr -d '[:space:]')\"\n"
+        "          endpoint_wait_max_attempts=20\n"
+        "          endpoint_wait_sleep_seconds=15\n"
+        "          endpoint_wait_attempt=1\n"
+        "          endpoint_convergence_reason_reported=false\n"
+        '          endpoint_count=""\n'
+        '          while [ "$endpoint_wait_attempt" -le "$endpoint_wait_max_attempts" ]; do\n'
+        "            endpoint_count=\"$(kubectl get endpoints site-web --namespace \"$K8S_NAMESPACE\" -o jsonpath='{range .subsets[*].addresses[*]}x{end}' 2>/dev/null | wc -c | tr -d '[:space:]')\"\n"
+        '            if [ -n "$endpoint_count" ] && [ "$endpoint_count" -gt 0 ]; then\n'
+        "              break\n"
+        "            fi\n"
+        '            if [ "$endpoint_wait_attempt" -lt "$endpoint_wait_max_attempts" ]; then\n'
+        '              if [ "$endpoint_convergence_reason_reported" = false ]; then\n'
+        '                echo "deploy_runtime_reason_code=service_probe_waiting_for_convergence"\n'
+        "                endpoint_convergence_reason_reported=true\n"
+        "              fi\n"
+        '              echo "Service endpoints not ready on attempt ${endpoint_wait_attempt}/${endpoint_wait_max_attempts}; retrying in ${endpoint_wait_sleep_seconds}s."\n'
+        '              sleep "$endpoint_wait_sleep_seconds"\n'
+        "            fi\n"
+        "            endpoint_wait_attempt=$((endpoint_wait_attempt + 1))\n"
+        "          done\n"
         '          if [ -z "$endpoint_count" ] || [ "$endpoint_count" -eq 0 ]; then\n'
         '            echo "deploy_runtime_reason_code=runtime_service_endpoints_missing_after_apply"\n'
         '            echo "deploy_runtime_reason_code=service_endpoint_missing"\n'
@@ -11505,8 +11646,19 @@ def _render_managed_deploy_workflow_yaml(
         "          fi\n"
         '          managed_certificate_json="$(kubectl get managedcertificate "$MBSRN_PREVIEW_CERTIFICATE_NAME" --namespace "$K8S_NAMESPACE" -o json 2>/dev/null || true)"\n'
         '          if [ -z "$managed_certificate_json" ]; then\n'
-        '            echo "deploy_runtime_reason_code=ingress_certificate_annotation_mismatch"\n'
-        '            echo "deploy_runtime_reason_message=Expected ManagedCertificate resource was not found in namespace."\n'
+        '            managed_certificate_exists="false"\n'
+        '            tls_certificate_status="MISSING"\n'
+        '            tls_domain_status="MISSING"\n'
+        '            observed_managed_certificate_status="MISSING"\n'
+        '            deploy_runtime_failure_stage="ingress_evidence"\n'
+        '            deploy_runtime_reason_message="Expected ManagedCertificate resource was not found in namespace."\n'
+        '            echo "deploy_runtime_reason_code=runtime_managed_certificate_missing_after_apply"\n'
+        '            echo "deploy_runtime_reason_message=$deploy_runtime_reason_message"\n'
+        '            echo "k8s_namespace=$K8S_NAMESPACE"\n'
+        '            echo "ingress_name=site-web"\n'
+        '            echo "preview_hostname=$preview_host"\n'
+        '            echo "preview_endpoint_mode=$MBSRN_PREVIEW_ENDPOINT_MODE"\n'
+        '            echo "expected_managed_certificate_name=$MBSRN_PREVIEW_CERTIFICATE_NAME"\n'
         "            exit 1\n"
         "          fi\n"
         "          evaluate_managed_certificate() {\n"
@@ -12990,6 +13142,7 @@ def _derive_https_probe_error_summary_for_failure(
         ),
         _DEPLOY_RUNTIME_REASON_INGRESS_BACKEND_502: "ingress_backend_502",
         _DEPLOY_RUNTIME_REASON_REACHABLE_BUT_TLS_MISMATCH: "cert_not_ready",
+        _DEPLOY_RUNTIME_REASON_RUNTIME_MANAGED_CERTIFICATE_MISSING_AFTER_APPLY: "cert_not_ready",
         _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_BOUND_TO_WRONG_SITE: "cert_not_ready",
         _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_CERTIFICATE_ANNOTATION_MISMATCH: "cert_not_ready",
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_IDENTITY_MISMATCH: "cert_not_ready",

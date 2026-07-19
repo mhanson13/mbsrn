@@ -1139,6 +1139,9 @@ Managed certificate mismatch reason-code interpretation:
   - inspect `observed_managed_certificate_domains`, `observed_managed_certificate_status`, and `observed_managed_certificate_domain_status` in workflow diagnostics.
 - `dispatch_service_reason_code=ingress_certificate_annotation_mismatch`
   - ingress managed-certificate annotation does not match the expected site-scoped certificate name.
+- `workflow_run_failure_reason_code=runtime_managed_certificate_missing_after_apply`
+  - blocking: ingress references the deterministic ManagedCertificate name, but the resource is missing after apply/recreate verification.
+  - treat preview HTTPS failures such as Firefox `PR_END_OF_FILE_ERROR` as certificate/ingress readiness failures first; inspect `k8s_namespace`, `ingress_name`, `expected_managed_certificate_name`, and preview-host diagnostics before chasing stale ingress Translate events.
 - `dispatch_service_reason_code=managed_certificate_identity_mismatch`
   - ingress annotation references multiple certificates and includes stale cross-site names.
   - check and remove stale certificates after confirming only one site-scoped certificate should remain attached.

@@ -1806,6 +1806,8 @@ Post-fix rollout for existing managed sites:
   - After apply and before ingress/TLS readiness loops, workflow verifies required runtime resources exist:
     - `deployment/site-web`, `service/site-web`
     - plus rendered/referenced ingress resources (`ingress`, `ManagedCertificate`, `FrontendConfig`, `BackendConfig`)
+  - managed runtime apply order is explicit for ingress dependencies: `BackendConfig` → `Service` → `Deployment` → `FrontendConfig` → `ManagedCertificate` → `Ingress`.
+  - if replace-runtime cleanup removed the preview `ManagedCertificate`, deploy recreates it and verifies the deterministic certificate resource before ingress-address/TLS readiness checks continue.
   - explicit missing-resource codes:
     - `runtime_deployment_missing_after_apply`
     - `runtime_service_missing_after_apply`
@@ -1815,6 +1817,7 @@ Post-fix rollout for existing managed sites:
     - `runtime_backend_config_missing_after_apply`
     - `runtime_service_endpoints_missing_after_apply`
   - missing ManagedCertificate object after apply is treated as manifest/apply failure; `PROVISIONING` is treated as TLS pending only after required objects exist.
+  - if `service/site-web` exists but ingress still reports a stale Translate event, deploy favors current Service/Endpoint evidence and bounded convergence checks rather than failing on stale event history alone.
   - Readiness can surface `legacy_runtime_replacement_required` when stale legacy runtime evidence is detected and replace-runtime was not requested.
   - Cleanup scope is limited to managed runtime resources (`site-web` ingress/service/deployment, managed preview certificate/config resources, site-scoped networkpolicy) and does not delete artifacts/media/GitHub content/business data.
   - Publish readiness is unchanged; this is deploy-only behavior.
@@ -2519,6 +2522,7 @@ TLS/certificate readiness is exposed separately from runtime rollout status:
   - `Certificate exists but is still provisioning. Deploy is held until the certificate is ACTIVE.`
 - preview-tolerant operator copy:
   - `Runtime can deploy while HTTPS certificate provisioning continues.`
+- Firefox preview failures such as `PR_END_OF_FILE_ERROR` usually indicate missing/unready `ManagedCertificate` or ingress TLS convergence, not a selected-media or publish/readiness regression.
 - `https_ready=true` is only emitted when HTTPS probe and certificate readiness are both satisfied.
 
 Resolve-live-url failure diagnostics are evidence-first:
