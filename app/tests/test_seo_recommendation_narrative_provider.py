@@ -207,6 +207,60 @@ def test_openai_recommendation_narrative_provider_parses_structured_response(mon
     assert "Alpha Plumbing" in user_prompt
 
 
+def test_openai_recommendation_narrative_provider_uses_responses_api_for_gpt_5(monkeypatch) -> None:
+    captured_request: dict[str, object] = {}
+    narrative_payload = {
+        "narrative_text": "Prioritize critical content improvements.",
+        "top_themes": ["content depth"],
+        "sections": {
+            "summary": "Critical recommendations lead the backlog.",
+            "priority_rationale": "Address the highest-impact work first.",
+            "next_actions": ["Expand thin service pages."],
+            "recommendation_references": ["rec-2"],
+            "tuning_suggestions": [],
+        },
+    }
+
+    def _fake_urlopen(request: urllib.request.Request, timeout: int):  # noqa: ANN001
+        captured_request["url"] = request.full_url
+        request_body = request.data.decode("utf-8") if isinstance(request.data, bytes) else "{}"
+        captured_request["payload"] = json.loads(request_body)
+        response = {
+            "model": "gpt-5.6-terra-2026-07-01",
+            "output_text": json.dumps(narrative_payload),
+        }
+        return _FakeHTTPResponse(json.dumps(response))
+
+    monkeypatch.setattr(urllib.request, "urlopen", _fake_urlopen)
+    provider = OpenAISEORecommendationNarrativeProvider(
+        api_key="sk-test",
+        model_name="gpt-5.6-terra",
+    )
+
+    output = provider.generate_narrative(
+        run=_run(),
+        recommendations=_recommendations(),
+        by_status={"open": 1, "in_progress": 1},
+        by_category={"SEO": 1, "CONTENT": 1},
+        by_severity={"WARNING": 1, "CRITICAL": 1},
+        by_effort_bucket={"LOW": 1, "HIGH": 1},
+        by_priority_band={"high": 1, "critical": 1},
+        backlog=_recommendations(),
+        competitor_telemetry_summary=_competitor_telemetry(),
+        current_tuning_values=_current_tuning_values(),
+    )
+
+    assert captured_request["url"] == "https://api.openai.com/v1/responses"
+    payload = captured_request["payload"]
+    assert isinstance(payload, dict)
+    assert payload["model"] == "gpt-5.6-terra"
+    assert "temperature" not in payload
+    assert payload["text"]["format"]["type"] == "json_schema"
+    assert payload["input"][1]["role"] == "user"
+    assert output.model_name == "gpt-5.6-terra-2026-07-01"
+    assert output.sections["recommendation_references"] == ["rec-2"]
+
+
 def test_openai_recommendation_narrative_provider_applies_next_action_diversity_dedupe(monkeypatch) -> None:
     def _fake_urlopen(request: urllib.request.Request, timeout: int):  # noqa: ANN001
         del request, timeout
@@ -336,6 +390,46 @@ def test_openai_recommendation_narrative_provider_auth_error_is_normalized(monke
     assert exc_info.value.normalized_failure_source == "local_configuration"
     assert exc_info.value.normalized_retryable is False
     assert exc_info.value.attempt_count == 1
+
+
+def test_openai_recommendation_narrative_provider_invalid_request_is_not_reported_as_auth_failure(
+    monkeypatch,
+) -> None:
+    def _invalid_request_urlopen(request: urllib.request.Request, timeout: int):  # noqa: ANN001
+        del request, timeout
+        raise urllib.error.HTTPError(
+            url="https://api.openai.com/v1/responses",
+            code=400,
+            msg="Bad Request",
+            hdrs=None,
+            fp=BytesIO(b'{"error":"unsupported_parameter"}'),
+        )
+
+    monkeypatch.setattr(urllib.request, "urlopen", _invalid_request_urlopen)
+    provider = OpenAISEORecommendationNarrativeProvider(
+        api_key="sk-test",
+        model_name="gpt-5.6-terra",
+    )
+
+    with pytest.raises(SEORecommendationNarrativeProviderError) as exc_info:
+        provider.generate_narrative(
+            run=_run(),
+            recommendations=_recommendations(),
+            by_status={"open": 1},
+            by_category={"SEO": 1},
+            by_severity={"WARNING": 1},
+            by_effort_bucket={"LOW": 1},
+            by_priority_band={"high": 1},
+            backlog=_recommendations(),
+            competitor_telemetry_summary=_competitor_telemetry(),
+            current_tuning_values=_current_tuning_values(),
+        )
+
+    assert exc_info.value.code == "provider_request"
+    assert exc_info.value.safe_message == "AI provider rejected the recommendation narrative request configuration."
+    assert exc_info.value.normalized_failure_category == "configuration_invalid"
+    assert exc_info.value.normalized_failure_reason == "provider_request_configuration_invalid"
+    assert exc_info.value.normalized_retryable is False
 
 
 def test_recommendation_context_budget_keeps_required_and_aggressively_trims_optional_context() -> None:
@@ -511,7 +605,7 @@ def test_openai_recommendation_narrative_provider_parses_wrapped_json_content(mo
         del request, timeout
         response = {
             "model": "gpt-5.1",
-            "choices": [{"message": {"content": wrapped_content}}],
+            "output_text": wrapped_content,
         }
         return _FakeHTTPResponse(json.dumps(response))
 
@@ -541,42 +635,36 @@ def test_openai_recommendation_narrative_provider_salvages_partial_tuning_sugges
         del request, timeout
         response = {
             "model": "gpt-5.1",
-            "choices": [
+            "output_text": json.dumps(
                 {
-                    "message": {
-                        "content": json.dumps(
+                    "narrative_text": "Narrative with partial suggestion recovery.",
+                    "top_themes": ["theme"],
+                    "sections": {
+                        "summary": "Summary",
+                        "priority_rationale": "Rationale",
+                        "next_actions": ["Action one"],
+                        "recommendation_references": ["rec-1"],
+                        "tuning_suggestions": [
                             {
-                                "narrative_text": "Narrative with partial suggestion recovery.",
-                                "top_themes": ["theme"],
-                                "sections": {
-                                    "summary": "Summary",
-                                    "priority_rationale": "Rationale",
-                                    "next_actions": ["Action one"],
-                                    "recommendation_references": ["rec-1"],
-                                    "tuning_suggestions": [
-                                        {
-                                            "setting": "competitor_candidate_directory_penalty",
-                                            "current_value": 35,
-                                            "recommended_value": 30,
-                                            "reason": "Directory exclusions are elevated.",
-                                            "linked_recommendation_ids": ["rec-1"],
-                                            "confidence": "high",
-                                        },
-                                        {
-                                            "setting": "competitor_candidate_directory_penalty",
-                                            "current_value": 35,
-                                            "recommended_value": 30,
-                                            "reason": "Invalid because references are missing.",
-                                            "linked_recommendation_ids": [],
-                                            "confidence": "high",
-                                        },
-                                    ],
-                                },
-                            }
-                        )
-                    }
+                                "setting": "competitor_candidate_directory_penalty",
+                                "current_value": 35,
+                                "recommended_value": 30,
+                                "reason": "Directory exclusions are elevated.",
+                                "linked_recommendation_ids": ["rec-1"],
+                                "confidence": "high",
+                            },
+                            {
+                                "setting": "competitor_candidate_directory_penalty",
+                                "current_value": 35,
+                                "recommended_value": 30,
+                                "reason": "Invalid because references are missing.",
+                                "linked_recommendation_ids": [],
+                                "confidence": "high",
+                            },
+                        ],
+                    },
                 }
-            ],
+            ),
         }
         return _FakeHTTPResponse(json.dumps(response))
 
@@ -607,7 +695,7 @@ def test_openai_recommendation_narrative_provider_truncated_json_is_invalid_outp
         del request, timeout
         response = {
             "model": "gpt-5.1",
-            "choices": [{"message": {"content": '{"narrative_text":"broken"'}}],
+            "output_text": '{"narrative_text":"broken"',
         }
         return _FakeHTTPResponse(json.dumps(response))
 

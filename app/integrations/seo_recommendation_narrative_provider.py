@@ -36,6 +36,7 @@ from app.services.seo_recommendation_narrative_prompt import (
 from app.services.seo_recommendation_diversity import (
     normalize_recommendation_next_actions,
 )
+from app.services.ai_model_settings import resolve_openai_non_tool_structured_output_profile
 
 
 _PROVIDER_ERROR_TIMEOUT = "timeout"
@@ -45,6 +46,7 @@ _PROVIDER_ERROR_SCHEMA_VALIDATION = "schema_validation"
 _PROVIDER_ERROR_PARSING = "parsing_error"
 _PROVIDER_ERROR_REQUEST = "provider_request"
 _LEGACY_PROMPT_CONFIG_KEY = "ai_prompt_text_recommendation"
+_NARRATIVE_RESPONSE_FORMAT_NAME = "seo_recommendation_narrative_response"
 logger = logging.getLogger(__name__)
 
 _MAX_NARRATIVE_TEXT_LENGTH = 6000
@@ -258,17 +260,30 @@ class OpenAISEORecommendationNarrativeProvider:
             budget_result=budget_result,
             budget_outcome="provider_submission",
         )
-        payload = self._build_request_payload(
-            system_prompt=prompt.system_prompt,
-            user_prompt=prompt.user_prompt,
+        request_profile = resolve_openai_non_tool_structured_output_profile(self.model_name)
+        if request_profile.endpoint_path == "/responses":
+            payload = self._build_responses_request_payload(
+                system_prompt=prompt.system_prompt,
+                user_prompt=prompt.user_prompt,
+            )
+            extract_assistant_content = self._extract_assistant_content_from_responses
+        else:
+            payload = self._build_chat_completions_request_payload(
+                system_prompt=prompt.system_prompt,
+                user_prompt=prompt.user_prompt,
+            )
+            extract_assistant_content = self._extract_assistant_content
+        raw_response = self._request_completion(
+            payload,
+            budget_result=budget_result,
+            endpoint_path=request_profile.endpoint_path,
         )
-        raw_response = self._request_completion(payload, budget_result=budget_result)
         response_json = self._parse_json_object(
             raw_response,
             code=_PROVIDER_ERROR_PARSING,
             safe_message="Recommendation narrative response could not be parsed.",
         )
-        assistant_content = self._extract_assistant_content(response_json)
+        assistant_content = extract_assistant_content(response_json)
         structured_json = self._parse_json_object(
             assistant_content,
             code=_PROVIDER_ERROR_INVALID_OUTPUT,
@@ -347,10 +362,19 @@ class OpenAISEORecommendationNarrativeProvider:
                 self.provider_name,
             )
 
-    def _request_completion(self, payload: dict[str, object], *, budget_result: dict[str, object]) -> str:
+    def _request_completion(
+        self,
+        payload: dict[str, object],
+        *,
+        budget_result: dict[str, object],
+        endpoint_path: str,
+    ) -> str:
         body = json.dumps(payload, ensure_ascii=True).encode("utf-8")
+        normalized_endpoint_path = endpoint_path.strip() or "/chat/completions"
+        if not normalized_endpoint_path.startswith("/"):
+            normalized_endpoint_path = f"/{normalized_endpoint_path}"
         request = urllib.request.Request(
-            url=f"{self.api_base_url}/chat/completions",
+            url=f"{self.api_base_url}{normalized_endpoint_path}",
             data=body,
             method="POST",
             headers={
@@ -398,11 +422,13 @@ class OpenAISEORecommendationNarrativeProvider:
         except AIExecutionError as exc:
             code = _PROVIDER_ERROR_REQUEST
             safe_message = "Recommendation narrative provider request failed."
-            if exc.normalized_failure.category in {"configuration_missing", "configuration_invalid"}:
+            if exc.normalized_failure.reason == "provider_auth_or_configuration_invalid":
                 code = _PROVIDER_ERROR_AUTH_CONFIG
                 safe_message = (
                     "AI provider authentication failed. Verify recommendation narrative provider credentials."
                 )
+            elif exc.normalized_failure.category in {"configuration_missing", "configuration_invalid"}:
+                safe_message = "AI provider rejected the recommendation narrative request configuration."
             elif exc.normalized_failure.category == "remote_timeout":
                 code = _PROVIDER_ERROR_TIMEOUT
                 safe_message = "Recommendation narrative generation timed out while calling the AI provider."
@@ -470,7 +496,29 @@ class OpenAISEORecommendationNarrativeProvider:
                 retry_suppressed=exc.normalized_failure.reason == "request_too_large_or_complex",
             ) from exc
 
-    def _build_request_payload(
+    def _build_responses_request_payload(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+    ) -> dict[str, object]:
+        return {
+            "model": self.model_name,
+            "text": {
+                "format": {
+                    "type": "json_schema",
+                    "name": _NARRATIVE_RESPONSE_FORMAT_NAME,
+                    "strict": True,
+                    "schema": _build_narrative_json_schema(),
+                }
+            },
+            "input": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+        }
+
+    def _build_chat_completions_request_payload(
         self,
         *,
         system_prompt: str,
@@ -486,7 +534,7 @@ class OpenAISEORecommendationNarrativeProvider:
             "response_format": {
                 "type": "json_schema",
                 "json_schema": {
-                    "name": "seo_recommendation_narrative_response",
+                    "name": _NARRATIVE_RESPONSE_FORMAT_NAME,
                     "strict": True,
                     "schema": _build_narrative_json_schema(),
                 },
@@ -530,6 +578,37 @@ class OpenAISEORecommendationNarrativeProvider:
                     parts.append(text.strip())
             if parts:
                 return "\n".join(parts)
+        raise self._provider_error(
+            code=_PROVIDER_ERROR_PARSING,
+            safe_message="Recommendation narrative response did not include content.",
+            raw_output=json.dumps(response_json, ensure_ascii=True, sort_keys=True),
+        )
+
+    def _extract_assistant_content_from_responses(self, response_json: dict[str, object]) -> str:
+        output_text = response_json.get("output_text")
+        if isinstance(output_text, str):
+            normalized_output_text = output_text.strip()
+            if normalized_output_text:
+                return normalized_output_text
+
+        output = response_json.get("output")
+        if isinstance(output, list):
+            for item in output:
+                if not isinstance(item, dict):
+                    continue
+                content = item.get("content")
+                if not isinstance(content, list):
+                    continue
+                parts: list[str] = []
+                for part in content:
+                    if not isinstance(part, dict):
+                        continue
+                    text = part.get("text")
+                    if isinstance(text, str) and text.strip():
+                        parts.append(text.strip())
+                if parts:
+                    return "\n".join(parts)
+
         raise self._provider_error(
             code=_PROVIDER_ERROR_PARSING,
             safe_message="Recommendation narrative response did not include content.",

@@ -697,7 +697,7 @@ def _normalize_http_failure(*, http_status: int) -> AINormalizedFailure:
     if http_status in {400, 404, 422}:
         return AINormalizedFailure(
             category="configuration_invalid",
-            reason="provider_auth_or_configuration_invalid",
+            reason="provider_request_configuration_invalid",
             source="local_configuration",
             retryable=False,
             http_status=http_status,

@@ -119,6 +119,45 @@ def test_execute_json_request_does_not_retry_non_retryable_configuration_error(
     assert exc_info.value.attempt_count == 1
 
 
+@pytest.mark.parametrize("http_status", [400, 404, 422])
+def test_execute_json_request_distinguishes_invalid_request_configuration_from_authentication(
+    monkeypatch: pytest.MonkeyPatch,
+    http_status: int,
+) -> None:
+    def _fake_urlopen(request: urllib.request.Request, timeout: int):  # noqa: ANN001
+        del request, timeout
+        raise urllib.error.HTTPError(
+            url="https://example.test",
+            code=http_status,
+            msg="invalid request",
+            hdrs={},
+            fp=None,
+        )
+
+    monkeypatch.setattr(urllib.request, "urlopen", _fake_urlopen)
+
+    with pytest.raises(AIExecutionError) as exc_info:
+        execute_json_request(
+            request=urllib.request.Request(
+                url="https://example.test",
+                data=b"{}",
+                method="POST",
+                headers={"Content-Type": "application/json"},
+            ),
+            policy=AIExecutionPolicy(
+                feature_area="test",
+                timeout_seconds=3,
+                max_attempts=3,
+                retry_backoff_seconds=0,
+            ),
+        )
+
+    assert exc_info.value.normalized_failure.category == "configuration_invalid"
+    assert exc_info.value.normalized_failure.reason == "provider_request_configuration_invalid"
+    assert exc_info.value.normalized_failure.retryable is False
+    assert exc_info.value.attempt_count == 1
+
+
 def test_execute_json_request_fails_early_when_payload_exceeds_max_input_size(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
