@@ -46,6 +46,7 @@ from app.integrations.seo_migration_github_publisher import (
     SEOMigrationGitHubDeployTarget,
     SEOMigrationGitHubLiveRuntimeProbeResult,
     SEOMigrationGitHubManagedCertificateReadinessResult,
+    SEOMigrationGitHubManagedCertificateEnsureResult,
     SEOMigrationGitHubManagedSiteDnsEnsureResult,
     SEOMigrationGitHubManagedSiteStaticIPEnsureResult,
     SEOMigrationGitHubRepoAdoptionResult,
@@ -896,6 +897,14 @@ class SEOMigrationPublishActionResult:
 
 @dataclass(frozen=True)
 class SEOMigrationDeployActionResult:
+    workspace: SEOMigrationWorkspace
+    artifact: SEOMigrationArtifactVersion
+    result: dict[str, object]
+    readiness: dict[str, object]
+
+
+@dataclass(frozen=True)
+class SEOMigrationManagedCertificateActionResult:
     workspace: SEOMigrationWorkspace
     artifact: SEOMigrationArtifactVersion
     result: dict[str, object]
@@ -4959,6 +4968,105 @@ class SEOMigrationService:
             result=result_payload,
         )
 
+    def provision_managed_certificate(
+        self,
+        *,
+        business_id: str,
+        site_id: str,
+        artifact_version_id: str,
+        principal_id: str | None,
+    ) -> SEOMigrationManagedCertificateActionResult:
+        started_at = time.monotonic()
+        workspace = self.get_workspace(business_id=business_id, site_id=site_id)
+        artifact = self.get_artifact_version(
+            business_id=business_id,
+            site_id=site_id,
+            artifact_version_id=artifact_version_id,
+        )
+        if artifact.approval_status != "approved" or artifact.publish_status != "published":
+            raise SEOMigrationValidationError(
+                "A published and approved artifact is required before provisioning the managed certificate."
+            )
+        try:
+            effective_publish_config, _, _ = self._build_effective_publish_config(
+                workspace_publish_config=workspace.publish_config_json,
+                require_admin=True,
+            )
+            deploy_target, workflow_resolution = self._resolve_deploy_target_with_workflow_precedence(
+                workspace=workspace,
+                effective_publish_config=effective_publish_config,
+                artifact_version_id=artifact.id,
+                validate_workflow_candidates=True,
+            )
+        except ValueError as exc:
+            raise SEOMigrationValidationError(str(exc) or "Deploy target is invalid.") from exc
+        deploy_workflow_mode = _normalize_string(workflow_resolution.get("deploy_workflow_mode"), max_length=80)
+        if deploy_workflow_mode != _DEPLOY_WORKFLOW_MODE_SITE_REPO_TEMPLATE_V1:
+            raise SEOMigrationValidationError(
+                "Managed certificate provisioning is available only for the MBSRN site-repository deploy workflow."
+            )
+        preview_hostname = _normalize_string(workflow_resolution.get("preview_hostname"), max_length=253)
+        if not preview_hostname:
+            preview_hostname, _ = derive_site_preview_hostname(repo_name=deploy_target["repo_name"], site_id=site_id)
+        kubernetes_namespace = _normalize_string(workflow_resolution.get("kubernetes_namespace"), max_length=63)
+        if not kubernetes_namespace:
+            kubernetes_namespace, _ = derive_site_kubernetes_namespace(
+                repo_name=deploy_target["repo_name"],
+                site_id=site_id,
+            )
+        managed_certificate_name, _ = derive_site_preview_certificate_name(
+            repo_name=deploy_target["repo_name"],
+            site_id=site_id,
+        )
+        deploy_secret_value, _, _ = self._resolve_deploy_secret_for_propagation()
+        try:
+            ensure_result: SEOMigrationGitHubManagedCertificateEnsureResult = (
+                self.github_publisher.ensure_managed_certificate(
+                    repo_name=deploy_target["repo_name"],
+                    site_id=site_id,
+                    preview_hostname=preview_hostname,
+                    kubernetes_namespace=kubernetes_namespace,
+                    managed_gke_config=_normalize_json_dict(workflow_resolution.get("managed_gke_config")),
+                    gcp_deploy_key=deploy_secret_value,
+                    expected_managed_certificate_name=managed_certificate_name,
+                )
+            )
+        except SEOMigrationGitHubPublisherError as exc:
+            raise SEOMigrationValidationError(exc.safe_message) from exc
+        readiness = self._build_deploy_readiness(
+            site=self._require_site(business_id=business_id, site_id=site_id),
+            workspace=workspace,
+            artifact=artifact,
+        )
+        certificate_readiness = ensure_result.readiness
+        result = {
+            "action": ensure_result.action,
+            "managed_certificate_name": certificate_readiness.managed_certificate_name,
+            "preview_hostname": certificate_readiness.preview_hostname,
+            "kubernetes_namespace": certificate_readiness.kubernetes_namespace,
+            "managed_certificate_exists": certificate_readiness.managed_certificate_exists,
+            "certificate_status": certificate_readiness.observed_managed_certificate_status or "PROVISIONING",
+            "reason_code": certificate_readiness.dispatch_service_reason_code,
+        }
+        self._log_control_plane_action(
+            action="managed_certificate_provision",
+            status="completed",
+            business_id=business_id,
+            site_id=site_id,
+            workspace_id=workspace.id,
+            artifact_version_id=artifact.id,
+            artifact_version=artifact.version,
+            principal_id=principal_id,
+            target_summary=result,
+            duration_ms=self._duration_ms(started_at),
+        )
+        return SEOMigrationManagedCertificateActionResult(
+            workspace=workspace,
+            artifact=artifact,
+            readiness=readiness,
+            result=result,
+        )
+
     def deploy_artifact_version(
         self,
         *,
@@ -6768,10 +6876,6 @@ class SEOMigrationService:
                         if isinstance(workflow_resolution.get("uses_shared_preview_gateway"), bool)
                         else preview_endpoint_mode_for_dispatch == _MANAGED_PREVIEW_ENDPOINT_MODE_SHARED_GATEWAY
                     )
-                    certificate_pending_allowed_before_dispatch = bool(
-                        preview_endpoint_mode_for_dispatch == _MANAGED_PREVIEW_ENDPOINT_MODE_SHARED_GATEWAY
-                        or uses_shared_preview_gateway_for_dispatch
-                    )
                     preview_hostname_for_certificate = _normalize_string(expected_dns_hostname, max_length=253) or _normalize_string(
                         target_readiness.preview_hostname if target_readiness is not None else None,
                         max_length=253,
@@ -6856,26 +6960,10 @@ class SEOMigrationService:
                         if normalized_certificate_reason in {None, _DEPLOY_DISPATCH_SERVICE_REASON_AVAILABLE}:
                             _emit_prerequisite_chain_log(stage="managed_certificate_readiness_succeeded")
                         elif normalized_certificate_reason == _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_PROVISIONING:
-                            if certificate_pending_allowed_before_dispatch:
-                                _emit_prerequisite_chain_log(
-                                    stage="managed_certificate_readiness_pending_allowed",
-                                    reason_code=normalized_certificate_reason,
-                                )
-                            else:
-                                dispatch_service_reason_code = normalized_certificate_reason
-                                _emit_prerequisite_chain_log(
-                                    stage="managed_certificate_readiness_blocked",
-                                    reason_code=normalized_certificate_reason,
-                                    level=logging.WARNING,
-                                )
-                                raise SEOMigrationGitHubPublisherError(
-                                    code=normalized_certificate_reason,
-                                    safe_message=(
-                                        "Managed certificate exists for this hostname but is still provisioning. "
-                                        "Wait for ACTIVE before HTTPS-required deploy."
-                                    ),
-                                    stage="certificate_readiness",
-                                )
+                            _emit_prerequisite_chain_log(
+                                stage="managed_certificate_readiness_pending_allowed",
+                                reason_code=normalized_certificate_reason,
+                            )
                         elif normalized_certificate_reason in {
                             _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_FAILED_NOT_VISIBLE,
                             _DEPLOY_DISPATCH_SERVICE_REASON_CERTIFICATE_DOMAIN_MISMATCH,

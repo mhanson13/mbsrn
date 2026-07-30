@@ -162,6 +162,12 @@ class SEOMigrationGitHubManagedCertificateReadinessResult:
 
 
 @dataclass(frozen=True)
+class SEOMigrationGitHubManagedCertificateEnsureResult:
+    action: str
+    readiness: SEOMigrationGitHubManagedCertificateReadinessResult
+
+
+@dataclass(frozen=True)
 class SEOMigrationGitHubRepositoryEnsureResult:
     repo_owner: str
     repo_name: str
@@ -564,6 +570,28 @@ class SEOMigrationGitHubPublisher:
             expected_managed_certificate_name,
         )
         return None
+
+    def ensure_managed_certificate(
+        self,
+        *,
+        repo_name: str,
+        site_id: str | None,
+        preview_hostname: str,
+        kubernetes_namespace: str,
+        managed_gke_config: dict[str, object] | None,
+        gcp_deploy_key: str | None,
+        expected_managed_certificate_name: str | None = None,
+    ) -> SEOMigrationGitHubManagedCertificateEnsureResult:
+        del (
+            repo_name,
+            site_id,
+            preview_hostname,
+            kubernetes_namespace,
+            managed_gke_config,
+            gcp_deploy_key,
+            expected_managed_certificate_name,
+        )
+        raise NotImplementedError
 
     def adopt_repository(
         self,
@@ -3219,6 +3247,231 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             gcp_credential_source=credential_source,
             gcp_principal_email=principal_email,
             gcp_impersonated_service_account_email=impersonated_service_account_email,
+        )
+
+    def ensure_managed_certificate(
+        self,
+        *,
+        repo_name: str,
+        site_id: str | None,
+        preview_hostname: str,
+        kubernetes_namespace: str,
+        managed_gke_config: dict[str, object] | None,
+        gcp_deploy_key: str | None,
+        expected_managed_certificate_name: str | None = None,
+    ) -> SEOMigrationGitHubManagedCertificateEnsureResult:
+        readiness = self.check_managed_certificate_readiness(
+            repo_name=repo_name,
+            site_id=site_id,
+            preview_hostname=preview_hostname,
+            kubernetes_namespace=kubernetes_namespace,
+            managed_gke_config=managed_gke_config,
+            gcp_deploy_key=gcp_deploy_key,
+            expected_managed_certificate_name=expected_managed_certificate_name,
+        )
+        if readiness.managed_certificate_exists:
+            if readiness.dispatch_service_reason_code in {
+                _DEPLOY_DISPATCH_SERVICE_REASON_CERTIFICATE_DOMAIN_MISMATCH,
+                _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_OWNERSHIP_UNVERIFIED,
+            }:
+                raise SEOMigrationGitHubPublisherError(
+                    code=readiness.dispatch_service_reason_code,
+                    safe_message=(
+                        "The existing ManagedCertificate does not belong to this site or does not match its preview hostname."
+                    ),
+                    stage="certificate_provisioning",
+                )
+            return SEOMigrationGitHubManagedCertificateEnsureResult(action="reused", readiness=readiness)
+
+        normalized_preview_hostname = readiness.preview_hostname
+        normalized_namespace = readiness.kubernetes_namespace
+        managed_certificate_name = readiness.managed_certificate_name
+        (
+            cluster_endpoint,
+            ssl_context,
+            access_token,
+            credential_source,
+            principal_email,
+            impersonated_service_account_email,
+        ) = self._resolve_managed_certificate_kubernetes_api_context(
+            managed_gke_config=managed_gke_config,
+            gcp_deploy_key=gcp_deploy_key,
+            stage="certificate_provisioning",
+        )
+        create_path = "/apis/networking.gke.io/v1/namespaces/" + urllib.parse.quote(
+            normalized_namespace,
+            safe="",
+        ) + "/managedcertificates"
+        try:
+            created_payload = _request_kubernetes_json(
+                method="POST",
+                endpoint=cluster_endpoint,
+                path=create_path,
+                access_token=access_token,
+                ssl_context=ssl_context,
+                timeout_seconds=self.timeout_seconds,
+                payload={
+                    "apiVersion": "networking.gke.io/v1",
+                    "kind": "ManagedCertificate",
+                    "metadata": {
+                        "name": managed_certificate_name,
+                        "namespace": normalized_namespace,
+                        "labels": build_managed_certificate_ownership_labels(
+                            repo_name=repo_name,
+                            site_id=site_id,
+                            preview_hostname=normalized_preview_hostname,
+                        ),
+                    },
+                    "spec": {"domains": [normalized_preview_hostname]},
+                },
+                expected_statuses=(200, 201),
+                error_stage="certificate_provisioning",
+            )
+        except SEOMigrationGitHubPublisherError as exc:
+            if exc.status_code != 409:
+                raise
+            refreshed_readiness = self.check_managed_certificate_readiness(
+                repo_name=repo_name,
+                site_id=site_id,
+                preview_hostname=normalized_preview_hostname,
+                kubernetes_namespace=normalized_namespace,
+                managed_gke_config=managed_gke_config,
+                gcp_deploy_key=gcp_deploy_key,
+                expected_managed_certificate_name=managed_certificate_name,
+            )
+            if (
+                refreshed_readiness.managed_certificate_exists
+                and refreshed_readiness.certificate_domain_matches_expected is not False
+                and refreshed_readiness.dispatch_service_reason_code
+                != _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_OWNERSHIP_UNVERIFIED
+            ):
+                return SEOMigrationGitHubManagedCertificateEnsureResult(
+                    action="reused",
+                    readiness=refreshed_readiness,
+                )
+            raise
+        if not isinstance(created_payload, dict):
+            raise SEOMigrationGitHubPublisherError(
+                code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_FAILED_NOT_VISIBLE,
+                safe_message="ManagedCertificate provisioning returned no resource details.",
+                stage="certificate_provisioning",
+            )
+        created_status_payload = created_payload.get("status")
+        created_certificate_status = (
+            _coerce_string(created_status_payload.get("certificateStatus"))
+            if isinstance(created_status_payload, dict)
+            else ""
+        )
+        created_readiness = SEOMigrationGitHubManagedCertificateReadinessResult(
+            managed_certificate_name=managed_certificate_name,
+            preview_hostname=normalized_preview_hostname,
+            kubernetes_namespace=normalized_namespace,
+            managed_certificate_exists=True,
+            certificate_domain_matches_expected=True,
+            observed_managed_certificate_domains=(normalized_preview_hostname,),
+            observed_managed_certificate_status=created_certificate_status or "PROVISIONING",
+            dispatch_service_reason_code=_DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_PROVISIONING,
+            gcp_credential_source=credential_source,
+            gcp_principal_email=principal_email,
+            gcp_impersonated_service_account_email=impersonated_service_account_email,
+        )
+        _emit_structured_publisher_log(
+            payload={
+                "event": "seo_migration_managed_certificate_provisioned",
+                "repo_name": repo_name,
+                "preview_hostname": normalized_preview_hostname,
+                "kubernetes_namespace": normalized_namespace,
+                "managed_certificate_name": managed_certificate_name,
+                "action": "created",
+                "gcp_credential_source": credential_source,
+                "gcp_principal_email": principal_email,
+                "gcp_impersonated_service_account_email": impersonated_service_account_email,
+            },
+            fallback_message="seo_migration_managed_certificate_provisioned",
+            level=logging.INFO,
+        )
+        return SEOMigrationGitHubManagedCertificateEnsureResult(action="created", readiness=created_readiness)
+
+    def _resolve_managed_certificate_kubernetes_api_context(
+        self,
+        *,
+        managed_gke_config: dict[str, object] | None,
+        gcp_deploy_key: str | None,
+        stage: str,
+    ) -> tuple[str, ssl.SSLContext, str, str | None, str | None, str | None]:
+        normalized_managed_gke_config = _normalize_managed_gke_config(managed_gke_config)
+        cluster_name = _coerce_string(normalized_managed_gke_config.get(_MANAGED_GKE_CONFIG_CLUSTER_NAME))
+        cluster_location = _coerce_string(normalized_managed_gke_config.get(_MANAGED_GKE_CONFIG_CLUSTER_LOCATION))
+        project_id = _coerce_string(normalized_managed_gke_config.get(_MANAGED_GKE_CONFIG_PROJECT_ID))
+        if not cluster_name or not cluster_location or not project_id:
+            raise SEOMigrationGitHubPublisherError(
+                code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_FAILED_NOT_VISIBLE,
+                safe_message="ManagedCertificate provisioning requires complete managed GKE configuration.",
+                stage=stage,
+            )
+        impersonated_service_account_email = (
+            _validate_managed_deploy_impersonation_service_account_email(
+                self.managed_deploy_service_account_email,
+                stage=stage,
+            )
+            if self.managed_deploy_service_account_email
+            else None
+        )
+        credential_source, principal_email = _resolve_google_credential_principal(
+            credentials_json=gcp_deploy_key,
+            timeout_seconds=self.timeout_seconds,
+        )
+        if impersonated_service_account_email:
+            credential_source = _GCP_CREDENTIAL_SOURCE_MANAGED_DEPLOY_IMPERSONATION
+        access_token = _resolve_google_access_token_for_managed_deploy_operations(
+            credentials_json=_coerce_string(gcp_deploy_key),
+            impersonated_service_account_email=impersonated_service_account_email,
+            missing_code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_FAILED_NOT_VISIBLE,
+            missing_safe_message="ManagedCertificate provisioning could not resolve control-plane credentials.",
+            invalid_code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_FAILED_NOT_VISIBLE,
+            invalid_safe_message="ManagedCertificate provisioning could not resolve control-plane credentials.",
+            integration_code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_FAILED_NOT_VISIBLE,
+            integration_safe_message="ManagedCertificate provisioning could not resolve control-plane credentials.",
+            stage=stage,
+        )
+        cluster_payload = _request_google_json(
+            method="GET",
+            url=(
+                "https://container.googleapis.com/v1/projects/"
+                f"{urllib.parse.quote(project_id, safe='')}/locations/{urllib.parse.quote(cluster_location, safe='')}"
+                f"/clusters/{urllib.parse.quote(cluster_name, safe='')}"
+            ),
+            access_token=access_token,
+            timeout_seconds=self.timeout_seconds,
+            error_stage=stage,
+            code_on_failure=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_FAILED_NOT_VISIBLE,
+            safe_message_on_failure="ManagedCertificate provisioning could not resolve target GKE cluster metadata.",
+            safe_message_on_timeout="ManagedCertificate provisioning timed out while loading cluster metadata.",
+        )
+        cluster_endpoint = _coerce_string(cluster_payload.get("endpoint")) if isinstance(cluster_payload, dict) else ""
+        master_auth = cluster_payload.get("masterAuth") if isinstance(cluster_payload, dict) else None
+        cluster_ca_certificate = _coerce_string(master_auth.get("clusterCaCertificate")) if isinstance(master_auth, dict) else ""
+        if not cluster_endpoint or not cluster_ca_certificate:
+            raise SEOMigrationGitHubPublisherError(
+                code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_FAILED_NOT_VISIBLE,
+                safe_message="ManagedCertificate provisioning could not resolve target GKE cluster access.",
+                stage=stage,
+            )
+        try:
+            decoded_cluster_ca = base64.b64decode(cluster_ca_certificate.encode("ascii")).decode("utf-8", errors="ignore")
+        except Exception as exc:  # pragma: no cover - defensive
+            raise SEOMigrationGitHubPublisherError(
+                code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_FAILED_NOT_VISIBLE,
+                safe_message="ManagedCertificate provisioning could not decode target GKE cluster CA bundle.",
+                stage=stage,
+            ) from exc
+        return (
+            cluster_endpoint,
+            ssl.create_default_context(cadata=decoded_cluster_ca),
+            access_token,
+            credential_source,
+            principal_email,
+            impersonated_service_account_email,
         )
 
     def dispatch_deploy(
@@ -10236,12 +10489,7 @@ def _render_managed_deploy_workflow_yaml(
         "          fi\n"
         '          managed_certificate_json="$(kubectl get managedcertificate "$MBSRN_PREVIEW_CERTIFICATE_NAME" --namespace "$K8S_NAMESPACE" -o json 2>/dev/null || true)"\n'
         '          if [ -z "$managed_certificate_json" ]; then\n'
-        '            if ! kubectl apply -f k8s/managedcertificate.yaml; then\n'
-        '              fail_endpoint_prerequisite "runtime_managed_certificate_missing_after_apply" "ManagedCertificate ensure could not create the expected preview certificate resource." "false" "MISSING"\n'
-        "            fi\n"
-        '            wait_for_endpoint_prerequisite "managedcertificate" "$MBSRN_PREVIEW_CERTIFICATE_NAME" 10 3 "runtime_managed_certificate_missing_after_apply" "ManagedCertificate referenced by ingress is missing after endpoint-prerequisite ensure." "false" "MISSING"\n'
-        '            echo "managed_certificate_action=created" >> "$GITHUB_OUTPUT"\n'
-        "            exit 0\n"
+        '            fail_endpoint_prerequisite "runtime_managed_certificate_missing_after_apply" "ManagedCertificate is missing. Use the control-plane Provision TLS Certificate action before requesting GKE deploy." "false" "MISSING"\n'
         "          fi\n"
         '          cert_eval_output="$(MANAGED_CERTIFICATE_JSON="$managed_certificate_json" EXPECTED_PREVIEW_HOST="$MBSRN_PREVIEW_HOSTNAME" EXPECTED_CERT_NAME="$MBSRN_PREVIEW_CERTIFICATE_NAME" EXPECTED_SITE_ID="$MBSRN_SITE_IDENTITY" EXPECTED_REPO_NAME="$GITHUB_REPOSITORY" python - <<\'PY\'\n'
         "          import json\n"

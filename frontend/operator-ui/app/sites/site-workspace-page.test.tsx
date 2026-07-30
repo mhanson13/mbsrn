@@ -24,6 +24,7 @@ import type {
   MigrationArtifactVersion,
   MigrationDraftReadinessPreflight,
   MigrationDeployActionResponse,
+  MigrationManagedCertificateActionResponse,
   MigrationHistoryListResponse,
   MigrationPublishActionResponse,
   MigrationRepositoryAdoptActionResponse,
@@ -128,6 +129,7 @@ const mockApproveMigrationArtifactVersion = jest.fn<Promise<MigrationArtifactVer
 const mockPublishMigrationArtifactVersion = jest.fn<Promise<MigrationPublishActionResponse>, unknown[]>();
 const mockAdoptMigrationPublishRepository = jest.fn<Promise<MigrationRepositoryAdoptActionResponse>, unknown[]>();
 const mockDeployMigrationArtifactVersion = jest.fn<Promise<MigrationDeployActionResponse>, unknown[]>();
+const mockProvisionMigrationManagedCertificate = jest.fn<Promise<MigrationManagedCertificateActionResponse>, unknown[]>();
 const mockRefreshMigrationDeployStatus = jest.fn<Promise<MigrationDeployActionResponse>, unknown[]>();
 const mockFetchMigrationPublishHistory = jest.fn<Promise<MigrationHistoryListResponse>, unknown[]>();
 const mockFetchMigrationDeployHistory = jest.fn<Promise<MigrationHistoryListResponse>, unknown[]>();
@@ -206,6 +208,7 @@ jest.mock("../../lib/api/client", () => {
     publishMigrationArtifactVersion: (...args: unknown[]) => mockPublishMigrationArtifactVersion(...args),
     adoptMigrationPublishRepository: (...args: unknown[]) => mockAdoptMigrationPublishRepository(...args),
     deployMigrationArtifactVersion: (...args: unknown[]) => mockDeployMigrationArtifactVersion(...args),
+    provisionMigrationManagedCertificate: (...args: unknown[]) => mockProvisionMigrationManagedCertificate(...args),
     refreshMigrationDeployStatus: (...args: unknown[]) => mockRefreshMigrationDeployStatus(...args),
     fetchMigrationPublishHistory: (...args: unknown[]) => mockFetchMigrationPublishHistory(...args),
     fetchMigrationDeployHistory: (...args: unknown[]) => mockFetchMigrationDeployHistory(...args),
@@ -1503,6 +1506,49 @@ describe("site migration workflow route", () => {
     );
     const deployPayload = mockDeployMigrationArtifactVersion.mock.calls.at(-1)?.[3] as Record<string, unknown>;
     expect(deployPayload?.replace_existing_runtime).toBeUndefined();
+  });
+
+  it("provisions the TLS certificate separately before requesting GKE deploy", async () => {
+    const user = userEvent.setup();
+    const approvedArtifact = buildMigrationArtifactVersion({
+      approval_status: "approved",
+      publish_status: "published",
+    });
+    mockFetchMigrationWorkspaceSummary.mockResolvedValue(
+      buildMigrationWorkspaceSummary({
+        workspace: buildMigrationWorkspace({
+          latest_approved_artifact_version_id: approvedArtifact.id,
+          latest_approved_artifact_version_number: approvedArtifact.version,
+          last_published_artifact_version_id: approvedArtifact.id,
+          last_published_artifact_version_number: approvedArtifact.version,
+        }),
+        latest_artifact: approvedArtifact,
+        deploy_readiness: {
+          ready: false,
+          reasons: ["ManagedCertificate resource for the expected hostname is not yet visible."],
+          approved_artifact_version_id: approvedArtifact.id,
+          tls_certificate_status: "FAILED_NOT_VISIBLE",
+          certificate_readiness_state: "certificate_resource_missing",
+          target: { enabled: true, repo_owner: "mhanson13", repo_name: "tnmfire", workflow_id: "deploy.yml", ref: "main" },
+        },
+      }),
+    );
+    mockFetchMigrationArtifactVersions.mockResolvedValue({ items: [approvedArtifact], total: 1 });
+
+    render(<SiteMigrationWorkflowPage />);
+
+    const provisionButton = await screen.findByTestId("migration-provision-certificate-button");
+    expect(provisionButton).toBeEnabled();
+    expect(screen.getByTestId("migration-certificate-status")).toHaveTextContent("FAILED_NOT_VISIBLE");
+    await user.click(provisionButton);
+
+    await waitFor(() =>
+      expect(mockProvisionMigrationManagedCertificate).toHaveBeenCalledWith("token-1", "biz-1", "site-1", {
+        artifact_version_id: approvedArtifact.id,
+      }),
+    );
+    expect(mockDeployMigrationArtifactVersion).not.toHaveBeenCalled();
+    expect(await screen.findByText(/TLS certificate resource created/i)).toBeInTheDocument();
   });
 
   it("allows deploy when legacy runtime replacement is required only after replace-runtime is selected", async () => {
@@ -3222,8 +3268,8 @@ describe("site migration workflow route", () => {
     expect(within(destinationSummary).getByTestId("migration-destination-publish-blocker")).toHaveTextContent(
       "GitHub publish/deploy authentication failed.",
     );
-    const deployTargetSummary = screen.getByTestId("migration-deploy-target-summary");
-    expect(within(deployTargetSummary).getByTestId("migration-destination-deploy-blocker")).toHaveTextContent(
+    const deployReadiness = screen.getByTestId("migration-deploy-readiness");
+    expect(within(deployReadiness).getByTestId("migration-deploy-readiness-primary-action")).toHaveTextContent(
       "Deploy target is not enabled.",
     );
     expect(within(destinationSummary).queryByText(/Category:/i)).not.toBeInTheDocument();
@@ -6913,6 +6959,7 @@ function seedCompetitorProfileGenerationDefaults(): void {
   mockPublishMigrationArtifactVersion.mockReset();
   mockAdoptMigrationPublishRepository.mockReset();
   mockDeployMigrationArtifactVersion.mockReset();
+  mockProvisionMigrationManagedCertificate.mockReset();
   mockRefreshMigrationDeployStatus.mockReset();
   mockFetchMigrationPublishHistory.mockReset();
   mockFetchMigrationDeployHistory.mockReset();
@@ -7060,6 +7107,16 @@ function seedCompetitorProfileGenerationDefaults(): void {
     }),
     readiness: { ready: true, reasons: [] },
     result: { status: "deploy_requested" },
+  });
+  mockProvisionMigrationManagedCertificate.mockResolvedValue({
+    workspace: defaultMigrationWorkspace,
+    artifact: defaultMigrationArtifact,
+    readiness: { ready: false, reasons: [] },
+    result: {
+      action: "created",
+      managed_certificate_exists: true,
+      certificate_status: "PROVISIONING",
+    },
   });
   mockRefreshMigrationDeployStatus.mockResolvedValue({
     workspace: buildMigrationWorkspace({

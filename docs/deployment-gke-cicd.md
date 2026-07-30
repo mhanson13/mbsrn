@@ -376,16 +376,14 @@ Typical causes:
 `certificate_provisioning_pending` interpretation:
 - static IP can be `IN_USE` and ingress IP can already match the reserved address while certificate remains `PROVISIONING`.
 - in this state, HTTPS probe failures are usually a downstream symptom of TLS convergence and should not be classified as backend 502 or app runtime failure.
-- control plane probes the deterministic ManagedCertificate name for the site before workflow dispatch (`expected_managed_certificate_name`), and reconcile/apply remains idempotent for that same name across retries.
+- Operators provision the deterministic ManagedCertificate from the migration workspace before requesting GKE deploy. The control plane owns that idempotent create/reuse action and validates ownership labels plus the expected hostname.
 - `observed_pre_shared_cert_annotation` is controller metadata only and not the source-of-truth binding decision for managed deployments.
 - runtime and TLS are tracked separately in readiness:
   - `certificate_readiness_state=certificate_provisioning_pending`
   - `runtime_ready_tls_pending=true` when LB/runtime evidence is present but HTTPS is still pending
   - `https_ready=false` until certificate converges and HTTPS probe succeeds
-- when endpoint mode requires HTTPS-ready certificate before dispatch (for example dedicated/static-IP mode), deploy readiness blocks with a certificate gate and does not dispatch another run until cert is `ACTIVE`.
-- HTTPS-required gate copy: `Certificate exists but is still provisioning. Deploy is held until the certificate is ACTIVE.`
-- when endpoint mode is preview-tolerant (`preview_shared_gateway`), runtime can remain deployable while TLS is pending; UI shows this as a wait-state, not as runtime-replace failure.
-- preview-tolerant copy: `Runtime can deploy while HTTPS certificate provisioning continues.`
+- a certificate in `PROVISIONING` does not block dispatch: deploy attaches the ingress and issuance can continue while runtime evidence is collected.
+- missing ManagedCertificate objects remain a deploy blocker. Use `Provision TLS Certificate`, then request GKE deploy; use refresh status to follow issuance to `ACTIVE`.
 - missing ManagedCertificate objects, FAILED_NOT_VISIBLE states, certificate/domain mismatch, and DNS mismatch remain distinct blocker states and are not normalized into provisioning.
 - next action: wait for ManagedCertificate to reach `ACTIVE`, then refresh/rerun deploy.
 
@@ -438,13 +436,13 @@ Scoped fresh redeploy (`replace_existing_runtime`) guidance:
   - `frontendconfig` remains runtime-managed so ingress/runtime resets stay aligned
 - workflow order is explicit:
   1. ensure namespace
-  2. ensure endpoint prerequisites (including preview `ManagedCertificate`)
+  2. verify endpoint prerequisites (including the control-plane-provisioned preview `ManagedCertificate`)
   3. optionally replace runtime resources
   4. apply runtime resources
   5. verify service/endpoints/certificate/ingress
   6. wait for DNS/TLS/HTTPS readiness
 - `ManagedCertificate` is a long-lived preview endpoint prerequisite:
-  - if missing, workflow creates it once from `k8s/managedcertificate.yaml`
+  - if missing, the workflow fails with a control-plane provisioning instruction; it never applies `k8s/managedcertificate.yaml`
   - if present with verified MBSRN ownership labels and the expected preview hostname, workflow reuses it
   - if present but ownership is ambiguous, workflow blocks with `managed_certificate_ownership_unverified`
   - if present but `spec.domains` does not match the expected preview hostname, workflow blocks with `certificate_domain_mismatch`

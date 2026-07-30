@@ -22,6 +22,7 @@ import {
   importMigrationDiscoveredMediaAssets,
   ingestMigrationSource,
   publishMigrationArtifactVersion,
+  provisionMigrationManagedCertificate,
   refreshMigrationDeployStatus,
   suggestMigrationRequirementField,
   suggestMigrationMediaAssetsMetadataBatch,
@@ -59,6 +60,7 @@ type BusyAction =
   | "adopt_repository"
   | "publish"
   | "deploy"
+  | "provision_certificate"
   | "refresh_deploy_status"
   | "delete_draft"
   | "upload_media"
@@ -7566,6 +7568,38 @@ export function MigrationWorkspacePanel({
     }
   };
 
+  const handleProvisionManagedCertificate = async (): Promise<void> => {
+    if (!selectedArtifactVersionId) {
+      setErrorHint(null);
+      setErrorMessage("Select a published artifact version before provisioning the TLS certificate.");
+      return;
+    }
+    setBusyAction("provision_certificate");
+    setErrorMessage(null);
+    setErrorHint(null);
+    setStatusMessage(null);
+    try {
+      const actionResult = await provisionMigrationManagedCertificate(token, businessId, siteId, {
+        artifact_version_id: selectedArtifactVersionId,
+      });
+      const result = asRecord(actionResult.result);
+      const action = asString(result.action).trim().toLowerCase();
+      setStatusMessage(
+        action === "created"
+          ? "TLS certificate resource created. Request GKE Deploy to attach the ingress; issuance may continue afterward."
+          : "TLS certificate resource already exists and was verified for this site.",
+      );
+      await loadWorkspaceData(false);
+    } catch (error) {
+      const baseMessage = toErrorMessage(error, "TLS certificate provisioning failed.");
+      await loadWorkspaceData(false, { preserveErrorMessage: true });
+      setErrorHint(null);
+      setErrorMessage(baseMessage);
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
   const handleRefreshDeployStatus = async (): Promise<void> => {
     if (!selectedArtifactVersionId) {
       setErrorHint(null);
@@ -9203,11 +9237,6 @@ export function MigrationWorkspacePanel({
                     {currentLiveHealthySelectedWorkflowFailureNote}
                   </span>
                 ) : null}
-                {deploySummaryBlockerMessage ? (
-                  <span className="hint warning" data-testid="migration-destination-deploy-blocker">
-                    {deploySummaryBlockerMessage}
-                  </span>
-                ) : null}
               </div>
 
               <div className="panel panel-compact stack" data-testid="migration-deploy-readiness">
@@ -9395,6 +9424,22 @@ export function MigrationWorkspacePanel({
             <div className="migration-publish-deploy-column stack" data-testid="migration-deploy-layout-right">
               <div className="panel panel-compact stack" data-testid="migration-deploy-controls">
                 <strong>Deploy Controls</strong>
+                <span className="hint muted" data-testid="migration-certificate-status">
+                  TLS certificate: {tlsCertificateStatus || certificateReadinessState || "Not provisioned"}
+                </span>
+                <span className="hint muted">
+                  Provisioning is separate from deploy. Deploy validates the certificate resource and attaches the ingress;
+                  certificate issuance can continue after the request is submitted.
+                </span>
+                <button
+                  type="button"
+                  className="button button-secondary"
+                  onClick={() => void handleProvisionManagedCertificate()}
+                  disabled={isActionInFlight || !selectedArtifactVersionIdTrimmed}
+                  data-testid="migration-provision-certificate-button"
+                >
+                  {busyAction === "provision_certificate" ? "Provisioning..." : "Provision TLS Certificate"}
+                </button>
                 <label className="link-row">
                   <input type="checkbox" checked={deployEnabled} onChange={(event) => setDeployEnabled(event.target.checked)} />
                   <span>Deploy enabled for this site workspace</span>

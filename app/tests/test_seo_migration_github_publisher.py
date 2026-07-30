@@ -5958,6 +5958,50 @@ def test_check_managed_certificate_readiness_reports_missing_resource(monkeypatc
     assert result.managed_certificate_name.startswith("site-web-preview-cert-")
 
 
+def test_ensure_managed_certificate_creates_missing_owned_resource(monkeypatch) -> None:
+    _stub_managed_certificate_readiness_dependencies(monkeypatch, managed_certificate_payload=None)
+    kubernetes_requests: list[dict[str, object]] = []
+
+    def _request_kubernetes_json(**kwargs):  # type: ignore[no-untyped-def]
+        kubernetes_requests.append(dict(kwargs))
+        if kwargs["method"] == "GET":
+            return None
+        return {
+            "metadata": {"name": "site-web-preview-cert-tnmfire"},
+            "status": {"certificateStatus": "PROVISIONING"},
+        }
+
+    monkeypatch.setattr(
+        "app.integrations.seo_migration_github_publisher._request_kubernetes_json",
+        _request_kubernetes_json,
+    )
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+
+    result = publisher.ensure_managed_certificate(
+        repo_name="mhanson13/tnmfire",
+        site_id="site-1",
+        preview_hostname="tnmfire.site.mbsrn.com",
+        kubernetes_namespace="tnmfire",
+        managed_gke_config={
+            "cluster_name": "cluster-1",
+            "cluster_location": "us-central1",
+            "project_id": "mbsrn-prod",
+        },
+        gcp_deploy_key='{"type":"service_account"}',
+    )
+
+    assert result.action == "created"
+    assert result.readiness.managed_certificate_exists is True
+    assert result.readiness.observed_managed_certificate_status == "PROVISIONING"
+    create_request = kubernetes_requests[-1]
+    assert create_request["method"] == "POST"
+    assert create_request["path"] == "/apis/networking.gke.io/v1/namespaces/tnmfire/managedcertificates"
+    payload = create_request["payload"]
+    assert isinstance(payload, dict)
+    assert payload["spec"] == {"domains": ["tnmfire.site.mbsrn.com"]}
+    assert payload["metadata"]["labels"]["mbsrn.io/site-id"] == "site-1"
+
+
 def test_check_managed_certificate_readiness_reports_provisioning_state(monkeypatch) -> None:
     _stub_managed_certificate_readiness_dependencies(
         monkeypatch,
@@ -8139,8 +8183,8 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert 'endpoint_prerequisite_resource_kinds="managedcertificate,dns_record,global_static_ip"' in workflow_yaml
     assert 'runtime_resource_kinds="ingress,frontendconfig,backendconfig,service,deployment,networkpolicy"' in workflow_yaml
     assert 'if [ ! -f k8s/managedcertificate.yaml ]; then' in workflow_yaml
-    assert 'echo "managed_certificate_action=created" >> "$GITHUB_OUTPUT"' in workflow_yaml
     assert 'echo "managed_certificate_action=reused" >> "$GITHUB_OUTPUT"' in workflow_yaml
+    assert "Use the control-plane Provision TLS Certificate action before requesting GKE deploy." in workflow_yaml
     assert 'fail_endpoint_prerequisite "managed_certificate_ownership_unverified"' in workflow_yaml
     assert 'fail_endpoint_prerequisite "certificate_domain_mismatch"' in workflow_yaml
     assert 'fail_endpoint_prerequisite "stale_managed_certificate_present"' in workflow_yaml
@@ -8150,7 +8194,7 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     )[1].split("      - name: Replace existing managed-site runtime resources (optional)", 1)[0]
     assert 'kubectl get managedcertificate "$MBSRN_PREVIEW_CERTIFICATE_NAME"' in ensure_endpoint_step_yaml
     assert 'if [ -z "$managed_certificate_json" ]; then' in ensure_endpoint_step_yaml
-    assert 'kubectl apply -f k8s/managedcertificate.yaml' in ensure_endpoint_step_yaml
+    assert 'kubectl apply -f k8s/managedcertificate.yaml' not in ensure_endpoint_step_yaml
     assert "Replace existing managed-site runtime resources (optional)" in workflow_yaml
     assert "deploy_runtime_reason_code=managed_site_runtime_replace_requested" in workflow_yaml
     assert "deploy_runtime_reason_code=managed_site_runtime_replace_completed" in workflow_yaml
@@ -8520,7 +8564,7 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
         'kubectl delete managedcertificate "$MBSRN_PREVIEW_CERTIFICATE_NAME" --namespace "$K8S_NAMESPACE" --ignore-not-found=true'
         not in workflow_yaml
     )
-    assert 'kubectl apply -f k8s/managedcertificate.yaml' in workflow_yaml
+    assert 'kubectl apply -f k8s/managedcertificate.yaml' not in workflow_yaml
     assert 'kubectl apply -f k8s/ingress.yaml --namespace "$K8S_NAMESPACE" >/dev/null 2>&1 || true' not in workflow_yaml
     assert 'echo "observed_managed_certificate_domains=$observed_managed_certificate_domains"' in workflow_yaml
     assert 'echo "observed_managed_certificate_status=$observed_managed_certificate_status"' in workflow_yaml
@@ -9371,7 +9415,7 @@ def test_ensure_deploy_workflow_uses_production_template_for_unknown_mode(monkey
     assert "google-github-actions/auth@v2" in rendered_workflow
     assert "google-github-actions/get-gke-credentials@v2" in rendered_workflow
     assert "Ensure managed-site endpoint prerequisites" in rendered_workflow
-    assert 'kubectl apply -f k8s/managedcertificate.yaml' in rendered_workflow
+    assert 'kubectl apply -f k8s/managedcertificate.yaml' not in rendered_workflow
     assert 'apply_manifest_if_present "k8s/managedcertificate.yaml"' not in rendered_workflow
     assert 'kubectl apply -f k8s/\n' not in rendered_workflow
     assert "resolved_live_url" in rendered_workflow

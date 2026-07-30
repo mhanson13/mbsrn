@@ -588,6 +588,10 @@ export interface MigrationDeployStatusRefreshRequest {
   artifact_version_id: string;
 }
 
+export interface MigrationManagedCertificateProvisionRequest {
+  artifact_version_id: string;
+}
+
 export interface MigrationSourceSnapshot {
   fetched_at?: string | null;
   final_url?: string | null;
@@ -1079,6 +1083,13 @@ export interface MigrationPublishActionResponse {
 }
 
 export interface MigrationDeployActionResponse {
+  workspace: MigrationWorkspace;
+  artifact: MigrationArtifactVersion;
+  readiness: Record<string, unknown>;
+  result: Record<string, unknown>;
+}
+
+export interface MigrationManagedCertificateActionResponse {
   workspace: MigrationWorkspace;
   artifact: MigrationArtifactVersion;
   readiness: Record<string, unknown>;

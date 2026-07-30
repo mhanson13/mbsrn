@@ -43,6 +43,8 @@ from app.integrations.seo_migration_github_publisher import (
     SEOMigrationGitHubDeployTarget,
     SEOMigrationGitHubManagedSiteDnsEnsureResult,
     SEOMigrationGitHubManagedSiteStaticIPEnsureResult,
+    SEOMigrationGitHubManagedCertificateEnsureResult,
+    SEOMigrationGitHubManagedCertificateReadinessResult,
     SEOMigrationGitHubImagePullSecretProvisionResult,
     SEOMigrationGitHubPublishFile,
     SEOMigrationGitHubPublishPreflightResult,
@@ -190,6 +192,7 @@ class _StubMigrationGitHubPublisher(SEOMigrationGitHubPublisher):
         self.secret_upsert_calls: list[tuple[str, str, str, str]] = []
         self.ensure_static_ip_calls: list[tuple[str, str, str | None, dict[str, object] | None, str | None, bool]] = []
         self.ensure_dns_calls: list[tuple[str, str, str, str, str | None, int, bool]] = []
+        self.ensure_managed_certificate_calls: list[tuple[str, str, str]] = []
         self.adopt_repository_calls: list[tuple[str, str, str, str, str, str | None, str | None]] = []
         self.workflow_provision_calls: list[
             tuple[
@@ -302,6 +305,33 @@ class _StubMigrationGitHubPublisher(SEOMigrationGitHubPublisher):
             dns_created=bool(self.ensure_dns_created),
             dns_ttl=int(ttl) if int(ttl) > 0 else self.ensure_dns_ttl,
             result=self.ensure_dns_result,
+        )
+
+    def ensure_managed_certificate(
+        self,
+        *,
+        repo_name: str,
+        site_id: str | None,
+        preview_hostname: str,
+        kubernetes_namespace: str,
+        managed_gke_config: dict[str, object] | None,
+        gcp_deploy_key: str | None,
+        expected_managed_certificate_name: str | None = None,
+    ) -> SEOMigrationGitHubManagedCertificateEnsureResult:
+        del site_id, managed_gke_config, gcp_deploy_key
+        self.ensure_managed_certificate_calls.append((repo_name, preview_hostname, kubernetes_namespace))
+        return SEOMigrationGitHubManagedCertificateEnsureResult(
+            action="created",
+            readiness=SEOMigrationGitHubManagedCertificateReadinessResult(
+                managed_certificate_name=expected_managed_certificate_name or "site-web-preview-cert",
+                preview_hostname=preview_hostname,
+                kubernetes_namespace=kubernetes_namespace,
+                managed_certificate_exists=True,
+                certificate_domain_matches_expected=True,
+                observed_managed_certificate_domains=(preview_hostname,),
+                observed_managed_certificate_status="PROVISIONING",
+                dispatch_service_reason_code="tls_certificate_provisioning",
+            ),
         )
 
     def ensure_repository(
@@ -1248,6 +1278,15 @@ def test_migration_api_happy_path_workflow(db_session) -> None:
     assert "deploy_secret_propagation_attempted" in (publish_response.json().get("result") or {})
     assert "deploy_secret_propagation_status" in (publish_response.json().get("result") or {})
     assert "deploy_secret_propagation_reason" in (publish_response.json().get("result") or {})
+
+    certificate_response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/managed-certificate/provision",
+        json={"artifact_version_id": artifact_id},
+    )
+    assert certificate_response.status_code == 200
+    certificate_result = certificate_response.json().get("result") or {}
+    assert certificate_result["action"] == "created"
+    assert certificate_result["managed_certificate_exists"] is True
 
     deploy_response = client.post(
         f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/deploy",

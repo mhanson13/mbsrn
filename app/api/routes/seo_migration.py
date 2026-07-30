@@ -26,6 +26,8 @@ from app.schemas.seo_migration import (
     SEOMigrationArtifactVersionRead,
     SEOMigrationDeployActionRead,
     SEOMigrationDeployConfigUpdateRequest,
+    SEOMigrationManagedCertificateActionRead,
+    SEOMigrationManagedCertificateProvisionRequest,
     SEOMigrationDeployStatusRefreshRequest,
     SEOMigrationDeployRequest,
     SEOMigrationDraftGenerationErrorEnvelopeRead,
@@ -1591,6 +1593,40 @@ def preview_seo_migration_artifact_file(
         path=path,
         media_type=media_type,
         content=content,
+    )
+
+
+@router.post(
+    "/sites/{site_id}/migration/managed-certificate/provision",
+    response_model=SEOMigrationManagedCertificateActionRead,
+)
+def provision_seo_migration_managed_certificate(
+    business_id: str,
+    site_id: str,
+    payload: SEOMigrationManagedCertificateProvisionRequest,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    migration_service: SEOMigrationService = Depends(get_seo_migration_service),
+) -> SEOMigrationManagedCertificateActionRead:
+    scoped_business_id = resolve_tenant_business_id(
+        tenant_context=tenant_context,
+        requested_business_id=business_id,
+    )
+    try:
+        action_result = migration_service.provision_managed_certificate(
+            business_id=scoped_business_id,
+            site_id=site_id,
+            artifact_version_id=payload.artifact_version_id,
+            principal_id=tenant_context.principal_id,
+        )
+    except SEOMigrationNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except SEOMigrationValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
+    return SEOMigrationManagedCertificateActionRead(
+        workspace=_to_workspace_read(action_result.workspace),
+        artifact=_to_artifact_read(action_result.artifact),
+        readiness=action_result.readiness,
+        result=action_result.result,
     )
 
 

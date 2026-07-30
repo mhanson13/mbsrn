@@ -47,7 +47,8 @@ Migration workflow on the dedicated page:
 7. Confirm Admin-managed GitHub publish target readiness and run publish dry-run.
 8. Publish approved artifact to target repository.
 9. Review Admin-owned deploy target diagnostics, set workspace deploy availability if needed, and run deploy dry-run.
-10. Submit explicit deploy request to GKE deployment workflow.
+10. Use `Provision TLS Certificate` to create or verify the site-owned ManagedCertificate.
+11. Submit explicit deploy request to GKE deployment workflow.
 
 Important operator cue:
 - GitHub publish is not production deployment.
@@ -1803,13 +1804,13 @@ Post-fix rollout for existing managed sites:
     - `endpoint_prerequisite_resource`: preview `ManagedCertificate`, deterministic preview static IP, preview DNS record
     - `runtime_resource`: `ingress/site-web`, `service/site-web`, `deployment/site-web`, `backendconfig`, `frontendconfig`, site-scoped `networkpolicy`
     - `frontendconfig` stays runtime-managed so ingress/runtime resets remain coherent
-  - Workflow order is: ensure namespace → ensure endpoint prerequisites → optional runtime replace → apply runtime resources → verify service/endpoints/certificate/ingress → wait for DNS/TLS readiness.
+  - Workflow order is: ensure namespace → verify endpoint prerequisites → optional runtime replace → apply runtime resources → verify service/endpoints/certificate/ingress → wait for DNS/TLS readiness.
   - When selected, workflow performs scoped namespace/site cleanup before apply and emits:
     - `managed_site_runtime_replace_requested`
     - `managed_site_runtime_replace_completed`
     - `managed_site_runtime_replace_failed`
   - Preview `ManagedCertificate` is a long-lived endpoint prerequisite:
-    - if missing, deploy creates it once from the managed manifest bundle
+    - if missing, deploy instructs the operator to use `Provision TLS Certificate`; deploy never creates it from the managed manifest bundle
     - if present with verified MBSRN ownership labels and the expected hostname, deploy reuses it
     - if present but ownership is ambiguous, deploy blocks with `managed_certificate_ownership_unverified`
     - if present but `spec.domains` does not match the expected preview hostname, deploy blocks with `certificate_domain_mismatch`
@@ -2523,14 +2524,9 @@ TLS/certificate readiness is exposed separately from runtime rollout status:
   - `certificate_active`
   - `certificate_domain_mismatch`
   - `certificate_stale_or_legacy`
-- control-plane readiness probes the deterministic ManagedCertificate name before dispatch (`expected_managed_certificate_name`); workflow reconcile/apply remains idempotent for that same name across retries.
+- `Provision TLS Certificate` is a separate, idempotent control-plane action. It creates or verifies the deterministic ManagedCertificate and refuses cross-site/domain-mismatched resources.
 - `runtime_ready_tls_pending=true` means ingress/load-balancer/runtime evidence exists, but cert/HTTPS are still converging.
-- `certificate_gate_required_before_deploy=true` means this endpoint mode requires ACTIVE certificate before dispatch.
-- `certificate_gate_blocked=true` indicates deploy dispatch is intentionally blocked on certificate readiness.
-- HTTPS-required operator copy:
-  - `Certificate exists but is still provisioning. Deploy is held until the certificate is ACTIVE.`
-- preview-tolerant operator copy:
-  - `Runtime can deploy while HTTPS certificate provisioning continues.`
+- `PROVISIONING` is an issuance wait-state, not a pre-dispatch blocker. Deploy validates the resource and attaches ingress; refresh deploy status follows TLS convergence.
 - Firefox preview failures such as `PR_END_OF_FILE_ERROR` usually indicate missing/unready `ManagedCertificate` or ingress TLS convergence, not a selected-media or publish/readiness regression.
 - `https_ready=true` is only emitted when HTTPS probe and certificate readiness are both satisfied.
 

@@ -28,6 +28,8 @@ import type {
   MigrationAnalyticsConfigUpdateRequest,
   MigrationDeployActionResponse,
   MigrationDeployConfigUpdateRequest,
+  MigrationManagedCertificateActionResponse,
+  MigrationManagedCertificateProvisionRequest,
   MigrationDeployRequest,
   MigrationDeployStatusRefreshRequest,
   MigrationDraftGenerateRequest,
@@ -831,6 +833,22 @@ export async function deployMigrationArtifactVersion(
 ): Promise<MigrationDeployActionResponse> {
   return apiRequest<MigrationDeployActionResponse>(
     `/api/businesses/${businessId}/seo/sites/${siteId}/migration/deploy`,
+    {
+      method: "POST",
+      token,
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function provisionMigrationManagedCertificate(
+  token: string,
+  businessId: string,
+  siteId: string,
+  payload: MigrationManagedCertificateProvisionRequest,
+): Promise<MigrationManagedCertificateActionResponse> {
+  return apiRequest<MigrationManagedCertificateActionResponse>(
+    `/api/businesses/${businessId}/seo/sites/${siteId}/migration/managed-certificate/provision`,
     {
       method: "POST",
       token,

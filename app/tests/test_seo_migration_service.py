@@ -32,6 +32,7 @@ from app.integrations.seo_migration_github_publisher import (
     SEOMigrationGitHubImagePullSecretProvisionResult,
     SEOMigrationGitHubLiveRuntimeProbeResult,
     SEOMigrationGitHubManagedCertificateReadinessResult,
+    SEOMigrationGitHubManagedCertificateEnsureResult,
     SEOMigrationGitHubManagedSiteDnsEnsureResult,
     SEOMigrationGitHubManagedSiteStaticIPEnsureResult,
     SEOMigrationGitHubPublishFile,
@@ -495,6 +496,9 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
                 str | None,
                 str | None,
             ]
+        ] = []
+        self.ensure_managed_certificate_calls: list[
+            tuple[str, str | None, str, str, dict[str, object] | None, str | None, str | None]
         ] = []
         self.deploy_call_order: list[str] = []
         self.refresh_calls: list[tuple[SEOMigrationGitHubDeployTarget, int, str | None]] = []
@@ -1013,6 +1017,41 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
                 self.managed_certificate_readiness_impersonated_service_account_email
             ),
         )
+
+    def ensure_managed_certificate(
+        self,
+        *,
+        repo_name: str,
+        site_id: str | None,
+        preview_hostname: str,
+        kubernetes_namespace: str,
+        managed_gke_config: dict[str, object] | None,
+        gcp_deploy_key: str | None,
+        expected_managed_certificate_name: str | None = None,
+    ) -> SEOMigrationGitHubManagedCertificateEnsureResult:
+        self.ensure_managed_certificate_calls.append(
+            (
+                repo_name,
+                site_id,
+                preview_hostname,
+                kubernetes_namespace,
+                dict(managed_gke_config or {}) or None,
+                gcp_deploy_key,
+                expected_managed_certificate_name,
+            )
+        )
+        certificate_name = expected_managed_certificate_name or "site-web-preview-cert"
+        readiness = SEOMigrationGitHubManagedCertificateReadinessResult(
+            managed_certificate_name=certificate_name,
+            preview_hostname=preview_hostname,
+            kubernetes_namespace=kubernetes_namespace,
+            managed_certificate_exists=True,
+            certificate_domain_matches_expected=True,
+            observed_managed_certificate_domains=(preview_hostname,),
+            observed_managed_certificate_status="PROVISIONING",
+            dispatch_service_reason_code="tls_certificate_provisioning",
+        )
+        return SEOMigrationGitHubManagedCertificateEnsureResult(action="created", readiness=readiness)
 
     def refresh_deploy_run_status(
         self,
@@ -6718,6 +6757,29 @@ def test_deploy_ensures_managed_site_static_ip_before_dispatch_and_records_metad
     assert "private_key" not in json.dumps(ensure_logs[-1]).lower()
 
 
+def test_provision_managed_certificate_is_separate_from_deploy_dispatch(db_session) -> None:
+    publisher = _RecordingGitHubPublisher()
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    artifact = _prepare_published_artifact(service, business_id=business_id, site_id=site_id)
+
+    result = service.provision_managed_certificate(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        principal_id="principal-1",
+    )
+
+    assert result.result["action"] == "created"
+    assert result.result["managed_certificate_exists"] is True
+    assert publisher.ensure_managed_certificate_calls
+    assert publisher.deploy_calls == []
+
+
 def test_deploy_ensures_managed_site_static_ip_existing_before_dispatch(db_session) -> None:
     publisher = _RecordingGitHubPublisher(
         ensure_static_ip_created=False,
@@ -7191,7 +7253,7 @@ def test_deploy_refreshes_static_ip_address_in_same_request_before_dns_ensure(db
     assert deploy_result.result.get("dns_propagation_result") == "observed_expected_ip"
 
 
-def test_deploy_blocks_before_dispatch_when_https_required_certificate_is_provisioning(
+def test_deploy_dispatches_when_certificate_is_provisioning(
     db_session,
     monkeypatch,
 ) -> None:
@@ -7211,37 +7273,23 @@ def test_deploy_blocks_before_dispatch_when_https_required_certificate_is_provis
     artifact = _prepare_published_artifact(service, business_id=business_id, site_id=site_id)
     monkeypatch.setattr(seo_migration_module, "_resolve_hostname_ipv4_addresses", lambda _hostname: ["34.149.170.250"])
 
-    with pytest.raises(SEOMigrationValidationError, match="still provisioning"):
-        service.deploy_artifact_version(
-            business_id=business_id,
-            site_id=site_id,
-            artifact_version_id=artifact.id,
-            dry_run=False,
-            principal_id="principal-1",
-        )
+    deploy_result = service.deploy_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        principal_id="principal-1",
+    )
 
     assert publisher.ensure_managed_certificate_readiness_calls
-    assert publisher.deploy_calls == []
-    assert publisher.deploy_call_order[:3] == [
+    assert publisher.deploy_calls
+    assert publisher.deploy_call_order[:4] == [
         "ensure_static_ip",
         "ensure_dns",
         "check_managed_certificate_readiness",
+        "dispatch_deploy",
     ]
-    workspace = service.get_workspace(business_id=business_id, site_id=site_id)
-    latest = (workspace.deploy_history_json or [])[-1]
-    assert latest.get("failure_reason") == "certificate_provisioning_pending"
-    assert latest.get("dispatch_service_reason_code") == "certificate_provisioning_pending"
-    assert latest.get("dispatch_result_stage") == "certificate_readiness"
-
-    summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
-    deploy_readiness = summary.deploy_readiness or {}
-    assert deploy_readiness.get("certificate_readiness_state") == "certificate_provisioning_pending"
-    assert deploy_readiness.get("certificate_gate_required_before_deploy") is True
-    assert deploy_readiness.get("certificate_gate_blocked") is True
-    assert "deploy_certificate_readiness_pending" in (deploy_readiness.get("blocker_codes") or [])
-    assert "deploy is held until the certificate is active" in " ".join(
-        str(item).lower() for item in (deploy_readiness.get("reasons") or [])
-    )
+    assert deploy_result.result.get("action") == "deploy"
 
 
 def test_deploy_allows_dispatch_when_managed_certificate_is_active(db_session, monkeypatch) -> None:
@@ -7474,20 +7522,17 @@ def test_deploy_replace_runtime_with_provisioning_certificate_is_not_classified_
     artifact = _prepare_published_artifact(service, business_id=business_id, site_id=site_id)
     monkeypatch.setattr(seo_migration_module, "_resolve_hostname_ipv4_addresses", lambda _hostname: ["34.149.170.250"])
 
-    with pytest.raises(SEOMigrationValidationError):
-        service.deploy_artifact_version(
-            business_id=business_id,
-            site_id=site_id,
-            artifact_version_id=artifact.id,
-            dry_run=False,
-            replace_existing_runtime=True,
-            principal_id="principal-1",
-        )
+    deploy_result = service.deploy_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        replace_existing_runtime=True,
+        principal_id="principal-1",
+    )
 
-    workspace = service.get_workspace(business_id=business_id, site_id=site_id)
-    latest = (workspace.deploy_history_json or [])[-1]
-    assert latest.get("failure_reason") == "certificate_provisioning_pending"
-    assert latest.get("failure_reason") != "managed_site_runtime_replace_failed"
+    assert publisher.deploy_calls
+    assert deploy_result.result.get("failure_reason") != "managed_site_runtime_replace_failed"
 
 
 def test_deploy_uses_stable_managed_certificate_name_across_attempts(db_session, monkeypatch) -> None:
