@@ -616,19 +616,19 @@ def test_openai_provider_timeout_is_normalized(monkeypatch) -> None:
 
     assert exc_info.value.code == "timeout"
     assert exc_info.value.normalized_failure_category == "remote_timeout"
-    assert exc_info.value.normalized_failure_reason == "request_too_large_or_complex"
+    assert exc_info.value.normalized_failure_reason == "provider_timeout"
     assert exc_info.value.normalized_failure_source == "remote_provider"
-    assert exc_info.value.normalized_retryable is False
-    assert exc_info.value.attempt_count == 1
+    assert exc_info.value.normalized_retryable is True
+    assert exc_info.value.attempt_count == 2
     assert exc_info.value.raw_output is not None
     raw_debug_payload = json.loads(exc_info.value.raw_output)
     assert raw_debug_payload["failure_kind"] == "timeout"
     assert raw_debug_payload["timeout_type"] == "read"
     assert raw_debug_payload["normalized_failure_category"] == "remote_timeout"
-    assert raw_debug_payload["normalized_failure_reason"] == "request_too_large_or_complex"
+    assert raw_debug_payload["normalized_failure_reason"] == "provider_timeout"
     assert raw_debug_payload["normalized_failure_source"] == "remote_provider"
-    assert raw_debug_payload["normalized_retryable"] is False
-    assert raw_debug_payload["attempt_count"] == 1
+    assert raw_debug_payload["normalized_retryable"] is True
+    assert raw_debug_payload["attempt_count"] == 2
     assert raw_debug_payload["endpoint_path"] == "/responses"
     assert isinstance(raw_debug_payload.get("request_debug"), dict)
     assert raw_debug_payload["request_debug"]["prompt_total_chars"] >= 1

@@ -684,12 +684,12 @@ def test_openai_migration_provider_timeout_maps_to_retryable_timeout_reason(monk
         provider.generate_artifacts(migration_context=_build_migration_context())
     error = exc_info.value
     assert error.reason == "timeout"
-    assert error.retryable is False
+    assert error.retryable is True
     assert error.normalized_failure_category == "remote_timeout"
-    assert error.normalized_failure_reason == "request_too_large_or_complex"
+    assert error.normalized_failure_reason == "provider_timeout"
     assert error.normalized_failure_source == "remote_provider"
-    assert error.normalized_retryable is False
-    assert error.attempt_count == 1
+    assert error.normalized_retryable is True
+    assert error.attempt_count == 2
     assert "timed out" in error.safe_message.lower()
 
 
