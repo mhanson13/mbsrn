@@ -177,7 +177,7 @@ Shared guarantees:
 - request budgeting with optional-context trimming before required content
 - workflow-specific parser/validator invoked through adapter policy
 - structured, secret-safe logging envelope
-- timeout retries are suppressed for unchanged oversized/complex payloads (`request_too_large_or_complex`) to avoid wasteful repeat calls
+- ordinary provider timeouts receive one bounded retry; timeout retries are suppressed only for high-pressure requests (at least 80% of their input budget or high computed complexity) and are labeled `request_too_large_or_complex`
 - calibration telemetry includes:
   - shared core events (`ai_execution_preflight`, `ai_execution_precall_rejected`, `ai_execution_retry_suppressed`, `ai_execution_completed`, `ai_execution_failed`)
   - recommendation budget events (`recommendation_narrative_request_budget`) with `budget_outcome`, `trimmed_bytes`, `trimming_pass_count`, and `dropped_optional_blocks`

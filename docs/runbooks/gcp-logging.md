@@ -134,8 +134,11 @@ Timeout vs request-too-large interpretation:
   - provider timed out under normal budget assumptions
   - retry can be useful when marked retryable.
 - `normalized_failure_reason=request_too_large_or_complex`
-  - timeout retry was suppressed because the payload size/complexity did not change
+  - timeout retry was suppressed only because the request was near its configured input ceiling (at least 80%) or had high computed complexity
   - fix by reducing optional context (adapter budget trimming) before retrying.
+- `normalized_failure_category=remote_timeout` + `normalized_failure_reason=provider_timeout`
+  - the request was not under high input pressure, so the bounded retry was attempted before this terminal timeout was recorded
+  - investigate provider latency only after confirming the retry count.
 - `normalized_failure_category=local_validation_failure` + `normalized_failure_reason=request_too_large` (or `request_too_large_or_complex`)
   - request was rejected before provider call due to synchronous budget guardrails
   - retry is not useful until request size/shape is reduced.

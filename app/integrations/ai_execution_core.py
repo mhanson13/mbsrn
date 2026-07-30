@@ -17,6 +17,7 @@ _INPUT_SIZE_BUCKET_MEDIUM_MAX = 60_000
 _INPUT_SIZE_BUCKET_LARGE_MAX = 120_000
 _DIFFICULTY_BUCKET_LOW_MAX = 34
 _DIFFICULTY_BUCKET_MEDIUM_MAX = 69
+_TIMEOUT_RETRY_SUPPRESSION_INPUT_UTILIZATION_PERCENT = 80
 
 logger = logging.getLogger(__name__)
 
@@ -414,6 +415,11 @@ def execute_json_request(
             should_retry
             and policy.suppress_timeout_retry_without_size_change
             and last_error.normalized_failure.category == "remote_timeout"
+            and _should_suppress_timeout_retry_for_input_pressure(
+                final_input_size=final_input_size,
+                max_input_size=max_input_size,
+                difficulty_score=difficulty_score,
+            )
         ):
             _log_core_event(
                 level=logging.WARNING,
@@ -495,6 +501,22 @@ def execute_json_request(
             difficulty_score=difficulty_score,
         )
     raise last_error
+
+
+def _should_suppress_timeout_retry_for_input_pressure(
+    *,
+    final_input_size: int,
+    max_input_size: int | None,
+    difficulty_score: int,
+) -> bool:
+    if difficulty_score > _DIFFICULTY_BUCKET_MEDIUM_MAX:
+        return True
+    if max_input_size is None:
+        return False
+    return (
+        final_input_size * 100
+        >= max_input_size * _TIMEOUT_RETRY_SUPPRESSION_INPUT_UTILIZATION_PERCENT
+    )
 
 
 def normalize_provider_failure(

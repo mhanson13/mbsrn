@@ -345,12 +345,12 @@ def test_openai_recommendation_narrative_provider_timeout_is_normalized(monkeypa
             current_tuning_values=_current_tuning_values(),
         )
 
-    assert exc_info.value.code == "provider_request"
+    assert exc_info.value.code == "timeout"
     assert exc_info.value.normalized_failure_category == "remote_timeout"
-    assert exc_info.value.normalized_failure_reason == "request_too_large_or_complex"
+    assert exc_info.value.normalized_failure_reason == "provider_timeout"
     assert exc_info.value.normalized_failure_source == "remote_provider"
-    assert exc_info.value.normalized_retryable is False
-    assert exc_info.value.attempt_count == 1
+    assert exc_info.value.normalized_retryable is True
+    assert exc_info.value.attempt_count == 2
 
 
 def test_openai_recommendation_narrative_provider_auth_error_is_normalized(monkeypatch) -> None:

@@ -62,26 +62,24 @@ def test_execute_json_request_retries_retryable_timeout(monkeypatch: pytest.Monk
 
     monkeypatch.setattr(urllib.request, "urlopen", _fake_urlopen)
 
-    with pytest.raises(AIExecutionError) as exc_info:
-        execute_json_request(
-            request=urllib.request.Request(
-                url="https://example.test",
-                data=b"{}",
-                method="POST",
-                headers={"Content-Type": "application/json"},
-            ),
-            policy=AIExecutionPolicy(
-                feature_area="test",
-                timeout_seconds=3,
-                max_attempts=2,
-                retry_backoff_seconds=0,
-            ),
-        )
+    response = execute_json_request(
+        request=urllib.request.Request(
+            url="https://example.test",
+            data=b"{}",
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        ),
+        policy=AIExecutionPolicy(
+            feature_area="test",
+            timeout_seconds=3,
+            max_attempts=2,
+            retry_backoff_seconds=0,
+        ),
+    )
 
-    assert exc_info.value.normalized_failure.category == "remote_timeout"
-    assert exc_info.value.normalized_failure.reason == "request_too_large_or_complex"
-    assert exc_info.value.normalized_failure.retryable is False
-    assert calls == [1]
+    assert response.body_text == '{"ok":true}'
+    assert response.attempt_count == 2
+    assert calls == [1, 1]
 
 
 def test_execute_json_request_does_not_retry_non_retryable_configuration_error(
@@ -272,6 +270,8 @@ def test_execute_json_request_retry_suppression_emits_calibration_event(
                 timeout_seconds=3,
                 max_attempts=2,
                 retry_backoff_seconds=0,
+                max_input_size=100,
+                final_input_size=90,
             ),
         )
 
@@ -288,6 +288,43 @@ def test_execute_json_request_retry_suppression_emits_calibration_event(
     assert latest.get("feature_area") == "recommendation_ai"
     assert latest.get("reason") == "request_too_large_or_complex"
     assert latest.get("provider_call_attempted") is True
+
+
+def test_execute_json_request_suppresses_retry_for_high_complexity_input(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[int] = []
+
+    def _fake_urlopen(request: urllib.request.Request, timeout: int):  # noqa: ANN001
+        del request, timeout
+        calls.append(1)
+        raise socket.timeout("timed out")
+
+    monkeypatch.setattr(urllib.request, "urlopen", _fake_urlopen)
+
+    with pytest.raises(AIExecutionError) as exc_info:
+        execute_json_request(
+            request=urllib.request.Request(
+                url="https://example.test",
+                data=("X" * 60).encode("utf-8"),
+                method="POST",
+                headers={"Content-Type": "application/json"},
+            ),
+            policy=AIExecutionPolicy(
+                feature_area="recommendation_ai",
+                timeout_seconds=3,
+                max_attempts=2,
+                retry_backoff_seconds=0,
+                max_input_size=100,
+                final_input_size=60,
+                section_count=10,
+                schema_complexity_flag=True,
+            ),
+        )
+
+    assert exc_info.value.normalized_failure.reason == "request_too_large_or_complex"
+    assert exc_info.value.difficulty_score == 72
+    assert calls == [1]
 
 
 @pytest.mark.parametrize(
