@@ -50,6 +50,8 @@ Migration workflow on the dedicated page:
 10. Use `Provision TLS Certificate` to create or verify the site-owned ManagedCertificate.
 11. Submit explicit deploy request to GKE deployment workflow.
 
+Artifact publication and managed deploy-workflow provisioning are separate stages. A successful artifact commit remains published when subsequent workflow verification fails; Deploy Readiness records `workflow_provisioning_failed` and blocks dispatch until workflow verification succeeds. Re-running Publish for the same artifact invokes duplicate-artifact workflow repair without rewriting artifact files. Existing marker-missing repositories remain blocked pending explicit adoption; only repositories created during the controlled MBSRN bootstrap receive their matching management marker automatically.
+
 Important operator cue:
 - GitHub publish is not production deployment.
 

@@ -492,6 +492,9 @@ function parseBlockerCodes(value: unknown): string[] {
 }
 
 function toDeployBlockerMessage(blockerCodes: string[]): string | null {
+  if (blockerCodes.includes("workflow_provisioning_failed")) {
+    return "Deploy workflow provisioning could not be verified. Retry deploy workflow provisioning before dispatch.";
+  }
   if (blockerCodes.includes("published_artifact_missing")) {
     return "A published artifact is required before deploy.";
   }

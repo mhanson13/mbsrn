@@ -1612,5 +1612,11 @@ If failure occurs:
   - `has_extra_request_options`
   - `has_null_optional_fields`
   - `schema_object_nodes_non_false_additional_properties`
-  - `schema_object_nodes_missing_required`
+- `schema_object_nodes_missing_required`
+
+## Managed Certificate And Static-IP Pending States
+
+- `managed_certificate_visibility_pending` means a control-plane create was accepted but the exact namespace/name is not yet observable; retry the certificate readiness action without creating a new name.
+- `managed_certificate_failed_not_visible` is reserved for observed controller visibility failure, while `managed_certificate_create_failed` is a terminal create/apply failure.
+- `static_ip_provisioning_pending` means the exact global address resource exists but has no numeric address yet. Do not dispatch; retry after bounded propagation. Multiple exact matches remain a conflict.
 

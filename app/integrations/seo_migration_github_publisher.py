@@ -159,6 +159,7 @@ class SEOMigrationGitHubManagedCertificateReadinessResult:
     gcp_credential_source: str | None = None
     gcp_principal_email: str | None = None
     gcp_impersonated_service_account_email: str | None = None
+    diagnostics: dict[str, object] | None = None
 
 
 @dataclass(frozen=True)
@@ -2781,6 +2782,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFLICT,
                 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_ADDRESS_MISSING,
                 _DEPLOY_DISPATCH_SERVICE_REASON_STATIC_IP_ADDRESS_MISSING_AFTER_RETRY,
+                _DEPLOY_DISPATCH_SERVICE_REASON_STATIC_IP_PROVISIONING_PENDING,
                 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_CONFIG_INVALID,
                 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_PERMISSION_DENIED,
             }:
@@ -3126,7 +3128,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                     "kubernetes_namespace": normalized_namespace,
                     "managed_certificate_name": managed_certificate_name,
                     "managed_certificate_exists": False,
-                    "dispatch_service_reason_code": _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_FAILED_NOT_VISIBLE,
+                    "dispatch_service_reason_code": _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_VISIBILITY_PENDING,
                     "gcp_credential_source": credential_source,
                     "gcp_principal_email": principal_email,
                     "gcp_impersonated_service_account_email": impersonated_service_account_email,
@@ -3143,7 +3145,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 observed_managed_certificate_domains=(),
                 observed_managed_certificate_status=None,
                 observed_managed_certificate_domain_status=None,
-                dispatch_service_reason_code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_FAILED_NOT_VISIBLE,
+                dispatch_service_reason_code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_VISIBILITY_PENDING,
                 gcp_credential_source=credential_source,
                 gcp_principal_email=principal_email,
                 gcp_impersonated_service_account_email=impersonated_service_account_email,
@@ -3352,7 +3354,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             raise
         if not isinstance(created_payload, dict):
             raise SEOMigrationGitHubPublisherError(
-                code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_FAILED_NOT_VISIBLE,
+                code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_CREATE_FAILED,
                 safe_message="ManagedCertificate provisioning returned no resource details.",
                 stage="certificate_provisioning",
             )
@@ -3405,7 +3407,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         project_id = _coerce_string(normalized_managed_gke_config.get(_MANAGED_GKE_CONFIG_PROJECT_ID))
         if not cluster_name or not cluster_location or not project_id:
             raise SEOMigrationGitHubPublisherError(
-                code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_FAILED_NOT_VISIBLE,
+                code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_CREATE_FAILED,
                 safe_message="ManagedCertificate provisioning requires complete managed GKE configuration.",
                 stage=stage,
             )
@@ -7899,8 +7901,14 @@ def _ensure_managed_site_global_static_ip(
 
     def _raise_static_ip_address_missing(*, operation: str) -> None:
         diagnostics_error_code, diagnostics_error_summary = _derive_missing_address_diagnostics()
+        reason_code = (
+            _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFLICT
+            if list_fallback_match_count > 1
+            else _DEPLOY_DISPATCH_SERVICE_REASON_STATIC_IP_PROVISIONING_PENDING
+        )
+        error_category = "conflict" if list_fallback_match_count > 1 else "prerequisite_pending"
         raise SEOMigrationGitHubPublisherError(
-            code=_DEPLOY_DISPATCH_SERVICE_REASON_STATIC_IP_ADDRESS_MISSING_AFTER_RETRY,
+            code=reason_code,
             safe_message=(
                 "Managed-site static IP ensure could not resolve an address value after bounded describe retries."
             ),
@@ -7908,10 +7916,11 @@ def _ensure_managed_site_global_static_ip(
             diagnostics=_normalize_static_ip_error_diagnostics(
                 {
                     "static_ip_operation": operation,
-                    "static_ip_error_category": "address_missing",
+                    "static_ip_error_category": error_category,
                     "static_ip_error_code": diagnostics_error_code,
                     "static_ip_error_summary": diagnostics_error_summary,
                     "static_ip_describe_attempts": describe_attempts,
+                    "retryable": list_fallback_match_count <= 1,
                     "static_ip_list_fallback_attempted": list_fallback_attempted,
                     "static_ip_list_fallback_match_count": list_fallback_match_count,
                     "static_ip_list_fallback_address_present": list_fallback_address_present,
@@ -9551,6 +9560,9 @@ _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROJECT_NOT_FOUND = "mana
 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFLICT = "managed_site_static_ip_conflict"
 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_ADDRESS_MISSING = "managed_site_static_ip_address_missing"
 _DEPLOY_DISPATCH_SERVICE_REASON_STATIC_IP_ADDRESS_MISSING_AFTER_RETRY = "static_ip_address_missing_after_retry"
+_DEPLOY_DISPATCH_SERVICE_REASON_STATIC_IP_PROVISIONING_PENDING = "static_ip_provisioning_pending"
+_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_CREATE_FAILED = "managed_certificate_create_failed"
+_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_VISIBILITY_PENDING = "managed_certificate_visibility_pending"
 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_CONFIG_INVALID = (
     "managed_deploy_impersonation_config_invalid"
 )

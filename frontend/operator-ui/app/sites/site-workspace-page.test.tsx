@@ -2069,6 +2069,34 @@ describe("site migration workflow route", () => {
     );
   });
 
+  it("shows workflow provisioning as a deploy-only blocker after artifact publish", async () => {
+    const summary = buildMigrationWorkspaceSummary({
+      deploy_readiness: {
+        ready: false,
+        blocker_codes: ["workflow_provisioning_failed"],
+        reasons: ["Deploy workflow provisioning could not be verified."],
+        target: {
+          enabled: true,
+          repo_owner: "mhanson13",
+          repo_name: "example-site",
+          workflow_id: "deploy-example-site-www-prod.yml",
+          ref: "main",
+        },
+      },
+    });
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(summary);
+    mockFetchMigrationPublishHistory.mockResolvedValueOnce({ items: [], total: 0 });
+    mockFetchMigrationDeployHistory.mockResolvedValueOnce({ items: [], total: 0 });
+
+    render(<SiteMigrationWorkflowPage />);
+
+    const deployReadiness = await screen.findByTestId("migration-deploy-readiness");
+    expect(within(deployReadiness).getByTestId("migration-deploy-readiness-primary-action")).toHaveTextContent(
+      "Blocker: Deploy workflow provisioning could not be verified.",
+    );
+    expect(deployReadiness).not.toHaveTextContent("Deployment target configuration is invalid.");
+  });
+
   it("renders FAILED_NOT_VISIBLE with DNS/TLS context in deploy consistency diagnostics", async () => {
     const user = userEvent.setup();
     const summary = buildMigrationWorkspaceSummary({

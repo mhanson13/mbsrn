@@ -302,11 +302,11 @@ It transforms a business's website and market context into structured insights a
   - secret values are never exposed in payloads/logs; namespace-level isolation still depends on cluster-side RBAC/service-account boundaries.
 - approve/publish/deploy button enablement is driven by authoritative readiness prerequisites after mutation refresh, not local stale assumptions.
 - analytics insertion rules remain workspace-level controls and now persist/reload reliably after save.
-- publish now enforces workflow bootstrap verification on every non-dry-run publish for target/generated repos:
+- publish records workflow bootstrap verification on every non-dry-run publish for target/generated repos:
   - checks/verifies `.github/workflows/{workflow_id}` on target branch
-  - provisions missing workflow file before publish is considered valid
+  - provisions missing workflow file after the artifact content commit succeeds
   - initializes uninitialized target refs for managed bootstrap writes when safe
-  - fails publish if provisioning cannot be verified (`workflow_provisioning_failed`)
+  - preserves the successful publish and blocks deploy readiness if provisioning cannot be verified (`workflow_provisioning_failed`)
   - keeps duplicate artifact write protection while allowing workflow-repair publishes (`duplicate_publish_repair`) when content already exists but workflow is missing
 - deploy now prefers authoritative workflow identity captured at publish time (`deploy_workflow_id` / `deploy_workflow_path`) before falling back to workspace/default workflow ids, preventing stale workspace workflow drift from blocking dispatch.
 - deploy now records requested-vs-used workflow identifiers (`workflow_identifier_requested`, `workflow_identifier_used`) plus identifier type/resolution source fields so dispatch by workflow id vs file-derived identifier is explicit in control-plane diagnostics.

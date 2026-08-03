@@ -384,6 +384,9 @@ Typical causes:
   - `https_ready=false` until certificate converges and HTTPS probe succeeds
 - a certificate in `PROVISIONING` does not block dispatch: deploy attaches the ingress and issuance can continue while runtime evidence is collected.
 - missing ManagedCertificate objects remain a deploy blocker. Use `Provision TLS Certificate`, then request GKE deploy; use refresh status to follow issuance to `ACTIVE`.
+- Artifact content is committed before the independent managed-workflow setup attempt. Workflow setup failure blocks Deploy Readiness, not the already successful artifact publish; retry provisioning or deploy without republishing. Repository adoption safeguards remain unchanged for existing marker-missing or marker-mismatched repositories.
+- certificate diagnostics distinguish `managed_certificate_create_failed` (terminal), `managed_certificate_visibility_pending` (accepted create not yet observable and retryable), `certificate_provisioning_pending` (observable object issuing TLS), and `managed_certificate_failed_not_visible` (observed controller failure).
+- an existing exact-name static-IP resource with no numeric address is `static_ip_provisioning_pending` and retryable; ambiguous matches remain a terminal conflict and deploy never dispatches without an address.
 - missing ManagedCertificate objects, FAILED_NOT_VISIBLE states, certificate/domain mismatch, and DNS mismatch remain distinct blocker states and are not normalized into provisioning.
 - next action: wait for ManagedCertificate to reach `ACTIVE`, then refresh/rerun deploy.
 

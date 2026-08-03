@@ -161,6 +161,7 @@ Shared reliability model:
 
 Competitor-specific behavior remains feature-bounded:
 - deterministic degraded/fallback paths remain in competitor orchestration
+- a degraded response with zero schema-valid candidates is `no_valid_candidates_after_validation`, never `degraded_success`
 - no fabricated competitor intelligence beyond existing deterministic fallback rules
 - review/accept trust gate remains unchanged
 

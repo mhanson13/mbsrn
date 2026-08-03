@@ -36,6 +36,7 @@ The site workspace now surfaces the latest completed recommendation run, determi
      - `retryable`
    - Raw reason/warning code arrays and scoring are not returned to operator UI payloads.
    - Parseable but operationally weak outputs are rejected with safe failure diagnostics rather than persisted as successful narratives.
+   - High-volume recommendation and backlog inputs are compacted before synchronous provider submission; the recommendation timeout remains task-scoped and bounded.
    - Structured narrative sections can include `tuning_suggestions` (max 4), each constrained to allowed setting keys, bounded integer values, and valid linked recommendation IDs.
 4. Narrative retrieval:
    - list/latest/by-id narrative endpoints return persisted narrative versions.

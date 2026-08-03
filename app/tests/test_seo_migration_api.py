@@ -2199,6 +2199,73 @@ def test_publish_duplicate_repairs_missing_workflow_when_artifact_already_exists
     assert len(publisher.workflow_provision_calls) == 2
 
 
+def test_publish_api_preserves_artifact_success_when_workflow_provisioning_fails(db_session) -> None:
+    business_id = "11111111-1111-1111-1111-111111111111"
+    site_id = "22222222-2222-2222-2222-222222222222"
+    _seed_business_and_site(db_session, business_id=business_id, site_id=site_id)
+    publisher = _StubMigrationGitHubPublisher(
+        existing_workflow=False,
+        fail_workflow_provision=True,
+    )
+    client = _make_client(
+        db_session,
+        business_id=business_id,
+        github_publisher=publisher,
+    )
+
+    workspace_response = client.put(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/workspace",
+        json={
+            "source_url": "https://legacy.example",
+            "publish_config": {
+                "enabled": True,
+                "repo_owner": "acme",
+                "repo_name": "tnmfire-site",
+                "branch": "main",
+            },
+            "deploy_config": {
+                "enabled": True,
+                "workflow_id": "deploy-www-prod.yml",
+                "ref": "main",
+            },
+        },
+    )
+    assert workspace_response.status_code == 200
+    _prepare_workspace_for_draft_generation(client, business_id=business_id, site_id=site_id)
+    artifact_id = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/generate-draft-artifacts",
+        json={"force_new_version": True},
+    ).json()["id"]
+    assert client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/artifact-versions/{artifact_id}/approve",
+        json={"approval_notes": "Approved"},
+    ).status_code == 200
+
+    publish_response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/publish",
+        json={"artifact_version_id": artifact_id, "dry_run": False},
+    )
+
+    assert publish_response.status_code == 200
+    publish_payload = publish_response.json()
+    result_payload = publish_payload["result"]
+    assert publish_payload["workspace"]["publish_status"] == "published"
+    assert publish_payload["artifact"]["publish_status"] == "published"
+    assert result_payload["publish_status"] == "published"
+    assert result_payload["publish_ready"] is True
+    assert result_payload["deploy_ready"] is False
+    assert result_payload["deploy_blocker_code"] == "workflow_provisioning_failed"
+    assert result_payload["dispatch_attempted"] is False
+    assert result_payload["workflow_provisioning_warning_code"] == "workflow_provisioning_failed"
+    assert result_payload["commit_shas"]
+
+    summary_payload = client.get(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/summary"
+    ).json()
+    assert "workflow_provisioning_failed" in summary_payload["deploy_readiness"]["blocker_codes"]
+    assert summary_payload["publish_history"][-1]["status"] == "published"
+
+
 def test_migration_summary_contract_includes_readiness_and_history_shapes(db_session) -> None:
     business_id = "11111111-1111-1111-1111-111111111111"
     site_id = "22222222-2222-2222-2222-222222222222"

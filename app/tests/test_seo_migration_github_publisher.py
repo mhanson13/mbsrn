@@ -4801,10 +4801,10 @@ def test_ensure_managed_site_static_ip_fails_when_address_missing_after_describe
             dry_run=False,
         )
 
-    assert exc_info.value.code == "static_ip_address_missing_after_retry"
+    assert exc_info.value.code == "static_ip_provisioning_pending"
     assert exc_info.value.stage == "static_ip_provision"
     diagnostics = exc_info.value.diagnostics or {}
-    assert diagnostics.get("static_ip_error_category") == "address_missing"
+    assert diagnostics.get("static_ip_error_category") == "prerequisite_pending"
     assert diagnostics.get("static_ip_operation") == "describe"
     assert diagnostics.get("static_ip_describe_attempts") == 8
     assert diagnostics.get("static_ip_list_fallback_attempted") is True
@@ -4929,10 +4929,10 @@ def test_ensure_managed_site_static_ip_fails_closed_when_list_fallback_has_multi
             dry_run=False,
         )
 
-    assert exc_info.value.code == "static_ip_address_missing_after_retry"
+    assert exc_info.value.code == "managed_site_static_ip_conflict"
     assert exc_info.value.stage == "static_ip_provision"
     diagnostics = exc_info.value.diagnostics or {}
-    assert diagnostics.get("static_ip_error_category") == "address_missing"
+    assert diagnostics.get("static_ip_error_category") == "conflict"
     assert diagnostics.get("static_ip_error_code") == "address_ambiguous_after_retry"
     assert diagnostics.get("static_ip_operation") == "describe"
     assert diagnostics.get("static_ip_list_fallback_attempted") is True
@@ -5954,7 +5954,7 @@ def test_check_managed_certificate_readiness_reports_missing_resource(monkeypatc
     )
 
     assert result.managed_certificate_exists is False
-    assert result.dispatch_service_reason_code == "managed_certificate_failed_not_visible"
+    assert result.dispatch_service_reason_code == "managed_certificate_visibility_pending"
     assert result.managed_certificate_name.startswith("site-web-preview-cert-")
 
 

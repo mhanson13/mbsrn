@@ -628,6 +628,8 @@ _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROJECT_NOT_FOUND = "mana
 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFLICT = "managed_site_static_ip_conflict"
 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_ADDRESS_MISSING = "managed_site_static_ip_address_missing"
 _DEPLOY_DISPATCH_SERVICE_REASON_STATIC_IP_ADDRESS_MISSING_AFTER_RETRY = "static_ip_address_missing_after_retry"
+_DEPLOY_DISPATCH_SERVICE_REASON_STATIC_IP_PROVISIONING_PENDING = "static_ip_provisioning_pending"
+_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_VISIBILITY_PENDING = "managed_certificate_visibility_pending"
 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_CONFIG_INVALID = (
     "managed_deploy_impersonation_config_invalid"
 )
@@ -3885,6 +3887,7 @@ class SEOMigrationService:
         workflow_provisioning_remediation_mode: str | None = None
         workflow_provisioning_warning_code: str | None = None
         workflow_provisioning_warning_message: str | None = None
+        workflow_provisioning_error_code: str | None = None
         workflow_remediation_attempted = False
         workflow_remediation_outcome = _WORKFLOW_REMEDIATION_OUTCOME_NOT_ATTEMPTED
         deploy_secret_propagation_attempted = False
@@ -3915,6 +3918,7 @@ class SEOMigrationService:
         expected_publish_url_source_detail: str | None = None
         duplicate_publish_repaired = False
         publish_result: SEOMigrationGitHubPublishResult | None = None
+        provision_workflow_after_publish = True
         admin_deploy_metadata = self._resolve_admin_deploy_template_metadata()
         deploy_workflow_mode = (
             _normalize_string(
@@ -4093,7 +4097,7 @@ class SEOMigrationService:
                 deploy_config=workspace.deploy_config_json,
             )
 
-            if not dry_run and isinstance(deploy_target_for_workflow, dict):
+            if (duplicate_publish_attempt or not provision_workflow_after_publish) and not dry_run and isinstance(deploy_target_for_workflow, dict):
                 workflow_provisioning_remediation_mode = (
                     "duplicate_publish_repair" if duplicate_publish_attempt else "bootstrap"
                 )
@@ -4591,6 +4595,218 @@ class SEOMigrationService:
         if publish_result is None:
             raise SEOMigrationValidationError("Migration publish result was unavailable.")
 
+        if (
+            not dry_run
+            and provision_workflow_after_publish
+            and not duplicate_publish_attempt
+            and isinstance(deploy_target_for_workflow, dict)
+        ):
+            workflow_provisioning_remediation_mode = "bootstrap"
+            workflow_owner = str(deploy_target_for_workflow.get("repo_owner") or target["repo_owner"])
+            workflow_repo = str(deploy_target_for_workflow.get("repo_name") or target["repo_name"])
+            workflow_ref = str(deploy_target_for_workflow.get("ref") or target["branch"])
+            workflow_identifier = str(deploy_target_for_workflow.get("workflow_id") or self.deploy_default_workflow_id)
+            workflow_path = f".github/workflows/{workflow_identifier}"
+            self._emit_structured_service_log(
+                payload={
+                    "event": "seo_migration_publish_workflow_resolution",
+                    "business_id": business_id,
+                    "site_id": site_id,
+                    "workspace_id": workspace.id,
+                    "artifact_version_id": artifact.id,
+                    "repo_owner": workflow_owner,
+                    "repo_name": workflow_repo,
+                    "ref": workflow_ref,
+                    "workflow_id": workflow_identifier,
+                    "workflow_path": (
+                        _normalize_workflow_path_for_deploy(
+                            (workflow_resolution_for_provision or {}).get("workflow_path")
+                        )
+                        or _normalize_workflow_path_for_deploy(workflow_path)
+                    ),
+                    "resolved_workflow_source": _normalize_string(
+                        (workflow_resolution_for_provision or {}).get("source"),
+                        max_length=60,
+                    ),
+                    "site_workflow_file_path": _normalize_workflow_path_for_deploy(
+                        (workflow_resolution_for_provision or {}).get("site_specific_workflow_path")
+                    ),
+                    "deploy_workflow_mode": _normalize_string(
+                        (workflow_resolution_for_provision or {}).get("deploy_workflow_mode"),
+                        max_length=60,
+                    )
+                    or deploy_workflow_mode,
+                },
+                fallback_message="seo_migration_publish_workflow_resolution",
+                level=logging.INFO,
+            )
+            if publish_preflight_blocker_code == "github_workflow_write_not_authorized":
+                workflow_provisioning_status = "skipped_not_authorized"
+                workflow_provisioning_remediation_mode = "authorization_required"
+                workflow_provisioning_warning_code = "github_workflow_write_not_authorized"
+                workflow_provisioning_warning_message = (
+                    "Deploy workflow provisioning could not be verified during publish because workflow write access is unavailable."
+                )
+                publish_warnings.append(workflow_provisioning_warning_message)
+            else:
+                try:
+                    deploy_workflow_provision_result = self.github_publisher.ensure_deploy_workflow(
+                    repo_owner=workflow_owner,
+                    repo_name=workflow_repo,
+                    branch=workflow_ref,
+                    workflow_id=workflow_identifier,
+                    dry_run=False,
+                    deploy_workflow_mode=deploy_workflow_mode,
+                    target_environment_key=target_environment_key,
+                    target_environment_source=target_environment_source,
+                    managed_gke_config=_normalize_json_dict(admin_deploy_metadata.get("managed_gke_config")),
+                    managed_image_pull_secret_config=self._resolve_managed_image_pull_secret_runtime_config()[0],
+                    namespace_isolation_defaults=admin_deploy_metadata.get("namespace_isolation_defaults"),
+                    site_id=site.id,
+                    business_id=workspace.business_id,
+                    repository_auto_create_created=repository_auto_create_created,
+                    artifact_version_id=artifact.id,
+                )
+                    workflow_provisioning_verified = True
+                    workflow_provisioning_status = (
+                        "created" if deploy_workflow_provision_result.provisioned else "already_exists"
+                    )
+                    self._log_workflow_provisioning(
+                    business_id=business_id,
+                    site_id=site_id,
+                    workspace_id=workspace.id,
+                    principal_id=principal_id,
+                    artifact_version_id=artifact.id,
+                    repo_owner=workflow_owner,
+                    repo_name=workflow_repo,
+                    ref=workflow_ref,
+                    workflow_id=workflow_identifier,
+                    workflow_path=deploy_workflow_provision_result.workflow_path,
+                    status=workflow_provisioning_status,
+                    remediation_mode=workflow_provisioning_remediation_mode,
+                    deploy_workflow_mode=deploy_workflow_mode,
+                    target_environment_key=target_environment_key,
+                    target_environment_source=target_environment_source,
+                    kubernetes_namespace=deploy_workflow_provision_result.kubernetes_namespace,
+                    namespace_source=deploy_workflow_provision_result.namespace_source,
+                    namespace_model_status=deploy_workflow_provision_result.namespace_model_status,
+                    managed_manifest_paths=deploy_workflow_provision_result.managed_manifest_paths,
+                    managed_resource_quota_expected=deploy_workflow_provision_result.managed_resource_quota_expected,
+                    managed_resource_quota_present=deploy_workflow_provision_result.managed_resource_quota_present,
+                    managed_limit_range_expected=deploy_workflow_provision_result.managed_limit_range_expected,
+                    managed_limit_range_present=deploy_workflow_provision_result.managed_limit_range_present,
+                    managed_network_policy_expected=deploy_workflow_provision_result.managed_network_policy_expected,
+                    managed_network_policy_present=deploy_workflow_provision_result.managed_network_policy_present,
+                    managed_namespace_policies_aligned=deploy_workflow_provision_result.managed_namespace_policies_aligned,
+                    workflow_remediation_outcome=workflow_remediation_outcome,
+                    repository_auto_create_created=repository_auto_create_created,
+                    commit_sha=deploy_workflow_provision_result.commit_sha,
+                    verified=True,
+                    )
+                    self._log_workflow_provisioning(
+                    business_id=business_id,
+                    site_id=site_id,
+                    workspace_id=workspace.id,
+                    principal_id=principal_id,
+                    artifact_version_id=artifact.id,
+                    repo_owner=workflow_owner,
+                    repo_name=workflow_repo,
+                    ref=workflow_ref,
+                    workflow_id=workflow_identifier,
+                    workflow_path=deploy_workflow_provision_result.workflow_path,
+                    status="verified",
+                    remediation_mode=workflow_provisioning_remediation_mode,
+                    deploy_workflow_mode=deploy_workflow_mode,
+                    target_environment_key=target_environment_key,
+                    target_environment_source=target_environment_source,
+                    kubernetes_namespace=deploy_workflow_provision_result.kubernetes_namespace,
+                    namespace_source=deploy_workflow_provision_result.namespace_source,
+                    namespace_model_status=deploy_workflow_provision_result.namespace_model_status,
+                    managed_manifest_paths=deploy_workflow_provision_result.managed_manifest_paths,
+                    managed_resource_quota_expected=deploy_workflow_provision_result.managed_resource_quota_expected,
+                    managed_resource_quota_present=deploy_workflow_provision_result.managed_resource_quota_present,
+                    managed_limit_range_expected=deploy_workflow_provision_result.managed_limit_range_expected,
+                    managed_limit_range_present=deploy_workflow_provision_result.managed_limit_range_present,
+                    managed_network_policy_expected=deploy_workflow_provision_result.managed_network_policy_expected,
+                    managed_network_policy_present=deploy_workflow_provision_result.managed_network_policy_present,
+                    managed_namespace_policies_aligned=deploy_workflow_provision_result.managed_namespace_policies_aligned,
+                    workflow_remediation_outcome=workflow_remediation_outcome,
+                    repository_auto_create_created=repository_auto_create_created,
+                    commit_sha=deploy_workflow_provision_result.commit_sha,
+                    verified=True,
+                    )
+                    if deploy_workflow_provision_result.provisioned:
+                        self._log_workflow_provisioned(
+                        business_id=business_id,
+                        site_id=site_id,
+                        workspace_id=workspace.id,
+                        principal_id=principal_id,
+                        provision_result=deploy_workflow_provision_result,
+                        )
+                    (
+                        deploy_secret_propagation_attempted,
+                        deploy_secret_propagation_status,
+                        deploy_secret_propagation_reason,
+                        deploy_secret_propagation_source,
+                    ) = self._attempt_deploy_secret_propagation(
+                    business_id=business_id,
+                    site_id=site_id,
+                    workspace_id=workspace.id,
+                    artifact_version_id=artifact.id,
+                    principal_id=principal_id,
+                    workflow_owner=workflow_owner,
+                    workflow_repo=workflow_repo,
+                    workflow_ref=workflow_ref,
+                    publish_target=target,
+                    deploy_target=deploy_target_for_workflow,
+                    admin_prerequisites=admin_publish_prerequisites,
+                    )
+                except SEOMigrationGitHubPublisherError as exc:
+                    workflow_provisioning_status = "failed"
+                    workflow_provisioning_warning_code = "workflow_provisioning_failed"
+                    workflow_provisioning_error_code = _normalize_string(exc.code, max_length=80)
+                    workflow_provisioning_warning_message = (
+                        "Deploy workflow provisioning could not be verified. Artifact publish succeeded; retry deploy workflow provisioning before dispatch."
+                    )
+                    publish_warnings.append(workflow_provisioning_warning_message)
+                    workflow_remediation_outcome = _WORKFLOW_REMEDIATION_OUTCOME_WRITE_FAILED
+                    self._log_workflow_provisioning(
+                        business_id=business_id,
+                        site_id=site_id,
+                        workspace_id=workspace.id,
+                        principal_id=principal_id,
+                        artifact_version_id=artifact.id,
+                        repo_owner=workflow_owner,
+                        repo_name=workflow_repo,
+                        ref=workflow_ref,
+                        workflow_id=workflow_identifier,
+                        workflow_path=workflow_path,
+                        status="failed",
+                        remediation_mode=workflow_provisioning_remediation_mode,
+                        deploy_workflow_mode=deploy_workflow_mode,
+                        target_environment_key=target_environment_key,
+                        target_environment_source=target_environment_source,
+                        kubernetes_namespace=_safe_derive_kubernetes_namespace_for_summary(
+                            repo_name=workflow_repo
+                        )[0],
+                        namespace_source=None,
+                        namespace_model_status=None,
+                        managed_manifest_paths=(),
+                        managed_resource_quota_expected=False,
+                        managed_resource_quota_present=None,
+                        managed_limit_range_expected=False,
+                        managed_limit_range_present=None,
+                        managed_network_policy_expected=False,
+                        managed_network_policy_present=None,
+                        managed_namespace_policies_aligned=None,
+                        workflow_remediation_outcome=workflow_remediation_outcome,
+                        repository_auto_create_created=repository_auto_create_created,
+                        commit_sha=None,
+                        verified=False,
+                        error_code=exc.code,
+                        error_message=exc.safe_message,
+                    )
+
         now = utc_now()
         status_label = "dry_run" if dry_run else "published"
         if not dry_run:
@@ -4664,6 +4880,7 @@ class SEOMigrationService:
             "workflow_provisioning_remediation_mode": workflow_provisioning_remediation_mode,
             "workflow_provisioning_warning_code": workflow_provisioning_warning_code,
             "workflow_provisioning_warning_message": workflow_provisioning_warning_message,
+            "workflow_provisioning_error_code": workflow_provisioning_error_code,
             "workflow_remediation_attempted": workflow_remediation_attempted,
             "workflow_remediation_outcome": workflow_remediation_outcome,
             "deploy_secret_propagation_attempted": deploy_secret_propagation_attempted,
@@ -4766,6 +4983,34 @@ class SEOMigrationService:
         self.session.commit()
         self.session.refresh(artifact)
         self.session.refresh(workspace)
+        publish_readiness_after_publish = self._build_publish_readiness(
+            site=site,
+            workspace=workspace,
+            artifact=artifact,
+        )
+        deploy_readiness_after_publish = self._build_deploy_readiness(
+            site=site,
+            workspace=workspace,
+            artifact=artifact,
+        )
+        deploy_blocker_codes_after_publish = _normalize_string_list(
+            deploy_readiness_after_publish.get("blocker_codes"),
+            max_items=12,
+            max_item_length=80,
+        )
+        publish_result_payload = {
+            **history_payload,
+            "publish_status": artifact.publish_status,
+            "publish_ready": bool(publish_readiness_after_publish.get("ready")),
+            "deploy_ready": bool(deploy_readiness_after_publish.get("ready")),
+            "deploy_blocker_code": (
+                "workflow_provisioning_failed"
+                if "workflow_provisioning_failed" in deploy_blocker_codes_after_publish
+                else (deploy_blocker_codes_after_publish[0] if deploy_blocker_codes_after_publish else None)
+            ),
+            "dispatch_attempted": False,
+            "deploy_readiness": deploy_readiness_after_publish,
+        }
         self._log_control_plane_action(
             action="publish",
             status="completed",
@@ -4789,6 +5034,7 @@ class SEOMigrationService:
                 "workflow_provisioning_remediation_mode": workflow_provisioning_remediation_mode,
                 "workflow_provisioning_warning_code": workflow_provisioning_warning_code,
                 "workflow_provisioning_warning_message": workflow_provisioning_warning_message,
+                "workflow_provisioning_error_code": workflow_provisioning_error_code,
                 "workflow_remediation_attempted": workflow_remediation_attempted,
                 "workflow_remediation_outcome": workflow_remediation_outcome,
                 "deploy_secret_propagation_attempted": deploy_secret_propagation_attempted,
@@ -4825,8 +5071,8 @@ class SEOMigrationService:
         return SEOMigrationPublishActionResult(
             workspace=workspace,
             artifact=artifact,
-            readiness=readiness,
-            result=history_payload,
+            readiness=publish_readiness_after_publish,
+            result=publish_result_payload,
         )
 
     def adopt_publish_repository(
@@ -6411,7 +6657,7 @@ class SEOMigrationService:
                                 _emit_prerequisite_chain_log(stage="static_ip_address_refreshed")
                         if not expected_static_ip_address:
                             dispatch_service_reason_code = (
-                                _DEPLOY_DISPATCH_SERVICE_REASON_STATIC_IP_ADDRESS_MISSING_AFTER_RETRY
+                                _DEPLOY_DISPATCH_SERVICE_REASON_STATIC_IP_PROVISIONING_PENDING
                             )
                             static_ip_ensure_result = "failed"
                             static_ip_operation = "ensure"
@@ -6426,11 +6672,11 @@ class SEOMigrationService:
                             )
                             _emit_prerequisite_chain_log(
                                 stage="static_ip_address_missing",
-                                reason_code=_DEPLOY_DISPATCH_SERVICE_REASON_STATIC_IP_ADDRESS_MISSING_AFTER_RETRY,
+                                reason_code=_DEPLOY_DISPATCH_SERVICE_REASON_STATIC_IP_PROVISIONING_PENDING,
                                 level=logging.WARNING,
                             )
                             raise SEOMigrationGitHubPublisherError(
-                                code=_DEPLOY_DISPATCH_SERVICE_REASON_STATIC_IP_ADDRESS_MISSING_AFTER_RETRY,
+                                code=_DEPLOY_DISPATCH_SERVICE_REASON_STATIC_IP_PROVISIONING_PENDING,
                                 safe_message=(
                                     "Managed-site static IP ensure could not resolve an address value after bounded retries. "
                                     "Verify global address visibility and retry."
@@ -6959,7 +7205,10 @@ class SEOMigrationService:
                         )
                         if normalized_certificate_reason in {None, _DEPLOY_DISPATCH_SERVICE_REASON_AVAILABLE}:
                             _emit_prerequisite_chain_log(stage="managed_certificate_readiness_succeeded")
-                        elif normalized_certificate_reason == _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_PROVISIONING:
+                        elif normalized_certificate_reason in {
+                            _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_PROVISIONING,
+                            _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_VISIBILITY_PENDING,
+                        }:
                             _emit_prerequisite_chain_log(
                                 stage="managed_certificate_readiness_pending_allowed",
                                 reason_code=normalized_certificate_reason,
@@ -19231,6 +19480,38 @@ class SEOMigrationService:
         }
 
     @staticmethod
+    def _derive_latest_publish_workflow_provisioning(
+        *,
+        history: object,
+        artifact_version_id: str | None,
+    ) -> dict[str, object]:
+        artifact_id = str(artifact_version_id or "").strip()
+        for item in reversed(_normalize_history_list(history)):
+            if str(item.get("action") or "").strip().lower() != "publish":
+                continue
+            if str(item.get("status") or "").strip().lower() != "published":
+                continue
+            if artifact_id and str(item.get("artifact_version_id") or "").strip() != artifact_id:
+                continue
+            return {
+                "status": _normalize_string(item.get("workflow_provisioning_status"), max_length=80),
+                "warning_code": _normalize_string(
+                    item.get("workflow_provisioning_warning_code"),
+                    max_length=80,
+                ),
+                "warning_message": _normalize_string(
+                    item.get("workflow_provisioning_warning_message"),
+                    max_length=300,
+                ),
+                "verified": (
+                    bool(item.get("workflow_provisioning_verified"))
+                    if isinstance(item.get("workflow_provisioning_verified"), bool)
+                    else None
+                ),
+            }
+        return {}
+
+    @staticmethod
     def _derive_latest_deploy_failure_detail(*, history: object) -> dict[str, object]:
         normalized_history = _normalize_history_list(history)
         for item in reversed(normalized_history):
@@ -20683,6 +20964,44 @@ class SEOMigrationService:
                             target_summary.get("image_pull_secret_provisioning_unavailable"),
                         )
                     )
+
+        latest_publish_workflow_provisioning = self._derive_latest_publish_workflow_provisioning(
+            history=workspace.publish_history_json,
+            artifact_version_id=artifact.id if artifact is not None else None,
+        )
+        publish_workflow_status = _normalize_string(
+            latest_publish_workflow_provisioning.get("status"),
+            max_length=80,
+        )
+        publish_workflow_warning_code = _normalize_string(
+            latest_publish_workflow_provisioning.get("warning_code"),
+            max_length=80,
+        )
+        publish_workflow_warning_message = _normalize_string(
+            latest_publish_workflow_provisioning.get("warning_message"),
+            max_length=300,
+        )
+        workflow_verified_by_current_readiness = bool(
+            target_readiness is not None
+            and target_readiness.workflow_exists
+            and target_readiness.workflow_dispatch_ready
+        )
+        if publish_workflow_status:
+            target_summary["workflow_provisioning_status"] = publish_workflow_status
+        if publish_workflow_warning_code:
+            target_summary["workflow_provisioning_warning_code"] = publish_workflow_warning_code
+        if publish_workflow_warning_message:
+            target_summary["workflow_provisioning_warning_message"] = publish_workflow_warning_message
+        target_summary["workflow_provisioning_verified_by_current_readiness"] = bool(
+            workflow_verified_by_current_readiness
+            and publish_workflow_warning_code != "workflow_provisioning_failed"
+        )
+        if publish_workflow_warning_code == "workflow_provisioning_failed":
+            reasons.append(
+                publish_workflow_warning_message
+                or "Deploy workflow provisioning could not be verified. Retry deploy workflow provisioning before dispatch."
+            )
+            blocker_codes.append("workflow_provisioning_failed")
 
         legacy_runtime_reason_code = (
             _normalize_dispatch_service_reason_code(dispatch_service_reason_code)
@@ -25843,6 +26162,7 @@ def _normalize_deploy_failure_reason_code(value: object) -> str | None:
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_CONFLICT,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_ADDRESS_MISSING,
         _DEPLOY_DISPATCH_SERVICE_REASON_STATIC_IP_ADDRESS_MISSING_AFTER_RETRY,
+        _DEPLOY_DISPATCH_SERVICE_REASON_STATIC_IP_PROVISIONING_PENDING,
         _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_MISSING,
         _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_HOSTNAME_MISSING,
         _DEPLOY_DISPATCH_SERVICE_REASON_TARGET_REPO_DEPLOY_SECRET_MISSING,
@@ -25857,6 +26177,7 @@ def _normalize_deploy_failure_reason_code(value: object) -> str | None:
         _DEPLOY_DISPATCH_SERVICE_REASON_CERTIFICATE_DOMAIN_MISMATCH,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_OWNERSHIP_UNVERIFIED,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_FAILED_NOT_VISIBLE,
+        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_VISIBILITY_PENDING,
         _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_PROVISIONING,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_DOMAIN_DRIFT_REPAIR_FAILED,
         "github_target_not_found",

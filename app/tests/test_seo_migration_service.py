@@ -7621,8 +7621,8 @@ def test_deploy_blocks_before_dns_ensure_when_static_ip_address_missing_after_re
     deploy_history = workspace.deploy_history_json or []
     assert deploy_history
     latest = deploy_history[-1]
-    assert latest.get("failure_reason") == "static_ip_address_missing_after_retry"
-    assert latest.get("dispatch_service_reason_code") == "static_ip_address_missing_after_retry"
+    assert latest.get("failure_reason") == "static_ip_provisioning_pending"
+    assert latest.get("dispatch_service_reason_code") == "static_ip_provisioning_pending"
     assert latest.get("dispatch_result_stage") == "static_ip_provision"
     prerequisite_logs = [
         record.__dict__.get("json_fields")
@@ -7633,7 +7633,7 @@ def test_deploy_blocks_before_dns_ensure_when_static_ip_address_missing_after_re
     assert prerequisite_logs
     missing_logs = [log for log in prerequisite_logs if log.get("stage") == "static_ip_address_missing"]
     assert missing_logs
-    assert missing_logs[-1].get("reason_code") == "static_ip_address_missing_after_retry"
+    assert missing_logs[-1].get("reason_code") == "static_ip_provisioning_pending"
     assert missing_logs[-1].get("static_ip_address_present") is False
     assert missing_logs[-1].get("dns_expected_ip_present") is False
 
@@ -12347,7 +12347,7 @@ def test_publish_duplicate_write_failure_reports_remediation_write_failed(db_ses
     assert failure_target.get("workflow_remediation_outcome") == "remediation_write_failed"
 
 
-def test_publish_fails_when_workflow_provisioning_fails(db_session) -> None:
+def test_publish_succeeds_when_workflow_provisioning_fails(db_session) -> None:
     publisher = _RecordingGitHubPublisher(fail_workflow_provision=True)
     service = _build_service(
         db_session,
@@ -12376,24 +12376,24 @@ def test_publish_fails_when_workflow_provisioning_fails(db_session) -> None:
         principal_id="principal-1",
     )
 
-    with pytest.raises(SEOMigrationValidationError, match="workflow provisioning failure"):
-        service.publish_artifact_version(
-            business_id=business_id,
-            site_id=site_id,
-            artifact_version_id=artifact.id,
-            dry_run=False,
-            commit_message=None,
-            analytics_measurement_id=None,
-            principal_id="principal-1",
-        )
+    result = service.publish_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        commit_message=None,
+        analytics_measurement_id=None,
+        principal_id="principal-1",
+    )
 
     refreshed_workspace = service.get_workspace(business_id=business_id, site_id=site_id)
     publish_history = refreshed_workspace.publish_history_json or []
     assert publish_history
     latest = publish_history[-1]
-    assert latest.get("status") == "failed"
-    assert latest.get("failure_category") == "target_invalid"
-    assert latest.get("failure_reason") == "workflow_provision_failed"
+    assert result.artifact.publish_status == "published"
+    assert latest.get("status") == "published"
+    assert latest.get("workflow_provisioning_status") == "failed"
+    assert latest.get("workflow_provisioning_warning_code") == "workflow_provisioning_failed"
 
 
 def test_duplicate_publish_rejection_still_allows_deploy(db_session) -> None:
@@ -15938,19 +15938,18 @@ def test_publish_missing_repo_with_auto_create_enabled_creates_repo_and_continue
 
 
 @pytest.mark.parametrize(
-    ("provision_error_code", "expected_failure_category"),
+    "provision_error_code",
     (
-        ("github_workflow_write_not_authorized", "config_missing"),
-        ("github_contents_write_not_authorized", "config_missing"),
-        ("github_branch_not_found_or_uninitialized", "target_invalid"),
-        ("github_repo_state_invalid_for_bootstrap", "target_invalid"),
+        "github_workflow_write_not_authorized",
+        "github_contents_write_not_authorized",
+        "github_branch_not_found_or_uninitialized",
+        "github_repo_state_invalid_for_bootstrap",
     ),
 )
-def test_publish_new_repo_preserves_precise_workflow_provision_failure_code(
+def test_publish_new_repo_records_workflow_provision_failure_without_rolling_back_artifact(
     db_session,
     caplog,
     provision_error_code: str,
-    expected_failure_category: str,
 ) -> None:
     caplog.set_level("INFO", logger="app.services.seo_migration")
     publisher = _RecordingGitHubPublisher(
@@ -15982,16 +15981,15 @@ def test_publish_new_repo_preserves_precise_workflow_provision_failure_code(
         principal_id="principal-1",
     )
 
-    with pytest.raises(SEOMigrationValidationError, match="Simulated workflow provisioning failure"):
-        service.publish_artifact_version(
-            business_id=business_id,
-            site_id=site_id,
-            artifact_version_id=artifact.id,
-            dry_run=False,
-            commit_message="Publish migration",
-            analytics_measurement_id=None,
-            principal_id="principal-1",
-        )
+    publish_result = service.publish_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        commit_message="Publish migration",
+        analytics_measurement_id=None,
+        principal_id="principal-1",
+    )
 
     assert publisher.ensure_repository_calls
     assert any(call[2] is True and call[3] is True for call in publisher.ensure_repository_calls)
@@ -15999,26 +15997,30 @@ def test_publish_new_repo_preserves_precise_workflow_provision_failure_code(
     publish_history = workspace.publish_history_json or []
     assert publish_history
     latest_history_item = publish_history[-1]
-    assert latest_history_item.get("status") == "failed"
-    assert latest_history_item.get("failure_reason") == provision_error_code
+    assert latest_history_item.get("status") == "published"
+    assert latest_history_item.get("workflow_provisioning_status") == "failed"
+    assert latest_history_item.get("workflow_provisioning_warning_code") == "workflow_provisioning_failed"
+    assert latest_history_item.get("workflow_provisioning_error_code") == provision_error_code
     assert latest_history_item.get("repository_auto_create_created") is True
     assert latest_history_item.get("repo_ensure_outcome") == "created"
     assert latest_history_item.get("failure_reason") != "github_request_failed"
 
-    failed_action_logs = [
+    completed_action_logs = [
         record.__dict__.get("json_fields")
         for record in caplog.records
         if isinstance(record.__dict__.get("json_fields"), dict)
         and record.__dict__["json_fields"].get("event") == "seo_migration_control_plane_action"
         and record.__dict__["json_fields"].get("action") == "publish"
-        and record.__dict__["json_fields"].get("status") == "failed"
+        and record.__dict__["json_fields"].get("status") == "completed"
     ]
-    assert failed_action_logs
-    failed_payload = failed_action_logs[-1]
-    target_payload = failed_payload.get("target") or {}
-    assert failed_payload.get("failure_category") == expected_failure_category
-    assert target_payload.get("failure_reason_code") == provision_error_code
-    assert target_payload.get("failure_reason_code") != "github_request_failed"
+    assert completed_action_logs
+    completed_payload = completed_action_logs[-1]
+    target_payload = completed_payload.get("target") or {}
+    assert publish_result.result.get("publish_status") == "published"
+    assert publish_result.result.get("deploy_ready") is False
+    assert publish_result.result.get("deploy_blocker_code") == "workflow_provisioning_failed"
+    assert publish_result.result.get("dispatch_attempted") is False
+    assert target_payload.get("workflow_provisioning_error_code") == provision_error_code
     assert target_payload.get("repository_auto_create_created") is True
     assert target_payload.get("repo_ensure_outcome") == "created"
 

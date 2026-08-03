@@ -4789,6 +4789,20 @@ class SEOCompetitorProfileGenerationService:
                 max_attempts=max_attempts,
             )
         )
+        if not output.candidates and output.schema_invalid_candidate_count > 0:
+            _finalize_timeout_outcome(final_outcome="failure")
+            raise SEOCompetitorProfileProviderError(
+                code="no_valid_candidates_after_validation",
+                safe_message="Competitor provider returned no valid candidates after schema validation.",
+                provider_name=output.provider_name,
+                model_name=output.model_name,
+                prompt_version=output.prompt_version,
+                normalized_failure_category="invalid_output",
+                normalized_failure_reason="no_valid_candidates_after_validation",
+                normalized_failure_source="provider_output",
+                normalized_retryable=False,
+                attempt_count=2,
+            )
         _finalize_timeout_outcome(
             final_outcome="degraded_success",
             recovery_path="degraded_success",

@@ -227,15 +227,17 @@ class OpenAISEORecommendationNarrativeProvider:
             current_tuning_values=current_tuning_values,
             competitor_context=competitor_context,
         )
+        prompt_recommendations = recommendations[:20]
+        prompt_backlog = backlog[:8]
         prompt = build_seo_recommendation_narrative_prompt(
             run=run,
-            recommendations=recommendations,
+            recommendations=prompt_recommendations,
             by_status=by_status,
             by_category=by_category,
             by_severity=by_severity,
             by_effort_bucket=by_effort_bucket,
             by_priority_band=by_priority_band,
-            backlog=backlog,
+            backlog=prompt_backlog,
             competitor_telemetry_summary=budgeted_competitor_telemetry_summary,
             current_tuning_values=budgeted_current_tuning_values,
             competitor_context=budgeted_competitor_context,
