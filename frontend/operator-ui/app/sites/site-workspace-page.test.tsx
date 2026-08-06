@@ -895,7 +895,7 @@ describe("site migration workflow route", () => {
     expect(screen.queryByTestId("migration-ga4-outcome-snapshot")).not.toBeInTheDocument();
   });
 
-  it("switches selected publish diagnostics context and falls back to latest summary when details are missing", async () => {
+  it("keeps selected publish diagnostics scoped when details are missing", async () => {
     const user = userEvent.setup();
     const publishHistoryWithDetails = {
       timestamp: "2026-03-21T00:20:00Z",
@@ -946,13 +946,10 @@ describe("site migration workflow route", () => {
     expect(await screen.findByTestId("migration-publish-diagnostics-scope")).toHaveTextContent(
       "2026-03-21T00:10:00Z",
     );
-    expect(screen.getByTestId("migration-publish-diagnostics")).toHaveTextContent(
-      "Publish failure category: target invalid",
-    );
-    expect(screen.getByTestId("migration-publish-diagnostics")).toHaveTextContent(
+    expect(screen.getByTestId("migration-publish-diagnostics")).not.toHaveTextContent(
       "Latest publish summary fallback message.",
     );
-    expect(screen.getByTestId("migration-publish-diagnostics-fallback-note")).toBeInTheDocument();
+    expect(screen.queryByTestId("migration-publish-diagnostics-fallback-note")).not.toBeInTheDocument();
   });
 
   it("switches selected deploy diagnostics context and falls back when selected record lacks detail", async () => {
@@ -2189,7 +2186,7 @@ describe("site migration workflow route", () => {
     await user.click(await screen.findByText("Show detailed migration failure diagnostics"));
 
     const diagnostics = screen.getByTestId("migration-deploy-diagnostics");
-    expect(diagnostics).toHaveTextContent(/runtime can deploy while https certificate provisioning continues/i);
+    expect(diagnostics).toHaveTextContent(/certificate exists but is still provisioning/i);
 
     const consistency = screen.getByTestId("migration-deploy-consistency");
     expect(within(consistency).getByTestId("migration-deploy-consistency-gate-ingress_conflict")).toHaveTextContent(
@@ -2226,11 +2223,11 @@ describe("site migration workflow route", () => {
     const summary = buildMigrationWorkspaceSummary({
       deploy_readiness: {
         ready: false,
-        reasons: ["Certificate exists but is still provisioning. Deploy is held until the certificate is ACTIVE."],
+        reasons: ["Certificate exists but is still provisioning. Runtime deploy can proceed while HTTPS certificate provisioning continues."],
         dispatch_service_reason_code: "certificate_provisioning_pending",
         certificate_readiness_state: "certificate_provisioning_pending",
         certificate_gate_required_before_deploy: true,
-        certificate_gate_blocked: true,
+        certificate_gate_blocked: false,
         runtime_ready_tls_pending: false,
         runtime_reached_load_balancer: false,
         deploy_https_ready: false,
@@ -2251,8 +2248,7 @@ describe("site migration workflow route", () => {
     await user.click(await screen.findByText("Show detailed migration failure diagnostics"));
 
     const diagnostics = screen.getByTestId("migration-deploy-diagnostics");
-    expect(diagnostics).toHaveTextContent(/deploy is held until the certificate is active/i);
-    expect(diagnostics).toHaveTextContent(/requires an active certificate before https-ready deploy can continu/i);
+    expect(diagnostics).toHaveTextContent(/runtime deploy can proceed while https certificate provisioning continues/i);
   });
 
   it("normalizes numeric workflow identifier diagnostics in raw deploy details", async () => {

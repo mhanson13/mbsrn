@@ -7364,7 +7364,7 @@ def test_deploy_blocks_before_dispatch_when_managed_certificate_resource_is_miss
 
     summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
     deploy_readiness = summary.deploy_readiness or {}
-    assert deploy_readiness.get("certificate_readiness_state") == "certificate_resource_missing"
+    assert deploy_readiness.get("certificate_readiness_state") == "certificate_missing"
     assert deploy_readiness.get("certificate_gate_blocked") is True
     assert "deploy_certificate_readiness_pending" in (deploy_readiness.get("blocker_codes") or [])
 
@@ -7446,8 +7446,8 @@ def test_deploy_blocks_before_dispatch_on_managed_certificate_ownership_unverifi
 
     summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
     deploy_readiness = summary.deploy_readiness or {}
-    assert deploy_readiness.get("certificate_readiness_state") == "certificate_stale_or_legacy"
-    assert deploy_readiness.get("certificate_gate_blocked") is False
+    assert deploy_readiness.get("certificate_readiness_state") == "certificate_ownership_unverified"
+    assert deploy_readiness.get("certificate_gate_blocked") is True
 
 
 def test_deploy_in_preview_shared_mode_allows_dispatch_while_certificate_provisions(db_session, monkeypatch) -> None:
@@ -9325,11 +9325,9 @@ def test_refresh_deploy_status_tls_provisioning_with_static_ip_alignment_maps_to
     assert deploy_readiness.get("certificate_readiness_state") == "certificate_provisioning_pending"
     assert deploy_readiness.get("runtime_ready_tls_pending") is True
     assert deploy_readiness.get("certificate_gate_required_before_deploy") is True
-    assert deploy_readiness.get("certificate_gate_blocked") is True
+    assert deploy_readiness.get("certificate_gate_blocked") is False
     assert deploy_readiness.get("https_ready") is False
-    assert "deploy is held until the certificate is active" in " ".join(
-        str(item).lower() for item in (deploy_readiness.get("reasons") or [])
-    )
+    assert not deploy_readiness.get("reasons")
     assert "reason=managed_certificate_provisioning" in str(deploy_readiness.get("https_probe_error_summary") or "")
 
 
@@ -9580,7 +9578,7 @@ def test_refresh_deploy_status_runtime_managed_certificate_missing_after_apply_s
     summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
     deploy_readiness = summary.deploy_readiness or {}
     assert deploy_readiness.get("selected_workflow_failure_reason") == "runtime_managed_certificate_missing_after_apply"
-    assert deploy_readiness.get("certificate_readiness_state") == "certificate_resource_missing"
+    assert deploy_readiness.get("certificate_readiness_state") == "certificate_missing"
     assert deploy_readiness.get("runtime_ready_tls_pending") is False
     assert "managedcertificate resource for the expected hostname is not yet visible" in " ".join(
         str(item).lower() for item in (deploy_readiness.get("reasons") or [])
@@ -9625,7 +9623,7 @@ def test_refresh_deploy_status_missing_managed_certificate_evidence_overrides_an
 
     summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
     deploy_readiness = summary.deploy_readiness or {}
-    assert deploy_readiness.get("certificate_readiness_state") == "certificate_resource_missing"
+    assert deploy_readiness.get("certificate_readiness_state") == "certificate_missing"
     assert deploy_readiness.get("runtime_ready_tls_pending") is False
 
 
@@ -9665,7 +9663,7 @@ def test_refresh_deploy_status_managed_certificate_ownership_unverified_sets_sta
     summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
     deploy_readiness = summary.deploy_readiness or {}
     assert deploy_readiness.get("selected_workflow_failure_reason") == "managed_certificate_ownership_unverified"
-    assert deploy_readiness.get("certificate_readiness_state") == "certificate_stale_or_legacy"
+    assert deploy_readiness.get("certificate_readiness_state") == "certificate_ownership_unverified"
     assert deploy_readiness.get("runtime_ready_tls_pending") is False
     assert "ownership labels" in str(refresh_result.result.get("workflow_run_failure_hint") or "").lower()
 

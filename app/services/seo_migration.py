@@ -664,11 +664,14 @@ _DEPLOY_RUNTIME_REASON_MANAGED_SITE_RUNTIME_REPLACE_FAILED = "managed_site_runti
 _MBSRN_MANAGED_DEPLOY_TEMPLATE_VERSION_OUTPUT_KEY = "mbsrn_managed_deploy_template_version"
 _DEPLOY_RUNTIME_REASON_CODE_PRESENT_OUTPUT_KEY = "deploy_runtime_reason_code_present"
 _MANAGED_DEPLOY_TEMPLATE_MARKER_PRESENT_OUTPUT_KEY = "managed_deploy_template_marker_present"
-_CERTIFICATE_READINESS_STATE_RESOURCE_MISSING = "certificate_resource_missing"
+_CERTIFICATE_READINESS_STATE_RESOURCE_MISSING = "certificate_missing"
+_CERTIFICATE_READINESS_STATE_VISIBILITY_PENDING = "certificate_visibility_pending"
 _CERTIFICATE_READINESS_STATE_PROVISIONING_PENDING = "certificate_provisioning_pending"
 _CERTIFICATE_READINESS_STATE_ACTIVE = "certificate_active"
+_CERTIFICATE_READINESS_STATE_FAILED_NOT_VISIBLE = "certificate_failed_not_visible"
 _CERTIFICATE_READINESS_STATE_DOMAIN_MISMATCH = "certificate_domain_mismatch"
-_CERTIFICATE_READINESS_STATE_STALE_OR_LEGACY = "certificate_stale_or_legacy"
+_CERTIFICATE_READINESS_STATE_STALE_OR_LEGACY = "certificate_ownership_unverified"
+_CERTIFICATE_READINESS_STATE_UNKNOWN = "certificate_status_unknown"
 _MANAGED_PREVIEW_ENDPOINT_MODE_SHARED_GATEWAY = "preview_shared_gateway"
 _MANAGED_PREVIEW_ENDPOINT_MODE_DEDICATED_STATIC_IP = "dedicated_static_ip"
 _DEPLOY_WORKFLOW_INTEGRITY_STATUS_MATCH = "match"
@@ -19171,6 +19174,62 @@ class SEOMigrationService:
             "current_live_runtime_source": current_live_runtime_source,
         }
 
+    def _refresh_current_endpoint_prerequisite_evidence(
+        self,
+        *,
+        repo_name: str,
+        site_id: str,
+        preview_hostname: str | None,
+        kubernetes_namespace: str | None,
+        managed_gke_config: dict[str, object],
+    ) -> dict[str, object]:
+        normalized_repo_name = _normalize_string(repo_name, max_length=120)
+        normalized_preview_hostname = _normalize_string(preview_hostname, max_length=253)
+        normalized_namespace = _normalize_string(kubernetes_namespace, max_length=63)
+        if not normalized_repo_name or not normalized_preview_hostname or not normalized_namespace:
+            return {"available": False, "source": "unavailable"}
+        expected_certificate_name, _ = derive_site_preview_certificate_name(
+            repo_name=normalized_repo_name,
+            site_id=site_id,
+        )
+        deploy_secret, _, _ = self._resolve_deploy_secret_for_propagation()
+        try:
+            result = self.github_publisher.check_managed_certificate_readiness(
+                repo_name=normalized_repo_name,
+                site_id=site_id,
+                preview_hostname=normalized_preview_hostname,
+                kubernetes_namespace=normalized_namespace,
+                managed_gke_config=managed_gke_config,
+                gcp_deploy_key=deploy_secret,
+                expected_managed_certificate_name=expected_certificate_name,
+            )
+        except SEOMigrationGitHubPublisherError:
+            return {"available": False, "source": "managed_certificate_readiness"}
+        if not isinstance(result, SEOMigrationGitHubManagedCertificateReadinessResult):
+            return {"available": False, "source": "managed_certificate_readiness"}
+        observed_domains = ",".join(
+            _normalize_string_list(result.observed_managed_certificate_domains, max_items=8, max_item_length=253)
+        ) or None
+        return {
+            "available": True,
+            "checked_at": utc_now().isoformat(),
+            "source": "managed_certificate_readiness",
+            "certificate_exists": bool(result.managed_certificate_exists),
+            "certificate_status": _normalize_string(result.observed_managed_certificate_status, max_length=64),
+            "certificate_domain_status": _normalize_string(
+                result.observed_managed_certificate_domain_status,
+                max_length=64,
+            ),
+            "certificate_domains_match": (
+                bool(result.certificate_domain_matches_expected)
+                if isinstance(result.certificate_domain_matches_expected, bool)
+                else None
+            ),
+            "certificate_domains": observed_domains,
+            "certificate_name": _normalize_string(result.managed_certificate_name, max_length=63),
+            "reason_code": _normalize_dispatch_service_reason_code(result.dispatch_service_reason_code),
+        }
+
     @staticmethod
     def _resolve_url_candidate_from_inputs(
         inputs: dict[str, str],
@@ -21318,6 +21377,23 @@ class SEOMigrationService:
         )
         if managed_site_rollout:
             target_summary.update(managed_site_rollout)
+        workflow_republished_not_rerun = (
+            _normalize_string(target_summary.get("managed_site_rollout_state"), max_length=80)
+            == "workflow_republished_but_deploy_not_rerun"
+        )
+        current_endpoint_evidence = (
+            self._refresh_current_endpoint_prerequisite_evidence(
+                repo_name=str(target_summary.get("repo_name") or ""),
+                site_id=site.id,
+                preview_hostname=_normalize_string(target_summary.get("preview_hostname"), max_length=253),
+                kubernetes_namespace=_normalize_string(target_summary.get("kubernetes_namespace"), max_length=63),
+                managed_gke_config=_normalize_json_dict(
+                    _normalize_json_dict(target_summary.get("managed_gke_config_details"))
+                ),
+            )
+            if target_valid and workflow_republished_not_rerun
+            else {"available": False, "source": "unavailable"}
+        )
         workflow_dispatch_supported = (
             bool(latest_traceability.get("workflow_dispatch_supported"))
             if isinstance(latest_traceability.get("workflow_dispatch_supported"), bool)
@@ -21658,6 +21734,36 @@ class SEOMigrationService:
             target_summary.get("managed_certificate_status"),
             max_length=64,
         )
+        current_endpoint_evidence_available = bool(current_endpoint_evidence.get("available"))
+        current_endpoint_evidence_checked_at = _normalize_string(
+            current_endpoint_evidence.get("checked_at"), max_length=64
+        )
+        current_endpoint_evidence_source = _normalize_string(
+            current_endpoint_evidence.get("source"), max_length=80
+        )
+        current_certificate_reason_code = _normalize_dispatch_service_reason_code(
+            current_endpoint_evidence.get("reason_code")
+        )
+        if current_endpoint_evidence_available:
+            managed_certificate_exists = _coerce_optional_bool(current_endpoint_evidence.get("certificate_exists"))
+            managed_certificate_status = _normalize_string(
+                current_endpoint_evidence.get("certificate_status"), max_length=64
+            )
+            observed_managed_certificate_status = managed_certificate_status
+            observed_managed_certificate_domain_status = _normalize_string(
+                current_endpoint_evidence.get("certificate_domain_status"), max_length=64
+            )
+            observed_managed_certificate_domains = _normalize_string(
+                current_endpoint_evidence.get("certificate_domains"), max_length=255
+            )
+            expected_managed_certificate_name = _normalize_string(
+                current_endpoint_evidence.get("certificate_name"), max_length=63
+            ) or expected_managed_certificate_name
+            tls_certificate_status = managed_certificate_status
+            tls_domain_status = observed_managed_certificate_domain_status
+            current_domains_match = _coerce_optional_bool(current_endpoint_evidence.get("certificate_domains_match"))
+            if current_domains_match is not None:
+                cert_identity_valid = current_domains_match
         if expected_managed_certificate_name and not _normalize_string(
             target_summary.get("expected_managed_certificate_name"),
             max_length=63,
@@ -22037,6 +22143,10 @@ class SEOMigrationService:
             }
         )
         certificate_reason_candidates = {item for item in certificate_reason_candidates if item}
+        if current_endpoint_evidence_available:
+            certificate_reason_candidates = {current_certificate_reason_code} if current_certificate_reason_code else set()
+        elif workflow_republished_not_rerun:
+            certificate_reason_candidates = set()
         normalized_managed_certificate_status = (managed_certificate_status or "").strip().upper()
         managed_certificate_missing_evidence = bool(
             managed_certificate_exists is False
@@ -22044,7 +22154,11 @@ class SEOMigrationService:
             or any(code in certificate_reason_candidates for code in cert_missing_reason_codes)
         )
         certificate_readiness_state: str | None = None
-        if managed_certificate_missing_evidence:
+        if current_certificate_reason_code == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_VISIBILITY_PENDING:
+            certificate_readiness_state = _CERTIFICATE_READINESS_STATE_VISIBILITY_PENDING
+        elif current_certificate_reason_code == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_FAILED_NOT_VISIBLE:
+            certificate_readiness_state = _CERTIFICATE_READINESS_STATE_FAILED_NOT_VISIBLE
+        elif managed_certificate_missing_evidence:
             certificate_readiness_state = _CERTIFICATE_READINESS_STATE_RESOURCE_MISSING
         elif any(code in certificate_reason_candidates for code in cert_domain_mismatch_reason_codes):
             certificate_readiness_state = _CERTIFICATE_READINESS_STATE_DOMAIN_MISMATCH
@@ -22056,6 +22170,8 @@ class SEOMigrationService:
             certificate_readiness_state = _CERTIFICATE_READINESS_STATE_ACTIVE
         elif deploy_https_ready is True and cert_identity_valid is True:
             certificate_readiness_state = _CERTIFICATE_READINESS_STATE_ACTIVE
+        elif workflow_republished_not_rerun and not current_endpoint_evidence_available:
+            certificate_readiness_state = _CERTIFICATE_READINESS_STATE_UNKNOWN
 
         runtime_reached_load_balancer = bool(
             host_reachable is True
@@ -22104,8 +22220,9 @@ class SEOMigrationService:
             and certificate_readiness_state
             in {
                 _CERTIFICATE_READINESS_STATE_RESOURCE_MISSING,
-                _CERTIFICATE_READINESS_STATE_PROVISIONING_PENDING,
+                _CERTIFICATE_READINESS_STATE_FAILED_NOT_VISIBLE,
                 _CERTIFICATE_READINESS_STATE_DOMAIN_MISMATCH,
+                _CERTIFICATE_READINESS_STATE_STALE_OR_LEGACY,
             }
         )
         if certificate_gate_blocked:
@@ -22121,10 +22238,13 @@ class SEOMigrationService:
                 )
             else:
                 reasons.append(
-                    "Certificate exists but is still provisioning. "
-                    "Deploy is held until the certificate is ACTIVE."
+                    "ManagedCertificate verification reported a terminal visibility or ownership failure. "
+                    "Refresh endpoint readiness and reconcile certificate ownership before deploy."
                 )
             blocker_codes.append(_DEPLOY_BLOCKER_CERTIFICATE_PENDING)
+        elif certificate_readiness_state == _CERTIFICATE_READINESS_STATE_UNKNOWN:
+            warnings.append("Current certificate state has not been verified. Refresh endpoint readiness before relying on TLS diagnostics.")
+            warning_codes.append("current_endpoint_evidence_unavailable")
         blocker_codes = _dedupe_strings(blocker_codes)
         reasons = _dedupe_strings(reasons)
 
@@ -22229,6 +22349,18 @@ class SEOMigrationService:
             "current_live_runtime_source": current_live_runtime_source,
             "current_live_runtime_note": current_live_runtime_note,
             "certificate_readiness_state": certificate_readiness_state,
+            "current_certificate_exists": managed_certificate_exists if current_endpoint_evidence_available else None,
+            "current_certificate_status": managed_certificate_status if current_endpoint_evidence_available else None,
+            "current_certificate_domain_status": (
+                observed_managed_certificate_domain_status if current_endpoint_evidence_available else None
+            ),
+            "current_certificate_domains_match": cert_identity_valid if current_endpoint_evidence_available else None,
+            "current_dns_observed_ip": None,
+            "current_expected_static_ip": None,
+            "current_ingress_ip": None,
+            "current_static_ip_binding_valid": None,
+            "current_endpoint_evidence_checked_at": current_endpoint_evidence_checked_at,
+            "current_endpoint_evidence_source": current_endpoint_evidence_source,
             "certificate_gate_required_before_deploy": certificate_gate_required_before_deploy,
             "certificate_gate_blocked": certificate_gate_blocked,
             "runtime_ready_tls_pending": runtime_ready_tls_pending,

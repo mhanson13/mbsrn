@@ -165,7 +165,8 @@ Destination, readiness, and diagnostics IA refinements:
   - Destination / Config
 - diagnostics are run-bound, not floating snapshot-only:
   - publish/deploy diagnostics can be scoped to selected history attempts
-  - fallback to latest summary is field-level and explicit when selected-attempt fields are missing
+  - selected-attempt reason/status fields never fall back across attempt boundaries
+  - current endpoint and current live evidence are rendered separately from historical attempts
   - publish/deploy history remains collapsible under Advanced Diagnostics
 - URL confirmation semantics are unchanged:
   - `deterministic_target_config` is expected guidance (not confirmed live evidence)
@@ -2521,10 +2522,14 @@ Deploy is not considered HTTPS-ready unless all runtime checks agree:
 
 TLS/certificate readiness is exposed separately from runtime rollout status:
 - `certificate_readiness_state` values:
-  - `certificate_resource_missing`
+  - `certificate_missing`
+  - `certificate_visibility_pending`
   - `certificate_provisioning_pending`
   - `certificate_active`
+  - `certificate_failed_not_visible`
   - `certificate_domain_mismatch`
+  - `certificate_ownership_unverified`
+  - `certificate_status_unknown`
   - `certificate_stale_or_legacy`
 - `Provision TLS Certificate` is a separate, idempotent control-plane action. It creates or verifies the deterministic ManagedCertificate and refuses cross-site/domain-mismatched resources.
 - `runtime_ready_tls_pending=true` means ingress/load-balancer/runtime evidence exists, but cert/HTTPS are still converging.

@@ -648,6 +648,8 @@ Reason-code guidance:
 - `workflow_not_production_ready`: workflow exists and is dispatchable, but is still scaffold/placeholder content and is blocked before dispatch.
 - `token_not_authorized`: runtime token lacks required repository/workflow permissions.
 - `workflow_provisioning_failed`: publish could not verify workflow file presence after provisioning attempt.
+- `certificate_status_unknown`: current endpoint readiness could not refresh certificate evidence; refresh endpoint readiness before treating historical TLS diagnostics as current.
+- `dispatch_not_attempted`: deployment was blocked before dispatch; do not use no-run guidance reserved for accepted dispatches.
 - `managed_workflow_template_invalid`: publish-time managed workflow template conformance validation failed before workflow write (YAML parse/contract mismatch such as missing required deploy outputs or missing `Resolve live URL from ingress status` step).
 
 Repository auto-create observability (publish path):

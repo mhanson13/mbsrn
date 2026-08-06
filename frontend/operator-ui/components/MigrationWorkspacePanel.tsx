@@ -511,7 +511,7 @@ function toDeployBlockerMessage(blockerCodes: string[]): string | null {
     return "Deployment target configuration is missing or disabled.";
   }
   if (blockerCodes.includes("deploy_certificate_readiness_pending")) {
-    return "Certificate exists but is still provisioning. Deploy is held until the certificate is ACTIVE.";
+    return "Certificate verification is blocking deploy. Refresh endpoint readiness and reconcile the certificate before retrying.";
   }
   return null;
 }
@@ -1886,7 +1886,7 @@ function toManagedGkeConfigGuidance(value: string | null): string | null {
     return "Google Cloud static IP resource was found, but the numeric address value was still missing after bounded retries/list fallback. Wait and retry deploy after address convergence.";
   }
   if (normalized === CERTIFICATE_PROVISIONING_PENDING_REASON) {
-    return "Certificate exists but is still provisioning. Deploy is held until the certificate is ACTIVE.";
+    return "Certificate exists but is still provisioning. Runtime deploy can proceed while HTTPS certificate provisioning continues.";
   }
   if (normalized === "generated_workflow_requires_missing_gcp_deploy_key") {
     return "Deploy workflow run failed because required target-repo deploy secret GCP_DEPLOY_KEY was missing. Provision deploy auth prerequisites and rerun deploy.";
@@ -4904,27 +4904,28 @@ export function MigrationWorkspacePanel({
   // 1) selected record context (publish/deploy row, selected draft artifact)
   // 2) latest summary diagnostics only for fields missing on selected context
   const publishFailureCategoryFromSelected = asStringOrNull(selectedPublishHistoryRecord.failure_category);
-  const publishFailureCategoryFromSummary =
-    asStringOrNull(migrationDiagnostics.last_publish_failure_category) ||
-    asStringOrNull(publishReadiness.last_failure_category) ||
-    asStringOrNull(publishReadiness.failure_category);
+  const publishFailureCategoryFromSummary = hasSelectedPublishAttempt
+    ? null
+    : asStringOrNull(migrationDiagnostics.last_publish_failure_category) ||
+      asStringOrNull(publishReadiness.last_failure_category) ||
+      asStringOrNull(publishReadiness.failure_category);
   const publishDiagnosticsFailureCategory = publishFailureCategoryFromSelected || publishFailureCategoryFromSummary;
   const publishFailureMessageFromSelected = asStringOrNull(selectedPublishHistoryRecord.failure_message);
-  const publishFailureMessageFromSummary =
-    asStringOrNull(migrationDiagnostics.last_publish_failure_message) ||
-    asStringOrNull(publishReadiness.last_failure_message);
+  const publishFailureMessageFromSummary = hasSelectedPublishAttempt
+    ? null
+    : asStringOrNull(migrationDiagnostics.last_publish_failure_message) || asStringOrNull(publishReadiness.last_failure_message);
   const publishDiagnosticsFailureMessage = publishFailureMessageFromSelected || publishFailureMessageFromSummary;
   const publishFailureReasonCodeFromSelected = asStringOrNull(selectedPublishHistoryRecord.failure_reason);
-  const publishFailureReasonCodeFromSummary =
-    asStringOrNull(migrationDiagnostics.last_publish_failure_reason) ||
-    asStringOrNull(publishReadiness.last_failure_reason);
+  const publishFailureReasonCodeFromSummary = hasSelectedPublishAttempt
+    ? null
+    : asStringOrNull(migrationDiagnostics.last_publish_failure_reason) || asStringOrNull(publishReadiness.last_failure_reason);
   const publishDiagnosticsFailureReasonCode = publishFailureReasonCodeFromSelected || publishFailureReasonCodeFromSummary;
   const publishFailureStageFromSelected =
     asStringOrNull(selectedPublishHistoryRecord.failure_stage) ||
     asStringOrNull(selectedPublishHistoryRecord.dispatch_result_stage);
-  const publishFailureStageFromSummary =
-    asStringOrNull(migrationDiagnostics.last_publish_failure_stage) ||
-    asStringOrNull(publishReadiness.last_failure_stage);
+  const publishFailureStageFromSummary = hasSelectedPublishAttempt
+    ? null
+    : asStringOrNull(migrationDiagnostics.last_publish_failure_stage) || asStringOrNull(publishReadiness.last_failure_stage);
   const publishWorkflowRemediationAttemptedFromSelected = asBooleanOrNull(
     selectedPublishHistoryRecord.workflow_remediation_attempted,
   );
@@ -6272,13 +6273,8 @@ export function MigrationWorkspacePanel({
         extractHostnameFromUrl(destinationSummary.deployResolvedLiveUrl) ||
         extractHostnameFromUrl(currentLiveUrl);
       const parts: string[] = [
-        certificateGateRequiredBeforeDeploy === true
-          ? "Certificate exists but is still provisioning. Deploy is held until the certificate is ACTIVE."
-          : "Runtime can deploy while HTTPS certificate provisioning continues.",
+        "Certificate exists but is still provisioning. Runtime deploy can proceed while HTTPS certificate provisioning continues.",
       ];
-      if (certificateGateRequiredBeforeDeploy === true) {
-        parts.push("This deploy mode requires an ACTIVE certificate before HTTPS-ready deploy can continue.");
-      }
       if (runtimeReadyTlsPending === true) {
         parts.push(
           hostname
