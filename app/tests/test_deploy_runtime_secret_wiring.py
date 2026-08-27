@@ -31,3 +31,13 @@ def test_deploy_prod_projects_git_credentials_into_control_plane_runtime_secret(
     assert '--from-literal=GIT_TOKEN="${GIT_TOKEN}"' in workflow_yaml
     assert "GCP_MANAGED_DEPLOY: ${{ vars.GCP_MANAGED_DEPLOY || '' }}" in workflow_yaml
     assert '--from-literal=GCP_MANAGED_DEPLOY="${GCP_MANAGED_DEPLOY:-}"' in workflow_yaml
+
+
+def test_deploy_prod_renders_build_sha_into_api_deployment() -> None:
+    workflow_yaml = (_repo_root() / ".github" / "workflows" / "deploy-prod.yml").read_text(encoding="utf-8")
+    api_render_end = workflow_yaml.index('k8s/api-deployment.yaml > "${render_dir}/api-deployment.yaml"')
+    api_render_start = workflow_yaml.rfind("\n          sed \\", 0, api_render_end)
+
+    assert api_render_start >= 0
+    api_render_block = workflow_yaml[api_render_start:api_render_end]
+    assert '-e "s|__BUILD_SHA__|${GITHUB_SHA}|g"' in api_render_block

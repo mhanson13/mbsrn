@@ -373,6 +373,7 @@ jobs:
             k8s/ui-deployment.yaml > "${render_dir}/ui-deployment.yaml"
           sed \
             -e "s|__API_IMAGE__|${API_IMAGE}|g" \
+            -e "s|__BUILD_SHA__|${GITHUB_SHA}|g" \
             -e "s|__API_CPU_REQUEST__|${API_CPU_REQUEST}|g" \
             -e "s|__API_MEMORY_REQUEST__|${API_MEMORY_REQUEST}|g" \
             -e "s|__API_EPHEMERAL_STORAGE_REQUEST__|${API_EPHEMERAL_STORAGE_REQUEST}|g" \
@@ -385,7 +386,6 @@ jobs:
             k8s/api-deployment.yaml > "${render_dir}/api-deployment.yaml"
           sed \
             -e "s|__API_IMAGE__|${API_IMAGE}|g" \
-            -e "s|__BUILD_SHA__|${GITHUB_SHA}|g" \
             -e "s|__DEPLOY_CPU_REQUEST__|${DEPLOY_CPU_REQUEST}|g" \
             -e "s|__DEPLOY_MEMORY_REQUEST__|${DEPLOY_MEMORY_REQUEST}|g" \
             -e "s|__DEPLOY_EPHEMERAL_STORAGE_REQUEST__|${DEPLOY_EPHEMERAL_STORAGE_REQUEST}|g" \
