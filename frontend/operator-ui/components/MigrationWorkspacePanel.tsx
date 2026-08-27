@@ -8,6 +8,7 @@ import { WorkspaceMessageStack } from "./layout/WorkspaceMessageStack";
 import { WorkspaceMetadataGrid, WorkspaceMetadataItem } from "./layout/WorkspaceMetadataGrid";
 import {
   ApiRequestError,
+  adoptSiteTLSCertificate,
   adoptMigrationPublishRepository,
   approveMigrationArtifactVersion,
   deleteMigrationArtifactVersion,
@@ -18,11 +19,13 @@ import {
   fetchMigrationMediaAssets,
   fetchMigrationPublishHistory,
   fetchMigrationWorkspaceSummary,
+  fetchSiteTLSCertificateStatus,
+  generateSiteTLSCertificate,
   generateMigrationDraftArtifacts,
   importMigrationDiscoveredMediaAssets,
   ingestMigrationSource,
+  importSiteTLSCertificate,
   publishMigrationArtifactVersion,
-  provisionMigrationManagedCertificate,
   refreshMigrationDeployStatus,
   suggestMigrationRequirementField,
   suggestMigrationMediaAssetsMetadataBatch,
@@ -33,6 +36,7 @@ import {
   updateMigrationRequirements,
   uploadMigrationMediaAsset,
   upsertMigrationWorkspace,
+  verifySiteTLSCertificate,
 } from "../lib/api/client";
 import type {
   MigrationArtifactVersion,
@@ -41,6 +45,7 @@ import type {
   MigrationRequirementSuggestionField,
   MigrationPublishConfig,
   MigrationWorkspaceSummary,
+  SiteTLSCertificateStatus,
 } from "../lib/api/types";
 
 interface MigrationWorkspacePanelProps {
@@ -61,6 +66,9 @@ type BusyAction =
   | "publish"
   | "deploy"
   | "provision_certificate"
+  | "adopt_certificate"
+  | "import_certificate"
+  | "verify_certificate"
   | "refresh_deploy_status"
   | "delete_draft"
   | "upload_media"
@@ -4069,6 +4077,10 @@ export function MigrationWorkspacePanel({
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
   const [summary, setSummary] = useState<MigrationWorkspaceSummary | null>(null);
+  const [siteTlsCertificate, setSiteTlsCertificate] = useState<SiteTLSCertificateStatus | null>(null);
+  const [existingCertificateResourceName, setExistingCertificateResourceName] = useState("");
+  const [importCertificatePem, setImportCertificatePem] = useState("");
+  const [importPrivateKeyPem, setImportPrivateKeyPem] = useState("");
   const [artifactVersions, setArtifactVersions] = useState<MigrationArtifactVersion[]>([]);
   const [publishHistory, setPublishHistory] = useState<Array<Record<string, unknown>>>([]);
   const [deployHistory, setDeployHistory] = useState<Array<Record<string, unknown>>>([]);
@@ -6388,6 +6400,9 @@ export function MigrationWorkspacePanel({
           fetchMigrationArtifactVersions(token, businessId, siteId),
         ]);
         setSummary(workspaceSummary);
+        void fetchSiteTLSCertificateStatus(token, businessId, siteId)
+          .then((tlsStatus) => setSiteTlsCertificate(tlsStatus))
+          .catch(() => setSiteTlsCertificate(null));
         setArtifactVersions(versionList.items || []);
         setPublishHistory(workspaceSummary.publish_history || []);
         setDeployHistory(workspaceSummary.deploy_history || []);
@@ -7568,32 +7583,90 @@ export function MigrationWorkspacePanel({
   };
 
   const handleProvisionManagedCertificate = async (): Promise<void> => {
-    if (!selectedArtifactVersionId) {
-      setErrorHint(null);
-      setErrorMessage("Select a published artifact version before provisioning the TLS certificate.");
-      return;
-    }
     setBusyAction("provision_certificate");
     setErrorMessage(null);
     setErrorHint(null);
     setStatusMessage(null);
     try {
-      const actionResult = await provisionMigrationManagedCertificate(token, businessId, siteId, {
-        artifact_version_id: selectedArtifactVersionId,
+      const tlsStatus = await generateSiteTLSCertificate(token, businessId, siteId, {
+        validity_days: 90,
+        key_algorithm: "rsa_2048",
       });
-      const result = asRecord(actionResult.result);
-      const action = asString(result.action).trim().toLowerCase();
-      setStatusMessage(
-        action === "created"
-          ? "TLS certificate resource created. Request GKE Deploy to attach the ingress; issuance may continue afterward."
-          : "TLS certificate resource already exists and was verified for this site.",
-      );
+      setSiteTlsCertificate(tlsStatus);
+      setStatusMessage("Self-signed certificate generated, vaulted, and published. Publish the site to update its Ingress.");
       await loadWorkspaceData(false);
     } catch (error) {
       const baseMessage = toErrorMessage(error, "TLS certificate provisioning failed.");
       await loadWorkspaceData(false, { preserveErrorMessage: true });
       setErrorHint(null);
       setErrorMessage(baseMessage);
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const handleAdoptExistingCertificate = async (): Promise<void> => {
+    const resourceName = existingCertificateResourceName.trim();
+    if (!resourceName) {
+      setErrorMessage("Enter an existing Google Compute SSL certificate resource name.");
+      return;
+    }
+    setBusyAction("adopt_certificate");
+    setErrorMessage(null);
+    setErrorHint(null);
+    setStatusMessage(null);
+    try {
+      const tlsStatus = await adoptSiteTLSCertificate(token, businessId, siteId, {
+        gcp_resource_name: resourceName,
+      });
+      setSiteTlsCertificate(tlsStatus);
+      setExistingCertificateResourceName("");
+      setStatusMessage("Existing self-managed certificate selected. Publish the site to update its Ingress.");
+      await loadWorkspaceData(false);
+    } catch (error) {
+      setErrorMessage(toErrorMessage(error, "Existing certificate could not be adopted."));
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const handleImportCertificate = async (): Promise<void> => {
+    if (!importCertificatePem.trim() || !importPrivateKeyPem.trim()) {
+      setErrorMessage("Both certificate PEM and private key PEM are required.");
+      return;
+    }
+    setBusyAction("import_certificate");
+    setErrorMessage(null);
+    setErrorHint(null);
+    setStatusMessage(null);
+    try {
+      const tlsStatus = await importSiteTLSCertificate(token, businessId, siteId, {
+        certificate_pem: importCertificatePem,
+        private_key_pem: importPrivateKeyPem,
+      });
+      setSiteTlsCertificate(tlsStatus);
+      setImportCertificatePem("");
+      setImportPrivateKeyPem("");
+      setStatusMessage("Certificate validated, vaulted, and published. Publish the site to update its Ingress.");
+      await loadWorkspaceData(false);
+    } catch (error) {
+      setErrorMessage(toErrorMessage(error, "Certificate import failed."));
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const handleVerifyCertificate = async (): Promise<void> => {
+    setBusyAction("verify_certificate");
+    setErrorMessage(null);
+    setErrorHint(null);
+    setStatusMessage(null);
+    try {
+      const tlsStatus = await verifySiteTLSCertificate(token, businessId, siteId);
+      setSiteTlsCertificate(tlsStatus);
+      setStatusMessage("The preview endpoint is serving the selected certificate fingerprint.");
+    } catch (error) {
+      setErrorMessage(toErrorMessage(error, "Certificate endpoint verification failed."));
     } finally {
       setBusyAction(null);
     }
@@ -9423,22 +9496,124 @@ export function MigrationWorkspacePanel({
             <div className="migration-publish-deploy-column stack" data-testid="migration-deploy-layout-right">
               <div className="panel panel-compact stack" data-testid="migration-deploy-controls">
                 <strong>Deploy Controls</strong>
-                <span className="hint muted" data-testid="migration-certificate-status">
-                  TLS certificate: {tlsCertificateStatus || certificateReadinessState || "Not provisioned"}
-                </span>
-                <span className="hint muted">
-                  Provisioning is separate from deploy. Deploy validates the certificate resource and attaches the ingress;
-                  certificate issuance can continue after the request is submitted.
-                </span>
-                <button
-                  type="button"
-                  className="button button-secondary"
-                  onClick={() => void handleProvisionManagedCertificate()}
-                  disabled={isActionInFlight || !selectedArtifactVersionIdTrimmed}
-                  data-testid="migration-provision-certificate-button"
-                >
-                  {busyAction === "provision_certificate" ? "Provisioning..." : "Provision TLS Certificate"}
-                </button>
+                <div className="panel panel-compact stack" data-testid="migration-certificate-status">
+                  <strong>Preview TLS · self-managed</strong>
+                  <span className="hint">Hostname: {siteTlsCertificate?.hostname || "Loading..."}</span>
+                  <span className={siteTlsCertificate?.published ? "hint success" : "hint muted"}>
+                    1. Google certificate: {siteTlsCertificate?.published ? "Published" : "Not published"}
+                    {siteTlsCertificate?.asset?.gcp_resource_name
+                      ? ` · ${siteTlsCertificate.asset.gcp_resource_name}`
+                      : ""}
+                  </span>
+                  <span className={siteTlsCertificate?.vaulted ? "hint success" : "hint muted"}>
+                    2. Key custody: {siteTlsCertificate?.vaulted
+                      ? "Vaulted in Google Secret Manager"
+                      : siteTlsCertificate?.asset?.custody === "external"
+                        ? "External (private key not held by MBSRN)"
+                        : "Not vaulted"}
+                  </span>
+                  <span
+                    className={
+                      siteTlsCertificate?.manifest_state === "published_to_repo" ? "hint success" : "hint muted"
+                    }
+                  >
+                    3. Ingress selection: {siteTlsCertificate?.selected_for_ingress
+                      ? siteTlsCertificate.manifest_state === "published_to_repo"
+                        ? "Published to repository"
+                        : "Selected; site publish required"
+                      : "Not selected"}
+                  </span>
+                  <span className={siteTlsCertificate?.serving_state === "serving" ? "hint success" : "hint muted"}>
+                    4. Endpoint: {siteTlsCertificate?.serving_state === "serving"
+                      ? "Serving selected fingerprint"
+                      : "Not verified"}
+                  </span>
+                  {siteTlsCertificate?.asset ? (
+                    <span className="hint muted">
+                      SHA-256: {siteTlsCertificate.asset.fingerprint_sha256} · expires {formatAttemptTimestamp(
+                        siteTlsCertificate.asset.not_valid_after,
+                      )}
+                    </span>
+                  ) : null}
+                  <span className="hint warning">
+                    Self-signed certificates are intentionally limited to *.site.mbsrn.com and are not browser-trusted.
+                  </span>
+                  <WorkspaceActionBar>
+                    <button
+                      type="button"
+                      className="button button-secondary"
+                      onClick={() => void handleProvisionManagedCertificate()}
+                      disabled={isActionInFlight}
+                      data-testid="migration-provision-certificate-button"
+                    >
+                      {busyAction === "provision_certificate" ? "Generating..." : "Generate, Vault & Publish"}
+                    </button>
+                    <button
+                      type="button"
+                      className="button button-secondary"
+                      onClick={() => void handleVerifyCertificate()}
+                      disabled={isActionInFlight || !siteTlsCertificate?.selected_for_ingress}
+                    >
+                      {busyAction === "verify_certificate" ? "Verifying..." : "Verify Served Certificate"}
+                    </button>
+                  </WorkspaceActionBar>
+                  <details>
+                    <summary>Use an existing self-managed certificate</summary>
+                    <div className="stack">
+                      <label className="stack">
+                        <span>Google Compute SSL certificate name</span>
+                        <input
+                          value={existingCertificateResourceName}
+                          onChange={(event) => setExistingCertificateResourceName(event.target.value)}
+                          placeholder="mbsrn-platfire-..."
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        className="button button-secondary"
+                        onClick={() => void handleAdoptExistingCertificate()}
+                        disabled={isActionInFlight || !existingCertificateResourceName.trim()}
+                      >
+                        {busyAction === "adopt_certificate" ? "Checking..." : "Select Existing Resource"}
+                      </button>
+                      <span className="hint muted">
+                        Adoption verifies that the resource is SELF_MANAGED and covers this preview hostname. Its private
+                        key remains external.
+                      </span>
+                    </div>
+                  </details>
+                  <details>
+                    <summary>Import and vault an existing certificate</summary>
+                    <div className="stack">
+                      <label className="stack">
+                        <span>Certificate PEM</span>
+                        <textarea
+                          rows={5}
+                          value={importCertificatePem}
+                          onChange={(event) => setImportCertificatePem(event.target.value)}
+                          autoComplete="off"
+                        />
+                      </label>
+                      <label className="stack">
+                        <span>Private key PEM</span>
+                        <textarea
+                          rows={5}
+                          value={importPrivateKeyPem}
+                          onChange={(event) => setImportPrivateKeyPem(event.target.value)}
+                          autoComplete="off"
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        className="button button-secondary"
+                        onClick={() => void handleImportCertificate()}
+                        disabled={isActionInFlight || !importCertificatePem.trim() || !importPrivateKeyPem.trim()}
+                      >
+                        {busyAction === "import_certificate" ? "Importing..." : "Validate, Vault & Publish"}
+                      </button>
+                    </div>
+                  </details>
+                </div>
                 <label className="link-row">
                   <input type="checkbox" checked={deployEnabled} onChange={(event) => setDeployEnabled(event.target.checked)} />
                   <span>Deploy enabled for this site workspace</span>

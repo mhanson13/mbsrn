@@ -57,6 +57,10 @@ import type {
   MigrationWorkspace,
   MigrationWorkspaceCreateOrUpdateRequest,
   MigrationWorkspaceSummary,
+  SiteTLSCertificateStatus,
+  TLSCertificateAdoptRequest,
+  TLSCertificateGenerateRequest,
+  TLSCertificateImportRequest,
   SEOSite,
   SEOSiteCreateRequest,
   SEOSiteAdminUpdateRequest,
@@ -854,6 +858,64 @@ export async function provisionMigrationManagedCertificate(
       token,
       body: JSON.stringify(payload),
     },
+  );
+}
+
+export async function fetchSiteTLSCertificateStatus(
+  token: string,
+  businessId: string,
+  siteId: string,
+): Promise<SiteTLSCertificateStatus> {
+  return apiRequest<SiteTLSCertificateStatus>(
+    `/api/businesses/${businessId}/tls/sites/${siteId}/status`,
+    { token },
+  );
+}
+
+export async function generateSiteTLSCertificate(
+  token: string,
+  businessId: string,
+  siteId: string,
+  payload: TLSCertificateGenerateRequest = {},
+): Promise<SiteTLSCertificateStatus> {
+  return apiRequest<SiteTLSCertificateStatus>(
+    `/api/businesses/${businessId}/tls/sites/${siteId}/certificates/generate`,
+    { method: "POST", token, body: JSON.stringify(payload) },
+  );
+}
+
+export async function importSiteTLSCertificate(
+  token: string,
+  businessId: string,
+  siteId: string,
+  payload: TLSCertificateImportRequest,
+): Promise<SiteTLSCertificateStatus> {
+  return apiRequest<SiteTLSCertificateStatus>(
+    `/api/businesses/${businessId}/tls/sites/${siteId}/certificates/import`,
+    { method: "POST", token, body: JSON.stringify(payload) },
+  );
+}
+
+export async function adoptSiteTLSCertificate(
+  token: string,
+  businessId: string,
+  siteId: string,
+  payload: TLSCertificateAdoptRequest,
+): Promise<SiteTLSCertificateStatus> {
+  return apiRequest<SiteTLSCertificateStatus>(
+    `/api/businesses/${businessId}/tls/sites/${siteId}/certificates/adopt`,
+    { method: "POST", token, body: JSON.stringify(payload) },
+  );
+}
+
+export async function verifySiteTLSCertificate(
+  token: string,
+  businessId: string,
+  siteId: string,
+): Promise<SiteTLSCertificateStatus> {
+  return apiRequest<SiteTLSCertificateStatus>(
+    `/api/businesses/${businessId}/tls/sites/${siteId}/verify`,
+    { method: "POST", token },
   );
 }
 

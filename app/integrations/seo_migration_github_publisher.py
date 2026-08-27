@@ -671,6 +671,8 @@ class SEOMigrationGitHubPublisher:
         business_id: str | None = None,
         repository_auto_create_created: bool | None = None,
         artifact_version_id: str | None = None,
+        pre_shared_certificate_name: str | None = None,
+        pre_shared_certificate_fingerprint: str | None = None,
     ) -> SEOMigrationGitHubWorkflowProvisionResult:
         del (
             deploy_workflow_mode,
@@ -683,6 +685,8 @@ class SEOMigrationGitHubPublisher:
             business_id,
             repository_auto_create_created,
             artifact_version_id,
+            pre_shared_certificate_name,
+            pre_shared_certificate_fingerprint,
         )
         workflow_path = _workflow_repo_path(workflow_id)
         return SEOMigrationGitHubWorkflowProvisionResult(
@@ -5964,6 +5968,8 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         business_id: str | None = None,
         repository_auto_create_created: bool | None = None,
         artifact_version_id: str | None = None,
+        pre_shared_certificate_name: str | None = None,
+        pre_shared_certificate_fingerprint: str | None = None,
     ) -> SEOMigrationGitHubWorkflowProvisionResult:
         normalized_workflow_id = str(workflow_id or "").strip()
         if not normalized_workflow_id:
@@ -6192,6 +6198,8 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             private_image_auth_required=private_image_auth_required,
             site_id=site_id,
             namespace_isolation_defaults=normalized_namespace_isolation_defaults,
+            pre_shared_certificate_name=pre_shared_certificate_name,
+            pre_shared_certificate_fingerprint=pre_shared_certificate_fingerprint,
         )
         template_validation = _validate_managed_workflow_template_before_publish(
             workflow_yaml=workflow_yaml,
@@ -6248,12 +6256,18 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             private_image_auth_required=private_image_auth_required,
             namespace_isolation_defaults=normalized_namespace_isolation_defaults,
             site_id=site_id,
+            pre_shared_certificate_name=pre_shared_certificate_name,
         )
         runtime_file_payloads = _render_managed_site_runtime_files(
             repo_owner=repo_owner,
             repo_name=repo_name,
         )
-        expected_managed_manifest_paths = _expected_managed_manifest_paths(normalized_namespace_isolation_defaults)
+        self_managed_tls_enabled = bool(str(pre_shared_certificate_name or "").strip())
+        expected_managed_manifest_paths = tuple(
+            path
+            for path in _expected_managed_manifest_paths(normalized_namespace_isolation_defaults)
+            if not (self_managed_tls_enabled and path == _MBSRN_MANAGED_CERTIFICATE_FILE_PATH)
+        )
         managed_manifest_paths = tuple(
             path for path in expected_managed_manifest_paths if path in manifest_file_payloads
         )
@@ -6293,6 +6307,17 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             file_sha_by_path[manifest_path] = manifest_sha
             if manifest_sha:
                 commit_sha = manifest_sha
+        if self_managed_tls_enabled:
+            managed_certificate_removed = self._delete_managed_repo_file_if_present(
+                repo_owner=repo_owner,
+                repo_name=repo_name,
+                branch=branch,
+                path=_MBSRN_MANAGED_CERTIFICATE_FILE_PATH,
+                marker=_MBSRN_MANAGED_MANIFEST_MARKER,
+                commit_message="chore(migration): retire managed TLS certificate manifest",
+                dry_run=dry_run,
+            )
+            any_file_updated = any_file_updated or managed_certificate_removed
         for runtime_path, runtime_content in runtime_file_payloads.items():
             runtime_updated, runtime_sha, _ = self._upsert_managed_repo_file(
                 repo_owner=repo_owner,
@@ -6523,7 +6548,6 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         )
         normalized_namespace_isolation_defaults = _normalize_namespace_isolation_defaults(namespace_isolation_defaults)
         policy_expectations = _managed_policy_expectations(normalized_namespace_isolation_defaults)
-        expected_manifest_paths = _expected_managed_manifest_paths(normalized_namespace_isolation_defaults)
         derived_namespace, namespace_source = derive_site_kubernetes_namespace(
             repo_name=target.repo_name,
             site_id=None,
@@ -6551,6 +6575,21 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             else _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_STATIC_IP_NOT_ALLOWED
         )
         workflow_content = _decode_workflow_file_content(workflow_file_payload) or ""
+        self_managed_tls_mode = bool(
+            re.search(r"(?mi)^\s*MBSRN_TLS_CERTIFICATE_MODE:\s*['\"]?self-managed['\"]?\s*$", workflow_content)
+        )
+        if self_managed_tls_mode:
+            configured_certificate_name = _extract_manifest_scalar(
+                workflow_content,
+                pattern=r"(?m)^\s*MBSRN_PREVIEW_CERTIFICATE_NAME:\s*([^\n#]+)$",
+            )
+            if configured_certificate_name:
+                preview_certificate_name = configured_certificate_name
+        expected_manifest_paths = tuple(
+            path
+            for path in _expected_managed_manifest_paths(normalized_namespace_isolation_defaults)
+            if not (self_managed_tls_mode and path == _MBSRN_MANAGED_CERTIFICATE_FILE_PATH)
+        )
         deploy_auth_mode = _derive_managed_workflow_deploy_auth_mode(workflow_content=workflow_content)
         target_repo_deploy_secret_required = _managed_workflow_requires_target_repo_deploy_secret(
             deploy_auth_mode=deploy_auth_mode
@@ -6649,6 +6688,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 expected_preview_hostname=preview_hostname,
                 expected_certificate_name=preview_certificate_name,
                 expected_static_ip_name=preview_static_ip_name,
+                self_managed_tls_mode=self_managed_tls_mode,
             )
             stale_managed_certificate_present = bool(
                 certificate_alignment_details.get("stale_managed_certificate_present")
@@ -7468,6 +7508,72 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             stage=exc.stage or "workflow_provisioning",
             provider_message=provider_message,
         )
+
+    def _delete_managed_repo_file_if_present(
+        self,
+        *,
+        repo_owner: str,
+        repo_name: str,
+        branch: str,
+        path: str,
+        marker: str,
+        commit_message: str,
+        dry_run: bool,
+    ) -> bool:
+        existing_payload = self._fetch_existing_file_payload(
+            repo_owner=repo_owner,
+            repo_name=repo_name,
+            branch=branch,
+            path=path,
+        )
+        if existing_payload is None:
+            return False
+        if not self._is_managed_file_payload(file_payload=existing_payload, marker=marker.lower()):
+            raise SEOMigrationGitHubPublisherError(
+                code="github_managed_file_conflict",
+                safe_message=f"The existing {path} file is not managed by MBSRN and cannot be removed automatically.",
+                stage="workflow_provisioning",
+            )
+        if dry_run:
+            return False
+        existing_sha = _coerce_string(existing_payload.get("sha"))
+        if not existing_sha:
+            raise SEOMigrationGitHubPublisherError(
+                code="workflow_provisioning_failed",
+                safe_message=f"The existing {path} file could not be identified for removal.",
+                stage="workflow_provisioning",
+            )
+        delete_path = (
+            f"/repos/{urllib.parse.quote(repo_owner)}/{urllib.parse.quote(repo_name)}"
+            f"/contents/{urllib.parse.quote(path, safe='/')}"
+        )
+        self._request_json(
+            method="DELETE",
+            path=delete_path,
+            payload={
+                "message": commit_message,
+                "sha": existing_sha,
+                "branch": branch,
+                "committer": {
+                    "name": self.committer_name,
+                    "email": self.committer_email,
+                },
+            },
+            expected_statuses=(200,),
+            error_stage="workflow_provisioning",
+        )
+        if self._fetch_existing_file_payload(
+            repo_owner=repo_owner,
+            repo_name=repo_name,
+            branch=branch,
+            path=path,
+        ) is not None:
+            raise SEOMigrationGitHubPublisherError(
+                code="workflow_provisioning_failed",
+                safe_message=f"The retired {path} file is still present after removal.",
+                stage="workflow_provisioning",
+            )
+        return True
 
     def _request_json(
         self,
@@ -10230,8 +10336,28 @@ def _render_managed_deploy_workflow_yaml(
     namespace_isolation_defaults: dict[str, object] | None = None,
     private_image_auth_required: bool = False,
     site_id: str | None = None,
+    pre_shared_certificate_name: str | None = None,
+    pre_shared_certificate_fingerprint: str | None = None,
 ) -> str:
     normalized_workflow_id = str(workflow_id or "").strip() or "deploy-www-prod.yml"
+    if pre_shared_certificate_name or pre_shared_certificate_fingerprint:
+        return _render_self_managed_deploy_workflow_yaml(
+            workflow_id=normalized_workflow_id,
+            repo_owner=repo_owner,
+            repo_name=repo_name,
+            branch=branch,
+            target_environment_key=target_environment_key,
+            target_environment_source=target_environment_source,
+            managed_gke_config=managed_gke_config,
+            kubernetes_namespace=kubernetes_namespace,
+            namespace_source=namespace_source,
+            preview_hostname=preview_hostname,
+            namespace_isolation_defaults=namespace_isolation_defaults,
+            private_image_auth_required=private_image_auth_required,
+            site_id=site_id,
+            pre_shared_certificate_name=pre_shared_certificate_name,
+            pre_shared_certificate_fingerprint=pre_shared_certificate_fingerprint,
+        )
     # Keep mode normalization deterministic even though generation currently has
     # a single production-safe template contract.
     _ = _normalize_deploy_workflow_mode(deploy_workflow_mode)
@@ -12656,6 +12782,347 @@ def _render_managed_deploy_workflow_yaml(
     return _embed_managed_workflow_signature(workflow_yaml=workflow_yaml_unsigned)
 
 
+def _render_self_managed_deploy_workflow_yaml(
+    *,
+    workflow_id: str,
+    repo_owner: str,
+    repo_name: str,
+    branch: str,
+    target_environment_key: str,
+    target_environment_source: str,
+    managed_gke_config: dict[str, object] | None,
+    kubernetes_namespace: str,
+    namespace_source: str,
+    preview_hostname: str,
+    namespace_isolation_defaults: dict[str, object] | None,
+    private_image_auth_required: bool,
+    site_id: str | None,
+    pre_shared_certificate_name: str | None,
+    pre_shared_certificate_fingerprint: str | None,
+) -> str:
+    certificate_name = str(pre_shared_certificate_name or "").strip()
+    fingerprint = re.sub(r"[^0-9a-f]", "", str(pre_shared_certificate_fingerprint or "").lower())
+    if not re.fullmatch(r"[a-z](?:[-a-z0-9]{0,61}[a-z0-9])?", certificate_name):
+        raise ValueError("A valid pre-shared certificate name is required.")
+    if not re.fullmatch(r"[0-9a-f]{64}", fingerprint):
+        raise ValueError("A valid SHA-256 certificate fingerprint is required.")
+
+    normalized_gke_config = _normalize_managed_gke_config(managed_gke_config)
+    cluster_name = normalized_gke_config.get(_MANAGED_GKE_CONFIG_CLUSTER_NAME)
+    cluster_location = normalized_gke_config.get(_MANAGED_GKE_CONFIG_CLUSTER_LOCATION)
+    project_id = normalized_gke_config.get(_MANAGED_GKE_CONFIG_PROJECT_ID)
+    rendered_cluster_name = (
+        _yaml_quote_scalar(cluster_name)
+        if cluster_name
+        else f"${{{{ vars.{_GKE_ENV_CLUSTER_NAME} || secrets.{_GKE_ENV_CLUSTER_NAME} }}}}"
+    )
+    rendered_cluster_location = (
+        _yaml_quote_scalar(cluster_location)
+        if cluster_location
+        else f"${{{{ vars.{_GKE_ENV_CLUSTER_LOCATION} || secrets.{_GKE_ENV_CLUSTER_LOCATION} }}}}"
+    )
+    rendered_project_id = (
+        _yaml_quote_scalar(project_id)
+        if project_id
+        else f"${{{{ vars.{_GKE_ENV_PROJECT_ID} || secrets.{_GKE_ENV_PROJECT_ID} }}}}"
+    )
+    namespace = _safe_identifier_fragment(kubernetes_namespace, fallback=repo_name, max_length=63)
+    namespace_origin = _safe_identifier_fragment(namespace_source, fallback="repo-name", max_length=40)
+    environment_key = _safe_identifier_fragment(target_environment_key, fallback="gke-prod", max_length=60)
+    environment_source = _normalize_target_environment_source(target_environment_source)
+    site_fragment = _safe_identifier_fragment(site_id, fallback="workspace", max_length=60)
+    hostname = str(preview_hostname or "").strip().lower()
+    if not hostname or not re.fullmatch(r"[a-z0-9](?:[-a-z0-9.]{0,251}[a-z0-9])?", hostname):
+        raise ValueError("A valid preview hostname is required.")
+    endpoint = resolve_managed_preview_endpoint_configuration(
+        repo_name=repo_name,
+        site_id=site_id,
+        preview_hostname=hostname,
+        namespace_isolation_defaults=_normalize_namespace_isolation_defaults(namespace_isolation_defaults),
+    )
+    static_ip_name = _coerce_string(endpoint.get("expected_static_ip_name"))
+    if not static_ip_name:
+        static_ip_name, _ = derive_site_preview_static_ip_name(repo_name=repo_name, site_id=site_id)
+    frontend_config_name, _ = derive_site_preview_frontend_config_name(repo_name=repo_name, site_id=site_id)
+    backend_config_name, _ = derive_site_preview_backend_config_name(repo_name=repo_name, site_id=site_id)
+    image_repository = _derive_site_runtime_image_repository(repo_owner=repo_owner, repo_name=repo_name)
+    private_image_auth_value = "true" if private_image_auth_required else "false"
+    pull_secret_step = ""
+    if private_image_auth_required:
+        pull_secret_step = (
+            "      - name: Verify GHCR image pull secret\n"
+            "        run: kubectl get secret ghcr-pull-secret --namespace \"$K8S_NAMESPACE\"\n"
+        )
+
+    workflow_yaml_unsigned = rf"""# {_MBSRN_MANAGED_WORKFLOW_MARKER}
+name: MBSRN Deploy {_safe_identifier_fragment(repo_name, fallback='site')}
+
+on:
+  workflow_dispatch:
+    inputs:
+      replace_existing_runtime:
+        description: Replace existing managed-site runtime resources before deploy
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    outputs:
+      live_url: ${{{{ steps.resolve_live_url.outputs.live_url }}}}
+      resolved_live_url: ${{{{ steps.resolve_live_url.outputs.resolved_live_url }}}}
+      deployed_url: ${{{{ steps.resolve_live_url.outputs.deployed_url }}}}
+      host_reachable: ${{{{ steps.resolve_live_url.outputs.host_reachable }}}}
+      host_reachability_scheme: ${{{{ steps.resolve_live_url.outputs.host_reachability_scheme }}}}
+      dns_record_matches_ingress: ${{{{ steps.resolve_live_url.outputs.dns_record_matches_ingress }}}}
+      dns_expected_ip: ${{{{ steps.resolve_live_url.outputs.dns_expected_ip }}}}
+      dns_observed_ip: ${{{{ steps.resolve_live_url.outputs.dns_observed_ip }}}}
+      expected_static_ip_address: ${{{{ steps.resolve_live_url.outputs.expected_static_ip_address }}}}
+      static_ip_status: ${{{{ steps.resolve_live_url.outputs.static_ip_status }}}}
+      static_ip_users: ${{{{ steps.resolve_live_url.outputs.static_ip_users }}}}
+      tls_certificate_status: ${{{{ steps.resolve_live_url.outputs.tls_certificate_status }}}}
+      tls_domain_status: ${{{{ steps.resolve_live_url.outputs.tls_domain_status }}}}
+      ingress_status_ip: ${{{{ steps.resolve_live_url.outputs.ingress_status_ip }}}}
+      ingress_status_ip_matches_static_ip: ${{{{ steps.resolve_live_url.outputs.ingress_status_ip_matches_static_ip }}}}
+      static_ip_bound_to_expected_forwarding_rule: ${{{{ steps.resolve_live_url.outputs.static_ip_bound_to_expected_forwarding_rule }}}}
+      ingress_ip: ${{{{ steps.resolve_live_url.outputs.ingress_ip }}}}
+      ingress_conflict_detected: ${{{{ steps.resolve_live_url.outputs.ingress_conflict_detected }}}}
+      cert_identity_valid: ${{{{ steps.resolve_live_url.outputs.cert_identity_valid }}}}
+      https_probe_error_summary: ${{{{ steps.resolve_live_url.outputs.https_probe_error_summary }}}}
+      deploy_https_ready: ${{{{ steps.resolve_live_url.outputs.deploy_https_ready }}}}
+      {_MBSRN_MANAGED_DEPLOY_TEMPLATE_VERSION_OUTPUT_KEY}: ${{{{ steps.resolve_live_url.outputs.{_MBSRN_MANAGED_DEPLOY_TEMPLATE_VERSION_OUTPUT_KEY} }}}}
+      site_runtime_image_reference: ${{{{ steps.resolve_site_runtime_image.outputs.site_runtime_image_reference }}}}
+      site_runtime_image_selection_mode: ${{{{ steps.resolve_site_runtime_image.outputs.site_runtime_image_selection_mode }}}}
+    environment:
+      name: {environment_key}
+      url: ${{{{ steps.resolve_live_url.outputs.resolved_live_url }}}}
+    env:
+      K8S_NAMESPACE: {namespace}
+      MBSRN_NAMESPACE_SOURCE: {namespace_origin}
+      MBSRN_TARGET_ENVIRONMENT_SOURCE: {environment_source}
+      MBSRN_SITE_IDENTITY: {site_fragment}
+      MBSRN_PREVIEW_HOSTNAME: {hostname}
+      MBSRN_PREVIEW_STATIC_IP_NAME: {static_ip_name}
+      MBSRN_PREVIEW_CERTIFICATE_NAME: {certificate_name}
+      MBSRN_EXPECTED_CERTIFICATE_FINGERPRINT: {fingerprint}
+      MBSRN_TLS_CERTIFICATE_MODE: self-managed
+      MBSRN_FRONTEND_CONFIG_NAME: {frontend_config_name}
+      MBSRN_BACKEND_CONFIG_NAME: {backend_config_name}
+      SITE_WEB_IMAGE_REPOSITORY: {image_repository}
+      PRIVATE_IMAGE_AUTH_REQUIRED: "{private_image_auth_value}"
+      GKE_CLUSTER_NAME: {rendered_cluster_name}
+      GKE_CLUSTER_LOCATION: {rendered_cluster_location}
+      GKE_PROJECT_ID: {rendered_project_id}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Prepare managed site runtime build context
+        run: |
+          set -euo pipefail
+          rm -rf site-runtime/context
+          mkdir -p site-runtime/context
+          rsync -a --delete --exclude '.git/' --exclude '.github/' --exclude 'k8s/' --exclude 'site-runtime/' --exclude 'mbsrn.key' ./ site-runtime/context/
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{{{ github.actor }}}}
+          password: ${{{{ secrets.GITHUB_TOKEN }}}}
+      - name: Build and push managed site runtime image
+        uses: docker/build-push-action@v6
+        with:
+          context: site-runtime
+          file: site-runtime/Dockerfile
+          push: true
+          provenance: false
+          tags: |
+            ${{{{ env.SITE_WEB_IMAGE_REPOSITORY }}}}:${{{{ github.sha }}}}
+            ${{{{ env.SITE_WEB_IMAGE_REPOSITORY }}}}:latest
+      - name: Resolve site runtime image
+        id: resolve_site_runtime_image
+        run: |
+          echo "site_runtime_image_reference=$SITE_WEB_IMAGE_REPOSITORY:$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+          echo "site_runtime_image_selection_mode=site_repo_build" >> "$GITHUB_OUTPUT"
+      - name: Validate deploy configuration
+        run: |
+          set -euo pipefail
+          test -n "${{{{ secrets.{_MANAGED_DEPLOY_TARGET_REPO_SECRET_NAME} }}}}" || {{ echo "deploy_runtime_reason_code=target_repo_deploy_secret_missing"; exit 1; }}
+          test -n "$GKE_CLUSTER_NAME" || {{ echo "deploy_runtime_reason_code=missing_cluster_name"; exit 1; }}
+          test -n "$GKE_CLUSTER_LOCATION" || {{ echo "deploy_runtime_reason_code=missing_cluster_location"; exit 1; }}
+          test -n "$GKE_PROJECT_ID" || {{ echo "deploy_runtime_reason_code=missing_gcp_project_id"; exit 1; }}
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{{{ secrets.{_MANAGED_DEPLOY_TARGET_REPO_SECRET_NAME} }}}}
+          create_credentials_file: true
+          export_environment_variables: true
+      - name: Get GKE credentials
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: ${{{{ env.GKE_CLUSTER_NAME }}}}
+          location: ${{{{ env.GKE_CLUSTER_LOCATION }}}}
+          project_id: ${{{{ env.GKE_PROJECT_ID }}}}
+      - name: Validate self-managed certificate resource
+        run: |
+          set -euo pipefail
+          certificate_type="$(gcloud compute ssl-certificates describe "$MBSRN_PREVIEW_CERTIFICATE_NAME" --global --project "$GKE_PROJECT_ID" --format='value(type)')"
+          if [ "$certificate_type" != "SELF_MANAGED" ]; then
+            echo "deploy_runtime_reason_code=self_managed_certificate_not_found"
+            echo "Certificate $MBSRN_PREVIEW_CERTIFICATE_NAME is not a global SELF_MANAGED Compute SSL certificate."
+            exit 1
+          fi
+          echo "Certificate resource verified: $MBSRN_PREVIEW_CERTIFICATE_NAME (SELF_MANAGED)."
+      - name: Ensure namespace exists
+        run: kubectl apply -f k8s/namespace.yaml
+{pull_secret_step}      - name: Apply managed manifests
+        run: |
+          set -euo pipefail
+          apply_if_present() {{ [ ! -f "$1" ] || kubectl apply -f "$1"; }}
+          apply_if_present k8s/resourcequota.yaml
+          apply_if_present k8s/limitrange.yaml
+          apply_if_present k8s/networkpolicy.yaml
+          apply_if_present k8s/backendconfig.yaml
+          apply_if_present k8s/service.yaml
+          apply_if_present k8s/deployment.yaml
+          apply_if_present k8s/frontendconfig.yaml
+          apply_if_present k8s/ingress.yaml
+      - name: Wait for application rollout
+        run: kubectl rollout status deployment/site-web --namespace "$K8S_NAMESPACE" --timeout=5m
+      - name: Resolve live URL from ingress status
+        id: resolve_live_url
+        run: |
+          set -uo pipefail
+          live_url="https://$MBSRN_PREVIEW_HOSTNAME"
+          ingress_ip=""
+          dns_observed_ip=""
+          expected_static_ip_address=""
+          static_ip_status=""
+          static_ip_users=""
+          dns_record_matches_ingress=false
+          ingress_status_ip_matches_static_ip=false
+          static_ip_bound_to_expected_forwarding_rule=false
+          ingress_conflict_detected=false
+          host_reachable=false
+          cert_identity_valid=false
+          deploy_https_ready=false
+          tls_certificate_status=ACTIVE
+          tls_domain_status=UNKNOWN
+          https_probe_error_summary=""
+          emit_outputs() {{
+            {{
+              echo "live_url=$live_url"
+              echo "resolved_live_url=$live_url"
+              echo "deployed_url=$live_url"
+              echo "host_reachable=$host_reachable"
+              echo "host_reachability_scheme=https"
+              echo "dns_record_matches_ingress=$dns_record_matches_ingress"
+              echo "dns_expected_ip=$expected_static_ip_address"
+              echo "dns_observed_ip=$dns_observed_ip"
+              echo "expected_static_ip_address=$expected_static_ip_address"
+              echo "static_ip_status=$static_ip_status"
+              echo "static_ip_users=$static_ip_users"
+              echo "tls_certificate_status=$tls_certificate_status"
+              echo "tls_domain_status=$tls_domain_status"
+              echo "ingress_status_ip=$ingress_ip"
+              echo "ingress_status_ip_matches_static_ip=$ingress_status_ip_matches_static_ip"
+              echo "static_ip_bound_to_expected_forwarding_rule=$static_ip_bound_to_expected_forwarding_rule"
+              echo "ingress_ip=$ingress_ip"
+              echo "ingress_conflict_detected=$ingress_conflict_detected"
+              echo "cert_identity_valid=$cert_identity_valid"
+              echo "https_probe_error_summary=$https_probe_error_summary"
+              echo "deploy_https_ready=$deploy_https_ready"
+              echo "{_MBSRN_MANAGED_DEPLOY_TEMPLATE_VERSION_OUTPUT_KEY}={_MBSRN_MANAGED_TEMPLATE_VERSION}"
+            }} >> "$GITHUB_OUTPUT"
+          }}
+          fail_tls() {{
+            https_probe_error_summary="reason=$1"
+            echo "deploy_runtime_reason_code=$1"
+            echo "deploy_runtime_failure_stage=certificate_verify"
+            emit_outputs
+            exit 1
+          }}
+
+          annotation="$(kubectl get ingress site-web --namespace "$K8S_NAMESPACE" -o jsonpath='{{.metadata.annotations.ingress\.gcp\.kubernetes\.io/pre-shared-cert}}' 2>/dev/null || true)"
+          [ "$annotation" = "$MBSRN_PREVIEW_CERTIFICATE_NAME" ] || fail_tls "pre_shared_certificate_annotation_mismatch"
+
+          attempt=1
+          while [ "$attempt" -le 30 ]; do
+            ingress_ip="$(kubectl get ingress site-web --namespace "$K8S_NAMESPACE" -o jsonpath='{{.status.loadBalancer.ingress[0].ip}}' 2>/dev/null || true)"
+            [ -n "$ingress_ip" ] && break
+            sleep 10
+            attempt=$((attempt + 1))
+          done
+          [ -n "$ingress_ip" ] || fail_tls "ingress_address_pending"
+
+          address_json="$(gcloud compute addresses describe "$MBSRN_PREVIEW_STATIC_IP_NAME" --global --project "$GKE_PROJECT_ID" --format='csv[no-heading](address,status,users)' 2>/dev/null || true)"
+          expected_static_ip_address="$(echo "$address_json" | cut -d, -f1 | tr -d '[:space:]')"
+          static_ip_status="$(echo "$address_json" | cut -d, -f2 | tr -d '[:space:]')"
+          static_ip_users="$(echo "$address_json" | cut -d, -f3-)"
+          [ -n "$expected_static_ip_address" ] || fail_tls "expected_static_ip_missing"
+          if [ "$ingress_ip" != "$expected_static_ip_address" ]; then
+            ingress_conflict_detected=true
+            fail_tls "ingress_static_ip_conflict"
+          fi
+          ingress_status_ip_matches_static_ip=true
+          static_ip_bound_to_expected_forwarding_rule=true
+
+          dns_observed_ip="$(getent ahostsv4 "$MBSRN_PREVIEW_HOSTNAME" | awk '{{print $1}}' | sort -u | paste -sd, - || true)"
+          echo "$dns_observed_ip" | tr ',' '\n' | grep -Fxq "$expected_static_ip_address" || fail_tls "dns_record_mismatch"
+          dns_record_matches_ingress=true
+
+          served_certificate="$(mktemp)"
+          openssl_error="$(mktemp)"
+          certificate_failure_reason="tls_handshake_failed"
+          tls_attempt=1
+          while [ "$tls_attempt" -le 30 ]; do
+            : > "$served_certificate"
+            : > "$openssl_error"
+            if timeout 10 openssl s_client -connect "$MBSRN_PREVIEW_HOSTNAME:443" -servername "$MBSRN_PREVIEW_HOSTNAME" < /dev/null 2>"$openssl_error" | openssl x509 -outform PEM > "$served_certificate"; then
+              observed_fingerprint="$(openssl x509 -in "$served_certificate" -noout -fingerprint -sha256 | cut -d= -f2 | tr -d ':' | tr '[:upper:]' '[:lower:]')"
+              if [ "$observed_fingerprint" = "$MBSRN_EXPECTED_CERTIFICATE_FINGERPRINT" ]; then
+                if openssl x509 -in "$served_certificate" -noout -checkhost "$MBSRN_PREVIEW_HOSTNAME" > /dev/null; then
+                  certificate_failure_reason=""
+                  break
+                fi
+                certificate_failure_reason="certificate_domain_mismatch"
+              else
+                certificate_failure_reason="certificate_fingerprint_mismatch"
+              fi
+            else
+              certificate_failure_reason="tls_handshake_failed"
+            fi
+            tls_attempt=$((tls_attempt + 1))
+            [ "$tls_attempt" -gt 30 ] || sleep 10
+          done
+          rm -f "$served_certificate" "$openssl_error"
+          [ -z "$certificate_failure_reason" ] || fail_tls "$certificate_failure_reason"
+          cert_identity_valid=true
+          tls_domain_status=ACTIVE
+
+          https_status="$(curl --insecure --silent --show-error --connect-timeout 5 --max-time 20 --output /dev/null --write-out '%{{http_code}}' "$live_url" || true)"
+          echo "$https_status" | grep -Eq '^[1-4][0-9][0-9]$' || fail_tls "https_probe_failed"
+          host_reachable=true
+          deploy_https_ready=true
+          emit_outputs
+          echo "TLS ready: self-managed certificate $MBSRN_PREVIEW_CERTIFICATE_NAME"
+          echo "Hostname: $MBSRN_PREVIEW_HOSTNAME"
+          echo "Ingress IP: $ingress_ip"
+          echo "Certificate fingerprint: $MBSRN_EXPECTED_CERTIFICATE_FINGERPRINT"
+      - name: Emit managed deployment metadata
+        run: |
+          echo "Repository: {repo_owner}/{repo_name}"
+          echo "Branch: {branch}"
+          echo "TLS mode: self-managed pre-shared certificate"
+"""
+    return _embed_managed_workflow_signature(workflow_yaml=workflow_yaml_unsigned)
+
+
 def _render_managed_gke_manifest_files(
     *,
     repo_owner: str,
@@ -12668,6 +13135,7 @@ def _render_managed_gke_manifest_files(
     namespace_isolation_defaults: dict[str, object] | None,
     site_id: str | None,
     private_image_auth_required: bool = False,
+    pre_shared_certificate_name: str | None = None,
 ) -> dict[str, str]:
     site_runtime_image_repository = _derive_site_runtime_image_repository(
         repo_owner=repo_owner,
@@ -12693,6 +13161,12 @@ def _render_managed_gke_manifest_files(
     namespace_origin = _safe_identifier_fragment(namespace_source, fallback="repo-name", max_length=40)
     site_fragment = _safe_identifier_fragment(site_id, fallback="workspace", max_length=60)
     normalized_preview_hostname = (_coerce_string(preview_hostname) or "").strip().lower()
+    normalized_pre_shared_certificate_name = (_coerce_string(pre_shared_certificate_name) or "").strip()
+    if normalized_pre_shared_certificate_name and not re.fullmatch(
+        r"[a-z](?:[-a-z0-9]{0,61}[a-z0-9])?",
+        normalized_pre_shared_certificate_name,
+    ):
+        raise ValueError("Pre-shared certificate name is invalid.")
     preview_endpoint = resolve_managed_preview_endpoint_configuration(
         repo_name=repo_name,
         site_id=site_id,
@@ -12799,6 +13273,11 @@ def _render_managed_gke_manifest_files(
         "      targetPort: 8080\n"
         "  type: ClusterIP\n"
     )
+    certificate_annotation = (
+        f"    ingress.gcp.kubernetes.io/pre-shared-cert: {normalized_pre_shared_certificate_name}\n"
+        if normalized_pre_shared_certificate_name
+        else f"    networking.gke.io/managed-certificates: {preview_certificate_name}\n"
+    )
     ingress_manifest = (
         f"# {_MBSRN_MANAGED_MANIFEST_MARKER}\n"
         "apiVersion: networking.k8s.io/v1\n"
@@ -12811,7 +13290,7 @@ def _render_managed_gke_manifest_files(
         "  annotations:\n"
         "    kubernetes.io/ingress.class: gce\n"
         f"    kubernetes.io/ingress.global-static-ip-name: {preview_static_ip_name}\n"
-        f"    networking.gke.io/managed-certificates: {preview_certificate_name}\n"
+        f"{certificate_annotation}"
         f"    networking.gke.io/v1beta1.FrontendConfig: {frontend_config_name}\n"
         "spec:\n"
         "  ingressClassName: gce\n"
@@ -12877,10 +13356,11 @@ def _render_managed_gke_manifest_files(
         _MBSRN_MANAGED_DEPLOYMENT_FILE_PATH: deployment_manifest,
         _MBSRN_MANAGED_SERVICE_FILE_PATH: service_manifest,
         _MBSRN_MANAGED_INGRESS_FILE_PATH: ingress_manifest,
-        _MBSRN_MANAGED_CERTIFICATE_FILE_PATH: managed_certificate_manifest,
         _MBSRN_MANAGED_FRONTEND_CONFIG_FILE_PATH: frontend_config_manifest,
         _MBSRN_MANAGED_BACKEND_CONFIG_FILE_PATH: backend_config_manifest,
     }
+    if not normalized_pre_shared_certificate_name:
+        manifests[_MBSRN_MANAGED_CERTIFICATE_FILE_PATH] = managed_certificate_manifest
     normalized_defaults = _normalize_namespace_isolation_defaults(namespace_isolation_defaults)
     resource_quota_defaults = normalized_defaults.get("resource_quota")
     if isinstance(resource_quota_defaults, dict) and _coerce_bool(
@@ -13178,6 +13658,7 @@ def _evaluate_preview_certificate_alignment(
     expected_preview_hostname: str,
     expected_certificate_name: str,
     expected_static_ip_name: str | None = None,
+    self_managed_tls_mode: bool = False,
 ) -> tuple[bool, dict[str, object]]:
     ingress_content = str(ingress_manifest_content or "")
     certificate_content = str(managed_certificate_manifest_content or "")
@@ -13278,6 +13759,13 @@ def _evaluate_preview_certificate_alignment(
         pre_shared_cert_metadata_mismatch
         and (ingress_certificate_mismatch or certificate_domain_mismatch or stale_managed_certificate_present)
     )
+    if self_managed_tls_mode:
+        ingress_certificate_mismatch = bool(
+            not valid_pre_shared_cert_binding or ingress_cert_annotation_values
+        )
+        stale_pre_shared_cert_binding_detected = bool(
+            ingress_pre_shared_cert_annotation_values and not valid_pre_shared_cert_binding
+        )
 
     observed_evidence = any(
         value
@@ -13286,6 +13774,7 @@ def _evaluate_preview_certificate_alignment(
             ingress_cert_annotation_values,
             certificate_name,
             certificate_domains,
+            ingress_pre_shared_cert_annotation_values,
         )
     )
     has_conflict = (
@@ -13294,6 +13783,7 @@ def _evaluate_preview_certificate_alignment(
         or stale_managed_certificate_present
         or shared_static_ip_not_allowed_for_per_site_ingress
         or stale_pre_shared_cert_binding_detected
+        or (self_managed_tls_mode and not valid_pre_shared_cert_binding)
     )
     all_aligned = not has_conflict
     if has_conflict:

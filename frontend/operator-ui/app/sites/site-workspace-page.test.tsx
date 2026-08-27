@@ -42,6 +42,7 @@ import type {
   SearchConsoleSiteSummaryResponse,
   SEOAuditRunListResponse,
   SEOSite,
+  SiteTLSCertificateStatus,
   SiteGA4Insights,
   SiteAnalyticsSummaryResponse,
 } from "../../lib/api/types";
@@ -130,6 +131,11 @@ const mockPublishMigrationArtifactVersion = jest.fn<Promise<MigrationPublishActi
 const mockAdoptMigrationPublishRepository = jest.fn<Promise<MigrationRepositoryAdoptActionResponse>, unknown[]>();
 const mockDeployMigrationArtifactVersion = jest.fn<Promise<MigrationDeployActionResponse>, unknown[]>();
 const mockProvisionMigrationManagedCertificate = jest.fn<Promise<MigrationManagedCertificateActionResponse>, unknown[]>();
+const mockFetchSiteTLSCertificateStatus = jest.fn<Promise<SiteTLSCertificateStatus>, unknown[]>();
+const mockGenerateSiteTLSCertificate = jest.fn<Promise<SiteTLSCertificateStatus>, unknown[]>();
+const mockImportSiteTLSCertificate = jest.fn<Promise<SiteTLSCertificateStatus>, unknown[]>();
+const mockAdoptSiteTLSCertificate = jest.fn<Promise<SiteTLSCertificateStatus>, unknown[]>();
+const mockVerifySiteTLSCertificate = jest.fn<Promise<SiteTLSCertificateStatus>, unknown[]>();
 const mockRefreshMigrationDeployStatus = jest.fn<Promise<MigrationDeployActionResponse>, unknown[]>();
 const mockFetchMigrationPublishHistory = jest.fn<Promise<MigrationHistoryListResponse>, unknown[]>();
 const mockFetchMigrationDeployHistory = jest.fn<Promise<MigrationHistoryListResponse>, unknown[]>();
@@ -209,6 +215,11 @@ jest.mock("../../lib/api/client", () => {
     adoptMigrationPublishRepository: (...args: unknown[]) => mockAdoptMigrationPublishRepository(...args),
     deployMigrationArtifactVersion: (...args: unknown[]) => mockDeployMigrationArtifactVersion(...args),
     provisionMigrationManagedCertificate: (...args: unknown[]) => mockProvisionMigrationManagedCertificate(...args),
+    fetchSiteTLSCertificateStatus: (...args: unknown[]) => mockFetchSiteTLSCertificateStatus(...args),
+    generateSiteTLSCertificate: (...args: unknown[]) => mockGenerateSiteTLSCertificate(...args),
+    importSiteTLSCertificate: (...args: unknown[]) => mockImportSiteTLSCertificate(...args),
+    adoptSiteTLSCertificate: (...args: unknown[]) => mockAdoptSiteTLSCertificate(...args),
+    verifySiteTLSCertificate: (...args: unknown[]) => mockVerifySiteTLSCertificate(...args),
     refreshMigrationDeployStatus: (...args: unknown[]) => mockRefreshMigrationDeployStatus(...args),
     fetchMigrationPublishHistory: (...args: unknown[]) => mockFetchMigrationPublishHistory(...args),
     fetchMigrationDeployHistory: (...args: unknown[]) => mockFetchMigrationDeployHistory(...args),
@@ -1505,7 +1516,7 @@ describe("site migration workflow route", () => {
     expect(deployPayload?.replace_existing_runtime).toBeUndefined();
   });
 
-  it("provisions the TLS certificate separately before requesting GKE deploy", async () => {
+  it("generates, vaults, and publishes self-managed preview TLS separately from GKE deploy", async () => {
     const user = userEvent.setup();
     const approvedArtifact = buildMigrationArtifactVersion({
       approval_status: "approved",
@@ -1531,21 +1542,65 @@ describe("site migration workflow route", () => {
       }),
     );
     mockFetchMigrationArtifactVersions.mockResolvedValue({ items: [approvedArtifact], total: 1 });
+    const generatedCertificateStatus: SiteTLSCertificateStatus = {
+      hostname: "platfire.site.mbsrn.com",
+      asset: {
+        id: "certificate-1",
+        hostname: "platfire.site.mbsrn.com",
+        display_name: "Platfire preview TLS",
+        source: "generated",
+        custody: "secret_manager",
+        certificate_kind: "self_signed",
+        key_algorithm: "rsa_2048",
+        fingerprint_sha256: "a".repeat(64),
+        serial_number: "1",
+        subject: "CN=platfire.site.mbsrn.com",
+        issuer: "CN=platfire.site.mbsrn.com",
+        san_dns_names: ["platfire.site.mbsrn.com"],
+        not_valid_before: "2026-03-21T00:00:00Z",
+        not_valid_after: "2027-03-20T00:00:00Z",
+        gcp_project_id: "mbsrn-prod",
+        gcp_resource_name: "mbsrn-platfire-preview-tls",
+        gcp_resource_scope: "global",
+        status: "published",
+        failure_reason_code: null,
+        failure_message: null,
+        created_at: "2026-03-21T00:00:00Z",
+        updated_at: "2026-03-21T00:00:00Z",
+      },
+      binding: {
+        id: "binding-1",
+        certificate_asset_id: "certificate-1",
+        is_active: true,
+        manifest_state: "selected",
+        serving_state: "unverified",
+        observed_fingerprint_sha256: null,
+        last_verified_at: null,
+      },
+      vaulted: true,
+      published: true,
+      selected_for_ingress: true,
+      manifest_state: "selected",
+      serving_state: "unverified",
+      browser_trust: "untrusted_self_signed",
+    };
+    mockGenerateSiteTLSCertificate.mockResolvedValueOnce(generatedCertificateStatus);
 
     render(<SiteMigrationWorkflowPage />);
 
     const provisionButton = await screen.findByTestId("migration-provision-certificate-button");
     expect(provisionButton).toBeEnabled();
-    expect(screen.getByTestId("migration-certificate-status")).toHaveTextContent("FAILED_NOT_VISIBLE");
+    expect(screen.getByTestId("migration-certificate-status")).toHaveTextContent("Preview TLS · self-managed");
     await user.click(provisionButton);
 
     await waitFor(() =>
-      expect(mockProvisionMigrationManagedCertificate).toHaveBeenCalledWith("token-1", "biz-1", "site-1", {
-        artifact_version_id: approvedArtifact.id,
+      expect(mockGenerateSiteTLSCertificate).toHaveBeenCalledWith("token-1", "biz-1", "site-1", {
+        key_algorithm: "rsa_2048",
+        validity_days: 90,
       }),
     );
     expect(mockDeployMigrationArtifactVersion).not.toHaveBeenCalled();
-    expect(await screen.findByText(/TLS certificate resource created/i)).toBeInTheDocument();
+    expect(await screen.findByText(/generated, vaulted, and published/i)).toBeInTheDocument();
   });
 
   it("allows deploy when legacy runtime replacement is required only after replace-runtime is selected", async () => {
@@ -6984,6 +7039,11 @@ function seedCompetitorProfileGenerationDefaults(): void {
   mockAdoptMigrationPublishRepository.mockReset();
   mockDeployMigrationArtifactVersion.mockReset();
   mockProvisionMigrationManagedCertificate.mockReset();
+  mockFetchSiteTLSCertificateStatus.mockReset();
+  mockGenerateSiteTLSCertificate.mockReset();
+  mockImportSiteTLSCertificate.mockReset();
+  mockAdoptSiteTLSCertificate.mockReset();
+  mockVerifySiteTLSCertificate.mockReset();
   mockRefreshMigrationDeployStatus.mockReset();
   mockFetchMigrationPublishHistory.mockReset();
   mockFetchMigrationDeployHistory.mockReset();
@@ -7142,6 +7202,22 @@ function seedCompetitorProfileGenerationDefaults(): void {
       certificate_status: "PROVISIONING",
     },
   });
+  const defaultTLSCertificateStatus: SiteTLSCertificateStatus = {
+    hostname: "platfire.site.mbsrn.com",
+    asset: null,
+    binding: null,
+    vaulted: false,
+    published: false,
+    selected_for_ingress: false,
+    manifest_state: "not_selected",
+    serving_state: "unverified",
+    browser_trust: "untrusted_self_signed",
+  };
+  mockFetchSiteTLSCertificateStatus.mockResolvedValue(defaultTLSCertificateStatus);
+  mockGenerateSiteTLSCertificate.mockResolvedValue(defaultTLSCertificateStatus);
+  mockImportSiteTLSCertificate.mockResolvedValue(defaultTLSCertificateStatus);
+  mockAdoptSiteTLSCertificate.mockResolvedValue(defaultTLSCertificateStatus);
+  mockVerifySiteTLSCertificate.mockResolvedValue(defaultTLSCertificateStatus);
   mockRefreshMigrationDeployStatus.mockResolvedValue({
     workspace: buildMigrationWorkspace({
       deploy_status: "deploy_requested",

@@ -8731,6 +8731,106 @@ def test_rendered_managed_templates_enable_pull_secret_only_for_private_image_au
     assert "name: ghcr-pull-secret" in deployment_yaml
 
 
+def test_rendered_self_managed_tls_templates_use_compute_pre_shared_certificate() -> None:
+    fingerprint = "ab" * 32
+    workflow_yaml = _render_managed_deploy_workflow_yaml(
+        workflow_id="deploy-www-prod.yml",
+        repo_owner="mhanson13",
+        repo_name="platfire",
+        branch="main",
+        deploy_workflow_mode="site_repo_template_v1",
+        target_environment_key="gke_prod",
+        target_environment_source="admin_config",
+        managed_gke_config={
+            "project_id": "mbsrn-prod",
+            "cluster_name": "mbsrn-prod",
+            "cluster_location": "us-central1",
+        },
+        kubernetes_namespace="platfire",
+        namespace_source="repo_name",
+        preview_hostname="platfire.site.mbsrn.com",
+        private_image_auth_required=True,
+        site_id="site-platfire",
+        pre_shared_certificate_name="mbsrn-platfire-ab12cd34",
+        pre_shared_certificate_fingerprint=fingerprint,
+    )
+    manifests = _render_managed_gke_manifest_files(
+        repo_owner="mhanson13",
+        repo_name="platfire",
+        target_environment_key="gke_prod",
+        target_environment_source="admin_config",
+        kubernetes_namespace="platfire",
+        namespace_source="repo_name",
+        preview_hostname="platfire.site.mbsrn.com",
+        namespace_isolation_defaults=None,
+        site_id="site-platfire",
+        private_image_auth_required=True,
+        pre_shared_certificate_name="mbsrn-platfire-ab12cd34",
+    )
+
+    parsed_workflow = yaml.safe_load(workflow_yaml)
+    assert isinstance(parsed_workflow, dict)
+    assert "k8s/managedcertificate.yaml" not in manifests
+    assert "networking.gke.io/managed-certificates" not in manifests["k8s/ingress.yaml"]
+    assert (
+        "ingress.gcp.kubernetes.io/pre-shared-cert: mbsrn-platfire-ab12cd34"
+        in manifests["k8s/ingress.yaml"]
+    )
+    assert "MBSRN_TLS_CERTIFICATE_MODE: self-managed" in workflow_yaml
+    assert f"MBSRN_EXPECTED_CERTIFICATE_FINGERPRINT: {fingerprint}" in workflow_yaml
+    assert "gcloud compute ssl-certificates describe" in workflow_yaml
+    assert "--insecure" in workflow_yaml
+    assert "certificate_fingerprint_mismatch" in workflow_yaml
+    assert 'while [ "$tls_attempt" -le 30 ]' in workflow_yaml
+    assert 'openssl x509 -in "$served_certificate" -noout -checkhost "$MBSRN_PREVIEW_HOSTNAME"' in workflow_yaml
+    assert "kubectl get managedcertificate" not in workflow_yaml
+
+
+def test_self_managed_tls_alignment_requires_exact_pre_shared_certificate_annotation() -> None:
+    aligned, details = github_publisher_module._evaluate_preview_certificate_alignment(
+        ingress_manifest_content=(
+            "apiVersion: networking.k8s.io/v1\n"
+            "kind: Ingress\n"
+            "metadata:\n"
+            "  annotations:\n"
+            "    ingress.gcp.kubernetes.io/pre-shared-cert: wrong-resource\n"
+            "spec:\n"
+            "  rules:\n"
+            "    - host: platfire.site.mbsrn.com\n"
+        ),
+        managed_certificate_manifest_content=None,
+        expected_preview_hostname="platfire.site.mbsrn.com",
+        expected_certificate_name="mbsrn-platfire-preview-tls",
+        expected_static_ip_name=None,
+        self_managed_tls_mode=True,
+    )
+
+    assert aligned is False
+    assert details["preview_certificate_valid_pre_shared_cert_binding"] is False
+    assert details["ingress_certificate_mismatch"] is True
+    assert details["stale_pre_shared_cert_binding_detected"] is True
+
+
+def test_rendered_self_managed_tls_template_rejects_incomplete_certificate_identity() -> None:
+    with pytest.raises(ValueError, match="fingerprint"):
+        _render_managed_deploy_workflow_yaml(
+            workflow_id="deploy-www-prod.yml",
+            repo_owner="mhanson13",
+            repo_name="platfire",
+            branch="main",
+            deploy_workflow_mode="site_repo_template_v1",
+            target_environment_key="gke_prod",
+            target_environment_source="admin_config",
+            managed_gke_config=None,
+            kubernetes_namespace="platfire",
+            namespace_source="repo_name",
+            preview_hostname="platfire.site.mbsrn.com",
+            site_id="site-platfire",
+            pre_shared_certificate_name="mbsrn-platfire-ab12cd34",
+            pre_shared_certificate_fingerprint=None,
+        )
+
+
 def test_resolve_managed_preview_endpoint_configuration_uses_shared_gateway_for_managed_preview_when_configured() -> None:
     resolved = resolve_managed_preview_endpoint_configuration(
         repo_name="tnmfire",

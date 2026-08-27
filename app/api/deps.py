@@ -57,6 +57,11 @@ from app.integrations import (
     TwilioSMSProvider,
 )
 from app.integrations.google_cloud_logging import GoogleCloudLoggingClient
+from app.integrations.tls_certificate import (
+    GoogleComputeSSLCertificateClient,
+    GoogleSecretManagerTLSCertificateVault,
+    SocketTLSCertificateEndpointVerifier,
+)
 from app.jobs.lead_reminders import LeadReminderJob
 from app.jobs.seo_competitor_profile_generation_retention import SEOCompetitorProfileGenerationRetentionJob
 from app.jobs.seo_automation import SEOAutomationJob
@@ -82,6 +87,7 @@ from app.repositories.seo_migration_repository import SEOMigrationRepository
 from app.repositories.seo_recommendation_narrative_repository import SEORecommendationNarrativeRepository
 from app.repositories.seo_recommendation_repository import SEORecommendationRepository
 from app.repositories.seo_site_repository import SEOSiteRepository
+from app.repositories.tls_certificate_repository import TLSCertificateRepository
 from app.services.business_settings import BusinessSettingsService
 from app.services.gcp_logs_query import GCPLogsQueryService
 from app.services.api_credentials import APICredentialService
@@ -134,6 +140,7 @@ from app.services.timeline import LeadTimelineService
 from app.services.action_automation_binding_service import ActionAutomationBindingService
 from app.services.action_automation_execution_service import ActionAutomationExecutionService
 from app.services.google_login_state import GoogleLoginStateService
+from app.services.tls_certificates import TLSCertificateService
 
 logger = logging.getLogger(__name__)
 
@@ -254,6 +261,10 @@ def get_seo_recommendation_narrative_repository(
 
 def get_seo_migration_repository(db: Session = Depends(get_db)) -> SEOMigrationRepository:
     return SEOMigrationRepository(db)
+
+
+def get_tls_certificate_repository(db: Session = Depends(get_db)) -> TLSCertificateRepository:
+    return TLSCertificateRepository(db)
 
 
 def get_parser_service() -> LeadParserService:
@@ -1143,6 +1154,7 @@ def get_seo_migration_service(
     artifact_provider: SEOMigrationArtifactGenerationProvider = Depends(get_seo_migration_artifact_provider),
     github_publisher: SEOMigrationGitHubPublisher = Depends(get_seo_migration_github_publisher),
     github_publish_config_service: GitHubPublishConfigService = Depends(get_github_publish_config_service),
+    tls_certificate_repository: TLSCertificateRepository = Depends(get_tls_certificate_repository),
 ) -> SEOMigrationService:
     settings = get_settings()
     provider_name = str(getattr(artifact_provider, "provider_name", settings.ai_provider_name or "unknown"))
@@ -1178,6 +1190,7 @@ def get_seo_migration_service(
         deploy_secret_git_token=settings.git_token,
         managed_site_private_image_auth_enabled=settings.migration_managed_site_private_image_auth_enabled,
         remote_image_import_enabled=settings.seo_migration_remote_image_import_enabled,
+        tls_certificate_repository=tls_certificate_repository,
     )
 
 
@@ -1264,6 +1277,35 @@ def get_auth_audit_service(
         session=db,
         business_repository=business_repository,
         auth_audit_repository=auth_audit_repository,
+    )
+
+
+def get_tls_certificate_service(
+    db: Session = Depends(get_db),
+    seo_site_repository: SEOSiteRepository = Depends(get_seo_site_repository),
+    tls_certificate_repository: TLSCertificateRepository = Depends(get_tls_certificate_repository),
+    auth_audit_service: AuthAuditService = Depends(get_auth_audit_service),
+) -> TLSCertificateService:
+    settings = get_settings()
+    project_id = str(settings.tls_certificate_gcp_project_id or "").strip()
+    return TLSCertificateService(
+        session=db,
+        site_repository=seo_site_repository,
+        certificate_repository=tls_certificate_repository,
+        vault=GoogleSecretManagerTLSCertificateVault(
+            project_id=project_id,
+            timeout_seconds=settings.tls_certificate_google_api_timeout_seconds,
+        ),
+        compute_client=GoogleComputeSSLCertificateClient(
+            project_id=project_id,
+            timeout_seconds=settings.tls_certificate_google_api_timeout_seconds,
+        ),
+        endpoint_verifier=SocketTLSCertificateEndpointVerifier(
+            timeout_seconds=settings.tls_certificate_endpoint_timeout_seconds,
+        ),
+        gcp_project_id=project_id,
+        auth_audit_service=auth_audit_service,
+        secret_prefix=settings.tls_certificate_secret_prefix,
     )
 
 

@@ -68,6 +68,10 @@ class Settings:
     search_console_use_mock_provider: bool
     gcp_logging_project_id: str | None
     gcp_logging_api_timeout_seconds: int
+    tls_certificate_gcp_project_id: str | None
+    tls_certificate_google_api_timeout_seconds: int
+    tls_certificate_endpoint_timeout_seconds: int
+    tls_certificate_secret_prefix: str
     google_oauth_token_encryption_secret: str | None
     google_oauth_token_encryption_key_version: str
     google_oauth_token_encryption_keys: dict[str, str]
@@ -455,6 +459,20 @@ def get_settings() -> Settings:
         search_console_use_mock_provider=_env_bool("SEARCH_CONSOLE_USE_MOCK_PROVIDER", False),
         gcp_logging_project_id=(os.getenv("GCP_PROJECT_ID") or None),
         gcp_logging_api_timeout_seconds=_env_int("GCP_LOGGING_API_TIMEOUT_SECONDS", 10, min_value=1),
+        tls_certificate_gcp_project_id=(
+            os.getenv("TLS_CERTIFICATE_GCP_PROJECT_ID") or os.getenv("GCP_PROJECT_ID") or None
+        ),
+        tls_certificate_google_api_timeout_seconds=_env_int(
+            "TLS_CERTIFICATE_GOOGLE_API_TIMEOUT_SECONDS",
+            30,
+            min_value=1,
+        ),
+        tls_certificate_endpoint_timeout_seconds=_env_int(
+            "TLS_CERTIFICATE_ENDPOINT_TIMEOUT_SECONDS",
+            10,
+            min_value=1,
+        ),
+        tls_certificate_secret_prefix=(os.getenv("TLS_CERTIFICATE_SECRET_PREFIX", "mbsrn-tls").strip() or "mbsrn-tls"),
         google_oauth_token_encryption_secret=google_oauth_token_encryption_secret,
         google_oauth_token_encryption_key_version=google_oauth_token_encryption_key_version,
         google_oauth_token_encryption_keys=google_oauth_token_encryption_keys,

@@ -80,6 +80,7 @@ from app.repositories.seo_migration_repository import SEOMigrationRepository
 from app.repositories.seo_recommendation_narrative_repository import SEORecommendationNarrativeRepository
 from app.repositories.seo_recommendation_repository import SEORecommendationRepository
 from app.repositories.seo_site_repository import SEOSiteRepository
+from app.repositories.tls_certificate_repository import TLSCertificateRepository
 from app.schemas.github_publish_config import normalize_namespace_isolation_defaults
 from app.services.ai_response_contract_evaluator import (
     AIResponseContractEvaluation,
@@ -1114,6 +1115,7 @@ class SEOMigrationService:
         deploy_secret_git_token: str | None = None,
         managed_site_private_image_auth_enabled: bool = True,
         remote_image_import_enabled: bool = True,
+        tls_certificate_repository: TLSCertificateRepository | None = None,
     ) -> None:
         self.session = session
         self.business_repository = business_repository
@@ -1175,12 +1177,40 @@ class SEOMigrationService:
         self.deploy_secret_git_token = (deploy_secret_git_token or "").strip() or None
         self.managed_site_private_image_auth_enabled = bool(managed_site_private_image_auth_enabled)
         self.remote_image_import_enabled = bool(remote_image_import_enabled)
+        self.tls_certificate_repository = tls_certificate_repository
         self.runtime_build_metadata = get_runtime_build_metadata()
         self._resolved_migration_draft_timeout_seconds = _MIGRATION_DRAFT_TIMEOUT_DEFAULT_SECONDS
         self._resolved_migration_draft_timeout_source = "default"
         self._resolved_migration_generation_safety = SEOMigrationGenerationSafety()
         self._resolved_migration_generation_safety_source = "default"
         self.media_storage_root = _resolve_migration_media_storage_root()
+
+    def _active_self_managed_tls_certificate(self, *, business_id: str, site_id: str) -> tuple[str, str] | None:
+        if self.tls_certificate_repository is None:
+            return None
+        binding = self.tls_certificate_repository.get_active_binding(business_id, site_id)
+        if binding is None:
+            return None
+        asset = binding.certificate_asset
+        resource_name = str(asset.gcp_resource_name or "").strip()
+        fingerprint = str(asset.fingerprint_sha256 or "").strip().lower()
+        if (
+            asset.status != "published"
+            or asset.certificate_kind != "self_signed"
+            or not resource_name
+            or not re.fullmatch(r"[0-9a-f]{64}", fingerprint)
+        ):
+            return None
+        return resource_name, fingerprint
+
+    def _mark_active_tls_manifest_published(self, *, business_id: str, site_id: str) -> None:
+        if self.tls_certificate_repository is None:
+            return
+        binding = self.tls_certificate_repository.get_active_binding(business_id, site_id)
+        if binding is None:
+            return
+        binding.manifest_state = "published_to_repo"
+        self.tls_certificate_repository.save_binding(binding)
 
     def create_or_update_workspace(
         self,
@@ -4013,6 +4043,10 @@ class SEOMigrationService:
         publish_runtime_remediation_mode = "duplicate_publish_repair" if duplicate_publish_attempt else "bootstrap"
         publish_runtime_allow_repair = not dry_run
         publish_runtime_bootstrap_allowed = bool(publish_runtime_allow_repair and (not dry_run))
+        active_tls_certificate = self._active_self_managed_tls_certificate(
+            business_id=business_id,
+            site_id=site_id,
+        )
         self._emit_structured_service_log(
             payload={
                 "event": "seo_migration_publish_runtime_context",
@@ -4173,8 +4207,17 @@ class SEOMigrationService:
                         business_id=workspace.business_id,
                         repository_auto_create_created=repository_auto_create_created,
                         artifact_version_id=artifact.id,
+                        **(
+                            {
+                                "pre_shared_certificate_name": active_tls_certificate[0],
+                                "pre_shared_certificate_fingerprint": active_tls_certificate[1],
+                            }
+                            if active_tls_certificate
+                            else {}
+                        ),
                     )
                     workflow_provisioning_verified = True
+                    self._mark_active_tls_manifest_published(business_id=business_id, site_id=site_id)
                     workflow_remediation_outcome = _derive_workflow_remediation_outcome(
                         remediation_attempted=workflow_remediation_attempted,
                         managed_workflow_outcome=deploy_workflow_provision_result.managed_workflow_outcome,
@@ -4669,8 +4712,17 @@ class SEOMigrationService:
                     business_id=workspace.business_id,
                     repository_auto_create_created=repository_auto_create_created,
                     artifact_version_id=artifact.id,
+                    **(
+                        {
+                            "pre_shared_certificate_name": active_tls_certificate[0],
+                            "pre_shared_certificate_fingerprint": active_tls_certificate[1],
+                        }
+                        if active_tls_certificate
+                        else {}
+                    ),
                 )
                     workflow_provisioning_verified = True
+                    self._mark_active_tls_manifest_published(business_id=business_id, site_id=site_id)
                     workflow_provisioning_status = (
                         "created" if deploy_workflow_provision_result.provisioned else "already_exists"
                     )

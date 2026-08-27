@@ -28,6 +28,7 @@ from app.api.routes import (
     seo_migration_router,
     seo_router,
     seo_v1_router,
+    tls_certificates_router,
 )
 from app.core.config import get_settings
 from app.core.log_sanitizer import sanitize_log_payload
@@ -623,3 +624,4 @@ app.include_router(integrations_router)
 app.include_router(seo_router)
 app.include_router(seo_v1_router)
 app.include_router(seo_migration_router)
+app.include_router(tls_certificates_router)

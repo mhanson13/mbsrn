@@ -1096,6 +1096,68 @@ export interface MigrationManagedCertificateActionResponse {
   result: Record<string, unknown>;
 }
 
+export interface TLSCertificateAsset {
+  id: string;
+  hostname: string;
+  display_name: string;
+  source: string;
+  custody: string;
+  certificate_kind: string;
+  key_algorithm: string;
+  fingerprint_sha256: string;
+  serial_number: string;
+  subject: string;
+  issuer: string;
+  san_dns_names: string[];
+  not_valid_before: string;
+  not_valid_after: string;
+  gcp_project_id: string;
+  gcp_resource_name: string | null;
+  gcp_resource_scope: string;
+  status: string;
+  failure_reason_code: string | null;
+  failure_message: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SiteTLSCertificateStatus {
+  hostname: string;
+  asset: TLSCertificateAsset | null;
+  binding: {
+    id: string;
+    certificate_asset_id: string;
+    is_active: boolean;
+    manifest_state: string;
+    serving_state: string;
+    observed_fingerprint_sha256: string | null;
+    last_verified_at: string | null;
+  } | null;
+  vaulted: boolean;
+  published: boolean;
+  selected_for_ingress: boolean;
+  manifest_state: string;
+  serving_state: string;
+  browser_trust: "untrusted_self_signed";
+}
+
+export interface TLSCertificateGenerateRequest {
+  display_name?: string;
+  validity_days?: number;
+  key_algorithm?: "rsa_2048" | "ecdsa_p256";
+}
+
+export interface TLSCertificateImportRequest {
+  display_name?: string;
+  certificate_pem: string;
+  private_key_pem: string;
+}
+
+export interface TLSCertificateAdoptRequest {
+  display_name?: string;
+  gcp_resource_name: string;
+}
+
 export interface MigrationRepositoryAdoptActionResponse {
   workspace: MigrationWorkspace;
   readiness: Record<string, unknown>;

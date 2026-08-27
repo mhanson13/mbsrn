@@ -60,6 +60,7 @@ from app.models.seo_competitor_snapshot_run import SEOCompetitorSnapshotRun
 from app.models.seo_recommendation import SEORecommendation
 from app.models.seo_recommendation_run import SEORecommendationRun
 from app.models.seo_site import SEOSite
+from app.models.tls_certificate import SiteTLSCertificateBinding, TLSCertificateAsset
 from app.repositories.business_repository import BusinessRepository
 from app.repositories.github_publish_config_repository import GitHubPublishConfigRepository
 from app.repositories.seo_audit_repository import SEOAuditRepository
@@ -70,6 +71,7 @@ from app.repositories.seo_migration_repository import SEOMigrationRepository
 from app.repositories.seo_recommendation_narrative_repository import SEORecommendationNarrativeRepository
 from app.repositories.seo_recommendation_repository import SEORecommendationRepository
 from app.repositories.seo_site_repository import SEOSiteRepository
+from app.repositories.tls_certificate_repository import TLSCertificateRepository
 from app.services.seo_migration import SEOMigrationService, SEOMigrationValidationError
 from app.services.seo_migration_artifact_quality import evaluate_migration_artifact_quality
 from app.services.seo_migration_context import SEOMigrationContextAssembler
@@ -1209,6 +1211,8 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         business_id: str | None = None,
         repository_auto_create_created: bool | None = None,
         artifact_version_id: str | None = None,
+        pre_shared_certificate_name: str | None = None,
+        pre_shared_certificate_fingerprint: str | None = None,
     ) -> SEOMigrationGitHubWorkflowProvisionResult:
         self.workflow_provision_calls.append(
             (
@@ -1227,6 +1231,8 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
                 business_id,
                 repository_auto_create_created,
                 artifact_version_id,
+                pre_shared_certificate_name,
+                pre_shared_certificate_fingerprint,
             )
         )
         if self.fail_workflow_provision:
@@ -1408,6 +1414,7 @@ def _build_service(
     deploy_secret_git_token: str | None = None,
     managed_site_private_image_auth_enabled: bool = False,
     remote_image_import_enabled: bool = False,
+    tls_certificate_repository: TLSCertificateRepository | None = None,
 ) -> SEOMigrationService:
     github_publish_config_service = GitHubPublishConfigService(
         session=db_session,
@@ -1438,6 +1445,7 @@ def _build_service(
         deploy_secret_git_token=deploy_secret_git_token,
         managed_site_private_image_auth_enabled=managed_site_private_image_auth_enabled,
         remote_image_import_enabled=remote_image_import_enabled,
+        tls_certificate_repository=tls_certificate_repository,
     )
 
 
@@ -12149,6 +12157,103 @@ def test_publish_duplicate_repairs_missing_workflow_without_republishing_artifac
     assert repair_result.result.get("workflow_provisioning_verified") is True
     assert repair_result.result.get("workflow_remediation_attempted") is True
     assert repair_result.result.get("workflow_remediation_outcome") == "remediation_upgraded_managed_placeholder"
+
+
+def test_duplicate_publish_reconciles_new_self_managed_certificate_binding(db_session) -> None:
+    publisher = _RecordingGitHubPublisher(existing_workflow=False)
+    certificate_repository = TLSCertificateRepository(db_session)
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+        tls_certificate_repository=certificate_repository,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+    _configure_publish_target(service, business_id=business_id, site_id=site_id)
+    _configure_deploy_target(
+        service,
+        business_id=business_id,
+        site_id=site_id,
+        workflow_id="deploy-tnmfire-www-prod.yml",
+    )
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes=None,
+        principal_id="principal-1",
+    )
+    service.publish_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        commit_message=None,
+        analytics_measurement_id=None,
+        principal_id="principal-1",
+    )
+
+    now = datetime.now(timezone.utc)
+    fingerprint = "ab" * 32
+    asset = TLSCertificateAsset(
+        id="33333333-3333-3333-3333-333333333333",
+        business_id=business_id,
+        hostname="tnmfire.site.mbsrn.com",
+        display_name="TNM preview certificate",
+        source="generated",
+        custody="vaulted",
+        certificate_kind="self_signed",
+        key_algorithm="rsa_2048",
+        fingerprint_sha256=fingerprint,
+        serial_number="1234",
+        subject="CN=tnmfire.site.mbsrn.com",
+        issuer="CN=tnmfire.site.mbsrn.com",
+        san_dns_names_json=["tnmfire.site.mbsrn.com"],
+        not_valid_before=now - timedelta(minutes=1),
+        not_valid_after=now + timedelta(days=90),
+        vault_secret_name="mbsrn-tls-test",
+        vault_secret_version="projects/mbsrn-prod/secrets/mbsrn-tls-test/versions/1",
+        gcp_project_id="mbsrn-prod",
+        gcp_resource_name="mbsrn-tnmfire-ab12cd34",
+        gcp_resource_scope="global",
+        status="published",
+        created_by_principal_id="principal-1",
+    )
+    binding = SiteTLSCertificateBinding(
+        id="44444444-4444-4444-4444-444444444444",
+        business_id=business_id,
+        site_id=site_id,
+        certificate_asset_id=asset.id,
+        is_active=True,
+        manifest_state="republish_required",
+        serving_state="not_verified",
+        created_by_principal_id="principal-1",
+    )
+    db_session.add_all([asset, binding])
+    db_session.commit()
+
+    with pytest.raises(SEOMigrationValidationError, match="already published"):
+        service.publish_artifact_version(
+            business_id=business_id,
+            site_id=site_id,
+            artifact_version_id=artifact.id,
+            dry_run=False,
+            commit_message=None,
+            analytics_measurement_id=None,
+            principal_id="principal-1",
+        )
+
+    certificate_call = publisher.workflow_provision_calls[-1]
+    assert certificate_call[15] == "mbsrn-tnmfire-ab12cd34"
+    assert certificate_call[16] == fingerprint
+    db_session.refresh(binding)
+    assert binding.manifest_state == "published_to_repo"
 
 
 def test_publish_duplicate_repairs_managed_placeholder_workflow_without_republishing_artifact(

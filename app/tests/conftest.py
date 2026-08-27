@@ -45,6 +45,7 @@ from app.models.seo_recommendation_run import SEORecommendationRun  # noqa: F401
 from app.models.seo_migration_artifact_version import SEOMigrationArtifactVersion  # noqa: F401
 from app.models.seo_migration_workspace import SEOMigrationWorkspace  # noqa: F401
 from app.models.seo_site import SEOSite  # noqa: F401
+from app.models.tls_certificate import SiteTLSCertificateBinding, TLSCertificateAsset  # noqa: F401
 
 os.environ.setdefault("APP_ENV", "test")
 os.environ.setdefault("DATABASE_URL", "sqlite+pysqlite:///:memory:")
