@@ -36,3 +36,6 @@ frontend/operator-ui/test-results/
 .coverage
 coverage.xml
 htmlcov/
+
+# Local CI/CD summary
+ci_cd.md

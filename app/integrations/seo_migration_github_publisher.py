@@ -3118,6 +3118,9 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             timeout_seconds=self.timeout_seconds,
             allow_404=True,
             error_stage="certificate_readiness",
+            code_on_failure=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_FAILED_NOT_VISIBLE,
+            safe_message_on_failure="ManagedCertificate readiness request to Kubernetes API failed.",
+            safe_message_on_timeout="ManagedCertificate readiness request timed out.",
         )
         if not isinstance(managed_certificate_payload, dict):
             _emit_structured_publisher_log(
@@ -3300,6 +3303,48 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             gcp_deploy_key=gcp_deploy_key,
             stage="certificate_provisioning",
         )
+        namespace_path = "/api/v1/namespaces/" + urllib.parse.quote(
+            normalized_namespace,
+            safe="",
+        )
+        namespace_payload = _request_kubernetes_json(
+            method="GET",
+            endpoint=cluster_endpoint,
+            path=namespace_path,
+            access_token=access_token,
+            ssl_context=ssl_context,
+            timeout_seconds=self.timeout_seconds,
+            allow_404=True,
+            error_stage="certificate_provisioning",
+            code_on_failure=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_CREATE_FAILED,
+            safe_message_on_failure="ManagedCertificate namespace readiness request to Kubernetes API failed.",
+            safe_message_on_timeout="ManagedCertificate namespace readiness request timed out.",
+        )
+        if not isinstance(namespace_payload, dict):
+            try:
+                _request_kubernetes_json(
+                    method="POST",
+                    endpoint=cluster_endpoint,
+                    path="/api/v1/namespaces",
+                    access_token=access_token,
+                    ssl_context=ssl_context,
+                    timeout_seconds=self.timeout_seconds,
+                    payload={
+                        "apiVersion": "v1",
+                        "kind": "Namespace",
+                        "metadata": {"name": normalized_namespace},
+                    },
+                    expected_statuses=(200, 201),
+                    error_stage="certificate_provisioning",
+                    code_on_failure=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_CREATE_FAILED,
+                    safe_message_on_failure="ManagedCertificate namespace creation request to Kubernetes API failed.",
+                    safe_message_on_timeout="ManagedCertificate namespace creation request timed out.",
+                )
+            except SEOMigrationGitHubPublisherError as exc:
+                # Another request can create the deterministic site namespace after
+                # the readiness probe but before this create reaches Kubernetes.
+                if exc.status_code != 409:
+                    raise
         create_path = "/apis/networking.gke.io/v1/namespaces/" + urllib.parse.quote(
             normalized_namespace,
             safe="",
@@ -3328,6 +3373,9 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 },
                 expected_statuses=(200, 201),
                 error_stage="certificate_provisioning",
+                code_on_failure=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_CREATE_FAILED,
+                safe_message_on_failure="ManagedCertificate creation request to Kubernetes API failed.",
+                safe_message_on_timeout="ManagedCertificate creation request timed out.",
             )
         except SEOMigrationGitHubPublisherError as exc:
             if exc.status_code != 409:
@@ -9104,6 +9152,9 @@ def _request_kubernetes_json(
     expected_statuses: tuple[int, ...] = (200,),
     allow_404: bool = False,
     error_stage: str | None = None,
+    code_on_failure: str = "image_pull_secret_provisioning_failed",
+    safe_message_on_failure: str = "Managed image pull secret provisioning request to Kubernetes API failed.",
+    safe_message_on_timeout: str = "Managed image pull secret provisioning request timed out.",
 ) -> dict[str, object] | list[object] | None:
     body: bytes | None = None
     headers = {
@@ -9126,9 +9177,9 @@ def _request_kubernetes_json(
         expected_statuses=expected_statuses,
         allow_404=allow_404,
         error_stage=error_stage,
-        code_on_failure="image_pull_secret_provisioning_failed",
-        safe_message_on_failure="Managed image pull secret provisioning request to Kubernetes API failed.",
-        safe_message_on_timeout="Managed image pull secret provisioning request timed out.",
+        code_on_failure=code_on_failure,
+        safe_message_on_failure=safe_message_on_failure,
+        safe_message_on_timeout=safe_message_on_timeout,
         ssl_context=ssl_context,
     )
 

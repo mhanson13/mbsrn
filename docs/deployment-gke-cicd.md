@@ -388,6 +388,12 @@ Typical causes:
 - certificate diagnostics distinguish `managed_certificate_create_failed` (terminal), `managed_certificate_visibility_pending` (accepted create not yet observable and retryable), `certificate_provisioning_pending` (observable object issuing TLS), and `managed_certificate_failed_not_visible` (observed controller failure).
 - Current endpoint readiness is scoped separately from historical deploy attempts. After a workflow republish, stale certificate/DNS/ingress failures remain historical and cannot gate the next deploy until current endpoint evidence confirms the same condition.
 - `certificate_provisioning_pending` allows runtime deploy while TLS issuance continues; missing, failed-not-visible, ownership-unverified, and domain-mismatch states block only when current evidence confirms them.
+
+### Release Provenance Verification
+
+The Operator UI HTML exposes the deployed frontend commit in `meta[name="mbsrn-ui-version"]` and `body[data-mbsrn-ui-version]`. The API `/health` response exposes only safe build metadata: `app_version`, `build_sha`, and `image_tag`. Production deploys use immutable `${GITHUB_SHA}` image tags for both workloads and inject that SHA into `MBSRN_GIT_COMMIT` for the API.
+
+After rollout, verify the UI marker and API health build SHA equal the GitHub Actions commit. Also verify the `mbsrn-ui` and `mbsrn-api` deployment image references use the same SHA-tagged release. A mismatch indicates an incomplete/stale deployment or cache, not migration business evidence; roll back only after confirming the target SHA/image pair.
 - an existing exact-name static-IP resource with no numeric address is `static_ip_provisioning_pending` and retryable; ambiguous matches remain a terminal conflict and deploy never dispatches without an address.
 - missing ManagedCertificate objects, FAILED_NOT_VISIBLE states, certificate/domain mismatch, and DNS mismatch remain distinct blocker states and are not normalized into provisioning.
 - next action: wait for ManagedCertificate to reach `ACTIVE`, then refresh/rerun deploy.

@@ -9991,7 +9991,7 @@ export function MigrationWorkspacePanel({
                   <span className="hint">Next action: {publishDiagnosticsNextAction}</span>
                   {publishDiagnosticsUsingSummaryFallback ? (
                     <span className="hint muted" data-testid="migration-publish-diagnostics-fallback-note">
-                      Selected-attempt diagnostics include latest-summary fallback for missing fields.
+                      Selected-attempt diagnostics are isolated; unavailable fields remain unavailable.
                     </span>
                   ) : null}
                   <details className="workspace-details-shell migration-compact-details" data-testid="migration-publish-diagnostics-raw-details">
@@ -10090,7 +10090,7 @@ export function MigrationWorkspacePanel({
                   </div>
                   {deployDiagnosticsUsingSummaryFallback ? (
                     <span className="hint muted" data-testid="migration-deploy-diagnostics-fallback-note">
-                      Selected-attempt diagnostics include latest-summary fallback for missing fields.
+                      Selected-attempt diagnostics are isolated; unavailable fields remain unavailable.
                     </span>
                   ) : null}
                   {managedSiteRolloutState ? (

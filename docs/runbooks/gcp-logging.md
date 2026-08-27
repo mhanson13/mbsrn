@@ -650,6 +650,11 @@ Reason-code guidance:
 - `workflow_provisioning_failed`: publish could not verify workflow file presence after provisioning attempt.
 - `certificate_status_unknown`: current endpoint readiness could not refresh certificate evidence; refresh endpoint readiness before treating historical TLS diagnostics as current.
 - `dispatch_not_attempted`: deployment was blocked before dispatch; do not use no-run guidance reserved for accepted dispatches.
+
+Release provenance triage:
+- compare the Operator HTML `mbsrn-ui-version` marker with the intended GitHub Actions commit;
+- query API `/health` and compare `build_sha` and `image_tag` with the same commit;
+- inspect the UI/API deployment image references and API `MBSRN_GIT_COMMIT` env value; all must match before diagnosing stale workspace/deploy evidence.
 - `managed_workflow_template_invalid`: publish-time managed workflow template conformance validation failed before workflow write (YAML parse/contract mismatch such as missing required deploy outputs or missing `Resolve live URL from ingress status` step).
 
 Repository auto-create observability (publish path):

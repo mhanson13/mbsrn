@@ -29,6 +29,12 @@ spec:
           env:
             - name: APP_ENV
               value: production
+            - name: MBSRN_GIT_COMMIT
+              value: __BUILD_SHA__
+            - name: MBSRN_BUILD_VERSION
+              value: __BUILD_SHA__
+            - name: MBSRN_IMAGE_TAG
+              value: __API_IMAGE__
             - name: DB_CONNECTION_MODE
               value: direct
             - name: SESSION_STATE_BACKEND

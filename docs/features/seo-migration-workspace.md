@@ -165,8 +165,10 @@ Destination, readiness, and diagnostics IA refinements:
   - Destination / Config
 - diagnostics are run-bound, not floating snapshot-only:
   - publish/deploy diagnostics can be scoped to selected history attempts
-  - selected-attempt reason/status fields never fall back across attempt boundaries
+- selected-attempt reason/status fields never fall back across attempt boundaries
   - current endpoint and current live evidence are rendered separately from historical attempts
+
+Deployment provenance is separate from migration evidence. The Operator HTML `mbsrn-ui-version` marker identifies the frontend commit; API `/health` returns safe `build_sha` and `image_tag` metadata. If these do not match the intended release, treat the page as a stale deployment/cache investigation rather than a current migration-readiness result.
   - publish/deploy history remains collapsible under Advanced Diagnostics
 - URL confirmation semantics are unchanged:
   - `deterministic_target_config` is expected guidance (not confirmed live evidence)

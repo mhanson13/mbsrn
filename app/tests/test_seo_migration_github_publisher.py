@@ -5993,6 +5993,15 @@ def test_ensure_managed_certificate_creates_missing_owned_resource(monkeypatch) 
     assert result.action == "created"
     assert result.readiness.managed_certificate_exists is True
     assert result.readiness.observed_managed_certificate_status == "PROVISIONING"
+    namespace_create_request = next(
+        request for request in kubernetes_requests if request["path"] == "/api/v1/namespaces"
+    )
+    assert namespace_create_request["method"] == "POST"
+    assert namespace_create_request["payload"] == {
+        "apiVersion": "v1",
+        "kind": "Namespace",
+        "metadata": {"name": "tnmfire"},
+    }
     create_request = kubernetes_requests[-1]
     assert create_request["method"] == "POST"
     assert create_request["path"] == "/apis/networking.gke.io/v1/namespaces/tnmfire/managedcertificates"
@@ -6000,6 +6009,44 @@ def test_ensure_managed_certificate_creates_missing_owned_resource(monkeypatch) 
     assert isinstance(payload, dict)
     assert payload["spec"] == {"domains": ["tnmfire.site.mbsrn.com"]}
     assert payload["metadata"]["labels"]["mbsrn.io/site-id"] == "site-1"
+
+
+def test_ensure_managed_certificate_reuses_existing_namespace(monkeypatch) -> None:
+    _stub_managed_certificate_readiness_dependencies(monkeypatch, managed_certificate_payload=None)
+    kubernetes_requests: list[dict[str, object]] = []
+
+    def _request_kubernetes_json(**kwargs):  # type: ignore[no-untyped-def]
+        kubernetes_requests.append(dict(kwargs))
+        if kwargs["path"] == "/api/v1/namespaces/tnmfire":
+            return {"metadata": {"name": "tnmfire"}}
+        if kwargs["method"] == "GET":
+            return None
+        return {
+            "metadata": {"name": "site-web-preview-cert-tnmfire"},
+            "status": {"certificateStatus": "PROVISIONING"},
+        }
+
+    monkeypatch.setattr(
+        "app.integrations.seo_migration_github_publisher._request_kubernetes_json",
+        _request_kubernetes_json,
+    )
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+
+    result = publisher.ensure_managed_certificate(
+        repo_name="mhanson13/tnmfire",
+        site_id="site-1",
+        preview_hostname="tnmfire.site.mbsrn.com",
+        kubernetes_namespace="tnmfire",
+        managed_gke_config={
+            "cluster_name": "cluster-1",
+            "cluster_location": "us-central1",
+            "project_id": "mbsrn-prod",
+        },
+        gcp_deploy_key='{"type":"service_account"}',
+    )
+
+    assert result.action == "created"
+    assert not any(request["path"] == "/api/v1/namespaces" for request in kubernetes_requests)
 
 
 def test_check_managed_certificate_readiness_reports_provisioning_state(monkeypatch) -> None:

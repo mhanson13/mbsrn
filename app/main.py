@@ -573,7 +573,14 @@ def on_startup() -> None:
 
 @app.get("/health")
 def health() -> dict[str, str]:
-    return {"status": "ok", "service": _service_name()}
+    runtime_metadata = get_runtime_build_metadata(app_env=settings.app_env)
+    return {
+        "status": "ok",
+        "service": _service_name(),
+        "app_version": runtime_metadata["build_version"],
+        "build_sha": runtime_metadata["git_commit"],
+        "image_tag": runtime_metadata["image_tag"],
+    }
 
 
 @app.get("/healthz")

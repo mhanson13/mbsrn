@@ -336,6 +336,7 @@ jobs:
           grep -q "__UI_MEMORY_LIMIT__" k8s/ui-deployment.yaml
           grep -q "__UI_EPHEMERAL_STORAGE_LIMIT__" k8s/ui-deployment.yaml
           grep -q "__API_IMAGE__" k8s/api-deployment.yaml
+          grep -q "__BUILD_SHA__" k8s/api-deployment.yaml
           grep -q "__API_CPU_REQUEST__" k8s/api-deployment.yaml
           grep -q "__API_MEMORY_REQUEST__" k8s/api-deployment.yaml
           grep -q "__API_EPHEMERAL_STORAGE_REQUEST__" k8s/api-deployment.yaml
@@ -384,6 +385,7 @@ jobs:
             k8s/api-deployment.yaml > "${render_dir}/api-deployment.yaml"
           sed \
             -e "s|__API_IMAGE__|${API_IMAGE}|g" \
+            -e "s|__BUILD_SHA__|${GITHUB_SHA}|g" \
             -e "s|__DEPLOY_CPU_REQUEST__|${DEPLOY_CPU_REQUEST}|g" \
             -e "s|__DEPLOY_MEMORY_REQUEST__|${DEPLOY_MEMORY_REQUEST}|g" \
             -e "s|__DEPLOY_EPHEMERAL_STORAGE_REQUEST__|${DEPLOY_EPHEMERAL_STORAGE_REQUEST}|g" \
@@ -665,3 +667,16 @@ jobs:
             kubectl logs deployment/mbsrn-api --namespace "${K8S_NAMESPACE}" --tail=200 || true
             exit 1
           fi
+
+          deployed_ui_image="$(kubectl -n "${K8S_NAMESPACE}" get deployment mbsrn-ui -o jsonpath='{.spec.template.spec.containers[?(@.name=="mbsrn-ui")].image}')"
+          deployed_api_image="$(kubectl -n "${K8S_NAMESPACE}" get deployment mbsrn-api -o jsonpath='{.spec.template.spec.containers[?(@.name=="mbsrn-api")].image}')"
+          deployed_api_sha="$(kubectl -n "${K8S_NAMESPACE}" get deployment mbsrn-api -o jsonpath='{.spec.template.spec.containers[?(@.name=="mbsrn-api")].env[?(@.name=="MBSRN_GIT_COMMIT")].value}')"
+          if [[ "${deployed_ui_image}" != "${UI_IMAGE}" || "${deployed_api_image}" != "${API_IMAGE}" || "${deployed_api_sha}" != "${GITHUB_SHA}" ]]; then
+            echo "Deployed build provenance does not match the workflow commit." >&2
+            echo "Expected UI/API SHA: ${GITHUB_SHA}" >&2
+            echo "Observed UI image: ${deployed_ui_image}" >&2
+            echo "Observed API image: ${deployed_api_image}" >&2
+            echo "Observed API build SHA: ${deployed_api_sha}" >&2
+            exit 1
+          fi
+          echo "Release provenance verified: UI/API images and API build SHA match ${GITHUB_SHA}."
