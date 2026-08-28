@@ -103,6 +103,7 @@ export default function SiteMigrationWorkflowPage(): JSX.Element {
 
       <OperatorPageSectionStack>
         <MigrationWorkspacePanel
+          key={`${context.businessId}:${selectedSite.id}`}
           token={context.token}
           businessId={context.businessId}
           siteId={selectedSite.id}

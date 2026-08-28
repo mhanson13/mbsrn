@@ -78,6 +78,10 @@ Migration workflow on the dedicated page:
 8. Continue the displayed GitHub, self-managed certificate, DNS, deployment, and verification gates in order.
 9. Open the verified preview URL.
 
+The route is keyed by business and site. Workspace loads also capture both that scope and a monotonically increasing request generation; any late summary, TLS, media, history, preview-release, or source-capture response is ignored after navigation or a newer refresh. This prevents one site's data from appearing in another site's operator workflow.
+
+Draft files and selected media are frozen together during generation. Approval returns `draft_package_incomplete` when selected bytes are missing or generated pages contain unresolved/non-deployable media references. The normal UI disables approval and preview creation when that incomplete state is already known and directs the operator to repair or re-import media, then generate a new draft. Publish never repairs or mutates an approved artifact.
+
 The certificate gate uses API-side **Ensure, Vault & Publish** semantics. A readiness response proves that the Google Cloud project and workload credentials are configured but leaves provider permissions in `operation_required` state until the actual Secret Manager or Compute request runs. The real operation supplies the authoritative result. Retries reuse a valid published certificate or resume matching vaulted material after a partial Compute failure, rather than generating another certificate. Normal operator output shows only the failed service step and next action; bounded provider status metadata remains in administrator diagnostics.
 
 Artifact publication and managed deploy-workflow provisioning are separate stages. A successful artifact commit remains published when subsequent workflow verification fails; Deploy Readiness records `workflow_provisioning_failed` and blocks dispatch until workflow verification succeeds. Re-running Publish for the same artifact invokes duplicate-artifact workflow repair without rewriting artifact files. Existing marker-missing repositories remain blocked pending explicit adoption; only repositories created during the controlled MBSRN bootstrap receive their matching management marker automatically.
@@ -117,9 +121,9 @@ Purpose:
 - surface next action and draft quality earlier
 - keep advanced diagnostics available but lower-priority
 
-No workflow changes:
-- approval/publish/deploy rules are unchanged
-- backend/API behavior and gating are unchanged
+Current workflow boundaries:
+- media completeness is a hard approval and preview-release gate
+- publish and deploy consume the exact approved artifact package
 - artifact quality remains advisory only
 
 Site operator page information architecture update:
@@ -443,6 +447,7 @@ Workspace/site scoping contract:
 - media list/upload/update operations are scoped by both tenant business and `site_id`
 - assets from one site workspace are not visible in another site workspace, even within the same tenant
 - cross-site update/select attempts return not-found behavior rather than mutating another workspace
+- late frontend requests are discarded when their captured business/site scope or request generation is no longer current
 
 Media / Images compact browser behavior:
 - migration media UI now uses compact Site Image cards in a responsive grid instead of verbose stacked rows

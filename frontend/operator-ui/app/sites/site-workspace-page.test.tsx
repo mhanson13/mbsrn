@@ -704,6 +704,62 @@ describe("site workspace modernized structure", () => {
 });
 
 describe("site migration workflow route", () => {
+  it("keeps late workspace responses isolated to the site that requested them", async () => {
+    let resolveSiteOneSummary: (value: MigrationWorkspaceSummary) => void = () => undefined;
+    const siteOneSummaryPromise = new Promise<MigrationWorkspaceSummary>((resolve) => {
+      resolveSiteOneSummary = resolve;
+    });
+    const siteOne = buildSite({ id: "site-1", display_name: "Site One" });
+    const siteTwo = buildSite({
+      id: "site-2",
+      display_name: "Site Two",
+      base_url: "https://site-two.example/",
+      normalized_domain: "site-two.example",
+      preview_slug: "site-two",
+      preview_hostname: "site-two.site.mbsrn.com",
+    });
+    const siteTwoSummary = buildMigrationWorkspaceSummary({
+      workspace: buildMigrationWorkspace({
+        site_id: "site-2",
+        source_url: "https://site-two.example/",
+      }),
+    });
+    mockUseOperatorContext.mockReturnValue(
+      baseContext({ sites: [siteOne, siteTwo], selectedSiteId: "site-1" }),
+    );
+    mockFetchMigrationWorkspaceSummary.mockImplementation((...args: unknown[]) =>
+      String(args[2]) === "site-1" ? siteOneSummaryPromise : Promise.resolve(siteTwoSummary),
+    );
+
+    const { rerender } = render(<SiteMigrationWorkflowPage />);
+    await waitFor(() =>
+      expect(mockFetchMigrationWorkspaceSummary).toHaveBeenCalledWith("token-1", "biz-1", "site-1"),
+    );
+
+    navigationState.params = { site_id: "site-2" };
+    mockUseOperatorContext.mockReturnValue(
+      baseContext({ sites: [siteOne, siteTwo], selectedSiteId: "site-2" }),
+    );
+    rerender(<SiteMigrationWorkflowPage />);
+
+    expect(await screen.findByDisplayValue("https://site-two.example/")).toBeInTheDocument();
+
+    await act(async () => {
+      resolveSiteOneSummary(
+        buildMigrationWorkspaceSummary({
+          workspace: buildMigrationWorkspace({
+            site_id: "site-1",
+            source_url: "https://late-site-one.example/",
+          }),
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(screen.getByDisplayValue("https://site-two.example/")).toBeInTheDocument();
+    expect(screen.queryByDisplayValue("https://late-site-one.example/")).not.toBeInTheDocument();
+  });
+
   it("queues the default analyze-and-rebuild source mode asynchronously", async () => {
     const user = userEvent.setup();
     render(<SiteMigrationWorkflowPage />);
@@ -3391,6 +3447,14 @@ describe("site migration workflow route", () => {
     expect(screen.getByTestId("migration-artifact-media-readiness-blockers")).toHaveTextContent(
       "Media readiness blockers:",
     );
+    expect(screen.getByTestId("migration-approve-draft-button")).toBeDisabled();
+    expect(screen.getByTestId("migration-artifact-approval-blocked-by-media")).toHaveTextContent(
+      "Repair or re-import the affected images",
+    );
+    expect(screen.getByTestId("migration-create-preview-release-button")).toBeDisabled();
+    expect(screen.getByTestId("migration-preview-package-incomplete")).toHaveTextContent(
+      "Repair the media in Section B and generate a new draft.",
+    );
   });
 
   it("shows pending-generation guidance instead of selected-media materialization blocker before next draft package generation", async () => {
@@ -3440,6 +3504,8 @@ describe("site migration workflow route", () => {
     );
     expect(screen.queryByTestId("migration-artifact-media-not-materialized-warning")).not.toBeInTheDocument();
     expect(screen.queryByTestId("migration-artifact-media-readiness-blockers")).not.toBeInTheDocument();
+    expect(screen.getByTestId("migration-approve-draft-button")).toBeDisabled();
+    expect(screen.getByTestId("migration-create-preview-release-button")).toBeDisabled();
   });
 
   it("shows private generated-media URL blockers without exposing raw URLs", async () => {

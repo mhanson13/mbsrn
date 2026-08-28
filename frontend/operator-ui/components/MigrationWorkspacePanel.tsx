@@ -4225,6 +4225,9 @@ export function MigrationWorkspacePanel({
   const [selectedDeployHistoryIdentity, setSelectedDeployHistoryIdentity] = useState("");
   const requirementsImportInputRef = useRef<HTMLInputElement | null>(null);
   const draftPreviewFrameRef = useRef<HTMLIFrameElement | null>(null);
+  const workspaceRequestGenerationRef = useRef(0);
+  const workspaceScopeRef = useRef({ token, businessId, siteId });
+  workspaceScopeRef.current = { token, businessId, siteId };
 
   const selectedArtifact = useMemo(() => {
     if (!selectedArtifactVersionId) {
@@ -4491,9 +4494,15 @@ export function MigrationWorkspacePanel({
   const artifactMediaSelectedAssetsCount =
     asNonNegativeInt(draftInputSummary.artifact_media_selected_assets_count)
     ?? selectedUsableMediaAssetsCount;
+  const artifactMediaSelectedAssetsInPackage = asNonNegativeInt(
+    draftInputSummary.artifact_media_selected_assets_count,
+  );
   const artifactMediaMaterializedAssetsCount =
     asNonNegativeInt(draftInputSummary.artifact_media_materialized_assets_count)
     ?? 0;
+  const artifactMediaMaterializedAssetsInPackage = asNonNegativeInt(
+    draftInputSummary.artifact_media_materialized_assets_count,
+  );
   const artifactMediaReferencedPathsCount =
     asNonNegativeInt(draftInputSummary.artifact_media_referenced_paths_count)
     ?? 0;
@@ -4581,6 +4590,17 @@ export function MigrationWorkspacePanel({
   });
   const artifactMediaHasRealBlocker =
     artifactMediaBlockingCodesForDraftInput.length > 0 || artifactMediaBlockingReasonsForDraftInput.length > 0;
+  const selectedArtifactPackageIncomplete =
+    selectedArtifactVersionIdTrimmed.length > 0
+    && summary?.latest_artifact?.id === selectedArtifactVersionIdTrimmed
+    && (
+      artifactMediaReadyForPublishDeploy === false
+      || (
+        artifactMediaSelectedAssetsInPackage !== null
+        && artifactMediaMaterializedAssetsInPackage !== null
+        && artifactMediaMaterializedAssetsInPackage < artifactMediaSelectedAssetsInPackage
+      )
+    );
   const mediaRequirementSatisfied =
     asBooleanOrNull(draftReadinessPreflight.media_requirement_satisfied)
     ?? asBooleanOrNull(draftInputSummary.media_requirement_satisfied)
@@ -6509,6 +6529,18 @@ export function MigrationWorkspacePanel({
 
   const loadWorkspaceData = useCallback(
     async (ensureWorkspace: boolean, options?: { preserveErrorMessage?: boolean }): Promise<void> => {
+      const requestGeneration = workspaceRequestGenerationRef.current + 1;
+      workspaceRequestGenerationRef.current = requestGeneration;
+      const requestScope = { token, businessId, siteId };
+      const requestIsCurrent = (): boolean => {
+        const currentScope = workspaceScopeRef.current;
+        return (
+          workspaceRequestGenerationRef.current === requestGeneration &&
+          currentScope.token === requestScope.token &&
+          currentScope.businessId === requestScope.businessId &&
+          currentScope.siteId === requestScope.siteId
+        );
+      };
       setBusyAction("load");
       if (!options?.preserveErrorMessage) {
         setErrorMessage(null);
@@ -6517,15 +6549,29 @@ export function MigrationWorkspacePanel({
       try {
         if (ensureWorkspace) {
           await upsertMigrationWorkspace(token, businessId, siteId, {});
+          if (!requestIsCurrent()) {
+            return;
+          }
         }
         const [workspaceSummary, versionList] = await Promise.all([
           fetchMigrationWorkspaceSummary(token, businessId, siteId),
           fetchMigrationArtifactVersions(token, businessId, siteId),
         ]);
+        if (!requestIsCurrent()) {
+          return;
+        }
         setSummary(workspaceSummary);
         void fetchSiteTLSCertificateStatus(token, businessId, siteId)
-          .then((tlsStatus) => setSiteTlsCertificate(tlsStatus))
-          .catch(() => setSiteTlsCertificate(null));
+          .then((tlsStatus) => {
+            if (requestIsCurrent()) {
+              setSiteTlsCertificate(tlsStatus);
+            }
+          })
+          .catch(() => {
+            if (requestIsCurrent()) {
+              setSiteTlsCertificate(null);
+            }
+          });
         setArtifactVersions(versionList.items || []);
         setPublishHistory(workspaceSummary.publish_history || []);
         setDeployHistory(workspaceSummary.deploy_history || []);
@@ -6556,6 +6602,9 @@ export function MigrationWorkspacePanel({
             fetchPreviewReleases(token, businessId, siteId),
             fetchMigrationSourceCaptures(token, businessId, siteId),
           ]);
+          if (!requestIsCurrent()) {
+            return;
+          }
           if (mediaResult.status === "fulfilled") {
             setMediaAssetsSnapshot(asRecord(mediaResult.value));
           } else {
@@ -6596,10 +6645,14 @@ export function MigrationWorkspacePanel({
           }
         })();
       } catch (error) {
-        setErrorHint(null);
-        setErrorMessage(toErrorMessage(error, "Failed to load migration workspace."));
+        if (requestIsCurrent()) {
+          setErrorHint(null);
+          setErrorMessage(toErrorMessage(error, "Failed to load migration workspace."));
+        }
       } finally {
-        setBusyAction(null);
+        if (requestIsCurrent()) {
+          setBusyAction(null);
+        }
       }
     },
     [businessId, hydrateFromSummary, siteId, token],
@@ -6647,6 +6700,9 @@ export function MigrationWorkspacePanel({
 
   useEffect(() => {
     void loadWorkspaceData(true);
+    return () => {
+      workspaceRequestGenerationRef.current += 1;
+    };
   }, [loadWorkspaceData]);
 
   useEffect(() => {
@@ -9266,17 +9322,17 @@ export function MigrationWorkspacePanel({
               || "Selected images changed after this draft package was generated. Generate a new draft to reflect those changes."}
           </span>
         ) : artifactMediaSelectedNotMaterializedCount > 0 && !artifactMediaPendingGeneration ? (
-          <span className="hint muted" data-testid="migration-artifact-media-not-materialized-warning">
+          <span className="hint warning" data-testid="migration-artifact-media-not-materialized-warning">
             {artifactMediaSelectedNotMaterializedCount} selected image
             {artifactMediaSelectedNotMaterializedCount === 1 ? "" : "s"} are not yet in this artifact package.
-            This is a warning only unless generated pages reference missing image paths.
+            Repair the media in Section B, then generate a new draft before approval.
           </span>
         ) : null}
         {artifactMediaUnresolvedReferencesCount > 0 ? (
           <span className="hint warning" data-testid="migration-artifact-media-unresolved-warning">
             {artifactMediaHasPrivateUrlBlocker
-              ? "Generated output references private app/control-plane or storage media URLs. Publish/deploy remains blocked until those references use artifact paths."
-              : "Generated output still contains unresolved image references. Publish/deploy remains blocked until resolved."}
+              ? "Generated output references private app/control-plane or storage media URLs. Approval is blocked until a new draft uses artifact paths."
+              : "Generated output still contains unresolved image references. Repair the media and generate a new draft before approval."}
           </span>
         ) : null}
         {artifactMediaSelectedUnusedCount > 0 || artifactMediaUnreferencedMaterializedCount > 0 ? (
@@ -9394,7 +9450,7 @@ export function MigrationWorkspacePanel({
                 type="button"
                 className="button button-secondary"
                 onClick={() => void handleApproveSelectedArtifact()}
-                disabled={isActionInFlight || !canApproveSelectedArtifact}
+                disabled={isActionInFlight || !canApproveSelectedArtifact || selectedArtifactPackageIncomplete}
                 data-testid="migration-approve-draft-button"
               >
                 {busyAction === "approve" ? "Approving..." : "Approve Selected Draft"}
@@ -9409,6 +9465,11 @@ export function MigrationWorkspacePanel({
                 {busyAction === "delete_draft" ? "Deleting..." : "Delete Selected Draft"}
               </button>
             </div>
+            {selectedArtifactPackageIncomplete ? (
+              <span className="hint warning" data-testid="migration-artifact-approval-blocked-by-media">
+                This draft package is incomplete. Repair or re-import the affected images in Section B, then generate a new draft.
+              </span>
+            ) : null}
             <div className="panel panel-compact stack-tight" data-testid="migration-artifact-quality-summary">
               <strong>Artifact Quality Summary</strong>
               {artifactQualitySummary ? (
@@ -9651,11 +9712,21 @@ export function MigrationWorkspacePanel({
               type="button"
               className="button button-primary"
               onClick={() => void handleCreatePreviewRelease()}
-              disabled={isActionInFlight || !selectedArtifactVersionIdTrimmed || !previewSlugTrimmed}
+              disabled={
+                isActionInFlight
+                || !selectedArtifactVersionIdTrimmed
+                || !previewSlugTrimmed
+                || selectedArtifactPackageIncomplete
+              }
               data-testid="migration-create-preview-release-button"
             >
               {busyAction === "create_preview" ? "Creating..." : "Approve & Create Preview"}
             </button>
+            {selectedArtifactPackageIncomplete ? (
+              <span className="hint warning" data-testid="migration-preview-package-incomplete">
+                Preview creation is waiting for a complete draft package. Repair the media in Section B and generate a new draft.
+              </span>
+            ) : null}
           </>
         )}
         {previewActionError ? (

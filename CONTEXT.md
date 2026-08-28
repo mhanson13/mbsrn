@@ -55,6 +55,8 @@ Workspace media reads now expose a bounded integrity state instead of sending op
 
 Artifact media is now finalized only during draft generation. Approval rejects missing selected files or unresolved references with `draft_package_incomplete`, preview-release creation defensively rejects incomplete legacy approved packages, and GitHub publication consumes only the frozen artifact. The former publish-time artifact repair path has been removed.
 
+The migration route remounts its workspace at the business/site boundary and every workspace refresh carries a generation-and-scope guard. Late summary, TLS, media, history, release, or capture responses from a previously viewed site are discarded. When the latest selected draft is known to have missing media or unresolved references, both standalone approval and **Approve & Create Preview** are disabled with one repair-and-regenerate instruction beside the action.
+
 Optional asynchronous source capture is implemented for all sites. `analyze_rebuild` remains the default; `faithful_snapshot` requires recorded authorization and runs Chromium in a dedicated non-root, gVisor-isolated worker rather than API Pods. Capture rows are tenant/site scoped, idempotent, retryable, and immutable by source version. Every browser attempt writes first-party pages/assets and a last-written manifest under a unique GCS attempt prefix with size, SHA-256, generation, and provenance. Exact-host/`www` navigation, public DNS pinning, redirect checks, external-request blocking, and bounded time/page/asset/byte limits are enforced. Unsupported dynamic behavior is reported as a limitation. The latest successfully completed requested run becomes the workspace baseline and supplies only bounded rendered context to AI draft generation. Production rollout and Platfire acceptance remain pending.
 
 ## Approved target workflow
@@ -89,6 +91,7 @@ Allowed operator-facing gate states are `waiting`, `running`, `ready`, `action_r
 ### Tenant and site isolation
 
 - Every record and external-resource operation is scoped by `business_id` and `site_id`.
+- Frontend async responses may update state only while their captured business/site scope and request generation remain current.
 - Repository ownership markers must match the expected business and site before MBSRN modifies an existing repository.
 - Storage object names use immutable IDs rather than display names.
 - No site name, customer domain, repository, or workflow path may be hard-coded into runtime behavior.

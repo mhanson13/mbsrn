@@ -115,6 +115,8 @@ Acceptance:
 - [x] Render preview-release and diagnostic action results beside the initiating controls.
 - [x] Keep diagnostic bundles collectable when TLS or preview-identity prerequisites are incomplete.
 - [x] Include sanitized provider failure evidence and artifact-media blocker counts in administrator bundles.
+- [x] Prevent late requests from a previously viewed site from overwriting the active migration workspace.
+- [x] Disable approval and preview creation when the selected latest draft package is known to be media-incomplete.
 - [ ] Split the migration workspace into focused components.
 
 Acceptance:
