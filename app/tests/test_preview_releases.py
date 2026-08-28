@@ -15,7 +15,11 @@ from app.repositories.seo_migration_repository import SEOMigrationRepository
 from app.repositories.seo_site_repository import SEOSiteRepository
 from app.repositories.tls_certificate_repository import TLSCertificateRepository
 from app.services.preview_release_execution import PreviewReleaseExecutionService
-from app.services.preview_releases import PreviewReleaseNotFoundError, PreviewReleaseService
+from app.services.preview_releases import (
+    PreviewReleaseNotFoundError,
+    PreviewReleaseService,
+    PreviewReleaseValidationError,
+)
 from app.services.seo_migration import SEOMigrationValidationError
 
 
@@ -162,6 +166,34 @@ def test_preview_release_creation_is_idempotent_and_freezes_identity_and_media(d
     site = db_session.get(SEOSite, site_id)
     assert site is not None
     assert site.preview_slug_locked_at is not None
+
+
+def test_preview_release_rejects_incomplete_legacy_approved_package(db_session) -> None:
+    business_id, site_id, artifact_id = _seed_release_source(db_session)
+    artifact = db_session.get(SEOMigrationArtifactVersion, artifact_id)
+    assert artifact is not None
+    artifact.context_json = {
+        "artifact_media_manifest": {
+            "selected_assets_count": 1,
+            "materialized_assets_count": 0,
+            "manifest": [{"asset_id": "asset-1", "materialized": False}],
+        }
+    }
+    artifact.generated_files_json = [{"path": "index.html", "content": "<html></html>"}]
+    db_session.add(artifact)
+    db_session.commit()
+
+    with pytest.raises(PreviewReleaseValidationError) as release_error:
+        _service(db_session).create_or_resume(
+            business_id=business_id,
+            site_id=site_id,
+            artifact_version_id=artifact_id,
+            idempotency_key=None,
+            principal_id="principal-1",
+        )
+
+    assert release_error.value.reason_code == "draft_package_incomplete"
+    assert db_session.query(PreviewRelease).count() == 0
 
 
 def test_preview_release_reconcile_uses_exact_artifact_and_certificate_fingerprint(db_session) -> None:

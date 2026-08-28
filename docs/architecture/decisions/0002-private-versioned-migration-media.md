@@ -9,6 +9,8 @@ Production migration source bytes are stored in a private, versioned GCS bucket 
 
 API responses expose authenticated preview endpoints and omit storage coordinates and checksums. Local filesystem storage remains available only for development and isolated tests.
 
+Media is materialized while a new draft artifact is generated. Approval rejects incomplete packages. Publication reads only the frozen artifact files and manifest; it never re-reads current workspace media or repairs an approved artifact in place.
+
 ## Consequences
 
-Requests no longer require pod affinity. A missing generation or integrity mismatch blocks materialization rather than silently publishing incomplete assets. Active objects have no automatic deletion policy; noncurrent generations expire after 90 days.
+Requests no longer require pod affinity. A missing generation or integrity mismatch blocks materialization rather than silently publishing incomplete assets. Operators repair or replace workspace media and generate a new draft. Active objects have no automatic deletion policy; noncurrent generations expire after 90 days.

@@ -5373,7 +5373,7 @@ def test_generate_artifacts_normalizes_css_media_references_to_assets_images_dir
     assert isinstance(publish_image.content_bytes, (bytes, bytearray))
 
 
-def test_publish_and_deploy_readiness_block_when_artifact_media_references_are_unresolved(db_session) -> None:
+def test_approval_blocks_when_artifact_media_references_are_unresolved(db_session) -> None:
     provider = _StaticMigrationProvider(
         _build_publishable_output(
             index_content=(
@@ -5393,44 +5393,26 @@ def test_publish_and_deploy_readiness_block_when_artifact_media_references_are_u
         site_id=site_id,
         principal_id="principal-1",
     )
-    service.approve_artifact_version(
-        business_id=business_id,
-        site_id=site_id,
-        artifact_version_id=artifact.id,
-        approval_notes="Approved for publish",
-        principal_id="principal-1",
-    )
-    _configure_deploy_target(service, business_id=business_id, site_id=site_id)
-    artifact = service.generate_draft_artifacts(
-        business_id=business_id,
-        site_id=site_id,
-        principal_id="principal-1",
-    )
-    service.approve_artifact_version(
-        business_id=business_id,
-        site_id=site_id,
-        artifact_version_id=artifact.id,
-        approval_notes=None,
-        principal_id="principal-1",
-    )
-    summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
-    publish_readiness = summary.publish_readiness if isinstance(summary.publish_readiness, dict) else {}
-    deploy_readiness = summary.deploy_readiness if isinstance(summary.deploy_readiness, dict) else {}
-    publish_media = publish_readiness.get("artifact_media_readiness")
-    deploy_media = deploy_readiness.get("artifact_media_readiness")
-    assert isinstance(publish_media, dict)
-    assert publish_media.get("ready") is False
-    assert publish_readiness.get("failure_category") == "media_materialization"
-    assert "artifact_internal_media_ids_unresolved" in list(publish_media.get("blocker_codes") or [])
-    assert "artifact_image_tokens_unresolved" in list(publish_media.get("blocker_codes") or [])
-    assert "generated_media_reference_unresolved" in list(publish_media.get("blocker_reason_codes") or [])
-    assert "publish_artifact_media_invalid" in list(publish_readiness.get("blocker_codes") or [])
-    assert isinstance(deploy_media, dict)
-    assert deploy_media.get("ready") is False
-    assert "deploy_artifact_media_invalid" in list(deploy_readiness.get("blocker_codes") or [])
+    artifact_media = service._build_artifact_media_readiness(artifact)
+    assert artifact_media.get("ready") is False
+    assert "artifact_internal_media_ids_unresolved" in list(artifact_media.get("blocker_codes") or [])
+    assert "artifact_image_tokens_unresolved" in list(artifact_media.get("blocker_codes") or [])
+    assert "generated_media_reference_unresolved" in list(artifact_media.get("blocker_reason_codes") or [])
+
+    with pytest.raises(SEOMigrationValidationError) as approval_error:
+        service.approve_artifact_version(
+            business_id=business_id,
+            site_id=site_id,
+            artifact_version_id=artifact.id,
+            approval_notes="Approved for publish",
+            principal_id="principal-1",
+        )
+    assert approval_error.value.error_code == "draft_package_incomplete"
+    assert "unresolved media references" in str(approval_error.value).lower()
+    assert artifact.approval_status != "approved"
 
 
-def test_publish_and_deploy_readiness_block_when_generated_output_uses_private_app_and_storage_media_urls(
+def test_approval_blocks_generated_output_using_private_app_and_storage_media_urls(
     db_session,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -5468,18 +5450,7 @@ def test_publish_and_deploy_readiness_block_when_generated_output_uses_private_a
             site_id=site_id,
             principal_id="principal-1",
         )
-        service.approve_artifact_version(
-            business_id=business_id,
-            site_id=site_id,
-            artifact_version_id=artifact.id,
-            approval_notes=None,
-            principal_id="principal-1",
-        )
-        summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
-        publish_readiness = summary.publish_readiness if isinstance(summary.publish_readiness, dict) else {}
-        deploy_readiness = summary.deploy_readiness if isinstance(summary.deploy_readiness, dict) else {}
-        publish_media = publish_readiness.get("artifact_media_readiness")
-        deploy_media = deploy_readiness.get("artifact_media_readiness")
+        publish_media = service._build_artifact_media_readiness(artifact)
 
         assert isinstance(publish_media, dict)
         assert publish_media.get("ready") is False
@@ -5498,16 +5469,17 @@ def test_publish_and_deploy_readiness_block_when_generated_output_uses_private_a
         assert "operator.internal.example" not in serialized_publish_media
         assert "storage.googleapis.com" not in serialized_publish_media
         assert "x-goog-signature" not in serialized_publish_media
-        assert publish_readiness.get("failure_category") == "media_materialization"
         assert "generated_media_reference_private_url" in list(publish_media.get("blocker_reason_codes") or [])
-        assert "publish_artifact_media_invalid" in list(publish_readiness.get("blocker_codes") or [])
-
-        assert isinstance(deploy_media, dict)
-        assert deploy_media.get("ready") is False
-        assert "deploy_artifact_media_invalid" in list(deploy_readiness.get("blocker_codes") or [])
-        serialized_deploy_media = json.dumps(deploy_media).lower()
-        assert "operator.internal.example" not in serialized_deploy_media
-        assert "storage.googleapis.com" not in serialized_deploy_media
+        with pytest.raises(SEOMigrationValidationError) as approval_error:
+            service.approve_artifact_version(
+                business_id=business_id,
+                site_id=site_id,
+                artifact_version_id=artifact.id,
+                approval_notes=None,
+                principal_id="principal-1",
+            )
+        assert approval_error.value.error_code == "draft_package_incomplete"
+        assert artifact.approval_status != "approved"
     finally:
         get_settings.cache_clear()
 
@@ -5564,7 +5536,7 @@ def test_generate_artifacts_flags_selected_media_not_materialized_when_storage_b
     assert media_diagnostics.get("ready") is False
 
 
-def test_publish_readiness_reports_source_bytes_missing_for_referenced_selected_media(db_session) -> None:
+def test_approval_reports_source_bytes_missing_for_referenced_selected_media(db_session) -> None:
     provider = _StaticMigrationProvider(
         _build_publishable_output(
             index_content=(
@@ -5600,24 +5572,22 @@ def test_publish_readiness_reports_source_bytes_missing_for_referenced_selected_
         site_id=site_id,
         principal_id="principal-1",
     )
-    service.approve_artifact_version(
-        business_id=business_id,
-        site_id=site_id,
-        artifact_version_id=artifact.id,
-        approval_notes=None,
-        principal_id="principal-1",
-    )
-    summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
-    publish_readiness = summary.publish_readiness if isinstance(summary.publish_readiness, dict) else {}
-    publish_media = publish_readiness.get("artifact_media_readiness")
-    assert publish_readiness.get("ready") is False
-    assert publish_readiness.get("failure_category") == "media_materialization"
-    assert isinstance(publish_media, dict)
-    assert "generated_media_source_bytes_missing" in list(publish_media.get("blocker_reason_codes") or [])
+    artifact_media = service._build_artifact_media_readiness(artifact)
+    assert "generated_media_source_bytes_missing" in list(artifact_media.get("blocker_reason_codes") or [])
     assert any(
         "approved/source bytes are unavailable for materialization" in str(item).lower()
-        for item in list(publish_media.get("reasons") or [])
+        for item in list(artifact_media.get("reasons") or [])
     )
+    with pytest.raises(SEOMigrationValidationError) as approval_error:
+        service.approve_artifact_version(
+            business_id=business_id,
+            site_id=site_id,
+            artifact_version_id=artifact.id,
+            approval_notes=None,
+            principal_id="principal-1",
+        )
+    assert approval_error.value.error_code == "draft_package_incomplete"
+    assert "missing 1 selected image" in str(approval_error.value).lower()
 
 
 def test_deploy_summary_uses_canonical_preview_slug_when_repository_name_differs(db_session) -> None:
@@ -5645,7 +5615,7 @@ def test_deploy_summary_uses_canonical_preview_slug_when_repository_name_differs
     assert target.get("preview_hostname_source") == "site_preview_slug"
 
 
-def test_deploy_readiness_does_not_block_on_selected_only_media_warning_state(db_session) -> None:
+def test_approval_blocks_selected_media_missing_from_draft_package(db_session) -> None:
     publisher = _RecordingGitHubPublisher(
         existing_repository=True,
         preflight_can_read_contents=True,
@@ -5686,36 +5656,22 @@ def test_deploy_readiness_does_not_block_on_selected_only_media_warning_state(db
         site_id=site_id,
         principal_id="principal-1",
     )
-    service.approve_artifact_version(
-        business_id=business_id,
-        site_id=site_id,
-        artifact_version_id=artifact.id,
-        approval_notes=None,
-        principal_id="principal-1",
-    )
-    service.publish_artifact_version(
-        business_id=business_id,
-        site_id=site_id,
-        artifact_version_id=artifact.id,
-        dry_run=False,
-        commit_message=None,
-        analytics_measurement_id=None,
-        principal_id="principal-1",
-    )
-
-    summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
-    deploy_readiness = summary.deploy_readiness if isinstance(summary.deploy_readiness, dict) else {}
-    deploy_media = (
-        deploy_readiness.get("artifact_media_readiness")
-        if isinstance(deploy_readiness.get("artifact_media_readiness"), dict)
-        else {}
-    )
-    assert "deploy_artifact_media_invalid" not in list(deploy_readiness.get("blocker_codes") or [])
-    assert deploy_media.get("ready") is True
-    assert "selected_media_pending_generation" in list(deploy_media.get("warning_codes") or [])
+    artifact_media = service._build_artifact_media_readiness(artifact)
+    assert artifact_media.get("selected_assets_count") == 1
+    assert artifact_media.get("materialized_assets_count") == 0
+    with pytest.raises(SEOMigrationValidationError) as approval_error:
+        service.approve_artifact_version(
+            business_id=business_id,
+            site_id=site_id,
+            artifact_version_id=artifact.id,
+            approval_notes=None,
+            principal_id="principal-1",
+        )
+    assert approval_error.value.error_code == "draft_package_incomplete"
+    assert "missing 1 selected image" in str(approval_error.value).lower()
 
 
-def test_publish_and_deploy_readiness_block_when_generated_html_references_missing_assets_path(db_session) -> None:
+def test_approval_blocks_generated_html_referencing_missing_assets_path(db_session) -> None:
     provider = _StaticMigrationProvider(
         _build_publishable_output(
             index_content=(
@@ -5735,33 +5691,25 @@ def test_publish_and_deploy_readiness_block_when_generated_html_references_missi
         site_id=site_id,
         principal_id="principal-1",
     )
-    service.approve_artifact_version(
-        business_id=business_id,
-        site_id=site_id,
-        artifact_version_id=artifact.id,
-        approval_notes=None,
-        principal_id="principal-1",
-    )
-    summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
-    publish_readiness = summary.publish_readiness if isinstance(summary.publish_readiness, dict) else {}
-    deploy_readiness = summary.deploy_readiness if isinstance(summary.deploy_readiness, dict) else {}
-    publish_media = publish_readiness.get("artifact_media_readiness")
-    deploy_media = deploy_readiness.get("artifact_media_readiness")
+    publish_media = service._build_artifact_media_readiness(artifact)
     assert isinstance(publish_media, dict)
-    assert isinstance(deploy_media, dict)
     assert publish_media.get("ready") is False
-    assert publish_readiness.get("failure_category") == "media_materialization"
     assert publish_media.get("missing_referenced_media_paths_count") == 0
     assert publish_media.get("unresolved_generated_media_paths_count") == 1
     assert "generated_media_source_missing" in list(publish_media.get("blocker_reason_codes") or [])
     assert "artifact_referenced_media_file_missing" in list(publish_media.get("blocker_codes") or [])
-    assert "publish_artifact_media_invalid" in list(publish_readiness.get("blocker_codes") or [])
-    assert deploy_media.get("ready") is False
-    assert "artifact_referenced_media_file_missing" in list(deploy_media.get("blocker_codes") or [])
-    assert "deploy_artifact_media_invalid" in list(deploy_readiness.get("blocker_codes") or [])
+    with pytest.raises(SEOMigrationValidationError) as approval_error:
+        service.approve_artifact_version(
+            business_id=business_id,
+            site_id=site_id,
+            artifact_version_id=artifact.id,
+            approval_notes=None,
+            principal_id="principal-1",
+        )
+    assert approval_error.value.error_code == "draft_package_incomplete"
 
 
-def test_publish_readiness_repairs_stale_selected_media_materialization_for_approved_artifacts(db_session) -> None:
+def test_publish_readiness_does_not_repair_stale_media_in_approved_artifacts(db_session) -> None:
     publisher = _RecordingGitHubPublisher(
         existing_repository=True,
         preflight_blocker_code="github_workflow_write_not_authorized",
@@ -5804,6 +5752,13 @@ def test_publish_readiness_repairs_stale_selected_media_materialization_for_appr
     artifact = service.generate_draft_artifacts(
         business_id=business_id,
         site_id=site_id,
+        principal_id="principal-1",
+    )
+    service.approve_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        approval_notes=None,
         principal_id="principal-1",
     )
 
@@ -5864,42 +5819,34 @@ def test_publish_readiness_repairs_stale_selected_media_materialization_for_appr
     service.seo_migration_repository.save_artifact_version(artifact)
     service.session.commit()
 
-    service.approve_artifact_version(
-        business_id=business_id,
-        site_id=site_id,
-        artifact_version_id=artifact.id,
-        approval_notes=None,
-        principal_id="principal-1",
-    )
     summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
     publish_readiness = summary.publish_readiness if isinstance(summary.publish_readiness, dict) else {}
     publish_media = publish_readiness.get("artifact_media_readiness")
-    assert publish_readiness.get("ready") is True
-    assert "publish_artifact_media_invalid" not in list(publish_readiness.get("blocker_codes") or [])
+    assert publish_readiness.get("ready") is False
+    assert "publish_artifact_media_invalid" in list(publish_readiness.get("blocker_codes") or [])
     assert isinstance(publish_media, dict)
-    assert publish_media.get("ready") is True
-    assert publish_media.get("materialized_assets_count") == 1
-    assert any(
-        "workflow provisioning stays unavailable" in str(item).lower()
-        for item in (publish_readiness.get("warnings") or [])
-    )
+    assert publish_media.get("ready") is False
+    assert publish_media.get("readiness_source") == "artifact_snapshot"
+    assert publish_media.get("materialized_assets_count") == 0
 
-    publish_result = service.publish_artifact_version(
+    with pytest.raises(SEOMigrationValidationError):
+        service.publish_artifact_version(
+            business_id=business_id,
+            site_id=site_id,
+            artifact_version_id=artifact.id,
+            dry_run=False,
+            commit_message=None,
+            analytics_measurement_id=None,
+            principal_id="principal-1",
+        )
+    persisted = service.get_artifact_version(
         business_id=business_id,
         site_id=site_id,
         artifact_version_id=artifact.id,
-        dry_run=False,
-        commit_message=None,
-        analytics_measurement_id=None,
-        principal_id="principal-1",
     )
-    assert publish_result.result.get("artifact_media_repair_applied") is True
-    assert publisher.publish_calls
-    _, publish_files, _, _ = publisher.publish_calls[-1]
-    publish_paths = [item.path for item in publish_files]
-    image_path = next(path for path in publish_paths if path.startswith("assets/images/"))
-    html_publish = next(item for item in publish_files if item.path == "index.html")
-    assert image_path in str(html_publish.content or "")
+    assert persisted.generated_files_json == stale_generated_files
+    assert persisted.context_json == stale_context
+    assert publisher.publish_calls == []
 
 
 def test_publish_readiness_treats_selected_media_changed_after_generation_as_advisory(db_session) -> None:
@@ -5992,7 +5939,6 @@ def test_publish_readiness_treats_selected_media_changed_after_generation_as_adv
 
 def test_publish_media_readiness_uses_pending_generation_status_for_stale_artifact_media_snapshot(
     db_session,
-    monkeypatch,
 ) -> None:
     publisher = _RecordingGitHubPublisher(
         existing_repository=True,
@@ -6090,22 +6036,6 @@ def test_publish_media_readiness_uses_pending_generation_status_for_stale_artifa
     )
     second_asset_id = str(second_upload.get("asset_id") or "").strip()
     assert second_asset_id.startswith("upl-")
-
-    def _mock_prepare_artifact_media_for_publish(**_: object) -> dict[str, object]:
-        return {
-            "artifact_media_readiness": {
-                "ready": True,
-                "blocker_codes": [],
-                "warning_codes": ["selected_media_available_not_referenced"],
-                "warnings": ["2 selected image(s) are not in this artifact package yet."],
-                "selected_assets_count": 2,
-                "materialized_assets_count": 0,
-                "selected_not_materialized_count": 2,
-                "selected_not_materialized_asset_ids": [first_asset_id, second_asset_id],
-            }
-        }
-
-    monkeypatch.setattr(service, "_prepare_artifact_media_for_publish", _mock_prepare_artifact_media_for_publish)
 
     summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
     publish_readiness = summary.publish_readiness if isinstance(summary.publish_readiness, dict) else {}

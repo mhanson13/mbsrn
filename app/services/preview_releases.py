@@ -97,11 +97,16 @@ class PreviewReleaseService:
                 "The selected draft must be approved before a preview release is created.",
                 reason_code="preview_release_approval_required",
             )
+        media_manifest = self._artifact_media_manifest(artifact.context_json)
+        if not self._package_ready(artifact.generated_files_json, media_manifest):
+            raise PreviewReleaseValidationError(
+                "The selected draft package is incomplete. Repair missing media and generate a new draft.",
+                reason_code="draft_package_incomplete",
+            )
         identity = self._preview_identity(site.preview_slug)
         operation_key = self._normalize_idempotency_key(
             idempotency_key or f"preview-release:{site_id}:{artifact_version_id}"
         )
-        media_manifest = self._artifact_media_manifest(artifact.context_json)
         publish_config = workspace.publish_config_json if isinstance(workspace.publish_config_json, dict) else {}
         release = PreviewRelease(
             id=str(uuid4()),

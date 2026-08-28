@@ -2777,35 +2777,30 @@ def test_migration_summary_redacts_private_generated_media_urls_in_readiness_pay
             f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/artifact-versions/{artifact_id}/approve",
             json={"approval_notes": None},
         )
-        assert approve_response.status_code == 200
+        assert approve_response.status_code == 422
+        assert "unresolved media references" in approve_response.json()["detail"].lower()
 
         summary_response = client.get(f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/summary")
         assert summary_response.status_code == 200
         payload = summary_response.json()
         publish_readiness = payload.get("publish_readiness") or {}
-        deploy_readiness = payload.get("deploy_readiness") or {}
-        publish_media = publish_readiness.get("artifact_media_readiness") or {}
-        deploy_media = deploy_readiness.get("artifact_media_readiness") or {}
+        draft_input_summary = ((payload.get("context_summary") or {}).get("draft_input_summary") or {})
 
-        assert publish_media.get("ready") is False
-        assert deploy_media.get("ready") is False
-        assert publish_readiness.get("failure_category") == "media_materialization"
-        assert "generated_media_reference_private_url" in list(publish_media.get("blocker_reason_codes") or [])
-        publish_reasons = [str(item).lower() for item in (publish_media.get("reasons") or [])]
+        assert draft_input_summary.get("artifact_media_ready_for_publish_deploy") is False
+        assert publish_readiness.get("ready") is False
+        assert "generated_media_reference_private_url" in list(
+            draft_input_summary.get("artifact_media_blocker_reason_codes") or []
+        )
+        publish_reasons = [
+            str(item).lower() for item in (draft_input_summary.get("artifact_media_reasons") or [])
+        ]
         assert any("private app/control-plane preview or media urls" in item for item in publish_reasons)
         assert any("private or signed storage media urls" in item for item in publish_reasons)
-        publish_reason_counts = publish_media.get("invalid_media_reference_reason_counts") or {}
-        assert publish_reason_counts.get("artifact_media_app_private_url") == 1
-        assert publish_reason_counts.get("artifact_media_private_storage_url") == 1
 
-        serialized_publish_media = json.dumps(publish_media).lower()
-        serialized_deploy_media = json.dumps(deploy_media).lower()
-        assert "operator.internal.example" not in serialized_publish_media
-        assert "storage.googleapis.com" not in serialized_publish_media
-        assert "x-goog-signature" not in serialized_publish_media
-        assert "operator.internal.example" not in serialized_deploy_media
-        assert "storage.googleapis.com" not in serialized_deploy_media
-        assert "x-goog-signature" not in serialized_deploy_media
+        serialized_draft_input_summary = json.dumps(draft_input_summary).lower()
+        assert "operator.internal.example" not in serialized_draft_input_summary
+        assert "storage.googleapis.com" not in serialized_draft_input_summary
+        assert "x-goog-signature" not in serialized_draft_input_summary
     finally:
         get_settings.cache_clear()
 

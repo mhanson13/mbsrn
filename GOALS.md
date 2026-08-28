@@ -62,6 +62,7 @@ Acceptance:
 - [x] Resume failed operations at the failed gate.
 - [x] Return existing state for duplicate requests.
 - [x] Stop deriving current status from unrelated latest-history records.
+- [x] Reject incomplete media packages before approval and publish only frozen artifact contents.
 
 Acceptance:
 

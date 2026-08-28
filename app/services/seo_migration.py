@@ -382,6 +382,7 @@ _MIGRATION_FAILURE_CATEGORY_VALUES = {
     "approval_required",
     "duplicate_request",
     "artifact_invalid",
+    "media_materialization",
     "provider_error",
     "deploy_error",
     "unknown_error",
@@ -3938,7 +3939,42 @@ class SEOMigrationService:
                 duration_ms=self._duration_ms(started_at),
             )
             raise SEOMigrationValidationError(failure_message)
-
+        artifact_media_readiness = self._build_artifact_media_readiness(artifact)
+        selected_media_count = max(0, int(artifact_media_readiness.get("selected_assets_count") or 0))
+        materialized_media_count = max(0, int(artifact_media_readiness.get("materialized_assets_count") or 0))
+        if not bool(artifact_media_readiness.get("ready")) or materialized_media_count < selected_media_count:
+            if materialized_media_count < selected_media_count:
+                missing_count = selected_media_count - materialized_media_count
+                failure_message = (
+                    f"Draft package is missing {missing_count} selected image"
+                    f"{'' if missing_count == 1 else 's'}. Repair the media, then generate a new draft."
+                )
+            else:
+                failure_message = (
+                    "Draft package contains unresolved media references. "
+                    "Resolve the media errors, then generate a new draft."
+                )
+            self._log_control_plane_action(
+                action="approve",
+                status="failed",
+                business_id=business_id,
+                site_id=site_id,
+                workspace_id=workspace.id,
+                artifact_version_id=artifact.id,
+                artifact_version=artifact.version,
+                principal_id=principal_id,
+                failure_category="media_materialization",
+                failure_reason=failure_message,
+                duration_ms=self._duration_ms(started_at),
+            )
+            raise SEOMigrationValidationError(
+                failure_message,
+                failure_category="media_materialization",
+                failure_reason="validation_failed",
+                error_code="draft_package_incomplete",
+                workspace_id=workspace.id,
+                artifact_version_id=artifact.id,
+            )
         artifact.approval_status = "approved"
         artifact.approved_at = utc_now()
         artifact.approved_by_principal_id = principal_id
@@ -4076,62 +4112,11 @@ class SEOMigrationService:
         )
         analytics_config = _normalize_analytics_config(workspace.analytics_config_json)
         analytics_insertion_mode = str(analytics_config.get("insertion_mode") or "publish_and_deploy")
-        artifact_media_publish_preparation = self._prepare_artifact_media_for_publish(
-            workspace=workspace,
-            artifact=artifact,
-            persist=(not dry_run),
-            principal_id=principal_id,
-        )
-        artifact_media_repair_applied = bool(artifact_media_publish_preparation.get("changed"))
-        artifact_media_repair_warnings = _normalize_string_list(
-            artifact_media_publish_preparation.get("warnings"),
-            max_items=12,
-            max_item_length=220,
-        )
-        prepared_artifact_media_readiness = _normalize_json_dict(
-            artifact_media_publish_preparation.get("artifact_media_readiness")
-        )
-        if prepared_artifact_media_readiness and not bool(prepared_artifact_media_readiness.get("ready")):
-            failure_message = (
-                "; ".join(
-                    _normalize_string_list(
-                        prepared_artifact_media_readiness.get("reasons"),
-                        max_items=8,
-                        max_item_length=220,
-                    )
-                )
-                or "Artifact media publish preparation failed."
-            )
-            failure_category = self._categorize_readiness_failure(
-                reasons=prepared_artifact_media_readiness.get("reasons"),
-                action="publish",
-                blocker_codes=["publish_artifact_media_invalid"],
-            )
-            self._log_control_plane_action(
-                action="publish",
-                status="failed",
-                business_id=business_id,
-                site_id=site_id,
-                workspace_id=workspace.id,
-                artifact_version_id=artifact.id,
-                artifact_version=artifact.version,
-                principal_id=principal_id,
-                dry_run=dry_run,
-                target_summary=target,
-                failure_category=failure_category,
-                failure_reason=failure_message,
-                duration_ms=self._duration_ms(started_at),
-            )
-            raise SEOMigrationValidationError(failure_message)
+        artifact_media_readiness = self._build_artifact_media_readiness(artifact)
         publish_files, analytics_injected_paths, publish_warnings = _prepare_publish_files(
             artifact=artifact,
             ga_measurement_id=effective_ga_measurement_id,
-            generated_files_override=_coerce_object_list(
-                artifact_media_publish_preparation.get("generated_files"),
-                max_items=160,
-            ),
         )
-        publish_warnings.extend(artifact_media_repair_warnings)
         if not publish_files:
             failure_message = "No publishable files were available for this artifact version."
             self._log_control_plane_action(
@@ -5177,16 +5162,12 @@ class SEOMigrationService:
             "analytics_applied": bool(analytics_injected_paths),
             "analytics_injected_paths": analytics_injected_paths,
             "warnings": publish_warnings,
-            "artifact_media_repair_applied": artifact_media_repair_applied,
+            "artifact_media_repair_applied": False,
             "artifact_media_selected_assets_count": _coerce_non_negative_int(
-                _normalize_json_dict(artifact_media_publish_preparation.get("artifact_media_readiness")).get(
-                    "selected_assets_count"
-                )
+                artifact_media_readiness.get("selected_assets_count")
             ),
             "artifact_media_materialized_assets_count": _coerce_non_negative_int(
-                _normalize_json_dict(artifact_media_publish_preparation.get("artifact_media_readiness")).get(
-                    "materialized_assets_count"
-                )
+                artifact_media_readiness.get("materialized_assets_count")
             ),
             "expected_publish_url": expected_publish_url,
             "url_source": expected_publish_url_source,
@@ -13638,7 +13619,6 @@ class SEOMigrationService:
         latest_artifact_media_readiness = self._resolve_effective_artifact_media_readiness(
             workspace=workspace,
             artifact=latest_artifact,
-            include_repair_preview=True,
         )
         unresolved_media_reference_count = (
             max(0, int(latest_artifact_media_readiness.get("unresolved_internal_media_ids_count") or 0))
@@ -16245,9 +16225,13 @@ class SEOMigrationService:
             for item in (*source_discovered_read, *operator_uploaded_read)
             if str(item.get("asset_id") or "").strip()
         }
-        selected_assets_read = [
-            dict(media_read_by_asset_id.get(str(item.get("asset_id") or "").lower()) or {}) for item in selected_assets
-        ]
+        selected_assets_read = []
+        for item in selected_assets:
+            selected_item = dict(media_read_by_asset_id.get(str(item.get("asset_id") or "").lower()) or {})
+            selected_item["artifact_path"] = _normalize_generated_path(
+                item.get("artifact_output_relative_path") or item.get("artifact_path")
+            )
+            selected_assets_read.append(selected_item)
         integrity_action_required_count = sum(
             1
             for item in (*source_discovered_read, *operator_uploaded_read)
@@ -20730,7 +20714,6 @@ class SEOMigrationService:
         artifact_media_readiness = self._resolve_effective_artifact_media_readiness(
             workspace=workspace,
             artifact=artifact,
-            include_repair_preview=True,
         )
         for warning in _normalize_string_list(
             artifact_media_readiness.get("warnings"),
@@ -23537,257 +23520,20 @@ class SEOMigrationService:
         }
         return rewritten, diagnostics
 
-    def _prepare_artifact_media_for_publish(
-        self,
-        *,
-        workspace: SEOMigrationWorkspace,
-        artifact: SEOMigrationArtifactVersion,
-        persist: bool,
-        principal_id: str | None,
-    ) -> dict[str, object]:
-        existing_generated_files = _coerce_object_list(
-            artifact.generated_files_json if isinstance(artifact.generated_files_json, list) else [],
-            max_items=160,
-        )
-        workspace_media_assets_payload = self._collect_workspace_media_assets(
-            workspace=workspace,
-            business_id=workspace.business_id,
-            site_id=workspace.site_id,
-        )
-        media_materialization = self._materialize_selected_media_assets_for_artifact(
-            media_assets_payload=workspace_media_assets_payload,
-        )
-        materialized_files = _coerce_object_list(
-            media_materialization.get("materialized_files"),
-            max_items=_MIGRATION_ARTIFACT_MAX_MEDIA_FILES,
-        )
-        merged_files_by_path: dict[str, dict[str, object]] = {}
-        merged_order: list[str] = []
-        for raw_item in existing_generated_files:
-            item = _normalize_json_dict(raw_item)
-            path = _normalize_generated_path(item.get("path"))
-            if path is None:
-                continue
-            normalized_item = dict(item)
-            normalized_item["path"] = path
-            merged_files_by_path[path] = normalized_item
-            merged_order.append(path)
-        for raw_item in materialized_files:
-            item = _normalize_json_dict(raw_item)
-            path = _normalize_generated_path(item.get("path"))
-            if path is None:
-                continue
-            normalized_item = dict(item)
-            normalized_item["path"] = path
-            if path not in merged_files_by_path:
-                merged_order.append(path)
-            merged_files_by_path[path] = normalized_item
-        merged_files: list[dict[str, object]] = []
-        seen_paths: set[str] = set()
-        for path in merged_order:
-            if path in seen_paths:
-                continue
-            seen_paths.add(path)
-            payload = merged_files_by_path.get(path)
-            if payload is None:
-                continue
-            merged_files.append(payload)
-
-        rewritten_files, media_reference_diagnostics = self._rewrite_generated_media_references(
-            generated_files=merged_files,
-            asset_path_by_id={
-                str(key): str(value)
-                for key, value in _normalize_json_dict(media_materialization.get("asset_path_by_id")).items()
-                if _normalize_string(key, max_length=120) and _normalize_string(value, max_length=240)
-            },
-            asset_aliases={
-                str(key): str(value)
-                for key, value in _normalize_json_dict(media_materialization.get("asset_aliases")).items()
-                if _normalize_string(key, max_length=120) and _normalize_string(value, max_length=240)
-            },
-        )
-        media_artifact_diagnostics = _build_artifact_media_diagnostics_payload(
-            media_materialization=media_materialization,
-            media_reference_diagnostics=media_reference_diagnostics,
-        )
-        preview_publish_files, _preview_analytics_paths, _preview_publish_warnings = _prepare_publish_files(
-            artifact=artifact,
-            ga_measurement_id=None,
-            generated_files_override=rewritten_files,
-        )
-        del _preview_analytics_paths
-        del _preview_publish_warnings
-        rewritten_paths = {
-            path
-            for path in (_normalize_generated_path(_normalize_json_dict(item).get("path")) for item in rewritten_files)
-            if path
-        }
-        publishable_paths = {
-            _normalize_generated_path(item.path)
-            for item in preview_publish_files
-            if _normalize_generated_path(item.path)
-        }
-        referenced_media_paths_for_publish = _normalize_string_list(
-            media_artifact_diagnostics.get("referenced_media_paths"),
-            max_items=160,
-            max_item_length=240,
-        )
-        publish_payload_missing_paths = sorted(
-            path
-            for path in referenced_media_paths_for_publish
-            if path in rewritten_paths and path not in publishable_paths
-        )
-        if publish_payload_missing_paths:
-            updated_media_blocker_codes = _normalize_string_list(
-                media_artifact_diagnostics.get("blocker_codes"),
-                max_items=20,
-                max_item_length=80,
-            )
-            if _ARTIFACT_MEDIA_BLOCKER_CODE_PUBLISH_PAYLOAD_MISSING not in {
-                item.lower() for item in updated_media_blocker_codes
-            }:
-                updated_media_blocker_codes.append(_ARTIFACT_MEDIA_BLOCKER_CODE_PUBLISH_PAYLOAD_MISSING)
-            media_artifact_diagnostics = {
-                **media_artifact_diagnostics,
-                "publish_payload_missing_paths_count": len(publish_payload_missing_paths),
-                "publish_payload_missing_paths": publish_payload_missing_paths[:80],
-                "blocker_codes": updated_media_blocker_codes,
-            }
-        media_manifest_payload = {
-            "selected_assets_count": max(0, int(media_materialization.get("selected_assets_count") or 0)),
-            "materialized_assets_count": max(0, int(media_materialization.get("materialized_assets_count") or 0)),
-            "manifest": _coerce_object_list(
-                media_materialization.get("manifest"),
-                max_items=_MIGRATION_ARTIFACT_MAX_MEDIA_FILES,
-            ),
-        }
-        effective_readiness = _build_artifact_media_readiness_from_payload(
-            diagnostics_payload=_normalize_json_dict(media_artifact_diagnostics),
-            manifest_payload=_normalize_json_dict(media_manifest_payload),
-        )
-        existing_context_json = _normalize_json_dict(artifact.context_json)
-        existing_manifest = _normalize_json_dict(existing_context_json.get("artifact_media_manifest"))
-        existing_diagnostics = _normalize_json_dict(existing_context_json.get("artifact_media_diagnostics"))
-        changed = (
-            rewritten_files != existing_generated_files
-            or media_manifest_payload != existing_manifest
-            or media_artifact_diagnostics != existing_diagnostics
-        )
-        if persist and changed:
-            updated_context_json = dict(existing_context_json)
-            updated_context_json["artifact_media_manifest"] = media_manifest_payload
-            updated_context_json["artifact_media_diagnostics"] = media_artifact_diagnostics
-            updated_context_json["artifact_media_repair"] = {
-                "status": "applied",
-                "applied_at": utc_now().isoformat(),
-                "selected_assets_count": media_manifest_payload["selected_assets_count"],
-                "materialized_assets_count": media_manifest_payload["materialized_assets_count"],
-                "referenced_media_paths_count": max(
-                    0,
-                    int(media_artifact_diagnostics.get("referenced_media_paths_count") or 0),
-                ),
-                "ready_for_publish": bool(effective_readiness.get("ready")),
-                "principal_id": _normalize_string(principal_id, max_length=120),
-            }
-            artifact.context_json = updated_context_json
-            artifact.generated_files_json = rewritten_files
-            artifact.file_count = len(rewritten_files)
-            artifact.total_bytes = _estimate_generated_files_total_bytes(rewritten_files)
-        warnings = _normalize_string_list(
-            media_materialization.get("warnings"),
-            max_items=12,
-            max_item_length=220,
-        )
-        return {
-            "changed": changed,
-            "warnings": warnings,
-            "generated_files": rewritten_files,
-            "artifact_media_manifest": media_manifest_payload,
-            "artifact_media_diagnostics": media_artifact_diagnostics,
-            "artifact_media_readiness": effective_readiness,
-        }
-
     def _resolve_effective_artifact_media_readiness(
         self,
         *,
         workspace: SEOMigrationWorkspace,
         artifact: SEOMigrationArtifactVersion | None,
-        include_repair_preview: bool,
     ) -> dict[str, object]:
         baseline_readiness = self._build_artifact_media_readiness(artifact)
         if artifact is None:
             return baseline_readiness
-        selected_readiness = baseline_readiness
-        readiness_source = "artifact_snapshot"
-        if not include_repair_preview:
-            return self._annotate_artifact_media_readiness_evidence(
-                workspace=workspace,
-                artifact=artifact,
-                readiness=selected_readiness,
-                readiness_source=readiness_source,
-            )
-        baseline_blockers = {
-            str(item).strip().lower() for item in (baseline_readiness.get("blocker_codes") or []) if str(item).strip()
-        }
-        if not baseline_blockers.intersection(
-            {
-                "artifact_referenced_media_file_missing",
-                "artifact_internal_media_ids_unresolved",
-                "artifact_image_tokens_unresolved",
-                "artifact_media_reference_not_deployable",
-            }
-        ):
-            return self._annotate_artifact_media_readiness_evidence(
-                workspace=workspace,
-                artifact=artifact,
-                readiness=selected_readiness,
-                readiness_source=readiness_source,
-            )
-        preview = self._prepare_artifact_media_for_publish(
-            workspace=workspace,
-            artifact=artifact,
-            persist=False,
-            principal_id=None,
-        )
-        preview_readiness = _normalize_json_dict(preview.get("artifact_media_readiness"))
-        if not preview_readiness:
-            return self._annotate_artifact_media_readiness_evidence(
-                workspace=workspace,
-                artifact=artifact,
-                readiness=selected_readiness,
-                readiness_source=readiness_source,
-            )
-        preview_blockers = {
-            str(item).strip().lower() for item in (preview_readiness.get("blocker_codes") or []) if str(item).strip()
-        }
-        if bool(preview_readiness.get("ready")) and not bool(baseline_readiness.get("ready")):
-            selected_readiness = preview_readiness
-            readiness_source = "repair_preview"
-        elif len(preview_blockers) < len(baseline_blockers):
-            selected_readiness = preview_readiness
-            readiness_source = "repair_preview"
-        else:
-            baseline_selected_not_materialized_count = max(
-                0,
-                int(baseline_readiness.get("selected_not_materialized_count") or 0),
-            )
-            preview_selected_not_materialized_count = max(
-                0,
-                int(preview_readiness.get("selected_not_materialized_count") or 0),
-            )
-            baseline_materialized_assets_count = max(0, int(baseline_readiness.get("materialized_assets_count") or 0))
-            preview_materialized_assets_count = max(0, int(preview_readiness.get("materialized_assets_count") or 0))
-            if (
-                baseline_selected_not_materialized_count != preview_selected_not_materialized_count
-                or baseline_materialized_assets_count != preview_materialized_assets_count
-            ):
-                selected_readiness = preview_readiness
-                readiness_source = "repair_preview"
         return self._annotate_artifact_media_readiness_evidence(
             workspace=workspace,
             artifact=artifact,
-            readiness=selected_readiness,
-            readiness_source=readiness_source,
+            readiness=baseline_readiness,
+            readiness_source="artifact_snapshot",
         )
 
     def _annotate_artifact_media_readiness_evidence(
