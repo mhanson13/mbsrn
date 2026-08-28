@@ -33,6 +33,8 @@ Before generating certificate material, call `GET /api/businesses/{business_id}/
 
 The real Secret Manager and Compute requests are authoritative. Failures distinguish unauthenticated credentials, permission denial, missing resource/API configuration, rate limiting, provider outage, timeout, and transport errors. Operator responses contain a short next action. Administrator diagnostics may include the service, operation, HTTP/provider status, retryability, and stable reason code, but never access tokens, provider response bodies, certificate PEM, or private keys.
 
+Secret Manager may return a canonical version resource containing the numeric project number even when the request used the project ID. The vault loader accepts that Google-generated form, validates the secret and version path, and rebuilds the access request against the configured certificate project. A reference to another named project remains invalid.
+
 Do not copy the certificate private key into GitHub. Existing GitHub deployment authentication remains unchanged.
 
 References: [Google self-managed SSL certificates](https://docs.cloud.google.com/load-balancing/docs/ssl-certificates/self-managed-certs), [GKE pre-shared certificate annotation](https://docs.cloud.google.com/kubernetes-engine/docs/how-to/secure-traffic-management), [Secret Manager least-privilege guidance](https://docs.cloud.google.com/secret-manager/docs/access-control), and [IAM resource conditions](https://docs.cloud.google.com/iam/docs/conditions-resource-attributes).

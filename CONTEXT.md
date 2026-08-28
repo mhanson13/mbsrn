@@ -124,6 +124,7 @@ Allowed operator-facing gate states are `waiting`, `running`, `ready`, `action_r
 - Customer production domains and Google-managed certificates are outside the preview release workflow.
 - Private keys are never committed to GitHub, returned by APIs, or written to logs.
 - Generated/imported private keys are vaulted in Secret Manager.
+- Secret Manager version references may contain Google's numeric canonical project number; reads normalize them to the configured certificate project and reject references to another named project.
 - Existing Compute self-managed certificates can be adopted after type and hostname validation.
 - Existing exact-host or wildcard certificates can be reused when they cover the resolved preview hostname.
 - Ingress selects the resource through `ingress.gcp.kubernetes.io/pre-shared-cert`.

@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import hashlib
 import json
 import logging
+import re
 import socket
 import ssl
 import time
@@ -17,6 +18,10 @@ from cryptography.hazmat.primitives import serialization
 
 
 _CLOUD_PLATFORM_SCOPE = "https://www.googleapis.com/auth/cloud-platform"
+_SECRET_VERSION_RESOURCE_PATTERN = re.compile(
+    r"\Aprojects/(?P<project>[^/]+)/secrets/"
+    r"(?P<secret>[A-Za-z0-9_-]{1,255})/versions/(?P<version>[1-9][0-9]*|latest)\Z"
+)
 logger = logging.getLogger(__name__)
 
 
@@ -517,13 +522,26 @@ class GoogleSecretManagerTLSCertificateVault(TLSCertificateVault):
     def load(self, *, secret_version_name: str) -> TLSCertificateMaterial:
         self._require_project()
         normalized_name = str(secret_version_name or "").strip().lstrip("/")
-        expected_prefix = f"projects/{self.project_id}/secrets/"
-        if not normalized_name.startswith(expected_prefix) or "/versions/" not in normalized_name:
+        resource_match = _SECRET_VERSION_RESOURCE_PATTERN.fullmatch(normalized_name)
+        if not resource_match:
             raise TLSCertificateProviderError(
                 code="tls_vault_reference_invalid",
                 safe_message="The TLS certificate vault reference is invalid.",
             )
-        access_url = f"https://secretmanager.googleapis.com/v1/{normalized_name}:access"
+        referenced_project = resource_match.group("project")
+        is_numeric_project = referenced_project.isascii() and referenced_project.isdecimal()
+        if referenced_project != self.project_id and not is_numeric_project:
+            raise TLSCertificateProviderError(
+                code="tls_vault_reference_invalid",
+                safe_message="The TLS certificate vault reference is invalid.",
+            )
+        quoted_project = urllib.parse.quote(self.project_id, safe="")
+        quoted_secret = urllib.parse.quote(resource_match.group("secret"), safe="")
+        quoted_version = urllib.parse.quote(resource_match.group("version"), safe="")
+        access_url = (
+            "https://secretmanager.googleapis.com/v1/"
+            f"projects/{quoted_project}/secrets/{quoted_secret}/versions/{quoted_version}:access"
+        )
         _, payload = self.client.request_json(
             method="GET",
             url=access_url,

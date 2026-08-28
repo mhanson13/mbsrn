@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 from pathlib import Path
 
 import pytest
@@ -8,6 +9,7 @@ from fastapi import HTTPException
 
 from app.api.routes.tls_certificates import _raise_http_error
 from app.integrations.tls_certificate import (
+    GoogleSecretManagerTLSCertificateVault,
     GoogleTLSCertificateCapabilityProbe,
     TLSCertificateProviderError,
     _GoogleJSONClient,
@@ -46,6 +48,63 @@ def test_google_tls_capability_probe_checks_credentials_without_calling_unsuppor
     assert secret_manager.missing_permissions == ()
     assert compute.missing_permissions == ()
     assert token_requests == ["requested"]
+    assert session.calls == []
+
+
+class _VaultReadResponse:
+    status_code = 200
+
+    def __init__(self) -> None:
+        bundle = b'{"schema_version":1,"certificate_pem":"certificate-pem",' b'"private_key_pem":"private-key-pem"}'
+        self._payload = {"payload": {"data": base64.b64encode(bundle).decode("ascii")}}
+        self.content = b"payload"
+
+    def json(self) -> dict[str, object]:
+        return self._payload
+
+
+class _VaultReadSession(requests.Session):
+    def __init__(self) -> None:
+        super().__init__()
+        self.calls: list[dict[str, object]] = []
+
+    def request(self, method: str, url: str, **kwargs: object) -> _VaultReadResponse:
+        self.calls.append({"method": method, "url": url, **kwargs})
+        return _VaultReadResponse()
+
+
+def test_secret_manager_vault_load_accepts_numeric_canonical_project_reference() -> None:
+    session = _VaultReadSession()
+    vault = GoogleSecretManagerTLSCertificateVault(
+        project_id="mbsrn-prod",
+        token_provider=lambda: "short-lived-token",
+        session=session,
+    )
+
+    material = vault.load(
+        secret_version_name=("projects/1068908288067/secrets/mbsrn-tls-bec9b51e-8b87-4088-b26e-b5ca73a164d0/versions/1")
+    )
+
+    assert material.certificate_pem == "certificate-pem"
+    assert material.private_key_pem == "private-key-pem"
+    assert session.calls[0]["url"] == (
+        "https://secretmanager.googleapis.com/v1/projects/mbsrn-prod/secrets/"
+        "mbsrn-tls-bec9b51e-8b87-4088-b26e-b5ca73a164d0/versions/1:access"
+    )
+
+
+def test_secret_manager_vault_load_rejects_another_named_project() -> None:
+    session = _VaultReadSession()
+    vault = GoogleSecretManagerTLSCertificateVault(
+        project_id="mbsrn-prod",
+        token_provider=lambda: "short-lived-token",
+        session=session,
+    )
+
+    with pytest.raises(TLSCertificateProviderError) as error:
+        vault.load(secret_version_name="projects/another-project/secrets/mbsrn-tls-test/versions/1")
+
+    assert error.value.code == "tls_vault_reference_invalid"
     assert session.calls == []
 
 
