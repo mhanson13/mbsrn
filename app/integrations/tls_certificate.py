@@ -320,6 +320,10 @@ class _GoogleJSONClient:
             safe_message = f"{error_message} Google Cloud denied this operation for the API workload identity."
             missing_permissions = required_permissions
             next_action = "Verify the listed permission on the API workload identity and check IAM conditions or organization policy."
+        elif status_code == 400 or provider_status == "INVALID_ARGUMENT":
+            reason_code = f"{error_code}_invalid_argument"
+            safe_message = f"{error_message} Google Cloud rejected the request configuration."
+            next_action = "This is a platform integration error. Collect administrator diagnostics and deploy a correction before retrying."
         elif status_code == 404:
             reason_code = f"{error_code}_not_found"
             safe_message = f"{error_message} The configured Google Cloud resource or API route was not found."
@@ -638,8 +642,10 @@ class GoogleComputeSSLCertificateClient(ComputeSSLCertificateClient):
                 "name": resource_name,
                 "description": description,
                 "type": "SELF_MANAGED",
-                "certificate": material.certificate_pem,
-                "privateKey": material.private_key_pem,
+                "selfManaged": {
+                    "certificate": material.certificate_pem,
+                    "privateKey": material.private_key_pem,
+                },
             },
             allowed_statuses=(200, 409),
             error_code="tls_compute_create_failed",
@@ -682,10 +688,7 @@ class GoogleComputeSSLCertificateClient(ComputeSSLCertificateClient):
             )
             if str(operation.get("status") or "").upper() == "DONE":
                 if operation.get("error"):
-                    raise TLSCertificateProviderError(
-                        code="tls_compute_create_failed",
-                        safe_message="The self-managed Google Cloud SSL certificate could not be created.",
-                    )
+                    raise self._operation_error(operation)
                 return
             time.sleep(0.5)
         raise TLSCertificateProviderError(
@@ -694,7 +697,54 @@ class GoogleComputeSSLCertificateClient(ComputeSSLCertificateClient):
         )
 
     @staticmethod
+    def _operation_error(operation: dict[str, object]) -> TLSCertificateProviderError:
+        error_payload = operation.get("error")
+        error_record = error_payload if isinstance(error_payload, dict) else {}
+        raw_errors = error_record.get("errors")
+        first_error = raw_errors[0] if isinstance(raw_errors, list) and raw_errors else None
+        first_error_record = first_error if isinstance(first_error, dict) else {}
+        provider_status = str(first_error_record.get("code") or "").strip().upper()[:80] or None
+        raw_http_status = operation.get("httpErrorStatusCode")
+        http_status = int(raw_http_status) if isinstance(raw_http_status, int) else None
+        if http_status == 400 or provider_status in {"INVALID_ARGUMENT", "INVALID_VALUE"}:
+            reason_code = "tls_compute_create_failed_invalid_argument"
+            safe_message = (
+                "The self-managed Google Cloud SSL certificate could not be created. "
+                "Google Cloud rejected the request configuration."
+            )
+            next_action = "This is a platform integration error. Collect administrator diagnostics and deploy a correction before retrying."
+            retryable = False
+        elif http_status == 403 or provider_status in {"FORBIDDEN", "PERMISSION_DENIED"}:
+            reason_code = "tls_compute_create_failed_permission_denied"
+            safe_message = (
+                "The self-managed Google Cloud SSL certificate could not be created. "
+                "Google Cloud denied this operation for the API workload identity."
+            )
+            next_action = "Verify compute.sslCertificates.create on the API workload identity and check IAM conditions."
+            retryable = False
+        else:
+            reason_code = "tls_compute_create_failed"
+            safe_message = "The self-managed Google Cloud SSL certificate could not be created."
+            next_action = (
+                "Collect administrator diagnostics and inspect the Google Cloud operation status before retrying."
+            )
+            retryable = bool(http_status and (http_status in {408, 425, 429} or http_status >= 500))
+        return TLSCertificateProviderError(
+            code=reason_code,
+            safe_message=safe_message,
+            service="compute_ssl_certificates",
+            operation="create_certificate",
+            http_status=http_status,
+            provider_status=provider_status,
+            retryable=retryable,
+            missing_permissions=("compute.sslCertificates.create",) if http_status == 403 else (),
+            next_action=next_action,
+        )
+
+    @staticmethod
     def _to_resource(payload: dict[str, object]) -> ComputeSSLCertificateResource:
+        self_managed_payload = payload.get("selfManaged")
+        self_managed = self_managed_payload if isinstance(self_managed_payload, dict) else {}
         raw_sans = payload.get("subjectAlternativeNames")
         sans = (
             tuple(str(item).strip().lower() for item in raw_sans if str(item).strip())
@@ -703,8 +753,12 @@ class GoogleComputeSSLCertificateClient(ComputeSSLCertificateClient):
         )
         return ComputeSSLCertificateResource(
             name=str(payload.get("name") or ""),
-            certificate_type=str(payload.get("type") or "UNKNOWN").upper(),
-            certificate_pem=(str(payload.get("certificate")) if payload.get("certificate") else None),
+            certificate_type=str(payload.get("type") or ("SELF_MANAGED" if self_managed else "UNKNOWN")).upper(),
+            certificate_pem=(
+                str(self_managed.get("certificate") or payload.get("certificate"))
+                if self_managed.get("certificate") or payload.get("certificate")
+                else None
+            ),
             subject_alternative_names=sans,
             expire_time=(str(payload.get("expireTime")) if payload.get("expireTime") else None),
             self_link=(str(payload.get("selfLink")) if payload.get("selfLink") else None),

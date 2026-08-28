@@ -74,6 +74,7 @@ Acceptance:
 - [x] Use real Secret Manager and Compute operations as authoritative permission checks with actionable, sanitized failures.
 - [x] Make `ensure` reuse published certificates and resume vaulted certificates after partial Compute failure.
 - [x] Accept Google Secret Manager's numeric canonical project references while keeping vault reads scoped to the configured certificate project.
+- [x] Publish Compute certificates with the explicit `selfManaged` API contract and classify invalid requests as non-retryable platform errors.
 - [ ] Complete idempotent import, adopt, bind, rotate, and verify operations.
 - [ ] Use only Compute self-managed certificates and the GKE pre-shared certificate annotation for preview hosts.
 - [ ] Remove preview dependencies on Kubernetes `ManagedCertificate` resources after compatibility validation.

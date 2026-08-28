@@ -9,9 +9,11 @@ from fastapi import HTTPException
 
 from app.api.routes.tls_certificates import _raise_http_error
 from app.integrations.tls_certificate import (
+    GoogleComputeSSLCertificateClient,
     GoogleSecretManagerTLSCertificateVault,
     GoogleTLSCertificateCapabilityProbe,
     TLSCertificateProviderError,
+    TLSCertificateMaterial,
     _GoogleJSONClient,
 )
 from app.services.tls_certificates import TLSCertificateConfigurationError
@@ -137,10 +139,117 @@ class _FailureSession(requests.Session):
         return self.response
 
 
+class _JSONResponse:
+    def __init__(self, status_code: int, payload: dict[str, object]) -> None:
+        self.status_code = status_code
+        self._payload = payload
+        self.content = b"payload"
+
+    def json(self) -> dict[str, object]:
+        return self._payload
+
+
+class _ComputeCreateSession(requests.Session):
+    def __init__(self, *, operation_error: dict[str, object] | None = None) -> None:
+        super().__init__()
+        self.calls: list[dict[str, object]] = []
+        self.operation_error = operation_error
+
+    def request(self, method: str, url: str, **kwargs: object) -> _JSONResponse:
+        self.calls.append({"method": method, "url": url, **kwargs})
+        if method == "POST":
+            return _JSONResponse(200, {"name": "operation-1"})
+        if "/global/operations/" in url:
+            payload: dict[str, object] = {"status": "DONE"}
+            if self.operation_error is not None:
+                payload.update(self.operation_error)
+            return _JSONResponse(200, payload)
+        return _JSONResponse(
+            200,
+            {
+                "name": "preview-platfire",
+                "type": "SELF_MANAGED",
+                "selfManaged": {"certificate": "certificate-pem"},
+                "subjectAlternativeNames": ["platfire.site.mbsrn.com"],
+            },
+        )
+
+
+def test_compute_certificate_create_uses_explicit_self_managed_payload() -> None:
+    session = _ComputeCreateSession()
+    client = GoogleComputeSSLCertificateClient(
+        project_id="mbsrn-prod",
+        token_provider=lambda: "short-lived-token",
+        session=session,
+    )
+
+    resource = client.create(
+        resource_name="preview-platfire",
+        description="Platfire preview certificate",
+        material=TLSCertificateMaterial(
+            certificate_pem="certificate-pem",
+            private_key_pem="private-key-pem",
+        ),
+    )
+
+    create_call = session.calls[0]
+    assert create_call["json"] == {
+        "name": "preview-platfire",
+        "description": "Platfire preview certificate",
+        "type": "SELF_MANAGED",
+        "selfManaged": {
+            "certificate": "certificate-pem",
+            "privateKey": "private-key-pem",
+        },
+    }
+    assert "certificate" not in create_call["json"]
+    assert "privateKey" not in create_call["json"]
+    assert resource.certificate_type == "SELF_MANAGED"
+    assert resource.certificate_pem == "certificate-pem"
+
+
+def test_compute_certificate_operation_invalid_argument_is_non_retryable_and_sanitized() -> None:
+    session = _ComputeCreateSession(
+        operation_error={
+            "httpErrorStatusCode": 400,
+            "error": {
+                "errors": [
+                    {
+                        "code": "INVALID_VALUE",
+                        "message": "private provider request detail",
+                    }
+                ]
+            },
+        }
+    )
+    client = GoogleComputeSSLCertificateClient(
+        project_id="mbsrn-prod",
+        token_provider=lambda: "short-lived-token",
+        session=session,
+    )
+
+    with pytest.raises(TLSCertificateProviderError) as error:
+        client.create(
+            resource_name="preview-platfire",
+            description="Platfire preview certificate",
+            material=TLSCertificateMaterial(
+                certificate_pem="certificate-pem",
+                private_key_pem="private-key-pem",
+            ),
+        )
+
+    assert error.value.code == "tls_compute_create_failed_invalid_argument"
+    assert error.value.http_status == 400
+    assert error.value.provider_status == "INVALID_VALUE"
+    assert error.value.retryable is False
+    assert "private provider request detail" not in error.value.safe_message
+
+
 @pytest.mark.parametrize(
     ("status_code", "provider_status", "reason_suffix", "retryable"),
     [
         (401, "UNAUTHENTICATED", "_unauthenticated", False),
+        (400, "INVALID_ARGUMENT", "_invalid_argument", False),
         (403, "PERMISSION_DENIED", "_permission_denied", False),
         (404, "NOT_FOUND", "_not_found", False),
         (429, "RESOURCE_EXHAUSTED", "_rate_limited", True),

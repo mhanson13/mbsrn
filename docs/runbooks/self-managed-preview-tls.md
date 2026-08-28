@@ -6,7 +6,7 @@ MBSRN uses self-signed, self-managed Google Compute SSL certificates only for `*
 
 1. Generate a certificate or import an existing certificate/key pair through the operator workspace. The API validates the self-signature, key match, validity period, and preview-host SAN.
 2. The certificate and private key are stored together as a versioned Google Secret Manager secret. API responses and logs expose only certificate metadata and the SHA-256 fingerprint.
-3. The public certificate and private key are uploaded to a global Compute Engine `SELF_MANAGED` SSL certificate resource.
+3. The public certificate and private key are uploaded to a global Compute Engine `SELF_MANAGED` SSL certificate resource through the explicit `selfManaged` request object.
 4. The selected resource name is written to the site's GKE Ingress through `ingress.gcp.kubernetes.io/pre-shared-cert`. No Kubernetes `ManagedCertificate` is created or applied.
 5. Deployment verifies the Compute resource type, Ingress annotation, static IP, DNS, served SAN, and exact served SHA-256 fingerprint. HTTPS probing uses explicit self-signed trust bypass only after the fingerprint check.
 
@@ -32,6 +32,8 @@ The role definition is versioned at `infra/gcp/preview-tls-operator-role.yaml`. 
 Before generating certificate material, call `GET /api/businesses/{business_id}/tls/capabilities`. A ready response confirms the certificate project and workload credentials are configured. It lists the permissions that the real certificate operations require, with `verification_state=operation_required`; it does not claim that Google has authorized an operation that has not run. Secret Manager does not provide a project-level permission-test route, and Google documents `testIamPermissions` as a UI aid rather than an authorization check.
 
 The real Secret Manager and Compute requests are authoritative. Failures distinguish unauthenticated credentials, permission denial, missing resource/API configuration, rate limiting, provider outage, timeout, and transport errors. Operator responses contain a short next action. Administrator diagnostics may include the service, operation, HTTP/provider status, retryability, and stable reason code, but never access tokens, provider response bodies, certificate PEM, or private keys.
+
+Google Cloud request validation failures such as `INVALID_ARGUMENT` are non-retryable platform integration errors. The operator should collect diagnostics instead of repeatedly generating or publishing certificate material.
 
 Secret Manager may return a canonical version resource containing the numeric project number even when the request used the project ID. The vault loader accepts that Google-generated form, validates the secret and version path, and rebuilds the access request against the configured certificate project. A reference to another named project remains invalid.
 
