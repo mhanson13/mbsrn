@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date, timedelta
 import json
 import os
+from pathlib import Path
 from types import SimpleNamespace
 import urllib.error
 from unittest.mock import patch
@@ -564,7 +565,9 @@ class _StubMigrationGitHubPublisher(SEOMigrationGitHubPublisher):
         business_id: str | None = None,
         repository_auto_create_created: bool | None = None,
         artifact_version_id: str | None = None,
+        preview_hostname: str | None = None,
     ) -> SEOMigrationGitHubWorkflowProvisionResult:
+        del preview_hostname
         self.workflow_provision_calls.append(
             (
                 repo_owner,
@@ -847,6 +850,9 @@ def test_github_publisher_dependency_uses_git_token_when_present() -> None:
         migration_publish_committer_name="MBSRN Automation",
         migration_publish_committer_email="automation@example.com",
         gcp_managed_deploy=None,
+        migration_reusable_deploy_workflow_ref=None,
+        migration_deploy_workload_identity_provider=None,
+        migration_deploy_service_account=None,
     )
     with patch("app.api.deps.get_settings", return_value=settings):
         publisher = get_seo_migration_github_publisher()
@@ -1373,6 +1379,94 @@ def test_migration_api_happy_path_workflow(db_session) -> None:
     assert "ANALYTICS_PLACEHOLDER" in file_preview_response.json()["content"]
     assert publisher.publish_calls
     assert publisher.deploy_calls
+
+
+def test_approve_and_create_preview_release_is_idempotent_and_returns_operator_gates(db_session) -> None:
+    business_id = "11111111-1111-1111-1111-111111111111"
+    site_id = "22222222-2222-2222-2222-222222222222"
+    _seed_business_and_site(db_session, business_id=business_id, site_id=site_id)
+    site = db_session.get(SEOSite, site_id)
+    assert site is not None
+    site.preview_slug = "generic-preview"
+    db_session.commit()
+    publisher = _StubMigrationGitHubPublisher()
+    client = _make_client(db_session, business_id=business_id, github_publisher=publisher)
+
+    workspace_response = client.put(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/workspace",
+        json={
+            "source_url": "https://legacy.example",
+            "publish_config": {
+                "enabled": True,
+                "repo_owner": "example-owner",
+                "repo_name": "generic-preview-site",
+                "branch": "main",
+            },
+        },
+    )
+    assert workspace_response.status_code == 200
+    _prepare_workspace_for_draft_generation(client, business_id=business_id, site_id=site_id)
+    generate_response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/generate-draft-artifacts",
+        json={"force_new_version": True},
+    )
+    assert generate_response.status_code == 201
+    artifact_id = generate_response.json()["id"]
+    route = (
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/"
+        f"artifact-versions/{artifact_id}/preview-release"
+    )
+
+    first_response = client.post(
+        route,
+        json={"approval_notes": "Approved for preview", "idempotency_key": "operator-click-1"},
+    )
+    second_response = client.post(
+        route,
+        json={"approval_notes": "Ignored on retry", "idempotency_key": "operator-click-2"},
+    )
+
+    assert first_response.status_code == 200
+    assert second_response.status_code == 200
+    first = first_response.json()
+    second = second_response.json()
+    assert second["id"] == first["id"]
+    assert first["preview_hostname"] == "generic-preview.site.mbsrn.com"
+    assert first["operation"]["active_gate"] == "github"
+    assert [gate["name"] for gate in first["gates"]] == [
+        "source",
+        "draft_package",
+        "approval",
+        "github",
+        "certificate",
+        "dns",
+        "deployment",
+        "verification",
+    ]
+    assert [gate["status"] for gate in first["gates"][:3]] == ["ready", "ready", "ready"]
+    assert all("details_json" not in gate for gate in first["gates"])
+
+    list_response = client.get(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/preview-releases"
+    )
+    assert list_response.status_code == 200
+    assert list_response.json()["total"] == 1
+
+    advance_response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/"
+        f"preview-releases/{first['id']}/advance"
+    )
+    assert advance_response.status_code == 200
+    advanced = advance_response.json()
+    assert advanced["operation"]["active_gate"] == "certificate"
+    assert next(gate for gate in advanced["gates"] if gate["name"] == "github")["status"] == "ready"
+    assert len(publisher.publish_calls) == 1
+
+    diagnostics_response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/diagnostics/collect"
+    )
+    assert diagnostics_response.status_code == 403
+    assert diagnostics_response.json()["detail"] == "Only administrators can collect migration diagnostics."
 
 
 def test_adopt_publish_repository_endpoint_writes_management_marker(db_session) -> None:
@@ -4565,8 +4659,10 @@ def test_migration_media_import_endpoint_surfaces_stable_fetch_reason_codes(
 def test_migration_media_import_endpoint_deduplicates_repeated_import_of_same_discovered_asset(
     db_session,
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     monkeypatch.setenv("SEO_MIGRATION_REMOTE_IMAGE_IMPORT_ENABLED", "true")
+    monkeypatch.setenv("MIGRATION_MEDIA_STORAGE_ROOT", str(tmp_path))
     get_settings.cache_clear()
 
     business_id = "11111111-1111-1111-1111-111111111111"

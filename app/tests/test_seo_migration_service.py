@@ -1213,6 +1213,7 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         artifact_version_id: str | None = None,
         pre_shared_certificate_name: str | None = None,
         pre_shared_certificate_fingerprint: str | None = None,
+        preview_hostname: str | None = None,
     ) -> SEOMigrationGitHubWorkflowProvisionResult:
         self.workflow_provision_calls.append(
             (
@@ -1233,6 +1234,7 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
                 artifact_version_id,
                 pre_shared_certificate_name,
                 pre_shared_certificate_fingerprint,
+                preview_hostname,
             )
         )
         if self.fail_workflow_provision:
@@ -2113,6 +2115,66 @@ def test_workspace_media_preview_returns_uploaded_image_payload_for_authorized_w
 
     assert media_type == "image/png"
     assert payload == _tiny_png_payload()
+
+
+def test_draft_generation_rejects_media_when_stored_checksum_changes(
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("MIGRATION_MEDIA_STORAGE_ROOT", str(tmp_path))
+    service = _build_service(db_session, _StaticMigrationProvider(_build_publishable_output()))
+    business_id, site_id = _seed_business_and_site(db_session)
+    _seed_workspace(service, business_id=business_id, site_id=site_id)
+
+    uploaded = service.upload_workspace_media_asset(
+        business_id=business_id,
+        site_id=site_id,
+        filename="integrity-target.png",
+        content_type="image/png",
+        payload=_tiny_png_payload(),
+        selected_for_draft=True,
+        category="hero",
+        alt_text="Integrity target",
+        description=None,
+        usage_note=None,
+        page_assignment="/",
+        principal_id="principal-1",
+    )
+    asset_id = str(uploaded.get("asset_id") or "")
+    workspace = service.get_workspace(business_id=business_id, site_id=site_id)
+    internal_asset = next(
+        item
+        for item in list((workspace.enriched_content_notes_json or {}).get("workspace_media_assets") or [])
+        if isinstance(item, dict) and item.get("asset_id") == asset_id
+    )
+    assert internal_asset.get("storage_provider") == "local"
+    assert isinstance(internal_asset.get("storage_generation"), str)
+    assert isinstance(internal_asset.get("storage_sha256"), str)
+    assert internal_asset.get("storage_size_bytes") == len(_tiny_png_payload())
+    assert "storage_sha256" not in uploaded
+
+    stored_path = next(path for path in tmp_path.rglob("*.png") if path.is_file())
+    stored_path.write_bytes(_tiny_png_payload() + b"tampered")
+    service.artifact_provider = _StaticMigrationProvider(
+        _build_publishable_output(
+            index_content=(
+                "<html><head><!-- ANALYTICS_PLACEHOLDER --></head><body>"
+                f'<img src="{asset_id}" alt="target" />'
+                "</body></html>"
+            )
+        )
+    )
+
+    artifact = service.generate_draft_artifacts(
+        business_id=business_id,
+        site_id=site_id,
+        principal_id="principal-1",
+    )
+
+    diagnostics = dict((artifact.context_json or {}).get("artifact_media_diagnostics") or {})
+    reason_counts = dict(diagnostics.get("selected_not_materialized_reason_counts") or {})
+    assert reason_counts.get("media_storage_integrity_failed") == 1
 
 
 def test_workspace_media_preview_uses_candidate_storage_lookup_when_storage_key_missing(
@@ -3051,7 +3113,9 @@ def test_discovered_media_import_blocks_private_source_urls_without_fetch(
 def test_discovered_media_import_deduplicates_repeated_import_attempts(
     db_session,
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
+    monkeypatch.setenv("MIGRATION_MEDIA_STORAGE_ROOT", str(tmp_path))
     service = _build_service(
         db_session,
         _StaticMigrationProvider(_build_publishable_output()),
@@ -5494,7 +5558,6 @@ def test_publish_readiness_reports_source_bytes_missing_for_referenced_selected_
     workspace.enriched_content_notes_json = enriched_notes
     service.seo_migration_repository.save_workspace(workspace)
     service.session.commit()
-
     artifact = service.generate_draft_artifacts(
         business_id=business_id,
         site_id=site_id,
@@ -5518,6 +5581,31 @@ def test_publish_readiness_reports_source_bytes_missing_for_referenced_selected_
         "approved/source bytes are unavailable for materialization" in str(item).lower()
         for item in list(publish_media.get("reasons") or [])
     )
+
+
+def test_deploy_summary_uses_canonical_preview_slug_when_repository_name_differs(db_session) -> None:
+    service = _build_service(db_session, _StaticMigrationProvider(_build_publishable_output()))
+    business_id, site_id = _seed_business_and_site(db_session)
+    site = service.seo_site_repository.get_for_business(business_id, site_id)
+    assert site is not None
+    site.preview_slug = "canonical-preview"
+    service.seo_site_repository.save(site)
+    service.session.commit()
+    service.create_or_update_workspace(
+        business_id=business_id,
+        site_id=site_id,
+        source_url="https://unrelated-source.example/",
+        publish_config={"target_repo": "owner/different-repository"},
+        deploy_config={"repo_name": "different-repository"},
+        principal_id="principal-1",
+    )
+    workspace = service.get_workspace(business_id=business_id, site_id=site_id)
+
+    target = service._safe_deploy_target_summary(workspace=workspace)
+
+    assert target.get("repo_name") == "different-repository"
+    assert target.get("preview_hostname") == "canonical-preview.site.mbsrn.com"
+    assert target.get("preview_hostname_source") == "site_preview_slug"
 
 
 def test_deploy_readiness_does_not_block_on_selected_only_media_warning_state(db_session) -> None:
@@ -7126,6 +7214,10 @@ def test_deploy_ensures_managed_site_dns_after_static_ip_and_before_dispatch(db_
         github_publisher=publisher,
     )
     business_id, site_id = _seed_business_and_site(db_session)
+    site = db_session.get(SEOSite, site_id)
+    assert site is not None
+    site.preview_slug = "canonical-preview"
+    db_session.commit()
     artifact = _prepare_published_artifact(service, business_id=business_id, site_id=site_id)
     monkeypatch.setattr(
         seo_migration_module,
@@ -7152,12 +7244,12 @@ def test_deploy_ensures_managed_site_dns_after_static_ip_and_before_dispatch(db_
         "dispatch_deploy",
     ]
     dns_call = publisher.ensure_managed_site_dns_calls[-1]
-    assert dns_call[0].endswith(".site.mbsrn.com")
+    assert dns_call[0] == "canonical-preview.site.mbsrn.com"
     assert dns_call[1] == "34.160.224.212"
     assert dns_call[2] == "sites"
     assert dns_call[6] is False
     assert deploy_result.result.get("expected_dns_hostname")
-    assert deploy_result.result.get("expected_dns_hostname").endswith(".site.mbsrn.com")
+    assert deploy_result.result.get("expected_dns_hostname") == "canonical-preview.site.mbsrn.com"
     assert deploy_result.result.get("expected_dns_managed_zone") == "sites"
     assert deploy_result.result.get("expected_dns_project_id")
     assert deploy_result.result.get("expected_dns_ip") == "34.160.224.212"
@@ -7335,6 +7427,76 @@ def test_deploy_allows_dispatch_when_managed_certificate_is_active(db_session, m
     derived_name, _ = derive_site_preview_certificate_name(repo_name=check_call[0], site_id=check_call[1])
     assert check_call[6] == derived_name
     assert deploy_result.result.get("expected_managed_certificate_name") == derived_name
+
+
+def test_deploy_with_self_managed_certificate_skips_legacy_managed_certificate_check(
+    db_session,
+    monkeypatch,
+) -> None:
+    publisher = _RecordingGitHubPublisher()
+    certificate_repository = TLSCertificateRepository(db_session)
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+        tls_certificate_repository=certificate_repository,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    artifact = _prepare_published_artifact(service, business_id=business_id, site_id=site_id)
+    now = datetime.now(timezone.utc)
+    resource_name = "mbsrn-tnmfire-self-managed-ab12cd34"
+    asset = TLSCertificateAsset(
+        id="5e9b11e7-d9b0-4e53-9710-65ca4d2ef2b7",
+        business_id=business_id,
+        hostname="tnmfire.site.mbsrn.com",
+        display_name="TNM self-managed preview certificate",
+        source="generated",
+        custody="vaulted",
+        certificate_kind="self_signed",
+        key_algorithm="rsa_2048",
+        fingerprint_sha256="ab" * 32,
+        serial_number="1234",
+        subject="CN=tnmfire.site.mbsrn.com",
+        issuer="CN=tnmfire.site.mbsrn.com",
+        san_dns_names_json=["tnmfire.site.mbsrn.com"],
+        not_valid_before=now - timedelta(minutes=1),
+        not_valid_after=now + timedelta(days=90),
+        vault_secret_name="mbsrn-tls-tnmfire",
+        vault_secret_version="projects/mbsrn-prod/secrets/mbsrn-tls-tnmfire/versions/1",
+        gcp_project_id="mbsrn-prod",
+        gcp_resource_name=resource_name,
+        gcp_resource_scope="global",
+        status="published",
+        created_by_principal_id="principal-1",
+    )
+    binding = SiteTLSCertificateBinding(
+        id="7db68399-cead-47ef-8fe0-7f16504a33a7",
+        business_id=business_id,
+        site_id=site_id,
+        certificate_asset_id=asset.id,
+        is_active=True,
+        manifest_state="published_to_repo",
+        serving_state="not_verified",
+        created_by_principal_id="principal-1",
+    )
+    db_session.add_all([asset, binding])
+    db_session.commit()
+    monkeypatch.setattr(seo_migration_module, "_resolve_hostname_ipv4_addresses", lambda _hostname: ["34.149.170.250"])
+
+    deploy_result = service.deploy_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        principal_id="principal-1",
+    )
+
+    assert not publisher.ensure_managed_certificate_readiness_calls
+    assert publisher.deploy_calls
+    assert publisher.deploy_call_order[:3] == ["ensure_static_ip", "ensure_dns", "dispatch_deploy"]
+    assert deploy_result.result.get("expected_managed_certificate_name") == resource_name
+    assert deploy_result.result.get("tls_certificate_status") == "ACTIVE"
+    assert deploy_result.result.get("managed_certificate_status") == "ACTIVE"
 
 
 def test_deploy_blocks_before_dispatch_when_managed_certificate_resource_is_missing(db_session, monkeypatch) -> None:
@@ -11337,6 +11499,10 @@ def test_publish_provisions_missing_deploy_workflow_once(db_session, caplog) -> 
         github_publisher=publisher,
     )
     business_id, site_id = _seed_business_and_site(db_session)
+    site = db_session.get(SEOSite, site_id)
+    assert site is not None
+    site.preview_slug = "canonical-preview"
+    db_session.commit()
     _seed_workspace(service, business_id=business_id, site_id=site_id)
     _configure_publish_target(service, business_id=business_id, site_id=site_id)
     _configure_deploy_target(
@@ -11384,6 +11550,7 @@ def test_publish_provisions_missing_deploy_workflow_once(db_session, caplog) -> 
     assert isinstance(workflow_call[10], dict)
     assert workflow_call[11] == site_id
     assert workflow_call[14] == artifact.id
+    assert workflow_call[17] == "canonical-preview.site.mbsrn.com"
     assert result.result.get("deploy_workflow_provisioned") is True
     assert result.result.get("deploy_workflow_id") == "deploy-tnmfire-www-prod.yml"
     assert result.result.get("deploy_workflow_path") == ".github/workflows/deploy-tnmfire-www-prod.yml"

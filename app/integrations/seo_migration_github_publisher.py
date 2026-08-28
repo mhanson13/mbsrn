@@ -19,6 +19,11 @@ import yaml
 from app.core.log_sanitizer import sanitize_log_payload
 from app.core.time import utc_now
 from app.core.runtime_metadata import get_runtime_build_metadata
+from app.integrations.preview_deployment_workflow import (
+    REUSABLE_PREVIEW_CALLER_MARKER,
+    render_reusable_preview_caller_workflow,
+    validate_reusable_preview_deployment_settings,
+)
 
 _LOGGER = logging.getLogger(__name__)
 _VALID_REPO_OWNER_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{0,38}$")
@@ -251,6 +256,7 @@ class SEOMigrationGitHubDeployTarget:
     workflow_id: str
     ref: str
     inputs: dict[str, str]
+    preview_hostname: str | None = None
 
 
 @dataclass(frozen=True)
@@ -516,6 +522,8 @@ class SEOMigrationGitHubPublisher:
         site_id: str | None,
         managed_gke_config: dict[str, object] | None,
         gcp_deploy_key: str | None,
+        namespace_isolation_defaults: dict[str, object] | None = None,
+        preview_hostname: str | None = None,
         dry_run: bool = False,
     ) -> SEOMigrationGitHubManagedSiteStaticIPEnsureResult:
         del (
@@ -524,6 +532,8 @@ class SEOMigrationGitHubPublisher:
             site_id,
             managed_gke_config,
             gcp_deploy_key,
+            namespace_isolation_defaults,
+            preview_hostname,
             dry_run,
         )
         raise NotImplementedError
@@ -673,6 +683,7 @@ class SEOMigrationGitHubPublisher:
         artifact_version_id: str | None = None,
         pre_shared_certificate_name: str | None = None,
         pre_shared_certificate_fingerprint: str | None = None,
+        preview_hostname: str | None = None,
     ) -> SEOMigrationGitHubWorkflowProvisionResult:
         del (
             deploy_workflow_mode,
@@ -687,6 +698,7 @@ class SEOMigrationGitHubPublisher:
             artifact_version_id,
             pre_shared_certificate_name,
             pre_shared_certificate_fingerprint,
+            preview_hostname,
         )
         workflow_path = _workflow_repo_path(workflow_id)
         return SEOMigrationGitHubWorkflowProvisionResult(
@@ -1015,6 +1027,9 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         committer_name: str = "MBSRN Migration Bot",
         committer_email: str = "migration-bot@mbsrn.local",
         managed_deploy_service_account_email: str | None = None,
+        reusable_deploy_workflow_ref: str | None = None,
+        deploy_workload_identity_provider: str | None = None,
+        deploy_service_account: str | None = None,
     ) -> None:
         normalized_token = token.strip()
         if not normalized_token:
@@ -1027,6 +1042,11 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         self.managed_deploy_service_account_email = (
             _coerce_string(managed_deploy_service_account_email) or ""
         ).strip() or None
+        self.reusable_preview_deployment_settings = validate_reusable_preview_deployment_settings(
+            workflow_ref=reusable_deploy_workflow_ref,
+            workload_identity_provider=deploy_workload_identity_provider,
+            service_account=deploy_service_account,
+        )
         self.runtime_build_metadata = get_runtime_build_metadata()
 
     def ensure_repository(
@@ -2269,85 +2289,179 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             level=logging.INFO,
         )
 
-        commit_shas: list[str] = []
-        total_bytes = 0
-        for file_item in files:
-            payload_bytes = _payload_bytes(file_item)
-            total_bytes += len(payload_bytes)
-            final_path = _join_repo_path(target.artifact_root, file_item.path)
-            try:
-                existing_payload = self._request_json(
-                    method="GET",
-                    path=(
-                        f"/repos/{urllib.parse.quote(target.repo_owner)}/{urllib.parse.quote(target.repo_name)}"
-                        f"/contents/{urllib.parse.quote(final_path, safe='/')}?ref={urllib.parse.quote(target.branch, safe='')}"
+        total_bytes = sum(len(_payload_bytes(item)) for item in files)
+        committed_paths = [_join_repo_path(target.artifact_root, item.path) for item in files]
+        if len(set(committed_paths)) != len(committed_paths):
+            raise SEOMigrationGitHubPublisherError(
+                code="publish_artifact_invalid",
+                safe_message="The release package contains duplicate repository paths.",
+                stage="publish",
+            )
+        repo_path = f"/repos/{urllib.parse.quote(target.repo_owner)}/{urllib.parse.quote(target.repo_name)}"
+        branch_ref = f"heads/{urllib.parse.quote(target.branch, safe='/')}"
+        write_not_authorized = (
+            _GITHUB_REASON_CONTENTS_WRITE_NOT_AUTHORIZED,
+            "GitHub token is not authorized to write repository contents for publish.",
+        )
+        try:
+            ref_payload = self._request_json(
+                method="GET",
+                path=f"{repo_path}/git/ref/{branch_ref}",
+                expected_statuses=(200,),
+                status_error_map={
+                    401: write_not_authorized,
+                    403: write_not_authorized,
+                    404: (
+                        _GITHUB_REASON_BRANCH_UNINITIALIZED,
+                        "GitHub repository branch is missing or uninitialized for publish.",
                     ),
-                    expected_statuses=(200,),
-                    allow_404=True,
-                    error_stage="publish",
-                    status_error_map={
-                        401: (
-                            _GITHUB_REASON_CONTENTS_WRITE_NOT_AUTHORIZED,
-                            "GitHub token is not authorized to write repository contents for publish.",
-                        ),
-                        403: (
-                            _GITHUB_REASON_CONTENTS_WRITE_NOT_AUTHORIZED,
-                            "GitHub token is not authorized to write repository contents for publish.",
-                        ),
-                    },
-                )
-            except SEOMigrationGitHubPublisherError as exc:
-                if exc.code == "github_request_failed":
-                    raise self._classify_publish_request_failed(exc=exc) from exc
-                raise
-            existing_sha = _coerce_string(existing_payload.get("sha")) if isinstance(existing_payload, dict) else None
-            encoded_content = base64.b64encode(payload_bytes).decode("ascii")
-            payload: dict[str, object] = {
-                "message": commit_message,
-                "content": encoded_content,
-                "branch": target.branch,
-                "committer": {
-                    "name": self.committer_name,
-                    "email": self.committer_email,
+                    409: (
+                        _GITHUB_REASON_BRANCH_UNINITIALIZED,
+                        "GitHub repository branch is missing or uninitialized for publish.",
+                    ),
+                    422: (
+                        _GITHUB_REASON_BRANCH_UNINITIALIZED,
+                        "GitHub repository branch is missing or uninitialized for publish.",
+                    ),
                 },
-            }
-            if existing_sha:
-                payload["sha"] = existing_sha
-            try:
-                response_payload = self._request_json(
-                    method="PUT",
-                    path=(
-                        f"/repos/{urllib.parse.quote(target.repo_owner)}/{urllib.parse.quote(target.repo_name)}"
-                        f"/contents/{urllib.parse.quote(final_path, safe='/')}"
-                    ),
-                    payload=payload,
-                    error_stage="publish",
-                    status_error_map={
-                        401: (
-                            _GITHUB_REASON_CONTENTS_WRITE_NOT_AUTHORIZED,
-                            "GitHub token is not authorized to write repository contents for publish.",
-                        ),
-                        403: (
-                            _GITHUB_REASON_CONTENTS_WRITE_NOT_AUTHORIZED,
-                            "GitHub token is not authorized to write repository contents for publish.",
-                        ),
-                    },
-                )
-            except SEOMigrationGitHubPublisherError as exc:
-                if exc.code == "github_request_failed":
-                    raise self._classify_publish_request_failed(exc=exc) from exc
-                raise
-            if not isinstance(response_payload, dict):
+                error_stage="publish",
+            )
+            ref_object = ref_payload.get("object") if isinstance(ref_payload, dict) else None
+            parent_sha = _coerce_string(ref_object.get("sha")) if isinstance(ref_object, dict) else None
+            if not parent_sha:
                 raise SEOMigrationGitHubPublisherError(
                     code="publish_response_invalid",
-                    safe_message="GitHub publish response was malformed.",
+                    safe_message="GitHub branch reference did not identify a parent commit.",
+                    stage="publish",
                 )
-            commit_payload = response_payload.get("commit")
-            if isinstance(commit_payload, dict):
-                commit_sha = str(commit_payload.get("sha") or "").strip()
-                if commit_sha:
-                    commit_shas.append(commit_sha)
-            committed_paths.append(final_path)
+            parent_payload = self._request_json(
+                method="GET",
+                path=f"{repo_path}/git/commits/{urllib.parse.quote(parent_sha)}",
+                expected_statuses=(200,),
+                status_error_map={401: write_not_authorized, 403: write_not_authorized},
+                error_stage="publish",
+            )
+            parent_tree = parent_payload.get("tree") if isinstance(parent_payload, dict) else None
+            base_tree_sha = _coerce_string(parent_tree.get("sha")) if isinstance(parent_tree, dict) else None
+            if not base_tree_sha:
+                raise SEOMigrationGitHubPublisherError(
+                    code="publish_response_invalid",
+                    safe_message="GitHub parent commit did not identify a base tree.",
+                    stage="publish",
+                )
+            tree_entries: list[dict[str, object]] = []
+            for file_item, final_path in zip(files, committed_paths, strict=True):
+                blob_payload = self._request_json(
+                    method="POST",
+                    path=f"{repo_path}/git/blobs",
+                    payload={
+                        "content": base64.b64encode(_payload_bytes(file_item)).decode("ascii"),
+                        "encoding": "base64",
+                    },
+                    expected_statuses=(201,),
+                    status_error_map={401: write_not_authorized, 403: write_not_authorized},
+                    error_stage="publish",
+                )
+                blob_sha = _coerce_string(blob_payload.get("sha")) if isinstance(blob_payload, dict) else None
+                if not blob_sha:
+                    raise SEOMigrationGitHubPublisherError(
+                        code="publish_response_invalid",
+                        safe_message="GitHub blob creation did not return an object identifier.",
+                        stage="publish",
+                    )
+                tree_entries.append({"path": final_path, "mode": "100644", "type": "blob", "sha": blob_sha})
+            tree_payload = self._request_json(
+                method="POST",
+                path=f"{repo_path}/git/trees",
+                payload={"base_tree": base_tree_sha, "tree": tree_entries},
+                expected_statuses=(201,),
+                status_error_map={401: write_not_authorized, 403: write_not_authorized},
+                error_stage="publish",
+            )
+            tree_sha = _coerce_string(tree_payload.get("sha")) if isinstance(tree_payload, dict) else None
+            if not tree_sha:
+                raise SEOMigrationGitHubPublisherError(
+                    code="publish_response_invalid",
+                    safe_message="GitHub tree creation did not return an object identifier.",
+                    stage="publish",
+                )
+            verified_tree_payload = self._request_json(
+                method="GET",
+                path=f"{repo_path}/git/trees/{urllib.parse.quote(tree_sha)}?recursive=1",
+                expected_statuses=(200,),
+                status_error_map={401: write_not_authorized, 403: write_not_authorized},
+                error_stage="publish_verification",
+            )
+            if not isinstance(verified_tree_payload, dict) or verified_tree_payload.get("truncated") is True:
+                raise SEOMigrationGitHubPublisherError(
+                    code="publish_tree_verification_failed",
+                    safe_message="GitHub could not provide complete release-tree verification.",
+                    stage="publish_verification",
+                )
+            verified_entries = verified_tree_payload.get("tree")
+            verified_blobs = {
+                (_coerce_string(entry.get("path")) or ""): (_coerce_string(entry.get("sha")) or "")
+                for entry in verified_entries
+                if isinstance(entry, dict) and entry.get("type") == "blob"
+            } if isinstance(verified_entries, list) else {}
+            expected_blobs = {str(entry["path"]): str(entry["sha"]) for entry in tree_entries}
+            if any(verified_blobs.get(path) != blob_sha for path, blob_sha in expected_blobs.items()):
+                raise SEOMigrationGitHubPublisherError(
+                    code="publish_tree_verification_failed",
+                    safe_message="GitHub did not confirm every expected release path and blob.",
+                    stage="publish_verification",
+                )
+            commit_payload = self._request_json(
+                method="POST",
+                path=f"{repo_path}/git/commits",
+                payload={
+                    "message": commit_message,
+                    "tree": tree_sha,
+                    "parents": [parent_sha],
+                    "committer": {"name": self.committer_name, "email": self.committer_email},
+                },
+                expected_statuses=(201,),
+                status_error_map={401: write_not_authorized, 403: write_not_authorized},
+                error_stage="publish",
+            )
+            commit_sha = _coerce_string(commit_payload.get("sha")) if isinstance(commit_payload, dict) else None
+            if not commit_sha:
+                raise SEOMigrationGitHubPublisherError(
+                    code="publish_response_invalid",
+                    safe_message="GitHub commit creation did not return an object identifier.",
+                    stage="publish",
+                )
+            updated_ref = self._request_json(
+                method="PATCH",
+                path=f"{repo_path}/git/refs/{branch_ref}",
+                payload={"sha": commit_sha, "force": False},
+                expected_statuses=(200,),
+                status_error_map={
+                    401: write_not_authorized,
+                    403: write_not_authorized,
+                    409: (
+                        _GITHUB_REASON_CONTENTS_PUBLISH_FAILED,
+                        "GitHub branch changed while the release package was publishing; retry the release.",
+                    ),
+                    422: (
+                        _GITHUB_REASON_CONTENTS_PUBLISH_FAILED,
+                        "GitHub branch changed while the release package was publishing; retry the release.",
+                    ),
+                },
+                error_stage="publish",
+            )
+            updated_object = updated_ref.get("object") if isinstance(updated_ref, dict) else None
+            updated_sha = _coerce_string(updated_object.get("sha")) if isinstance(updated_object, dict) else None
+            if updated_sha != commit_sha:
+                raise SEOMigrationGitHubPublisherError(
+                    code="publish_response_invalid",
+                    safe_message="GitHub did not confirm the exact release commit on the target branch.",
+                    stage="publish",
+                )
+        except SEOMigrationGitHubPublisherError as exc:
+            if exc.code == "github_request_failed":
+                raise self._classify_publish_request_failed(exc=exc) from exc
+            raise
 
         return SEOMigrationGitHubPublishResult(
             dry_run=False,
@@ -2357,7 +2471,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             artifact_root=target.artifact_root,
             files_published=len(files),
             total_bytes=total_bytes,
-            commit_shas=tuple(_dedupe_strings(commit_shas)),
+            commit_shas=(commit_sha,),
             committed_paths=tuple(committed_paths),
             published_at=published_at,
         )
@@ -2680,8 +2794,12 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         dry_run: bool = False,
     ) -> SEOMigrationGitHubManagedSiteStaticIPEnsureResult:
         del repo_owner
-        preview_endpoint = resolve_managed_preview_endpoint_configuration(
+        resource_slug, _ = _resolve_preview_resource_slug(
             repo_name=repo_name,
+            preview_hostname=preview_hostname,
+        )
+        preview_endpoint = resolve_managed_preview_endpoint_configuration(
+            repo_name=resource_slug,
             site_id=site_id,
             preview_hostname=preview_hostname,
             namespace_isolation_defaults=namespace_isolation_defaults,
@@ -5970,6 +6088,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         artifact_version_id: str | None = None,
         pre_shared_certificate_name: str | None = None,
         pre_shared_certificate_fingerprint: str | None = None,
+        preview_hostname: str | None = None,
     ) -> SEOMigrationGitHubWorkflowProvisionResult:
         normalized_workflow_id = str(workflow_id or "").strip()
         if not normalized_workflow_id:
@@ -5984,14 +6103,22 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         private_image_auth_required = _managed_image_pull_secret_required(managed_image_pull_secret_config)
         normalized_namespace_isolation_defaults = _normalize_namespace_isolation_defaults(namespace_isolation_defaults)
         policy_expectations = _managed_policy_expectations(normalized_namespace_isolation_defaults)
+        resource_slug, resource_slug_source = _resolve_preview_resource_slug(
+            repo_name=repo_name,
+            preview_hostname=preview_hostname,
+        )
         derived_namespace, namespace_source = derive_site_kubernetes_namespace(
-            repo_name=repo_name,
+            repo_name=resource_slug,
             site_id=site_id,
         )
-        preview_hostname, _ = derive_site_preview_hostname(
-            repo_name=repo_name,
-            site_id=site_id,
-        )
+        if resource_slug_source == "preview_slug":
+            namespace_source = resource_slug_source
+        resolved_preview_hostname = (_coerce_string(preview_hostname) or "").strip().lower().rstrip(".")
+        if not resolved_preview_hostname:
+            resolved_preview_hostname, _ = derive_site_preview_hostname(
+                repo_name=repo_name,
+                site_id=site_id,
+            )
         workflow_path = _workflow_repo_path(normalized_workflow_id)
         _emit_structured_publisher_log(
             payload={
@@ -6194,12 +6321,14 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             managed_gke_config=normalized_managed_gke_config,
             kubernetes_namespace=derived_namespace,
             namespace_source=namespace_source,
-            preview_hostname=preview_hostname,
+            preview_hostname=resolved_preview_hostname,
+            resource_slug=resource_slug,
             private_image_auth_required=private_image_auth_required,
             site_id=site_id,
             namespace_isolation_defaults=normalized_namespace_isolation_defaults,
             pre_shared_certificate_name=pre_shared_certificate_name,
             pre_shared_certificate_fingerprint=pre_shared_certificate_fingerprint,
+            reusable_deployment_settings=self.reusable_preview_deployment_settings,
         )
         template_validation = _validate_managed_workflow_template_before_publish(
             workflow_yaml=workflow_yaml,
@@ -6252,7 +6381,8 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             target_environment_source=normalized_target_environment_source,
             kubernetes_namespace=derived_namespace,
             namespace_source=namespace_source,
-            preview_hostname=preview_hostname,
+            preview_hostname=resolved_preview_hostname,
+            resource_slug=resource_slug,
             private_image_auth_required=private_image_auth_required,
             namespace_isolation_defaults=normalized_namespace_isolation_defaults,
             site_id=site_id,
@@ -6441,7 +6571,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             target_environment_source=normalized_target_environment_source,
             kubernetes_namespace=derived_namespace,
             namespace_source=namespace_source,
-            preview_hostname=preview_hostname,
+            preview_hostname=resolved_preview_hostname,
             managed_manifest_paths=managed_manifest_paths,
             namespace_model_status=namespace_model_status,
             managed_resource_quota_expected=bool(policy_expectations.get("resource_quota_expected")),
@@ -6548,20 +6678,28 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         )
         normalized_namespace_isolation_defaults = _normalize_namespace_isolation_defaults(namespace_isolation_defaults)
         policy_expectations = _managed_policy_expectations(normalized_namespace_isolation_defaults)
+        resource_slug, resource_slug_source = _resolve_preview_resource_slug(
+            repo_name=target.repo_name,
+            preview_hostname=target.preview_hostname,
+        )
         derived_namespace, namespace_source = derive_site_kubernetes_namespace(
-            repo_name=target.repo_name,
+            repo_name=resource_slug,
             site_id=None,
         )
-        preview_hostname, _ = derive_site_preview_hostname(
-            repo_name=target.repo_name,
-            site_id=None,
-        )
+        if resource_slug_source == "preview_slug":
+            namespace_source = resource_slug_source
+        preview_hostname = (_coerce_string(target.preview_hostname) or "").strip().lower().rstrip(".")
+        if not preview_hostname:
+            preview_hostname, _ = derive_site_preview_hostname(
+                repo_name=target.repo_name,
+                site_id=None,
+            )
         preview_certificate_name, _ = derive_site_preview_certificate_name(
-            repo_name=target.repo_name,
+            repo_name=resource_slug,
             site_id=None,
         )
         preview_endpoint = resolve_managed_preview_endpoint_configuration(
-            repo_name=target.repo_name,
+            repo_name=resource_slug,
             site_id=None,
             preview_hostname=preview_hostname,
             namespace_isolation_defaults=normalized_namespace_isolation_defaults,
@@ -9975,6 +10113,27 @@ def derive_site_preview_hostname(*, repo_name: object, site_id: object | None = 
     return f"{host_label}.{_MBSRN_MANAGED_PREVIEW_DOMAIN_SUFFIX}", namespace_source
 
 
+def _resolve_preview_resource_slug(*, repo_name: object, preview_hostname: object | None) -> tuple[str, str]:
+    normalized_hostname = (_coerce_string(preview_hostname) or "").strip().lower().rstrip(".")
+    if not normalized_hostname:
+        return str(repo_name or ""), "repo_name"
+    suffix = f".{_MBSRN_MANAGED_PREVIEW_DOMAIN_SUFFIX}"
+    if not normalized_hostname.endswith(suffix):
+        raise SEOMigrationGitHubPublisherError(
+            code="preview_hostname_invalid",
+            safe_message=f"Preview hostname must be a direct child of {_MBSRN_MANAGED_PREVIEW_DOMAIN_SUFFIX}.",
+            stage="workflow_provisioning",
+        )
+    slug = normalized_hostname[: -len(suffix)]
+    if not slug or "." in slug or _safe_identifier_fragment(slug, fallback="", max_length=63) != slug:
+        raise SEOMigrationGitHubPublisherError(
+            code="preview_hostname_invalid",
+            safe_message="Preview hostname does not contain a valid canonical preview slug.",
+            stage="workflow_provisioning",
+        )
+    return slug, "preview_slug"
+
+
 def derive_site_preview_certificate_name(*, repo_name: object, site_id: object | None = None) -> tuple[str, str]:
     namespace, namespace_source = derive_site_kubernetes_namespace(repo_name=repo_name, site_id=site_id)
     suffix_budget = 63 - len(_MBSRN_MANAGED_PREVIEW_CERTIFICATE_NAME_PREFIX) - 1
@@ -10333,14 +10492,35 @@ def _render_managed_deploy_workflow_yaml(
     kubernetes_namespace: str,
     namespace_source: str,
     preview_hostname: str,
+    resource_slug: str | None = None,
     namespace_isolation_defaults: dict[str, object] | None = None,
     private_image_auth_required: bool = False,
     site_id: str | None = None,
     pre_shared_certificate_name: str | None = None,
     pre_shared_certificate_fingerprint: str | None = None,
+    reusable_deployment_settings: tuple[str, str, str] | None = None,
 ) -> str:
     normalized_workflow_id = str(workflow_id or "").strip() or "deploy-www-prod.yml"
     if pre_shared_certificate_name or pre_shared_certificate_fingerprint:
+        if reusable_deployment_settings is not None:
+            return _render_reusable_self_managed_deploy_workflow_yaml(
+                workflow_id=normalized_workflow_id,
+                repo_owner=repo_owner,
+                repo_name=repo_name,
+                target_environment_key=target_environment_key,
+                target_environment_source=target_environment_source,
+                managed_gke_config=managed_gke_config,
+                kubernetes_namespace=kubernetes_namespace,
+                namespace_source=namespace_source,
+                preview_hostname=preview_hostname,
+                resource_slug=resource_slug,
+                namespace_isolation_defaults=namespace_isolation_defaults,
+                private_image_auth_required=private_image_auth_required,
+                site_id=site_id,
+                pre_shared_certificate_name=pre_shared_certificate_name,
+                pre_shared_certificate_fingerprint=pre_shared_certificate_fingerprint,
+                reusable_deployment_settings=reusable_deployment_settings,
+            )
         return _render_self_managed_deploy_workflow_yaml(
             workflow_id=normalized_workflow_id,
             repo_owner=repo_owner,
@@ -10352,6 +10532,7 @@ def _render_managed_deploy_workflow_yaml(
             kubernetes_namespace=kubernetes_namespace,
             namespace_source=namespace_source,
             preview_hostname=preview_hostname,
+            resource_slug=resource_slug,
             namespace_isolation_defaults=namespace_isolation_defaults,
             private_image_auth_required=private_image_auth_required,
             site_id=site_id,
@@ -10397,20 +10578,21 @@ def _render_managed_deploy_workflow_yaml(
     )
     normalized_namespace_source = _safe_identifier_fragment(namespace_source, fallback="repo-name", max_length=40)
     normalized_preview_hostname = (_coerce_string(preview_hostname) or "").strip().lower()
+    resource_name_seed = resource_slug or repo_name
     preview_certificate_name, _ = derive_site_preview_certificate_name(
-        repo_name=repo_name,
+        repo_name=resource_name_seed,
         site_id=site_id,
     )
     frontend_config_name, _ = derive_site_preview_frontend_config_name(
-        repo_name=repo_name,
+        repo_name=resource_name_seed,
         site_id=site_id,
     )
     backend_config_name, _ = derive_site_preview_backend_config_name(
-        repo_name=repo_name,
+        repo_name=resource_name_seed,
         site_id=site_id,
     )
     preview_endpoint = resolve_managed_preview_endpoint_configuration(
-        repo_name=repo_name,
+        repo_name=resource_name_seed,
         site_id=site_id,
         preview_hostname=normalized_preview_hostname,
         namespace_isolation_defaults=_normalize_namespace_isolation_defaults(namespace_isolation_defaults),
@@ -12782,6 +12964,85 @@ def _render_managed_deploy_workflow_yaml(
     return _embed_managed_workflow_signature(workflow_yaml=workflow_yaml_unsigned)
 
 
+def _render_reusable_self_managed_deploy_workflow_yaml(
+    *,
+    workflow_id: str,
+    repo_owner: str,
+    repo_name: str,
+    target_environment_key: str,
+    target_environment_source: str,
+    managed_gke_config: dict[str, object] | None,
+    kubernetes_namespace: str,
+    namespace_source: str,
+    preview_hostname: str,
+    resource_slug: str | None,
+    namespace_isolation_defaults: dict[str, object] | None,
+    private_image_auth_required: bool,
+    site_id: str | None,
+    pre_shared_certificate_name: str | None,
+    pre_shared_certificate_fingerprint: str | None,
+    reusable_deployment_settings: tuple[str, str, str],
+) -> str:
+    del workflow_id
+    normalized_gke_config = _normalize_managed_gke_config(managed_gke_config)
+    cluster_name = _coerce_string(normalized_gke_config.get(_MANAGED_GKE_CONFIG_CLUSTER_NAME))
+    cluster_location = _coerce_string(normalized_gke_config.get(_MANAGED_GKE_CONFIG_CLUSTER_LOCATION))
+    project_id = _coerce_string(normalized_gke_config.get(_MANAGED_GKE_CONFIG_PROJECT_ID))
+    if not cluster_name or not cluster_location or not project_id:
+        raise ValueError("Reusable preview deployment requires complete managed GKE configuration.")
+
+    hostname = str(preview_hostname or "").strip().lower().rstrip(".")
+    resource_name_seed = resource_slug or repo_name
+    endpoint = resolve_managed_preview_endpoint_configuration(
+        repo_name=resource_name_seed,
+        site_id=site_id,
+        preview_hostname=hostname,
+        namespace_isolation_defaults=_normalize_namespace_isolation_defaults(namespace_isolation_defaults),
+    )
+    static_ip_name = _coerce_string(endpoint.get("expected_static_ip_name"))
+    if not static_ip_name:
+        static_ip_name, _ = derive_site_preview_static_ip_name(repo_name=resource_name_seed, site_id=site_id)
+    frontend_config_name, _ = derive_site_preview_frontend_config_name(
+        repo_name=resource_name_seed,
+        site_id=site_id,
+    )
+    backend_config_name, _ = derive_site_preview_backend_config_name(
+        repo_name=resource_name_seed,
+        site_id=site_id,
+    )
+    workflow_ref, workload_identity_provider, service_account = reusable_deployment_settings
+    unsigned = render_reusable_preview_caller_workflow(
+        managed_template_marker=_MBSRN_MANAGED_WORKFLOW_MARKER,
+        workflow_ref=workflow_ref,
+        workload_identity_provider=workload_identity_provider,
+        service_account=service_account,
+        display_name=_safe_identifier_fragment(repo_name, fallback="site"),
+        gcp_project_id=project_id,
+        gke_cluster_name=cluster_name,
+        gke_cluster_location=cluster_location,
+        kubernetes_namespace=_safe_identifier_fragment(kubernetes_namespace, fallback=repo_name, max_length=63),
+        target_environment_key=_safe_identifier_fragment(target_environment_key, fallback="gke-prod", max_length=60),
+        target_environment_source=_safe_identifier_fragment(
+            target_environment_source,
+            fallback="admin-config",
+            max_length=60,
+        ),
+        site_identity=_safe_identifier_fragment(site_id, fallback="workspace", max_length=60),
+        preview_hostname=hostname,
+        preview_static_ip_name=static_ip_name,
+        preview_certificate_name=str(pre_shared_certificate_name or "").strip(),
+        expected_certificate_fingerprint=str(pre_shared_certificate_fingerprint or ""),
+        frontend_config_name=frontend_config_name,
+        backend_config_name=backend_config_name,
+        site_runtime_image_repository=_derive_site_runtime_image_repository(
+            repo_owner=repo_owner,
+            repo_name=repo_name,
+        ),
+        private_image_auth_required=private_image_auth_required,
+    )
+    return _embed_managed_workflow_signature(workflow_yaml=unsigned)
+
+
 def _render_self_managed_deploy_workflow_yaml(
     *,
     workflow_id: str,
@@ -12794,6 +13055,7 @@ def _render_self_managed_deploy_workflow_yaml(
     kubernetes_namespace: str,
     namespace_source: str,
     preview_hostname: str,
+    resource_slug: str | None,
     namespace_isolation_defaults: dict[str, object] | None,
     private_image_auth_required: bool,
     site_id: str | None,
@@ -12834,17 +13096,18 @@ def _render_self_managed_deploy_workflow_yaml(
     hostname = str(preview_hostname or "").strip().lower()
     if not hostname or not re.fullmatch(r"[a-z0-9](?:[-a-z0-9.]{0,251}[a-z0-9])?", hostname):
         raise ValueError("A valid preview hostname is required.")
+    resource_name_seed = resource_slug or repo_name
     endpoint = resolve_managed_preview_endpoint_configuration(
-        repo_name=repo_name,
+        repo_name=resource_name_seed,
         site_id=site_id,
         preview_hostname=hostname,
         namespace_isolation_defaults=_normalize_namespace_isolation_defaults(namespace_isolation_defaults),
     )
     static_ip_name = _coerce_string(endpoint.get("expected_static_ip_name"))
     if not static_ip_name:
-        static_ip_name, _ = derive_site_preview_static_ip_name(repo_name=repo_name, site_id=site_id)
-    frontend_config_name, _ = derive_site_preview_frontend_config_name(repo_name=repo_name, site_id=site_id)
-    backend_config_name, _ = derive_site_preview_backend_config_name(repo_name=repo_name, site_id=site_id)
+        static_ip_name, _ = derive_site_preview_static_ip_name(repo_name=resource_name_seed, site_id=site_id)
+    frontend_config_name, _ = derive_site_preview_frontend_config_name(repo_name=resource_name_seed, site_id=site_id)
+    backend_config_name, _ = derive_site_preview_backend_config_name(repo_name=resource_name_seed, site_id=site_id)
     image_repository = _derive_site_runtime_image_repository(repo_owner=repo_owner, repo_name=repo_name)
     private_image_auth_value = "true" if private_image_auth_required else "false"
     pull_secret_step = ""
@@ -13132,6 +13395,7 @@ def _render_managed_gke_manifest_files(
     kubernetes_namespace: str,
     namespace_source: str,
     preview_hostname: str,
+    resource_slug: str | None = None,
     namespace_isolation_defaults: dict[str, object] | None,
     site_id: str | None,
     private_image_auth_required: bool = False,
@@ -13141,19 +13405,19 @@ def _render_managed_gke_manifest_files(
         repo_owner=repo_owner,
         repo_name=repo_name,
     )
+    resource_name_seed = resource_slug or repo_name
     preview_certificate_name, _ = derive_site_preview_certificate_name(
-        repo_name=repo_name,
+        repo_name=resource_name_seed,
         site_id=site_id,
     )
     frontend_config_name, _ = derive_site_preview_frontend_config_name(
-        repo_name=repo_name,
+        repo_name=resource_name_seed,
         site_id=site_id,
     )
     backend_config_name, _ = derive_site_preview_backend_config_name(
-        repo_name=repo_name,
+        repo_name=resource_name_seed,
         site_id=site_id,
     )
-    repo_owner_fragment = _safe_identifier_fragment(repo_owner, fallback="mbsrn", max_length=40)
     repo_fragment = _safe_identifier_fragment(repo_name, fallback="site", max_length=40)
     env_key = _safe_identifier_fragment(target_environment_key, fallback="gke-prod", max_length=40)
     env_source = _safe_identifier_fragment(target_environment_source, fallback="admin-config", max_length=40)
@@ -13168,7 +13432,7 @@ def _render_managed_gke_manifest_files(
     ):
         raise ValueError("Pre-shared certificate name is invalid.")
     preview_endpoint = resolve_managed_preview_endpoint_configuration(
-        repo_name=repo_name,
+        repo_name=resource_name_seed,
         site_id=site_id,
         preview_hostname=normalized_preview_hostname,
         namespace_isolation_defaults=_normalize_namespace_isolation_defaults(namespace_isolation_defaults),
@@ -13176,7 +13440,7 @@ def _render_managed_gke_manifest_files(
     preview_static_ip_name = _coerce_string(preview_endpoint.get("expected_static_ip_name"))
     if not preview_static_ip_name:
         preview_static_ip_name, _ = derive_site_preview_static_ip_name(
-            repo_name=repo_name,
+            repo_name=resource_name_seed,
             site_id=site_id,
         )
     image_pull_secrets_block = ""
@@ -14971,6 +15235,14 @@ def _evaluate_workflow_conformance(
             evidence_summary=("workflow_dispatch=true;" f"placeholder_markers={','.join(placeholder_markers)}"),
         )
 
+    if REUSABLE_PREVIEW_CALLER_MARKER in lowered:
+        return SEOMigrationGitHubWorkflowConformanceResult(
+            is_conformant=True,
+            conformance_status=_WORKFLOW_CONFORMANCE_STATUS_CONFORMANT,
+            conformance_reasons=(),
+            evidence_summary="workflow_dispatch=true;execution=reusable_preview_workflow",
+        )
+
     required_marker_hits = tuple(
         marker for marker in _WORKFLOW_CONFORMANCE_REQUIRED_DEPLOY_MARKERS if marker in lowered
     )
@@ -15030,6 +15302,35 @@ def _validate_managed_workflow_template_before_publish(
             validation_errors.append("jobs_deploy_missing")
         return SEOMigrationManagedWorkflowTemplateValidationResult(
             is_valid=False,
+            validation_errors=tuple(validation_errors),
+        )
+
+    if REUSABLE_PREVIEW_CALLER_MARKER in normalized_yaml.lower():
+        reusable_ref = str(deploy_config.get("uses") or "").strip()
+        reusable_inputs = deploy_config.get("with")
+        required_reusable_inputs = {
+            "gcp_project_id",
+            "gke_cluster_name",
+            "gke_cluster_location",
+            "kubernetes_namespace",
+            "preview_hostname",
+            "preview_static_ip_name",
+            "preview_certificate_name",
+            "expected_certificate_fingerprint",
+            "site_runtime_image_repository",
+            "workload_identity_provider",
+            "service_account",
+        }
+        if not reusable_ref:
+            validation_errors.append("reusable_workflow_ref_missing")
+        if not isinstance(reusable_inputs, dict):
+            validation_errors.append("reusable_workflow_inputs_missing")
+        else:
+            missing_inputs = sorted(required_reusable_inputs.difference(str(key) for key in reusable_inputs))
+            if missing_inputs:
+                validation_errors.append("reusable_workflow_inputs_missing:" + ",".join(missing_inputs))
+        return SEOMigrationManagedWorkflowTemplateValidationResult(
+            is_valid=(not validation_errors),
             validation_errors=tuple(validation_errors),
         )
 

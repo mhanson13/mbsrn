@@ -27,6 +27,7 @@ from app.models import (
     lead_event,
     principal,
     principal_identity,
+    preview_release,
     provider_connection,
     provider_oauth_state,
     seo_audit_finding,
@@ -55,6 +56,7 @@ from app.models import (
     seo_migration_artifact_version,
     seo_migration_workspace,
     seo_site,
+    tls_certificate,
 )
 
 config = context.config

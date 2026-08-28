@@ -1,0 +1,393 @@
+name: Reusable MBSRN Site Preview Deploy
+
+on:
+  workflow_call:
+    inputs:
+      gcp_project_id:
+        required: true
+        type: string
+      gke_cluster_name:
+        required: true
+        type: string
+      gke_cluster_location:
+        required: true
+        type: string
+      kubernetes_namespace:
+        required: true
+        type: string
+      target_environment_key:
+        required: true
+        type: string
+      target_environment_source:
+        required: true
+        type: string
+      site_identity:
+        required: true
+        type: string
+      preview_hostname:
+        required: true
+        type: string
+      preview_static_ip_name:
+        required: true
+        type: string
+      preview_certificate_name:
+        required: true
+        type: string
+      expected_certificate_fingerprint:
+        required: true
+        type: string
+      frontend_config_name:
+        required: true
+        type: string
+      backend_config_name:
+        required: true
+        type: string
+      site_runtime_image_repository:
+        required: true
+        type: string
+      private_image_auth_required:
+        required: false
+        default: true
+        type: boolean
+      workload_identity_provider:
+        required: true
+        type: string
+      service_account:
+        required: true
+        type: string
+      replace_existing_runtime:
+        required: false
+        default: false
+        type: boolean
+    outputs:
+      live_url:
+        value: ${{ jobs.deploy.outputs.live_url }}
+      resolved_live_url:
+        value: ${{ jobs.deploy.outputs.resolved_live_url }}
+      deployed_url:
+        value: ${{ jobs.deploy.outputs.deployed_url }}
+      dns_record_matches_ingress:
+        value: ${{ jobs.deploy.outputs.dns_record_matches_ingress }}
+      dns_expected_ip:
+        value: ${{ jobs.deploy.outputs.dns_expected_ip }}
+      dns_observed_ip:
+        value: ${{ jobs.deploy.outputs.dns_observed_ip }}
+      tls_certificate_status:
+        value: ${{ jobs.deploy.outputs.tls_certificate_status }}
+      tls_domain_status:
+        value: ${{ jobs.deploy.outputs.tls_domain_status }}
+      ingress_ip:
+        value: ${{ jobs.deploy.outputs.ingress_ip }}
+      ingress_conflict_detected:
+        value: ${{ jobs.deploy.outputs.ingress_conflict_detected }}
+      cert_identity_valid:
+        value: ${{ jobs.deploy.outputs.cert_identity_valid }}
+      deploy_https_ready:
+        value: ${{ jobs.deploy.outputs.deploy_https_ready }}
+      mbsrn_managed_deploy_template_version:
+        value: ${{ jobs.deploy.outputs.mbsrn_managed_deploy_template_version }}
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ inputs.target_environment_key }}
+      url: ${{ steps.resolve_live_url.outputs.resolved_live_url }}
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    outputs:
+      live_url: ${{ steps.resolve_live_url.outputs.live_url }}
+      resolved_live_url: ${{ steps.resolve_live_url.outputs.resolved_live_url }}
+      deployed_url: ${{ steps.resolve_live_url.outputs.deployed_url }}
+      dns_record_matches_ingress: ${{ steps.resolve_live_url.outputs.dns_record_matches_ingress }}
+      dns_expected_ip: ${{ steps.resolve_live_url.outputs.dns_expected_ip }}
+      dns_observed_ip: ${{ steps.resolve_live_url.outputs.dns_observed_ip }}
+      tls_certificate_status: ${{ steps.resolve_live_url.outputs.tls_certificate_status }}
+      tls_domain_status: ${{ steps.resolve_live_url.outputs.tls_domain_status }}
+      ingress_ip: ${{ steps.resolve_live_url.outputs.ingress_ip }}
+      ingress_conflict_detected: ${{ steps.resolve_live_url.outputs.ingress_conflict_detected }}
+      cert_identity_valid: ${{ steps.resolve_live_url.outputs.cert_identity_valid }}
+      deploy_https_ready: ${{ steps.resolve_live_url.outputs.deploy_https_ready }}
+      mbsrn_managed_deploy_template_version: ${{ steps.resolve_live_url.outputs.mbsrn_managed_deploy_template_version }}
+    env:
+      GCP_PROJECT_ID: ${{ inputs.gcp_project_id }}
+      GKE_CLUSTER_NAME: ${{ inputs.gke_cluster_name }}
+      GKE_CLUSTER_LOCATION: ${{ inputs.gke_cluster_location }}
+      K8S_NAMESPACE: ${{ inputs.kubernetes_namespace }}
+      MBSRN_TARGET_ENVIRONMENT_SOURCE: ${{ inputs.target_environment_source }}
+      MBSRN_SITE_IDENTITY: ${{ inputs.site_identity }}
+      MBSRN_PREVIEW_HOSTNAME: ${{ inputs.preview_hostname }}
+      MBSRN_PREVIEW_STATIC_IP_NAME: ${{ inputs.preview_static_ip_name }}
+      MBSRN_PREVIEW_CERTIFICATE_NAME: ${{ inputs.preview_certificate_name }}
+      MBSRN_EXPECTED_CERTIFICATE_FINGERPRINT: ${{ inputs.expected_certificate_fingerprint }}
+      MBSRN_FRONTEND_CONFIG_NAME: ${{ inputs.frontend_config_name }}
+      MBSRN_BACKEND_CONFIG_NAME: ${{ inputs.backend_config_name }}
+      SITE_WEB_IMAGE_REPOSITORY: ${{ inputs.site_runtime_image_repository }}
+
+    steps:
+      - name: Checkout caller repository
+        uses: actions/checkout@v4
+
+      - name: Validate bounded deployment inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          required=(
+            GCP_PROJECT_ID
+            GKE_CLUSTER_NAME
+            GKE_CLUSTER_LOCATION
+            K8S_NAMESPACE
+            MBSRN_PREVIEW_HOSTNAME
+            MBSRN_PREVIEW_STATIC_IP_NAME
+            MBSRN_PREVIEW_CERTIFICATE_NAME
+            MBSRN_EXPECTED_CERTIFICATE_FINGERPRINT
+            SITE_WEB_IMAGE_REPOSITORY
+          )
+          for name in "${required[@]}"; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "deploy_runtime_reason_code=missing_required_input"
+              echo "Missing required input: ${name}"
+              exit 1
+            fi
+          done
+          [[ "$MBSRN_PREVIEW_HOSTNAME" =~ ^[a-z0-9-]+\.site\.mbsrn\.com$ ]] || {
+            echo "deploy_runtime_reason_code=preview_hostname_invalid"
+            exit 1
+          }
+          [[ "$MBSRN_EXPECTED_CERTIFICATE_FINGERPRINT" =~ ^[0-9a-f]{64}$ ]] || {
+            echo "deploy_runtime_reason_code=certificate_fingerprint_invalid"
+            exit 1
+          }
+          manifests=(
+            k8s/namespace.yaml
+            k8s/backendconfig.yaml
+            k8s/service.yaml
+            k8s/deployment.yaml
+            k8s/frontendconfig.yaml
+            k8s/ingress.yaml
+            site-runtime/Dockerfile
+          )
+          for path in "${manifests[@]}"; do
+            if [[ ! -f "$path" ]]; then
+              echo "deploy_runtime_reason_code=managed_runtime_file_missing"
+              echo "Missing managed runtime file: ${path}"
+              exit 1
+            fi
+          done
+          if grep -q "networking.gke.io/managed-certificates:" k8s/ingress.yaml; then
+            echo "deploy_runtime_reason_code=legacy_managed_certificate_annotation_present"
+            exit 1
+          fi
+          if [[ -f k8s/managedcertificate.yaml ]]; then
+            echo "Ignoring compatibility-only k8s/managedcertificate.yaml; the reusable preview path never applies it."
+          fi
+
+      - name: Prepare managed site runtime build context
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf site-runtime/context
+          mkdir -p site-runtime/context
+          rsync -a --delete \
+            --exclude '.git/' \
+            --exclude '.github/' \
+            --exclude 'k8s/' \
+            --exclude 'site-runtime/' \
+            --exclude '*.key' \
+            ./ site-runtime/context/
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push managed site runtime image
+        uses: docker/build-push-action@v6
+        with:
+          context: site-runtime
+          file: site-runtime/Dockerfile
+          push: true
+          provenance: false
+          tags: |
+            ${{ env.SITE_WEB_IMAGE_REPOSITORY }}:${{ github.sha }}
+            ${{ env.SITE_WEB_IMAGE_REPOSITORY }}:latest
+
+      - name: Authenticate to Google Cloud with WIF
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ inputs.workload_identity_provider }}
+          service_account: ${{ inputs.service_account }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v3
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+
+      - name: Get GKE credentials
+        uses: google-github-actions/get-gke-credentials@v3
+        with:
+          cluster_name: ${{ env.GKE_CLUSTER_NAME }}
+          location: ${{ env.GKE_CLUSTER_LOCATION }}
+          project_id: ${{ env.GCP_PROJECT_ID }}
+
+      - name: Validate self-managed certificate resource
+        shell: bash
+        run: |
+          set -euo pipefail
+          certificate_type="$(gcloud compute ssl-certificates describe \
+            "$MBSRN_PREVIEW_CERTIFICATE_NAME" \
+            --global \
+            --project "$GCP_PROJECT_ID" \
+            --format='value(type)')"
+          if [[ "$certificate_type" != "SELF_MANAGED" ]]; then
+            echo "deploy_runtime_reason_code=self_managed_certificate_not_found"
+            exit 1
+          fi
+
+      - name: Ensure namespace exists
+        run: kubectl apply -f k8s/namespace.yaml
+
+      - name: Verify GHCR image pull secret
+        if: inputs.private_image_auth_required
+        run: kubectl get secret ghcr-pull-secret --namespace "$K8S_NAMESPACE"
+
+      - name: Apply managed manifests
+        shell: bash
+        run: |
+          set -euo pipefail
+          apply_if_present() { [[ ! -f "$1" ]] || kubectl apply -f "$1"; }
+          apply_if_present k8s/resourcequota.yaml
+          apply_if_present k8s/limitrange.yaml
+          apply_if_present k8s/networkpolicy.yaml
+          apply_if_present k8s/backendconfig.yaml
+          apply_if_present k8s/service.yaml
+          apply_if_present k8s/deployment.yaml
+          apply_if_present k8s/frontendconfig.yaml
+          apply_if_present k8s/ingress.yaml
+
+      - name: Wait for application rollout
+        run: kubectl rollout status deployment/site-web --namespace "$K8S_NAMESPACE" --timeout=5m
+
+      - name: Resolve live URL from ingress status
+        id: resolve_live_url
+        shell: bash
+        run: |
+          set -uo pipefail
+          live_url="https://$MBSRN_PREVIEW_HOSTNAME"
+          ingress_ip=""
+          dns_observed_ip=""
+          expected_static_ip_address=""
+          tls_certificate_status="ACTIVE"
+          tls_domain_status="UNKNOWN"
+          ingress_conflict_detected=false
+          cert_identity_valid=false
+          deploy_https_ready=false
+          emit_outputs() {
+            {
+              echo "live_url=$live_url"
+              echo "resolved_live_url=$live_url"
+              echo "deployed_url=$live_url"
+              echo "dns_record_matches_ingress=$dns_record_matches_ingress"
+              echo "dns_expected_ip=$expected_static_ip_address"
+              echo "dns_observed_ip=$dns_observed_ip"
+              echo "tls_certificate_status=$tls_certificate_status"
+              echo "tls_domain_status=$tls_domain_status"
+              echo "ingress_ip=$ingress_ip"
+              echo "ingress_conflict_detected=$ingress_conflict_detected"
+              echo "cert_identity_valid=$cert_identity_valid"
+              echo "deploy_https_ready=$deploy_https_ready"
+              echo "mbsrn_managed_deploy_template_version=site_repo_template_v1"
+            } >> "$GITHUB_OUTPUT"
+          }
+          fail_preview() {
+            echo "deploy_runtime_reason_code=$1"
+            echo "deploy_runtime_failure_stage=$2"
+            emit_outputs
+            exit 1
+          }
+
+          dns_record_matches_ingress=false
+          annotation="$(kubectl get ingress site-web --namespace "$K8S_NAMESPACE" \
+            -o jsonpath='{.metadata.annotations.ingress\.gcp\.kubernetes\.io/pre-shared-cert}' \
+            2>/dev/null || true)"
+          [[ "$annotation" == "$MBSRN_PREVIEW_CERTIFICATE_NAME" ]] || \
+            fail_preview "pre_shared_certificate_annotation_mismatch" "certificate_verify"
+
+          for _ in $(seq 1 30); do
+            ingress_ip="$(kubectl get ingress site-web --namespace "$K8S_NAMESPACE" \
+              -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)"
+            [[ -z "$ingress_ip" ]] || break
+            sleep 10
+          done
+          [[ -n "$ingress_ip" ]] || fail_preview "ingress_address_pending" "ingress_verify"
+
+          expected_static_ip_address="$(gcloud compute addresses describe \
+            "$MBSRN_PREVIEW_STATIC_IP_NAME" \
+            --global \
+            --project "$GCP_PROJECT_ID" \
+            --format='value(address)' 2>/dev/null || true)"
+          [[ -n "$expected_static_ip_address" ]] || fail_preview "expected_static_ip_missing" "ingress_verify"
+          if [[ "$ingress_ip" != "$expected_static_ip_address" ]]; then
+            ingress_conflict_detected=true
+            fail_preview "ingress_static_ip_conflict" "ingress_verify"
+          fi
+
+          dns_observed_ip="$(getent ahostsv4 "$MBSRN_PREVIEW_HOSTNAME" | awk '{print $1}' | sort -u | paste -sd, - || true)"
+          echo "$dns_observed_ip" | tr ',' '\n' | grep -Fxq "$expected_static_ip_address" || \
+            fail_preview "dns_record_mismatch" "dns_verify"
+          dns_record_matches_ingress=true
+
+          served_certificate="$(mktemp)"
+          certificate_failure_reason="tls_handshake_failed"
+          for _ in $(seq 1 30); do
+            : > "$served_certificate"
+            if timeout 10 openssl s_client \
+              -connect "$MBSRN_PREVIEW_HOSTNAME:443" \
+              -servername "$MBSRN_PREVIEW_HOSTNAME" \
+              < /dev/null 2>/dev/null | openssl x509 -outform PEM > "$served_certificate"; then
+              observed_fingerprint="$(openssl x509 -in "$served_certificate" \
+                -noout -fingerprint -sha256 | cut -d= -f2 | tr -d ':' | tr '[:upper:]' '[:lower:]')"
+              if [[ "$observed_fingerprint" == "$MBSRN_EXPECTED_CERTIFICATE_FINGERPRINT" ]]; then
+                if openssl x509 -in "$served_certificate" -noout \
+                  -checkhost "$MBSRN_PREVIEW_HOSTNAME" >/dev/null; then
+                  certificate_failure_reason=""
+                  break
+                fi
+                certificate_failure_reason="certificate_domain_mismatch"
+              else
+                certificate_failure_reason="certificate_fingerprint_mismatch"
+              fi
+            fi
+            sleep 10
+          done
+          rm -f "$served_certificate"
+          [[ -z "$certificate_failure_reason" ]] || \
+            fail_preview "$certificate_failure_reason" "certificate_verify"
+          cert_identity_valid=true
+          tls_domain_status="ACTIVE"
+
+          https_status="$(curl --insecure --silent --show-error \
+            --connect-timeout 5 --max-time 20 --output /dev/null \
+            --write-out '%{http_code}' "$live_url" || true)"
+          echo "$https_status" | grep -Eq '^[1-4][0-9][0-9]$' || \
+            fail_preview "https_probe_failed" "endpoint_verify"
+          deploy_https_ready=true
+          emit_outputs
+
+      - name: Emit deployment summary
+        shell: bash
+        run: |
+          echo "Preview hostname: $MBSRN_PREVIEW_HOSTNAME"
+          echo "Certificate: $MBSRN_PREVIEW_CERTIFICATE_NAME"
+          echo "Namespace: $K8S_NAMESPACE"
+          echo "Target source: $MBSRN_TARGET_ENVIRONMENT_SOURCE"
+          echo "Site identity: $MBSRN_SITE_IDENTITY"

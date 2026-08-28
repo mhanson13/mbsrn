@@ -20,6 +20,16 @@ An existing Compute SSL certificate can also be adopted without its private key.
 - Set `TLS_CERTIFICATE_GCP_PROJECT_ID` when it differs from `GCP_PROJECT_ID`.
 - Run `alembic upgrade head` before exposing the new operator controls.
 
+Provision or reconcile the narrow role idempotently:
+
+```bash
+scripts/bootstrap_preview_tls_permissions.sh --gcp-project-id mbsrn-prod
+```
+
+The role definition is versioned at `infra/gcp/preview-tls-operator-role.yaml`. It contains `secretmanager.secrets.create`, `secretmanager.versions.add`, `compute.sslCertificates.create`, `compute.sslCertificates.get`, and `compute.globalOperations.get`.
+
+Before generating certificate material, call `GET /api/businesses/{business_id}/tls/capabilities`. A ready response confirms both permission groups. A failure lists missing permissions and a short next action; private keys and provider response bodies are never included.
+
 Do not copy the certificate private key into GitHub. Existing GitHub deployment authentication remains unchanged.
 
 References: [Google self-managed SSL certificates](https://docs.cloud.google.com/load-balancing/docs/ssl-certificates/self-managed-certs), [GKE pre-shared certificate annotation](https://docs.cloud.google.com/kubernetes-engine/docs/how-to/secure-traffic-management), and [Secret Manager least-privilege guidance](https://docs.cloud.google.com/secret-manager/docs/access-control).

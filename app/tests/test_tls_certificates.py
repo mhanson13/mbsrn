@@ -12,6 +12,8 @@ from sqlalchemy.orm import Session
 from app.integrations.tls_certificate import (
     ComputeSSLCertificateClient,
     ComputeSSLCertificateResource,
+    TLSCertificateCapabilityCheck,
+    TLSCertificateCapabilityProbe,
     TLSCertificateEndpointObservation,
     TLSCertificateEndpointVerifier,
     TLSCertificateMaterial,
@@ -21,7 +23,11 @@ from app.models.business import Business
 from app.models.seo_site import SEOSite
 from app.repositories.seo_site_repository import SEOSiteRepository
 from app.repositories.tls_certificate_repository import TLSCertificateRepository
-from app.services.tls_certificates import TLSCertificateService, TLSCertificateValidationError
+from app.services.tls_certificates import (
+    TLSCertificateConfigurationError,
+    TLSCertificateService,
+    TLSCertificateValidationError,
+)
 
 
 class _FakeVault(TLSCertificateVault):
@@ -86,6 +92,22 @@ class _FakeEndpointVerifier(TLSCertificateEndpointVerifier):
         return self.observation
 
 
+class _MissingCapabilityProbe(TLSCertificateCapabilityProbe):
+    def check(self) -> tuple[TLSCertificateCapabilityCheck, ...]:
+        return (
+            TLSCertificateCapabilityCheck(
+                component="secret_manager",
+                required_permissions=("secretmanager.secrets.create", "secretmanager.versions.add"),
+                granted_permissions=("secretmanager.versions.add",),
+            ),
+            TLSCertificateCapabilityCheck(
+                component="compute_ssl_certificates",
+                required_permissions=("compute.sslCertificates.create", "compute.sslCertificates.get"),
+                granted_permissions=("compute.sslCertificates.get",),
+            ),
+        )
+
+
 def _seed_site(db_session: Session) -> tuple[Business, SEOSite]:
     business = Business(
         id="11111111-1111-1111-1111-111111111111",
@@ -99,6 +121,7 @@ def _seed_site(db_session: Session) -> tuple[Business, SEOSite]:
         display_name="Platinum Fire",
         base_url="https://www.platfire.com",
         normalized_domain="www.platfire.com",
+        preview_slug="platfire",
         is_active=True,
         is_primary=True,
     )
@@ -173,6 +196,66 @@ def test_generate_vaults_publishes_and_selects_self_signed_preview_certificate(d
     assert status.asset.gcp_resource_name in compute.resources
     assert status.asset.vault_secret_version in vault.material_by_version
     assert not hasattr(status.asset, "private_key_pem")
+    db_session.refresh(site)
+    assert site.preview_slug_locked_at is not None
+
+
+def test_generate_stops_before_key_creation_when_capabilities_are_missing(db_session: Session) -> None:
+    business, site = _seed_site(db_session)
+    vault = _FakeVault()
+    compute = _FakeComputeClient()
+    service = TLSCertificateService(
+        session=db_session,
+        site_repository=SEOSiteRepository(db_session),
+        certificate_repository=TLSCertificateRepository(db_session),
+        vault=vault,
+        compute_client=compute,
+        endpoint_verifier=_FakeEndpointVerifier(),
+        gcp_project_id="mbsrn-prod",
+        capability_probe=_MissingCapabilityProbe(),
+    )
+
+    capability_status = service.get_capabilities()
+    assert capability_status.ready is False
+    assert capability_status.reason_code == "tls_permissions_missing"
+    with pytest.raises(TLSCertificateConfigurationError) as error:
+        service.generate_for_site(
+            business_id=business.id,
+            site_id=site.id,
+            principal_id="principal-1",
+        )
+
+    assert error.value.missing_permissions == (
+        "secretmanager.secrets.create",
+        "compute.sslCertificates.create",
+    )
+    assert vault.material_by_version == {}
+    assert compute.resources == {}
+    db_session.refresh(site)
+    assert site.preview_slug_locked_at is None
+
+
+def test_ensure_reuses_published_certificate_without_generating_another(db_session: Session) -> None:
+    business, site = _seed_site(db_session)
+    service, vault, compute, _ = _service(db_session)
+    first = service.generate_for_site(
+        business_id=business.id,
+        site_id=site.id,
+        principal_id="principal-1",
+    )
+    first_asset_id = first.asset.id if first.asset is not None else None
+
+    ensured = service.ensure_for_site(
+        business_id=business.id,
+        site_id=site.id,
+        principal_id="principal-1",
+    )
+
+    assert ensured.asset is not None
+    assert ensured.asset.id == first_asset_id
+    assert len(vault.material_by_version) == 1
+    assert len(compute.resources) == 1
+    assert len(TLSCertificateRepository(db_session).list_assets_for_business(business.id)) == 1
 
 
 def test_import_rejects_private_key_that_does_not_match_certificate(db_session: Session) -> None:
@@ -191,6 +274,8 @@ def test_import_rejects_private_key_that_does_not_match_certificate(db_session: 
         )
 
     assert vault.material_by_version == {}
+    db_session.refresh(site)
+    assert site.preview_slug_locked_at is None
 
 
 def test_adopt_existing_self_managed_certificate_without_private_key(db_session: Session) -> None:
@@ -220,6 +305,31 @@ def test_adopt_existing_self_managed_certificate_without_private_key(db_session:
     assert status.vaulted is False
     assert status.published is True
     assert vault.material_by_version == {}
+
+
+def test_invalid_adopt_does_not_lock_preview_identity(db_session: Session) -> None:
+    business, site = _seed_site(db_session)
+    service, _, compute, _ = _service(db_session)
+    material = _self_signed_material("platfire.site.mbsrn.com")
+    compute.resources["managed-certificate"] = ComputeSSLCertificateResource(
+        name="managed-certificate",
+        certificate_type="MANAGED",
+        certificate_pem=material.certificate_pem,
+        subject_alternative_names=("platfire.site.mbsrn.com",),
+        expire_time=None,
+        self_link=None,
+    )
+
+    with pytest.raises(TLSCertificateValidationError, match="Only existing self-managed"):
+        service.adopt_for_site(
+            business_id=business.id,
+            site_id=site.id,
+            resource_name="managed-certificate",
+            principal_id="principal-1",
+        )
+
+    db_session.refresh(site)
+    assert site.preview_slug_locked_at is None
 
 
 def test_verify_compares_served_certificate_fingerprint(db_session: Session) -> None:
@@ -295,6 +405,7 @@ def test_wildcard_certificate_can_be_reused_by_another_preview_site(db_session: 
         display_name="Second Preview",
         base_url="https://www.second-preview.com",
         normalized_domain="www.second-preview.com",
+        preview_slug="second-preview",
         is_active=True,
         is_primary=False,
     )

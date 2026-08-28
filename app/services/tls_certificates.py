@@ -16,6 +16,8 @@ from app.core.time import utc_now
 from app.integrations.tls_certificate import (
     ComputeSSLCertificateClient,
     ComputeSSLCertificateResource,
+    TLSCertificateCapabilityCheck,
+    TLSCertificateCapabilityProbe,
     TLSCertificateEndpointVerifier,
     TLSCertificateMaterial,
     TLSCertificateProviderError,
@@ -25,6 +27,7 @@ from app.models.tls_certificate import SiteTLSCertificateBinding, TLSCertificate
 from app.repositories.seo_site_repository import SEOSiteRepository
 from app.repositories.tls_certificate_repository import TLSCertificateRepository
 from app.services.auth_audit import AuthAuditService
+from app.core.preview_identity import PreviewIdentityValidationError, build_site_preview_identity
 
 
 _PREVIEW_SUFFIX = ".site.mbsrn.com"
@@ -44,7 +47,16 @@ class TLSCertificateValidationError(ValueError):
 
 
 class TLSCertificateConfigurationError(ValueError):
-    pass
+    def __init__(
+        self,
+        message: str,
+        *,
+        reason_code: str = "tls_configuration_error",
+        missing_permissions: tuple[str, ...] = (),
+    ) -> None:
+        super().__init__(message)
+        self.reason_code = reason_code
+        self.missing_permissions = missing_permissions
 
 
 @dataclass(frozen=True)
@@ -73,6 +85,15 @@ class SiteTLSCertificateStatus:
     serving_state: str
 
 
+@dataclass(frozen=True)
+class TLSCertificateCapabilityStatus:
+    project_id: str
+    ready: bool
+    checks: tuple[TLSCertificateCapabilityCheck, ...]
+    reason_code: str
+    message: str
+
+
 class TLSCertificateService:
     def __init__(
         self,
@@ -84,6 +105,7 @@ class TLSCertificateService:
         compute_client: ComputeSSLCertificateClient,
         endpoint_verifier: TLSCertificateEndpointVerifier,
         gcp_project_id: str,
+        capability_probe: TLSCertificateCapabilityProbe | None = None,
         auth_audit_service: AuthAuditService | None = None,
         preview_suffix: str = _PREVIEW_SUFFIX,
         secret_prefix: str = "mbsrn-tls",
@@ -95,6 +117,7 @@ class TLSCertificateService:
         self.compute_client = compute_client
         self.endpoint_verifier = endpoint_verifier
         self.gcp_project_id = str(gcp_project_id or "").strip()
+        self.capability_probe = capability_probe
         self.auth_audit_service = auth_audit_service
         self.preview_suffix = self._normalize_preview_suffix(preview_suffix)
         self.secret_prefix = self._normalize_secret_prefix(secret_prefix)
@@ -114,6 +137,46 @@ class TLSCertificateService:
             for asset in assets
             if self._hostname_is_covered(hostname, tuple(asset.san_dns_names_json or []))
         ]
+
+    def get_capabilities(self) -> TLSCertificateCapabilityStatus:
+        if not self.gcp_project_id:
+            return TLSCertificateCapabilityStatus(
+                project_id="",
+                ready=False,
+                checks=(),
+                reason_code="tls_gcp_project_missing",
+                message="The Google Cloud project for TLS certificates is not configured.",
+            )
+        if self.capability_probe is None:
+            return TLSCertificateCapabilityStatus(
+                project_id=self.gcp_project_id,
+                ready=False,
+                checks=(),
+                reason_code="tls_capability_probe_unavailable",
+                message="TLS certificate capability checks are unavailable in this runtime.",
+            )
+        try:
+            checks = self.capability_probe.check()
+        except TLSCertificateProviderError as exc:
+            return TLSCertificateCapabilityStatus(
+                project_id=self.gcp_project_id,
+                ready=False,
+                checks=(),
+                reason_code=exc.code,
+                message=exc.safe_message,
+            )
+        ready = bool(checks) and all(check.ready for check in checks)
+        return TLSCertificateCapabilityStatus(
+            project_id=self.gcp_project_id,
+            ready=ready,
+            checks=checks,
+            reason_code="tls_capabilities_ready" if ready else "tls_permissions_missing",
+            message=(
+                "Certificate vault and publication permissions are ready."
+                if ready
+                else "The API runtime identity is missing certificate vault or publication permissions."
+            ),
+        )
 
     def get_site_status(self, *, business_id: str, site_id: str) -> SiteTLSCertificateStatus:
         hostname = self._hostname_for_site(business_id=business_id, site_id=site_id)
@@ -141,6 +204,7 @@ class TLSCertificateService:
         key_algorithm: str = "rsa_2048",
     ) -> SiteTLSCertificateStatus:
         hostname = self._hostname_for_site(business_id=business_id, site_id=site_id)
+        self._require_write_capabilities()
         bounded_validity_days = max(1, min(int(validity_days), 397))
         normalized_algorithm = str(key_algorithm or "rsa_2048").strip().lower()
         if normalized_algorithm == "rsa_2048":
@@ -189,6 +253,8 @@ class TLSCertificateService:
                 encryption_algorithm=serialization.NoEncryption(),
             ).decode("ascii"),
         )
+        self._parse_certificate_and_key(material, hostname=hostname)
+        self._hostname_for_site(business_id=business_id, site_id=site_id, lock=True)
         asset = self._vault_publish_and_bind(
             business_id=business_id,
             site_id=site_id,
@@ -208,6 +274,62 @@ class TLSCertificateService:
         self.session.commit()
         return self.get_site_status(business_id=business_id, site_id=site_id)
 
+    def ensure_for_site(
+        self,
+        *,
+        business_id: str,
+        site_id: str,
+        principal_id: str | None,
+        display_name: str | None = None,
+        validity_days: int = 90,
+        key_algorithm: str = "rsa_2048",
+        minimum_validity_days: int = 14,
+    ) -> SiteTLSCertificateStatus:
+        hostname = self._hostname_for_site(business_id=business_id, site_id=site_id)
+        minimum_expiry = datetime.now(timezone.utc) + timedelta(days=max(0, int(minimum_validity_days)))
+        active_binding = self.certificate_repository.get_active_binding(business_id, site_id)
+        candidate_assets: list[TLSCertificateAsset] = []
+        if active_binding is not None:
+            candidate_assets.append(active_binding.certificate_asset)
+        for asset in self.certificate_repository.list_assets_for_business(business_id):
+            if all(existing.id != asset.id for existing in candidate_assets):
+                candidate_assets.append(asset)
+        for asset in candidate_assets:
+            not_valid_after = asset.not_valid_after
+            if not_valid_after.tzinfo is None:
+                not_valid_after = not_valid_after.replace(tzinfo=timezone.utc)
+            if (
+                asset.status != "published"
+                or not asset.gcp_resource_name
+                or not_valid_after <= minimum_expiry
+                or not self._hostname_is_covered(hostname, tuple(asset.san_dns_names_json or []))
+            ):
+                continue
+            try:
+                resource = self.compute_client.get(resource_name=asset.gcp_resource_name)
+            except TLSCertificateProviderError as exc:
+                raise TLSCertificateConfigurationError(exc.safe_message, reason_code=exc.code) from exc
+            if resource is None or resource.certificate_type != "SELF_MANAGED":
+                continue
+            self._hostname_for_site(business_id=business_id, site_id=site_id, lock=True)
+            if active_binding is None or active_binding.certificate_asset_id != asset.id:
+                self._activate_binding(
+                    business_id=business_id,
+                    site_id=site_id,
+                    asset=asset,
+                    principal_id=principal_id,
+                )
+                self.session.commit()
+            return self.get_site_status(business_id=business_id, site_id=site_id)
+        return self.generate_for_site(
+            business_id=business_id,
+            site_id=site_id,
+            principal_id=principal_id,
+            display_name=display_name,
+            validity_days=validity_days,
+            key_algorithm=key_algorithm,
+        )
+
     def import_for_site(
         self,
         *,
@@ -219,10 +341,13 @@ class TLSCertificateService:
         display_name: str | None = None,
     ) -> SiteTLSCertificateStatus:
         hostname = self._hostname_for_site(business_id=business_id, site_id=site_id)
+        self._require_write_capabilities()
         material = TLSCertificateMaterial(
             certificate_pem=str(certificate_pem or ""),
             private_key_pem=str(private_key_pem or ""),
         )
+        self._parse_certificate_and_key(material, hostname=hostname)
+        self._hostname_for_site(business_id=business_id, site_id=site_id, lock=True)
         asset = self._vault_publish_and_bind(
             business_id=business_id,
             site_id=site_id,
@@ -256,7 +381,7 @@ class TLSCertificateService:
         try:
             resource = self.compute_client.get(resource_name=normalized_resource_name)
         except TLSCertificateProviderError as exc:
-            raise TLSCertificateConfigurationError(exc.safe_message) from exc
+            raise TLSCertificateConfigurationError(exc.safe_message, reason_code=exc.code) from exc
         if resource is None:
             raise TLSCertificateNotFoundError("The requested Google Cloud SSL certificate resource was not found.")
         if resource.certificate_type != "SELF_MANAGED":
@@ -264,6 +389,7 @@ class TLSCertificateService:
         if not resource.certificate_pem:
             raise TLSCertificateValidationError("The existing SSL certificate metadata is unavailable.")
         parsed = self._parse_certificate(resource.certificate_pem, hostname=hostname, require_self_signed=True)
+        self._hostname_for_site(business_id=business_id, site_id=site_id, lock=True)
         asset = self.certificate_repository.get_asset_by_fingerprint(business_id, parsed.fingerprint_sha256)
         if asset is None:
             asset = self._new_asset(
@@ -317,6 +443,7 @@ class TLSCertificateService:
         if asset.status != "published" or not asset.gcp_resource_name:
             raise TLSCertificateValidationError("The TLS certificate must be published before it can be selected.")
         self._ensure_hostname_covered(hostname, tuple(asset.san_dns_names_json or []))
+        self._hostname_for_site(business_id=business_id, site_id=site_id, lock=True)
         self._activate_binding(
             business_id=business_id,
             site_id=site_id,
@@ -412,7 +539,7 @@ class TLSCertificateService:
                 )
             except TLSCertificateProviderError as exc:
                 self._mark_failed(asset, exc)
-                raise TLSCertificateConfigurationError(exc.safe_message) from exc
+                raise TLSCertificateConfigurationError(exc.safe_message, reason_code=exc.code) from exc
             asset.custody = "vaulted"
             asset.vault_secret_name = secret_id
             asset.vault_secret_version = version_name
@@ -431,7 +558,7 @@ class TLSCertificateService:
             self._verify_compute_resource(resource, expected_fingerprint=parsed.fingerprint_sha256)
         except TLSCertificateProviderError as exc:
             self._mark_failed(asset, exc)
-            raise TLSCertificateConfigurationError(exc.safe_message) from exc
+            raise TLSCertificateConfigurationError(exc.safe_message, reason_code=exc.code) from exc
         asset.gcp_resource_name = resource_name
         asset.status = "published"
         asset.failure_reason_code = None
@@ -511,21 +638,38 @@ class TLSCertificateService:
         self.certificate_repository.save_asset(asset)
         self.session.commit()
 
-    def _hostname_for_site(self, *, business_id: str, site_id: str) -> str:
+    def _require_write_capabilities(self) -> None:
+        if self.capability_probe is None:
+            return
+        status = self.get_capabilities()
+        if status.ready:
+            return
+        missing_permissions = tuple(
+            permission
+            for check in status.checks
+            for permission in check.missing_permissions
+        )
+        raise TLSCertificateConfigurationError(
+            status.message,
+            reason_code=status.reason_code,
+            missing_permissions=missing_permissions,
+        )
+
+    def _hostname_for_site(self, *, business_id: str, site_id: str, lock: bool = False) -> str:
         site = self.site_repository.get_for_business(business_id, site_id)
         if site is None:
             raise TLSCertificateNotFoundError("Site not found.")
-        hostname = f"{self._site_hostname_label(site.normalized_domain)}{self.preview_suffix}"
+        try:
+            identity = build_site_preview_identity(site.preview_slug)
+        except PreviewIdentityValidationError as exc:
+            raise TLSCertificateValidationError(str(exc)) from exc
+        if lock and site.preview_slug_locked_at is None:
+            site.preview_slug_locked_at = utc_now()
+            self.site_repository.save(site)
+            self.session.commit()
+            self.session.refresh(site)
+        hostname = identity.hostname
         return self._validate_preview_hostname(hostname)
-
-    @staticmethod
-    def _site_hostname_label(normalized_domain: str) -> str:
-        normalized = str(normalized_domain or "").strip().lower().removeprefix("www.")
-        candidate = normalized.split(".", 1)[0]
-        candidate = re.sub(r"[^a-z0-9-]+", "-", candidate).strip("-")
-        if not candidate:
-            raise TLSCertificateValidationError("A preview hostname could not be derived for this site.")
-        return candidate[:63].rstrip("-")
 
     def _validate_preview_hostname(self, hostname: str) -> str:
         normalized = str(hostname or "").strip().lower().rstrip(".")

@@ -19,7 +19,7 @@ jest.mock("../../components/useOperatorContext", () => ({
 }));
 
 jest.mock("../../components/MigrationWorkspacePanel", () => ({
-  MigrationWorkspacePanel: (props: { token: string; businessId: string; siteId: string }) => {
+  MigrationWorkspacePanel: (props: { token: string; businessId: string; siteId: string; isAdmin?: boolean }) => {
     mockMigrationPanel(props);
     return <div data-testid="migration-workspace-panel">Migration workspace panel</div>;
   },
@@ -66,6 +66,7 @@ describe("site migration workflow page", () => {
       token: "token-1",
       businessId: "biz-1",
       siteId: "site-1",
+      isAdmin: false,
     });
     expect(screen.getByRole("link", { name: "Back to Site Workspace" })).toHaveAttribute("href", "/sites/site-1");
   });
@@ -106,4 +107,3 @@ describe("site migration workflow page", () => {
     expect(screen.queryByTestId("migration-workspace-panel")).not.toBeInTheDocument();
   });
 });
-

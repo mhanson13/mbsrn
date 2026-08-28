@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "./AuthProvider";
 import { fetchSites } from "../lib/api/client";
 import { normalizeError } from "../lib/errors";
-import type { SEOSite } from "../lib/api/types";
+import type { PrincipalRole, SEOSite } from "../lib/api/types";
 
 const STORAGE_SELECTED_SITE_PREFIX = "mbsrn.operator.selected_site_id";
 const LEGACY_STORAGE_SELECTED_SITE_PREFIX = "workboots.operator.selected_site_id";
@@ -18,6 +18,7 @@ interface OperatorContextResult {
   scopeWarning?: string | null;
   token: string;
   businessId: string;
+  principalRole: PrincipalRole | null;
   sites: SEOSite[];
   selectedSiteId: string | null;
   setSelectedSiteId: (siteId: string) => void;
@@ -221,6 +222,7 @@ export function useOperatorContext(): OperatorContextResult {
     scopeWarning,
     token: token || "",
     businessId: principal?.business_id || "",
+    principalRole: principal?.role || null,
     sites,
     selectedSiteId,
     setSelectedSiteId,

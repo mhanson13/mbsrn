@@ -29,6 +29,10 @@ class SEOSiteRepository:
         )
         return self.session.scalar(stmt)
 
+    def get_by_preview_slug(self, preview_slug: str) -> SEOSite | None:
+        stmt: Select[tuple[SEOSite]] = select(SEOSite).where(SEOSite.preview_slug == preview_slug)
+        return self.session.scalar(stmt)
+
     def list_for_business(self, business_id: str) -> list[SEOSite]:
         stmt: Select[tuple[SEOSite]] = (
             select(SEOSite)

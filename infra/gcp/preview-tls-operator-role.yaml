@@ -1,0 +1,9 @@
+title: MBSRN Preview TLS Operator
+description: Vaults and publishes self-managed TLS certificates for site.mbsrn.com previews.
+stage: GA
+includedPermissions:
+  - compute.globalOperations.get
+  - compute.sslCertificates.create
+  - compute.sslCertificates.get
+  - secretmanager.secrets.create
+  - secretmanager.versions.add

@@ -6,6 +6,7 @@ from app.models.lead import Lead, LeadSource, LeadStatus
 from app.models.lead_event import ActorType, LeadEvent, LeadEventType
 from app.models.principal import Principal, PrincipalRole
 from app.models.principal_identity import PrincipalIdentity
+from app.models.preview_release import PreviewRelease, PreviewReleaseGate, PreviewReleaseOperation
 from app.models.provider_connection import ProviderConnection
 from app.models.provider_oauth_state import ProviderOAuthState
 from app.models.seo_audit_finding import SEOAuditFinding
@@ -51,6 +52,9 @@ __all__ = [
     "Principal",
     "PrincipalIdentity",
     "PrincipalRole",
+    "PreviewRelease",
+    "PreviewReleaseGate",
+    "PreviewReleaseOperation",
     "ProviderConnection",
     "ProviderOAuthState",
     "SEOAuditFinding",

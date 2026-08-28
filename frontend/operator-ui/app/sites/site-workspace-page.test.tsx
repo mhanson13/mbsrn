@@ -31,6 +31,9 @@ import type {
   MigrationArtifactVersionListResponse,
   MigrationWorkspace,
   MigrationWorkspaceSummary,
+  PreviewRelease,
+  PreviewReleaseListResponse,
+  PreviewDiagnosticBundle,
   RecommendationAnalysisFreshness,
   Recommendation,
   RecommendationListResponse,
@@ -52,6 +55,7 @@ type OperatorContextMockValue = {
   error: string | null;
   token: string;
   businessId: string;
+  principalRole?: "admin" | "operator" | null;
   sites: SEOSite[];
   selectedSiteId: string | null;
   setSelectedSiteId: jest.Mock;
@@ -118,6 +122,7 @@ const mockUpsertMigrationWorkspace = jest.fn<Promise<MigrationWorkspace>, unknow
 const mockFetchMigrationWorkspaceSummary = jest.fn<Promise<MigrationWorkspaceSummary>, unknown[]>();
 const mockFetchMigrationArtifactVersions = jest.fn<Promise<MigrationArtifactVersionListResponse>, unknown[]>();
 const mockFetchMigrationArtifactFilePreview = jest.fn<Promise<MigrationArtifactFilePreview>, unknown[]>();
+const mockFetchMigrationArtifactFileBlob = jest.fn<Promise<Blob>, unknown[]>();
 const mockIngestMigrationSource = jest.fn<Promise<MigrationWorkspace>, unknown[]>();
 const mockUpdateMigrationRequirements = jest.fn<Promise<MigrationWorkspace>, unknown[]>();
 const mockSuggestMigrationRequirementField = jest.fn<Promise<Record<string, unknown>>, unknown[]>();
@@ -127,6 +132,10 @@ const mockUpdateMigrationDeployConfig = jest.fn<Promise<MigrationWorkspace>, unk
 const mockUpdateMigrationAnalyticsConfig = jest.fn<Promise<MigrationWorkspace>, unknown[]>();
 const mockDeleteMigrationArtifactVersion = jest.fn<Promise<MigrationArtifactDeleteActionResponse>, unknown[]>();
 const mockApproveMigrationArtifactVersion = jest.fn<Promise<MigrationArtifactVersion>, unknown[]>();
+const mockApproveAndCreatePreviewRelease = jest.fn<Promise<PreviewRelease>, unknown[]>();
+const mockAdvancePreviewRelease = jest.fn<Promise<PreviewRelease>, unknown[]>();
+const mockFetchPreviewReleases = jest.fn<Promise<PreviewReleaseListResponse>, unknown[]>();
+const mockCollectPreviewDiagnostics = jest.fn<Promise<PreviewDiagnosticBundle>, unknown[]>();
 const mockPublishMigrationArtifactVersion = jest.fn<Promise<MigrationPublishActionResponse>, unknown[]>();
 const mockAdoptMigrationPublishRepository = jest.fn<Promise<MigrationRepositoryAdoptActionResponse>, unknown[]>();
 const mockDeployMigrationArtifactVersion = jest.fn<Promise<MigrationDeployActionResponse>, unknown[]>();
@@ -142,6 +151,7 @@ const mockFetchMigrationDeployHistory = jest.fn<Promise<MigrationHistoryListResp
 const mockGenerateMigrationDraftArtifacts = jest.fn<Promise<MigrationArtifactVersion>, unknown[]>();
 const mockFetchMigrationDraftReadiness = jest.fn<Promise<MigrationDraftReadinessPreflight>, unknown[]>();
 const mockFetchMigrationMediaAssets = jest.fn<Promise<Record<string, unknown>>, unknown[]>();
+const mockFetchMigrationMediaPreviewBlob = jest.fn<Promise<Blob>, unknown[]>();
 const mockUploadMigrationMediaAsset = jest.fn<Promise<Record<string, unknown>>, unknown[]>();
 const mockImportMigrationDiscoveredMediaAssets = jest.fn<Promise<Record<string, unknown>>, unknown[]>();
 const mockUpdateMigrationMediaAsset = jest.fn<Promise<Record<string, unknown>>, unknown[]>();
@@ -202,6 +212,7 @@ jest.mock("../../lib/api/client", () => {
     fetchMigrationWorkspaceSummary: (...args: unknown[]) => mockFetchMigrationWorkspaceSummary(...args),
     fetchMigrationArtifactVersions: (...args: unknown[]) => mockFetchMigrationArtifactVersions(...args),
     fetchMigrationArtifactFilePreview: (...args: unknown[]) => mockFetchMigrationArtifactFilePreview(...args),
+    fetchMigrationArtifactFileBlob: (...args: unknown[]) => mockFetchMigrationArtifactFileBlob(...args),
     ingestMigrationSource: (...args: unknown[]) => mockIngestMigrationSource(...args),
     updateMigrationRequirements: (...args: unknown[]) => mockUpdateMigrationRequirements(...args),
     suggestMigrationRequirementField: (...args: unknown[]) => mockSuggestMigrationRequirementField(...args),
@@ -211,6 +222,10 @@ jest.mock("../../lib/api/client", () => {
     updateMigrationAnalyticsConfig: (...args: unknown[]) => mockUpdateMigrationAnalyticsConfig(...args),
     deleteMigrationArtifactVersion: (...args: unknown[]) => mockDeleteMigrationArtifactVersion(...args),
     approveMigrationArtifactVersion: (...args: unknown[]) => mockApproveMigrationArtifactVersion(...args),
+    approveAndCreatePreviewRelease: (...args: unknown[]) => mockApproveAndCreatePreviewRelease(...args),
+    advancePreviewRelease: (...args: unknown[]) => mockAdvancePreviewRelease(...args),
+    fetchPreviewReleases: (...args: unknown[]) => mockFetchPreviewReleases(...args),
+    collectPreviewDiagnostics: (...args: unknown[]) => mockCollectPreviewDiagnostics(...args),
     publishMigrationArtifactVersion: (...args: unknown[]) => mockPublishMigrationArtifactVersion(...args),
     adoptMigrationPublishRepository: (...args: unknown[]) => mockAdoptMigrationPublishRepository(...args),
     deployMigrationArtifactVersion: (...args: unknown[]) => mockDeployMigrationArtifactVersion(...args),
@@ -226,6 +241,7 @@ jest.mock("../../lib/api/client", () => {
     generateMigrationDraftArtifacts: (...args: unknown[]) => mockGenerateMigrationDraftArtifacts(...args),
     fetchMigrationDraftReadiness: (...args: unknown[]) => mockFetchMigrationDraftReadiness(...args),
     fetchMigrationMediaAssets: (...args: unknown[]) => mockFetchMigrationMediaAssets(...args),
+    fetchMigrationMediaPreviewBlob: (...args: unknown[]) => mockFetchMigrationMediaPreviewBlob(...args),
     uploadMigrationMediaAsset: (...args: unknown[]) => mockUploadMigrationMediaAsset(...args),
     importMigrationDiscoveredMediaAssets: (...args: unknown[]) => mockImportMigrationDiscoveredMediaAssets(...args),
     updateMigrationMediaAsset: (...args: unknown[]) => mockUpdateMigrationMediaAsset(...args),
@@ -678,6 +694,91 @@ describe("site workspace modernized structure", () => {
 });
 
 describe("site migration workflow route", () => {
+  it("creates an idempotent preview release from the selected draft and keeps manual controls collapsed", async () => {
+    const user = userEvent.setup();
+    const release = buildPreviewRelease();
+    mockFetchPreviewReleases
+      .mockResolvedValueOnce({ items: [], total: 0 })
+      .mockResolvedValue({ items: [release], total: 1 });
+    mockApproveAndCreatePreviewRelease.mockResolvedValueOnce(release);
+
+    render(<SiteMigrationWorkflowPage />);
+
+    const releaseSection = await screen.findByTestId("migration-preview-release-section");
+    const createButton = within(releaseSection).getByRole("button", { name: "Approve & Create Preview" });
+    expect(createButton).toBeEnabled();
+    expect(screen.getByTestId("migration-manual-publish-deploy-controls")).not.toHaveAttribute("open");
+
+    await user.click(createButton);
+
+    await waitFor(() =>
+      expect(mockApproveAndCreatePreviewRelease).toHaveBeenCalledWith(
+        "token-1",
+        "biz-1",
+        "site-1",
+        "migration-artifact-1",
+      ),
+    );
+    expect(await screen.findByText("Preview hostname: example-site.site.mbsrn.com")).toBeInTheDocument();
+    expect(screen.getByTestId("migration-preview-release-gates")).toBeInTheDocument();
+  });
+
+  it("shows concise action-required release guidance without exposing a broken advance action", async () => {
+    const release = buildPreviewRelease({
+      status: "action_required",
+      operation: {
+        ...buildPreviewRelease().operation,
+        status: "action_required",
+        active_gate: "certificate",
+        support_id: "support-123",
+      },
+      gates: buildPreviewRelease().gates.map((gate) =>
+        gate.name === "certificate"
+          ? {
+              ...gate,
+              status: "action_required",
+              reason_code: "release_certificate_changed",
+              message: "The selected certificate changed.",
+              next_action: "Restore the selected certificate binding or create a new preview release.",
+            }
+          : gate,
+      ),
+    });
+    mockFetchPreviewReleases.mockResolvedValueOnce({ items: [release], total: 1 });
+
+    render(<SiteMigrationWorkflowPage />);
+
+    const releaseSection = await screen.findByTestId("migration-preview-release-section");
+    expect(within(releaseSection).getByText(/Restore the selected certificate binding/)).toBeInTheDocument();
+    expect(within(releaseSection).getByText("Support ID: support-123")).toBeInTheDocument();
+    expect(within(releaseSection).getByTestId("migration-advance-preview-release-button")).toBeDisabled();
+  });
+
+  it("shows explicit sanitized debug collection only to administrators", async () => {
+    const user = userEvent.setup();
+    mockUseOperatorContext.mockReturnValue(baseContext({ principalRole: "admin" }));
+
+    render(<SiteMigrationWorkflowPage />);
+
+    const debugPanel = await screen.findByTestId("migration-collect-debug-output");
+    await user.click(within(debugPanel).getByRole("button", { name: "Collect Debug Output" }));
+
+    await waitFor(() =>
+      expect(mockCollectPreviewDiagnostics).toHaveBeenCalledWith("token-1", "biz-1", "site-1", null),
+    );
+    expect(await screen.findByText(/Sanitized diagnostic bundle collected/)).toHaveTextContent("support-1");
+    expect(within(debugPanel).getByText(/View sanitized bundle/)).toBeInTheDocument();
+  });
+
+  it("does not show diagnostic collection controls to operators", async () => {
+    mockUseOperatorContext.mockReturnValue(baseContext({ principalRole: "operator" }));
+
+    render(<SiteMigrationWorkflowPage />);
+
+    await screen.findByTestId("migration-preview-release-section");
+    expect(screen.queryByTestId("migration-collect-debug-output")).not.toBeInTheDocument();
+  });
+
   it("supports deleting an eligible selected draft artifact", async () => {
     const user = userEvent.setup();
     const confirmSpy = jest.spyOn(window, "confirm").mockReturnValue(true);
@@ -3025,14 +3126,17 @@ describe("site migration workflow route", () => {
     const previewFrame = await screen.findByTestId("migration-file-preview-iframe");
     expect(previewFrame).toHaveAttribute("srcDoc", expect.stringContaining("Artifact One Home"));
     expect(previewFrame).toHaveAttribute("srcDoc", expect.stringContaining("data-preview-link-blocked=\"true\""));
-    expect(previewFrame).toHaveAttribute(
-      "srcDoc",
-      expect.stringContaining(
-        "/api/businesses/biz-1/seo/sites/site-1/migration/artifact-versions/artifact-preview-1/files/assets/images/hero.png",
-      ),
+    expect(mockFetchMigrationArtifactFileBlob).toHaveBeenCalledWith(
+      "token-1",
+      "biz-1",
+      "site-1",
+      "artifact-preview-1",
+      "assets/images/hero.png",
     );
+    expect(previewFrame).toHaveAttribute("srcDoc", expect.stringContaining("data:image/png;base64,"));
+    expect(previewFrame.getAttribute("srcDoc")).not.toContain("/api/businesses/");
     expect(screen.getByTestId("migration-draft-preview-auth-guidance")).toHaveTextContent(
-      "Draft preview route requires operator session context.",
+      "Draft images are loaded through authenticated API requests.",
     );
 
     const previewRail = screen.getByTestId("migration-file-tree");
@@ -5091,8 +5195,15 @@ describe("site migration workflow route", () => {
     const mediaSection = await screen.findByTestId("migration-media-section");
     const sourceList = within(mediaSection).getByTestId("migration-media-source-list");
     const uploadedPreview = within(sourceList).getByRole("img", { name: "crew.jpg" });
-    expect(uploadedPreview.getAttribute("src")).toBe(
-      "/api/businesses/biz-1/seo/sites/site-1/migration/media/assets/uploaded-preview/preview",
+    await waitFor(() =>
+      expect(uploadedPreview.getAttribute("src")).toMatch(/^data:image\/png;base64,/),
+    );
+    expect(uploadedPreview.getAttribute("src")).not.toContain("/api/businesses/");
+    expect(mockFetchMigrationMediaPreviewBlob).toHaveBeenCalledWith(
+      "token-1",
+      "biz-1",
+      "site-1",
+      "uploaded-preview",
     );
 
     const previewImage = within(sourceList).getByRole("img", { name: "Safe hero image" });
@@ -6885,6 +6996,54 @@ function buildMigrationArtifactFilePreview(
   };
 }
 
+function buildPreviewRelease(overrides: Partial<PreviewRelease> = {}): PreviewRelease {
+  const gateNames: PreviewRelease["gates"][number]["name"][] = [
+    "source",
+    "draft_package",
+    "approval",
+    "github",
+    "certificate",
+    "dns",
+    "deployment",
+    "verification",
+  ];
+  return {
+    id: "preview-release-1",
+    artifact_version_id: "migration-artifact-1",
+    release_number: 1,
+    status: "waiting",
+    preview_slug: "example-site",
+    preview_hostname: "example-site.site.mbsrn.com",
+    preview_url: null,
+    git_commit_sha: null,
+    certificate_fingerprint_sha256: null,
+    created_at: "2026-03-21T00:20:00Z",
+    updated_at: "2026-03-21T00:20:00Z",
+    operation: {
+      id: "preview-operation-1",
+      status: "waiting",
+      active_gate: "github",
+      support_id: null,
+      failure_reason_code: null,
+      failure_message: null,
+      started_at: "2026-03-21T00:20:00Z",
+      completed_at: null,
+      updated_at: "2026-03-21T00:20:00Z",
+    },
+    gates: gateNames.map((name, index) => ({
+      name,
+      ordinal: index + 1,
+      status: index < 3 ? "ready" : "waiting",
+      reason_code: index < 3 ? null : `${name}_pending`,
+      message: index < 3 ? `${name} is ready.` : `${name} is waiting.`,
+      next_action: index < 3 ? null : `Continue ${name}.`,
+      attempt_count: 0,
+      updated_at: "2026-03-21T00:20:00Z",
+    })),
+    ...overrides,
+  };
+}
+
 function baseContext(overrides: Partial<OperatorContextMockValue> = {}): OperatorContextMockValue {
   return {
     loading: false,
@@ -7035,6 +7194,10 @@ function seedCompetitorProfileGenerationDefaults(): void {
   mockUpdateMigrationAnalyticsConfig.mockReset();
   mockDeleteMigrationArtifactVersion.mockReset();
   mockApproveMigrationArtifactVersion.mockReset();
+  mockApproveAndCreatePreviewRelease.mockReset();
+  mockAdvancePreviewRelease.mockReset();
+  mockFetchPreviewReleases.mockReset();
+  mockCollectPreviewDiagnostics.mockReset();
   mockPublishMigrationArtifactVersion.mockReset();
   mockAdoptMigrationPublishRepository.mockReset();
   mockDeployMigrationArtifactVersion.mockReset();
@@ -7142,6 +7305,22 @@ function seedCompetitorProfileGenerationDefaults(): void {
       approved_at: "2026-03-21T00:10:00Z",
     }),
   );
+  const defaultPreviewRelease = buildPreviewRelease({ artifact_version_id: defaultMigrationArtifact.id });
+  mockApproveAndCreatePreviewRelease.mockResolvedValue(defaultPreviewRelease);
+  mockAdvancePreviewRelease.mockResolvedValue(defaultPreviewRelease);
+  mockFetchPreviewReleases.mockResolvedValue({ items: [], total: 0 });
+  mockCollectPreviewDiagnostics.mockResolvedValue({
+    bundle_id: "bundle-1",
+    support_id: "support-1",
+    business_id: "biz-1",
+    site_id: "site-1",
+    release_id: null,
+    collected_at: "2026-03-21T00:20:00Z",
+    expires_at: "2026-03-28T00:20:00Z",
+    retention_days: 7,
+    payload: { workspace: { migration_status: "draft_generated" } },
+    exclusions: ["credentials and tokens", "private keys and secret payloads"],
+  });
   mockPublishMigrationArtifactVersion.mockResolvedValue({
     workspace: buildMigrationWorkspace({
       publish_status: "published",
@@ -8389,6 +8568,8 @@ beforeEach(() => {
   window.sessionStorage.clear();
   navigationState.params = { site_id: "site-1" };
   mockUseOperatorContext.mockReturnValue(baseContext());
+  mockFetchMigrationArtifactFileBlob.mockResolvedValue(new Blob(["artifact-image"], { type: "image/png" }));
+  mockFetchMigrationMediaPreviewBlob.mockResolvedValue(new Blob(["media-image"], { type: "image/png" }));
   seedCompetitorProfileGenerationDefaults();
 });
 

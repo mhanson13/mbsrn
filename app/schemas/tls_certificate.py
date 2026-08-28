@@ -54,6 +54,22 @@ class SiteTLSCertificateStatusRead(BaseModel):
     browser_trust: str = "untrusted_self_signed"
 
 
+class TLSCertificateCapabilityCheckRead(BaseModel):
+    component: str
+    ready: bool
+    required_permissions: list[str]
+    missing_permissions: list[str]
+
+
+class TLSCertificateCapabilityStatusRead(BaseModel):
+    project_id: str
+    ready: bool
+    reason_code: str
+    message: str
+    next_action: str | None = None
+    checks: list[TLSCertificateCapabilityCheckRead]
+
+
 class TLSCertificateAssetListRead(BaseModel):
     items: list[TLSCertificateAssetRead]
 

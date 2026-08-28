@@ -120,6 +120,15 @@ class Settings:
     migration_publish_committer_email: str
     migration_deploy_default_workflow_id: str
     migration_deploy_default_ref: str
+    migration_reusable_deploy_workflow_ref: str | None
+    migration_deploy_workload_identity_provider: str | None
+    migration_deploy_service_account: str | None
+    migration_media_storage_backend: str
+    migration_media_storage_root: str
+    migration_media_gcs_bucket: str | None
+    migration_media_gcs_project_id: str | None
+    migration_media_gcs_timeout_seconds: int
+    migration_media_gcs_api_base_url: str
     protected_control_plane_repository: str
     openai_api_base_url: str
     twilio_account_sid: str | None
@@ -381,6 +390,12 @@ def get_settings() -> Settings:
         split_env_name="AI_PROMPT_TEXT_RECOMMENDATIONS",
         legacy_prompt_text=legacy_prompt_text_recommendation,
     )
+    migration_media_storage_backend = os.getenv(
+        "MIGRATION_MEDIA_STORAGE_BACKEND",
+        "gcs" if env_normalized in {"production", "staging"} else "local",
+    ).strip().lower()
+    if migration_media_storage_backend not in {"local", "gcs"}:
+        raise RuntimeError("MIGRATION_MEDIA_STORAGE_BACKEND must be 'local' or 'gcs'.")
 
     return Settings(
         app_name=os.getenv("APP_NAME", "MBSRN Operator Platform"),
@@ -549,6 +564,36 @@ def get_settings() -> Settings:
             os.getenv("MIGRATION_DEPLOY_DEFAULT_WORKFLOW_ID", "deploy-www-prod.yml").strip() or "deploy-www-prod.yml"
         ),
         migration_deploy_default_ref=(os.getenv("MIGRATION_DEPLOY_DEFAULT_REF", "main").strip() or "main"),
+        migration_reusable_deploy_workflow_ref=(
+            os.getenv("MIGRATION_REUSABLE_DEPLOY_WORKFLOW_REF", "").strip() or None
+        ),
+        migration_deploy_workload_identity_provider=(
+            os.getenv("MIGRATION_DEPLOY_WORKLOAD_IDENTITY_PROVIDER", "").strip() or None
+        ),
+        migration_deploy_service_account=(
+            os.getenv("MIGRATION_DEPLOY_SERVICE_ACCOUNT", "").strip() or None
+        ),
+        migration_media_storage_backend=migration_media_storage_backend,
+        migration_media_storage_root=(
+            os.getenv("MIGRATION_MEDIA_STORAGE_ROOT", "var/migration_media").strip() or "var/migration_media"
+        ),
+        migration_media_gcs_bucket=(os.getenv("MIGRATION_MEDIA_GCS_BUCKET") or "").strip() or None,
+        migration_media_gcs_project_id=(
+            os.getenv("MIGRATION_MEDIA_GCS_PROJECT_ID")
+            or os.getenv("GCP_PROJECT_ID")
+            or os.getenv("TLS_CERTIFICATE_GCP_PROJECT_ID")
+            or ""
+        ).strip()
+        or None,
+        migration_media_gcs_timeout_seconds=_env_int(
+            "MIGRATION_MEDIA_GCS_TIMEOUT_SECONDS",
+            30,
+            min_value=1,
+        ),
+        migration_media_gcs_api_base_url=(
+            os.getenv("MIGRATION_MEDIA_GCS_API_BASE_URL", "https://storage.googleapis.com").strip()
+            or "https://storage.googleapis.com"
+        ),
         protected_control_plane_repository=_resolve_protected_control_plane_repository(),
         openai_api_base_url=os.getenv("OPENAI_API_BASE_URL", "https://api.openai.com/v1").strip(),
         twilio_account_sid=os.getenv("TWILIO_ACCOUNT_SID"),

@@ -36,6 +36,8 @@ from app.repositories.business_repository import BusinessRepository
 from app.repositories.seo_site_repository import SEOSiteRepository
 from app.schemas.seo_site import extract_primary_business_zip, normalize_primary_business_zip
 from app.schemas.seo_site import SEOSiteCreateRequest, SEOSiteUpdateRequest
+from app.core.preview_identity import PreviewIdentityValidationError, normalize_preview_slug
+from app.core.time import utc_now
 
 
 class SEOSiteNotFoundError(ValueError):
@@ -857,6 +859,8 @@ class SEOSiteService:
             business_id=business_id,
             normalized_domain=normalized.domain,
         )
+        preview_slug = self._normalize_preview_slug(payload.preview_slug)
+        self._ensure_unique_preview_slug(preview_slug=preview_slug)
 
         existing_sites = self.seo_site_repository.list_for_business(business_id)
         is_primary = payload.is_primary or len(existing_sites) == 0
@@ -891,6 +895,7 @@ class SEOSiteService:
             display_name=payload.display_name.strip(),
             base_url=normalized.url,
             normalized_domain=normalized.domain,
+            preview_slug=preview_slug,
             industry=self._clean_optional(payload.industry),
             primary_location=primary_location,
             service_areas_json=payload.service_areas,
@@ -936,6 +941,15 @@ class SEOSiteService:
             site.base_url = normalized.url
             site.normalized_domain = normalized.domain
             domain_changed = normalized.domain != original_normalized_domain
+        if "preview_slug" in changes:
+            preview_slug = self._normalize_preview_slug(changes["preview_slug"])
+            current_preview_slug = self._normalize_preview_slug(site.preview_slug)
+            if site.preview_slug_locked_at is not None and preview_slug != current_preview_slug:
+                raise SEOSiteValidationError(
+                    "preview_slug is locked because preview infrastructure has already been created"
+                )
+            self._ensure_unique_preview_slug(preview_slug=preview_slug, excluding_site_id=site.id)
+            site.preview_slug = preview_slug
         # When a site is repointed to a different domain/vendor, stale explicit
         # industry assignments from the previous site identity can contaminate
         # downstream context derivation. Clear only on real domain change unless
@@ -997,6 +1011,21 @@ class SEOSiteService:
         self.seo_site_repository.save(site)
         self._commit_with_constraint_handling()
         self.session.refresh(site)
+        return site
+
+    def lock_preview_slug_for_infrastructure(self, *, business_id: str, site_id: str) -> SEOSite:
+        self._require_business(business_id)
+        site = self.seo_site_repository.get_for_business(business_id, site_id)
+        if site is None:
+            raise SEOSiteNotFoundError("SEO site not found")
+        preview_slug = self._normalize_preview_slug(site.preview_slug)
+        if preview_slug is None:
+            raise SEOSiteValidationError("preview_slug is required before preview infrastructure is created")
+        if site.preview_slug_locked_at is None:
+            site.preview_slug_locked_at = utc_now()
+            self.seo_site_repository.save(site)
+            self._commit_with_constraint_handling()
+            self.session.refresh(site)
         return site
 
     def delete_site_permanently(
@@ -1143,6 +1172,26 @@ class SEOSiteService:
             return
         raise SEOSiteValidationError("A site for this domain already exists for the business")
 
+    @staticmethod
+    def _normalize_preview_slug(value: object) -> str | None:
+        try:
+            return normalize_preview_slug(value)
+        except PreviewIdentityValidationError as exc:
+            raise SEOSiteValidationError(str(exc)) from exc
+
+    def _ensure_unique_preview_slug(
+        self,
+        *,
+        preview_slug: str | None,
+        excluding_site_id: str | None = None,
+    ) -> None:
+        if preview_slug is None:
+            return
+        existing = self.seo_site_repository.get_by_preview_slug(preview_slug)
+        if existing is None or (excluding_site_id and existing.id == excluding_site_id):
+            return
+        raise SEOSiteValidationError("preview_slug is already assigned to another site")
+
     def _commit_with_constraint_handling(self) -> None:
         try:
             self.session.commit()
@@ -1151,6 +1200,8 @@ class SEOSiteService:
             error_text = str(exc).lower()
             if "uq_seo_sites_business_normalized_domain" in error_text:
                 raise SEOSiteValidationError("A site for this domain already exists for the business") from exc
+            if "uq_seo_sites_preview_slug" in error_text:
+                raise SEOSiteValidationError("preview_slug is already assigned to another site") from exc
             if "uq_seo_sites_one_primary_per_business" in error_text:
                 raise SEOSiteValidationError("Only one primary SEO site is allowed per business") from exc
             raise SEOSiteValidationError("SEO site update violated a database constraint") from exc

@@ -752,3 +752,74 @@ class SEOMigrationArtifactDeleteActionRead(BaseModel):
 class SEOMigrationHistoryListRead(BaseModel):
     items: list[dict[str, object]]
     total: int
+
+
+class PreviewReleaseCreateRequest(BaseModel):
+    approval_notes: str | None = Field(default=None, max_length=2000)
+    idempotency_key: str | None = Field(default=None, min_length=1, max_length=120)
+
+
+class PreviewReleaseGateRead(BaseModel):
+    name: Literal[
+        "source",
+        "draft_package",
+        "approval",
+        "github",
+        "certificate",
+        "dns",
+        "deployment",
+        "verification",
+    ]
+    ordinal: int = Field(ge=1, le=8)
+    status: Literal["waiting", "running", "ready", "action_required", "failed"]
+    reason_code: str | None = None
+    message: str
+    next_action: str | None = None
+    attempt_count: int = Field(ge=0)
+    updated_at: datetime
+
+
+class PreviewReleaseOperationRead(BaseModel):
+    id: str
+    status: Literal["waiting", "running", "ready", "action_required", "failed"]
+    active_gate: str | None = None
+    support_id: str | None = None
+    failure_reason_code: str | None = None
+    failure_message: str | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    updated_at: datetime
+
+
+class PreviewReleaseRead(BaseModel):
+    id: str
+    artifact_version_id: str
+    release_number: int = Field(ge=1)
+    status: Literal["waiting", "running", "ready", "action_required", "failed"]
+    preview_slug: str
+    preview_hostname: str
+    preview_url: str | None = None
+    git_commit_sha: str | None = None
+    certificate_fingerprint_sha256: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    operation: PreviewReleaseOperationRead
+    gates: list[PreviewReleaseGateRead]
+
+
+class PreviewReleaseListRead(BaseModel):
+    items: list[PreviewReleaseRead]
+    total: int = Field(ge=0)
+
+
+class PreviewDiagnosticBundleRead(BaseModel):
+    bundle_id: str
+    support_id: str
+    business_id: str
+    site_id: str
+    release_id: str | None = None
+    collected_at: datetime
+    expires_at: datetime
+    retention_days: int = Field(ge=1, le=30)
+    payload: dict[str, object]
+    exclusions: list[str]

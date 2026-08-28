@@ -32,6 +32,7 @@ from app.integrations.seo_migration_github_publisher import (
     _classify_rollout_blocker_hints_from_describe_outputs,
     _emit_structured_publisher_log,
     _resolve_google_credential_principal,
+    _resolve_preview_resource_slug,
     build_managed_site_static_ip_labels,
     resolve_managed_preview_endpoint_configuration,
     derive_site_kubernetes_namespace,
@@ -216,6 +217,41 @@ def _managed_repo_baseline_present_responses() -> list[_FakeHTTPResponse]:
         _FakeHTTPResponse(status=200, body=json.dumps({"sha": "readme-sha"})),
         _FakeHTTPResponse(status=200, body=json.dumps({"sha": "gitignore-sha"})),
         _FakeHTTPResponse(status=200, body=json.dumps({"sha": "license-sha"})),
+    ]
+
+
+def _atomic_publish_responses(
+    *,
+    file_count: int = 1,
+    commit_sha: str = "content-commit",
+    artifact_root: str = "",
+) -> list[_FakeHTTPResponse]:
+    paths = ["index.html"] if file_count == 1 else ["index.html", "assets/hero.png"]
+    if artifact_root:
+        paths = [f"{artifact_root}/{path}" for path in paths]
+    return [
+        _FakeHTTPResponse(status=200, body=json.dumps({"object": {"sha": "parent-commit"}})),
+        _FakeHTTPResponse(status=200, body=json.dumps({"tree": {"sha": "base-tree"}})),
+        *[
+            _FakeHTTPResponse(status=201, body=json.dumps({"sha": f"blob-{index}"}))
+            for index in range(file_count)
+        ],
+        _FakeHTTPResponse(status=201, body=json.dumps({"sha": "new-tree"})),
+        _FakeHTTPResponse(
+            status=200,
+            body=json.dumps(
+                {
+                    "sha": "new-tree",
+                    "truncated": False,
+                    "tree": [
+                        {"path": path, "type": "blob", "sha": f"blob-{index}"}
+                        for index, path in enumerate(paths)
+                    ],
+                }
+            ),
+        ),
+        _FakeHTTPResponse(status=201, body=json.dumps({"sha": commit_sha})),
+        _FakeHTTPResponse(status=200, body=json.dumps({"object": {"sha": commit_sha}})),
     ]
 
 
@@ -1306,12 +1342,7 @@ def test_publish_files_allows_existing_repo_with_matching_management_marker(monk
                 site_id="site-1",
             ),
             *_managed_repo_baseline_present_responses(),
-            _http_error(
-                "https://api.github.com/repos/mhanson13/tnmfire/contents/index.html?ref=main",
-                status_code=404,
-                message="Not Found",
-            ),
-            _FakeHTTPResponse(status=201, body=json.dumps({"commit": {"sha": "commit-1"}})),
+            *_atomic_publish_responses(commit_sha="commit-1"),
         ],
         calls,
     )
@@ -1340,6 +1371,104 @@ def test_publish_files_allows_existing_repo_with_matching_management_marker(monk
     assert result.files_published == 1
     assert result.committed_paths == ("index.html",)
     assert result.commit_shas == ("commit-1",)
+
+
+def test_publish_files_commits_text_and_binary_package_with_one_atomic_ref_update(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    payloads: list[dict[str, object] | None] = []
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _FakeHTTPResponse(status=200, body=json.dumps({"default_branch": "main"})),
+            _FakeHTTPResponse(status=200, body=json.dumps({"object": {"sha": "main-sha"}})),
+            _repo_management_marker_response(),
+            *_managed_repo_baseline_present_responses(),
+            *_atomic_publish_responses(file_count=2, commit_sha="atomic-commit", artifact_root="site"),
+        ],
+        calls,
+        payloads,
+    )
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+
+    result = publisher.publish_files(
+        target=SEOMigrationGitHubPublishTarget(
+            repo_owner="mhanson13",
+            repo_name="tnmfire",
+            branch="main",
+            artifact_root="site",
+            business_id="business-1",
+            site_id="site-1",
+        ),
+        files=[
+            SEOMigrationGitHubPublishFile(path="index.html", content="<html>ready</html>"),
+            SEOMigrationGitHubPublishFile(path="assets/hero.png", content_bytes=b"\x89PNG\r\n"),
+        ],
+        commit_message="publish exact release",
+        dry_run=False,
+    )
+
+    assert result.commit_shas == ("atomic-commit",)
+    assert result.committed_paths == ("site/index.html", "site/assets/hero.png")
+    assert sum(method == "PATCH" and "/git/refs/heads/main" in url for method, url in calls) == 1
+    assert not any("/contents/site/" in url for _, url in calls)
+    blob_payloads = [
+        payload
+        for (method, url), payload in zip(calls, payloads, strict=True)
+        if method == "POST" and url.endswith("/git/blobs")
+    ]
+    assert [payload["encoding"] for payload in blob_payloads if payload is not None] == ["base64", "base64"]
+    assert base64.b64decode(str(blob_payloads[1]["content"])) == b"\x89PNG\r\n"
+    commit_payload = next(
+        payload
+        for (method, url), payload in zip(calls, payloads, strict=True)
+        if method == "POST" and url.endswith("/git/commits")
+    )
+    assert commit_payload == {
+        "message": "publish exact release",
+        "tree": "new-tree",
+        "parents": ["parent-commit"],
+        "committer": {"name": "MBSRN Migration Bot", "email": "migration-bot@mbsrn.local"},
+    }
+
+
+def test_publish_files_does_not_create_commit_or_move_ref_when_tree_verification_fails(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    _install_urlopen_stub(
+        monkeypatch,
+        [
+            _FakeHTTPResponse(status=200, body=json.dumps({"default_branch": "main"})),
+            _FakeHTTPResponse(status=200, body=json.dumps({"object": {"sha": "main-sha"}})),
+            _repo_management_marker_response(),
+            *_managed_repo_baseline_present_responses(),
+            _FakeHTTPResponse(status=200, body=json.dumps({"object": {"sha": "parent-commit"}})),
+            _FakeHTTPResponse(status=200, body=json.dumps({"tree": {"sha": "base-tree"}})),
+            _FakeHTTPResponse(status=201, body=json.dumps({"sha": "blob-0"})),
+            _FakeHTTPResponse(status=201, body=json.dumps({"sha": "new-tree"})),
+            _FakeHTTPResponse(status=200, body=json.dumps({"sha": "new-tree", "truncated": False, "tree": []})),
+        ],
+        calls,
+    )
+    publisher = GitHubSEOMigrationPublisher(token="test-token")
+
+    with pytest.raises(SEOMigrationGitHubPublisherError) as exc_info:
+        publisher.publish_files(
+            target=SEOMigrationGitHubPublishTarget(
+                repo_owner="mhanson13",
+                repo_name="tnmfire",
+                branch="main",
+                artifact_root="",
+                business_id="business-1",
+                site_id="site-1",
+            ),
+            files=[SEOMigrationGitHubPublishFile(path="index.html", content="<html>ready</html>")],
+            commit_message="publish exact release",
+            dry_run=False,
+        )
+
+    assert exc_info.value.code == "publish_tree_verification_failed"
+    assert exc_info.value.stage == "publish_verification"
+    assert not any(method == "POST" and url.endswith("/git/commits") for method, url in calls)
+    assert not any(method == "PATCH" and "/git/refs/" in url for method, url in calls)
 
 
 def test_publish_files_reconciles_missing_repo_baseline_files_for_managed_repo(monkeypatch) -> None:
@@ -1387,12 +1516,7 @@ def test_publish_files_reconciles_missing_repo_baseline_files_for_managed_repo(m
                 message="Not Found",
             ),
             _FakeHTTPResponse(status=201, body=json.dumps({"commit": {"sha": "baseline-license"}})),
-            _http_error(
-                "https://api.github.com/repos/mhanson13/tnmfire/contents/index.html?ref=main",
-                status_code=404,
-                message="Not Found",
-            ),
-            _FakeHTTPResponse(status=201, body=json.dumps({"commit": {"sha": "content-commit"}})),
+            *_atomic_publish_responses(),
         ],
         calls,
     )
@@ -1457,12 +1581,7 @@ def test_publish_files_reconciles_only_missing_baseline_files_without_overwritin
                 message="Not Found",
             ),
             _FakeHTTPResponse(status=201, body=json.dumps({"commit": {"sha": "baseline-gitignore"}})),
-            _http_error(
-                "https://api.github.com/repos/mhanson13/tnmfire/contents/index.html?ref=main",
-                status_code=404,
-                message="Not Found",
-            ),
-            _FakeHTTPResponse(status=201, body=json.dumps({"commit": {"sha": "content-commit"}})),
+            *_atomic_publish_responses(),
         ],
         calls,
     )
@@ -1587,6 +1706,22 @@ def test_derive_site_preview_hostname_matches_namespace_slug() -> None:
     preview_hostname, source = derive_site_preview_hostname(repo_name="TnM Fire", site_id=None)
     assert preview_hostname == "tnm-fire.site.mbsrn.com"
     assert source == "repo_name"
+
+
+def test_preview_resource_slug_uses_explicit_canonical_hostname_when_repository_differs() -> None:
+    assert _resolve_preview_resource_slug(
+        repo_name="unrelated-repository",
+        preview_hostname="canonical-preview.site.mbsrn.com",
+    ) == ("canonical-preview", "preview_slug")
+
+
+def test_preview_resource_slug_rejects_non_platform_hostname() -> None:
+    with pytest.raises(SEOMigrationGitHubPublisherError) as exc_info:
+        _resolve_preview_resource_slug(
+            repo_name="repository",
+            preview_hostname="www.customer.example",
+        )
+    assert exc_info.value.code == "preview_hostname_invalid"
 
 
 def test_derive_site_preview_certificate_name_is_site_scoped_and_dns1123_safe() -> None:
@@ -1852,13 +1987,10 @@ def test_publish_files_classifies_contents_write_forbidden(monkeypatch) -> None:
             _FakeHTTPResponse(status=200, body=json.dumps({"object": {"sha": "main-sha"}})),
             _repo_management_marker_response(),
             *_managed_repo_baseline_present_responses(),
+            _FakeHTTPResponse(status=200, body=json.dumps({"object": {"sha": "parent-commit"}})),
+            _FakeHTTPResponse(status=200, body=json.dumps({"tree": {"sha": "base-tree"}})),
             _http_error(
-                "https://api.github.com/repos/mhanson13/tnmfire/contents/index.html?ref=main",
-                status_code=404,
-                message="Not Found",
-            ),
-            _http_error(
-                "https://api.github.com/repos/mhanson13/tnmfire/contents/index.html",
+                "https://api.github.com/repos/mhanson13/tnmfire/git/blobs",
                 status_code=403,
                 message="Resource not accessible by integration",
             ),
@@ -1886,6 +2018,7 @@ def test_publish_files_classifies_contents_write_forbidden(monkeypatch) -> None:
         )
     assert exc_info.value.code == "github_contents_write_not_authorized"
     assert exc_info.value.stage == "publish"
+    assert not any(method == "PATCH" and "/git/refs/" in url for method, url in calls)
 
 
 def test_publish_files_classifies_branch_uninitialized_from_lookup(monkeypatch) -> None:
@@ -1898,7 +2031,7 @@ def test_publish_files_classifies_branch_uninitialized_from_lookup(monkeypatch) 
             _repo_management_marker_response(),
             *_managed_repo_baseline_present_responses(),
             _http_error(
-                "https://api.github.com/repos/mhanson13/tnmfire/contents/index.html?ref=main",
+                "https://api.github.com/repos/mhanson13/tnmfire/git/ref/heads/main",
                 status_code=422,
                 message="Invalid request. Branch main was not found.",
             ),
@@ -1937,13 +2070,10 @@ def test_publish_files_classifies_generic_request_failure(monkeypatch) -> None:
             _FakeHTTPResponse(status=200, body=json.dumps({"object": {"sha": "main-sha"}})),
             _repo_management_marker_response(),
             *_managed_repo_baseline_present_responses(),
+            _FakeHTTPResponse(status=200, body=json.dumps({"object": {"sha": "parent-commit"}})),
+            _FakeHTTPResponse(status=200, body=json.dumps({"tree": {"sha": "base-tree"}})),
             _http_error(
-                "https://api.github.com/repos/mhanson13/tnmfire/contents/index.html?ref=main",
-                status_code=404,
-                message="Not Found",
-            ),
-            _http_error(
-                "https://api.github.com/repos/mhanson13/tnmfire/contents/index.html",
+                "https://api.github.com/repos/mhanson13/tnmfire/git/blobs",
                 status_code=422,
                 message="Validation Failed",
             ),
@@ -4526,7 +4656,7 @@ def test_ensure_managed_site_static_ip_create_payload_includes_gcp_safe_ownershi
         monkeypatch,
         [
             _http_error(
-                "https://compute.googleapis.com/compute/v1/projects/mbsrn-prod/global/addresses/site-web-preview-ip-tnmfire",
+                "https://compute.googleapis.com/compute/v1/projects/mbsrn-prod/global/addresses/site-web-preview-ip-preview",
                 status_code=404,
                 message="Not Found",
             ),
@@ -4535,7 +4665,7 @@ def test_ensure_managed_site_static_ip_create_payload_includes_gcp_safe_ownershi
                 status=200,
                 body=json.dumps(
                     {
-                        "name": "site-web-preview-ip-tnmfire",
+                        "name": "site-web-preview-ip-preview",
                         "address": "34.160.224.212",
                     }
                 ),
@@ -4563,7 +4693,7 @@ def test_ensure_managed_site_static_ip_create_payload_includes_gcp_safe_ownershi
     assert payloads == [
         None,
         {
-            "name": "site-web-preview-ip-tnmfire",
+            "name": "site-web-preview-ip-preview",
             "addressType": "EXTERNAL",
             "ipVersion": "IPV4",
             "labels": build_managed_site_static_ip_labels(

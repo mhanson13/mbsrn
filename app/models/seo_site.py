@@ -13,6 +13,7 @@ class SEOSite(Base):
     __tablename__ = "seo_sites"
     __table_args__ = (
         UniqueConstraint("business_id", "normalized_domain", name="uq_seo_sites_business_normalized_domain"),
+        UniqueConstraint("preview_slug", name="uq_seo_sites_preview_slug"),
         Index(
             "uq_seo_sites_one_primary_per_business",
             "business_id",
@@ -32,6 +33,8 @@ class SEOSite(Base):
     display_name: Mapped[str] = mapped_column(String(255), nullable=False)
     base_url: Mapped[str] = mapped_column(String(2048), nullable=False)
     normalized_domain: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    preview_slug: Mapped[str | None] = mapped_column(String(63), nullable=True, index=True)
+    preview_slug_locked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     industry: Mapped[str | None] = mapped_column(String(128), nullable=True)
     primary_location: Mapped[str | None] = mapped_column(String(255), nullable=True)
     service_areas_json: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)

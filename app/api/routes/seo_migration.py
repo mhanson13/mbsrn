@@ -8,8 +8,10 @@ from app.api.deps import (
     TenantContext,
     get_seo_analytics_service,
     get_seo_migration_service,
+    get_preview_release_service,
     get_seo_site_service,
     get_tenant_context,
+    get_tls_certificate_service,
     resolve_tenant_business_id,
 )
 from app.schemas.seo_recommendation import (
@@ -57,7 +59,14 @@ from app.schemas.seo_migration import (
     SEOMigrationWorkspaceCreateOrUpdateRequest,
     SEOMigrationWorkspaceRead,
     SEOMigrationWorkspaceSummaryRead,
+    PreviewReleaseCreateRequest,
+    PreviewReleaseGateRead,
+    PreviewReleaseListRead,
+    PreviewReleaseOperationRead,
+    PreviewReleaseRead,
+    PreviewDiagnosticBundleRead,
 )
+from app.models.principal import PrincipalRole
 from app.services.seo_analytics import SEOAnalyticsService
 from app.services.seo_migration import (
     SEOMigrationNotFoundError,
@@ -65,6 +74,15 @@ from app.services.seo_migration import (
     SEOMigrationValidationError,
 )
 from app.services.seo_sites import SEOSiteNotFoundError, SEOSiteService
+from app.services.preview_releases import (
+    PreviewReleaseNotFoundError,
+    PreviewReleaseService,
+    PreviewReleaseState,
+    PreviewReleaseValidationError,
+)
+from app.services.preview_release_execution import PreviewReleaseExecutionService
+from app.services.preview_diagnostics import PreviewDiagnosticCollectionService
+from app.services.tls_certificates import TLSCertificateService
 
 
 router = APIRouter(prefix="/api/businesses/{business_id}/seo", tags=["seo"])
@@ -83,6 +101,48 @@ _DRAFT_REASON_CODE_DEFAULT = "draft_generation_failed"
 _GA4_OUTCOME_SESSIONS_DIRECTION_THRESHOLD_PERCENT = 5.0
 _GA4_OUTCOME_ORGANIC_DIRECTION_THRESHOLD_PERCENT = 5.0
 _GA4_OUTCOME_ENGAGEMENT_DIRECTION_THRESHOLD_POINTS = 0.02
+
+
+def _to_preview_release_read(state: PreviewReleaseState) -> PreviewReleaseRead:
+    release = state.release
+    operation = state.operation
+    return PreviewReleaseRead(
+        id=release.id,
+        artifact_version_id=release.artifact_version_id,
+        release_number=release.release_number,
+        status=release.status,
+        preview_slug=release.preview_slug,
+        preview_hostname=release.preview_hostname,
+        preview_url=release.preview_url,
+        git_commit_sha=release.git_commit_sha,
+        certificate_fingerprint_sha256=release.certificate_fingerprint_sha256,
+        created_at=release.created_at,
+        updated_at=release.updated_at,
+        operation=PreviewReleaseOperationRead(
+            id=operation.id,
+            status=operation.status,
+            active_gate=operation.active_gate,
+            support_id=operation.support_id,
+            failure_reason_code=operation.failure_reason_code,
+            failure_message=operation.failure_message,
+            started_at=operation.started_at,
+            completed_at=operation.completed_at,
+            updated_at=operation.updated_at,
+        ),
+        gates=[
+            PreviewReleaseGateRead(
+                name=gate.gate_name,
+                ordinal=gate.ordinal,
+                status=gate.status,
+                reason_code=gate.reason_code,
+                message=gate.message,
+                next_action=gate.next_action,
+                attempt_count=gate.attempt_count,
+                updated_at=gate.updated_at,
+            )
+            for gate in state.gates
+        ],
+    )
 
 
 def _normalize_ga4_outcome_anchor_timestamp(value: datetime) -> datetime:
@@ -1352,6 +1412,193 @@ def approve_seo_migration_artifact_version(
     except SEOMigrationValidationError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
     return _to_artifact_read(artifact)
+
+
+@router.post(
+    "/sites/{site_id}/migration/artifact-versions/{artifact_version_id}/preview-release",
+    response_model=PreviewReleaseRead,
+)
+def approve_and_create_preview_release(
+    business_id: str,
+    site_id: str,
+    artifact_version_id: str,
+    payload: PreviewReleaseCreateRequest | None = None,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    migration_service: SEOMigrationService = Depends(get_seo_migration_service),
+    preview_release_service: PreviewReleaseService = Depends(get_preview_release_service),
+) -> PreviewReleaseRead:
+    scoped_business_id = resolve_tenant_business_id(
+        tenant_context=tenant_context,
+        requested_business_id=business_id,
+    )
+    normalized_payload = payload or PreviewReleaseCreateRequest()
+    try:
+        artifact = migration_service.get_artifact_version(
+            business_id=scoped_business_id,
+            site_id=site_id,
+            artifact_version_id=artifact_version_id,
+        )
+        if artifact.approval_status != "approved":
+            migration_service.approve_artifact_version(
+                business_id=scoped_business_id,
+                site_id=site_id,
+                artifact_version_id=artifact_version_id,
+                approval_notes=normalized_payload.approval_notes,
+                principal_id=tenant_context.principal_id,
+            )
+        release_state = preview_release_service.create_or_resume(
+            business_id=scoped_business_id,
+            site_id=site_id,
+            artifact_version_id=artifact_version_id,
+            idempotency_key=normalized_payload.idempotency_key,
+            principal_id=tenant_context.principal_id,
+        )
+    except (SEOMigrationNotFoundError, PreviewReleaseNotFoundError) as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except (SEOMigrationValidationError, PreviewReleaseValidationError) as exc:
+        reason_code = getattr(exc, "reason_code", None) or getattr(exc, "error_code", None)
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={"reason_code": reason_code or "preview_release_invalid", "message": str(exc)},
+        ) from exc
+    return _to_preview_release_read(release_state)
+
+
+@router.get("/sites/{site_id}/migration/preview-releases", response_model=PreviewReleaseListRead)
+def list_preview_releases(
+    business_id: str,
+    site_id: str,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    preview_release_service: PreviewReleaseService = Depends(get_preview_release_service),
+) -> PreviewReleaseListRead:
+    scoped_business_id = resolve_tenant_business_id(
+        tenant_context=tenant_context,
+        requested_business_id=business_id,
+    )
+    states = preview_release_service.list(business_id=scoped_business_id, site_id=site_id)
+    return PreviewReleaseListRead(items=[_to_preview_release_read(item) for item in states], total=len(states))
+
+
+@router.get("/sites/{site_id}/migration/preview-releases/{release_id}", response_model=PreviewReleaseRead)
+def get_preview_release(
+    business_id: str,
+    site_id: str,
+    release_id: str,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    preview_release_service: PreviewReleaseService = Depends(get_preview_release_service),
+) -> PreviewReleaseRead:
+    scoped_business_id = resolve_tenant_business_id(
+        tenant_context=tenant_context,
+        requested_business_id=business_id,
+    )
+    try:
+        state = preview_release_service.get(
+            business_id=scoped_business_id,
+            site_id=site_id,
+            release_id=release_id,
+        )
+    except PreviewReleaseNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return _to_preview_release_read(state)
+
+
+@router.post("/sites/{site_id}/migration/preview-releases/{release_id}/reconcile", response_model=PreviewReleaseRead)
+def reconcile_preview_release(
+    business_id: str,
+    site_id: str,
+    release_id: str,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    preview_release_service: PreviewReleaseService = Depends(get_preview_release_service),
+) -> PreviewReleaseRead:
+    scoped_business_id = resolve_tenant_business_id(
+        tenant_context=tenant_context,
+        requested_business_id=business_id,
+    )
+    try:
+        state = preview_release_service.reconcile(
+            business_id=scoped_business_id,
+            site_id=site_id,
+            release_id=release_id,
+        )
+    except PreviewReleaseNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return _to_preview_release_read(state)
+
+
+@router.post("/sites/{site_id}/migration/preview-releases/{release_id}/advance", response_model=PreviewReleaseRead)
+def advance_preview_release(
+    business_id: str,
+    site_id: str,
+    release_id: str,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    migration_service: SEOMigrationService = Depends(get_seo_migration_service),
+    preview_release_service: PreviewReleaseService = Depends(get_preview_release_service),
+    certificate_service: TLSCertificateService = Depends(get_tls_certificate_service),
+) -> PreviewReleaseRead:
+    """Advance one resumable external gate for an approved preview release."""
+
+    scoped_business_id = resolve_tenant_business_id(
+        tenant_context=tenant_context,
+        requested_business_id=business_id,
+    )
+    executor = PreviewReleaseExecutionService(
+        release_service=preview_release_service,
+        migration_service=migration_service,
+        certificate_service=certificate_service,
+    )
+    try:
+        state = executor.advance(
+            business_id=scoped_business_id,
+            site_id=site_id,
+            release_id=release_id,
+            principal_id=tenant_context.principal_id,
+        )
+    except PreviewReleaseNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except PreviewReleaseValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={"reason_code": exc.reason_code, "message": str(exc)},
+        ) from exc
+    return _to_preview_release_read(state)
+
+
+@router.post(
+    "/sites/{site_id}/migration/diagnostics/collect",
+    response_model=PreviewDiagnosticBundleRead,
+)
+def collect_preview_diagnostics(
+    business_id: str,
+    site_id: str,
+    release_id: str | None = Query(default=None),
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    migration_service: SEOMigrationService = Depends(get_seo_migration_service),
+    preview_release_service: PreviewReleaseService = Depends(get_preview_release_service),
+    certificate_service: TLSCertificateService = Depends(get_tls_certificate_service),
+) -> PreviewDiagnosticBundleRead:
+    if tenant_context.principal_role != PrincipalRole.ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only administrators can collect migration diagnostics.",
+        )
+    scoped_business_id = resolve_tenant_business_id(
+        tenant_context=tenant_context,
+        requested_business_id=business_id,
+    )
+    collector = PreviewDiagnosticCollectionService(
+        release_service=preview_release_service,
+        migration_service=migration_service,
+        certificate_service=certificate_service,
+    )
+    try:
+        bundle = collector.collect(
+            business_id=scoped_business_id,
+            site_id=site_id,
+            release_id=release_id,
+        )
+    except (SEOMigrationNotFoundError, PreviewReleaseNotFoundError) as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return PreviewDiagnosticBundleRead.model_validate(bundle)
 
 
 @router.delete(

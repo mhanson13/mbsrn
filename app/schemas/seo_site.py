@@ -6,6 +6,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.core.preview_identity import build_site_preview_identity, normalize_preview_slug
+
 _ZIP_CODE_PATTERN = re.compile(r"\b(?P<zip>\d{5})\b")
 
 
@@ -44,6 +46,7 @@ class SEOSiteCreateRequest(BaseModel):
     ga4_measurement_id: str | None = Field(default=None, max_length=64)
     is_active: bool = True
     is_primary: bool = False
+    preview_slug: str | None = Field(default=None, max_length=63)
 
     @field_validator("primary_business_zip", mode="before")
     @classmethod
@@ -51,6 +54,11 @@ class SEOSiteCreateRequest(BaseModel):
         if value is None:
             return None
         return normalize_primary_business_zip(str(value))
+
+    @field_validator("preview_slug", mode="before")
+    @classmethod
+    def validate_preview_slug(cls, value: object) -> str | None:
+        return normalize_preview_slug(value)
 
 
 class SEOSiteUpdateRequest(BaseModel):
@@ -68,6 +76,7 @@ class SEOSiteUpdateRequest(BaseModel):
     ga4_measurement_id: str | None = Field(default=None, max_length=64)
     is_active: bool | None = None
     is_primary: bool | None = None
+    preview_slug: str | None = Field(default=None, max_length=63)
 
     @field_validator("primary_business_zip", mode="before")
     @classmethod
@@ -75,6 +84,11 @@ class SEOSiteUpdateRequest(BaseModel):
         if value is None:
             return None
         return normalize_primary_business_zip(str(value))
+
+    @field_validator("preview_slug", mode="before")
+    @classmethod
+    def validate_preview_slug(cls, value: object) -> str | None:
+        return normalize_preview_slug(value)
 
 
 class SEOSiteAdminUpdateRequest(BaseModel):
@@ -86,6 +100,7 @@ class SEOSiteAdminUpdateRequest(BaseModel):
     ga4_property_id: str | None = Field(default=None, max_length=128)
     ga4_data_stream_id: str | None = Field(default=None, max_length=128)
     ga4_measurement_id: str | None = Field(default=None, max_length=64)
+    preview_slug: str | None = Field(default=None, max_length=63)
 
     @model_validator(mode="after")
     def require_name_or_url(self) -> "SEOSiteAdminUpdateRequest":
@@ -98,12 +113,18 @@ class SEOSiteAdminUpdateRequest(BaseModel):
             and self.ga4_property_id is None
             and self.ga4_data_stream_id is None
             and self.ga4_measurement_id is None
+            and self.preview_slug is None
         ):
             raise ValueError(
                 "At least one of name, url, search_console_property_url, search_console_enabled, "
                 "ga4_account_id, ga4_property_id, ga4_data_stream_id, or ga4_measurement_id must be provided"
             )
         return self
+
+    @field_validator("preview_slug", mode="before")
+    @classmethod
+    def validate_preview_slug(cls, value: object) -> str | None:
+        return normalize_preview_slug(value)
 
 
 class SEOSiteRead(BaseModel):
@@ -114,6 +135,9 @@ class SEOSiteRead(BaseModel):
     display_name: str
     base_url: str
     normalized_domain: str
+    preview_slug: str | None = None
+    preview_hostname: str | None = None
+    preview_slug_locked_at: datetime | None = None
     industry: str | None
     primary_location: str | None
     primary_business_zip: str | None = None
@@ -137,6 +161,8 @@ class SEOSiteRead(BaseModel):
     def derive_primary_business_zip(self) -> "SEOSiteRead":
         if self.primary_business_zip is None:
             self.primary_business_zip = extract_primary_business_zip(self.primary_location)
+        if self.preview_slug is not None:
+            self.preview_hostname = build_site_preview_identity(self.preview_slug).hostname
         return self
 
 

@@ -29,6 +29,7 @@ concurrency:
 
 env:
   GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+  MIGRATION_MEDIA_GCS_BUCKET: ${{ vars.MIGRATION_MEDIA_GCS_BUCKET }}
   GCP_REGION: ${{ vars.GCP_REGION }}
   GKE_CLUSTER: ${{ vars.GKE_CLUSTER }}
   K8S_NAMESPACE: ${{ vars.K8S_NAMESPACE }}
@@ -50,6 +51,9 @@ env:
   AI_MODEL_NAME: ${{ vars.AI_MODEL_NAME || 'gpt-4o-mini' }}
   AI_TIMEOUT_VALUE: ${{ vars.AI_TIMEOUT_VALUE || '30' }}
   GCP_MANAGED_DEPLOY: ${{ vars.GCP_MANAGED_DEPLOY || '' }}
+  MIGRATION_REUSABLE_DEPLOY_WORKFLOW_REF: ${{ vars.MIGRATION_REUSABLE_DEPLOY_WORKFLOW_REF || '' }}
+  MIGRATION_DEPLOY_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.MIGRATION_DEPLOY_WORKLOAD_IDENTITY_PROVIDER || '' }}
+  MIGRATION_DEPLOY_SERVICE_ACCOUNT: ${{ vars.MIGRATION_DEPLOY_SERVICE_ACCOUNT || '' }}
   UI_CPU_REQUEST: "100m"
   UI_MEMORY_REQUEST: ${{ vars.UI_MEMORY_REQUEST }}
   UI_EPHEMERAL_STORAGE_REQUEST: ${{ vars.UI_EPHEMERAL_STORAGE_REQUEST }}
@@ -99,6 +103,7 @@ jobs:
 
           required=(
             GCP_PROJECT_ID
+            MIGRATION_MEDIA_GCS_BUCKET
             GCP_REGION
             GKE_CLUSTER
             K8S_NAMESPACE
@@ -346,6 +351,8 @@ jobs:
           grep -q "__GOOGLE_OIDC_CLIENT_ID__" k8s/api-deployment.yaml
           grep -q "__GOOGLE_OAUTH_CLIENT_ID__" k8s/api-deployment.yaml
           grep -q "__GOOGLE_BUSINESS_PROFILE_REDIRECT_URI__" k8s/api-deployment.yaml
+          grep -q "__MIGRATION_MEDIA_GCS_BUCKET__" k8s/api-deployment.yaml
+          grep -q "__GCP_PROJECT_ID__" k8s/api-deployment.yaml
           grep -q "__API_IMAGE__" k8s/api-migration-job.yaml
           grep -q "__DEPLOY_CPU_REQUEST__" k8s/api-migration-job.yaml
           grep -q "__DEPLOY_MEMORY_REQUEST__" k8s/api-migration-job.yaml
@@ -383,6 +390,8 @@ jobs:
             -e "s|__GOOGLE_OIDC_CLIENT_ID__|${GOOGLE_OIDC_CLIENT_ID}|g" \
             -e "s|__GOOGLE_OAUTH_CLIENT_ID__|${GOOGLE_OAUTH_CLIENT_ID}|g" \
             -e "s|__GOOGLE_BUSINESS_PROFILE_REDIRECT_URI__|${GOOGLE_BUSINESS_PROFILE_REDIRECT_URI}|g" \
+            -e "s|__MIGRATION_MEDIA_GCS_BUCKET__|${MIGRATION_MEDIA_GCS_BUCKET}|g" \
+            -e "s|__GCP_PROJECT_ID__|${GCP_PROJECT_ID}|g" \
             k8s/api-deployment.yaml > "${render_dir}/api-deployment.yaml"
           sed \
             -e "s|__API_IMAGE__|${API_IMAGE}|g" \
@@ -430,6 +439,15 @@ jobs:
               exit 1
             fi
           done
+
+          reusable_deploy_values=0
+          [[ -z "${MIGRATION_REUSABLE_DEPLOY_WORKFLOW_REF:-}" ]] || reusable_deploy_values=$((reusable_deploy_values + 1))
+          [[ -z "${MIGRATION_DEPLOY_WORKLOAD_IDENTITY_PROVIDER:-}" ]] || reusable_deploy_values=$((reusable_deploy_values + 1))
+          [[ -z "${MIGRATION_DEPLOY_SERVICE_ACCOUNT:-}" ]] || reusable_deploy_values=$((reusable_deploy_values + 1))
+          if [[ "$reusable_deploy_values" -ne 0 && "$reusable_deploy_values" -ne 3 ]]; then
+            echo "Reusable preview deployment requires all three MIGRATION_REUSABLE_DEPLOY_* settings." >&2
+            exit 1
+          fi
 
           python scripts/validate_k8s_env_sources.py \
             "${render_dir}/api-deployment.yaml" \
@@ -510,6 +528,9 @@ jobs:
             --from-literal=GOOGLE_OAUTH_CLIENT_SECRET="${GOOGLE_OAUTH_CLIENT_SECRET}" \
             --from-literal=GCP_PROJECT_ID="${GCP_PROJECT_ID}" \
             --from-literal=GCP_MANAGED_DEPLOY="${GCP_MANAGED_DEPLOY:-}" \
+            --from-literal=MIGRATION_REUSABLE_DEPLOY_WORKFLOW_REF="${MIGRATION_REUSABLE_DEPLOY_WORKFLOW_REF:-}" \
+            --from-literal=MIGRATION_DEPLOY_WORKLOAD_IDENTITY_PROVIDER="${MIGRATION_DEPLOY_WORKLOAD_IDENTITY_PROVIDER:-}" \
+            --from-literal=MIGRATION_DEPLOY_SERVICE_ACCOUNT="${MIGRATION_DEPLOY_SERVICE_ACCOUNT:-}" \
             --from-literal=AI_PROVIDER_API_KEY="${AI_PROVIDER_API_KEY}" \
             --from-literal=GIT_TOKEN="${GIT_TOKEN}" \
             --from-literal=GIT_USERID="${GIT_USERID}" \

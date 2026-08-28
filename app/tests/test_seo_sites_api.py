@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from datetime import datetime, timezone
 import json
 from types import SimpleNamespace
 from uuid import uuid4
@@ -44,6 +45,7 @@ from app.models.seo_migration_workspace import SEOMigrationWorkspace
 from app.models.seo_recommendation import SEORecommendation
 from app.models.seo_recommendation_narrative import SEORecommendationNarrative
 from app.models.seo_recommendation_run import SEORecommendationRun
+from app.models.seo_site import SEOSite
 from app.repositories.business_repository import BusinessRepository
 from app.repositories.seo_site_repository import SEOSiteRepository
 from app.services.github_publish_config import GitHubPublishConfigSecretError
@@ -983,6 +985,85 @@ def test_seo_site_duplicate_domain_rejected_for_business(db_session, seeded_busi
     )
     assert duplicate.status_code == 422
     assert "already exists" in duplicate.json()["detail"].lower()
+
+
+def test_preview_slug_is_global_operator_editable_and_locked_after_infrastructure(
+    db_session,
+    seeded_business,
+) -> None:
+    other_business = Business(
+        id=str(uuid4()),
+        name="Other Preview Tenant",
+        notification_phone="+13035550199",
+        notification_email="owner@other-preview.example",
+        sms_enabled=True,
+        email_enabled=True,
+        customer_auto_ack_enabled=True,
+        contractor_alerts_enabled=True,
+        timezone="America/Denver",
+    )
+    db_session.add(other_business)
+    db_session.commit()
+    admin_client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        principal_role=PrincipalRole.ADMIN,
+    )
+    create_response = admin_client.post(
+        f"/api/businesses/{seeded_business.id}/seo/sites",
+        json={
+            "display_name": "Preview Identity Site",
+            "base_url": "https://source-domain.example/",
+            "preview_slug": "PlatFire",
+        },
+    )
+    assert create_response.status_code == 201
+    created = create_response.json()
+    site_id = created["id"]
+    assert created["preview_slug"] == "platfire"
+    assert created["preview_hostname"] == "platfire.site.mbsrn.com"
+    assert created["preview_slug_locked_at"] is None
+
+    other_client = _make_client(
+        db_session,
+        business_id=other_business.id,
+        principal_role=PrincipalRole.ADMIN,
+    )
+    duplicate_response = other_client.post(
+        f"/api/businesses/{other_business.id}/seo/sites",
+        json={
+            "display_name": "Conflicting Preview Site",
+            "base_url": "https://different-source.example/",
+            "preview_slug": "platfire",
+        },
+    )
+    assert duplicate_response.status_code == 422
+    assert "another site" in duplicate_response.json()["detail"]
+
+    operator_client = _make_client(
+        db_session,
+        business_id=seeded_business.id,
+        principal_id="preview-operator",
+        principal_role=PrincipalRole.OPERATOR,
+    )
+    edit_response = operator_client.patch(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}",
+        json={"preview_slug": "platfire-draft"},
+    )
+    assert edit_response.status_code == 200
+    assert edit_response.json()["preview_hostname"] == "platfire-draft.site.mbsrn.com"
+
+    site = db_session.get(SEOSite, site_id)
+    assert site is not None
+    site.preview_slug_locked_at = datetime.now(timezone.utc)
+    db_session.add(site)
+    db_session.commit()
+    locked_response = operator_client.patch(
+        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}",
+        json={"preview_slug": "another-preview"},
+    )
+    assert locked_response.status_code == 422
+    assert "locked" in locked_response.json()["detail"]
 
 
 def test_admin_can_deactivate_and_reactivate_site(db_session, seeded_business) -> None:

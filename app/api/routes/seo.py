@@ -4006,6 +4006,8 @@ def patch_admin_seo_site(
         update_payload_data["ga4_data_stream_id"] = payload.ga4_data_stream_id
     if payload.ga4_measurement_id is not None:
         update_payload_data["ga4_measurement_id"] = payload.ga4_measurement_id
+    if payload.preview_slug is not None:
+        update_payload_data["preview_slug"] = payload.preview_slug
     update_payload = SEOSiteUpdateRequest.model_validate(update_payload_data)
     try:
         site = seo_site_service.update_site(

@@ -49,6 +49,12 @@ spec:
                   name: mbsrn-api-auth
                   key: GCP_PROJECT_ID
                   optional: true
+            - name: MIGRATION_MEDIA_STORAGE_BACKEND
+              value: gcs
+            - name: MIGRATION_MEDIA_GCS_BUCKET
+              value: __MIGRATION_MEDIA_GCS_BUCKET__
+            - name: MIGRATION_MEDIA_GCS_PROJECT_ID
+              value: __GCP_PROJECT_ID__
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:
@@ -101,6 +107,24 @@ spec:
                 secretKeyRef:
                   name: mbsrn-api-auth
                   key: GCP_MANAGED_DEPLOY
+                  optional: true
+            - name: MIGRATION_REUSABLE_DEPLOY_WORKFLOW_REF
+              valueFrom:
+                secretKeyRef:
+                  name: mbsrn-api-auth
+                  key: MIGRATION_REUSABLE_DEPLOY_WORKFLOW_REF
+                  optional: true
+            - name: MIGRATION_DEPLOY_WORKLOAD_IDENTITY_PROVIDER
+              valueFrom:
+                secretKeyRef:
+                  name: mbsrn-api-auth
+                  key: MIGRATION_DEPLOY_WORKLOAD_IDENTITY_PROVIDER
+                  optional: true
+            - name: MIGRATION_DEPLOY_SERVICE_ACCOUNT
+              valueFrom:
+                secretKeyRef:
+                  name: mbsrn-api-auth
+                  key: MIGRATION_DEPLOY_SERVICE_ACCOUNT
                   optional: true
             - name: GOOGLE_PLACES_API_KEY
               valueFrom:

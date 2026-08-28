@@ -66,6 +66,12 @@ from app.integrations.seo_migration_github_publisher import (
     resolve_managed_preview_endpoint_configuration,
     normalize_workflow_dispatch_identifier_for_api,
 )
+from app.integrations.migration_media_storage import (
+    LocalMigrationMediaStorage,
+    MigrationMediaStorage,
+    MigrationMediaStorageError,
+    StoredMigrationMediaObject,
+)
 from app.models.business import Business
 from app.models.principal import PrincipalRole
 from app.models.seo_migration_artifact_version import SEOMigrationArtifactVersion
@@ -93,6 +99,7 @@ from app.services.ai_model_settings import (
     resolve_ai_model_for_task,
     resolve_ai_model_name,
 )
+from app.core.preview_identity import PreviewIdentityValidationError, build_site_preview_identity
 from app.services.github_publish_config import GitHubPublishConfigSecretError, GitHubPublishConfigService
 from app.services.seo_migration_context import SEOMigrationContextAssembler
 from app.services.seo_migration_artifact_quality import evaluate_migration_artifact_quality
@@ -271,6 +278,7 @@ _MIGRATION_ARTIFACT_MAX_MEDIA_TOTAL_BYTES = 24 * 1024 * 1024
 _MIGRATION_ARTIFACT_MAX_MEDIA_FILENAME_CHARS = 80
 _MIGRATION_ARTIFACT_MEDIA_REASON_BYTES_MISSING = "media_bytes_missing"
 _MIGRATION_ARTIFACT_MEDIA_REASON_STORAGE_READ_FAILED = "media_storage_read_failed"
+_MIGRATION_ARTIFACT_MEDIA_REASON_STORAGE_INTEGRITY_FAILED = "media_storage_integrity_failed"
 _MIGRATION_ARTIFACT_MEDIA_REASON_UNSUPPORTED_MEDIA_TYPE = "unsupported_media_type"
 _MIGRATION_ARTIFACT_MEDIA_REASON_SAFETY_BLOCKED = "media_safety_blocked"
 _MIGRATION_ARTIFACT_MEDIA_REASON_NOT_SELECTED = "media_not_selected"
@@ -1116,6 +1124,7 @@ class SEOMigrationService:
         managed_site_private_image_auth_enabled: bool = True,
         remote_image_import_enabled: bool = True,
         tls_certificate_repository: TLSCertificateRepository | None = None,
+        media_storage: MigrationMediaStorage | None = None,
     ) -> None:
         self.session = session
         self.business_repository = business_repository
@@ -1178,12 +1187,14 @@ class SEOMigrationService:
         self.managed_site_private_image_auth_enabled = bool(managed_site_private_image_auth_enabled)
         self.remote_image_import_enabled = bool(remote_image_import_enabled)
         self.tls_certificate_repository = tls_certificate_repository
+        self.media_storage = media_storage or LocalMigrationMediaStorage(
+            root=_resolve_migration_media_storage_root()
+        )
         self.runtime_build_metadata = get_runtime_build_metadata()
         self._resolved_migration_draft_timeout_seconds = _MIGRATION_DRAFT_TIMEOUT_DEFAULT_SECONDS
         self._resolved_migration_draft_timeout_source = "default"
         self._resolved_migration_generation_safety = SEOMigrationGenerationSafety()
         self._resolved_migration_generation_safety_source = "default"
-        self.media_storage_root = _resolve_migration_media_storage_root()
 
     def _active_self_managed_tls_certificate(self, *, business_id: str, site_id: str) -> tuple[str, str] | None:
         if self.tls_certificate_repository is None:
@@ -1430,11 +1441,21 @@ class SEOMigrationService:
             asset_id=asset_id,
             extension=ext,
         )
-        _write_workspace_media_file(
-            storage_root=self.media_storage_root,
-            storage_key=storage_key,
-            payload=payload,
-        )
+        try:
+            stored_media = self.media_storage.write(
+                key=storage_key,
+                payload=payload,
+                content_type=sniffed_content_type,
+            )
+        except MigrationMediaStorageError as exc:
+            raise SEOMigrationValidationError(
+                "Migration media storage is unavailable.",
+                failure_category="dependency_unavailable",
+                failure_reason="storage_write_failed",
+                error_code=_MIGRATION_MEDIA_REASON_STORAGE_WRITE_FAILED,
+                workspace_id=workspace.id,
+                retryable=True,
+            ) from exc
         width, height = _detect_image_dimensions(payload, sniffed_content_type)
         media_asset: dict[str, object] = {
             "asset_id": asset_id,
@@ -1454,6 +1475,7 @@ class SEOMigrationService:
             "storage_key": storage_key,
             "created_at": utc_now().isoformat(),
         }
+        _apply_stored_migration_media_metadata(media_asset, stored_media)
         current_uploads.append(media_asset)
         trimmed_uploads = current_uploads[-_MIGRATION_MEDIA_UPLOAD_MAX_COUNT:]
         enriched = _normalize_json_dict(workspace.enriched_content_notes_json)
@@ -1654,7 +1676,7 @@ class SEOMigrationService:
 
         payload, _preview_unavailable_reason = _read_workspace_media_payload_for_materialization(
             media_asset=target_asset,
-            storage_root=self.media_storage_root,
+            media_storage=self.media_storage,
             business_id=business_id,
             site_id=site_id,
         )
@@ -2143,12 +2165,13 @@ class SEOMigrationService:
                 reason_code=_MIGRATION_MEDIA_REASON_ANALYSIS_NOT_AVAILABLE,
             )
 
-        try:
-            image_bytes = _read_workspace_media_file(
-                storage_root=self.media_storage_root,
-                storage_key=storage_key,
-            )
-        except SEOMigrationValidationError:
+        image_bytes, _read_reason_code = _read_workspace_media_payload_for_materialization(
+            media_asset=media_asset,
+            media_storage=self.media_storage,
+            business_id=business_id,
+            site_id=site_id,
+        )
+        if image_bytes is None:
             return _build_media_metadata_suggestion_payload(
                 suggestion_status=_MIGRATION_MEDIA_SUGGESTION_STATUS_NOT_AVAILABLE,
                 reason_code=_MIGRATION_MEDIA_REASON_ANALYSIS_NOT_AVAILABLE,
@@ -2625,12 +2648,12 @@ class SEOMigrationService:
                 extension=extension,
             )
             try:
-                _write_workspace_media_file(
-                    storage_root=self.media_storage_root,
-                    storage_key=storage_key,
+                stored_media = self.media_storage.write(
+                    key=storage_key,
                     payload=payload,
+                    content_type=detected_content_type,
                 )
-            except OSError:
+            except (MigrationMediaStorageError, OSError):
                 failed_count += 1
                 results.append(
                     {
@@ -2659,6 +2682,7 @@ class SEOMigrationService:
             target_asset["width"] = width
             target_asset["height"] = height
             target_asset["storage_key"] = storage_key
+            _apply_stored_migration_media_metadata(target_asset, stored_media)
             target_asset["import_status"] = "selected" if selected_value else "imported"
             target_asset["selected_for_draft"] = selected_value
             target_asset["normalized_url"] = normalized_final_url or _normalize_discovered_media_lookup_url(
@@ -3741,6 +3765,8 @@ class SEOMigrationService:
         commit_message: str | None,
         analytics_measurement_id: str | None,
         principal_id: str | None,
+        provision_deploy_workflow: bool = True,
+        duplicate_is_success: bool = False,
     ) -> SEOMigrationPublishActionResult:
         started_at = time.monotonic()
         workspace = self.get_workspace(business_id=business_id, site_id=site_id)
@@ -3951,7 +3977,6 @@ class SEOMigrationService:
         expected_publish_url_source_detail: str | None = None
         duplicate_publish_repaired = False
         publish_result: SEOMigrationGitHubPublishResult | None = None
-        provision_workflow_after_publish = True
         admin_deploy_metadata = self._resolve_admin_deploy_template_metadata()
         deploy_workflow_mode = (
             _normalize_string(
@@ -4134,7 +4159,12 @@ class SEOMigrationService:
                 deploy_config=workspace.deploy_config_json,
             )
 
-            if (duplicate_publish_attempt or not provision_workflow_after_publish) and not dry_run and isinstance(deploy_target_for_workflow, dict):
+            if (
+                provision_deploy_workflow
+                and duplicate_publish_attempt
+                and not dry_run
+                and isinstance(deploy_target_for_workflow, dict)
+            ):
                 workflow_provisioning_remediation_mode = (
                     "duplicate_publish_repair" if duplicate_publish_attempt else "bootstrap"
                 )
@@ -4190,6 +4220,20 @@ class SEOMigrationService:
                         "Deploy workflow provisioning could not be verified during publish because workflow write access is unavailable."
                     )
                     publish_warnings.append(workflow_provisioning_warning_message)
+                elif duplicate_is_success:
+                    duplicate_publish_repaired = True
+                    publish_result = SEOMigrationGitHubPublishResult(
+                        dry_run=False,
+                        repo_owner=target["repo_owner"],
+                        repo_name=target["repo_name"],
+                        branch=target["branch"],
+                        artifact_root=target["artifact_root"],
+                        files_published=0,
+                        total_bytes=0,
+                        commit_shas=(),
+                        committed_paths=(),
+                        published_at=utc_now().isoformat(),
+                    )
                 else:
                     deploy_workflow_provision_result = self.github_publisher.ensure_deploy_workflow(
                         repo_owner=workflow_owner,
@@ -4207,6 +4251,11 @@ class SEOMigrationService:
                         business_id=workspace.business_id,
                         repository_auto_create_created=repository_auto_create_created,
                         artifact_version_id=artifact.id,
+                        preview_hostname=_safe_derive_preview_hostname_for_summary(
+                            repo_name=workflow_repo,
+                            site_id=site.id,
+                            preview_slug=site.preview_slug,
+                        )[0],
                         **(
                             {
                                 "pre_shared_certificate_name": active_tls_certificate[0],
@@ -4643,7 +4692,7 @@ class SEOMigrationService:
 
         if (
             not dry_run
-            and provision_workflow_after_publish
+            and provision_deploy_workflow
             and not duplicate_publish_attempt
             and isinstance(deploy_target_for_workflow, dict)
         ):
@@ -4712,6 +4761,11 @@ class SEOMigrationService:
                     business_id=workspace.business_id,
                     repository_auto_create_created=repository_auto_create_created,
                     artifact_version_id=artifact.id,
+                    preview_hostname=_safe_derive_preview_hostname_for_summary(
+                        repo_name=workflow_repo,
+                        site_id=site.id,
+                        preview_slug=site.preview_slug,
+                    )[0],
                     **(
                         {
                             "pre_shared_certificate_name": active_tls_certificate[0],
@@ -5387,6 +5441,10 @@ class SEOMigrationService:
             site_id=site_id,
             artifact_version_id=artifact_version_id,
         )
+        active_self_managed_tls_certificate = self._active_self_managed_tls_certificate(
+            business_id=business_id,
+            site_id=site_id,
+        )
         self._log_control_plane_action(
             action="deploy",
             status="requested",
@@ -5473,6 +5531,11 @@ class SEOMigrationService:
             )
             raise SEOMigrationValidationError(failure_message) from exc
         namespace_isolation_defaults = _normalize_json_dict(workflow_resolution.get("namespace_isolation_defaults"))
+        canonical_preview_hostname, _ = _safe_derive_preview_hostname_for_summary(
+            repo_name=deploy_target.get("repo_name"),
+            site_id=site.id,
+            preview_slug=site.preview_slug,
+        )
         workflow_resolution_path = _normalize_workflow_path_for_deploy(workflow_resolution.get("workflow_path"))
         dispatch_identifier_diagnostics = _resolve_workflow_dispatch_identifier(
             workflow_id=deploy_target.get("workflow_id"),
@@ -6344,6 +6407,7 @@ class SEOMigrationService:
                 workflow_id=(workflow_identifier_used or deploy_target["workflow_id"]),
                 ref=deploy_target["ref"],
                 inputs=deploy_inputs,
+                preview_hostname=canonical_preview_hostname,
             )
             managed_gke_config_for_dispatch = _normalize_json_dict(workflow_resolution.get("managed_gke_config"))
             (
@@ -6518,6 +6582,7 @@ class SEOMigrationService:
                     workflow_id=(workflow_identifier_used or deploy_target_for_dispatch.workflow_id),
                     ref=deploy_target_for_dispatch.ref,
                     inputs=deploy_inputs,
+                    preview_hostname=canonical_preview_hostname,
                 )
                 deploy_workflow_mode_for_dispatch = _normalize_string(
                     workflow_resolution.get("deploy_workflow_mode"),
@@ -6532,7 +6597,7 @@ class SEOMigrationService:
                 )
                 deploy_secret_value_for_control_plane: str | None = None
                 if deploy_workflow_mode_for_dispatch == _DEPLOY_WORKFLOW_MODE_SITE_REPO_TEMPLATE_V1 and not dry_run:
-                    preview_hostname_for_static_ip = _normalize_string(
+                    preview_hostname_for_static_ip = canonical_preview_hostname or _normalize_string(
                         target_readiness.preview_hostname if target_readiness is not None else None,
                         max_length=253,
                     ) or _normalize_string(
@@ -6851,7 +6916,7 @@ class SEOMigrationService:
                         )
                         raise
                     try:
-                        preview_hostname_for_dns = _normalize_string(
+                        preview_hostname_for_dns = canonical_preview_hostname or _normalize_string(
                             target_readiness.preview_hostname if target_readiness is not None else None,
                             max_length=253,
                         ) or _normalize_string(
@@ -6992,10 +7057,8 @@ class SEOMigrationService:
                         except Exception:
                             derived_preview_hostname = None
                         expected_dns_hostname = (
-                            _normalize_string(
-                                derived_preview_hostname,
-                                max_length=253,
-                            )
+                            canonical_preview_hostname
+                            or _normalize_string(derived_preview_hostname, max_length=253)
                             or expected_dns_hostname
                         )
                         expected_dns_managed_zone = (
@@ -7177,7 +7240,7 @@ class SEOMigrationService:
                         if isinstance(workflow_resolution.get("uses_shared_preview_gateway"), bool)
                         else preview_endpoint_mode_for_dispatch == _MANAGED_PREVIEW_ENDPOINT_MODE_SHARED_GATEWAY
                     )
-                    preview_hostname_for_certificate = _normalize_string(expected_dns_hostname, max_length=253) or _normalize_string(
+                    preview_hostname_for_certificate = canonical_preview_hostname or _normalize_string(expected_dns_hostname, max_length=253) or _normalize_string(
                         target_readiness.preview_hostname if target_readiness is not None else None,
                         max_length=253,
                     ) or _normalize_string(
@@ -7203,20 +7266,36 @@ class SEOMigrationService:
                         repo_name=deploy_target_for_dispatch.repo_name,
                         site_id=site_id,
                     )
-                    managed_certificate_reconcile_note = (
-                        "Existing ManagedCertificate resource is being reconciled; no new unique certificate name was generated."
-                    )
-                    _emit_prerequisite_chain_log(stage="managed_certificate_readiness_start")
-                    managed_certificate_readiness: SEOMigrationGitHubManagedCertificateReadinessResult | None = (
-                        self.github_publisher.check_managed_certificate_readiness(
-                            repo_name=deploy_target_for_dispatch.repo_name,
-                            site_id=site_id,
-                            preview_hostname=preview_hostname_for_certificate or "",
-                            kubernetes_namespace=certificate_namespace,
-                            managed_gke_config=managed_gke_config_for_dispatch,
-                            gcp_deploy_key=deploy_secret_value_for_control_plane,
-                            expected_managed_certificate_name=expected_managed_certificate_name,
+                    if active_self_managed_tls_certificate:
+                        expected_managed_certificate_name = active_self_managed_tls_certificate[0]
+                        managed_certificate_exists = True
+                        managed_certificate_status = "ACTIVE"
+                        managed_certificate_reconcile_note = (
+                            "Self-managed Compute certificate is selected through the ingress pre-shared certificate annotation."
                         )
+                    managed_certificate_reconcile_note = (
+                        managed_certificate_reconcile_note
+                        or "Existing ManagedCertificate resource is being reconciled; no new unique certificate name was generated."
+                    )
+                    _emit_prerequisite_chain_log(
+                        stage=(
+                            "self_managed_certificate_ready"
+                            if active_self_managed_tls_certificate
+                            else "managed_certificate_readiness_start"
+                        )
+                    )
+                    managed_certificate_readiness: SEOMigrationGitHubManagedCertificateReadinessResult | None = (
+                        None
+                        if active_self_managed_tls_certificate
+                        else self.github_publisher.check_managed_certificate_readiness(
+                                repo_name=deploy_target_for_dispatch.repo_name,
+                                site_id=site_id,
+                                preview_hostname=preview_hostname_for_certificate or "",
+                                kubernetes_namespace=certificate_namespace,
+                                managed_gke_config=managed_gke_config_for_dispatch,
+                                gcp_deploy_key=deploy_secret_value_for_control_plane,
+                                expected_managed_certificate_name=expected_managed_certificate_name,
+                            )
                     )
                     if managed_certificate_readiness is not None:
                         expected_managed_certificate_name = _normalize_string(
@@ -8333,6 +8412,12 @@ class SEOMigrationService:
             workflow_integrity_reason_code = _normalize_workflow_integrity_reason_code(
                 target_readiness.workflow_integrity_reason_code
             )
+        if active_self_managed_tls_certificate:
+            # Workflow output may omit legacy ManagedCertificate fields. Preserve the
+            # control-plane evidence for the selected Compute SSL certificate instead.
+            tls_certificate_status = tls_certificate_status or "ACTIVE"
+            managed_certificate_exists = True
+            managed_certificate_status = managed_certificate_status or "ACTIVE"
         derived_https_ready = bool(
             post_dispatch_state == "workflow_run_succeeded_with_live_url"
             and resolved_live_url
@@ -17770,6 +17855,8 @@ class SEOMigrationService:
         workflow_id = str(normalized.get("workflow_id") or self.deploy_default_workflow_id).strip()
         workflow_path = _normalize_workflow_path_for_deploy(f".github/workflows/{workflow_id}")
         repo_name = str(normalized.get("repo_name") or fallback_publish.get("repo_name") or "").strip()
+        site = self.seo_site_repository.get_for_business(workspace.business_id, workspace.site_id)
+        preview_slug = getattr(site, "preview_slug", None) if site is not None else None
         kubernetes_namespace, namespace_source = _safe_derive_kubernetes_namespace_for_summary(
             repo_name=repo_name,
             site_id=workspace.site_id,
@@ -17777,6 +17864,7 @@ class SEOMigrationService:
         preview_hostname, preview_hostname_source = _safe_derive_preview_hostname_for_summary(
             repo_name=repo_name,
             site_id=workspace.site_id,
+            preview_slug=preview_slug,
         )
         expected_static_ip_name, expected_static_ip_name_source = _safe_derive_preview_static_ip_name_for_summary(
             repo_name=repo_name,
@@ -17885,6 +17973,8 @@ class SEOMigrationService:
             }
 
         repo_name = str(publish_target.get("repo_name") or "").strip()
+        site = self.seo_site_repository.get_for_business(business_id, site_id)
+        preview_slug = getattr(site, "preview_slug", None) if site is not None else None
         kubernetes_namespace, namespace_source = _safe_derive_kubernetes_namespace_for_summary(
             repo_name=repo_name,
             site_id=site_id,
@@ -17892,6 +17982,7 @@ class SEOMigrationService:
         preview_hostname, preview_hostname_source = _safe_derive_preview_hostname_for_summary(
             repo_name=repo_name,
             site_id=site_id,
+            preview_slug=preview_slug,
         )
         expected_static_ip_name, expected_static_ip_name_source = _safe_derive_preview_static_ip_name_for_summary(
             repo_name=repo_name,
@@ -18118,6 +18209,11 @@ class SEOMigrationService:
         resolved_preview_hostname, resolved_preview_hostname_source = _safe_derive_preview_hostname_for_summary(
             repo_name=resolved_target.get("repo_name"),
             site_id=workspace.site_id,
+            preview_slug=getattr(
+                self.seo_site_repository.get_for_business(workspace.business_id, workspace.site_id),
+                "preview_slug",
+                None,
+            ),
         )
         resolved_static_ip_name, resolved_static_ip_source = _safe_derive_preview_static_ip_name_for_summary(
             repo_name=resolved_target.get("repo_name"),
@@ -18421,6 +18517,11 @@ class SEOMigrationService:
                     or workspace.site_id
                 ),
                 site_id=workspace.site_id,
+                preview_slug=getattr(
+                    self.seo_site_repository.get_for_business(workspace.business_id, workspace.site_id),
+                    "preview_slug",
+                    None,
+                ),
             )
         preview_url = (
             _normalize_url_candidate(deploy_target.get("preview_url"))
@@ -22947,7 +23048,7 @@ class SEOMigrationService:
                     alias_to_path.setdefault(alias, planned_output_relative_path)
             media_bytes, read_reason_code = _read_workspace_media_payload_for_materialization(
                 media_asset=item,
-                storage_root=self.media_storage_root,
+                media_storage=self.media_storage,
                 business_id=workspace_business_id,
                 site_id=workspace_site_id,
             )
@@ -25075,6 +25176,18 @@ def _build_workspace_media_storage_key(
     return f"{business_fragment}/{site_fragment}/{asset_fragment}{suffix}"
 
 
+def _apply_stored_migration_media_metadata(
+    media_asset: dict[str, object],
+    stored_media: StoredMigrationMediaObject,
+) -> None:
+    media_asset["storage_key"] = stored_media.key
+    media_asset["storage_provider"] = stored_media.provider
+    media_asset["storage_bucket"] = stored_media.bucket
+    media_asset["storage_generation"] = stored_media.generation
+    media_asset["storage_size_bytes"] = stored_media.size_bytes
+    media_asset["storage_sha256"] = stored_media.sha256
+
+
 def _write_workspace_media_file(*, storage_root: Path, storage_key: str, payload: bytes) -> None:
     normalized_key = (storage_key or "").replace("\\", "/").strip("/")
     if not normalized_key:
@@ -25171,7 +25284,7 @@ def _candidate_workspace_media_storage_keys_for_materialization(
 def _read_workspace_media_payload_for_materialization(
     *,
     media_asset: dict[str, object],
-    storage_root: Path,
+    media_storage: MigrationMediaStorage,
     business_id: str | None,
     site_id: str | None,
 ) -> tuple[bytes | None, str | None]:
@@ -25180,17 +25293,32 @@ def _read_workspace_media_payload_for_materialization(
         business_id=business_id,
         site_id=site_id,
     )
+    explicit_storage_key = _normalize_string(media_asset.get("storage_key"), max_length=240)
+    expected_generation = _normalize_string(media_asset.get("storage_generation"), max_length=120)
+    expected_sha256 = (_normalize_string(media_asset.get("storage_sha256"), max_length=64) or "").lower()
+    expected_size = _coerce_non_negative_int(media_asset.get("storage_size_bytes"))
+    expected_provider = _normalize_string(media_asset.get("storage_provider"), max_length=20)
+    expected_bucket = _normalize_string(media_asset.get("storage_bucket"), max_length=222)
+    if expected_provider and expected_provider != media_storage.provider_name:
+        return None, _MIGRATION_ARTIFACT_MEDIA_REASON_STORAGE_READ_FAILED
+    active_bucket = _normalize_string(getattr(media_storage, "bucket", None), max_length=222)
+    if expected_bucket and active_bucket != expected_bucket:
+        return None, _MIGRATION_ARTIFACT_MEDIA_REASON_STORAGE_READ_FAILED
     attempted_storage_read = False
     for storage_key in candidate_storage_keys:
         attempted_storage_read = True
         try:
-            payload = _read_workspace_media_file(
-                storage_root=storage_root,
-                storage_key=storage_key,
+            payload = media_storage.read(
+                key=storage_key,
+                generation=expected_generation if explicit_storage_key == storage_key else None,
             )
-        except (SEOMigrationValidationError, OSError):
+        except (MigrationMediaStorageError, OSError):
             continue
         if payload:
+            if expected_size is not None and len(payload) != expected_size:
+                return None, _MIGRATION_ARTIFACT_MEDIA_REASON_STORAGE_INTEGRITY_FAILED
+            if expected_sha256 and hashlib.sha256(payload).hexdigest() != expected_sha256:
+                return None, _MIGRATION_ARTIFACT_MEDIA_REASON_STORAGE_INTEGRITY_FAILED
             return payload, None
 
     legacy_payload = _decode_legacy_media_base64_payload(media_asset)
@@ -28414,7 +28542,14 @@ def _safe_derive_preview_hostname_for_summary(
     *,
     repo_name: object,
     site_id: object | None = None,
+    preview_slug: object | None = None,
 ) -> tuple[str | None, str | None]:
+    if preview_slug is not None:
+        try:
+            identity = build_site_preview_identity(preview_slug)
+        except PreviewIdentityValidationError:
+            return None, None
+        return identity.hostname, "site_preview_slug"
     try:
         preview_hostname, source = derive_site_preview_hostname(
             repo_name=repo_name,

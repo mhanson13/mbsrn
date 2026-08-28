@@ -791,6 +791,65 @@ export interface MigrationArtifactVersionListResponse {
   total: number;
 }
 
+export type PreviewReleaseStatus = "waiting" | "running" | "ready" | "action_required" | "failed";
+
+export interface PreviewReleaseGate {
+  name: "source" | "draft_package" | "approval" | "github" | "certificate" | "dns" | "deployment" | "verification";
+  ordinal: number;
+  status: PreviewReleaseStatus;
+  reason_code: string | null;
+  message: string;
+  next_action: string | null;
+  attempt_count: number;
+  updated_at: string;
+}
+
+export interface PreviewReleaseOperation {
+  id: string;
+  status: PreviewReleaseStatus;
+  active_gate: string | null;
+  support_id: string | null;
+  failure_reason_code: string | null;
+  failure_message: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  updated_at: string;
+}
+
+export interface PreviewRelease {
+  id: string;
+  artifact_version_id: string;
+  release_number: number;
+  status: PreviewReleaseStatus;
+  preview_slug: string;
+  preview_hostname: string;
+  preview_url: string | null;
+  git_commit_sha: string | null;
+  certificate_fingerprint_sha256: string | null;
+  created_at: string;
+  updated_at: string;
+  operation: PreviewReleaseOperation;
+  gates: PreviewReleaseGate[];
+}
+
+export interface PreviewReleaseListResponse {
+  items: PreviewRelease[];
+  total: number;
+}
+
+export interface PreviewDiagnosticBundle {
+  bundle_id: string;
+  support_id: string;
+  business_id: string;
+  site_id: string;
+  release_id: string | null;
+  collected_at: string;
+  expires_at: string;
+  retention_days: number;
+  payload: Record<string, unknown>;
+  exclusions: string[];
+}
+
 export interface MigrationPromptPreview {
   provider_name: string;
   model_name: string;

@@ -10,14 +10,20 @@ import {
   ApiRequestError,
   adoptSiteTLSCertificate,
   adoptMigrationPublishRepository,
+  advancePreviewRelease,
+  approveAndCreatePreviewRelease,
   approveMigrationArtifactVersion,
+  collectPreviewDiagnostics,
   deleteMigrationArtifactVersion,
   deployMigrationArtifactVersion,
   fetchMigrationArtifactVersions,
   fetchMigrationDraftReadiness,
   fetchMigrationDeployHistory,
+  fetchMigrationArtifactFileBlob,
   fetchMigrationMediaAssets,
+  fetchMigrationMediaPreviewBlob,
   fetchMigrationPublishHistory,
+  fetchPreviewReleases,
   fetchMigrationWorkspaceSummary,
   fetchSiteTLSCertificateStatus,
   generateSiteTLSCertificate,
@@ -45,6 +51,8 @@ import type {
   MigrationRequirementSuggestionField,
   MigrationPublishConfig,
   MigrationWorkspaceSummary,
+  PreviewRelease,
+  PreviewDiagnosticBundle,
   SiteTLSCertificateStatus,
 } from "../lib/api/types";
 
@@ -52,6 +60,7 @@ interface MigrationWorkspacePanelProps {
   token: string;
   businessId: string;
   siteId: string;
+  isAdmin?: boolean;
 }
 
 type BusyAction =
@@ -62,6 +71,9 @@ type BusyAction =
   | "save_deploy_config"
   | "generate"
   | "approve"
+  | "create_preview"
+  | "advance_preview"
+  | "collect_debug"
   | "adopt_repository"
   | "publish"
   | "deploy"
@@ -1138,6 +1150,72 @@ function resolveSafeMediaPreviewUrl(rawUrl: string | null): string | null {
   } catch {
     return null;
   }
+}
+
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(reader.error || new Error("Image data could not be read."));
+    reader.readAsDataURL(blob);
+  });
+}
+
+function AuthenticatedMigrationImage({
+  token,
+  businessId,
+  siteId,
+  assetId,
+  previewUrl,
+  alt,
+}: {
+  token: string;
+  businessId: string;
+  siteId: string;
+  assetId: string;
+  previewUrl: string;
+  alt: string;
+}) {
+  const controlledPreview = MIGRATION_MEDIA_PREVIEW_PATH_PATTERN.test(previewUrl);
+  const [authenticatedSource, setAuthenticatedSource] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!controlledPreview) {
+      setAuthenticatedSource(null);
+      return () => {
+        cancelled = true;
+      };
+    }
+    setAuthenticatedSource(null);
+    void fetchMigrationMediaPreviewBlob(token, businessId, siteId, assetId)
+      .then(blobToDataUrl)
+      .then((dataUrl) => {
+        if (!cancelled) {
+          setAuthenticatedSource(dataUrl);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setAuthenticatedSource(null);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [assetId, businessId, controlledPreview, siteId, token]);
+
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={controlledPreview ? authenticatedSource || undefined : previewUrl}
+      alt={alt}
+      className="migration-media-card-thumbnail"
+      loading="lazy"
+      decoding="async"
+      data-authenticated-preview={controlledPreview ? "true" : "false"}
+    />
+  );
 }
 
 const MIGRATION_MEDIA_PREVIEW_CANDIDATE_KEYS = [
@@ -3799,25 +3877,6 @@ function normalizeArtifactPathForPreview(path: string): string {
   return path.replace(/\\/g, "/").replace(/^\/+/, "").trim();
 }
 
-function buildArtifactPreviewFileUrl(
-  businessId: string,
-  siteId: string,
-  artifactVersionId: string,
-  path: string,
-): string | null {
-  const normalizedPath = normalizeArtifactPathForPreview(path);
-  if (!normalizedPath) {
-    return null;
-  }
-  const encodedPath = normalizedPath
-    .split("/")
-    .map((segment) => encodeURIComponent(segment))
-    .join("/");
-  return `/api/businesses/${encodeURIComponent(businessId)}/seo/sites/${encodeURIComponent(
-    siteId,
-  )}/migration/artifact-versions/${encodeURIComponent(artifactVersionId)}/files/${encodedPath}`;
-}
-
 function resolveArtifactRelativePath(entryPath: string, href: string): string | null {
   const normalizedHref = href.trim();
   if (!normalizedHref || normalizedHref.startsWith("#")) {
@@ -3859,7 +3918,7 @@ function extractPreviewPageTitle(path: string, html: string): string {
 
 function buildDraftPreviewEvaluation(
   artifact: MigrationArtifactVersion | null,
-  options: { businessId: string; siteId: string },
+  options: { businessId: string; siteId: string; authenticatedAssetUrls?: Record<string, string> },
 ): DraftPreviewEvaluation {
   if (!artifact || !Array.isArray(artifact.generated_files_json)) {
     return {
@@ -3939,14 +3998,9 @@ function buildDraftPreviewEvaluation(
         if (!isImageAsset) {
           return full;
         }
-        const assetUrl = buildArtifactPreviewFileUrl(
-          options.businessId,
-          options.siteId,
-          artifact.id,
-          resolvedPath,
-        );
+        const assetUrl = options.authenticatedAssetUrls?.[resolvedPath] || null;
         if (!assetUrl) {
-          return full;
+          return `${prefix}${quoteChar}data:,${quoteChar}`;
         }
         return `${prefix}${quoteChar}${assetUrl}${quoteChar}`;
       },
@@ -4070,6 +4124,7 @@ export function MigrationWorkspacePanel({
   token,
   businessId,
   siteId,
+  isAdmin = false,
 }: MigrationWorkspacePanelProps): JSX.Element {
   const [busyAction, setBusyAction] = useState<BusyAction>("load");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -4082,6 +4137,8 @@ export function MigrationWorkspacePanel({
   const [importCertificatePem, setImportCertificatePem] = useState("");
   const [importPrivateKeyPem, setImportPrivateKeyPem] = useState("");
   const [artifactVersions, setArtifactVersions] = useState<MigrationArtifactVersion[]>([]);
+  const [previewReleases, setPreviewReleases] = useState<PreviewRelease[]>([]);
+  const [diagnosticBundle, setDiagnosticBundle] = useState<PreviewDiagnosticBundle | null>(null);
   const [publishHistory, setPublishHistory] = useState<Array<Record<string, unknown>>>([]);
   const [deployHistory, setDeployHistory] = useState<Array<Record<string, unknown>>>([]);
   const [publishHistoryLoaded, setPublishHistoryLoaded] = useState(false);
@@ -4130,6 +4187,12 @@ export function MigrationWorkspacePanel({
 
   const [selectedFilePath, setSelectedFilePath] = useState("");
   const [draftPreviewOpen, setDraftPreviewOpen] = useState(false);
+  const [draftPreviewAssetsLoading, setDraftPreviewAssetsLoading] = useState(false);
+  const [draftPreviewAssetsError, setDraftPreviewAssetsError] = useState<string | null>(null);
+  const [draftPreviewAssetData, setDraftPreviewAssetData] = useState<{
+    artifactId: string;
+    urls: Record<string, string>;
+  } | null>(null);
   const [selectedPublishHistoryIdentity, setSelectedPublishHistoryIdentity] = useState("");
   const [selectedDeployHistoryIdentity, setSelectedDeployHistoryIdentity] = useState("");
   const requirementsImportInputRef = useRef<HTMLInputElement | null>(null);
@@ -4141,6 +4204,10 @@ export function MigrationWorkspacePanel({
     }
     return artifactVersions.find((item) => item.id === selectedArtifactVersionId) || null;
   }, [artifactVersions, selectedArtifactVersionId]);
+  const selectedPreviewRelease = useMemo(
+    () => previewReleases.find((release) => release.artifact_version_id === selectedArtifactVersionId) || null,
+    [previewReleases, selectedArtifactVersionId],
+  );
 
   const workspaceRecord = asRecord(summary?.workspace);
   const workspaceSiteName =
@@ -6099,8 +6166,12 @@ export function MigrationWorkspacePanel({
       buildDraftPreviewEvaluation(selectedArtifact, {
         businessId,
         siteId,
+        authenticatedAssetUrls:
+          selectedArtifact && draftPreviewAssetData?.artifactId === selectedArtifact.id
+            ? draftPreviewAssetData.urls
+            : undefined,
       }),
-    [businessId, siteId, selectedArtifact],
+    [businessId, draftPreviewAssetData, siteId, selectedArtifact],
   );
   const previewTitleByPath = useMemo(() => {
     const titleMap = new Map<string, string>();
@@ -6418,11 +6489,12 @@ export function MigrationWorkspacePanel({
           }),
         );
         void (async () => {
-          const [mediaResult, readinessResult, publishHistoryResult, deployHistoryResult] = await Promise.allSettled([
+          const [mediaResult, readinessResult, publishHistoryResult, deployHistoryResult, previewReleaseResult] = await Promise.allSettled([
             fetchMigrationMediaAssets(token, businessId, siteId),
             fetchMigrationDraftReadiness(token, businessId, siteId),
             fetchMigrationPublishHistory(token, businessId, siteId),
             fetchMigrationDeployHistory(token, businessId, siteId),
+            fetchPreviewReleases(token, businessId, siteId),
           ]);
           if (mediaResult.status === "fulfilled") {
             setMediaAssetsSnapshot(asRecord(mediaResult.value));
@@ -6455,6 +6527,9 @@ export function MigrationWorkspacePanel({
             setDeployHistoryLoaded(true);
           } else {
             setDeployHistoryLoaded(false);
+          }
+          if (previewReleaseResult.status === "fulfilled") {
+            setPreviewReleases(previewReleaseResult.value.items || []);
           }
         })();
       } catch (error) {
@@ -6544,6 +6619,8 @@ export function MigrationWorkspacePanel({
   useEffect(() => {
     setDraftPreviewOpen(false);
     setSelectedFilePath("");
+    setDraftPreviewAssetsError(null);
+    setDraftPreviewAssetData(null);
   }, [selectedArtifactVersionId]);
 
   useEffect(() => {
@@ -7458,6 +7535,59 @@ export function MigrationWorkspacePanel({
     }
   };
 
+  const handleToggleDraftPreview = async (): Promise<void> => {
+    if (draftPreviewOpen) {
+      setDraftPreviewOpen(false);
+      return;
+    }
+    if (!selectedArtifact || !draftPreview.available) {
+      return;
+    }
+    if (draftPreviewAssetData?.artifactId === selectedArtifact.id) {
+      setDraftPreviewOpen(true);
+      return;
+    }
+
+    const imagePaths = (selectedArtifact.generated_files_json || [])
+      .map((item) => asRecord(item))
+      .map((item) => ({
+        path: normalizeArtifactPathForPreview(asString(item.path)),
+        mediaType: asString(item.media_type).trim().toLowerCase(),
+      }))
+      .filter(
+        (item) =>
+          Boolean(item.path)
+          && (item.mediaType.startsWith("image/") || /\.(?:png|jpe?g|webp|gif|svg)$/i.test(item.path)),
+      );
+
+    setDraftPreviewAssetsLoading(true);
+    setDraftPreviewAssetsError(null);
+    try {
+      const resolvedEntries = await Promise.all(
+        imagePaths.map(async ({ path }) => {
+          const blob = await fetchMigrationArtifactFileBlob(
+            token,
+            businessId,
+            siteId,
+            selectedArtifact.id,
+            path,
+          );
+          return [path, await blobToDataUrl(blob)] as const;
+        }),
+      );
+      setDraftPreviewAssetData({
+        artifactId: selectedArtifact.id,
+        urls: Object.fromEntries(resolvedEntries),
+      });
+      setDraftPreviewOpen(true);
+    } catch (error) {
+      setDraftPreviewAssetsError(toErrorMessage(error, "Draft images could not be loaded securely."));
+      setDraftPreviewOpen(false);
+    } finally {
+      setDraftPreviewAssetsLoading(false);
+    }
+  };
+
   const handlePublishSelectedArtifact = async (): Promise<void> => {
     if (!selectedArtifactVersionId) {
       setErrorHint(null);
@@ -7508,6 +7638,81 @@ export function MigrationWorkspacePanel({
         return;
       }
       setErrorMessage(formatActionFailureMessage("publish", category, baseMessage));
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const handleCreatePreviewRelease = async (): Promise<void> => {
+    if (!selectedArtifactVersionIdTrimmed) {
+      setErrorMessage("Select a draft artifact before creating a preview release.");
+      return;
+    }
+    setBusyAction("create_preview");
+    setErrorMessage(null);
+    setErrorHint(null);
+    setStatusMessage(null);
+    try {
+      const release = await approveAndCreatePreviewRelease(
+        token,
+        businessId,
+        siteId,
+        selectedArtifactVersionIdTrimmed,
+      );
+      setPreviewReleases((current) => [release, ...current.filter((item) => item.id !== release.id)]);
+      setStatusMessage("Draft approved and preview release created. Continue with the next infrastructure gate.");
+      await loadWorkspaceData(false);
+    } catch (error) {
+      setErrorMessage(toErrorMessage(error, "Preview release could not be created."));
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const handleAdvancePreviewRelease = async (): Promise<void> => {
+    if (!selectedPreviewRelease) {
+      setErrorMessage("Create a preview release before continuing infrastructure setup.");
+      return;
+    }
+    setBusyAction("advance_preview");
+    setErrorMessage(null);
+    setErrorHint(null);
+    setStatusMessage(null);
+    try {
+      const release = await advancePreviewRelease(token, businessId, siteId, selectedPreviewRelease.id);
+      setPreviewReleases((current) => [release, ...current.filter((item) => item.id !== release.id)]);
+      const activeGate = release.operation.active_gate?.replace(/_/g, " ");
+      setStatusMessage(
+        release.status === "ready"
+          ? "Preview release is verified and ready."
+          : activeGate
+            ? `Release updated. Next gate: ${activeGate}.`
+            : "Preview release state updated.",
+      );
+      await loadWorkspaceData(false);
+    } catch (error) {
+      setErrorMessage(toErrorMessage(error, "Preview release could not advance."));
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const handleCollectPreviewDiagnostics = async (): Promise<void> => {
+    setBusyAction("collect_debug");
+    setErrorMessage(null);
+    setErrorHint(null);
+    setStatusMessage(null);
+    try {
+      const bundle = await collectPreviewDiagnostics(
+        token,
+        businessId,
+        siteId,
+        selectedPreviewRelease?.id || null,
+      );
+      setDiagnosticBundle(bundle);
+      setStatusMessage(`Sanitized diagnostic bundle collected. Support ID: ${bundle.support_id}.`);
+    } catch (error) {
+      setErrorMessage(toErrorMessage(error, "Diagnostic bundle could not be collected."));
     } finally {
       setBusyAction(null);
     }
@@ -7799,6 +8004,10 @@ export function MigrationWorkspacePanel({
       onChange: setRequirementsNotes,
     },
   ];
+  const selectedPreviewGate = selectedPreviewRelease?.gates.find(
+    (gate) => gate.name === selectedPreviewRelease.operation.active_gate,
+  ) || null;
+  const previewGateNeedsOperatorAction = selectedPreviewGate?.status === "action_required";
 
   if (busyAction === "load" && !summary) {
     return <p className="hint muted">Loading migration workspace...</p>;
@@ -8136,13 +8345,13 @@ export function MigrationWorkspacePanel({
                   >
                     <div className="migration-media-card-preview-shell">
                       {item.previewUrl ? (
-                        /* eslint-disable-next-line @next/next/no-img-element */
-                        <img
-                          src={item.previewUrl}
+                        <AuthenticatedMigrationImage
+                          token={token}
+                          businessId={businessId}
+                          siteId={siteId}
+                          assetId={item.assetId}
+                          previewUrl={item.previewUrl}
                           alt={item.previewAlt}
-                          className="migration-media-card-thumbnail"
-                          loading="lazy"
-                          decoding="async"
                         />
                       ) : (
                         <div className="migration-media-card-preview-unavailable" data-testid={`migration-media-preview-unavailable-${item.assetId}`}>
@@ -8944,11 +9153,11 @@ export function MigrationWorkspacePanel({
               <button
                 type="button"
                 className="button button-primary"
-                onClick={() => setDraftPreviewOpen((current) => !current)}
-                disabled={!draftPreview.available}
+                onClick={() => void handleToggleDraftPreview()}
+                disabled={!draftPreview.available || draftPreviewAssetsLoading}
                 data-testid="migration-preview-draft-button"
               >
-                {draftPreviewOpen ? "Hide preview" : "Show preview"}
+                {draftPreviewAssetsLoading ? "Loading secure preview..." : draftPreviewOpen ? "Hide preview" : "Show preview"}
               </button>
               <button
                 type="button"
@@ -9043,8 +9252,13 @@ export function MigrationWorkspacePanel({
                 One read-only preview surface. Choose a page/file in the left rail and review the sandboxed web output.
               </span>
               <span className="hint muted" data-testid="migration-draft-preview-auth-guidance">
-                Draft preview route requires operator session context. External or app-auth links are blocked inside preview.
+                Draft images are loaded through authenticated API requests. External and application links are blocked.
               </span>
+              {draftPreviewAssetsError ? (
+                <span className="hint warning" data-testid="migration-draft-preview-auth-error">
+                  {draftPreviewAssetsError}
+                </span>
+              ) : null}
               {draftPreviewOpen && draftPreview.available ? (
                 <div className="migration-draft-preview-layout" data-testid="migration-draft-preview-layout">
                   <div className="panel panel-compact stack-tight migration-draft-preview-rail" data-testid="migration-file-tree">
@@ -9126,6 +9340,87 @@ export function MigrationWorkspacePanel({
 
       <MigrationPublishDeploySection>
 
+      <div className="panel stack workspace-section-block" data-testid="migration-preview-release-section">
+        <h3>Preview Release</h3>
+        <span className="hint muted">
+          One release keeps the selected draft, GitHub commit, certificate, DNS, deployment, and verification evidence together.
+        </span>
+        {selectedPreviewRelease ? (
+          <>
+            <div className="workspace-status-callout stack-tight">
+              <strong>
+                Release {selectedPreviewRelease.release_number} · {selectedPreviewRelease.status.replace(/_/g, " ")}
+              </strong>
+              <span className="hint">Preview hostname: {selectedPreviewRelease.preview_hostname}</span>
+              {selectedPreviewRelease.git_commit_sha ? (
+                <span className="hint muted">Git commit: {selectedPreviewRelease.git_commit_sha.slice(0, 12)}</span>
+              ) : null}
+            </div>
+            <ol className="stack-tight" data-testid="migration-preview-release-gates">
+              {selectedPreviewRelease.gates.map((gate) => (
+                <li key={gate.name} data-testid={`migration-preview-gate-${gate.name}`}>
+                  <span className={gate.status === "ready" ? "hint success" : gate.status === "failed" || gate.status === "action_required" ? "hint warning" : "hint"}>
+                    <strong>{gate.name.replace(/_/g, " ")}</strong>: {gate.status.replace(/_/g, " ")}
+                  </span>
+                  <span className="hint muted"> · {gate.message}</span>
+                </li>
+              ))}
+            </ol>
+            {selectedPreviewRelease.status === "ready" && selectedPreviewRelease.preview_url ? (
+              <a
+                className="button button-primary"
+                href={selectedPreviewRelease.preview_url}
+                target="_blank"
+                rel="noreferrer"
+              >
+                Open Verified Preview
+              </a>
+            ) : (
+              <button
+                type="button"
+                className="button button-primary"
+                onClick={() => void handleAdvancePreviewRelease()}
+                disabled={isActionInFlight || previewGateNeedsOperatorAction}
+                data-testid="migration-advance-preview-release-button"
+              >
+                {busyAction === "advance_preview"
+                  ? "Working..."
+                  : selectedPreviewGate?.status === "failed"
+                    ? `Retry ${selectedPreviewGate.name.replace(/_/g, " ")}`
+                    : selectedPreviewGate
+                      ? `Continue: ${selectedPreviewGate.name.replace(/_/g, " ")}`
+                      : "Refresh Preview Release"}
+              </button>
+            )}
+            {selectedPreviewGate?.next_action ? (
+              <span className={previewGateNeedsOperatorAction ? "hint warning" : "hint muted"}>
+                Next: {selectedPreviewGate.next_action}
+              </span>
+            ) : null}
+            {selectedPreviewRelease.operation.support_id ? (
+              <span className="hint muted">Support ID: {selectedPreviewRelease.operation.support_id}</span>
+            ) : null}
+          </>
+        ) : (
+          <>
+            <span className="hint">
+              Select the draft you want to publish. This action approves that exact version and creates an idempotent preview release.
+            </span>
+            <button
+              type="button"
+              className="button button-primary"
+              onClick={() => void handleCreatePreviewRelease()}
+              disabled={isActionInFlight || !selectedArtifactVersionIdTrimmed}
+              data-testid="migration-create-preview-release-button"
+            >
+              {busyAction === "create_preview" ? "Creating..." : "Approve & Create Preview"}
+            </button>
+          </>
+        )}
+      </div>
+
+      <details className="workspace-details-shell" data-testid="migration-manual-publish-deploy-controls">
+      <summary>Advanced manual publish, certificate, and deploy controls</summary>
       <div className="panel stack workspace-section-block" data-testid="migration-publish-deploy-section">
         <h3>Publish and Deploy Controls</h3>
         <div className="workspace-status-callout stack-tight">
@@ -9565,7 +9860,7 @@ export function MigrationWorkspacePanel({
                         <input
                           value={existingCertificateResourceName}
                           onChange={(event) => setExistingCertificateResourceName(event.target.value)}
-                          placeholder="mbsrn-platfire-..."
+                          placeholder="mbsrn-preview-..."
                         />
                       </label>
                       <button
@@ -9675,6 +9970,7 @@ export function MigrationWorkspacePanel({
           </div>
         </div>
       </div>
+      </details>
 
       </MigrationPublishDeploySection>
 
@@ -9682,6 +9978,29 @@ export function MigrationWorkspacePanel({
 
       <div className="panel stack workspace-section-block">
         <h3>Advanced Diagnostics &amp; History</h3>
+        {isAdmin ? (
+          <div className="panel panel-compact stack-tight" data-testid="migration-collect-debug-output">
+            <strong>Administrator diagnostic bundle</strong>
+            <span className="hint muted">
+              Collection is explicit and sanitized. Credentials, private keys, raw media, and captured site content are excluded.
+            </span>
+            <button
+              type="button"
+              className="button button-secondary"
+              onClick={() => void handleCollectPreviewDiagnostics()}
+              disabled={isActionInFlight}
+            >
+              {busyAction === "collect_debug" ? "Collecting..." : "Collect Debug Output"}
+            </button>
+            {diagnosticBundle ? (
+              <details className="workspace-details-shell">
+                <summary>View sanitized bundle · support {diagnosticBundle.support_id}</summary>
+                <span className="hint muted">Expires: {formatAttemptTimestamp(diagnosticBundle.expires_at)}</span>
+                <pre>{JSON.stringify(diagnosticBundle, null, 2)}</pre>
+              </details>
+            ) : null}
+          </div>
+        ) : null}
         <details className="migration-advanced-details workspace-details-shell">
           <summary className="hint muted">Show detailed migration failure diagnostics</summary>
           <div className="stack">

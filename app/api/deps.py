@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import hashlib
 import ipaddress
 import logging
+from pathlib import Path
 
 from fastapi import Depends, Header, HTTPException, Request, status
 from sqlalchemy.orm import Session
@@ -57,9 +58,15 @@ from app.integrations import (
     TwilioSMSProvider,
 )
 from app.integrations.google_cloud_logging import GoogleCloudLoggingClient
+from app.integrations.migration_media_storage import (
+    GoogleCloudStorageMigrationMediaStorage,
+    LocalMigrationMediaStorage,
+    MigrationMediaStorage,
+)
 from app.integrations.tls_certificate import (
     GoogleComputeSSLCertificateClient,
     GoogleSecretManagerTLSCertificateVault,
+    GoogleTLSCertificateCapabilityProbe,
     SocketTLSCertificateEndpointVerifier,
 )
 from app.jobs.lead_reminders import LeadReminderJob
@@ -73,6 +80,7 @@ from app.repositories.github_publish_config_repository import GitHubPublishConfi
 from app.repositories.lead_repository import LeadRepository
 from app.repositories.principal_identity_repository import PrincipalIdentityRepository
 from app.repositories.principal_repository import PrincipalRepository
+from app.repositories.preview_release_repository import PreviewReleaseRepository
 from app.repositories.provider_connection_repository import ProviderConnectionRepository
 from app.repositories.provider_oauth_state_repository import ProviderOAuthStateRepository
 from app.repositories.seo_audit_repository import SEOAuditRepository
@@ -107,6 +115,7 @@ from app.services.notifications import NotificationDispatchService
 from app.services.parser import LeadParserService
 from app.services.principal_identities import PrincipalIdentityService
 from app.services.principals import PrincipalService
+from app.services.preview_releases import PreviewReleaseService
 from app.services.reminder_engine import ReminderEngineService
 from app.services.response_metrics import ResponseMetricsService
 from app.services.seo_audit import SEOAuditService
@@ -261,6 +270,10 @@ def get_seo_recommendation_narrative_repository(
 
 def get_seo_migration_repository(db: Session = Depends(get_db)) -> SEOMigrationRepository:
     return SEOMigrationRepository(db)
+
+
+def get_preview_release_repository(db: Session = Depends(get_db)) -> PreviewReleaseRepository:
+    return PreviewReleaseRepository(db)
 
 
 def get_tls_certificate_repository(db: Session = Depends(get_db)) -> TLSCertificateRepository:
@@ -829,6 +842,9 @@ def get_seo_migration_github_publisher() -> SEOMigrationGitHubPublisher:
             committer_name=settings.migration_publish_committer_name,
             committer_email=settings.migration_publish_committer_email,
             managed_deploy_service_account_email=settings.gcp_managed_deploy,
+            reusable_deploy_workflow_ref=settings.migration_reusable_deploy_workflow_ref,
+            deploy_workload_identity_provider=settings.migration_deploy_workload_identity_provider,
+            deploy_service_account=settings.migration_deploy_service_account,
         )
     except ValueError as exc:
         logger.warning("Failed to initialize GitHub migration publisher: %s", str(exc))
@@ -1136,6 +1152,34 @@ def get_seo_recommendation_narrative_service(
     )
 
 
+def get_migration_media_storage() -> MigrationMediaStorage:
+    settings = get_settings()
+    if settings.migration_media_storage_backend == "gcs":
+        return GoogleCloudStorageMigrationMediaStorage(
+            bucket=settings.migration_media_gcs_bucket or "",
+            project_id=settings.migration_media_gcs_project_id,
+            timeout_seconds=settings.migration_media_gcs_timeout_seconds,
+            api_base_url=settings.migration_media_gcs_api_base_url,
+        )
+    return LocalMigrationMediaStorage(root=Path(settings.migration_media_storage_root))
+
+
+def get_preview_release_service(
+    db: Session = Depends(get_db),
+    seo_site_repository: SEOSiteRepository = Depends(get_seo_site_repository),
+    seo_migration_repository: SEOMigrationRepository = Depends(get_seo_migration_repository),
+    preview_release_repository: PreviewReleaseRepository = Depends(get_preview_release_repository),
+    tls_certificate_repository: TLSCertificateRepository = Depends(get_tls_certificate_repository),
+) -> PreviewReleaseService:
+    return PreviewReleaseService(
+        session=db,
+        site_repository=seo_site_repository,
+        migration_repository=seo_migration_repository,
+        release_repository=preview_release_repository,
+        certificate_repository=tls_certificate_repository,
+    )
+
+
 def get_seo_migration_service(
     db: Session = Depends(get_db),
     business_repository: BusinessRepository = Depends(get_business_repository),
@@ -1155,6 +1199,7 @@ def get_seo_migration_service(
     github_publisher: SEOMigrationGitHubPublisher = Depends(get_seo_migration_github_publisher),
     github_publish_config_service: GitHubPublishConfigService = Depends(get_github_publish_config_service),
     tls_certificate_repository: TLSCertificateRepository = Depends(get_tls_certificate_repository),
+    media_storage: MigrationMediaStorage = Depends(get_migration_media_storage),
 ) -> SEOMigrationService:
     settings = get_settings()
     provider_name = str(getattr(artifact_provider, "provider_name", settings.ai_provider_name or "unknown"))
@@ -1191,6 +1236,7 @@ def get_seo_migration_service(
         managed_site_private_image_auth_enabled=settings.migration_managed_site_private_image_auth_enabled,
         remote_image_import_enabled=settings.seo_migration_remote_image_import_enabled,
         tls_certificate_repository=tls_certificate_repository,
+        media_storage=media_storage,
     )
 
 
@@ -1304,6 +1350,10 @@ def get_tls_certificate_service(
             timeout_seconds=settings.tls_certificate_endpoint_timeout_seconds,
         ),
         gcp_project_id=project_id,
+        capability_probe=GoogleTLSCertificateCapabilityProbe(
+            project_id=project_id,
+            timeout_seconds=settings.tls_certificate_google_api_timeout_seconds,
+        ),
         auth_audit_service=auth_audit_service,
         secret_prefix=settings.tls_certificate_secret_prefix,
     )

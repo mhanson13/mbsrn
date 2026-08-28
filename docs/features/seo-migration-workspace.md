@@ -23,6 +23,13 @@ Lifecycle states are tracked independently:
 
 No auto-publish or auto-deploy behavior exists in this feature.
 
+Preview identity contract (2026-08-28):
+- a site may configure one globally unique `preview_slug`
+- the resolved draft hostname is `<preview_slug>.site.mbsrn.com`
+- source domain and GitHub repository name do not define preview identity
+- the slug is editable until the first preview infrastructure mutation, then locked
+- existing sites remain unconfigured until an operator confirms a slug; migration `0062_site_preview_identity` does not create infrastructure
+
 State/order invariants:
 - publish is blocked until the selected artifact version is approved and publish target readiness is valid
 - deploy is blocked until the selected artifact version has a successful publish and deploy target readiness is valid
@@ -215,6 +222,9 @@ Draft review and preview behavior:
 - Section D owns preview + review actions (`Show preview` / `Hide preview`, `Approve Selected Draft`, `Delete Selected Draft`)
 - preview remains sandboxed and draft-only (`not published`, `not deployed`)
 - one unified draft preview surface is used (no duplicate preview iframe surfaces)
+- generated artifact images and migration-media thumbnails are fetched through the authenticated API client with the operator bearer token
+- protected media and artifact API URLs are never assigned directly to `img.src` or embedded iframe markup; fetched blobs are rendered as local data URLs and revoked/discarded with component state
+- a failed authenticated image fetch produces bounded preview-unavailable guidance and does not fall back to an unauthenticated request
 - preview layout is two-column on desktop:
   - left rail (`~15-20%`) for page/file selection
   - right pane (`~80-85%`) for sandboxed web iframe preview
@@ -581,6 +591,14 @@ Import safety controls:
 - allowed image MIME types match upload policy (`jpeg/png/webp/gif`)
 - SVG remains disallowed in this pass
 - content-type mismatch is rejected
+
+Production storage contract (2026-08-28):
+- imported and uploaded source bytes use the injected migration media storage contract
+- production uses a private, versioned GCS bucket; local filesystem storage is development/test only
+- persisted private metadata includes object generation, byte length, and SHA-256 digest
+- generation-pinned reads verify byte length and digest before preview analysis or artifact materialization
+- bucket/object coordinates and checksums are omitted from operator API responses
+- storage configuration and recovery procedures are documented in `docs/runbooks/migration-media-storage.md`
 
 Import reason codes:
 - `remote_import_disabled`
@@ -1377,7 +1395,28 @@ Operational examples:
   - signals: `content_density_failures_by_file` populated with required files present
   - operator/admin action: improve generated content depth; retry is conditionally useful once content shape is improved.
 
+## Preview release workflow (2026-08)
+
+`POST /api/businesses/{business_id}/seo/sites/{site_id}/migration/artifact-versions/{artifact_version_id}/preview-release`
+approves the selected artifact when necessary and creates or resumes its preview release. Repeating the request returns the same release; it does not create another release or treat the existing approval as an error.
+
+The response is intentionally operator-focused: release identity, current operation, canonical preview hostname, and the eight ordered gates. Provider payloads and gate `details_json` are not included in this standard response.
+
+Release inspection endpoints are:
+
+- `GET /api/businesses/{business_id}/seo/sites/{site_id}/migration/preview-releases`
+- `GET /api/businesses/{business_id}/seo/sites/{site_id}/migration/preview-releases/{release_id}`
+- `POST /api/businesses/{business_id}/seo/sites/{site_id}/migration/preview-releases/{release_id}/reconcile`
+- `POST /api/businesses/{business_id}/seo/sites/{site_id}/migration/preview-releases/{release_id}/advance`
+- `POST /api/businesses/{business_id}/seo/sites/{site_id}/migration/diagnostics/collect` (administrator only)
+
+Reconciliation advances a gate only when evidence belongs to the release's exact artifact, commit, certificate binding, and fingerprint. `advance` executes exactly one pending external gate. A failed gate records a stable reason and support ID and can be retried without repeating successful gates. A selected certificate is immutable for that release.
+
+The normal workspace shows this gate list and one next action. Compatibility publish/certificate/deploy controls are collapsed under advanced manual controls. Raw history stays under Advanced Diagnostics. Administrators must explicitly choose **Collect Debug Output** to build a bounded, sanitized bundle with a support ID and seven-day expiry.
+
 ## Publish Workflow (GitHub)
+
+Approved artifact files are published as one Git object transaction: blobs, base-tree overlay, exact path/blob verification, one commit, then one non-forced branch update. HTML/CSS/JavaScript and referenced binary media therefore become visible together under one commit SHA. Repository ownership-marker and baseline checks remain prerequisites.
 GitHub publish target configuration is split across Admin + workspace ownership:
 
 Admin-owned baseline (global):

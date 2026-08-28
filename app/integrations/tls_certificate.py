@@ -47,6 +47,27 @@ class TLSCertificateEndpointObservation:
     certificate_pem: str
 
 
+@dataclass(frozen=True)
+class TLSCertificateCapabilityCheck:
+    component: str
+    required_permissions: tuple[str, ...]
+    granted_permissions: tuple[str, ...]
+
+    @property
+    def missing_permissions(self) -> tuple[str, ...]:
+        granted = set(self.granted_permissions)
+        return tuple(permission for permission in self.required_permissions if permission not in granted)
+
+    @property
+    def ready(self) -> bool:
+        return not self.missing_permissions
+
+
+class TLSCertificateCapabilityProbe:
+    def check(self) -> tuple[TLSCertificateCapabilityCheck, ...]:
+        raise NotImplementedError
+
+
 class TLSCertificateVault:
     def store(
         self,
@@ -181,6 +202,79 @@ class _GoogleJSONClient:
         if not isinstance(payload, dict):
             raise TLSCertificateProviderError(code=error_code, safe_message=error_message)
         return response.status_code, payload
+
+
+class GoogleTLSCertificateCapabilityProbe(TLSCertificateCapabilityProbe):
+    SECRET_MANAGER_PERMISSIONS = (
+        "secretmanager.secrets.create",
+        "secretmanager.versions.add",
+    )
+    COMPUTE_PERMISSIONS = (
+        "compute.sslCertificates.create",
+        "compute.sslCertificates.get",
+        "compute.globalOperations.get",
+    )
+
+    def __init__(
+        self,
+        *,
+        project_id: str,
+        timeout_seconds: int = 30,
+        token_provider: Callable[[], str] | None = None,
+        session: requests.Session | None = None,
+    ) -> None:
+        self.project_id = str(project_id or "").strip()
+        self.client = _GoogleJSONClient(
+            timeout_seconds=timeout_seconds,
+            token_provider=token_provider,
+            session=session,
+        )
+
+    def check(self) -> tuple[TLSCertificateCapabilityCheck, ...]:
+        if not self.project_id:
+            raise TLSCertificateProviderError(
+                code="tls_gcp_project_missing",
+                safe_message="The Google Cloud project for TLS certificates is not configured.",
+            )
+        quoted_project = urllib.parse.quote(self.project_id, safe="")
+        _, secret_payload = self.client.request_json(
+            method="POST",
+            url=(
+                f"https://secretmanager.googleapis.com/v1/projects/{quoted_project}:testIamPermissions"
+            ),
+            body={"permissions": list(self.SECRET_MANAGER_PERMISSIONS)},
+            allowed_statuses=(200,),
+            error_code="tls_secret_manager_capability_check_failed",
+            error_message="Secret Manager certificate permissions could not be checked.",
+        )
+        _, compute_payload = self.client.request_json(
+            method="POST",
+            url=(
+                f"https://compute.googleapis.com/compute/v1/projects/{quoted_project}/testIamPermissions"
+            ),
+            body={"permissions": list(self.COMPUTE_PERMISSIONS)},
+            allowed_statuses=(200,),
+            error_code="tls_compute_capability_check_failed",
+            error_message="Compute SSL certificate permissions could not be checked.",
+        )
+        return (
+            TLSCertificateCapabilityCheck(
+                component="secret_manager",
+                required_permissions=self.SECRET_MANAGER_PERMISSIONS,
+                granted_permissions=self._normalize_permissions(secret_payload.get("permissions")),
+            ),
+            TLSCertificateCapabilityCheck(
+                component="compute_ssl_certificates",
+                required_permissions=self.COMPUTE_PERMISSIONS,
+                granted_permissions=self._normalize_permissions(compute_payload.get("permissions")),
+            ),
+        )
+
+    @staticmethod
+    def _normalize_permissions(value: object) -> tuple[str, ...]:
+        if not isinstance(value, list):
+            return ()
+        return tuple(sorted({str(item).strip() for item in value if str(item).strip()}))
 
 
 class GoogleSecretManagerTLSCertificateVault(TLSCertificateVault):

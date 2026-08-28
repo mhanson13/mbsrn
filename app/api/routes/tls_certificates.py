@@ -13,6 +13,8 @@ from app.schemas.tls_certificate import (
     SiteTLSCertificateBindingRead,
     SiteTLSCertificateStatusRead,
     TLSCertificateAdoptRequest,
+    TLSCertificateCapabilityCheckRead,
+    TLSCertificateCapabilityStatusRead,
     TLSCertificateAssetListRead,
     TLSCertificateAssetRead,
     TLSCertificateGenerateRequest,
@@ -86,7 +88,15 @@ def _raise_http_error(exc: Exception) -> None:
     if isinstance(exc, TLSCertificateNotFoundError):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     if isinstance(exc, TLSCertificateConfigurationError):
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "reason_code": exc.reason_code,
+                "message": str(exc),
+                "missing_permissions": list(exc.missing_permissions),
+                "next_action": "Grant the listed permissions to the API workload identity, then retry.",
+            },
+        ) from exc
     raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
 
 
@@ -106,6 +116,40 @@ def list_tls_certificates(
     except (TLSCertificateNotFoundError, TLSCertificateValidationError, TLSCertificateConfigurationError) as exc:
         _raise_http_error(exc)
     return TLSCertificateAssetListRead(items=[_asset_read(asset) for asset in assets])
+
+
+@router.get("/capabilities", response_model=TLSCertificateCapabilityStatusRead)
+def get_tls_certificate_capabilities(
+    business_id: str,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    certificate_service: TLSCertificateService = Depends(get_tls_certificate_service),
+) -> TLSCertificateCapabilityStatusRead:
+    resolve_tenant_business_id(
+        tenant_context=tenant_context,
+        requested_business_id=business_id,
+    )
+    capability_status = certificate_service.get_capabilities()
+    checks = [
+        TLSCertificateCapabilityCheckRead(
+            component=check.component,
+            ready=check.ready,
+            required_permissions=list(check.required_permissions),
+            missing_permissions=list(check.missing_permissions),
+        )
+        for check in capability_status.checks
+    ]
+    return TLSCertificateCapabilityStatusRead(
+        project_id=capability_status.project_id,
+        ready=capability_status.ready,
+        reason_code=capability_status.reason_code,
+        message=capability_status.message,
+        next_action=(
+            None
+            if capability_status.ready
+            else "Grant the missing permissions to the API workload identity, then retry the capability check."
+        ),
+        checks=checks,
+    )
 
 
 @router.get("/sites/{site_id}/status", response_model=SiteTLSCertificateStatusRead)
@@ -140,6 +184,32 @@ def generate_site_tls_certificate(
     )
     try:
         certificate_status = certificate_service.generate_for_site(
+            business_id=scoped_business_id,
+            site_id=site_id,
+            principal_id=tenant_context.principal_id,
+            display_name=payload.display_name,
+            validity_days=payload.validity_days,
+            key_algorithm=payload.key_algorithm,
+        )
+    except (TLSCertificateNotFoundError, TLSCertificateValidationError, TLSCertificateConfigurationError) as exc:
+        _raise_http_error(exc)
+    return _status_read(certificate_status)
+
+
+@router.post("/sites/{site_id}/certificates/ensure", response_model=SiteTLSCertificateStatusRead)
+def ensure_site_tls_certificate(
+    business_id: str,
+    site_id: str,
+    payload: TLSCertificateGenerateRequest,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    certificate_service: TLSCertificateService = Depends(get_tls_certificate_service),
+) -> SiteTLSCertificateStatusRead:
+    scoped_business_id = resolve_tenant_business_id(
+        tenant_context=tenant_context,
+        requested_business_id=business_id,
+    )
+    try:
+        certificate_status = certificate_service.ensure_for_site(
             business_id=scoped_business_id,
             site_id=site_id,
             principal_id=tenant_context.principal_id,

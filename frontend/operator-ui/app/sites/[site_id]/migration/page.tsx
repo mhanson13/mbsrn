@@ -102,7 +102,12 @@ export default function SiteMigrationWorkflowPage(): JSX.Element {
       />
 
       <OperatorPageSectionStack>
-        <MigrationWorkspacePanel token={context.token} businessId={context.businessId} siteId={selectedSite.id} />
+        <MigrationWorkspacePanel
+          token={context.token}
+          businessId={context.businessId}
+          siteId={selectedSite.id}
+          isAdmin={context.principalRole === "admin"}
+        />
       </OperatorPageSectionStack>
     </PageContainer>
   );

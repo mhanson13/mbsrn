@@ -49,6 +49,9 @@ import type {
   MigrationRepositoryAdoptActionResponse,
   MigrationPublishConfigUpdateRequest,
   MigrationPublishRequest,
+  PreviewRelease,
+  PreviewReleaseListResponse,
+  PreviewDiagnosticBundle,
   MigrationPromptPreview,
   MigrationRequirementsSuggestionRequest,
   MigrationRequirementsSuggestionResponse,
@@ -294,6 +297,58 @@ export async function deleteAdminSite(token: string, businessId: string, siteId:
     method: "DELETE",
     token,
   });
+}
+
+async function authenticatedBlobRequest(path: string, token: string): Promise<Blob> {
+  let response: Response;
+  try {
+    response = await fetch(`${apiBaseUrl()}${path}`, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+      cache: "no-store",
+    });
+  } catch (error) {
+    throw normalizeError(error, `Network request failed for ${path}.`);
+  }
+  if (!response.ok) {
+    throw new ApiRequestError(`HTTP ${response.status}`, { status: response.status, detail: null });
+  }
+  return response.blob();
+}
+
+export async function fetchMigrationMediaPreviewBlob(
+  token: string,
+  businessId: string,
+  siteId: string,
+  assetId: string,
+): Promise<Blob> {
+  return authenticatedBlobRequest(
+    `/api/businesses/${encodeURIComponent(businessId)}/seo/sites/${encodeURIComponent(
+      siteId,
+    )}/migration/media/assets/${encodeURIComponent(assetId)}/preview`,
+    token,
+  );
+}
+
+export async function fetchMigrationArtifactFileBlob(
+  token: string,
+  businessId: string,
+  siteId: string,
+  artifactVersionId: string,
+  path: string,
+): Promise<Blob> {
+  const encodedPath = path
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+  return authenticatedBlobRequest(
+    `/api/businesses/${encodeURIComponent(businessId)}/seo/sites/${encodeURIComponent(
+      siteId,
+    )}/migration/artifact-versions/${encodeURIComponent(artifactVersionId)}/files/${encodedPath}`,
+    token,
+  );
 }
 
 export async function prepareAdminSiteDeletePlan(
@@ -842,6 +897,58 @@ export async function deployMigrationArtifactVersion(
       token,
       body: JSON.stringify(payload),
     },
+  );
+}
+
+export async function approveAndCreatePreviewRelease(
+  token: string,
+  businessId: string,
+  siteId: string,
+  artifactVersionId: string,
+): Promise<PreviewRelease> {
+  return apiRequest<PreviewRelease>(
+    `/api/businesses/${businessId}/seo/sites/${siteId}/migration/artifact-versions/${artifactVersionId}/preview-release`,
+    {
+      method: "POST",
+      token,
+      body: JSON.stringify({}),
+    },
+  );
+}
+
+export async function fetchPreviewReleases(
+  token: string,
+  businessId: string,
+  siteId: string,
+): Promise<PreviewReleaseListResponse> {
+  return apiRequest<PreviewReleaseListResponse>(
+    `/api/businesses/${businessId}/seo/sites/${siteId}/migration/preview-releases`,
+    { token },
+  );
+}
+
+export async function advancePreviewRelease(
+  token: string,
+  businessId: string,
+  siteId: string,
+  releaseId: string,
+): Promise<PreviewRelease> {
+  return apiRequest<PreviewRelease>(
+    `/api/businesses/${businessId}/seo/sites/${siteId}/migration/preview-releases/${releaseId}/advance`,
+    { method: "POST", token },
+  );
+}
+
+export async function collectPreviewDiagnostics(
+  token: string,
+  businessId: string,
+  siteId: string,
+  releaseId?: string | null,
+): Promise<PreviewDiagnosticBundle> {
+  const query = releaseId ? `?release_id=${encodeURIComponent(releaseId)}` : "";
+  return apiRequest<PreviewDiagnosticBundle>(
+    `/api/businesses/${businessId}/seo/sites/${siteId}/migration/diagnostics/collect${query}`,
+    { method: "POST", token },
   );
 }
 
