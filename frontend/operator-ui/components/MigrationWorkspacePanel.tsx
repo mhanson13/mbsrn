@@ -8663,9 +8663,9 @@ export function MigrationWorkspacePanel({
                           {busyAction === "repair_media" ? "Replacing..." : "Choose replacement file"}
                           <input
                             type="file"
+                            className="workspace-hidden-file-input"
                             accept="image/jpeg,image/png,image/webp,image/gif"
                             disabled={isActionInFlight}
-                            style={{ display: "none" }}
                             onChange={(event) => void handleReplaceMediaAsset(item.assetId, event)}
                           />
                         </label>
