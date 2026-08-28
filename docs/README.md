@@ -10,7 +10,7 @@
 - [SEO Crawl Settings](features/seo-audit-or-crawl-settings.md)
 - [SEO Recommendation AI Assist](features/seo-recommendations-ai-assist.md)
 - [Competitor Profile Retention](features/seo-competitor-profile-generation-retention.md)
-- [SEO Migration Workspace (Phase 1-4)](features/seo-migration-workspace.md)
+- [SEO Migration Workspace (Phase 1-7)](features/seo-migration-workspace.md)
 
 ## Audits
 - [Google Analytics (GA4) Platform Audit](audits/google-analytics-platform-audit.md)
@@ -34,6 +34,7 @@
 - [Phase 4 Runtime Validation Runbook](phase4-runtime-validation-runbook.md)
 - [Competitor Timeouts Runbook](runbooks/competitor-timeouts.md)
 - [DNS + TLS + OAuth Production Cutover Runbook](runbooks/dns-tls-oauth-cutover.md)
+- [Faithful Source Capture Runbook](runbooks/faithful-source-capture.md)
 
 ## Development
 - [Testing](development/testing.md)

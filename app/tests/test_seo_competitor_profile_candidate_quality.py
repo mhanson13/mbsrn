@@ -327,9 +327,10 @@ def test_operator_preferred_domains_receive_positive_score_signal() -> None:
     )
     assert len(result.included_candidates) == 2
     by_domain = {item.canonical_domain: item for item in result.included_candidates}
-    assert by_domain["seededcompetitor.example.net"].relevance_score > by_domain[
-        "baselinecompetitor.example.net"
-    ].relevance_score
+    assert (
+        by_domain["seededcompetitor.example.net"].relevance_score
+        > by_domain["baselinecompetitor.example.net"].relevance_score
+    )
 
 
 def test_operator_not_useful_domains_receive_negative_score_signal() -> None:
@@ -361,9 +362,10 @@ def test_operator_not_useful_domains_receive_negative_score_signal() -> None:
     )
     assert len(result.included_candidates) == 2
     by_domain = {item.canonical_domain: item for item in result.included_candidates}
-    assert by_domain["deprioritizedcompetitor.example.net"].relevance_score < by_domain[
-        "baselinecompetitor.example.net"
-    ].relevance_score
+    assert (
+        by_domain["deprioritizedcompetitor.example.net"].relevance_score
+        < by_domain["baselinecompetitor.example.net"].relevance_score
+    )
 
 
 def test_preferred_domain_signal_does_not_override_self_domain_exclusion() -> None:

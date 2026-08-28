@@ -78,6 +78,8 @@ class SEOMigrationContextAssembler:
             "migration_workspace": {
                 "workspace_id": workspace.id,
                 "source_url": workspace.source_url,
+                "ingestion_mode": workspace.ingestion_mode,
+                "latest_source_capture_id": workspace.latest_source_capture_id,
                 "source_site_status": workspace.source_site_status,
                 "migration_status": workspace.migration_status,
             },

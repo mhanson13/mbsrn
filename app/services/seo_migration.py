@@ -617,9 +617,7 @@ _DEPLOY_DISPATCH_SERVICE_REASON_IMAGE_PULL_SECRET_MISSING = "image_pull_secret_m
 _DEPLOY_DISPATCH_SERVICE_REASON_IMAGE_PULL_SECRET_NOT_REFERENCED = "image_pull_secret_not_referenced"
 _DEPLOY_DISPATCH_SERVICE_REASON_CERTIFICATE_DOMAIN_MISMATCH = "certificate_domain_mismatch"
 _DEPLOY_DISPATCH_SERVICE_REASON_STALE_MANAGED_CERTIFICATE_PRESENT = "stale_managed_certificate_present"
-_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_OWNERSHIP_UNVERIFIED = (
-    "managed_certificate_ownership_unverified"
-)
+_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_OWNERSHIP_UNVERIFIED = "managed_certificate_ownership_unverified"
 _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_CERTIFICATE_MISMATCH = "ingress_certificate_mismatch"
 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_IDENTITY_MISMATCH = "managed_certificate_identity_mismatch"
 _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_CERTIFICATE_ANNOTATION_MISMATCH = "ingress_certificate_annotation_mismatch"
@@ -1187,9 +1185,7 @@ class SEOMigrationService:
         self.managed_site_private_image_auth_enabled = bool(managed_site_private_image_auth_enabled)
         self.remote_image_import_enabled = bool(remote_image_import_enabled)
         self.tls_certificate_repository = tls_certificate_repository
-        self.media_storage = media_storage or LocalMigrationMediaStorage(
-            root=_resolve_migration_media_storage_root()
-        )
+        self.media_storage = media_storage or LocalMigrationMediaStorage(root=_resolve_migration_media_storage_root())
         self.runtime_build_metadata = get_runtime_build_metadata()
         self._resolved_migration_draft_timeout_seconds = _MIGRATION_DRAFT_TIMEOUT_DEFAULT_SECONDS
         self._resolved_migration_draft_timeout_source = "default"
@@ -1309,7 +1305,10 @@ class SEOMigrationService:
         site_id: str,
         media_asset: dict[str, object],
     ) -> str | None:
-        if _normalize_media_workspace_status(media_asset.get("workspace_status")) != _MIGRATION_MEDIA_WORKSPACE_STATUS_ACTIVE:
+        if (
+            _normalize_media_workspace_status(media_asset.get("workspace_status"))
+            != _MIGRATION_MEDIA_WORKSPACE_STATUS_ACTIVE
+        ):
             return None
         asset_id = _normalize_string(media_asset.get("asset_id"), max_length=80)
         if asset_id is None:
@@ -1665,7 +1664,10 @@ class SEOMigrationService:
             )
 
         declared_content_type = _normalize_media_content_type(target_asset.get("content_type"))
-        if declared_content_type is not None and declared_content_type not in _MIGRATION_MEDIA_UPLOAD_ALLOWED_CONTENT_TYPES:
+        if (
+            declared_content_type is not None
+            and declared_content_type not in _MIGRATION_MEDIA_UPLOAD_ALLOWED_CONTENT_TYPES
+        ):
             raise SEOMigrationValidationError(
                 "Unsupported media content type.",
                 failure_category="artifact_invalid",
@@ -2521,7 +2523,9 @@ class SEOMigrationService:
                     results.append(
                         {
                             "asset_id": target_asset_id,
-                            "normalized_url": _normalize_discovered_media_lookup_url(target_asset.get("normalized_url")),
+                            "normalized_url": _normalize_discovered_media_lookup_url(
+                                target_asset.get("normalized_url")
+                            ),
                             "status": "failed",
                             "reason_code": quality_reason or _MIGRATION_MEDIA_REASON_ASSET_LOW_VALUE,
                             "media_asset": None,
@@ -2533,7 +2537,9 @@ class SEOMigrationService:
                     results.append(
                         {
                             "asset_id": target_asset_id,
-                            "normalized_url": _normalize_discovered_media_lookup_url(target_asset.get("normalized_url")),
+                            "normalized_url": _normalize_discovered_media_lookup_url(
+                                target_asset.get("normalized_url")
+                            ),
                             "status": "failed",
                             "reason_code": quality_reason or _MIGRATION_MEDIA_REASON_ASSET_REJECTED,
                             "media_asset": None,
@@ -4216,9 +4222,7 @@ class SEOMigrationService:
                     workflow_provisioning_status = "skipped_not_authorized"
                     workflow_provisioning_remediation_mode = "authorization_required"
                     workflow_provisioning_warning_code = "github_workflow_write_not_authorized"
-                    workflow_provisioning_warning_message = (
-                        "Deploy workflow provisioning could not be verified during publish because workflow write access is unavailable."
-                    )
+                    workflow_provisioning_warning_message = "Deploy workflow provisioning could not be verified during publish because workflow write access is unavailable."
                     publish_warnings.append(workflow_provisioning_warning_message)
                 elif duplicate_is_success:
                     duplicate_publish_repaired = True
@@ -4739,118 +4743,116 @@ class SEOMigrationService:
                 workflow_provisioning_status = "skipped_not_authorized"
                 workflow_provisioning_remediation_mode = "authorization_required"
                 workflow_provisioning_warning_code = "github_workflow_write_not_authorized"
-                workflow_provisioning_warning_message = (
-                    "Deploy workflow provisioning could not be verified during publish because workflow write access is unavailable."
-                )
+                workflow_provisioning_warning_message = "Deploy workflow provisioning could not be verified during publish because workflow write access is unavailable."
                 publish_warnings.append(workflow_provisioning_warning_message)
             else:
                 try:
                     deploy_workflow_provision_result = self.github_publisher.ensure_deploy_workflow(
-                    repo_owner=workflow_owner,
-                    repo_name=workflow_repo,
-                    branch=workflow_ref,
-                    workflow_id=workflow_identifier,
-                    dry_run=False,
-                    deploy_workflow_mode=deploy_workflow_mode,
-                    target_environment_key=target_environment_key,
-                    target_environment_source=target_environment_source,
-                    managed_gke_config=_normalize_json_dict(admin_deploy_metadata.get("managed_gke_config")),
-                    managed_image_pull_secret_config=self._resolve_managed_image_pull_secret_runtime_config()[0],
-                    namespace_isolation_defaults=admin_deploy_metadata.get("namespace_isolation_defaults"),
-                    site_id=site.id,
-                    business_id=workspace.business_id,
-                    repository_auto_create_created=repository_auto_create_created,
-                    artifact_version_id=artifact.id,
-                    preview_hostname=_safe_derive_preview_hostname_for_summary(
+                        repo_owner=workflow_owner,
                         repo_name=workflow_repo,
+                        branch=workflow_ref,
+                        workflow_id=workflow_identifier,
+                        dry_run=False,
+                        deploy_workflow_mode=deploy_workflow_mode,
+                        target_environment_key=target_environment_key,
+                        target_environment_source=target_environment_source,
+                        managed_gke_config=_normalize_json_dict(admin_deploy_metadata.get("managed_gke_config")),
+                        managed_image_pull_secret_config=self._resolve_managed_image_pull_secret_runtime_config()[0],
+                        namespace_isolation_defaults=admin_deploy_metadata.get("namespace_isolation_defaults"),
                         site_id=site.id,
-                        preview_slug=site.preview_slug,
-                    )[0],
-                    **(
-                        {
-                            "pre_shared_certificate_name": active_tls_certificate[0],
-                            "pre_shared_certificate_fingerprint": active_tls_certificate[1],
-                        }
-                        if active_tls_certificate
-                        else {}
-                    ),
-                )
+                        business_id=workspace.business_id,
+                        repository_auto_create_created=repository_auto_create_created,
+                        artifact_version_id=artifact.id,
+                        preview_hostname=_safe_derive_preview_hostname_for_summary(
+                            repo_name=workflow_repo,
+                            site_id=site.id,
+                            preview_slug=site.preview_slug,
+                        )[0],
+                        **(
+                            {
+                                "pre_shared_certificate_name": active_tls_certificate[0],
+                                "pre_shared_certificate_fingerprint": active_tls_certificate[1],
+                            }
+                            if active_tls_certificate
+                            else {}
+                        ),
+                    )
                     workflow_provisioning_verified = True
                     self._mark_active_tls_manifest_published(business_id=business_id, site_id=site_id)
                     workflow_provisioning_status = (
                         "created" if deploy_workflow_provision_result.provisioned else "already_exists"
                     )
                     self._log_workflow_provisioning(
-                    business_id=business_id,
-                    site_id=site_id,
-                    workspace_id=workspace.id,
-                    principal_id=principal_id,
-                    artifact_version_id=artifact.id,
-                    repo_owner=workflow_owner,
-                    repo_name=workflow_repo,
-                    ref=workflow_ref,
-                    workflow_id=workflow_identifier,
-                    workflow_path=deploy_workflow_provision_result.workflow_path,
-                    status=workflow_provisioning_status,
-                    remediation_mode=workflow_provisioning_remediation_mode,
-                    deploy_workflow_mode=deploy_workflow_mode,
-                    target_environment_key=target_environment_key,
-                    target_environment_source=target_environment_source,
-                    kubernetes_namespace=deploy_workflow_provision_result.kubernetes_namespace,
-                    namespace_source=deploy_workflow_provision_result.namespace_source,
-                    namespace_model_status=deploy_workflow_provision_result.namespace_model_status,
-                    managed_manifest_paths=deploy_workflow_provision_result.managed_manifest_paths,
-                    managed_resource_quota_expected=deploy_workflow_provision_result.managed_resource_quota_expected,
-                    managed_resource_quota_present=deploy_workflow_provision_result.managed_resource_quota_present,
-                    managed_limit_range_expected=deploy_workflow_provision_result.managed_limit_range_expected,
-                    managed_limit_range_present=deploy_workflow_provision_result.managed_limit_range_present,
-                    managed_network_policy_expected=deploy_workflow_provision_result.managed_network_policy_expected,
-                    managed_network_policy_present=deploy_workflow_provision_result.managed_network_policy_present,
-                    managed_namespace_policies_aligned=deploy_workflow_provision_result.managed_namespace_policies_aligned,
-                    workflow_remediation_outcome=workflow_remediation_outcome,
-                    repository_auto_create_created=repository_auto_create_created,
-                    commit_sha=deploy_workflow_provision_result.commit_sha,
-                    verified=True,
-                    )
-                    self._log_workflow_provisioning(
-                    business_id=business_id,
-                    site_id=site_id,
-                    workspace_id=workspace.id,
-                    principal_id=principal_id,
-                    artifact_version_id=artifact.id,
-                    repo_owner=workflow_owner,
-                    repo_name=workflow_repo,
-                    ref=workflow_ref,
-                    workflow_id=workflow_identifier,
-                    workflow_path=deploy_workflow_provision_result.workflow_path,
-                    status="verified",
-                    remediation_mode=workflow_provisioning_remediation_mode,
-                    deploy_workflow_mode=deploy_workflow_mode,
-                    target_environment_key=target_environment_key,
-                    target_environment_source=target_environment_source,
-                    kubernetes_namespace=deploy_workflow_provision_result.kubernetes_namespace,
-                    namespace_source=deploy_workflow_provision_result.namespace_source,
-                    namespace_model_status=deploy_workflow_provision_result.namespace_model_status,
-                    managed_manifest_paths=deploy_workflow_provision_result.managed_manifest_paths,
-                    managed_resource_quota_expected=deploy_workflow_provision_result.managed_resource_quota_expected,
-                    managed_resource_quota_present=deploy_workflow_provision_result.managed_resource_quota_present,
-                    managed_limit_range_expected=deploy_workflow_provision_result.managed_limit_range_expected,
-                    managed_limit_range_present=deploy_workflow_provision_result.managed_limit_range_present,
-                    managed_network_policy_expected=deploy_workflow_provision_result.managed_network_policy_expected,
-                    managed_network_policy_present=deploy_workflow_provision_result.managed_network_policy_present,
-                    managed_namespace_policies_aligned=deploy_workflow_provision_result.managed_namespace_policies_aligned,
-                    workflow_remediation_outcome=workflow_remediation_outcome,
-                    repository_auto_create_created=repository_auto_create_created,
-                    commit_sha=deploy_workflow_provision_result.commit_sha,
-                    verified=True,
-                    )
-                    if deploy_workflow_provision_result.provisioned:
-                        self._log_workflow_provisioned(
                         business_id=business_id,
                         site_id=site_id,
                         workspace_id=workspace.id,
                         principal_id=principal_id,
-                        provision_result=deploy_workflow_provision_result,
+                        artifact_version_id=artifact.id,
+                        repo_owner=workflow_owner,
+                        repo_name=workflow_repo,
+                        ref=workflow_ref,
+                        workflow_id=workflow_identifier,
+                        workflow_path=deploy_workflow_provision_result.workflow_path,
+                        status=workflow_provisioning_status,
+                        remediation_mode=workflow_provisioning_remediation_mode,
+                        deploy_workflow_mode=deploy_workflow_mode,
+                        target_environment_key=target_environment_key,
+                        target_environment_source=target_environment_source,
+                        kubernetes_namespace=deploy_workflow_provision_result.kubernetes_namespace,
+                        namespace_source=deploy_workflow_provision_result.namespace_source,
+                        namespace_model_status=deploy_workflow_provision_result.namespace_model_status,
+                        managed_manifest_paths=deploy_workflow_provision_result.managed_manifest_paths,
+                        managed_resource_quota_expected=deploy_workflow_provision_result.managed_resource_quota_expected,
+                        managed_resource_quota_present=deploy_workflow_provision_result.managed_resource_quota_present,
+                        managed_limit_range_expected=deploy_workflow_provision_result.managed_limit_range_expected,
+                        managed_limit_range_present=deploy_workflow_provision_result.managed_limit_range_present,
+                        managed_network_policy_expected=deploy_workflow_provision_result.managed_network_policy_expected,
+                        managed_network_policy_present=deploy_workflow_provision_result.managed_network_policy_present,
+                        managed_namespace_policies_aligned=deploy_workflow_provision_result.managed_namespace_policies_aligned,
+                        workflow_remediation_outcome=workflow_remediation_outcome,
+                        repository_auto_create_created=repository_auto_create_created,
+                        commit_sha=deploy_workflow_provision_result.commit_sha,
+                        verified=True,
+                    )
+                    self._log_workflow_provisioning(
+                        business_id=business_id,
+                        site_id=site_id,
+                        workspace_id=workspace.id,
+                        principal_id=principal_id,
+                        artifact_version_id=artifact.id,
+                        repo_owner=workflow_owner,
+                        repo_name=workflow_repo,
+                        ref=workflow_ref,
+                        workflow_id=workflow_identifier,
+                        workflow_path=deploy_workflow_provision_result.workflow_path,
+                        status="verified",
+                        remediation_mode=workflow_provisioning_remediation_mode,
+                        deploy_workflow_mode=deploy_workflow_mode,
+                        target_environment_key=target_environment_key,
+                        target_environment_source=target_environment_source,
+                        kubernetes_namespace=deploy_workflow_provision_result.kubernetes_namespace,
+                        namespace_source=deploy_workflow_provision_result.namespace_source,
+                        namespace_model_status=deploy_workflow_provision_result.namespace_model_status,
+                        managed_manifest_paths=deploy_workflow_provision_result.managed_manifest_paths,
+                        managed_resource_quota_expected=deploy_workflow_provision_result.managed_resource_quota_expected,
+                        managed_resource_quota_present=deploy_workflow_provision_result.managed_resource_quota_present,
+                        managed_limit_range_expected=deploy_workflow_provision_result.managed_limit_range_expected,
+                        managed_limit_range_present=deploy_workflow_provision_result.managed_limit_range_present,
+                        managed_network_policy_expected=deploy_workflow_provision_result.managed_network_policy_expected,
+                        managed_network_policy_present=deploy_workflow_provision_result.managed_network_policy_present,
+                        managed_namespace_policies_aligned=deploy_workflow_provision_result.managed_namespace_policies_aligned,
+                        workflow_remediation_outcome=workflow_remediation_outcome,
+                        repository_auto_create_created=repository_auto_create_created,
+                        commit_sha=deploy_workflow_provision_result.commit_sha,
+                        verified=True,
+                    )
+                    if deploy_workflow_provision_result.provisioned:
+                        self._log_workflow_provisioned(
+                            business_id=business_id,
+                            site_id=site_id,
+                            workspace_id=workspace.id,
+                            principal_id=principal_id,
+                            provision_result=deploy_workflow_provision_result,
                         )
                     (
                         deploy_secret_propagation_attempted,
@@ -4858,25 +4860,23 @@ class SEOMigrationService:
                         deploy_secret_propagation_reason,
                         deploy_secret_propagation_source,
                     ) = self._attempt_deploy_secret_propagation(
-                    business_id=business_id,
-                    site_id=site_id,
-                    workspace_id=workspace.id,
-                    artifact_version_id=artifact.id,
-                    principal_id=principal_id,
-                    workflow_owner=workflow_owner,
-                    workflow_repo=workflow_repo,
-                    workflow_ref=workflow_ref,
-                    publish_target=target,
-                    deploy_target=deploy_target_for_workflow,
-                    admin_prerequisites=admin_publish_prerequisites,
+                        business_id=business_id,
+                        site_id=site_id,
+                        workspace_id=workspace.id,
+                        artifact_version_id=artifact.id,
+                        principal_id=principal_id,
+                        workflow_owner=workflow_owner,
+                        workflow_repo=workflow_repo,
+                        workflow_ref=workflow_ref,
+                        publish_target=target,
+                        deploy_target=deploy_target_for_workflow,
+                        admin_prerequisites=admin_publish_prerequisites,
                     )
                 except SEOMigrationGitHubPublisherError as exc:
                     workflow_provisioning_status = "failed"
                     workflow_provisioning_warning_code = "workflow_provisioning_failed"
                     workflow_provisioning_error_code = _normalize_string(exc.code, max_length=80)
-                    workflow_provisioning_warning_message = (
-                        "Deploy workflow provisioning could not be verified. Artifact publish succeeded; retry deploy workflow provisioning before dispatch."
-                    )
+                    workflow_provisioning_warning_message = "Deploy workflow provisioning could not be verified. Artifact publish succeeded; retry deploy workflow provisioning before dispatch."
                     publish_warnings.append(workflow_provisioning_warning_message)
                     workflow_remediation_outcome = _WORKFLOW_REMEDIATION_OUTCOME_WRITE_FAILED
                     self._log_workflow_provisioning(
@@ -4895,9 +4895,7 @@ class SEOMigrationService:
                         deploy_workflow_mode=deploy_workflow_mode,
                         target_environment_key=target_environment_key,
                         target_environment_source=target_environment_source,
-                        kubernetes_namespace=_safe_derive_kubernetes_namespace_for_summary(
-                            repo_name=workflow_repo
-                        )[0],
+                        kubernetes_namespace=_safe_derive_kubernetes_namespace_for_summary(repo_name=workflow_repo)[0],
                         namespace_source=None,
                         namespace_model_status=None,
                         managed_manifest_paths=(),
@@ -6597,12 +6595,16 @@ class SEOMigrationService:
                 )
                 deploy_secret_value_for_control_plane: str | None = None
                 if deploy_workflow_mode_for_dispatch == _DEPLOY_WORKFLOW_MODE_SITE_REPO_TEMPLATE_V1 and not dry_run:
-                    preview_hostname_for_static_ip = canonical_preview_hostname or _normalize_string(
-                        target_readiness.preview_hostname if target_readiness is not None else None,
-                        max_length=253,
-                    ) or _normalize_string(
-                        workflow_resolution.get("preview_hostname"),
-                        max_length=253,
+                    preview_hostname_for_static_ip = (
+                        canonical_preview_hostname
+                        or _normalize_string(
+                            target_readiness.preview_hostname if target_readiness is not None else None,
+                            max_length=253,
+                        )
+                        or _normalize_string(
+                            workflow_resolution.get("preview_hostname"),
+                            max_length=253,
+                        )
                     )
 
                     def _emit_prerequisite_chain_log(
@@ -6787,9 +6789,7 @@ class SEOMigrationService:
                                 "Static IP ensure could not resolve an address value after bounded refresh attempts."
                             )
                             static_ip_exit_code = None
-                            static_ip_permission_hint = (
-                                "Verify global address describe/list permissions and retry."
-                            )
+                            static_ip_permission_hint = "Verify global address describe/list permissions and retry."
                             _emit_prerequisite_chain_log(
                                 stage="static_ip_address_missing",
                                 reason_code=_DEPLOY_DISPATCH_SERVICE_REASON_STATIC_IP_PROVISIONING_PENDING,
@@ -6916,12 +6916,16 @@ class SEOMigrationService:
                         )
                         raise
                     try:
-                        preview_hostname_for_dns = canonical_preview_hostname or _normalize_string(
-                            target_readiness.preview_hostname if target_readiness is not None else None,
-                            max_length=253,
-                        ) or _normalize_string(
-                            workflow_resolution.get("preview_hostname"),
-                            max_length=253,
+                        preview_hostname_for_dns = (
+                            canonical_preview_hostname
+                            or _normalize_string(
+                                target_readiness.preview_hostname if target_readiness is not None else None,
+                                max_length=253,
+                            )
+                            or _normalize_string(
+                                workflow_resolution.get("preview_hostname"),
+                                max_length=253,
+                            )
                         )
                         if not preview_hostname_for_dns:
                             derived_preview_hostname, _ = derive_site_preview_hostname(
@@ -7231,21 +7235,29 @@ class SEOMigrationService:
                             stage="dns_propagation",
                         )
                     _emit_prerequisite_chain_log(stage="dns_propagation_succeeded")
-                    preview_endpoint_mode_for_dispatch = _normalize_string(
-                        workflow_resolution.get("preview_endpoint_mode"),
-                        max_length=60,
-                    ) or _MANAGED_PREVIEW_ENDPOINT_MODE_DEDICATED_STATIC_IP
+                    preview_endpoint_mode_for_dispatch = (
+                        _normalize_string(
+                            workflow_resolution.get("preview_endpoint_mode"),
+                            max_length=60,
+                        )
+                        or _MANAGED_PREVIEW_ENDPOINT_MODE_DEDICATED_STATIC_IP
+                    )
                     uses_shared_preview_gateway_for_dispatch = (
                         bool(workflow_resolution.get("uses_shared_preview_gateway"))
                         if isinstance(workflow_resolution.get("uses_shared_preview_gateway"), bool)
                         else preview_endpoint_mode_for_dispatch == _MANAGED_PREVIEW_ENDPOINT_MODE_SHARED_GATEWAY
                     )
-                    preview_hostname_for_certificate = canonical_preview_hostname or _normalize_string(expected_dns_hostname, max_length=253) or _normalize_string(
-                        target_readiness.preview_hostname if target_readiness is not None else None,
-                        max_length=253,
-                    ) or _normalize_string(
-                        workflow_resolution.get("preview_hostname"),
-                        max_length=253,
+                    preview_hostname_for_certificate = (
+                        canonical_preview_hostname
+                        or _normalize_string(expected_dns_hostname, max_length=253)
+                        or _normalize_string(
+                            target_readiness.preview_hostname if target_readiness is not None else None,
+                            max_length=253,
+                        )
+                        or _normalize_string(
+                            workflow_resolution.get("preview_hostname"),
+                            max_length=253,
+                        )
                     )
                     if not preview_hostname_for_certificate:
                         derived_preview_hostname_for_certificate, _ = derive_site_preview_hostname(
@@ -7270,9 +7282,7 @@ class SEOMigrationService:
                         expected_managed_certificate_name = active_self_managed_tls_certificate[0]
                         managed_certificate_exists = True
                         managed_certificate_status = "ACTIVE"
-                        managed_certificate_reconcile_note = (
-                            "Self-managed Compute certificate is selected through the ingress pre-shared certificate annotation."
-                        )
+                        managed_certificate_reconcile_note = "Self-managed Compute certificate is selected through the ingress pre-shared certificate annotation."
                     managed_certificate_reconcile_note = (
                         managed_certificate_reconcile_note
                         or "Existing ManagedCertificate resource is being reconciled; no new unique certificate name was generated."
@@ -7288,27 +7298,34 @@ class SEOMigrationService:
                         None
                         if active_self_managed_tls_certificate
                         else self.github_publisher.check_managed_certificate_readiness(
-                                repo_name=deploy_target_for_dispatch.repo_name,
-                                site_id=site_id,
-                                preview_hostname=preview_hostname_for_certificate or "",
-                                kubernetes_namespace=certificate_namespace,
-                                managed_gke_config=managed_gke_config_for_dispatch,
-                                gcp_deploy_key=deploy_secret_value_for_control_plane,
-                                expected_managed_certificate_name=expected_managed_certificate_name,
-                            )
+                            repo_name=deploy_target_for_dispatch.repo_name,
+                            site_id=site_id,
+                            preview_hostname=preview_hostname_for_certificate or "",
+                            kubernetes_namespace=certificate_namespace,
+                            managed_gke_config=managed_gke_config_for_dispatch,
+                            gcp_deploy_key=deploy_secret_value_for_control_plane,
+                            expected_managed_certificate_name=expected_managed_certificate_name,
+                        )
                     )
                     if managed_certificate_readiness is not None:
-                        expected_managed_certificate_name = _normalize_string(
-                            managed_certificate_readiness.managed_certificate_name,
-                            max_length=63,
-                        ) or expected_managed_certificate_name
+                        expected_managed_certificate_name = (
+                            _normalize_string(
+                                managed_certificate_readiness.managed_certificate_name,
+                                max_length=63,
+                            )
+                            or expected_managed_certificate_name
+                        )
                         managed_certificate_exists = bool(managed_certificate_readiness.managed_certificate_exists)
                         observed_certificate_domains: list[str] = []
-                        for raw_domain in tuple(managed_certificate_readiness.observed_managed_certificate_domains or ()):
+                        for raw_domain in tuple(
+                            managed_certificate_readiness.observed_managed_certificate_domains or ()
+                        ):
                             normalized_domain = _normalize_string(raw_domain, max_length=253)
                             if normalized_domain:
                                 observed_certificate_domains.append(normalized_domain)
-                        observed_managed_certificate_domains = ",".join(_dedupe_strings(observed_certificate_domains)) or None
+                        observed_managed_certificate_domains = (
+                            ",".join(_dedupe_strings(observed_certificate_domains)) or None
+                        )
                         observed_managed_certificate_status = _normalize_string(
                             managed_certificate_readiness.observed_managed_certificate_status,
                             max_length=64,
@@ -7554,10 +7571,11 @@ class SEOMigrationService:
             failure_category = self._categorize_publisher_failure(exc=exc, action="deploy")
             failure_reason_code = _normalize_deploy_failure_reason_code(exc.code)
             failure_stage = _normalize_deploy_failure_stage(exc.stage)
-            dispatch_attempted = (
-                failure_stage == "workflow_dispatch"
-                and failure_reason_code in {"github_temporal_failure", "github_timeout", "github_network_error"}
-            )
+            dispatch_attempted = failure_stage == "workflow_dispatch" and failure_reason_code in {
+                "github_temporal_failure",
+                "github_timeout",
+                "github_network_error",
+            }
             dispatch_result_stage = failure_stage or "workflow_dispatch"
             workflow_run_lookup_attempted = False
             workflow_run_found = False
@@ -8371,9 +8389,7 @@ class SEOMigrationService:
         managed_deploy_template_marker_present = runtime_network_readiness.get(
             _MANAGED_DEPLOY_TEMPLATE_MARKER_PRESENT_OUTPUT_KEY
         )
-        managed_site_runtime_replace_performed = runtime_network_readiness.get(
-            "managed_site_runtime_replace_performed"
-        )
+        managed_site_runtime_replace_performed = runtime_network_readiness.get("managed_site_runtime_replace_performed")
         managed_site_runtime_replace_scope = runtime_network_readiness.get("managed_site_runtime_replace_scope")
         managed_site_runtime_replace_deleted_kinds = runtime_network_readiness.get(
             "managed_site_runtime_replace_deleted_kinds"
@@ -11071,9 +11087,7 @@ class SEOMigrationService:
                 else None
             ),
             "runtime_ready": (
-                bool(next_item.get("runtime_ready"))
-                if isinstance(next_item.get("runtime_ready"), bool)
-                else None
+                bool(next_item.get("runtime_ready")) if isinstance(next_item.get("runtime_ready"), bool) else None
             ),
             "ingress_address_resolved": (
                 bool(next_item.get("ingress_address_resolved"))
@@ -11081,14 +11095,10 @@ class SEOMigrationService:
                 else None
             ),
             "service_exists": (
-                bool(next_item.get("service_exists"))
-                if isinstance(next_item.get("service_exists"), bool)
-                else None
+                bool(next_item.get("service_exists")) if isinstance(next_item.get("service_exists"), bool) else None
             ),
             "endpoints_ready": (
-                bool(next_item.get("endpoints_ready"))
-                if isinstance(next_item.get("endpoints_ready"), bool)
-                else None
+                bool(next_item.get("endpoints_ready")) if isinstance(next_item.get("endpoints_ready"), bool) else None
             ),
             "managed_certificate_exists": (
                 bool(next_item.get("managed_certificate_exists"))
@@ -11112,9 +11122,7 @@ class SEOMigrationService:
                 max_length=200,
             ),
             "https_ready": (
-                bool(next_item.get("https_ready"))
-                if isinstance(next_item.get("https_ready"), bool)
-                else None
+                bool(next_item.get("https_ready")) if isinstance(next_item.get("https_ready"), bool) else None
             ),
             "runtime_ready_tls_pending": (
                 bool(next_item.get("runtime_ready_tls_pending"))
@@ -11723,9 +11731,7 @@ class SEOMigrationService:
                 else None
             ),
             "runtime_ready": (
-                bool(history_item.get("runtime_ready"))
-                if isinstance(history_item.get("runtime_ready"), bool)
-                else None
+                bool(history_item.get("runtime_ready")) if isinstance(history_item.get("runtime_ready"), bool) else None
             ),
             "ingress_address_resolved": (
                 bool(history_item.get("ingress_address_resolved"))
@@ -11764,9 +11770,7 @@ class SEOMigrationService:
                 max_length=200,
             ),
             "https_ready": (
-                bool(history_item.get("https_ready"))
-                if isinstance(history_item.get("https_ready"), bool)
-                else None
+                bool(history_item.get("https_ready")) if isinstance(history_item.get("https_ready"), bool) else None
             ),
             "runtime_ready_tls_pending": (
                 bool(history_item.get("runtime_ready_tls_pending"))
@@ -12573,7 +12577,9 @@ class SEOMigrationService:
                 if isinstance(failure_generation_safety.get("preflight_blocked"), bool)
                 else False
             )
-            draft_failure_source = "local_preflight" if (provider_call_skipped or preflight_blocked) else "remote_provider"
+            draft_failure_source = (
+                "local_preflight" if (provider_call_skipped or preflight_blocked) else "remote_provider"
+            )
             draft_compatibility_decision = (
                 "blocked_local_preflight" if draft_failure_source == "local_preflight" else "allowed"
             )
@@ -12870,7 +12876,9 @@ class SEOMigrationService:
         artifact_model_used = _normalize_string(provider_output.model_name, max_length=128) or model_resolved
         generation_duration_ms = self._duration_ms(started_at)
         draft_input_summary = _normalize_json_dict(context_json.get("draft_input_summary"))
-        provider_generation_safety = _normalize_json_dict(getattr(self.artifact_provider, "last_generation_safety", None))
+        provider_generation_safety = _normalize_json_dict(
+            getattr(self.artifact_provider, "last_generation_safety", None)
+        )
         if not provider_generation_safety:
             provider_generation_safety = self._resolved_migration_generation_safety.to_context_payload()
         artifact_quality_evaluation = evaluate_migration_artifact_quality(
@@ -13382,14 +13390,12 @@ class SEOMigrationService:
             )
             or "compact_fallback"
         )
-        draft_input_summary_payload["generation_max_final_input_chars"] = (
-            _coerce_int(ai_execution_summary.get("max_final_input_chars"))
-            or _coerce_int(draft_input_summary_payload.get("generation_max_final_input_chars"))
-        )
-        draft_input_summary_payload["generation_max_difficulty_score"] = (
-            _coerce_int(ai_execution_summary.get("max_difficulty_score"))
-            or _coerce_int(draft_input_summary_payload.get("generation_max_difficulty_score"))
-        )
+        draft_input_summary_payload["generation_max_final_input_chars"] = _coerce_int(
+            ai_execution_summary.get("max_final_input_chars")
+        ) or _coerce_int(draft_input_summary_payload.get("generation_max_final_input_chars"))
+        draft_input_summary_payload["generation_max_difficulty_score"] = _coerce_int(
+            ai_execution_summary.get("max_difficulty_score")
+        ) or _coerce_int(draft_input_summary_payload.get("generation_max_difficulty_score"))
         compact_fallback_attempted = ai_execution_summary.get("compact_fallback_attempted")
         if isinstance(compact_fallback_attempted, bool):
             draft_input_summary_payload["generation_compact_fallback_attempted"] = compact_fallback_attempted
@@ -13884,9 +13890,7 @@ class SEOMigrationService:
         degraded_state = _normalize_string(diagnostics_payload.get("degraded_state"), max_length=120)
         context_budget_size_chars_raw = diagnostics_payload.get("context_budget_size_chars")
         context_budget_size_chars = (
-            max(1, int(context_budget_size_chars_raw))
-            if isinstance(context_budget_size_chars_raw, int)
-            else None
+            max(1, int(context_budget_size_chars_raw)) if isinstance(context_budget_size_chars_raw, int) else None
         )
         largest_context_block = _normalize_string(diagnostics_payload.get("largest_context_block"), max_length=80)
         largest_context_block_size_chars_raw = diagnostics_payload.get("largest_context_block_size_chars")
@@ -14181,9 +14185,7 @@ class SEOMigrationService:
         preflight_blocked_setting_actual = _coerce_int(
             generation_safety_payload.get("preflight_blocked_setting_actual")
         )
-        preflight_blocked_setting_cap = _coerce_int(
-            generation_safety_payload.get("preflight_blocked_setting_cap")
-        )
+        preflight_blocked_setting_cap = _coerce_int(generation_safety_payload.get("preflight_blocked_setting_cap"))
         provider_call_skipped_raw = generation_safety_payload.get("provider_call_skipped")
         return {
             "model_requested": model_requested,
@@ -14204,9 +14206,7 @@ class SEOMigrationService:
             "max_final_input_chars": max_final_input_chars,
             "max_difficulty_score": max_difficulty_score,
             "compact_fallback_attempted": (
-                bool(compact_fallback_attempted_raw)
-                if isinstance(compact_fallback_attempted_raw, bool)
-                else None
+                bool(compact_fallback_attempted_raw) if isinstance(compact_fallback_attempted_raw, bool) else None
             ),
             "budget_capped": bool(budget_capped_raw) if isinstance(budget_capped_raw, bool) else None,
             "preflight_blocked": bool(preflight_blocked_raw) if isinstance(preflight_blocked_raw, bool) else None,
@@ -14868,7 +14868,9 @@ class SEOMigrationService:
             duration_ms=duration_ms,
             timeout_seconds=resolved_timeout_seconds,
             timeout_source=normalized_timeout_source,
-            generation_safety=(failure.generation_safety or self._resolved_migration_generation_safety.to_context_payload()),
+            generation_safety=(
+                failure.generation_safety or self._resolved_migration_generation_safety.to_context_payload()
+            ),
         )
         if normalized_failure_source == "local_preflight":
             execution_payload = _normalize_json_dict(payload.get("draft_generation_execution"))
@@ -15107,10 +15109,9 @@ class SEOMigrationService:
                 else None
             )
         )
-        largest_context_block = (
-            _normalize_string(details.get("largest_context_block"), max_length=80)
-            or _normalize_string(context_budget.get("largest_retained_block"), max_length=80)
-        )
+        largest_context_block = _normalize_string(
+            details.get("largest_context_block"), max_length=80
+        ) or _normalize_string(context_budget.get("largest_retained_block"), max_length=80)
         largest_context_block_size_chars = (
             max(0, int(details.get("largest_context_block_size_chars")))
             if isinstance(details.get("largest_context_block_size_chars"), int)
@@ -15441,7 +15442,9 @@ class SEOMigrationService:
         except Exception:  # noqa: BLE001
             pass
         try:
-            setattr(self.artifact_provider, "generation_safety_source", self._resolved_migration_generation_safety_source)
+            setattr(
+                self.artifact_provider, "generation_safety_source", self._resolved_migration_generation_safety_source
+            )
         except Exception:  # noqa: BLE001
             pass
         return model_name
@@ -15835,6 +15838,40 @@ class SEOMigrationService:
             if isinstance(value, list):
                 asset_reference_count += len(value)
 
+        faithful_capture_raw = _normalize_json_dict(source_snapshot.get("faithful_capture"))
+        faithful_pages: list[dict[str, object]] = []
+        raw_faithful_pages = faithful_capture_raw.get("pages")
+        if isinstance(raw_faithful_pages, list):
+            for raw_page in raw_faithful_pages[: max(1, int(source_page_limit))]:
+                page = _normalize_json_dict(raw_page)
+                if not page:
+                    continue
+                faithful_pages.append(
+                    {
+                        "final_url": _normalize_string(page.get("final_url"), max_length=2048),
+                        "title": _normalize_string(page.get("title"), max_length=220),
+                        "text_excerpt": _normalize_string(page.get("text_excerpt"), max_length=5000),
+                    }
+                )
+        faithful_capture_context: dict[str, object] | None = None
+        if faithful_capture_raw:
+            faithful_capture_context = {
+                "capture_id": _normalize_string(faithful_capture_raw.get("capture_id"), max_length=64),
+                "source_version": _coerce_non_negative_int(faithful_capture_raw.get("source_version")),
+                "manifest_sha256": _normalize_string(
+                    faithful_capture_raw.get("manifest_sha256"),
+                    max_length=64,
+                ),
+                "page_count": _coerce_non_negative_int(faithful_capture_raw.get("page_count")),
+                "asset_count": _coerce_non_negative_int(faithful_capture_raw.get("asset_count")),
+                "unsupported_features": _normalize_string_list(
+                    faithful_capture_raw.get("unsupported_features"),
+                    max_items=30,
+                    max_item_length=120,
+                ),
+                "rendered_pages": faithful_pages,
+            }
+
         return {
             "source_url": _normalize_discovered_media_lookup_url(source_snapshot.get("source_url"))
             or _normalize_string(source_snapshot.get("source_url"), max_length=2048),
@@ -15859,6 +15896,7 @@ class SEOMigrationService:
             "low_value_discovered_images_count": low_value_count,
             "rejected_discovered_images_count": rejected_count,
             "warnings": warnings,
+            "faithful_capture": faithful_capture_context,
         }
 
     def _collect_workspace_media_assets(
@@ -15868,14 +15906,20 @@ class SEOMigrationService:
         business_id: str | None = None,
         site_id: str | None = None,
     ) -> dict[str, object]:
-        resolved_business_id = _normalize_string(
-            business_id or getattr(workspace, "business_id", None),
-            max_length=64,
-        ) or ""
-        resolved_site_id = _normalize_string(
-            site_id or getattr(workspace, "site_id", None),
-            max_length=64,
-        ) or ""
+        resolved_business_id = (
+            _normalize_string(
+                business_id or getattr(workspace, "business_id", None),
+                max_length=64,
+            )
+            or ""
+        )
+        resolved_site_id = (
+            _normalize_string(
+                site_id or getattr(workspace, "site_id", None),
+                max_length=64,
+            )
+            or ""
+        )
         source_snapshot = _normalize_json_dict(workspace.imported_source_snapshot_json)
         source_discovered_all = _normalize_workspace_discovered_media_assets(source_snapshot.get("discovered_images"))
         operator_uploaded_all = _normalize_workspace_operator_media_assets(workspace.enriched_content_notes_json)
@@ -16079,14 +16123,20 @@ class SEOMigrationService:
             media_assets_payload=media_assets_payload,
         )
         generation_budget_payload = _normalize_json_dict(generation_budget)
-        generation_depth = _normalize_string(
-            generation_budget_payload.get("migration_generation_depth"),
-            max_length=32,
-        ) or "standard"
-        variation_level = _normalize_string(
-            generation_budget_payload.get("migration_variation_level"),
-            max_length=32,
-        ) or "balanced"
+        generation_depth = (
+            _normalize_string(
+                generation_budget_payload.get("migration_generation_depth"),
+                max_length=32,
+            )
+            or "standard"
+        )
+        variation_level = (
+            _normalize_string(
+                generation_budget_payload.get("migration_variation_level"),
+                max_length=32,
+            )
+            or "balanced"
+        )
         context_budget_size_chars = _coerce_int(generation_budget_payload.get("migration_context_budget_chars"))
         generated_page_limit = _coerce_int(generation_budget_payload.get("migration_generated_page_limit"))
         generated_file_limit = _coerce_int(generation_budget_payload.get("migration_generated_file_limit"))
@@ -17443,11 +17493,7 @@ class SEOMigrationService:
             min_value=_MIGRATION_MEDIA_ASSET_LIMIT_MIN,
             max_value=_MIGRATION_MEDIA_ASSET_LIMIT_MAX,
         )
-        if (
-            context_budget_override is None
-            and page_limit_override is None
-            and media_limit_override is None
-        ):
+        if context_budget_override is None and page_limit_override is None and media_limit_override is None:
             return budget
         return SEOMigrationGenerationBudget(
             context_budget_chars=(
@@ -17457,8 +17503,12 @@ class SEOMigrationService:
             competitor_limit=budget.competitor_limit,
             source_page_summary_limit=budget.source_page_summary_limit,
             media_asset_limit=media_limit_override if media_limit_override is not None else budget.media_asset_limit,
-            generated_page_limit=page_limit_override if page_limit_override is not None else budget.generated_page_limit,
-            generated_file_limit=media_limit_override if media_limit_override is not None else budget.generated_file_limit,
+            generated_page_limit=(
+                page_limit_override if page_limit_override is not None else budget.generated_page_limit
+            ),
+            generated_file_limit=(
+                media_limit_override if media_limit_override is not None else budget.generated_file_limit
+            ),
             generation_depth=budget.generation_depth,
             variation_level=budget.variation_level,
             require_page_variety=budget.require_page_variety,
@@ -17616,15 +17666,11 @@ class SEOMigrationService:
             ).lower()
             if preflight_mode not in {"compact_fallback", "block_before_provider"}:
                 preflight_mode = defaults.preflight_mode
-            provider_timeout_seconds = _coerce_int(
-                getattr(raw_safety, "migration_provider_timeout_seconds", None)
-            )
+            provider_timeout_seconds = _coerce_int(getattr(raw_safety, "migration_provider_timeout_seconds", None))
             max_final_input_chars = _coerce_int(getattr(raw_safety, "migration_max_final_input_chars", None))
             max_difficulty_score = _coerce_int(getattr(raw_safety, "migration_max_difficulty_score", None))
             compact_page_limit = _coerce_int(getattr(raw_safety, "migration_compact_page_limit", None))
-            compact_media_asset_limit = _coerce_int(
-                getattr(raw_safety, "migration_compact_media_asset_limit", None)
-            )
+            compact_media_asset_limit = _coerce_int(getattr(raw_safety, "migration_compact_media_asset_limit", None))
             compact_recommendation_limit = _coerce_int(
                 getattr(raw_safety, "migration_compact_recommendation_limit", None)
             )
@@ -17882,23 +17928,32 @@ class SEOMigrationService:
                     admin_deploy_metadata.get("namespace_isolation_defaults")
                 ),
             )
-            preview_endpoint_mode = _normalize_string(
-                preview_endpoint.get("effective_mode"),
-                max_length=40,
-            ) or _MANAGED_PREVIEW_ENDPOINT_MODE_DEDICATED_STATIC_IP
+            preview_endpoint_mode = (
+                _normalize_string(
+                    preview_endpoint.get("effective_mode"),
+                    max_length=40,
+                )
+                or _MANAGED_PREVIEW_ENDPOINT_MODE_DEDICATED_STATIC_IP
+            )
             uses_shared_preview_gateway = bool(preview_endpoint.get("uses_shared_preview_gateway"))
             shared_preview_static_ip_name = _normalize_string(
                 preview_endpoint.get("shared_preview_static_ip_name"),
                 max_length=80,
             )
-            expected_static_ip_name = _normalize_string(
-                preview_endpoint.get("expected_static_ip_name"),
-                max_length=80,
-            ) or expected_static_ip_name
-            expected_static_ip_name_source = _normalize_string(
-                preview_endpoint.get("expected_static_ip_name_source"),
-                max_length=80,
-            ) or expected_static_ip_name_source
+            expected_static_ip_name = (
+                _normalize_string(
+                    preview_endpoint.get("expected_static_ip_name"),
+                    max_length=80,
+                )
+                or expected_static_ip_name
+            )
+            expected_static_ip_name_source = (
+                _normalize_string(
+                    preview_endpoint.get("expected_static_ip_name_source"),
+                    max_length=80,
+                )
+                or expected_static_ip_name_source
+            )
         except Exception:  # noqa: BLE001
             pass
         expected_dns_managed_zone = (
@@ -18000,23 +18055,32 @@ class SEOMigrationService:
                     admin_deploy_metadata.get("namespace_isolation_defaults")
                 ),
             )
-            preview_endpoint_mode = _normalize_string(
-                preview_endpoint.get("effective_mode"),
-                max_length=40,
-            ) or _MANAGED_PREVIEW_ENDPOINT_MODE_DEDICATED_STATIC_IP
+            preview_endpoint_mode = (
+                _normalize_string(
+                    preview_endpoint.get("effective_mode"),
+                    max_length=40,
+                )
+                or _MANAGED_PREVIEW_ENDPOINT_MODE_DEDICATED_STATIC_IP
+            )
             uses_shared_preview_gateway = bool(preview_endpoint.get("uses_shared_preview_gateway"))
             shared_preview_static_ip_name = _normalize_string(
                 preview_endpoint.get("shared_preview_static_ip_name"),
                 max_length=80,
             )
-            expected_static_ip_name = _normalize_string(
-                preview_endpoint.get("expected_static_ip_name"),
-                max_length=80,
-            ) or expected_static_ip_name
-            expected_static_ip_name_source = _normalize_string(
-                preview_endpoint.get("expected_static_ip_name_source"),
-                max_length=80,
-            ) or expected_static_ip_name_source
+            expected_static_ip_name = (
+                _normalize_string(
+                    preview_endpoint.get("expected_static_ip_name"),
+                    max_length=80,
+                )
+                or expected_static_ip_name
+            )
+            expected_static_ip_name_source = (
+                _normalize_string(
+                    preview_endpoint.get("expected_static_ip_name_source"),
+                    max_length=80,
+                )
+                or expected_static_ip_name_source
+            )
         except Exception:  # noqa: BLE001
             pass
         managed_certificate_name, _ = derive_site_preview_certificate_name(
@@ -18055,7 +18119,8 @@ class SEOMigrationService:
             "expected_dns_project_id": _normalize_string(
                 admin_deploy_metadata.get("managed_site_dns_project_id"),
                 max_length=120,
-            ) or _normalize_string(
+            )
+            or _normalize_string(
                 admin_deploy_metadata.get("managed_gke_project_id"),
                 max_length=120,
             ),
@@ -18232,23 +18297,32 @@ class SEOMigrationService:
                     admin_deploy_metadata.get("namespace_isolation_defaults")
                 ),
             )
-            preview_endpoint_mode = _normalize_string(
-                preview_endpoint.get("effective_mode"),
-                max_length=40,
-            ) or _MANAGED_PREVIEW_ENDPOINT_MODE_DEDICATED_STATIC_IP
+            preview_endpoint_mode = (
+                _normalize_string(
+                    preview_endpoint.get("effective_mode"),
+                    max_length=40,
+                )
+                or _MANAGED_PREVIEW_ENDPOINT_MODE_DEDICATED_STATIC_IP
+            )
             uses_shared_preview_gateway = bool(preview_endpoint.get("uses_shared_preview_gateway"))
             shared_preview_static_ip_name = _normalize_string(
                 preview_endpoint.get("shared_preview_static_ip_name"),
                 max_length=80,
             )
-            resolved_static_ip_name = _normalize_string(
-                preview_endpoint.get("expected_static_ip_name"),
-                max_length=80,
-            ) or resolved_static_ip_name
-            resolved_static_ip_source = _normalize_string(
-                preview_endpoint.get("expected_static_ip_name_source"),
-                max_length=80,
-            ) or resolved_static_ip_source
+            resolved_static_ip_name = (
+                _normalize_string(
+                    preview_endpoint.get("expected_static_ip_name"),
+                    max_length=80,
+                )
+                or resolved_static_ip_name
+            )
+            resolved_static_ip_source = (
+                _normalize_string(
+                    preview_endpoint.get("expected_static_ip_name_source"),
+                    max_length=80,
+                )
+                or resolved_static_ip_source
+            )
         except Exception:  # noqa: BLE001
             pass
         resolved_dns_managed_zone = (
@@ -19002,11 +19076,7 @@ class SEOMigrationService:
             "gce_backend_healthy": (
                 True
                 if normalized_backend_health_status == "HEALTHY"
-                else (
-                    False
-                    if normalized_backend_health_status in {"UNHEALTHY", "DEGRADED"}
-                    else None
-                )
+                else (False if normalized_backend_health_status in {"UNHEALTHY", "DEGRADED"} else None)
             ),
             "k8s_endpoint_ready": k8s_endpoint_ready,
             "service_has_ready_endpoints": k8s_endpoint_ready,
@@ -19360,9 +19430,12 @@ class SEOMigrationService:
             return {"available": False, "source": "managed_certificate_readiness"}
         if not isinstance(result, SEOMigrationGitHubManagedCertificateReadinessResult):
             return {"available": False, "source": "managed_certificate_readiness"}
-        observed_domains = ",".join(
-            _normalize_string_list(result.observed_managed_certificate_domains, max_items=8, max_item_length=253)
-        ) or None
+        observed_domains = (
+            ",".join(
+                _normalize_string_list(result.observed_managed_certificate_domains, max_items=8, max_item_length=253)
+            )
+            or None
+        )
         return {
             "available": True,
             "checked_at": utc_now().isoformat(),
@@ -20411,9 +20484,7 @@ class SEOMigrationService:
         context_payload = _normalize_json_dict(artifact.context_json)
         diagnostics_payload = _normalize_json_dict(context_payload.get("artifact_media_diagnostics"))
         if not diagnostics_payload:
-            generated_files = (
-                artifact.generated_files_json if isinstance(artifact.generated_files_json, list) else []
-            )
+            generated_files = artifact.generated_files_json if isinstance(artifact.generated_files_json, list) else []
             diagnostics_payload = _derive_artifact_media_reference_diagnostics_from_generated_files(
                 _coerce_object_list(generated_files, max_items=120)
             )
@@ -21205,8 +21276,7 @@ class SEOMigrationService:
         if publish_workflow_warning_message:
             target_summary["workflow_provisioning_warning_message"] = publish_workflow_warning_message
         target_summary["workflow_provisioning_verified_by_current_readiness"] = bool(
-            workflow_verified_by_current_readiness
-            and publish_workflow_warning_code != "workflow_provisioning_failed"
+            workflow_verified_by_current_readiness and publish_workflow_warning_code != "workflow_provisioning_failed"
         )
         if publish_workflow_warning_code == "workflow_provisioning_failed":
             reasons.append(
@@ -21891,9 +21961,7 @@ class SEOMigrationService:
         current_endpoint_evidence_checked_at = _normalize_string(
             current_endpoint_evidence.get("checked_at"), max_length=64
         )
-        current_endpoint_evidence_source = _normalize_string(
-            current_endpoint_evidence.get("source"), max_length=80
-        )
+        current_endpoint_evidence_source = _normalize_string(current_endpoint_evidence.get("source"), max_length=80)
         current_certificate_reason_code = _normalize_dispatch_service_reason_code(
             current_endpoint_evidence.get("reason_code")
         )
@@ -21909,9 +21977,10 @@ class SEOMigrationService:
             observed_managed_certificate_domains = _normalize_string(
                 current_endpoint_evidence.get("certificate_domains"), max_length=255
             )
-            expected_managed_certificate_name = _normalize_string(
-                current_endpoint_evidence.get("certificate_name"), max_length=63
-            ) or expected_managed_certificate_name
+            expected_managed_certificate_name = (
+                _normalize_string(current_endpoint_evidence.get("certificate_name"), max_length=63)
+                or expected_managed_certificate_name
+            )
             tls_certificate_status = managed_certificate_status
             tls_domain_status = observed_managed_certificate_domain_status
             current_domains_match = _coerce_optional_bool(current_endpoint_evidence.get("certificate_domains_match"))
@@ -21948,9 +22017,7 @@ class SEOMigrationService:
             bool(latest_traceability.get("https_ready"))
             if isinstance(latest_traceability.get("https_ready"), bool)
             else (
-                bool(target_summary.get("https_ready"))
-                if isinstance(target_summary.get("https_ready"), bool)
-                else None
+                bool(target_summary.get("https_ready")) if isinstance(target_summary.get("https_ready"), bool) else None
             )
         )
         runtime_ready_tls_pending_observed = (
@@ -22208,19 +22275,14 @@ class SEOMigrationService:
                 tls_domain_status = "ACTIVE"
         normalized_tls_status = (tls_certificate_status or "").strip().upper()
         normalized_tls_domain_status = (tls_domain_status or "").strip().upper()
-        tls_provisioning_evidence = normalized_tls_status == "PROVISIONING" or normalized_tls_domain_status == "PROVISIONING"
-        static_ip_alignment_evidence = (
-            (static_ip_status or "").strip().upper() == "IN_USE"
-            and (
-                ingress_status_ip_matches_static_ip is True
-                or static_ip_bound_to_expected_forwarding_rule is True
-            )
+        tls_provisioning_evidence = (
+            normalized_tls_status == "PROVISIONING" or normalized_tls_domain_status == "PROVISIONING"
+        )
+        static_ip_alignment_evidence = (static_ip_status or "").strip().upper() == "IN_USE" and (
+            ingress_status_ip_matches_static_ip is True or static_ip_bound_to_expected_forwarding_rule is True
         )
         if deploy_https_ready is False and tls_provisioning_evidence:
-            if (
-                not https_probe_error_summary
-                or "probe_attempted_without_error_summary" in https_probe_error_summary
-            ):
+            if not https_probe_error_summary or "probe_attempted_without_error_summary" in https_probe_error_summary:
                 https_probe_error_summary = _compose_https_probe_error_summary(
                     "managed_certificate_provisioning",
                     detail="managed certificate/domain status still PROVISIONING",
@@ -22297,7 +22359,9 @@ class SEOMigrationService:
         )
         certificate_reason_candidates = {item for item in certificate_reason_candidates if item}
         if current_endpoint_evidence_available:
-            certificate_reason_candidates = {current_certificate_reason_code} if current_certificate_reason_code else set()
+            certificate_reason_candidates = (
+                {current_certificate_reason_code} if current_certificate_reason_code else set()
+            )
         elif workflow_republished_not_rerun:
             certificate_reason_candidates = set()
         normalized_managed_certificate_status = (managed_certificate_status or "").strip().upper()
@@ -22361,8 +22425,7 @@ class SEOMigrationService:
         if runtime_ready_tls_pending_observed is True and deploy_https_ready is False:
             runtime_ready_tls_pending = True
         https_ready = bool(
-            deploy_https_ready is True
-            and certificate_readiness_state == _CERTIFICATE_READINESS_STATE_ACTIVE
+            deploy_https_ready is True and certificate_readiness_state == _CERTIFICATE_READINESS_STATE_ACTIVE
         )
         if https_ready_observed is True:
             https_ready = True
@@ -22396,7 +22459,9 @@ class SEOMigrationService:
                 )
             blocker_codes.append(_DEPLOY_BLOCKER_CERTIFICATE_PENDING)
         elif certificate_readiness_state == _CERTIFICATE_READINESS_STATE_UNKNOWN:
-            warnings.append("Current certificate state has not been verified. Refresh endpoint readiness before relying on TLS diagnostics.")
+            warnings.append(
+                "Current certificate state has not been verified. Refresh endpoint readiness before relying on TLS diagnostics."
+            )
             warning_codes.append("current_endpoint_evidence_unavailable")
         blocker_codes = _dedupe_strings(blocker_codes)
         reasons = _dedupe_strings(reasons)
@@ -23002,20 +23067,22 @@ class SEOMigrationService:
             asset_id = _normalize_string(item.get("asset_id"), max_length=80)
             if asset_id is None:
                 continue
-            original_filename = _normalize_media_filename(
-                item.get("display_filename") or item.get("filename") or asset_id
-            ) or f"{asset_id}.jpg"
+            original_filename = (
+                _normalize_media_filename(item.get("display_filename") or item.get("filename") or asset_id)
+                or f"{asset_id}.jpg"
+            )
             planned_output_relative_path = _normalize_generated_path(
                 item.get("artifact_output_relative_path") or item.get("artifact_path")
             )
-            if (
-                planned_output_relative_path is not None
-                and not planned_output_relative_path.startswith(f"{_MIGRATION_ARTIFACT_MEDIA_DIR}/")
+            if planned_output_relative_path is not None and not planned_output_relative_path.startswith(
+                f"{_MIGRATION_ARTIFACT_MEDIA_DIR}/"
             ):
                 planned_output_relative_path = None
             planned_path_details = selected_artifact_path_plan.get(asset_id.lower(), {})
             if planned_output_relative_path is None:
-                planned_output_relative_path = _normalize_generated_path(planned_path_details.get("output_relative_path"))
+                planned_output_relative_path = _normalize_generated_path(
+                    planned_path_details.get("output_relative_path")
+                )
             planned_safe_filename = (
                 planned_output_relative_path.rsplit("/", 1)[-1] if planned_output_relative_path else None
             ) or _normalize_string(planned_path_details.get("safe_output_filename"), max_length=160)
@@ -23067,9 +23134,7 @@ class SEOMigrationService:
             if (total_media_bytes + len(media_bytes)) > _MIGRATION_ARTIFACT_MAX_MEDIA_TOTAL_BYTES:
                 manifest_entry["reason_code"] = _MIGRATION_ARTIFACT_MEDIA_REASON_SAFETY_BLOCKED
                 manifest_entries.append(manifest_entry)
-                warnings.append(
-                    "Selected media exceeded artifact materialization budget and was partially omitted."
-                )
+                warnings.append("Selected media exceeded artifact materialization budget and was partially omitted.")
                 continue
             detected_content_type = _detect_media_content_type(media_bytes)
             if detected_content_type not in _MIGRATION_MEDIA_UPLOAD_ALLOWED_CONTENT_TYPES:
@@ -23332,10 +23397,7 @@ class SEOMigrationService:
         del _preview_publish_warnings
         rewritten_paths = {
             path
-            for path in (
-                _normalize_generated_path(_normalize_json_dict(item).get("path"))
-                for item in rewritten_files
-            )
+            for path in (_normalize_generated_path(_normalize_json_dict(item).get("path")) for item in rewritten_files)
             if path
         }
         publishable_paths = {
@@ -23349,7 +23411,9 @@ class SEOMigrationService:
             max_item_length=240,
         )
         publish_payload_missing_paths = sorted(
-            path for path in referenced_media_paths_for_publish if path in rewritten_paths and path not in publishable_paths
+            path
+            for path in referenced_media_paths_for_publish
+            if path in rewritten_paths and path not in publishable_paths
         )
         if publish_payload_missing_paths:
             updated_media_blocker_codes = _normalize_string_list(
@@ -23513,7 +23577,9 @@ class SEOMigrationService:
         readiness_source: str,
     ) -> dict[str, object]:
         readiness_payload = _normalize_json_dict(readiness)
-        readiness_payload["readiness_source"] = _normalize_string(readiness_source, max_length=40) or "artifact_snapshot"
+        readiness_payload["readiness_source"] = (
+            _normalize_string(readiness_source, max_length=40) or "artifact_snapshot"
+        )
         readiness_payload["artifact_version_id"] = _normalize_string(artifact.id, max_length=80)
         readiness_payload["artifact_version_created_at"] = (
             artifact.created_at.isoformat() if isinstance(artifact.created_at, datetime) else None
@@ -23574,8 +23640,7 @@ class SEOMigrationService:
         artifact_generated_paths = {
             path
             for path in (
-                _normalize_generated_path(_normalize_json_dict(item).get("path"))
-                for item in artifact_generated_files
+                _normalize_generated_path(_normalize_json_dict(item).get("path")) for item in artifact_generated_files
             )
             if path
         }
@@ -23601,12 +23666,18 @@ class SEOMigrationService:
         )
         readiness_payload["selected_media_ids"] = selected_media_ids[:_MIGRATION_ARTIFACT_MAX_MEDIA_FILES]
         readiness_payload["artifact_manifest_selected_media_count"] = len(manifest_asset_ids)
-        readiness_payload["artifact_manifest_selected_media_ids"] = manifest_asset_ids[:_MIGRATION_ARTIFACT_MAX_MEDIA_FILES]
-        readiness_payload["selected_media_missing_from_artifact_manifest_count"] = len(selected_media_missing_from_manifest)
-        readiness_payload["selected_media_missing_from_artifact_manifest_ids"] = (
-            selected_media_missing_from_manifest[:_MIGRATION_ARTIFACT_MAX_MEDIA_FILES]
+        readiness_payload["artifact_manifest_selected_media_ids"] = manifest_asset_ids[
+            :_MIGRATION_ARTIFACT_MAX_MEDIA_FILES
+        ]
+        readiness_payload["selected_media_missing_from_artifact_manifest_count"] = len(
+            selected_media_missing_from_manifest
         )
-        readiness_payload["selected_media_updated_after_artifact_created"] = selected_media_updated_after_artifact_created
+        readiness_payload["selected_media_missing_from_artifact_manifest_ids"] = selected_media_missing_from_manifest[
+            :_MIGRATION_ARTIFACT_MAX_MEDIA_FILES
+        ]
+        readiness_payload["selected_media_updated_after_artifact_created"] = (
+            selected_media_updated_after_artifact_created
+        )
         readiness_payload["expected_artifact_paths"] = expected_artifact_paths[:160]
         readiness_payload["matched_artifact_paths"] = matched_artifact_paths[:160]
         readiness_payload["missing_artifact_paths"] = missing_artifact_paths[:160]
@@ -23619,9 +23690,9 @@ class SEOMigrationService:
         selected_media_pending_generation_count = len(selected_media_missing_from_manifest)
         readiness_payload["selected_media_pending_generation"] = selected_media_updated_after_artifact_created
         readiness_payload["selected_media_pending_generation_count"] = selected_media_pending_generation_count
-        readiness_payload["selected_media_pending_generation_ids"] = (
-            selected_media_missing_from_manifest[:_MIGRATION_ARTIFACT_MAX_MEDIA_FILES]
-        )
+        readiness_payload["selected_media_pending_generation_ids"] = selected_media_missing_from_manifest[
+            :_MIGRATION_ARTIFACT_MAX_MEDIA_FILES
+        ]
         if selected_media_updated_after_artifact_created:
             readiness_payload["selected_media_pending_generation_message"] = (
                 _selected_media_pending_generation_next_artifact_message(selected_media_pending_generation_count)
@@ -23641,9 +23712,7 @@ class SEOMigrationService:
             max_items=20,
             max_item_length=80,
         )
-        blocker_codes = [
-            item for item in blocker_codes if item.lower() != "selected_media_not_materialized"
-        ]
+        blocker_codes = [item for item in blocker_codes if item.lower() != "selected_media_not_materialized"]
         readiness_payload["blocker_codes"] = _dedupe_strings(blocker_codes)
 
         warning_codes = _normalize_selected_media_warning_codes(
@@ -23667,9 +23736,7 @@ class SEOMigrationService:
                 warning_codes.insert(0, "selected_media_pending_generation")
             warning_codes.insert(0, "selected_media_changed_after_generation")
             warning_reasons = [
-                item
-                for item in warning_reasons
-                if "chosen after this artifact was generated" not in item.lower()
+                item for item in warning_reasons if "chosen after this artifact was generated" not in item.lower()
             ]
             warning_reasons.insert(
                 0,
@@ -23887,9 +23954,10 @@ def _plan_selected_media_artifact_paths(selected_assets: list[dict[str, object]]
         asset_id = _normalize_string(payload.get("asset_id"), max_length=80)
         if asset_id is None:
             continue
-        original_filename = _normalize_media_filename(
-            payload.get("display_filename") or payload.get("filename") or asset_id
-        ) or f"{asset_id}.jpg"
+        original_filename = (
+            _normalize_media_filename(payload.get("display_filename") or payload.get("filename") or asset_id)
+            or f"{asset_id}.jpg"
+        )
         content_type = _normalize_media_content_type(payload.get("content_type"))
         if content_type is None:
             content_type = _infer_media_content_type_from_filename(original_filename) or "image/jpeg"
@@ -24263,9 +24331,7 @@ def _record_generated_media_reference(
                 invalid_media_reference_reason_counts.get(reason_code, 0) + 1
             )
     resolved_candidate = _resolve_artifact_reference_path(base_path=base_path, reference=reference)
-    if resolved_candidate and (
-        resolved_candidate.startswith("assets/") or _is_likely_image_path(resolved_candidate)
-    ):
+    if resolved_candidate and (resolved_candidate.startswith("assets/") or _is_likely_image_path(resolved_candidate)):
         if resolved_candidate in available_paths:
             referenced_media_paths.add(resolved_candidate)
             return
@@ -24475,7 +24541,9 @@ def _build_artifact_media_diagnostics_payload(
     for raw_entry in manifest_entries:
         entry = _normalize_json_dict(raw_entry)
         asset_id = _normalize_string(entry.get("asset_id"), max_length=80)
-        reason_code = _normalize_string(entry.get("reason_code"), max_length=80) or _MIGRATION_ARTIFACT_MEDIA_REASON_BYTES_MISSING
+        reason_code = (
+            _normalize_string(entry.get("reason_code"), max_length=80) or _MIGRATION_ARTIFACT_MEDIA_REASON_BYTES_MISSING
+        )
         output_relative_path = _normalize_generated_path(entry.get("output_relative_path"))
         if bool(entry.get("materialized")):
             if output_relative_path:
@@ -24483,7 +24551,9 @@ def _build_artifact_media_diagnostics_payload(
             continue
         if asset_id:
             selected_not_materialized_asset_ids.append(asset_id)
-        selected_not_materialized_reason_counts[reason_code] = selected_not_materialized_reason_counts.get(reason_code, 0) + 1
+        selected_not_materialized_reason_counts[reason_code] = (
+            selected_not_materialized_reason_counts.get(reason_code, 0) + 1
+        )
         selected_not_materialized.append(
             {
                 "asset_id": asset_id,
@@ -24502,7 +24572,9 @@ def _build_artifact_media_diagnostics_payload(
             max_item_length=240,
         )
     )
-    unreferenced_materialized_media_paths = sorted(path for path in materialized_paths if path not in referenced_media_paths)
+    unreferenced_materialized_media_paths = sorted(
+        path for path in materialized_paths if path not in referenced_media_paths
+    )
 
     blocker_codes = _normalize_string_list(
         media_reference_diagnostics.get("blocker_codes"),
@@ -24552,10 +24624,14 @@ def _build_artifact_media_diagnostics_payload(
         "selected_assets_count": selected_assets_count,
         "materialized_assets_count": materialized_assets_count,
         "selected_not_materialized_count": len(selected_not_materialized),
-        "selected_not_materialized_asset_ids": selected_not_materialized_asset_ids[:_MIGRATION_ARTIFACT_MAX_MEDIA_FILES],
+        "selected_not_materialized_asset_ids": selected_not_materialized_asset_ids[
+            :_MIGRATION_ARTIFACT_MAX_MEDIA_FILES
+        ],
         "selected_not_materialized_reason_counts": selected_not_materialized_reason_counts,
         "selected_not_materialized": selected_not_materialized[:_MIGRATION_ARTIFACT_MAX_MEDIA_FILES],
-        "referenced_media_paths_count": max(0, int(media_reference_diagnostics.get("referenced_media_paths_count") or 0)),
+        "referenced_media_paths_count": max(
+            0, int(media_reference_diagnostics.get("referenced_media_paths_count") or 0)
+        ),
         "referenced_media_paths": _normalize_string_list(
             media_reference_diagnostics.get("referenced_media_paths"),
             max_items=160,
@@ -24599,7 +24675,9 @@ def _build_artifact_media_diagnostics_payload(
             max_items=160,
             max_item_length=120,
         ),
-        "invalid_media_references_count": max(0, int(media_reference_diagnostics.get("invalid_media_references_count") or 0)),
+        "invalid_media_references_count": max(
+            0, int(media_reference_diagnostics.get("invalid_media_references_count") or 0)
+        ),
         "invalid_media_references": _normalize_string_list(
             media_reference_diagnostics.get("invalid_media_references"),
             max_items=160,
@@ -24618,7 +24696,9 @@ def _build_artifact_media_diagnostics_payload(
         "media_warning_reasons": warning_reasons[:12],
         "selected_media_pending_generation": bool(selected_not_materialized),
         "selected_media_pending_generation_count": len(selected_not_materialized),
-        "selected_media_pending_generation_ids": selected_not_materialized_asset_ids[:_MIGRATION_ARTIFACT_MAX_MEDIA_FILES],
+        "selected_media_pending_generation_ids": selected_not_materialized_asset_ids[
+            :_MIGRATION_ARTIFACT_MAX_MEDIA_FILES
+        ],
         "selected_media_pending_generation_message": (
             _selected_media_pending_generation_warning_reason(len(selected_not_materialized))
             if selected_not_materialized
@@ -24683,9 +24763,7 @@ def _build_artifact_media_blocker_reason_details(
 
     blocker_reason_counts: dict[str, int] = {}
     if generated_media_source_missing_paths:
-        blocker_reason_counts[_ARTIFACT_MEDIA_BLOCKER_REASON_SOURCE_MISSING] = len(
-            generated_media_source_missing_paths
-        )
+        blocker_reason_counts[_ARTIFACT_MEDIA_BLOCKER_REASON_SOURCE_MISSING] = len(generated_media_source_missing_paths)
     if generated_media_source_bytes_missing_paths:
         blocker_reason_counts[_ARTIFACT_MEDIA_BLOCKER_REASON_SOURCE_BYTES_MISSING] = len(
             generated_media_source_bytes_missing_paths
@@ -24695,9 +24773,7 @@ def _build_artifact_media_blocker_reason_details(
             generated_media_reference_unresolved_count
         )
     if generated_media_reference_private_url_count > 0:
-        blocker_reason_counts[_ARTIFACT_MEDIA_BLOCKER_REASON_PRIVATE_URL] = (
-            generated_media_reference_private_url_count
-        )
+        blocker_reason_counts[_ARTIFACT_MEDIA_BLOCKER_REASON_PRIVATE_URL] = generated_media_reference_private_url_count
     if publish_payload_missing_paths:
         blocker_reason_counts[_ARTIFACT_MEDIA_BLOCKER_REASON_PUBLISH_PAYLOAD_MISSING] = len(
             publish_payload_missing_paths
@@ -24779,9 +24855,7 @@ def _build_artifact_media_readiness_from_payload(
     media_blocker_reasons: list[str] = []
     media_warning_reasons: list[str] = []
     if selected_not_materialized_count > 0:
-        media_warning_reasons.append(
-            _selected_media_pending_generation_warning_reason(selected_not_materialized_count)
-        )
+        media_warning_reasons.append(_selected_media_pending_generation_warning_reason(selected_not_materialized_count))
         if "selected_media_pending_generation" not in {code.lower() for code in warning_codes}:
             warning_codes.append("selected_media_pending_generation")
     unresolved_internal_count = max(
@@ -24811,11 +24885,14 @@ def _build_artifact_media_readiness_from_payload(
     invalid_media_reference_reason_counts = _normalize_invalid_media_reference_reason_counts(
         diagnostics_payload.get("invalid_media_reference_reason_counts")
     )
-    invalid_media_reference_reason_codes = _normalize_string_list(
-        diagnostics_payload.get("invalid_media_reference_reason_codes"),
-        max_items=12,
-        max_item_length=80,
-    ) or sorted(invalid_media_reference_reason_counts.keys())[:12]
+    invalid_media_reference_reason_codes = (
+        _normalize_string_list(
+            diagnostics_payload.get("invalid_media_reference_reason_codes"),
+            max_items=12,
+            max_item_length=80,
+        )
+        or sorted(invalid_media_reference_reason_counts.keys())[:12]
+    )
     blocker_reason_details = _build_artifact_media_blocker_reason_details(
         diagnostics_payload=diagnostics_payload,
     )
@@ -24947,11 +25024,14 @@ def _build_artifact_media_readiness_from_payload(
             or (selected_not_materialized_count if selected_media_pending_generation else 0)
         ),
     )
-    selected_media_pending_generation_ids = _normalize_string_list(
-        diagnostics_payload.get("selected_media_pending_generation_ids"),
-        max_items=_MIGRATION_ARTIFACT_MAX_MEDIA_FILES,
-        max_item_length=80,
-    ) or selected_not_materialized_asset_ids[:_MIGRATION_ARTIFACT_MAX_MEDIA_FILES]
+    selected_media_pending_generation_ids = (
+        _normalize_string_list(
+            diagnostics_payload.get("selected_media_pending_generation_ids"),
+            max_items=_MIGRATION_ARTIFACT_MAX_MEDIA_FILES,
+            max_item_length=80,
+        )
+        or selected_not_materialized_asset_ids[:_MIGRATION_ARTIFACT_MAX_MEDIA_FILES]
+    )
     selected_media_pending_generation_message = _normalize_string(
         diagnostics_payload.get("selected_media_pending_generation_message"),
         max_length=240,
@@ -25777,13 +25857,10 @@ def _media_asset_unusable_reason_code(value: object) -> str | None:
     quality_reason = _normalize_media_quality_reason(item.get("quality_reason"))
     if candidate_quality == _MIGRATION_MEDIA_CANDIDATE_QUALITY_REJECTED:
         return quality_reason or _MIGRATION_MEDIA_REASON_ASSET_REJECTED
-    if (
-        candidate_quality == _MIGRATION_MEDIA_CANDIDATE_QUALITY_LOW_VALUE
-        and quality_reason in {
-            _MIGRATION_MEDIA_REASON_NON_IMAGE_CANDIDATE_DETECTED,
-            _MIGRATION_MEDIA_REASON_TRACKING_PIXEL_DETECTED,
-        }
-    ):
+    if candidate_quality == _MIGRATION_MEDIA_CANDIDATE_QUALITY_LOW_VALUE and quality_reason in {
+        _MIGRATION_MEDIA_REASON_NON_IMAGE_CANDIDATE_DETECTED,
+        _MIGRATION_MEDIA_REASON_TRACKING_PIXEL_DETECTED,
+    }:
         return quality_reason
 
     import_status = (_normalize_string(item.get("import_status"), max_length=40) or "").lower()
@@ -27152,9 +27229,11 @@ def _normalize_workflow_identifier_type(
     workflow_identifier: object = None,
 ) -> str | None:
     normalized = _normalize_string(value, max_length=80)
-    normalized_identifier = _normalize_workflow_path_for_deploy(workflow_identifier) or _normalize_workflow_id_for_deploy(
-        workflow_identifier
-    ) or _normalize_string(workflow_identifier, max_length=160)
+    normalized_identifier = (
+        _normalize_workflow_path_for_deploy(workflow_identifier)
+        or _normalize_workflow_id_for_deploy(workflow_identifier)
+        or _normalize_string(workflow_identifier, max_length=160)
+    )
     inferred_identifier_type = _infer_dispatch_identifier_type(normalized_identifier) if normalized_identifier else None
     if not normalized:
         return inferred_identifier_type
@@ -27609,10 +27688,7 @@ def _derive_managed_gke_dispatch_readiness_message(*, dispatch_service_reason_co
             "Update the A record and wait for propagation before retrying deploy."
         )
     if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_PROVISIONING:
-        return (
-            "Certificate exists but is still provisioning. "
-            "Deploy is held until the certificate is ACTIVE."
-        )
+        return "Certificate exists but is still provisioning. " "Deploy is held until the certificate is ACTIVE."
     if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_DEPLOYED_CONTENT_IDENTITY_MISMATCH:
         return (
             "Managed deployment manifest image identity does not match this site/repo target. "
@@ -27884,10 +27960,7 @@ def _derive_deploy_failure_remediation_hint(
             "Correct DNS and wait for propagation before retrying deploy."
         )
     if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_PROVISIONING:
-        return (
-            "Certificate exists but is still provisioning. "
-            "Deploy is held until the certificate is ACTIVE."
-        )
+        return "Certificate exists but is still provisioning. " "Deploy is held until the certificate is ACTIVE."
     if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_DEPLOYED_CONTENT_IDENTITY_MISMATCH:
         return (
             "Infrastructure may be healthy but deployed content identity is wrong for this site. "
@@ -28080,13 +28153,9 @@ def _derive_workflow_run_failure_hint(
             "backendconfig, service, deployment, and site-scoped networkpolicy cleanup in the target namespace."
         )
     if normalized_reason == _DEPLOY_RUNTIME_REASON_MANAGED_SITE_RUNTIME_REPLACE_REQUESTED:
-        return (
-            "Scoped managed-site runtime replacement was requested for this deploy run."
-        )
+        return "Scoped managed-site runtime replacement was requested for this deploy run."
     if normalized_reason == _DEPLOY_RUNTIME_REASON_MANAGED_SITE_RUNTIME_REPLACE_COMPLETED:
-        return (
-            "Scoped managed-site runtime replacement completed before managed manifests were applied."
-        )
+        return "Scoped managed-site runtime replacement completed before managed manifests were applied."
     if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_MANAGED_CERTIFICATE_METADATA_UNAVAILABLE:
         return (
             "ManagedCertificate metadata was unavailable from cluster API, but HTTPS/TLS identity evidence can still "
@@ -28315,10 +28384,7 @@ def _derive_workflow_run_failure_hint(
             "Update DNS A record and retry once propagation completes."
         )
     if normalized_reason == _DEPLOY_DISPATCH_SERVICE_REASON_TLS_CERTIFICATE_PROVISIONING:
-        return (
-            "Certificate exists but is still provisioning. "
-            "Deploy is held until the certificate is ACTIVE."
-        )
+        return "Certificate exists but is still provisioning. " "Deploy is held until the certificate is ACTIVE."
     if normalized_reason == _DEPLOY_RUN_FAILURE_REASON_CLOUDSQL_INVALID_STATE:
         return (
             "Cloud SQL proxy could not fetch an ephemeral certificate because the instance reported invalidState. "

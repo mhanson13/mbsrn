@@ -1007,6 +1007,99 @@ def _prepare_workspace_for_draft_generation(client: TestClient, *, business_id: 
     assert enriched_response.status_code == 200
 
 
+def test_source_capture_api_requires_authorization_and_is_idempotent(db_session) -> None:
+    business_id = "source-capture-api-business"
+    site_id = "source-capture-api-site"
+    _seed_business_and_site(db_session, business_id=business_id, site_id=site_id)
+    client = _make_client(db_session, business_id=business_id)
+    workspace_response = client.put(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/workspace",
+        json={"source_url": "https://tnmfire.example/"},
+    )
+    assert workspace_response.status_code == 200
+
+    unauthorized = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/source-capture-runs",
+        json={
+            "mode": "faithful_snapshot",
+            "source_url": "https://tnmfire.example/",
+            "authorization_acknowledged": False,
+            "idempotency_key": "capture-api-1",
+        },
+    )
+    assert unauthorized.status_code == 422
+    assert "Authorization acknowledgment" in unauthorized.json()["detail"]
+
+    payload = {
+        "mode": "faithful_snapshot",
+        "source_url": "https://tnmfire.example/",
+        "authorization_acknowledged": True,
+        "idempotency_key": "capture-api-1",
+        "page_limit": 7,
+        "asset_limit": 100,
+        "max_total_bytes": 20_000_000,
+    }
+    created = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/source-capture-runs",
+        json=payload,
+    )
+    duplicate = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/source-capture-runs",
+        json=payload,
+    )
+    assert created.status_code == 202
+    assert duplicate.status_code == 202
+    assert duplicate.json()["id"] == created.json()["id"]
+    assert created.json()["mode"] == "faithful_snapshot"
+    assert created.json()["status"] == "queued"
+    assert created.json()["authorization_acknowledged"] is True
+    assert "manifest_storage_key" not in created.json()
+
+    listed = client.get(f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/source-capture-runs")
+    assert listed.status_code == 200
+    assert listed.json()["total"] == 1
+    assert listed.json()["items"][0]["id"] == created.json()["id"]
+
+
+def test_source_capture_api_is_tenant_scoped(db_session) -> None:
+    business_id = "source-capture-owner-business"
+    site_id = "source-capture-owner-site"
+    _seed_business_and_site(db_session, business_id=business_id, site_id=site_id)
+    owner_client = _make_client(db_session, business_id=business_id)
+    owner_client.put(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/workspace",
+        json={"source_url": "https://tnmfire.example/"},
+    )
+    created = owner_client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/source-capture-runs",
+        json={
+            "mode": "analyze_rebuild",
+            "idempotency_key": "capture-owner-1",
+        },
+    )
+    assert created.status_code == 202
+
+    other_business_id = "source-capture-other-business"
+    db_session.add(
+        Business(
+            id=other_business_id,
+            name="Other Business",
+            notification_phone="+13035550198",
+            notification_email="other@example.com",
+            sms_enabled=True,
+            email_enabled=True,
+            customer_auto_ack_enabled=True,
+            contractor_alerts_enabled=True,
+        )
+    )
+    db_session.commit()
+    other_client = _make_client(db_session, business_id=other_business_id)
+    response = other_client.get(
+        f"/api/businesses/{other_business_id}/seo/sites/{site_id}/migration/source-capture-runs/{created.json()['id']}"
+    )
+    assert response.status_code == 404
+
+
 def test_requirements_suggestion_endpoint_returns_completed_payload_for_supported_fields(db_session) -> None:
     business_id = "11111111-1111-1111-1111-111111111111"
     site_id = "22222222-2222-2222-2222-222222222222"
@@ -1446,15 +1539,12 @@ def test_approve_and_create_preview_release_is_idempotent_and_returns_operator_g
     assert [gate["status"] for gate in first["gates"][:3]] == ["ready", "ready", "ready"]
     assert all("details_json" not in gate for gate in first["gates"])
 
-    list_response = client.get(
-        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/preview-releases"
-    )
+    list_response = client.get(f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/preview-releases")
     assert list_response.status_code == 200
     assert list_response.json()["total"] == 1
 
     advance_response = client.post(
-        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/"
-        f"preview-releases/{first['id']}/advance"
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/" f"preview-releases/{first['id']}/advance"
     )
     assert advance_response.status_code == 200
     advanced = advance_response.json()
@@ -1529,7 +1619,7 @@ def test_artifact_file_stream_route_serves_materialized_media_without_exposing_b
     provider.output = _build_migration_artifact_output(
         index_content=(
             "<html><head><!-- ANALYTICS_PLACEHOLDER --></head><body>"
-            f"<img src=\"{uploaded_asset_id}\" alt=\"hero\"/>"
+            f'<img src="{uploaded_asset_id}" alt="hero"/>'
             "</body></html>"
         )
     )
@@ -2330,10 +2420,13 @@ def test_publish_api_preserves_artifact_success_when_workflow_provisioning_fails
         f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/generate-draft-artifacts",
         json={"force_new_version": True},
     ).json()["id"]
-    assert client.post(
-        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/artifact-versions/{artifact_id}/approve",
-        json={"approval_notes": "Approved"},
-    ).status_code == 200
+    assert (
+        client.post(
+            f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/artifact-versions/{artifact_id}/approve",
+            json={"approval_notes": "Approved"},
+        ).status_code
+        == 200
+    )
 
     publish_response = client.post(
         f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/publish",
@@ -2353,9 +2446,7 @@ def test_publish_api_preserves_artifact_success_when_workflow_provisioning_fails
     assert result_payload["workflow_provisioning_warning_code"] == "workflow_provisioning_failed"
     assert result_payload["commit_shas"]
 
-    summary_payload = client.get(
-        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/summary"
-    ).json()
+    summary_payload = client.get(f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/summary").json()
     assert "workflow_provisioning_failed" in summary_payload["deploy_readiness"]["blocker_codes"]
     assert summary_payload["publish_history"][-1]["status"] == "published"
 
@@ -2598,7 +2689,7 @@ def test_migration_summary_redacts_private_generated_media_urls_in_readiness_pay
             _build_migration_artifact_output(
                 index_content=(
                     "<html><head><!-- ANALYTICS_PLACEHOLDER --></head><body>"
-                    f"<img src=\"{preview_media_url}\" alt=\"preview\" />"
+                    f'<img src="{preview_media_url}" alt="preview" />'
                     "</body></html>"
                 ),
                 styles_content=f"body {{ background-image: url('{storage_media_url}'); }}",
@@ -2698,7 +2789,13 @@ def test_migration_summary_prefers_deploy_anchor_for_ga4_outcome_snapshot(db_ses
     snapshot = summary_response.json().get("ga4_outcome_snapshot") or {}
     assert snapshot.get("status") == "available"
     assert snapshot.get("anchor_type") == "migration_deployed"
-    assert snapshot.get("outcome_direction") in {"improved", "declined", "mixed", "no_clear_change", "insufficient_data"}
+    assert snapshot.get("outcome_direction") in {
+        "improved",
+        "declined",
+        "mixed",
+        "no_clear_change",
+        "insufficient_data",
+    }
     assert "Observed after deploy" in str(snapshot.get("operator_hint") or "")
     assert analytics_stub.comparison_calls
     assert analytics_stub.comparison_calls[0].get("page_path") is None
@@ -4034,7 +4131,7 @@ def test_migration_media_batch_suggest_metadata_succeeds_for_selected_uploaded_a
         assert result.get("suggestion_status") == "completed"
         assert result.get("reason_code") == "image_metadata_suggested"
         assert isinstance(result.get("retryable"), bool)
-        diagnostics = ((result.get("metadata_suggestion") or {}).get("model_diagnostics") or {})
+        diagnostics = (result.get("metadata_suggestion") or {}).get("model_diagnostics") or {}
         assert diagnostics.get("task_alias") == "media_metadata_helper"
     serialized = json.dumps(payload).lower()
     for forbidden in (
@@ -4283,20 +4380,20 @@ def test_migration_media_import_endpoint_imports_discovered_assets_and_enables_s
     )
     workspace.imported_source_snapshot_json = {
         "discovered_images": [
-                {
-                    "asset_id": "srcimg-import-me",
-                    "normalized_url": "https://legacy.example/media/hero.jpg?token=abc",
-                    "provenance": "source_site_import",
-                    "import_status": "discovered",
-                    "selected_for_draft": True,
-                    "candidate_quality": "useful",
-                    "fetch_status": "validated_head",
-                    "content_type": "image/png",
-                    "metadata_suggestion": {
-                        "suggestion_status": "not_available",
-                        "reason_code": "image_not_imported",
-                    },
-                }
+            {
+                "asset_id": "srcimg-import-me",
+                "normalized_url": "https://legacy.example/media/hero.jpg?token=abc",
+                "provenance": "source_site_import",
+                "import_status": "discovered",
+                "selected_for_draft": True,
+                "candidate_quality": "useful",
+                "fetch_status": "validated_head",
+                "content_type": "image/png",
+                "metadata_suggestion": {
+                    "suggestion_status": "not_available",
+                    "reason_code": "image_not_imported",
+                },
+            }
         ]
     }
     db_session.add(workspace)
@@ -4468,18 +4565,18 @@ def test_migration_media_import_endpoint_blocks_private_source_hosts(
     )
     workspace.imported_source_snapshot_json = {
         "discovered_images": [
-                {
-                    "asset_id": "srcimg-private-host",
-                    "normalized_url": "http://127.0.0.1/blocked.png",
-                    "provenance": "source_site_import",
-                    "import_status": "discovered",
-                    "selected_for_draft": True,
-                    "candidate_quality": "useful",
-                    "fetch_status": "validated_head",
-                    "content_type": "image/png",
-                }
-            ]
-        }
+            {
+                "asset_id": "srcimg-private-host",
+                "normalized_url": "http://127.0.0.1/blocked.png",
+                "provenance": "source_site_import",
+                "import_status": "discovered",
+                "selected_for_draft": True,
+                "candidate_quality": "useful",
+                "fetch_status": "validated_head",
+                "content_type": "image/png",
+            }
+        ]
+    }
     db_session.add(workspace)
     db_session.commit()
 
@@ -4522,18 +4619,18 @@ def test_migration_media_import_endpoint_blocks_redirect_escape_to_private_host(
     )
     workspace.imported_source_snapshot_json = {
         "discovered_images": [
-                {
-                    "asset_id": "srcimg-redirect",
-                    "normalized_url": "https://legacy.example/media/redirect.jpg",
-                    "provenance": "source_site_import",
-                    "import_status": "discovered",
-                    "selected_for_draft": True,
-                    "candidate_quality": "useful",
-                    "fetch_status": "validated_head",
-                    "content_type": "image/png",
-                }
-            ]
-        }
+            {
+                "asset_id": "srcimg-redirect",
+                "normalized_url": "https://legacy.example/media/redirect.jpg",
+                "provenance": "source_site_import",
+                "import_status": "discovered",
+                "selected_for_draft": True,
+                "candidate_quality": "useful",
+                "fetch_status": "validated_head",
+                "content_type": "image/png",
+            }
+        ]
+    }
     db_session.add(workspace)
     db_session.commit()
 
@@ -4686,18 +4783,18 @@ def test_migration_media_import_endpoint_deduplicates_repeated_import_of_same_di
     )
     workspace.imported_source_snapshot_json = {
         "discovered_images": [
-                {
-                    "asset_id": "srcimg-repeat",
-                    "normalized_url": "https://legacy.example/media/repeat.jpg",
-                    "provenance": "source_site_import",
-                    "import_status": "discovered",
-                    "selected_for_draft": True,
-                    "candidate_quality": "useful",
-                    "fetch_status": "validated_head",
-                    "content_type": "image/png",
-                }
-            ]
-        }
+            {
+                "asset_id": "srcimg-repeat",
+                "normalized_url": "https://legacy.example/media/repeat.jpg",
+                "provenance": "source_site_import",
+                "import_status": "discovered",
+                "selected_for_draft": True,
+                "candidate_quality": "useful",
+                "fetch_status": "validated_head",
+                "content_type": "image/png",
+            }
+        ]
+    }
     db_session.add(workspace)
     db_session.commit()
 

@@ -1608,9 +1608,7 @@ def test_admin_site_delete_plan_uses_precise_dns_warning_codes(db_session, seede
     assert "site_delete_dns_verification_limited" in warning_codes
 
 
-def test_admin_site_delete_plan_blocks_unverified_static_ip_cleanup(
-    db_session, seeded_business, monkeypatch
-) -> None:
+def test_admin_site_delete_plan_blocks_unverified_static_ip_cleanup(db_session, seeded_business, monkeypatch) -> None:
     admin_principal = _seed_admin_principal(db_session=db_session, business_id=seeded_business.id)
     delete_service, _ = _make_delete_service(
         db_session,
@@ -2039,9 +2037,7 @@ def test_admin_site_delete_plan_reports_missing_static_ip_cleanup_state(
     )
 
 
-def test_admin_site_delete_execute_deletes_label_verified_static_ip(
-    db_session, seeded_business, monkeypatch
-) -> None:
+def test_admin_site_delete_execute_deletes_label_verified_static_ip(db_session, seeded_business, monkeypatch) -> None:
     admin_principal = _seed_admin_principal(db_session=db_session, business_id=seeded_business.id)
     delete_service, _ = _make_delete_service(
         db_session,
@@ -2205,9 +2201,7 @@ def test_admin_site_delete_execute_deletes_static_ip_with_dns_fallback(
     assert google_calls["delete_urls"]
 
 
-def test_admin_site_delete_execute_skips_static_ip_when_in_use(
-    db_session, seeded_business, monkeypatch
-) -> None:
+def test_admin_site_delete_execute_skips_static_ip_when_in_use(db_session, seeded_business, monkeypatch) -> None:
     admin_principal = _seed_admin_principal(db_session=db_session, business_id=seeded_business.id)
     delete_service, _ = _make_delete_service(
         db_session,
@@ -2278,9 +2272,7 @@ def test_admin_site_delete_execute_skips_static_ip_when_in_use(
     assert google_calls["delete_urls"] == []
 
 
-def test_admin_site_delete_execute_skips_shared_gateway_static_ip(
-    db_session, seeded_business, monkeypatch
-) -> None:
+def test_admin_site_delete_execute_skips_shared_gateway_static_ip(db_session, seeded_business, monkeypatch) -> None:
     admin_principal = _seed_admin_principal(db_session=db_session, business_id=seeded_business.id)
     delete_service, _ = _make_delete_service(
         db_session,
@@ -2676,10 +2668,7 @@ def test_admin_site_delete_blocks_active_site_without_force_delete(db_session, s
     )
     assert plan_response.status_code == 200
     plan_payload = plan_response.json()
-    assert any(
-        blocker["reason_code"] == "site_delete_active_site_blocked"
-        for blocker in plan_payload["blockers"]
-    )
+    assert any(blocker["reason_code"] == "site_delete_active_site_blocked" for blocker in plan_payload["blockers"])
 
     execute_response = client.post(
         f"/api/businesses/{seeded_business.id}/seo/admin/sites/{site_id}/delete",
@@ -2925,7 +2914,11 @@ def test_admin_site_delete_blocks_protected_control_plane_repo_without_preflight
 
     create_response = client.post(
         f"/api/businesses/{seeded_business.id}/seo/sites",
-        json={"display_name": "Protected Repo Site", "base_url": "https://protected-repo.example.com/", "is_active": False},
+        json={
+            "display_name": "Protected Repo Site",
+            "base_url": "https://protected-repo.example.com/",
+            "is_active": False,
+        },
     )
     assert create_response.status_code == 201
     site_id = create_response.json()["id"]
@@ -3005,7 +2998,11 @@ def test_admin_site_delete_fails_closed_when_protected_repo_guard_config_is_inva
 
     create_response = client.post(
         f"/api/businesses/{seeded_business.id}/seo/sites",
-        json={"display_name": "Invalid Guard Site", "base_url": "https://invalid-guard.example.com/", "is_active": False},
+        json={
+            "display_name": "Invalid Guard Site",
+            "base_url": "https://invalid-guard.example.com/",
+            "is_active": False,
+        },
     )
     assert create_response.status_code == 201
     site_id = create_response.json()["id"]

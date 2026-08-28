@@ -53,9 +53,7 @@ _SITE_DELETE_STATIC_IP_VERIFICATION_LIMITED = "site_delete_static_ip_verificatio
 _SITE_DELETE_STATIC_IP_SHARED_GATEWAY_NOT_AUTO_DELETED = "site_delete_static_ip_shared_gateway_not_auto_deleted"
 _SITE_DELETE_DNS_VERIFICATION_LIMITED = "site_delete_dns_verification_limited"
 _SITE_DELETE_MANAGED_CERTIFICATE_VERIFICATION_LIMITED = "site_delete_managed_certificate_verification_limited"
-_GITHUB_REPO_DELETE_PROTECTED_CONTROL_PLANE_REPO_BLOCKED = (
-    "github_repo_delete_protected_control_plane_repo_blocked"
-)
+_GITHUB_REPO_DELETE_PROTECTED_CONTROL_PLANE_REPO_BLOCKED = "github_repo_delete_protected_control_plane_repo_blocked"
 _STATIC_IP_DELETE_SKIPPED_UNVERIFIED_OWNERSHIP = "static_ip_delete_skipped_unverified_ownership"
 _STATIC_IP_DELETE_SKIPPED_SHARED_GATEWAY = "static_ip_delete_skipped_shared_gateway"
 _STATIC_IP_DELETE_SKIPPED_IN_USE = "static_ip_delete_skipped_in_use"
@@ -296,10 +294,12 @@ class SEOSiteDeleteService:
             static_ip_resource=static_ip_resource,
             gcp_deploy_key=gcp_deploy_key,
         )
-        managed_certificate_resource, certificate_blockers, certificate_warnings = self._plan_managed_certificate_resource(
-            context=context,
-            site=site,
-            gcp_deploy_key=gcp_deploy_key,
+        managed_certificate_resource, certificate_blockers, certificate_warnings = (
+            self._plan_managed_certificate_resource(
+                context=context,
+                site=site,
+                gcp_deploy_key=gcp_deploy_key,
+            )
         )
 
         blockers.extend(github_blockers)
@@ -424,7 +424,9 @@ class SEOSiteDeleteService:
                 status_code=422,
                 reason_code="site_delete_confirmation_required",
                 message="DNS, static IP, and managed certificate deletion acknowledgement is required before execution.",
-                blockers=[_issue("site_delete_confirmation_required", "Acknowledge DNS/static-IP/certificate deletion.")],
+                blockers=[
+                    _issue("site_delete_confirmation_required", "Acknowledge DNS/static-IP/certificate deletion.")
+                ],
             )
 
         warnings: list[dict[str, str]] = list(plan.get("warnings") or [])
@@ -516,9 +518,7 @@ class SEOSiteDeleteService:
         else:
             db_reason_code = "site_delete_completed"
             selected_external_results = [
-                item
-                for item in external_resources
-                if item.get("reason_code") != "external_cleanup_not_selected"
+                item for item in external_resources if item.get("reason_code") != "external_cleanup_not_selected"
             ]
             partial_external = any(
                 item.get("status") in {"failed", "blocked", "skipped", "not_checked"}
@@ -527,12 +527,16 @@ class SEOSiteDeleteService:
             if partial_external:
                 db_message = "Site deleted from the control-plane database with partial external cleanup."
             elif selected_external_results:
-                db_message = "Site deleted from the control-plane database and selected managed resources were cleaned up."
+                db_message = (
+                    "Site deleted from the control-plane database and selected managed resources were cleaned up."
+                )
             else:
                 db_message = "Site deleted from the control-plane database. External cleanup was not selected."
 
-        if not db_deleted and deleted_external_count > 0 and not any(
-            item.get("reason_code") == "site_delete_db_failed_after_external_cleanup" for item in blockers
+        if (
+            not db_deleted
+            and deleted_external_count > 0
+            and not any(item.get("reason_code") == "site_delete_db_failed_after_external_cleanup" for item in blockers)
         ):
             blockers.append(
                 _issue(
@@ -543,13 +547,10 @@ class SEOSiteDeleteService:
 
         external_cleanup_selected = bool(delete_github_repo or delete_runtime_resources or delete_dns_resources)
         selected_external_results = [
-            item
-            for item in external_resources
-            if item.get("reason_code") != "external_cleanup_not_selected"
+            item for item in external_resources if item.get("reason_code") != "external_cleanup_not_selected"
         ]
         external_cleanup_partial = any(
-            item.get("status") in {"failed", "blocked", "skipped", "not_checked"}
-            for item in selected_external_results
+            item.get("status") in {"failed", "blocked", "skipped", "not_checked"} for item in selected_external_results
         )
 
         return {
@@ -598,9 +599,7 @@ class SEOSiteDeleteService:
             if table is None or model is SEOSite:
                 continue
             has_site_fk = any(
-                fk.column.table.name == SEOSite.__tablename__
-                for column in table.columns
-                for fk in column.foreign_keys
+                fk.column.table.name == SEOSite.__tablename__ for column in table.columns for fk in column.foreign_keys
             )
             if has_site_fk:
                 models.append(model)
@@ -684,9 +683,7 @@ class SEOSiteDeleteService:
         publish_target = summary.get("publish_target") if isinstance(summary.get("publish_target"), dict) else {}
         deploy_target = summary.get("deploy_target") if isinstance(summary.get("deploy_target"), dict) else {}
         admin_deploy_metadata = (
-            summary.get("admin_deploy_metadata")
-            if isinstance(summary.get("admin_deploy_metadata"), dict)
-            else {}
+            summary.get("admin_deploy_metadata") if isinstance(summary.get("admin_deploy_metadata"), dict) else {}
         )
         repo_owner = _normalize_text(deploy_target.get("repo_owner"), max_length=120) or _normalize_text(
             publish_target.get("repo_owner"),
@@ -696,10 +693,14 @@ class SEOSiteDeleteService:
             publish_target.get("repo_name"),
             max_length=255,
         )
-        repo_ref = _normalize_text(deploy_target.get("ref"), max_length=120) or _normalize_text(
-            publish_target.get("branch"),
-            max_length=120,
-        ) or "main"
+        repo_ref = (
+            _normalize_text(deploy_target.get("ref"), max_length=120)
+            or _normalize_text(
+                publish_target.get("branch"),
+                max_length=120,
+            )
+            or "main"
+        )
         admin_repo_owner = _normalize_repo_owner(
             getattr(self.seo_migration_service.github_publish_config_service.get(), "repository", None)
             if self.seo_migration_service.github_publish_config_service is not None
@@ -1747,8 +1748,7 @@ class SEOSiteDeleteService:
         encoded_project = urllib.parse.quote(context.dns_project_id or "", safe="")
         encoded_zone = urllib.parse.quote(context.dns_managed_zone or "", safe="")
         changes_url = (
-            "https://dns.googleapis.com/dns/v1/projects/"
-            f"{encoded_project}/managedZones/{encoded_zone}/changes"
+            "https://dns.googleapis.com/dns/v1/projects/" f"{encoded_project}/managedZones/{encoded_zone}/changes"
         )
         rrdata_values = list((inspection["details"].get("observed_ips") or []))
         ttl_value = int(inspection["details"].get("observed_ttl") or context.dns_ttl or 300)
@@ -1943,8 +1943,7 @@ class SEOSiteDeleteService:
         encoded_project = urllib.parse.quote(context.managed_gke_config.get("project_id") or "", safe="")
         encoded_name = urllib.parse.quote(context.static_ip_name or "", safe="")
         address_url = (
-            "https://compute.googleapis.com/compute/v1/projects/"
-            f"{encoded_project}/global/addresses/{encoded_name}"
+            "https://compute.googleapis.com/compute/v1/projects/" f"{encoded_project}/global/addresses/{encoded_name}"
         )
         try:
             _request_google_json(
@@ -2012,7 +2011,10 @@ class SEOSiteDeleteService:
             resource_status=_normalize_text(resource.get("status"), max_length=40),
         )
         delete_reason_code = _normalize_text(resource.get("reason_code"), max_length=120)
-        safe_summary = _normalize_text(resource.get("summary"), max_length=500) or "Managed preview static IP diagnostics unavailable."
+        safe_summary = (
+            _normalize_text(resource.get("summary"), max_length=500)
+            or "Managed preview static IP diagnostics unavailable."
+        )
         surfaced_details = {
             **details,
             "static_ip_ownership_status": ownership_status,
@@ -2157,9 +2159,7 @@ class SEOSiteDeleteService:
 
     def _delete_local_site_records(self, *, business_id: str, site_id: str) -> None:
         for model in self._site_owned_delete_order():
-            self.session.execute(
-                delete(model).where(model.business_id == business_id).where(model.site_id == site_id)
-            )
+            self.session.execute(delete(model).where(model.business_id == business_id).where(model.site_id == site_id))
         deleted_site = self.session.execute(
             delete(SEOSite).where(SEOSite.business_id == business_id).where(SEOSite.id == site_id)
         )
@@ -2449,9 +2449,7 @@ class SEOSiteDeleteService:
                 "observed_network_tier": _normalize_text(payload.get("networkTier"), max_length=80),
                 "observed_purpose": _normalize_text(payload.get("purpose"), max_length=80),
                 "observed_labels": self._sanitize_managed_site_labels(payload.get("labels")),
-                "label_fingerprint_present": bool(
-                    _normalize_text(payload.get("labelFingerprint"), max_length=500)
-                ),
+                "label_fingerprint_present": bool(_normalize_text(payload.get("labelFingerprint"), max_length=500)),
             },
         }
 
@@ -2600,9 +2598,8 @@ class SEOSiteDeleteService:
     def _static_ip_has_expected_managed_shape(self, *, details: dict[str, Any]) -> bool:
         observed_address_type = _normalize_text(details.get("observed_address_type"), max_length=80)
         observed_ip_version = _normalize_text(details.get("observed_ip_version"), max_length=40)
-        return (
-            (observed_address_type is None or observed_address_type.upper() == "EXTERNAL")
-            and (observed_ip_version is None or observed_ip_version.upper() == "IPV4")
+        return (observed_address_type is None or observed_address_type.upper() == "EXTERNAL") and (
+            observed_ip_version is None or observed_ip_version.upper() == "IPV4"
         )
 
     def _inspect_static_ip_reference_conflicts(self, *, context: _DeleteContext) -> dict[str, Any]:
@@ -2626,11 +2623,7 @@ class SEOSiteDeleteService:
             )
             other_preview_hostname = _normalize_hostname(deploy_target.get("preview_hostname"))
             other_conflict_types: set[str] = set()
-            if (
-                static_ip_name
-                and other_static_ip_name
-                and static_ip_name.lower() == other_static_ip_name.lower()
-            ):
+            if static_ip_name and other_static_ip_name and static_ip_name.lower() == other_static_ip_name.lower():
                 other_conflict_types.add("static_ip_name")
             if (
                 static_ip_name

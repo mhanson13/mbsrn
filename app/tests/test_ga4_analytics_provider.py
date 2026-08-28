@@ -37,7 +37,9 @@ def test_google_ga4_client_uses_site_scoped_property_for_reports(monkeypatch: py
         if metrics == ["sessions"]:
             return {"rows": [{"metricValues": [{"value": "62"}]}]}
         if metrics == ["totalUsers", "sessions", "screenPageViews", "engagementRate"]:
-            return {"rows": [{"metricValues": [{"value": "100"}, {"value": "140"}, {"value": "220"}, {"value": "0.64"}]}]}
+            return {
+                "rows": [{"metricValues": [{"value": "100"}, {"value": "140"}, {"value": "220"}, {"value": "0.64"}]}]
+            }
         return {}
 
     monkeypatch.setattr(client, "_request_json", _request_json)

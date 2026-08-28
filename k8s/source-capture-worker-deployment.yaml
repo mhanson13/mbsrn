@@ -1,0 +1,89 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mbsrn-source-capture-worker
+  namespace: mbsrn
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: mbsrn-source-capture-worker
+  template:
+    metadata:
+      labels:
+        app: mbsrn-source-capture-worker
+    spec:
+      runtimeClassName: gvisor
+      serviceAccountName: mbsrn-api
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: source-capture-worker
+          image: __CAPTURE_WORKER_IMAGE__
+          env:
+            - name: APP_ENV
+              value: production
+            - name: MBSRN_GIT_COMMIT
+              value: __BUILD_SHA__
+            - name: DB_CONNECTION_MODE
+              value: direct
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: mbsrn-api-auth
+                  key: DATABASE_URL
+            - name: GCP_PROJECT_ID
+              value: __GCP_PROJECT_ID__
+            - name: MIGRATION_MEDIA_STORAGE_BACKEND
+              value: gcs
+            - name: MIGRATION_MEDIA_GCS_BUCKET
+              value: __MIGRATION_MEDIA_GCS_BUCKET__
+            - name: MIGRATION_MEDIA_GCS_PROJECT_ID
+              value: __GCP_PROJECT_ID__
+            - name: FAITHFUL_CAPTURE_NAVIGATION_TIMEOUT_SECONDS
+              value: "20"
+            - name: FAITHFUL_CAPTURE_TIMEOUT_SECONDS
+              value: "180"
+            - name: FAITHFUL_CAPTURE_RENDER_WAIT_MILLISECONDS
+              value: "750"
+            - name: FAITHFUL_CAPTURE_MAX_RESOURCE_BYTES
+              value: "5000000"
+            - name: FAITHFUL_CAPTURE_WORKER_POLL_SECONDS
+              value: "3"
+            - name: FAITHFUL_CAPTURE_STALE_AFTER_SECONDS
+              value: "600"
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+              ephemeral-storage: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+              ephemeral-storage: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            runAsNonRoot: true
+          volumeMounts:
+            - name: browser-tmp
+              mountPath: /tmp
+            - name: browser-home
+              mountPath: /home/pwuser
+      volumes:
+        - name: browser-tmp
+          emptyDir:
+            sizeLimit: 512Mi
+        - name: browser-home
+          emptyDir:
+            sizeLimit: 256Mi

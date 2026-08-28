@@ -43,6 +43,7 @@ from app.models.seo_recommendation import SEORecommendation  # noqa: F401
 from app.models.seo_recommendation_narrative import SEORecommendationNarrative  # noqa: F401
 from app.models.seo_recommendation_run import SEORecommendationRun  # noqa: F401
 from app.models.seo_migration_artifact_version import SEOMigrationArtifactVersion  # noqa: F401
+from app.models.seo_migration_source_capture import SEOMigrationSourceCapture  # noqa: F401
 from app.models.seo_migration_workspace import SEOMigrationWorkspace  # noqa: F401
 from app.models.seo_site import SEOSite  # noqa: F401
 from app.models.tls_certificate import SiteTLSCertificateBinding, TLSCertificateAsset  # noqa: F401

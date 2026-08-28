@@ -155,7 +155,10 @@ _SITE_CONTEXT_SERVICE_HINTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("fire alarm", ("fire alarm", "fire alarms", "alarm monitoring", "alarm system")),
     ("fire suppression", ("fire suppression", "suppression system", "suppression services")),
     ("life safety systems", ("life safety", "life safety systems", "life-safety systems")),
-    ("commercial fire protection", ("commercial fire protection", "commercial fire sprinkler", "commercial fire alarm")),
+    (
+        "commercial fire protection",
+        ("commercial fire protection", "commercial fire sprinkler", "commercial fire alarm"),
+    ),
     ("residential fire sprinkler", ("residential fire sprinkler", "residential sprinkler", "home fire sprinkler")),
     ("landscaping", ("landscaping", "landscape")),
     ("concrete", ("concrete", "foundation")),
@@ -745,8 +748,7 @@ def _is_valid_service_phrase_tokens(tokens: list[str]) -> bool:
     non_generic_tokens = [
         token
         for token in tokens
-        if token not in _SITE_CONTEXT_GENERIC_INDUSTRY_TOKENS
-        and token not in _SITE_CONTEXT_SINGLE_TERM_REJECT_TOKENS
+        if token not in _SITE_CONTEXT_GENERIC_INDUSTRY_TOKENS and token not in _SITE_CONTEXT_SINGLE_TERM_REJECT_TOKENS
     ]
     return bool(non_generic_tokens)
 

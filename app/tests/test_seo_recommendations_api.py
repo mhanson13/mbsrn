@@ -1568,7 +1568,7 @@ def test_recommendation_ga4_outcome_snapshot_pending_after_window(db_session, se
     assert list_recommendations.status_code == 200
     payload = list_recommendations.json()
     by_rule_key = {item["rule_key"]: item for item in payload["items"]}
-    snapshot = (by_rule_key["ga4_outcome_pending"].get("ga4_outcome_snapshot") or {})
+    snapshot = by_rule_key["ga4_outcome_pending"].get("ga4_outcome_snapshot") or {}
     assert snapshot.get("status") == "pending_after_window"
     assert snapshot.get("anchor_type") == "recommendation_accepted"
     assert snapshot.get("before_window") is None
@@ -1631,7 +1631,7 @@ def test_recommendation_ga4_outcome_snapshot_available_for_completed_action(db_s
     assert list_recommendations.status_code == 200
     payload = list_recommendations.json()
     by_rule_key = {item["rule_key"]: item for item in payload["items"]}
-    snapshot = (by_rule_key["ga4_outcome_available"].get("ga4_outcome_snapshot") or {})
+    snapshot = by_rule_key["ga4_outcome_available"].get("ga4_outcome_snapshot") or {}
     assert snapshot.get("status") == "available"
     assert snapshot.get("source") == "site_scoped_ga4"
     assert snapshot.get("anchor_type") == "recommendation_accepted"
@@ -1639,7 +1639,13 @@ def test_recommendation_ga4_outcome_snapshot_available_for_completed_action(db_s
     assert snapshot.get("after_window") is not None
     assert snapshot.get("delta") is not None
     assert isinstance((snapshot.get("delta") or {}).get("sessions_delta"), int)
-    assert snapshot.get("outcome_direction") in {"improved", "declined", "mixed", "no_clear_change", "insufficient_data"}
+    assert snapshot.get("outcome_direction") in {
+        "improved",
+        "declined",
+        "mixed",
+        "no_clear_change",
+        "insufficient_data",
+    }
     assert "observed after completion" in str(snapshot.get("operator_hint", "")).lower()
     assert "caused" not in str(snapshot.get("operator_hint", "")).lower()
 
@@ -1700,7 +1706,7 @@ def test_recommendation_ga4_outcome_snapshot_not_configured_when_site_property_m
     assert list_recommendations.status_code == 200
     payload = list_recommendations.json()
     by_rule_key = {item["rule_key"]: item for item in payload["items"]}
-    snapshot = (by_rule_key["ga4_outcome_not_configured"].get("ga4_outcome_snapshot") or {})
+    snapshot = by_rule_key["ga4_outcome_not_configured"].get("ga4_outcome_snapshot") or {}
     assert snapshot.get("status") == "not_configured"
     assert snapshot.get("source") == "site_scoped_ga4"
     assert "add a ga4 property id" in str(snapshot.get("operator_hint", "")).lower()
@@ -6082,18 +6088,14 @@ def test_recommendation_detail_reports_duplicate_metadata_for_grouped_findings(d
     )
     db_session.commit()
 
-    older_detail = client.get(
-        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/{older_id}"
-    )
+    older_detail = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/{older_id}")
     assert older_detail.status_code == 200
     older_payload = older_detail.json()
     assert older_payload["duplicate_count"] == 2
     assert older_payload["is_duplicate_representative"] is False
     assert older_payload["duplicate_representative_id"] == newest_id
 
-    newest_detail = client.get(
-        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/{newest_id}"
-    )
+    newest_detail = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/recommendations/{newest_id}")
     assert newest_detail.status_code == 200
     newest_payload = newest_detail.json()
     assert newest_payload["duplicate_count"] == 2

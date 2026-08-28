@@ -220,6 +220,31 @@ class SEOMigrationSourceIngestRequest(BaseModel):
         return normalized
 
 
+class SEOMigrationSourceCaptureCreateRequest(BaseModel):
+    mode: Literal["analyze_rebuild", "faithful_snapshot"] = "analyze_rebuild"
+    source_url: str | None = Field(default=None, max_length=2048)
+    authorization_acknowledged: bool = False
+    idempotency_key: str = Field(min_length=1, max_length=120)
+    page_limit: int = Field(default=10, ge=1, le=25)
+    asset_limit: int = Field(default=200, ge=1, le=300)
+    max_total_bytes: int = Field(default=50_000_000, ge=1_000_000, le=100_000_000)
+
+    @field_validator("source_url", mode="before")
+    @classmethod
+    def _normalize_source_url(cls, value: object) -> str | None:
+        normalized = _normalize_optional_text(value, max_length=2048)
+        if normalized is None:
+            return None
+        if not (normalized.startswith("http://") or normalized.startswith("https://")):
+            raise ValueError("source_url must use http or https")
+        return normalized
+
+    @field_validator("idempotency_key", mode="before")
+    @classmethod
+    def _normalize_idempotency_key(cls, value: object) -> str:
+        return _normalize_optional_text(value, max_length=120) or ""
+
+
 class SEOMigrationRequirementsUpdateRequest(BaseModel):
     operator_requirements: SEOMigrationOperatorRequirements
 
@@ -493,6 +518,36 @@ class SEOMigrationSourceSnapshotRead(BaseModel):
     discovered_images: list[dict[str, object]] = Field(default_factory=list)
     cleaned_text_blocks: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+    faithful_capture: dict[str, object] | None = None
+
+
+class SEOMigrationSourceCaptureRead(BaseModel):
+    id: str
+    source_version: int
+    mode: Literal["analyze_rebuild", "faithful_snapshot"]
+    status: Literal["queued", "running", "completed", "failed"]
+    requested_source_url: str
+    authorization_acknowledged: bool
+    authorization_statement_version: str | None = None
+    browser_engine: str | None = None
+    page_count: int = 0
+    asset_count: int = 0
+    total_bytes: int = 0
+    unsupported_features: list[str] = Field(default_factory=list)
+    warning_codes: list[str] = Field(default_factory=list)
+    failure_reason_code: str | None = None
+    failure_message: str | None = None
+    manifest_sha256: str | None = None
+    attempt_count: int = 0
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class SEOMigrationSourceCaptureListRead(BaseModel):
+    items: list[SEOMigrationSourceCaptureRead]
+    total: int
 
 
 class SEOMigrationMediaMetadataSuggestionRead(BaseModel):
@@ -664,6 +719,8 @@ class SEOMigrationWorkspaceRead(BaseModel):
     business_id: str
     site_id: str
     source_url: str | None = None
+    ingestion_mode: Literal["analyze_rebuild", "faithful_snapshot"] = "analyze_rebuild"
+    latest_source_capture_id: str | None = None
     source_site_status: str
     migration_status: str
     operator_requirements_json: dict[str, object] | None = None

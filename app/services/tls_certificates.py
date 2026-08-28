@@ -31,9 +31,7 @@ from app.core.preview_identity import PreviewIdentityValidationError, build_site
 
 
 _PREVIEW_SUFFIX = ".site.mbsrn.com"
-_HOSTNAME_PATTERN = re.compile(
-    r"^(?=.{1,253}\.?$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}\.?$"
-)
+_HOSTNAME_PATTERN = re.compile(r"^(?=.{1,253}\.?$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}\.?$")
 _RESOURCE_NAME_PATTERN = re.compile(r"^[a-z](?:[-a-z0-9]{0,61}[a-z0-9])?$")
 _SECRET_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,255}$")
 
@@ -132,11 +130,7 @@ class TLSCertificateService:
         if not site_id:
             return assets
         hostname = self._hostname_for_site(business_id=business_id, site_id=site_id)
-        return [
-            asset
-            for asset in assets
-            if self._hostname_is_covered(hostname, tuple(asset.san_dns_names_json or []))
-        ]
+        return [asset for asset in assets if self._hostname_is_covered(hostname, tuple(asset.san_dns_names_json or []))]
 
     def get_capabilities(self) -> TLSCertificateCapabilityStatus:
         if not self.gcp_project_id:
@@ -644,11 +638,7 @@ class TLSCertificateService:
         status = self.get_capabilities()
         if status.ready:
             return
-        missing_permissions = tuple(
-            permission
-            for check in status.checks
-            for permission in check.missing_permissions
-        )
+        missing_permissions = tuple(permission for check in status.checks for permission in check.missing_permissions)
         raise TLSCertificateConfigurationError(
             status.message,
             reason_code=status.reason_code,
@@ -676,9 +666,7 @@ class TLSCertificateService:
         if not _HOSTNAME_PATTERN.fullmatch(normalized):
             raise TLSCertificateValidationError("The preview hostname is invalid.")
         if not normalized.endswith(self.preview_suffix) or normalized == self.preview_suffix.lstrip("."):
-            raise TLSCertificateValidationError(
-                f"Self-signed certificates are restricted to *{self.preview_suffix}."
-            )
+            raise TLSCertificateValidationError(f"Self-signed certificates are restricted to *{self.preview_suffix}.")
         return normalized
 
     @classmethod
@@ -725,7 +713,9 @@ class TLSCertificateService:
             raise TLSCertificateValidationError("The certificate must be valid PEM.") from exc
         try:
             san_extension = certificate.extensions.get_extension_for_class(x509.SubjectAlternativeName)
-            san_dns_names = tuple(name.lower().rstrip(".") for name in san_extension.value.get_values_for_type(x509.DNSName))
+            san_dns_names = tuple(
+                name.lower().rstrip(".") for name in san_extension.value.get_values_for_type(x509.DNSName)
+            )
         except x509.ExtensionNotFound as exc:
             raise TLSCertificateValidationError("The certificate must contain a DNS Subject Alternative Name.") from exc
         cls._ensure_hostname_covered(hostname, san_dns_names)
@@ -854,9 +844,7 @@ class TLSCertificateService:
 
     def _require_project(self) -> None:
         if not self.gcp_project_id:
-            raise TLSCertificateConfigurationError(
-                "The Google Cloud project for TLS certificates is not configured."
-            )
+            raise TLSCertificateConfigurationError("The Google Cloud project for TLS certificates is not configured.")
 
     def _audit(
         self,

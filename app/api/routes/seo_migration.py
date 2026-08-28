@@ -8,6 +8,7 @@ from app.api.deps import (
     TenantContext,
     get_seo_analytics_service,
     get_seo_migration_service,
+    get_seo_migration_source_capture_service,
     get_preview_release_service,
     get_seo_site_service,
     get_tenant_context,
@@ -55,6 +56,9 @@ from app.schemas.seo_migration import (
     SEOMigrationPromptPreviewRead,
     SEOMigrationRequirementsUpdateRequest,
     SEOMigrationSourceIngestRequest,
+    SEOMigrationSourceCaptureCreateRequest,
+    SEOMigrationSourceCaptureListRead,
+    SEOMigrationSourceCaptureRead,
     SEOMigrationSourceSnapshotRead,
     SEOMigrationWorkspaceCreateOrUpdateRequest,
     SEOMigrationWorkspaceRead,
@@ -79,6 +83,11 @@ from app.services.preview_releases import (
     PreviewReleaseService,
     PreviewReleaseState,
     PreviewReleaseValidationError,
+)
+from app.services.seo_migration_source_capture import (
+    SEOMigrationSourceCaptureService,
+    SourceCaptureNotFoundError,
+    SourceCaptureValidationError,
 )
 from app.services.preview_release_execution import PreviewReleaseExecutionService
 from app.services.preview_diagnostics import PreviewDiagnosticCollectionService
@@ -159,7 +168,9 @@ def _derive_migration_ga4_outcome_anchor(workspace) -> tuple[str, datetime] | No
     return None
 
 
-def _derive_ga4_outcome_unavailable_status(*, site_analytics_summary: object, ga4_property_id: str | None) -> str | None:
+def _derive_ga4_outcome_unavailable_status(
+    *, site_analytics_summary: object, ga4_property_id: str | None
+) -> str | None:
     if not str(ga4_property_id or "").strip():
         return "not_configured"
 
@@ -416,6 +427,32 @@ def _build_migration_ga4_outcome_snapshot(
 
 def _to_workspace_read(workspace) -> SEOMigrationWorkspaceRead:  # noqa: ANN001
     return SEOMigrationWorkspaceRead.model_validate(workspace)
+
+
+def _to_source_capture_read(capture) -> SEOMigrationSourceCaptureRead:  # noqa: ANN001
+    return SEOMigrationSourceCaptureRead(
+        id=capture.id,
+        source_version=capture.source_version,
+        mode=capture.mode,
+        status=capture.status,
+        requested_source_url=capture.requested_source_url,
+        authorization_acknowledged=capture.authorization_acknowledged,
+        authorization_statement_version=capture.authorization_statement_version,
+        browser_engine=capture.browser_engine,
+        page_count=capture.page_count,
+        asset_count=capture.asset_count,
+        total_bytes=capture.total_bytes,
+        unsupported_features=list(capture.unsupported_features_json or []),
+        warning_codes=list(capture.warning_codes_json or []),
+        failure_reason_code=capture.failure_reason_code,
+        failure_message=capture.failure_message,
+        manifest_sha256=capture.manifest_sha256,
+        attempt_count=capture.attempt_count,
+        started_at=capture.started_at,
+        completed_at=capture.completed_at,
+        created_at=capture.created_at,
+        updated_at=capture.updated_at,
+    )
 
 
 def _sanitize_generated_files_for_read(
@@ -740,6 +777,97 @@ def ingest_seo_migration_source(
     except SEOMigrationValidationError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
     return _to_workspace_read(workspace)
+
+
+@router.post(
+    "/sites/{site_id}/migration/source-capture-runs",
+    response_model=SEOMigrationSourceCaptureRead,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def create_seo_migration_source_capture(
+    business_id: str,
+    site_id: str,
+    payload: SEOMigrationSourceCaptureCreateRequest,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    capture_service: SEOMigrationSourceCaptureService = Depends(get_seo_migration_source_capture_service),
+) -> SEOMigrationSourceCaptureRead:
+    scoped_business_id = resolve_tenant_business_id(
+        tenant_context=tenant_context,
+        requested_business_id=business_id,
+    )
+    try:
+        capture = capture_service.queue_capture(
+            business_id=scoped_business_id,
+            site_id=site_id,
+            mode=payload.mode,
+            source_url=payload.source_url,
+            authorization_acknowledged=payload.authorization_acknowledged,
+            idempotency_key=payload.idempotency_key,
+            page_limit=payload.page_limit,
+            asset_limit=payload.asset_limit,
+            max_total_bytes=payload.max_total_bytes,
+            principal_id=tenant_context.principal_id,
+        )
+    except SourceCaptureNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except SourceCaptureValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
+    return _to_source_capture_read(capture)
+
+
+@router.get(
+    "/sites/{site_id}/migration/source-capture-runs",
+    response_model=SEOMigrationSourceCaptureListRead,
+)
+def list_seo_migration_source_captures(
+    business_id: str,
+    site_id: str,
+    limit: int = Query(default=20, ge=1, le=100),
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    capture_service: SEOMigrationSourceCaptureService = Depends(get_seo_migration_source_capture_service),
+) -> SEOMigrationSourceCaptureListRead:
+    scoped_business_id = resolve_tenant_business_id(
+        tenant_context=tenant_context,
+        requested_business_id=business_id,
+    )
+    try:
+        captures = capture_service.list_captures(
+            business_id=scoped_business_id,
+            site_id=site_id,
+            limit=limit,
+        )
+    except SourceCaptureNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return SEOMigrationSourceCaptureListRead(
+        items=[_to_source_capture_read(capture) for capture in captures],
+        total=len(captures),
+    )
+
+
+@router.get(
+    "/sites/{site_id}/migration/source-capture-runs/{capture_id}",
+    response_model=SEOMigrationSourceCaptureRead,
+)
+def get_seo_migration_source_capture(
+    business_id: str,
+    site_id: str,
+    capture_id: str,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    capture_service: SEOMigrationSourceCaptureService = Depends(get_seo_migration_source_capture_service),
+) -> SEOMigrationSourceCaptureRead:
+    scoped_business_id = resolve_tenant_business_id(
+        tenant_context=tenant_context,
+        requested_business_id=business_id,
+    )
+    try:
+        capture = capture_service.get_capture(
+            business_id=scoped_business_id,
+            site_id=site_id,
+            capture_id=capture_id,
+        )
+    except SourceCaptureNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return _to_source_capture_read(capture)
 
 
 @router.get("/sites/{site_id}/migration/media/assets", response_model=SEOMigrationMediaAssetListRead)

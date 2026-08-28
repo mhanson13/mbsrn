@@ -27,6 +27,8 @@ import type {
   MigrationManagedCertificateActionResponse,
   MigrationHistoryListResponse,
   MigrationPublishActionResponse,
+  MigrationSourceCapture,
+  MigrationSourceCaptureListResponse,
   MigrationRepositoryAdoptActionResponse,
   MigrationArtifactVersionListResponse,
   MigrationWorkspace,
@@ -124,6 +126,9 @@ const mockFetchMigrationArtifactVersions = jest.fn<Promise<MigrationArtifactVers
 const mockFetchMigrationArtifactFilePreview = jest.fn<Promise<MigrationArtifactFilePreview>, unknown[]>();
 const mockFetchMigrationArtifactFileBlob = jest.fn<Promise<Blob>, unknown[]>();
 const mockIngestMigrationSource = jest.fn<Promise<MigrationWorkspace>, unknown[]>();
+const mockCreateMigrationSourceCapture = jest.fn<Promise<MigrationSourceCapture>, unknown[]>();
+const mockFetchMigrationSourceCapture = jest.fn<Promise<MigrationSourceCapture>, unknown[]>();
+const mockFetchMigrationSourceCaptures = jest.fn<Promise<MigrationSourceCaptureListResponse>, unknown[]>();
 const mockUpdateMigrationRequirements = jest.fn<Promise<MigrationWorkspace>, unknown[]>();
 const mockSuggestMigrationRequirementField = jest.fn<Promise<Record<string, unknown>>, unknown[]>();
 const mockUpdateMigrationEnrichedContent = jest.fn<Promise<MigrationWorkspace>, unknown[]>();
@@ -214,6 +219,9 @@ jest.mock("../../lib/api/client", () => {
     fetchMigrationArtifactFilePreview: (...args: unknown[]) => mockFetchMigrationArtifactFilePreview(...args),
     fetchMigrationArtifactFileBlob: (...args: unknown[]) => mockFetchMigrationArtifactFileBlob(...args),
     ingestMigrationSource: (...args: unknown[]) => mockIngestMigrationSource(...args),
+    createMigrationSourceCapture: (...args: unknown[]) => mockCreateMigrationSourceCapture(...args),
+    fetchMigrationSourceCapture: (...args: unknown[]) => mockFetchMigrationSourceCapture(...args),
+    fetchMigrationSourceCaptures: (...args: unknown[]) => mockFetchMigrationSourceCaptures(...args),
     updateMigrationRequirements: (...args: unknown[]) => mockUpdateMigrationRequirements(...args),
     suggestMigrationRequirementField: (...args: unknown[]) => mockSuggestMigrationRequirementField(...args),
     updateMigrationEnrichedContent: (...args: unknown[]) => mockUpdateMigrationEnrichedContent(...args),
@@ -694,6 +702,95 @@ describe("site workspace modernized structure", () => {
 });
 
 describe("site migration workflow route", () => {
+  it("queues the default analyze-and-rebuild source mode asynchronously", async () => {
+    const user = userEvent.setup();
+    render(<SiteMigrationWorkflowPage />);
+
+    const controls = await screen.findByTestId("migration-source-capture-controls");
+    await user.click(within(controls).getByRole("button", { name: "Start source analysis" }));
+
+    await waitFor(() =>
+      expect(mockCreateMigrationSourceCapture).toHaveBeenCalledWith(
+        "token-1",
+        "biz-1",
+        "site-1",
+        expect.objectContaining({
+          mode: "analyze_rebuild",
+          source_url: "https://legacy.example/",
+          authorization_acknowledged: false,
+        }),
+      ),
+    );
+    expect(await screen.findByText(/Source analysis queued/)).toBeInTheDocument();
+  });
+
+  it("requires authorization before queuing a faithful Chromium snapshot", async () => {
+    const user = userEvent.setup();
+    mockCreateMigrationSourceCapture.mockResolvedValueOnce(
+      buildMigrationSourceCapture({
+        mode: "faithful_snapshot",
+        status: "queued",
+        authorization_acknowledged: true,
+        authorization_statement_version: "faithful-snapshot-authorization-v1",
+        browser_engine: "chromium",
+        page_count: 0,
+        manifest_sha256: null,
+        completed_at: null,
+      }),
+    );
+    render(<SiteMigrationWorkflowPage />);
+
+    const controls = await screen.findByTestId("migration-source-capture-controls");
+    await user.selectOptions(within(controls).getByLabelText("Ingestion mode"), "faithful_snapshot");
+    const startButton = within(controls).getByRole("button", { name: "Start faithful snapshot" });
+    expect(startButton).toBeDisabled();
+
+    await user.click(
+      within(controls).getByRole("checkbox", {
+        name: /I confirm that I am authorized to capture and reproduce this website’s content/,
+      }),
+    );
+    expect(startButton).toBeEnabled();
+    await user.click(startButton);
+
+    await waitFor(() =>
+      expect(mockCreateMigrationSourceCapture).toHaveBeenCalledWith(
+        "token-1",
+        "biz-1",
+        "site-1",
+        expect.objectContaining({
+          mode: "faithful_snapshot",
+          authorization_acknowledged: true,
+        }),
+      ),
+    );
+    expect(await screen.findByText(/Faithful browser snapshot queued/)).toBeInTheDocument();
+  });
+
+  it("summarizes faithful capture output and keeps limitations collapsed", async () => {
+    mockFetchMigrationSourceCaptures.mockResolvedValueOnce({
+      items: [
+        buildMigrationSourceCapture({
+          mode: "faithful_snapshot",
+          browser_engine: "chromium",
+          page_count: 4,
+          asset_count: 18,
+          total_bytes: 25000,
+          unsupported_features: ["server_side_forms_require_replacement"],
+          warning_codes: ["external_resources_blocked"],
+        }),
+      ],
+      total: 1,
+    });
+    render(<SiteMigrationWorkflowPage />);
+
+    const status = await screen.findByTestId("migration-source-capture-status");
+    expect(status).toHaveTextContent("Source baseline ready");
+    expect(status).toHaveTextContent("4 pages · 18 first-party assets");
+    const limitations = within(status).getByText("Review capture limitations");
+    expect(limitations.closest("details")).not.toHaveAttribute("open");
+  });
+
   it("creates an idempotent preview release from the selected draft and keeps manual controls collapsed", async () => {
     const user = userEvent.setup();
     const release = buildPreviewRelease();
@@ -4321,7 +4418,7 @@ describe("site migration workflow route", () => {
     expect(within(mediaSection).getByText("Pages scanned: 3")).toBeInTheDocument();
     expect(within(mediaSection).getByText("Images included in draft: 1")).toBeInTheDocument();
     expect(within(mediaSection).getByRole("button", { name: "Use checked images in draft" })).toBeInTheDocument();
-    expect(within(mediaSection).getByRole("button", { name: "Discover / Refresh Source Images" })).toBeInTheDocument();
+    expect(within(mediaSection).getByRole("button", { name: "Refresh source capture" })).toBeInTheDocument();
     expect(within(mediaSection).getByTestId("migration-media-upload-disclosure")).toBeInTheDocument();
 
     const sourceList = within(mediaSection).getByTestId("migration-media-source-list");
@@ -6731,6 +6828,8 @@ function buildMigrationWorkspace(overrides: Partial<MigrationWorkspace> = {}): M
     business_id: "biz-1",
     site_id: "site-1",
     source_url: "https://legacy.example/",
+    ingestion_mode: "analyze_rebuild",
+    latest_source_capture_id: null,
     source_site_status: "not_ingested",
     migration_status: "draft",
     operator_requirements_json: {},
@@ -7044,6 +7143,33 @@ function buildPreviewRelease(overrides: Partial<PreviewRelease> = {}): PreviewRe
   };
 }
 
+function buildMigrationSourceCapture(overrides: Partial<MigrationSourceCapture> = {}): MigrationSourceCapture {
+  return {
+    id: "source-capture-1",
+    source_version: 1,
+    mode: "analyze_rebuild",
+    status: "completed",
+    requested_source_url: "https://legacy.example/",
+    authorization_acknowledged: false,
+    authorization_statement_version: null,
+    browser_engine: null,
+    page_count: 3,
+    asset_count: 0,
+    total_bytes: 0,
+    unsupported_features: [],
+    warning_codes: [],
+    failure_reason_code: null,
+    failure_message: null,
+    manifest_sha256: "a".repeat(64),
+    attempt_count: 1,
+    started_at: "2026-03-21T00:00:00Z",
+    completed_at: "2026-03-21T00:01:00Z",
+    created_at: "2026-03-21T00:00:00Z",
+    updated_at: "2026-03-21T00:01:00Z",
+    ...overrides,
+  };
+}
+
 function baseContext(overrides: Partial<OperatorContextMockValue> = {}): OperatorContextMockValue {
   return {
     loading: false,
@@ -7186,6 +7312,9 @@ function seedCompetitorProfileGenerationDefaults(): void {
   mockFetchMigrationArtifactVersions.mockReset();
   mockFetchMigrationArtifactFilePreview.mockReset();
   mockIngestMigrationSource.mockReset();
+  mockCreateMigrationSourceCapture.mockReset();
+  mockFetchMigrationSourceCapture.mockReset();
+  mockFetchMigrationSourceCaptures.mockReset();
   mockUpdateMigrationRequirements.mockReset();
   mockSuggestMigrationRequirementField.mockReset();
   mockUpdateMigrationEnrichedContent.mockReset();
@@ -7273,6 +7402,9 @@ function seedCompetitorProfileGenerationDefaults(): void {
     source_site_status: "ingested",
     migration_status: "source_ingested",
   });
+  mockFetchMigrationSourceCaptures.mockResolvedValue({ items: [], total: 0 });
+  mockCreateMigrationSourceCapture.mockResolvedValue(buildMigrationSourceCapture());
+  mockFetchMigrationSourceCapture.mockResolvedValue(buildMigrationSourceCapture());
   mockUpdateMigrationRequirements.mockResolvedValue({
     ...defaultMigrationWorkspace,
     migration_status: "requirements_captured",

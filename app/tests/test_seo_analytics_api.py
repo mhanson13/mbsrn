@@ -672,7 +672,10 @@ def test_site_analytics_summary_reports_permission_denied_reason(
     assert payload["ga4_insights"]["status"] == "permission_denied"
     assert payload["ga4_insights"]["message"] == "Verify GA4 property access before using analytics insights."
     assert payload["ga4_acquisition_insights"]["status"] == "permission_denied"
-    assert payload["ga4_acquisition_insights"]["message"] == "Verify GA4 property access before using acquisition insights."
+    assert (
+        payload["ga4_acquisition_insights"]["message"]
+        == "Verify GA4 property access before using acquisition insights."
+    )
 
 
 @pytest.mark.parametrize(

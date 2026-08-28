@@ -961,9 +961,8 @@ def _determine_exclusion_reason(
     site_context: _SiteScoringContext,
 ) -> str | None:
     if site_context.domain and candidate.canonical_domain:
-        if (
-            candidate.canonical_domain == site_context.domain
-            or candidate.canonical_domain.endswith(f".{site_context.domain}")
+        if candidate.canonical_domain == site_context.domain or candidate.canonical_domain.endswith(
+            f".{site_context.domain}"
         ):
             return EXCLUSION_REASON_EXISTING_DOMAIN_MATCH
     if candidate.canonical_domain in existing_domain_set:

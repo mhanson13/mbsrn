@@ -108,9 +108,7 @@ PROVIDER_AUTH_CONFIG_ERROR_SUMMARY = "AI provider credentials are not configured
 PROVIDER_SCHEMA_INVALID_ERROR_SUMMARY = (
     "Competitor generation is blocked by a local provider schema configuration issue."
 )
-PROMPT_OVERRIDE_CONTRACT_INVALID_ERROR_SUMMARY = (
-    "Competitor generation is blocked because the active Admin prompt override does not match the required output contract."
-)
+PROMPT_OVERRIDE_CONTRACT_INVALID_ERROR_SUMMARY = "Competitor generation is blocked because the active Admin prompt override does not match the required output contract."
 INVALID_OUTPUT_ERROR_SUMMARY = (
     "Competitor profile generation returned invalid structured output. Start a new generation run to retry."
 )

@@ -11,8 +11,7 @@ _BASE_RETENTION_CRONJOB = _REPO_ROOT / "infra" / "k8s" / "base" / "api-seo-compe
 _PROCFILE = _REPO_ROOT / "Procfile"
 _EXPECTED_COMMAND = ["/cnb/process/seo-competitor-profile-retention"]
 _EXPECTED_PROCFILE_LINE = (
-    "seo-competitor-profile-retention: "
-    "python -m app.cli.seo_competitor_profile_generation_retention_cleanup"
+    "seo-competitor-profile-retention: " "python -m app.cli.seo_competitor_profile_generation_retention_cleanup"
 )
 _UNSUPPORTED_INTERPRETERS = {"python", "python3"}
 

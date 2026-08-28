@@ -7,12 +7,10 @@ import re
 REUSABLE_PREVIEW_CALLER_MARKER = "mbsrn-reusable-preview-caller:v1"
 
 _WORKFLOW_REF_PATTERN = re.compile(
-    r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/\.github/workflows/"
-    r"[A-Za-z0-9_.-]+\.ya?ml@[A-Za-z0-9_./-]+$"
+    r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/\.github/workflows/" r"[A-Za-z0-9_.-]+\.ya?ml@[A-Za-z0-9_./-]+$"
 )
 _WIF_PROVIDER_PATTERN = re.compile(
-    r"^projects/[0-9]+/locations/global/workloadIdentityPools/"
-    r"[a-z0-9-]+/providers/[a-z0-9-]+$"
+    r"^projects/[0-9]+/locations/global/workloadIdentityPools/" r"[a-z0-9-]+/providers/[a-z0-9-]+$"
 )
 _SERVICE_ACCOUNT_PATTERN = re.compile(
     r"^[a-z][a-z0-9-]{4,28}[a-z0-9]@[a-z][a-z0-9-]{4,28}[a-z0-9]\.iam\.gserviceaccount\.com$"

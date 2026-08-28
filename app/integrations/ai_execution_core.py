@@ -513,10 +513,7 @@ def _should_suppress_timeout_retry_for_input_pressure(
         return True
     if max_input_size is None:
         return False
-    return (
-        final_input_size * 100
-        >= max_input_size * _TIMEOUT_RETRY_SUPPRESSION_INPUT_UTILIZATION_PERCENT
-    )
+    return final_input_size * 100 >= max_input_size * _TIMEOUT_RETRY_SUPPRESSION_INPUT_UTILIZATION_PERCENT
 
 
 def normalize_provider_failure(

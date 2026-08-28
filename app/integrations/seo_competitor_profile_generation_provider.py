@@ -167,7 +167,7 @@ _PROVIDER_INVALID_REQUEST_CONTRACT_TOKENS = (
 )
 _PROVIDER_INVALID_TOOL_REQUEST_TOKENS = (
     "web_search",
-    "\"tools\"",
+    '"tools"',
     "tools[",
     "tool_choice",
     "invalid tool",
@@ -315,9 +315,7 @@ class OpenAISEOCompetitorProfileGenerationProvider:
         self.prompt_config_key = str(prompt_config_key or "ai_prompt_text_competitor").strip()
         self.legacy_config_used = bool(legacy_config_used)
         self.runtime_build_metadata = get_runtime_build_metadata()
-        self.runtime_app_version = (
-            _clean_optional_value(self.runtime_build_metadata.get("build_version")) or "unknown"
-        )
+        self.runtime_app_version = _clean_optional_value(self.runtime_build_metadata.get("build_version")) or "unknown"
         self.runtime_build_sha = _clean_optional_value(self.runtime_build_metadata.get("git_commit")) or "unknown"
         self.runtime_pod_name = _clean_optional_value(os.getenv("HOSTNAME"))
 
@@ -1887,9 +1885,7 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                     "Competitor profile generation is blocked by a local provider schema configuration issue."
                 )
             elif normalized_failure_reason == _FAILURE_REASON_AI_MODEL_REQUEST_PARAMETER_UNSUPPORTED:
-                provider_request_safe_message = (
-                    "Competitor profile generation request uses a model parameter that is unsupported for the configured model."
-                )
+                provider_request_safe_message = "Competitor profile generation request uses a model parameter that is unsupported for the configured model."
             elif normalized_failure_reason == _FAILURE_REASON_AI_MODEL_REQUEST_SHAPE_UNSUPPORTED:
                 provider_request_safe_message = (
                     "Competitor profile generation request shape is incompatible with the configured model."
@@ -1899,13 +1895,17 @@ class OpenAISEOCompetitorProfileGenerationProvider:
                     "Competitor profile generation request uses an invalid provider request contract."
                 )
             elif normalized_failure_reason == "provider_tool_request_invalid":
-                provider_request_safe_message = "Competitor profile generation request uses an invalid tool request shape."
+                provider_request_safe_message = (
+                    "Competitor profile generation request uses an invalid tool request shape."
+                )
             elif normalized_failure_reason == "provider_invalid_request_unknown":
-                provider_request_safe_message = "Competitor profile generation request is invalid for the configured provider."
-            elif (
-                failure_category == "local_validation_failure"
-                and exc.normalized_failure.reason in {"request_too_large", "request_too_large_or_complex"}
-            ):
+                provider_request_safe_message = (
+                    "Competitor profile generation request is invalid for the configured provider."
+                )
+            elif failure_category == "local_validation_failure" and exc.normalized_failure.reason in {
+                "request_too_large",
+                "request_too_large_or_complex",
+            }:
                 provider_request_safe_message = (
                     "Competitor profile generation request is too large or complex for synchronous generation."
                 )
@@ -2114,9 +2114,7 @@ class OpenAISEOCompetitorProfileGenerationProvider:
         normalized_message = (error_message or "").strip().lower()
         normalized_body = (provider_error_body or "").strip().lower()
         combined = "\n".join(
-            part
-            for part in (normalized_type, normalized_code, normalized_message, normalized_body)
-            if part
+            part for part in (normalized_type, normalized_code, normalized_message, normalized_body) if part
         )
         if not combined:
             return False

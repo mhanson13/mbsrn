@@ -270,7 +270,9 @@ class PreviewReleaseService:
             and active_binding.observed_fingerprint_sha256 == release.certificate_fingerprint_sha256
         )
         if verified:
-            self._set_gate_ready(gates_by_name["verification"], "The preview serves the selected certificate fingerprint.")
+            self._set_gate_ready(
+                gates_by_name["verification"], "The preview serves the selected certificate fingerprint."
+            )
             release.preview_url = f"https://{release.preview_hostname}"
             release.verified_at = active_binding.last_verified_at or utc_now()
         ordered_gates = tuple(sorted(gates_by_name.values(), key=lambda gate: gate.ordinal))
@@ -419,9 +421,15 @@ class PreviewReleaseService:
             )
         if gate_name == "approval":
             ready = getattr(artifact, "approval_status", None) == "approved"
-            return self._binary_gate(ready, "approval_required", "The selected draft is approved.", "Approve the draft.")
+            return self._binary_gate(
+                ready, "approval_required", "The selected draft is approved.", "Approve the draft."
+            )
         messages = {
-            "github": ("github_publish_pending", "GitHub publication is waiting.", "Publish the exact release package."),
+            "github": (
+                "github_publish_pending",
+                "GitHub publication is waiting.",
+                "Publish the exact release package.",
+            ),
             "certificate": (
                 "certificate_ensure_pending",
                 "Preview certificate ensure is waiting.",

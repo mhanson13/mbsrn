@@ -116,9 +116,7 @@ def upgrade() -> None:
     )
     op.create_index(op.f("ix_preview_release_gates_release_id"), "preview_release_gates", ["release_id"])
     op.create_index(op.f("ix_preview_release_gates_operation_id"), "preview_release_gates", ["operation_id"])
-    op.create_index(
-        "ix_preview_release_gates_release_ordinal", "preview_release_gates", ["release_id", "ordinal"]
-    )
+    op.create_index("ix_preview_release_gates_release_ordinal", "preview_release_gates", ["release_id", "ordinal"])
 
 
 def downgrade() -> None:

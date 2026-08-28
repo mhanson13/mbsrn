@@ -403,6 +403,8 @@ def require_site_delete_admin_principal(
             },
         )
     return principal
+
+
 _COMPETITOR_QUALITY_MIN_READY_CANDIDATES = 2
 _COMPETITOR_QUALITY_REASON_VALID = "valid"
 _COMPETITOR_QUALITY_REASON_DUPLICATE_DOMAIN = "duplicate_domain"
@@ -566,7 +568,9 @@ def _recommendation_duplicate_datetime_rank(value: datetime | None) -> float:
     return resolved.timestamp()
 
 
-def _recommendation_duplicate_representative_rank(recommendation: SEORecommendationRead) -> tuple[int, int, float, float, str, str]:
+def _recommendation_duplicate_representative_rank(
+    recommendation: SEORecommendationRead,
+) -> tuple[int, int, float, float, str, str]:
     status_rank = _RECOMMENDATION_DUPLICATE_GROUP_STATUS_RANKS.get(recommendation.status, 0)
     priority_score = int(recommendation.priority_score or 0)
     updated_rank = _recommendation_duplicate_datetime_rank(recommendation.updated_at)
@@ -6312,12 +6316,13 @@ def get_competitor_reviewed_list(
         if str(feedback_item.feedback_status).strip().lower() == "manually_seeded":
             manual_seed_count += 1
 
-    latest_generation_run = (
-        max(generation_runs, key=_run_activity_timestamp) if generation_runs else None
-    )
+    latest_generation_run = max(generation_runs, key=_run_activity_timestamp) if generation_runs else None
     latest_generation_detail_response: SEOCompetitorProfileGenerationRunDetailRead | None = None
     latest_quality_summary: SEOCompetitorProfileGenerationQualitySummaryRead | None = None
-    if latest_generation_run is not None and str(latest_generation_run.status).strip().lower() in {"completed", "failed"}:
+    if latest_generation_run is not None and str(latest_generation_run.status).strip().lower() in {
+        "completed",
+        "failed",
+    }:
         latest_generation_detail = generation_service.get_run_detail(
             business_id=scoped_business_id,
             site_id=site_id,
@@ -6400,7 +6405,9 @@ def get_competitor_reviewed_list(
         source_generation_run_id = accepted_draft.generation_run_id if accepted_draft is not None else None
         reviewed_rows_by_domain[domain_key] = SEOCompetitorReviewedCompetitorRowRead(
             domain=domain_key,
-            display_name=feedback_item.display_name if feedback_item and feedback_item.display_name else domain_item.display_name,
+            display_name=(
+                feedback_item.display_name if feedback_item and feedback_item.display_name else domain_item.display_name
+            ),
             review_state=review_state,
             provenance=provenance,
             confidence_score=confidence_score,
@@ -6474,18 +6481,14 @@ def get_competitor_reviewed_list(
             or (str(draft.provenance_classification or "").strip().lower() == "synthetic_fallback")
         )
         review_state = (
-            _COMPETITOR_REVIEW_STATE_LEGACY_SYNTHETIC
-            if is_synthetic
-            else _COMPETITOR_REVIEW_STATE_GENERATED_SUGGESTION
+            _COMPETITOR_REVIEW_STATE_LEGACY_SYNTHETIC if is_synthetic else _COMPETITOR_REVIEW_STATE_GENERATED_SUGGESTION
         )
         reviewed_rows_by_domain[draft_domain_key] = SEOCompetitorReviewedCompetitorRowRead(
             domain=draft_domain_key,
             display_name=draft.suggested_name,
             review_state=review_state,
             provenance=(
-                _COMPETITOR_REVIEW_PROVENANCE_LEGACY
-                if is_synthetic
-                else _COMPETITOR_REVIEW_PROVENANCE_AI_SUGGESTED
+                _COMPETITOR_REVIEW_PROVENANCE_LEGACY if is_synthetic else _COMPETITOR_REVIEW_PROVENANCE_AI_SUGGESTED
             ),
             confidence_score=draft.confidence_score,
             reason_selected=(
@@ -6523,7 +6526,9 @@ def get_competitor_reviewed_list(
     )
 
     accepted_useful_count = sum(
-        1 for item in reviewed_rows if item.review_state in {_COMPETITOR_REVIEW_STATE_ACCEPTED, _COMPETITOR_REVIEW_STATE_USEFUL}
+        1
+        for item in reviewed_rows
+        if item.review_state in {_COMPETITOR_REVIEW_STATE_ACCEPTED, _COMPETITOR_REVIEW_STATE_USEFUL}
     )
     needs_review_count = sum(
         1
@@ -6531,7 +6536,9 @@ def get_competitor_reviewed_list(
         if item.review_state in {_COMPETITOR_REVIEW_STATE_NEEDS_REVIEW, _COMPETITOR_REVIEW_STATE_GENERATED_SUGGESTION}
     )
     excluded_count = sum(1 for item in reviewed_rows if item.review_state == _COMPETITOR_REVIEW_STATE_EXCLUDED)
-    manual_seed_row_count = sum(1 for item in reviewed_rows if item.review_state == _COMPETITOR_REVIEW_STATE_MANUAL_SEED)
+    manual_seed_row_count = sum(
+        1 for item in reviewed_rows if item.review_state == _COMPETITOR_REVIEW_STATE_MANUAL_SEED
+    )
 
     latest_snapshot_run = None
     for competitor_set in competitor_sets:
@@ -6542,7 +6549,9 @@ def get_competitor_reviewed_list(
         if not snapshot_runs:
             continue
         candidate_snapshot = max(snapshot_runs, key=_run_activity_timestamp)
-        if latest_snapshot_run is None or _run_activity_timestamp(candidate_snapshot) > _run_activity_timestamp(latest_snapshot_run):
+        if latest_snapshot_run is None or _run_activity_timestamp(candidate_snapshot) > _run_activity_timestamp(
+            latest_snapshot_run
+        ):
             latest_snapshot_run = candidate_snapshot
 
     latest_comparison_run = max(comparison_runs, key=_run_activity_timestamp) if comparison_runs else None
@@ -6791,11 +6800,7 @@ def _build_competitor_profile_quality_summary(
         or reason_counts[_COMPETITOR_QUALITY_REASON_PROVIDER_RETURNED_EMPTY] > 0
         or accepted_candidates <= 0
     )
-    warning_count = sum(
-        count
-        for reason, count in reason_counts.items()
-        if reason != _COMPETITOR_QUALITY_REASON_VALID
-    )
+    warning_count = sum(count for reason, count in reason_counts.items() if reason != _COMPETITOR_QUALITY_REASON_VALID)
     outcome_status_level = _clean_optional(getattr(outcome_summary, "status_level", None))
     if has_blocking_issue or run_status == "failed":
         quality_status = "blocked"
@@ -6806,11 +6811,7 @@ def _build_competitor_profile_quality_summary(
     ):
         quality_status = "partial"
 
-    final_active_domains_count = sum(
-        1
-        for item in drafts
-        if _clean_optional(getattr(item, "suggested_domain", None))
-    )
+    final_active_domains_count = sum(1 for item in drafts if _clean_optional(getattr(item, "suggested_domain", None)))
     top_reason = _top_competitor_quality_reason(reason_counts)
     operator_message = _build_competitor_quality_operator_message(
         status=quality_status,

@@ -232,10 +232,7 @@ def _atomic_publish_responses(
     return [
         _FakeHTTPResponse(status=200, body=json.dumps({"object": {"sha": "parent-commit"}})),
         _FakeHTTPResponse(status=200, body=json.dumps({"tree": {"sha": "base-tree"}})),
-        *[
-            _FakeHTTPResponse(status=201, body=json.dumps({"sha": f"blob-{index}"}))
-            for index in range(file_count)
-        ],
+        *[_FakeHTTPResponse(status=201, body=json.dumps({"sha": f"blob-{index}"})) for index in range(file_count)],
         _FakeHTTPResponse(status=201, body=json.dumps({"sha": "new-tree"})),
         _FakeHTTPResponse(
             status=200,
@@ -244,8 +241,7 @@ def _atomic_publish_responses(
                     "sha": "new-tree",
                     "truncated": False,
                     "tree": [
-                        {"path": path, "type": "blob", "sha": f"blob-{index}"}
-                        for index, path in enumerate(paths)
+                        {"path": path, "type": "blob", "sha": f"blob-{index}"} for index, path in enumerate(paths)
                     ],
                 }
             ),
@@ -3860,10 +3856,7 @@ def test_check_deploy_target_readiness_blocks_when_target_repo_deploy_secret_is_
     assert details.get("target_repo_deploy_secret_required") is True
     assert details.get("target_repo_deploy_secret_name") == "GCP_DEPLOY_KEY"
     assert details.get("target_repo_deploy_secret_present") is False
-    assert any(
-        method == "GET" and url.endswith("/actions/secrets/GCP_DEPLOY_KEY")
-        for method, url in calls
-    )
+    assert any(method == "GET" and url.endswith("/actions/secrets/GCP_DEPLOY_KEY") for method, url in calls)
 
 
 def test_check_deploy_target_readiness_resolves_managed_gke_config_from_repo_fallback_when_admin_missing(
@@ -7111,9 +7104,10 @@ def test_resolve_workflow_run_failure_details_falls_back_to_template_stale_when_
     assert failure_stage == "ingress_evidence"
     assert failed_step_name == "Resolve live URL from ingress status"
     assert workflow_output is not None
-    assert "reprovision target workflow template and retry deploy" in str(
-        workflow_output.get("deploy_runtime_reason_message") or ""
-    ).lower()
+    assert (
+        "reprovision target workflow template and retry deploy"
+        in str(workflow_output.get("deploy_runtime_reason_message") or "").lower()
+    )
     assert workflow_output.get("deploy_runtime_reason_code_present") == "false"
     assert workflow_output.get("managed_deploy_template_marker_present") == "false"
 
@@ -7143,8 +7137,7 @@ def test_derive_https_probe_error_summary_for_failure_maps_tls_provisioning_reas
     )
 
     assert (
-        summary
-        == "reason=managed_certificate_provisioning;detail=managed certificate/domain status still PROVISIONING"
+        summary == "reason=managed_certificate_provisioning;detail=managed certificate/domain status still PROVISIONING"
     )
 
 
@@ -8335,7 +8328,10 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "MBSRN_PREVIEW_HOSTNAME: tnmfire.site.mbsrn.com" in workflow_yaml
     assert "MBSRN_PREVIEW_CERTIFICATE_NAME: site-web-preview-cert-tnmfire" in workflow_yaml
     assert "MBSRN_PREVIEW_STATIC_IP_NAME: site-web-preview-ip-tnmfire" in workflow_yaml
-    assert "MBSRN_REPLACE_EXISTING_RUNTIME: ${{ github.event.inputs.replace_existing_runtime || 'false' }}" in workflow_yaml
+    assert (
+        "MBSRN_REPLACE_EXISTING_RUNTIME: ${{ github.event.inputs.replace_existing_runtime || 'false' }}"
+        in workflow_yaml
+    )
     assert "MBSRN_FRONTEND_CONFIG_NAME: site-web-frontend-config-tnmfire" in workflow_yaml
     assert "MBSRN_BACKEND_CONFIG_NAME: site-web-backend-config-tnmfire" in workflow_yaml
     assert "SITE_WEB_IMAGE_REPOSITORY: ghcr.io/mhanson13/tnmfire-site-web" in workflow_yaml
@@ -8358,8 +8354,11 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert 'kubectl get secret ghcr-pull-secret --namespace "$K8S_NAMESPACE"' in workflow_yaml
     assert "Ensure managed-site endpoint prerequisites" in workflow_yaml
     assert 'endpoint_prerequisite_resource_kinds="managedcertificate,dns_record,global_static_ip"' in workflow_yaml
-    assert 'runtime_resource_kinds="ingress,frontendconfig,backendconfig,service,deployment,networkpolicy"' in workflow_yaml
-    assert 'if [ ! -f k8s/managedcertificate.yaml ]; then' in workflow_yaml
+    assert (
+        'runtime_resource_kinds="ingress,frontendconfig,backendconfig,service,deployment,networkpolicy"'
+        in workflow_yaml
+    )
+    assert "if [ ! -f k8s/managedcertificate.yaml ]; then" in workflow_yaml
     assert 'echo "managed_certificate_action=reused" >> "$GITHUB_OUTPUT"' in workflow_yaml
     assert "Use the control-plane Provision TLS Certificate action before requesting GKE deploy." in workflow_yaml
     assert 'fail_endpoint_prerequisite "managed_certificate_ownership_unverified"' in workflow_yaml
@@ -8368,10 +8367,12 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     ensure_endpoint_step_yaml = workflow_yaml.split(
         "      - name: Ensure managed-site endpoint prerequisites",
         1,
-    )[1].split("      - name: Replace existing managed-site runtime resources (optional)", 1)[0]
+    )[
+        1
+    ].split("      - name: Replace existing managed-site runtime resources (optional)", 1)[0]
     assert 'kubectl get managedcertificate "$MBSRN_PREVIEW_CERTIFICATE_NAME"' in ensure_endpoint_step_yaml
     assert 'if [ -z "$managed_certificate_json" ]; then' in ensure_endpoint_step_yaml
-    assert 'kubectl apply -f k8s/managedcertificate.yaml' not in ensure_endpoint_step_yaml
+    assert "kubectl apply -f k8s/managedcertificate.yaml" not in ensure_endpoint_step_yaml
     assert "Replace existing managed-site runtime resources (optional)" in workflow_yaml
     assert "deploy_runtime_reason_code=managed_site_runtime_replace_requested" in workflow_yaml
     assert "deploy_runtime_reason_code=managed_site_runtime_replace_completed" in workflow_yaml
@@ -8382,7 +8383,10 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert 'delete_named_resource "backendconfig" "$MBSRN_BACKEND_CONFIG_NAME"' in workflow_yaml
     assert 'delete_named_resource "service" "site-web"' in workflow_yaml
     assert 'delete_named_resource "deployment" "site-web"' in workflow_yaml
-    assert 'kubectl delete networkpolicy --namespace "$K8S_NAMESPACE" -l "$network_policy_selector" --ignore-not-found=true' in workflow_yaml
+    assert (
+        'kubectl delete networkpolicy --namespace "$K8S_NAMESPACE" -l "$network_policy_selector" --ignore-not-found=true'
+        in workflow_yaml
+    )
     assert "managed_site_runtime_replace_performed" in workflow_yaml
     assert "managed_site_runtime_replace_scope" in workflow_yaml
     assert "managed_site_runtime_replace_deleted_kinds" in workflow_yaml
@@ -8408,8 +8412,7 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert 'apply_manifest_if_present "k8s/service.yaml"' in workflow_yaml
     assert (
         'wait_for_named_resource "service" "site-web" 10 3 "runtime_service_missing_after_apply" '
-        '"Service site-web is missing after managed manifest apply."'
-        in workflow_yaml
+        '"Service site-web is missing after managed manifest apply."' in workflow_yaml
     )
     assert 'apply_manifest_if_present "k8s/deployment.yaml"' in workflow_yaml
     assert 'apply_manifest_if_present "k8s/frontendconfig.yaml"' in workflow_yaml
@@ -8418,7 +8421,7 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
         "      - name: Verify required resources after apply",
         1,
     )[0]
-    assert 'kubectl apply -f k8s/managedcertificate.yaml' not in apply_step_yaml
+    assert "kubectl apply -f k8s/managedcertificate.yaml" not in apply_step_yaml
     assert 'apply_manifest_if_present "k8s/ingress.yaml"' in workflow_yaml
     assert "Verify required resources after apply" in workflow_yaml
     assert 'fail_missing_resource "runtime_deployment_missing_after_apply"' in workflow_yaml
@@ -8505,7 +8508,7 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
         in workflow_yaml
     )
     assert "url: ${{ steps.resolve_live_url.outputs.resolved_live_url }}" in workflow_yaml
-    assert 'kubectl apply -f k8s/\n' not in workflow_yaml
+    assert "kubectl apply -f k8s/\n" not in workflow_yaml
     assert "kubectl rollout status deployment/site-web" in workflow_yaml
     assert "site-web rollout timed out in namespace $K8S_NAMESPACE; collecting bounded diagnostics." in workflow_yaml
     assert 'kubectl get rs --namespace "$K8S_NAMESPACE" -o wide || true' in workflow_yaml
@@ -8591,8 +8594,7 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert 'while [ "$endpoint_wait_attempt" -le "$endpoint_wait_max_attempts" ]; do' in workflow_yaml
     assert (
         "Service endpoints not ready on attempt ${endpoint_wait_attempt}/${endpoint_wait_max_attempts}; "
-        "retrying in ${endpoint_wait_sleep_seconds}s."
-        in workflow_yaml
+        "retrying in ${endpoint_wait_sleep_seconds}s." in workflow_yaml
     )
     assert 'while [ "$probe_attempt" -le "$probe_max_attempts" ]; do' in workflow_yaml
     assert 'if [ "$probe_attempt" -lt "$probe_max_attempts" ]; then' in workflow_yaml
@@ -8741,7 +8743,7 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
         'kubectl delete managedcertificate "$MBSRN_PREVIEW_CERTIFICATE_NAME" --namespace "$K8S_NAMESPACE" --ignore-not-found=true'
         not in workflow_yaml
     )
-    assert 'kubectl apply -f k8s/managedcertificate.yaml' not in workflow_yaml
+    assert "kubectl apply -f k8s/managedcertificate.yaml" not in workflow_yaml
     assert 'kubectl apply -f k8s/ingress.yaml --namespace "$K8S_NAMESPACE" >/dev/null 2>&1 || true' not in workflow_yaml
     assert 'echo "observed_managed_certificate_domains=$observed_managed_certificate_domains"' in workflow_yaml
     assert 'echo "observed_managed_certificate_status=$observed_managed_certificate_status"' in workflow_yaml
@@ -8902,10 +8904,7 @@ def test_rendered_self_managed_tls_templates_use_compute_pre_shared_certificate(
     assert isinstance(parsed_workflow, dict)
     assert "k8s/managedcertificate.yaml" not in manifests
     assert "networking.gke.io/managed-certificates" not in manifests["k8s/ingress.yaml"]
-    assert (
-        "ingress.gcp.kubernetes.io/pre-shared-cert: mbsrn-platfire-ab12cd34"
-        in manifests["k8s/ingress.yaml"]
-    )
+    assert "ingress.gcp.kubernetes.io/pre-shared-cert: mbsrn-platfire-ab12cd34" in manifests["k8s/ingress.yaml"]
     assert "MBSRN_TLS_CERTIFICATE_MODE: self-managed" in workflow_yaml
     assert f"MBSRN_EXPECTED_CERTIFICATE_FINGERPRINT: {fingerprint}" in workflow_yaml
     assert "gcloud compute ssl-certificates describe" in workflow_yaml
@@ -8961,7 +8960,9 @@ def test_rendered_self_managed_tls_template_rejects_incomplete_certificate_ident
         )
 
 
-def test_resolve_managed_preview_endpoint_configuration_uses_shared_gateway_for_managed_preview_when_configured() -> None:
+def test_resolve_managed_preview_endpoint_configuration_uses_shared_gateway_for_managed_preview_when_configured() -> (
+    None
+):
     resolved = resolve_managed_preview_endpoint_configuration(
         repo_name="tnmfire",
         site_id="site-tnmfire",
@@ -9198,15 +9199,18 @@ def test_rendered_managed_workflow_yaml_parses_embedded_certificate_evaluation_s
     assert "set_https_probe_error_summary() {" in run_script
     assert "ensure_https_probe_error_summary() {" in run_script
     assert "collect_ingress_502_runtime_diagnostics() {" in run_script
-    assert "kubectl -n \"$K8S_NAMESPACE\" get pods -l app.kubernetes.io/name=site-web -o wide || true" in run_script
-    assert "kubectl -n \"$K8S_NAMESPACE\" logs -l app.kubernetes.io/name=site-web --tail=200 --all-containers=true" in run_script
+    assert 'kubectl -n "$K8S_NAMESPACE" get pods -l app.kubernetes.io/name=site-web -o wide || true' in run_script
     assert (
-        "kubectl -n \"$K8S_NAMESPACE\" logs -l app.kubernetes.io/name=site-web --previous --tail=100 --all-containers=true"
+        'kubectl -n "$K8S_NAMESPACE" logs -l app.kubernetes.io/name=site-web --tail=200 --all-containers=true'
         in run_script
     )
-    assert "kubectl -n \"$K8S_NAMESPACE\" get deploy site-web -o yaml" in run_script
-    assert "kubectl -n \"$K8S_NAMESPACE\" get rs -l app.kubernetes.io/name=site-web -o wide || true" in run_script
-    assert "kubectl -n \"$K8S_NAMESPACE\" get events --sort-by=.lastTimestamp || true" in run_script
+    assert (
+        'kubectl -n "$K8S_NAMESPACE" logs -l app.kubernetes.io/name=site-web --previous --tail=100 --all-containers=true'
+        in run_script
+    )
+    assert 'kubectl -n "$K8S_NAMESPACE" get deploy site-web -o yaml' in run_script
+    assert 'kubectl -n "$K8S_NAMESPACE" get rs -l app.kubernetes.io/name=site-web -o wide || true' in run_script
+    assert 'kubectl -n "$K8S_NAMESPACE" get events --sort-by=.lastTimestamp || true' in run_script
     assert "http://site-web.${K8S_NAMESPACE}.svc.cluster.local:80/" in run_script
     assert 'runtime_probe_status="ingress_or_edge_convergence"' in run_script
     assert 'fallback_reason="dns_not_ready"' in run_script
@@ -9269,7 +9273,7 @@ def test_rendered_managed_workflow_yaml_parses_embedded_certificate_evaluation_s
     cert_domain_mismatch_index = run_script.index("deploy_runtime_reason_code=certificate_domain_mismatch")
     assert annotation_mismatch_index < cert_domain_mismatch_index
     assert 'tls_certificate_status="MISSING"' in run_script
-    assert 'expected_managed_certificate_name=$MBSRN_PREVIEW_CERTIFICATE_NAME' in run_script
+    assert "expected_managed_certificate_name=$MBSRN_PREVIEW_CERTIFICATE_NAME" in run_script
     assert (
         "Neither ingress status IP nor reserved static IP address is available for DNS/TLS validation yet."
         in run_script
@@ -9692,9 +9696,9 @@ def test_ensure_deploy_workflow_uses_production_template_for_unknown_mode(monkey
     assert "google-github-actions/auth@v2" in rendered_workflow
     assert "google-github-actions/get-gke-credentials@v2" in rendered_workflow
     assert "Ensure managed-site endpoint prerequisites" in rendered_workflow
-    assert 'kubectl apply -f k8s/managedcertificate.yaml' not in rendered_workflow
+    assert "kubectl apply -f k8s/managedcertificate.yaml" not in rendered_workflow
     assert 'apply_manifest_if_present "k8s/managedcertificate.yaml"' not in rendered_workflow
-    assert 'kubectl apply -f k8s/\n' not in rendered_workflow
+    assert "kubectl apply -f k8s/\n" not in rendered_workflow
     assert "resolved_live_url" in rendered_workflow
     assert "placeholder deploy" not in rendered_workflow.lower()
     assert "provisioned in mode" not in rendered_workflow.lower()

@@ -40,10 +40,7 @@ class DevEmailProvider:
 
     def send_email(self, *, to_address: str, subject: str, body: str) -> EmailDispatchResult:
         body_chars = len(str(body or ""))
-        print(
-            f"[dev-email] from={self.from_address} to={to_address} "
-            f"subject={subject} body_chars={body_chars}"
-        )
+        print(f"[dev-email] from={self.from_address} to={to_address} " f"subject={subject} body_chars={body_chars}")
         return EmailDispatchResult(
             provider=self.provider_name,
             recipient=to_address,

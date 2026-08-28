@@ -34,14 +34,11 @@ class StoredMigrationMediaObject:
 
 class MigrationMediaStorage(Protocol):
     @property
-    def provider_name(self) -> str:
-        ...
+    def provider_name(self) -> str: ...
 
-    def write(self, *, key: str, payload: bytes, content_type: str) -> StoredMigrationMediaObject:
-        ...
+    def write(self, *, key: str, payload: bytes, content_type: str) -> StoredMigrationMediaObject: ...
 
-    def read(self, *, key: str, generation: str | None = None) -> bytes:
-        ...
+    def read(self, *, key: str, generation: str | None = None) -> bytes: ...
 
 
 def normalize_migration_media_storage_key(value: object) -> str:
@@ -167,10 +164,7 @@ class GoogleCloudStorageMigrationMediaStorage:
             params["generation"] = normalized_generation
         response = self._request(
             "GET",
-            (
-                f"{self.api_base_url}/storage/v1/b/{quote(self.bucket, safe='')}/o/"
-                f"{quote(normalized_key, safe='')}"
-            ),
+            (f"{self.api_base_url}/storage/v1/b/{quote(self.bucket, safe='')}/o/" f"{quote(normalized_key, safe='')}"),
             params=params,
         )
         return bytes(response.content)

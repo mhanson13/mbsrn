@@ -474,7 +474,10 @@ def test_put_github_publish_config_accepts_max_migration_provider_timeout_second
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["namespace_isolation_defaults"]["migration_generation_safety"]["migration_provider_timeout_seconds"] == 600
+    assert (
+        payload["namespace_isolation_defaults"]["migration_generation_safety"]["migration_provider_timeout_seconds"]
+        == 600
+    )
 
 
 def test_put_github_publish_config_caps_migration_provider_timeout_seconds_6000_without_failing(

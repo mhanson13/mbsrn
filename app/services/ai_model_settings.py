@@ -799,15 +799,15 @@ def _resolve_known_ai_model_capabilities(model_name: str) -> tuple[AIModelCapabi
         return _GENERATIVE_MODEL_CAPABILITIES
     if model_name == "mock" or model_name.startswith("mock-"):
         return _GENERATIVE_MODEL_CAPABILITIES
-    if (
-        model_name.startswith("gpt-5")
-        or model_name.startswith("gpt-4o")
-        or model_name.startswith("gpt-4.1")
-    ):
+    if model_name.startswith("gpt-5") or model_name.startswith("gpt-4o") or model_name.startswith("gpt-4.1"):
         return _GENERATIVE_MODEL_CAPABILITIES
     if model_name.startswith("text-embedding-"):
         return _EMBEDDING_MODEL_CAPABILITIES
-    if model_name == "omni-moderation" or model_name == "omni-moderation-latest" or model_name.startswith("omni-moderation-"):
+    if (
+        model_name == "omni-moderation"
+        or model_name == "omni-moderation-latest"
+        or model_name.startswith("omni-moderation-")
+    ):
         return _MODERATION_MODEL_CAPABILITIES
     return None
 

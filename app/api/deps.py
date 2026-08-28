@@ -92,6 +92,7 @@ from app.repositories.seo_competitor_repository import SEOCompetitorRepository
 from app.repositories.seo_competitor_profile_generation_repository import SEOCompetitorProfileGenerationRepository
 from app.repositories.seo_competitor_summary_repository import SEOCompetitorSummaryRepository
 from app.repositories.seo_migration_repository import SEOMigrationRepository
+from app.repositories.seo_migration_source_capture_repository import SEOMigrationSourceCaptureRepository
 from app.repositories.seo_recommendation_narrative_repository import SEORecommendationNarrativeRepository
 from app.repositories.seo_recommendation_repository import SEORecommendationRepository
 from app.repositories.seo_site_repository import SEOSiteRepository
@@ -132,8 +133,10 @@ from app.services.seo_crawler import SEOCrawler
 from app.services.seo_extractor import SEOExtractor
 from app.services.seo_finding_rules import SEOFindingRules
 from app.services.seo_migration import SEOMigrationService
+from app.services.faithful_source_capture import PlaywrightFaithfulSourceCaptureEngine
 from app.services.seo_migration_context import SEOMigrationContextAssembler
 from app.services.seo_migration_ingest import SEOMigrationSourceIngestService
+from app.services.seo_migration_source_capture import SEOMigrationSourceCaptureService
 from app.services.seo_migration_prompt import SEO_MIGRATION_PROMPT_VERSION
 from app.services.seo_recommendation_narratives import SEORecommendationNarrativeService
 from app.services.seo_recommendations import SEORecommendationService
@@ -270,6 +273,12 @@ def get_seo_recommendation_narrative_repository(
 
 def get_seo_migration_repository(db: Session = Depends(get_db)) -> SEOMigrationRepository:
     return SEOMigrationRepository(db)
+
+
+def get_seo_migration_source_capture_repository(
+    db: Session = Depends(get_db),
+) -> SEOMigrationSourceCaptureRepository:
+    return SEOMigrationSourceCaptureRepository(db)
 
 
 def get_preview_release_repository(db: Session = Depends(get_db)) -> PreviewReleaseRepository:
@@ -1162,6 +1171,32 @@ def get_migration_media_storage() -> MigrationMediaStorage:
             api_base_url=settings.migration_media_gcs_api_base_url,
         )
     return LocalMigrationMediaStorage(root=Path(settings.migration_media_storage_root))
+
+
+def get_seo_migration_source_capture_service(
+    db: Session = Depends(get_db),
+    seo_site_repository: SEOSiteRepository = Depends(get_seo_site_repository),
+    seo_migration_repository: SEOMigrationRepository = Depends(get_seo_migration_repository),
+    capture_repository: SEOMigrationSourceCaptureRepository = Depends(get_seo_migration_source_capture_repository),
+    ingest_service: SEOMigrationSourceIngestService = Depends(get_seo_migration_ingest_service),
+    storage: MigrationMediaStorage = Depends(get_migration_media_storage),
+) -> SEOMigrationSourceCaptureService:
+    settings = get_settings()
+    return SEOMigrationSourceCaptureService(
+        session=db,
+        site_repository=seo_site_repository,
+        migration_repository=seo_migration_repository,
+        capture_repository=capture_repository,
+        ingest_service=ingest_service,
+        storage=storage,
+        faithful_engine=PlaywrightFaithfulSourceCaptureEngine(
+            navigation_timeout_seconds=settings.faithful_capture_navigation_timeout_seconds,
+            capture_timeout_seconds=settings.faithful_capture_timeout_seconds,
+            render_wait_milliseconds=settings.faithful_capture_render_wait_milliseconds,
+            max_resource_bytes=settings.faithful_capture_max_resource_bytes,
+        ),
+        stale_after_seconds=settings.faithful_capture_stale_after_seconds,
+    )
 
 
 def get_preview_release_service(

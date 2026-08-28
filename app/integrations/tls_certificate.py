@@ -239,9 +239,7 @@ class GoogleTLSCertificateCapabilityProbe(TLSCertificateCapabilityProbe):
         quoted_project = urllib.parse.quote(self.project_id, safe="")
         _, secret_payload = self.client.request_json(
             method="POST",
-            url=(
-                f"https://secretmanager.googleapis.com/v1/projects/{quoted_project}:testIamPermissions"
-            ),
+            url=(f"https://secretmanager.googleapis.com/v1/projects/{quoted_project}:testIamPermissions"),
             body={"permissions": list(self.SECRET_MANAGER_PERMISSIONS)},
             allowed_statuses=(200,),
             error_code="tls_secret_manager_capability_check_failed",
@@ -249,9 +247,7 @@ class GoogleTLSCertificateCapabilityProbe(TLSCertificateCapabilityProbe):
         )
         _, compute_payload = self.client.request_json(
             method="POST",
-            url=(
-                f"https://compute.googleapis.com/compute/v1/projects/{quoted_project}/testIamPermissions"
-            ),
+            url=(f"https://compute.googleapis.com/compute/v1/projects/{quoted_project}/testIamPermissions"),
             body={"permissions": list(self.COMPUTE_PERMISSIONS)},
             allowed_statuses=(200,),
             error_code="tls_compute_capability_check_failed",
@@ -304,8 +300,7 @@ class GoogleSecretManagerTLSCertificateVault(TLSCertificateVault):
         quoted_project = urllib.parse.quote(self.project_id, safe="")
         quoted_secret = urllib.parse.quote(secret_id, safe="")
         create_url = (
-            f"https://secretmanager.googleapis.com/v1/projects/{quoted_project}/secrets"
-            f"?secretId={quoted_secret}"
+            f"https://secretmanager.googleapis.com/v1/projects/{quoted_project}/secrets" f"?secretId={quoted_secret}"
         )
         self.client.request_json(
             method="POST",
@@ -416,7 +411,9 @@ class GoogleComputeSSLCertificateClient(ComputeSSLCertificateClient):
         self._require_project()
         quoted_project = urllib.parse.quote(self.project_id, safe="")
         quoted_name = urllib.parse.quote(resource_name, safe="")
-        url = f"https://compute.googleapis.com/compute/v1/projects/{quoted_project}/global/sslCertificates/{quoted_name}"
+        url = (
+            f"https://compute.googleapis.com/compute/v1/projects/{quoted_project}/global/sslCertificates/{quoted_name}"
+        )
         status_code, payload = self.client.request_json(
             method="GET",
             url=url,
@@ -497,7 +494,11 @@ class GoogleComputeSSLCertificateClient(ComputeSSLCertificateClient):
     @staticmethod
     def _to_resource(payload: dict[str, object]) -> ComputeSSLCertificateResource:
         raw_sans = payload.get("subjectAlternativeNames")
-        sans = tuple(str(item).strip().lower() for item in raw_sans if str(item).strip()) if isinstance(raw_sans, list) else ()
+        sans = (
+            tuple(str(item).strip().lower() for item in raw_sans if str(item).strip())
+            if isinstance(raw_sans, list)
+            else ()
+        )
         return ComputeSSLCertificateResource(
             name=str(payload.get("name") or ""),
             certificate_type=str(payload.get("type") or "UNKNOWN").upper(),

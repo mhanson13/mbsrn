@@ -744,9 +744,11 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
             artifact_root=target.artifact_root,
             files_published=len(files),
             total_bytes=sum(
-                len(item.content_bytes)
-                if isinstance(item.content_bytes, (bytes, bytearray))
-                else len((item.content or "").encode("utf-8"))
+                (
+                    len(item.content_bytes)
+                    if isinstance(item.content_bytes, (bytes, bytearray))
+                    else len((item.content or "").encode("utf-8"))
+                )
                 for item in files
             ),
             commit_shas=() if dry_run else ("abc123",),
@@ -2177,6 +2179,41 @@ def test_draft_generation_rejects_media_when_stored_checksum_changes(
     assert reason_counts.get("media_storage_integrity_failed") == 1
 
 
+def test_faithful_capture_context_includes_bounded_rendered_baseline(db_session) -> None:
+    service = _build_service(db_session, _StaticMigrationProvider(_build_publishable_output()))
+    rendered_text = "Rendered baseline text " * 500
+    context = service._build_source_snapshot_context_payload(  # noqa: SLF001
+        source_snapshot={
+            "source_url": "https://example.com/",
+            "final_url": "https://www.example.com/",
+            "faithful_capture": {
+                "capture_id": "capture-1",
+                "source_version": 2,
+                "manifest_sha256": "a" * 64,
+                "page_count": 1,
+                "asset_count": 8,
+                "unsupported_features": ["server_side_forms_require_replacement"],
+                "pages": [
+                    {
+                        "final_url": "https://www.example.com/",
+                        "title": "Rendered Example",
+                        "text_excerpt": rendered_text,
+                    }
+                ],
+            },
+        }
+    )
+    faithful = context.get("faithful_capture")
+    assert isinstance(faithful, dict)
+    assert faithful.get("capture_id") == "capture-1"
+    assert faithful.get("manifest_sha256") == "a" * 64
+    assert faithful.get("unsupported_features") == ["server_side_forms_require_replacement"]
+    rendered_pages = faithful.get("rendered_pages")
+    assert isinstance(rendered_pages, list)
+    assert rendered_pages[0]["title"] == "Rendered Example"
+    assert len(str(rendered_pages[0]["text_excerpt"])) == 5000
+
+
 def test_workspace_media_preview_uses_candidate_storage_lookup_when_storage_key_missing(
     db_session,
     monkeypatch: pytest.MonkeyPatch,
@@ -2220,9 +2257,7 @@ def test_workspace_media_preview_uses_candidate_storage_lookup_when_storage_key_
     db_session.commit()
 
     listed = service.list_workspace_media_assets(business_id=business_id, site_id=site_id)
-    uploaded_assets = [
-        item for item in list(listed.get("operator_uploaded") or []) if isinstance(item, dict)
-    ]
+    uploaded_assets = [item for item in list(listed.get("operator_uploaded") or []) if isinstance(item, dict)]
     fallback_asset = next(
         item for item in uploaded_assets if str(item.get("asset_id") or "").strip() == uploaded_asset_id
     )
@@ -2996,20 +3031,20 @@ def test_discovered_media_import_imports_selected_assets_when_feature_flag_enabl
     workspace = service.get_workspace(business_id=business_id, site_id=site_id)
     workspace.imported_source_snapshot_json = {
         "discovered_images": [
-                {
-                    "asset_id": "srcimg-selected",
-                    "normalized_url": "https://legacy.example/media/hero.jpg?token=abc",
-                    "selected_for_draft": True,
-                    "provenance": "source_site_import",
-                    "import_status": "discovered",
-                    "candidate_quality": "useful",
-                    "fetch_status": "validated_head",
-                    "content_type": "image/png",
-                    "metadata_suggestion": {
-                        "suggestion_status": "not_available",
-                        "reason_code": "image_not_imported",
-                    },
-                }
+            {
+                "asset_id": "srcimg-selected",
+                "normalized_url": "https://legacy.example/media/hero.jpg?token=abc",
+                "selected_for_draft": True,
+                "provenance": "source_site_import",
+                "import_status": "discovered",
+                "candidate_quality": "useful",
+                "fetch_status": "validated_head",
+                "content_type": "image/png",
+                "metadata_suggestion": {
+                    "suggestion_status": "not_available",
+                    "reason_code": "image_not_imported",
+                },
+            }
         ]
     }
     service.seo_migration_repository.save_workspace(workspace)
@@ -3071,18 +3106,18 @@ def test_discovered_media_import_blocks_private_source_urls_without_fetch(
     workspace = service.get_workspace(business_id=business_id, site_id=site_id)
     workspace.imported_source_snapshot_json = {
         "discovered_images": [
-                {
-                    "asset_id": "srcimg-private",
-                    "normalized_url": "http://127.0.0.1/internal.png",
-                    "selected_for_draft": True,
-                    "provenance": "source_site_import",
-                    "import_status": "discovered",
-                    "candidate_quality": "useful",
-                    "fetch_status": "validated_head",
-                    "content_type": "image/png",
-                }
-            ]
-        }
+            {
+                "asset_id": "srcimg-private",
+                "normalized_url": "http://127.0.0.1/internal.png",
+                "selected_for_draft": True,
+                "provenance": "source_site_import",
+                "import_status": "discovered",
+                "candidate_quality": "useful",
+                "fetch_status": "validated_head",
+                "content_type": "image/png",
+            }
+        ]
+    }
     service.seo_migration_repository.save_workspace(workspace)
     service.session.commit()
 
@@ -3127,18 +3162,18 @@ def test_discovered_media_import_deduplicates_repeated_import_attempts(
     workspace = service.get_workspace(business_id=business_id, site_id=site_id)
     workspace.imported_source_snapshot_json = {
         "discovered_images": [
-                {
-                    "asset_id": "srcimg-repeat",
-                    "normalized_url": "https://legacy.example/media/repeat.jpg",
-                    "selected_for_draft": True,
-                    "provenance": "source_site_import",
-                    "import_status": "discovered",
-                    "candidate_quality": "useful",
-                    "fetch_status": "validated_head",
-                    "content_type": "image/png",
-                }
-            ]
-        }
+            {
+                "asset_id": "srcimg-repeat",
+                "normalized_url": "https://legacy.example/media/repeat.jpg",
+                "selected_for_draft": True,
+                "provenance": "source_site_import",
+                "import_status": "discovered",
+                "candidate_quality": "useful",
+                "fetch_status": "validated_head",
+                "content_type": "image/png",
+            }
+        ]
+    }
     service.seo_migration_repository.save_workspace(workspace)
     service.session.commit()
 
@@ -5113,7 +5148,7 @@ def test_generate_artifacts_materializes_selected_media_and_rewrites_internal_im
     provider.output = _build_publishable_output(
         index_content=(
             "<html><head><!-- ANALYTICS_PLACEHOLDER --></head><body>"
-            f"<img src=\"{asset_id}\" alt=\"crew\" />"
+            f'<img src="{asset_id}" alt="crew" />'
             "</body></html>"
         )
     )
@@ -5168,7 +5203,9 @@ def test_generate_artifacts_materializes_selected_media_and_rewrites_internal_im
     assert "assets/images/" in str(html_publish.content or "")
 
 
-def test_generate_artifacts_materializes_selected_media_even_when_provider_does_not_reference_images(db_session) -> None:
+def test_generate_artifacts_materializes_selected_media_even_when_provider_does_not_reference_images(
+    db_session,
+) -> None:
     provider = _StaticMigrationProvider(_build_publishable_output())
     service = _build_service(db_session, provider)
     business_id, site_id = _seed_business_and_site(db_session)
@@ -5232,7 +5269,7 @@ def test_generate_artifacts_normalizes_assets_filename_references_to_assets_imag
     provider.output = _build_publishable_output(
         index_content=(
             "<html><head><!-- ANALYTICS_PLACEHOLDER --></head><body>"
-            "<img src=\"assets/frust_gc_person_www.png\" alt=\"hero\" />"
+            '<img src="assets/frust_gc_person_www.png" alt="hero" />'
             "</body></html>"
         )
     )
@@ -5341,8 +5378,8 @@ def test_publish_and_deploy_readiness_block_when_artifact_media_references_are_u
         _build_publishable_output(
             index_content=(
                 "<html><head><!-- ANALYTICS_PLACEHOLDER --></head><body>"
-                "<img src=\"upl-missing-media\" alt=\"missing\" />"
-                "<img src=\"@image(project-hero)\" alt=\"token\" />"
+                '<img src="upl-missing-media" alt="missing" />'
+                '<img src="@image(project-hero)" alt="token" />'
                 "</body></html>"
             )
         )
@@ -5415,7 +5452,7 @@ def test_publish_and_deploy_readiness_block_when_generated_output_uses_private_a
             _build_publishable_output(
                 index_content=(
                     "<html><head><!-- ANALYTICS_PLACEHOLDER --></head><body>"
-                    f"<img src=\"{preview_media_url}\" alt=\"preview\" />"
+                    f'<img src="{preview_media_url}" alt="preview" />'
                     "</body></html>"
                 ),
                 styles_content=f"body {{ background-image: url('{storage_media_url}'); }}",
@@ -5480,7 +5517,7 @@ def test_generate_artifacts_flags_selected_media_not_materialized_when_storage_b
         _build_publishable_output(
             index_content=(
                 "<html><head><!-- ANALYTICS_PLACEHOLDER --></head><body>"
-                "<img src=\"upl-selected-missing\" alt=\"missing\" />"
+                '<img src="upl-selected-missing" alt="missing" />'
                 "</body></html>"
             )
         )
@@ -5532,7 +5569,7 @@ def test_publish_readiness_reports_source_bytes_missing_for_referenced_selected_
         _build_publishable_output(
             index_content=(
                 "<html><head><!-- ANALYTICS_PLACEHOLDER --></head><body>"
-                "<img src=\"upl-selected-missing\" alt=\"missing\" />"
+                '<img src="upl-selected-missing" alt="missing" />'
                 "</body></html>"
             )
         )
@@ -5683,7 +5720,7 @@ def test_publish_and_deploy_readiness_block_when_generated_html_references_missi
         _build_publishable_output(
             index_content=(
                 "<html><head><!-- ANALYTICS_PLACEHOLDER --></head><body>"
-                "<img src=\"assets/missing-hero.png\" alt=\"missing\" />"
+                '<img src="assets/missing-hero.png" alt="missing" />'
                 "</body></html>"
             )
         )
@@ -5760,7 +5797,7 @@ def test_publish_readiness_repairs_stale_selected_media_materialization_for_appr
     provider.output = _build_publishable_output(
         index_content=(
             "<html><head><!-- ANALYTICS_PLACEHOLDER --></head><body>"
-            "<img src=\"assets/images/frust-cleaning-person-www.png\" alt=\"hero\" />"
+            '<img src="assets/images/frust-cleaning-person-www.png" alt="hero" />'
             "</body></html>"
         )
     )
@@ -5821,9 +5858,7 @@ def test_publish_readiness_repairs_stale_selected_media_materialization_for_appr
     artifact.generated_files_json = stale_generated_files
     artifact.file_count = len(stale_generated_files)
     artifact.total_bytes = sum(
-        max(0, int(item.get("size_bytes") or 0))
-        for item in stale_generated_files
-        if isinstance(item, dict)
+        max(0, int(item.get("size_bytes") or 0)) for item in stale_generated_files if isinstance(item, dict)
     )
     artifact.context_json = stale_context
     service.seo_migration_repository.save_artifact_version(artifact)
@@ -6170,7 +6205,7 @@ def test_workflow_identifier_type_normalizes_numeric_ids_and_legacy_history_valu
                 "workflow_identifier_type_used": "workflow_numeric_id",
                 "dispatch_identifier_type": "workflow_numeric_id",
             }
-        ]
+        ],
     )
 
     assert traceability.get("workflow_identifier_type_requested") == "workflow_id"
@@ -7579,9 +7614,7 @@ def test_deploy_blocks_before_dispatch_on_managed_certificate_domain_mismatch(db
     assert "deploy_certificate_readiness_pending" in (deploy_readiness.get("blocker_codes") or [])
 
 
-def test_deploy_blocks_before_dispatch_on_managed_certificate_ownership_unverified(
-    db_session, monkeypatch
-) -> None:
+def test_deploy_blocks_before_dispatch_on_managed_certificate_ownership_unverified(db_session, monkeypatch) -> None:
     publisher = _RecordingGitHubPublisher(
         managed_certificate_readiness_exists=True,
         managed_certificate_readiness_domain_matches_expected=True,
@@ -7754,7 +7787,9 @@ def test_deploy_uses_stable_managed_certificate_name_across_attempts(db_session,
     derived_name, _ = derive_site_preview_certificate_name(repo_name=calls[0][0], site_id=calls[0][1])
     assert expected_names[0] == derived_name
     workspace = service.get_workspace(business_id=business_id, site_id=site_id)
-    deploy_entries = [item for item in (workspace.deploy_history_json or []) if item.get("status") == "deploy_requested"]
+    deploy_entries = [
+        item for item in (workspace.deploy_history_json or []) if item.get("status") == "deploy_requested"
+    ]
     assert len(deploy_entries) >= 2
     assert len({str(item.get("expected_managed_certificate_name")) for item in deploy_entries}) == 1
 
@@ -9482,7 +9517,9 @@ def test_refresh_deploy_status_tls_provisioning_with_static_ip_alignment_maps_to
         artifact_version_id=artifact.id,
         principal_id="principal-1",
     )
-    assert refresh_result.result.get("workflow_run_failure_reason_code") == "https_probe_failed_after_control_plane_ready"
+    assert (
+        refresh_result.result.get("workflow_run_failure_reason_code") == "https_probe_failed_after_control_plane_ready"
+    )
     assert refresh_result.result.get("deploy_https_ready") is False
 
     summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
@@ -9709,9 +9746,10 @@ def test_refresh_deploy_status_runtime_service_missing_after_apply_not_reclassif
     assert deploy_readiness.get("selected_workflow_failure_reason") == "runtime_service_missing_after_apply"
     assert deploy_readiness.get("selected_workflow_failure_stage") == "ingress_verify"
     assert deploy_readiness.get("runtime_ready_tls_pending") is False
-    assert "service/site-web is missing afterward" in str(
-        refresh_result.result.get("workflow_run_failure_hint") or ""
-    ).lower()
+    assert (
+        "service/site-web is missing afterward"
+        in str(refresh_result.result.get("workflow_run_failure_hint") or "").lower()
+    )
 
 
 def test_refresh_deploy_status_runtime_managed_certificate_missing_after_apply_sets_resource_missing_state(
@@ -9875,9 +9913,10 @@ def test_refresh_deploy_status_generic_failure_with_template_marker_maps_to_runt
     assert refresh_result.result.get("deploy_runtime_reason_code_present") is False
     assert refresh_result.result.get("managed_deploy_template_marker_present") is True
     assert refresh_result.result.get("mbsrn_managed_deploy_template_version") == "site_repo_template_v1"
-    assert "exited before reporting a precise readiness reason" in str(
-        refresh_result.result.get("workflow_run_failure_hint") or ""
-    ).lower()
+    assert (
+        "exited before reporting a precise readiness reason"
+        in str(refresh_result.result.get("workflow_run_failure_hint") or "").lower()
+    )
 
     summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
     deploy_readiness = summary.deploy_readiness or {}
@@ -9921,9 +9960,10 @@ def test_refresh_deploy_status_generic_failure_without_template_marker_maps_to_t
     assert refresh_result.result.get("selected_workflow_failure_reason") == "managed_deploy_workflow_template_stale"
     assert refresh_result.result.get("deploy_runtime_reason_code_present") is False
     assert refresh_result.result.get("managed_deploy_template_marker_present") is False
-    assert "reprovision target workflow files from publish" in str(
-        refresh_result.result.get("workflow_run_failure_hint") or ""
-    ).lower()
+    assert (
+        "reprovision target workflow files from publish"
+        in str(refresh_result.result.get("workflow_run_failure_hint") or "").lower()
+    )
 
     summary = service.get_workspace_summary(business_id=business_id, site_id=site_id)
     deploy_readiness = summary.deploy_readiness or {}

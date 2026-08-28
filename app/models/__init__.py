@@ -34,6 +34,7 @@ from app.models.seo_recommendation import SEORecommendation
 from app.models.seo_recommendation_narrative import SEORecommendationNarrative
 from app.models.seo_recommendation_run import SEORecommendationRun
 from app.models.seo_migration_artifact_version import SEOMigrationArtifactVersion
+from app.models.seo_migration_source_capture import SEOMigrationSourceCapture
 from app.models.seo_migration_workspace import SEOMigrationWorkspace
 from app.models.seo_site import SEOSite
 from app.models.tls_certificate import SiteTLSCertificateBinding, TLSCertificateAsset
@@ -83,6 +84,7 @@ __all__ = [
     "SEORecommendationNarrative",
     "SEORecommendationRun",
     "SEOMigrationArtifactVersion",
+    "SEOMigrationSourceCapture",
     "SEOMigrationWorkspace",
     "SEOSite",
     "SiteTLSCertificateBinding",

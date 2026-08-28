@@ -37,6 +37,7 @@ env:
   AR_REPOSITORY: ${{ vars.AR_REPOSITORY }}
   UI_IMAGE_NAME: ${{ vars.UI_IMAGE_NAME }}
   API_IMAGE_NAME: ${{ vars.API_IMAGE_NAME }}
+  CAPTURE_WORKER_IMAGE_NAME: ${{ vars.CAPTURE_WORKER_IMAGE_NAME || 'mbsrn-source-capture-worker' }}
   NEXT_PUBLIC_GOOGLE_CLIENT_ID: ${{ vars.NEXT_PUBLIC_GOOGLE_CLIENT_ID }}
   NEXT_PUBLIC_API_BASE_URL: ${{ vars.NEXT_PUBLIC_API_BASE_URL }}
   NEXT_PUBLIC_APP_VERSION: ${{ github.sha }}
@@ -204,6 +205,11 @@ jobs:
             exit 1
           fi
 
+          if ! grep -qx "source-capture-worker: python -m app.cli.source_capture_worker" Procfile; then
+            echo "Procfile source-capture worker process is missing." >&2
+            exit 1
+          fi
+
           if [[ "${DB_ALIGNMENT_MODE}" != "normal" && "${DB_ALIGNMENT_MODE}" != "baseline_existing" ]]; then
             echo "Invalid DB_ALIGNMENT_MODE: ${DB_ALIGNMENT_MODE}" >&2
             exit 1
@@ -211,6 +217,8 @@ jobs:
 
           files=(
             frontend/operator-ui/Dockerfile
+            Dockerfile.capture-worker
+            requirements-capture.txt
             k8s/namespace.yaml
             k8s/ui-serviceaccount.yaml
             k8s/api-serviceaccount.yaml
@@ -226,6 +234,7 @@ jobs:
             k8s/api-migration-job.yaml
             k8s/api-migration-baseline-job.yaml
             k8s/api-seo-competitor-profile-retention-cronjob.yaml
+            k8s/source-capture-worker-deployment.yaml
           )
 
           for path in "${files[@]}"; do
@@ -270,6 +279,7 @@ jobs:
 
           UI_IMAGE="${AR_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${AR_REPOSITORY}/${UI_IMAGE_NAME}:${GITHUB_SHA}"
           API_IMAGE="${AR_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${AR_REPOSITORY}/${API_IMAGE_NAME}:${GITHUB_SHA}"
+          CAPTURE_WORKER_IMAGE="${AR_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${AR_REPOSITORY}/${CAPTURE_WORKER_IMAGE_NAME}:${GITHUB_SHA}"
           UI_API_BASE_URL="${NEXT_PUBLIC_API_BASE_URL:-/api}"
 
           if [[ -z "${API_IMAGE}" ]]; then
@@ -279,6 +289,7 @@ jobs:
 
           echo "UI_IMAGE=${UI_IMAGE}" >> "${GITHUB_ENV}"
           echo "API_IMAGE=${API_IMAGE}" >> "${GITHUB_ENV}"
+          echo "CAPTURE_WORKER_IMAGE=${CAPTURE_WORKER_IMAGE}" >> "${GITHUB_ENV}"
           echo "Using API image for migration and deploy: ${API_IMAGE}"
 
           # Google Cloud Buildpacks use repo-root .python-version to select Python runtime.
@@ -288,6 +299,12 @@ jobs:
             --gcs-log-dir "${GCS_LOGS_BUCKET}" \
             --pack image="${API_IMAGE}" \
             .
+
+          docker build \
+            --file Dockerfile.capture-worker \
+            --tag "${CAPTURE_WORKER_IMAGE}" \
+            .
+          docker push "${CAPTURE_WORKER_IMAGE}"
 
           docker build \
             --file frontend/operator-ui/Dockerfile \
@@ -368,6 +385,10 @@ jobs:
           grep -q "__DEPLOY_MEMORY_LIMIT__" k8s/api-migration-baseline-job.yaml
           grep -q "__DEPLOY_EPHEMERAL_STORAGE_LIMIT__" k8s/api-migration-baseline-job.yaml
           grep -q "__API_IMAGE__" k8s/api-seo-competitor-profile-retention-cronjob.yaml
+          grep -q "__CAPTURE_WORKER_IMAGE__" k8s/source-capture-worker-deployment.yaml
+          grep -q "__BUILD_SHA__" k8s/source-capture-worker-deployment.yaml
+          grep -q "__MIGRATION_MEDIA_GCS_BUCKET__" k8s/source-capture-worker-deployment.yaml
+          grep -q "__GCP_PROJECT_ID__" k8s/source-capture-worker-deployment.yaml
 
           sed \
             -e "s|__UI_IMAGE__|${UI_IMAGE}|g" \
@@ -414,13 +435,20 @@ jobs:
           sed \
             -e "s|__API_IMAGE__|${API_IMAGE}|g" \
             k8s/api-seo-competitor-profile-retention-cronjob.yaml > "${render_dir}/api-seo-competitor-profile-retention-cronjob.yaml"
+          sed \
+            -e "s|__CAPTURE_WORKER_IMAGE__|${CAPTURE_WORKER_IMAGE}|g" \
+            -e "s|__BUILD_SHA__|${GITHUB_SHA}|g" \
+            -e "s|__MIGRATION_MEDIA_GCS_BUCKET__|${MIGRATION_MEDIA_GCS_BUCKET}|g" \
+            -e "s|__GCP_PROJECT_ID__|${GCP_PROJECT_ID}|g" \
+            k8s/source-capture-worker-deployment.yaml > "${render_dir}/source-capture-worker-deployment.yaml"
 
           for rendered in \
             "${render_dir}/ui-deployment.yaml" \
             "${render_dir}/api-deployment.yaml" \
             "${render_dir}/api-migration-job.yaml" \
             "${render_dir}/api-migration-baseline-job.yaml" \
-            "${render_dir}/api-seo-competitor-profile-retention-cronjob.yaml"
+            "${render_dir}/api-seo-competitor-profile-retention-cronjob.yaml" \
+            "${render_dir}/source-capture-worker-deployment.yaml"
           do
             if grep -q "__[A-Z0-9_][A-Z0-9_]*__" "${rendered}"; then
               echo "Unresolved placeholder detected in rendered manifest: ${rendered}" >&2
@@ -440,6 +468,11 @@ jobs:
             fi
           done
 
+          if ! grep -Fq "image: ${CAPTURE_WORKER_IMAGE}" "${render_dir}/source-capture-worker-deployment.yaml"; then
+            echo "Rendered capture worker does not use expected image ${CAPTURE_WORKER_IMAGE}." >&2
+            exit 1
+          fi
+
           reusable_deploy_values=0
           [[ -z "${MIGRATION_REUSABLE_DEPLOY_WORKFLOW_REF:-}" ]] || reusable_deploy_values=$((reusable_deploy_values + 1))
           [[ -z "${MIGRATION_DEPLOY_WORKLOAD_IDENTITY_PROVIDER:-}" ]] || reusable_deploy_values=$((reusable_deploy_values + 1))
@@ -453,7 +486,8 @@ jobs:
             "${render_dir}/api-deployment.yaml" \
             "${render_dir}/api-migration-job.yaml" \
             "${render_dir}/api-migration-baseline-job.yaml" \
-            "${render_dir}/api-seo-competitor-profile-retention-cronjob.yaml"
+            "${render_dir}/api-seo-competitor-profile-retention-cronjob.yaml" \
+            "${render_dir}/source-capture-worker-deployment.yaml"
 
           database_env_block="$(awk '
             $0 ~ /name: DATABASE_URL/ {capture=1; next}
@@ -631,6 +665,8 @@ jobs:
           kubectl apply -n "${K8S_NAMESPACE}" -f "${RENDER_DIR}/api-deployment.yaml"
           kubectl apply -n "${K8S_NAMESPACE}" -f "${RENDER_DIR}/api-service.yaml"
           kubectl apply -n "${K8S_NAMESPACE}" -f "${RENDER_DIR}/api-seo-competitor-profile-retention-cronjob.yaml"
+          kubectl apply --dry-run=server -n "${K8S_NAMESPACE}" -f "${RENDER_DIR}/source-capture-worker-deployment.yaml"
+          kubectl apply -n "${K8S_NAMESPACE}" -f "${RENDER_DIR}/source-capture-worker-deployment.yaml"
           kubectl rollout restart deployment/mbsrn-api --namespace "${K8S_NAMESPACE}"
 
       - name: Wait for rollouts
@@ -681,6 +717,7 @@ jobs:
           }
 
           kubectl rollout status deployment/mbsrn-ui --namespace "${K8S_NAMESPACE}" --timeout=300s
+          kubectl rollout status deployment/mbsrn-source-capture-worker --namespace "${K8S_NAMESPACE}" --timeout=300s
           if ! kubectl rollout status deployment/mbsrn-api --namespace "${K8S_NAMESPACE}" --timeout=300s; then
             print_api_env_wiring_diagnostics
             kubectl describe deployment mbsrn-api --namespace "${K8S_NAMESPACE}" || true
@@ -692,12 +729,16 @@ jobs:
           deployed_ui_image="$(kubectl -n "${K8S_NAMESPACE}" get deployment mbsrn-ui -o jsonpath='{.spec.template.spec.containers[?(@.name=="mbsrn-ui")].image}')"
           deployed_api_image="$(kubectl -n "${K8S_NAMESPACE}" get deployment mbsrn-api -o jsonpath='{.spec.template.spec.containers[?(@.name=="mbsrn-api")].image}')"
           deployed_api_sha="$(kubectl -n "${K8S_NAMESPACE}" get deployment mbsrn-api -o jsonpath='{.spec.template.spec.containers[?(@.name=="mbsrn-api")].env[?(@.name=="MBSRN_GIT_COMMIT")].value}')"
-          if [[ "${deployed_ui_image}" != "${UI_IMAGE}" || "${deployed_api_image}" != "${API_IMAGE}" || "${deployed_api_sha}" != "${GITHUB_SHA}" ]]; then
+          deployed_capture_image="$(kubectl -n "${K8S_NAMESPACE}" get deployment mbsrn-source-capture-worker -o jsonpath='{.spec.template.spec.containers[?(@.name=="source-capture-worker")].image}')"
+          deployed_capture_sha="$(kubectl -n "${K8S_NAMESPACE}" get deployment mbsrn-source-capture-worker -o jsonpath='{.spec.template.spec.containers[?(@.name=="source-capture-worker")].env[?(@.name=="MBSRN_GIT_COMMIT")].value}')"
+          if [[ "${deployed_ui_image}" != "${UI_IMAGE}" || "${deployed_api_image}" != "${API_IMAGE}" || "${deployed_api_sha}" != "${GITHUB_SHA}" || "${deployed_capture_image}" != "${CAPTURE_WORKER_IMAGE}" || "${deployed_capture_sha}" != "${GITHUB_SHA}" ]]; then
             echo "Deployed build provenance does not match the workflow commit." >&2
             echo "Expected UI/API SHA: ${GITHUB_SHA}" >&2
             echo "Observed UI image: ${deployed_ui_image}" >&2
             echo "Observed API image: ${deployed_api_image}" >&2
             echo "Observed API build SHA: ${deployed_api_sha}" >&2
+            echo "Observed capture worker image: ${deployed_capture_image}" >&2
+            echo "Observed capture worker build SHA: ${deployed_capture_sha}" >&2
             exit 1
           fi
           echo "Release provenance verified: UI/API images and API build SHA match ${GITHUB_SHA}."

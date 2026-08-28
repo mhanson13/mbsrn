@@ -4,14 +4,13 @@ from dataclasses import dataclass
 from datetime import datetime
 from html.parser import HTMLParser
 import hashlib
-import ipaddress
 import re
-import socket
 import urllib.parse
 import urllib.error
 import urllib.request
 
 from app.core.time import utc_now
+from app.core.safe_url import is_disallowed_host as _is_disallowed_host
 
 
 _ALLOWED_CONTENT_TYPES = ("text/html", "application/xhtml+xml")
@@ -454,7 +453,9 @@ class SEOMigrationSourceIngestService:
         discovery_warnings: list[str] = []
         discovered_image_candidates: list[tuple[str, str]] = []
 
-        homepage_page = self._fetch_html_page(normalized_source_url=normalized_source_url, page_url=normalized_source_url, opener=opener)
+        homepage_page = self._fetch_html_page(
+            normalized_source_url=normalized_source_url, page_url=normalized_source_url, opener=opener
+        )
         homepage_parser = self._parse_html_page(page=homepage_page)
         scanned_pages.append(
             {
@@ -858,7 +859,9 @@ def _build_discovered_image_metadata(
         if not extension and candidate_quality != "rejected" and not has_validated_image_content_type:
             candidate_quality = "rejected"
             quality_reason = "non_image_candidate_detected"
-            warnings.append(f"Rejected discovered image candidate without image path evidence: {normalized_url_for_lookup}.")
+            warnings.append(
+                f"Rejected discovered image candidate without image path evidence: {normalized_url_for_lookup}."
+            )
         normalized.append(
             {
                 "asset_id": asset_id,
@@ -1140,54 +1143,6 @@ def _path_extension(value: str) -> str:
     if dot_index <= 0:
         return ""
     return filename[dot_index:]
-
-
-def _is_disallowed_host(hostname: str | None) -> bool:
-    host = (hostname or "").strip().lower().rstrip(".")
-    if not host:
-        return True
-    if host in {"localhost", "metadata.google.internal", "metadata"}:
-        return True
-    if host.endswith(".localhost") or host.endswith(".local"):
-        return True
-
-    try:
-        direct_ip = ipaddress.ip_address(host)
-    except ValueError:
-        direct_ip = None
-    if direct_ip is not None:
-        return _is_disallowed_ip(direct_ip)
-
-    try:
-        resolved = socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
-    except OSError:
-        # If DNS cannot be resolved here, rely on runtime fetch safeguards.
-        return False
-    for item in resolved:
-        if not isinstance(item, tuple) or len(item) < 5:
-            continue
-        sockaddr = item[4]
-        if not isinstance(sockaddr, tuple) or not sockaddr:
-            continue
-        candidate = sockaddr[0]
-        try:
-            resolved_ip = ipaddress.ip_address(str(candidate))
-        except ValueError:
-            continue
-        if _is_disallowed_ip(resolved_ip):
-            return True
-    return False
-
-
-def _is_disallowed_ip(value: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
-    return bool(
-        value.is_private
-        or value.is_loopback
-        or value.is_link_local
-        or value.is_multicast
-        or value.is_unspecified
-        or value.is_reserved
-    )
 
 
 def _strip_url_query(value: str) -> str:

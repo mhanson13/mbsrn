@@ -6,6 +6,7 @@ import { WorkspaceActionBar } from "./layout/WorkspaceActionBar";
 import { WorkspaceEmptyStateCard } from "./layout/WorkspaceEmptyStateCard";
 import { WorkspaceMessageStack } from "./layout/WorkspaceMessageStack";
 import { WorkspaceMetadataGrid, WorkspaceMetadataItem } from "./layout/WorkspaceMetadataGrid";
+import { SourceCaptureControls } from "./migration/SourceCaptureControls";
 import {
   ApiRequestError,
   adoptSiteTLSCertificate,
@@ -14,6 +15,7 @@ import {
   approveAndCreatePreviewRelease,
   approveMigrationArtifactVersion,
   collectPreviewDiagnostics,
+  createMigrationSourceCapture,
   deleteMigrationArtifactVersion,
   deployMigrationArtifactVersion,
   fetchMigrationArtifactVersions,
@@ -23,13 +25,14 @@ import {
   fetchMigrationMediaAssets,
   fetchMigrationMediaPreviewBlob,
   fetchMigrationPublishHistory,
+  fetchMigrationSourceCapture,
+  fetchMigrationSourceCaptures,
   fetchPreviewReleases,
   fetchMigrationWorkspaceSummary,
   fetchSiteTLSCertificateStatus,
   generateSiteTLSCertificate,
   generateMigrationDraftArtifacts,
   importMigrationDiscoveredMediaAssets,
-  ingestMigrationSource,
   importSiteTLSCertificate,
   publishMigrationArtifactVersion,
   refreshMigrationDeployStatus,
@@ -48,6 +51,8 @@ import type {
   MigrationArtifactVersion,
   MigrationDeployConfig,
   MigrationOperatorRequirements,
+  MigrationSourceCapture,
+  MigrationSourceCaptureMode,
   MigrationRequirementSuggestionField,
   MigrationPublishConfig,
   MigrationWorkspaceSummary,
@@ -4145,6 +4150,9 @@ export function MigrationWorkspacePanel({
   const [deployHistoryLoaded, setDeployHistoryLoaded] = useState(false);
 
   const [sourceUrl, setSourceUrl] = useState("");
+  const [sourceCaptureMode, setSourceCaptureMode] = useState<MigrationSourceCaptureMode>("analyze_rebuild");
+  const [sourceCaptureAuthorization, setSourceCaptureAuthorization] = useState(false);
+  const [sourceCaptures, setSourceCaptures] = useState<MigrationSourceCapture[]>([]);
   const [businessObjectives, setBusinessObjectives] = useState("");
   const [requestedPages, setRequestedPages] = useState("");
   const [mustInclude, setMustInclude] = useState("");
@@ -4216,6 +4224,7 @@ export function MigrationWorkspacePanel({
     asStringOrNull(workspaceRecord.site_id) ||
     siteId;
   const sourceSnapshot = summary?.source_snapshot || null;
+  const latestSourceCapture = sourceCaptures[0] || null;
   const publishReadiness = asRecord(summary?.publish_readiness || {});
   const deployReadiness = asRecord(summary?.deploy_readiness || {});
   const publishArtifactMediaReadiness = asRecord(publishReadiness.artifact_media_readiness);
@@ -6436,6 +6445,7 @@ export function MigrationWorkspacePanel({
   const hydrateFromSummary = useCallback((nextSummary: MigrationWorkspaceSummary) => {
     const workspace = nextSummary.workspace;
     setSourceUrl(workspace.source_url || "");
+    setSourceCaptureMode(workspace.ingestion_mode || "analyze_rebuild");
 
     const rawRequirements = asRecord(workspace.operator_requirements_json);
     setBusinessObjectives(joinLines(asStringList(rawRequirements.business_objectives)));
@@ -6489,12 +6499,20 @@ export function MigrationWorkspacePanel({
           }),
         );
         void (async () => {
-          const [mediaResult, readinessResult, publishHistoryResult, deployHistoryResult, previewReleaseResult] = await Promise.allSettled([
+          const [
+            mediaResult,
+            readinessResult,
+            publishHistoryResult,
+            deployHistoryResult,
+            previewReleaseResult,
+            sourceCaptureResult,
+          ] = await Promise.allSettled([
             fetchMigrationMediaAssets(token, businessId, siteId),
             fetchMigrationDraftReadiness(token, businessId, siteId),
             fetchMigrationPublishHistory(token, businessId, siteId),
             fetchMigrationDeployHistory(token, businessId, siteId),
             fetchPreviewReleases(token, businessId, siteId),
+            fetchMigrationSourceCaptures(token, businessId, siteId),
           ]);
           if (mediaResult.status === "fulfilled") {
             setMediaAssetsSnapshot(asRecord(mediaResult.value));
@@ -6530,6 +6548,9 @@ export function MigrationWorkspacePanel({
           }
           if (previewReleaseResult.status === "fulfilled") {
             setPreviewReleases(previewReleaseResult.value.items || []);
+          }
+          if (sourceCaptureResult.status === "fulfilled") {
+            setSourceCaptures(sourceCaptureResult.value.items || []);
           }
         })();
       } catch (error) {
@@ -6585,6 +6606,27 @@ export function MigrationWorkspacePanel({
   useEffect(() => {
     void loadWorkspaceData(true);
   }, [loadWorkspaceData]);
+
+  useEffect(() => {
+    if (!latestSourceCapture || !["queued", "running"].includes(latestSourceCapture.status)) {
+      return;
+    }
+    const captureId = latestSourceCapture.id;
+    const timerId = window.setInterval(() => {
+      void fetchMigrationSourceCapture(token, businessId, siteId, captureId)
+        .then((capture) => {
+          setSourceCaptures((current) => [capture, ...current.filter((item) => item.id !== capture.id)]);
+          if (capture.status === "completed" || capture.status === "failed") {
+            window.clearInterval(timerId);
+            void loadWorkspaceData(false, { preserveErrorMessage: true });
+          }
+        })
+        .catch(() => {
+          window.clearInterval(timerId);
+        });
+    }, 3000);
+    return () => window.clearInterval(timerId);
+  }, [businessId, latestSourceCapture, loadWorkspaceData, siteId, token]);
 
   useEffect(() => {
     setRequirementSuggestions(createDefaultRequirementSuggestionMap());
@@ -6682,12 +6724,22 @@ export function MigrationWorkspacePanel({
     setErrorHint(null);
     setStatusMessage(null);
     try {
-      const workspace = await ingestMigrationSource(token, businessId, siteId, {
+      const randomValue =
+        typeof globalThis.crypto?.randomUUID === "function"
+          ? globalThis.crypto.randomUUID()
+          : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      const capture = await createMigrationSourceCapture(token, businessId, siteId, {
+        mode: sourceCaptureMode,
         source_url: sourceUrl.trim() || null,
+        authorization_acknowledged: sourceCaptureMode === "faithful_snapshot" && sourceCaptureAuthorization,
+        idempotency_key: `source-capture-${randomValue}`,
       });
-      setSourceUrl(workspace.source_url || sourceUrl);
-      setStatusMessage("Source ingest completed.");
-      await loadWorkspaceData(false);
+      setSourceCaptures((current) => [capture, ...current.filter((item) => item.id !== capture.id)]);
+      setStatusMessage(
+        sourceCaptureMode === "faithful_snapshot"
+          ? "Faithful browser snapshot queued. You may leave this page while the worker runs."
+          : "Source analysis queued. You may leave this page while the worker runs.",
+      );
     } catch (error) {
       setErrorHint(null);
       setErrorMessage(toErrorMessage(error, "Source ingest failed."));
@@ -6730,6 +6782,21 @@ export function MigrationWorkspacePanel({
     } catch (error) {
       setErrorHint(null);
       setErrorMessage(toErrorMessage(error, "Failed to save migration requirements."));
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const handleRefreshSourceCapture = async (): Promise<void> => {
+    setBusyAction("ingest");
+    setErrorMessage(null);
+    setErrorHint(null);
+    try {
+      const response = await fetchMigrationSourceCaptures(token, businessId, siteId);
+      setSourceCaptures(response.items || []);
+      await loadWorkspaceData(false, { preserveErrorMessage: true });
+    } catch (error) {
+      setErrorMessage(toErrorMessage(error, "Failed to refresh source capture status."));
     } finally {
       setBusyAction(null);
     }
@@ -8044,28 +8111,23 @@ export function MigrationWorkspacePanel({
 
       <MigrationSourceRequirementsSection>
 
-      <div className="panel stack workspace-section-block">
-        <h3>Source Ingest</h3>
-        <label className="stack-tight">
-          <span className="hint muted">Source URL</span>
-          <input
-            type="url"
-            value={sourceUrl}
-            placeholder="https://legacy.example/"
-            onChange={(event) => setSourceUrl(event.target.value)}
-          />
-        </label>
-        <WorkspaceActionBar variant="primary">
-          <button
-            type="button"
-            className="button button-primary"
-            onClick={() => void handleIngestSource()}
-            disabled={busyAction === "ingest" || busyAction === "load"}
-          >
-            {busyAction === "ingest" ? "Ingesting..." : "Ingest / Refresh Source"}
-          </button>
-        </WorkspaceActionBar>
-      </div>
+      <SourceCaptureControls
+        sourceUrl={sourceUrl}
+        mode={sourceCaptureMode}
+        authorizationAcknowledged={sourceCaptureAuthorization}
+        latestCapture={latestSourceCapture}
+        busy={busyAction === "ingest" || busyAction === "load"}
+        onSourceUrlChange={setSourceUrl}
+        onModeChange={(mode) => {
+          setSourceCaptureMode(mode);
+          if (mode !== "faithful_snapshot") {
+            setSourceCaptureAuthorization(false);
+          }
+        }}
+        onAuthorizationChange={setSourceCaptureAuthorization}
+        onStart={() => void handleIngestSource()}
+        onRefresh={() => void handleRefreshSourceCapture()}
+      />
 
       <div className="panel stack workspace-section-block" data-testid="migration-source-summary">
         <h3>Source Snapshot Summary</h3>
@@ -8141,9 +8203,14 @@ export function MigrationWorkspacePanel({
                 type="button"
                 className="button button-tertiary"
                 onClick={() => void handleIngestSource()}
-                disabled={busyAction === "ingest" || busyAction === "load" || !sourceUrl.trim()}
+                disabled={
+                  busyAction === "ingest" ||
+                  busyAction === "load" ||
+                  !sourceUrl.trim() ||
+                  (sourceCaptureMode === "faithful_snapshot" && !sourceCaptureAuthorization)
+                }
               >
-                {busyAction === "ingest" ? "Refreshing..." : "Discover / Refresh Source Images"}
+                {busyAction === "ingest" ? "Refreshing..." : "Refresh source capture"}
               </button>
             </WorkspaceActionBar>
             <span className="hint muted">

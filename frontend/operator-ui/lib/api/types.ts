@@ -518,6 +518,48 @@ export interface MigrationSourceIngestRequest {
   source_url?: string | null;
 }
 
+export type MigrationSourceCaptureMode = "analyze_rebuild" | "faithful_snapshot";
+export type MigrationSourceCaptureStatus = "queued" | "running" | "completed" | "failed";
+
+export interface MigrationSourceCaptureCreateRequest {
+  mode: MigrationSourceCaptureMode;
+  source_url?: string | null;
+  authorization_acknowledged?: boolean;
+  idempotency_key: string;
+  page_limit?: number;
+  asset_limit?: number;
+  max_total_bytes?: number;
+}
+
+export interface MigrationSourceCapture {
+  id: string;
+  source_version: number;
+  mode: MigrationSourceCaptureMode;
+  status: MigrationSourceCaptureStatus;
+  requested_source_url: string;
+  authorization_acknowledged: boolean;
+  authorization_statement_version: string | null;
+  browser_engine: string | null;
+  page_count: number;
+  asset_count: number;
+  total_bytes: number;
+  unsupported_features: string[];
+  warning_codes: string[];
+  failure_reason_code: string | null;
+  failure_message: string | null;
+  manifest_sha256: string | null;
+  attempt_count: number;
+  started_at: string | null;
+  completed_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MigrationSourceCaptureListResponse {
+  items: MigrationSourceCapture[];
+  total: number;
+}
+
 export interface MigrationRequirementsUpdateRequest {
   operator_requirements: MigrationOperatorRequirements;
 }
@@ -613,6 +655,7 @@ export interface MigrationSourceSnapshot {
   discovered_images?: Array<Record<string, unknown>>;
   cleaned_text_blocks: string[];
   warnings: string[];
+  faithful_capture?: Record<string, unknown> | null;
 }
 
 export interface MigrationMediaAsset {
@@ -864,6 +907,8 @@ export interface MigrationWorkspace {
   business_id: string;
   site_id: string;
   source_url: string | null;
+  ingestion_mode: MigrationSourceCaptureMode;
+  latest_source_capture_id: string | null;
   source_site_status: string;
   migration_status: string;
   operator_requirements_json: Record<string, unknown> | null;

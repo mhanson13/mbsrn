@@ -293,9 +293,7 @@ def test_competitor_domain_feedback_upsert_and_manual_seed_flow(db_session, seed
     assert manual_seed_payload["domain"] == "seedcompetitor.com"
     assert manual_seed_payload["feedback_status"] == "manually_seeded"
 
-    list_feedback = client.get(
-        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-domain-feedback"
-    )
+    list_feedback = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-domain-feedback")
     assert list_feedback.status_code == 200
     list_payload = list_feedback.json()
     assert list_payload["total"] == 2
@@ -448,9 +446,7 @@ def test_competitor_reviewed_list_is_site_scoped_and_derives_review_states(db_se
     )
     assert create_manual_seed.status_code == 201
 
-    reviewed_list = client.get(
-        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-reviewed-list"
-    )
+    reviewed_list = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-reviewed-list")
     assert reviewed_list.status_code == 200
     payload = reviewed_list.json()
 
@@ -510,9 +506,7 @@ def test_competitor_reviewed_list_keeps_snapshot_queue_in_advanced_diagnostics_o
     )
     assert queue_snapshot.status_code == 201
 
-    reviewed_list = client.get(
-        f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-reviewed-list"
-    )
+    reviewed_list = client.get(f"/api/businesses/{seeded_business.id}/seo/sites/{site_id}/competitor-reviewed-list")
     assert reviewed_list.status_code == 200
     payload = reviewed_list.json()
 

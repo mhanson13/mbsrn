@@ -57,6 +57,9 @@ import type {
   MigrationRequirementsSuggestionResponse,
   MigrationRequirementsUpdateRequest,
   MigrationSourceIngestRequest,
+  MigrationSourceCapture,
+  MigrationSourceCaptureCreateRequest,
+  MigrationSourceCaptureListResponse,
   MigrationWorkspace,
   MigrationWorkspaceCreateOrUpdateRequest,
   MigrationWorkspaceSummary,
@@ -635,6 +638,45 @@ export async function importMigrationDiscoveredMediaAssets(
         },
       ),
     },
+  );
+}
+
+export async function createMigrationSourceCapture(
+  token: string,
+  businessId: string,
+  siteId: string,
+  payload: MigrationSourceCaptureCreateRequest,
+): Promise<MigrationSourceCapture> {
+  return apiRequest<MigrationSourceCapture>(
+    `/api/businesses/${businessId}/seo/sites/${siteId}/migration/source-capture-runs`,
+    {
+      method: "POST",
+      token,
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function fetchMigrationSourceCaptures(
+  token: string,
+  businessId: string,
+  siteId: string,
+): Promise<MigrationSourceCaptureListResponse> {
+  return apiRequest<MigrationSourceCaptureListResponse>(
+    `/api/businesses/${businessId}/seo/sites/${siteId}/migration/source-capture-runs`,
+    { token },
+  );
+}
+
+export async function fetchMigrationSourceCapture(
+  token: string,
+  businessId: string,
+  siteId: string,
+  captureId: string,
+): Promise<MigrationSourceCapture> {
+  return apiRequest<MigrationSourceCapture>(
+    `/api/businesses/${businessId}/seo/sites/${siteId}/migration/source-capture-runs/${captureId}`,
+    { token },
   );
 }
 

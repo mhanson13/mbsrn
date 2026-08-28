@@ -29,6 +29,15 @@ class SEOMigrationRepository:
         )
         return self.session.scalar(stmt)
 
+    def lock_workspace_for_business_site(self, business_id: str, site_id: str) -> SEOMigrationWorkspace | None:
+        stmt: Select[tuple[SEOMigrationWorkspace]] = (
+            select(SEOMigrationWorkspace)
+            .where(SEOMigrationWorkspace.business_id == business_id)
+            .where(SEOMigrationWorkspace.site_id == site_id)
+            .with_for_update()
+        )
+        return self.session.scalar(stmt)
+
     def create_artifact_version(self, artifact_version: SEOMigrationArtifactVersion) -> SEOMigrationArtifactVersion:
         self.session.add(artifact_version)
         self.session.flush()

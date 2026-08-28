@@ -1023,8 +1023,7 @@ def test_prompt_builder_override_cannot_change_runtime_candidate_constraints() -
 
 def test_prompt_override_contract_assessment_marks_legacy_alias_shape() -> None:
     legacy_override = (
-        "OUTPUT FORMAT:\n"
-        '{"candidates":[{"name":"Example","domain":"example.com","reasoning":"same market"}]}'
+        "OUTPUT FORMAT:\n" '{"candidates":[{"name":"Example","domain":"example.com","reasoning":"same market"}]}'
     )
     assessment = assess_seo_competitor_prompt_override_contract(legacy_override)
     assert assessment.status == "legacy_alias"
@@ -1032,10 +1031,7 @@ def test_prompt_override_contract_assessment_marks_legacy_alias_shape() -> None:
 
 
 def test_prompt_override_contract_assessment_marks_invalid_shape_when_required_fields_missing() -> None:
-    invalid_override = (
-        "OUTPUT FORMAT:\n"
-        '{"candidates":[{"domain":"example.com","confidence":0.7}]}'
-    )
+    invalid_override = "OUTPUT FORMAT:\n" '{"candidates":[{"domain":"example.com","confidence":0.7}]}'
     assessment = assess_seo_competitor_prompt_override_contract(invalid_override)
     assert assessment.status == "invalid"
     assert assessment.reason == "prompt_override_contract_invalid"

@@ -112,9 +112,7 @@ class PreviewDiagnosticCollectionService:
                 "published": certificate_status.published,
                 "manifest_state": certificate_status.manifest_state,
                 "serving_state": certificate_status.serving_state,
-                "observed_fingerprint_sha256": (
-                    binding.observed_fingerprint_sha256 if binding is not None else None
-                ),
+                "observed_fingerprint_sha256": (binding.observed_fingerprint_sha256 if binding is not None else None),
             },
             "tls_capabilities": {
                 "project_id": capability_status.project_id,

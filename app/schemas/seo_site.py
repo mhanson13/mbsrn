@@ -223,9 +223,7 @@ class SEOSiteDeletePlanRead(BaseModel):
     blockers: list[SEOSiteDeleteIssueRead] = Field(default_factory=list)
     warnings: list[SEOSiteDeleteIssueRead] = Field(default_factory=list)
     required_confirmation_phrase: str = Field(min_length=1, max_length=500)
-    execution_defaults: SEOSiteDeleteExecutionDefaultsRead = Field(
-        default_factory=SEOSiteDeleteExecutionDefaultsRead
-    )
+    execution_defaults: SEOSiteDeleteExecutionDefaultsRead = Field(default_factory=SEOSiteDeleteExecutionDefaultsRead)
 
 
 class SEOSiteDeleteExecuteRequest(BaseModel):

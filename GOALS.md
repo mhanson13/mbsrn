@@ -114,18 +114,20 @@ Acceptance:
 
 ## Phase 7: Add optional faithful site capture
 
-- [ ] Add explicit `analyze_rebuild` and `faithful_snapshot` ingestion modes.
-- [ ] Require authorization acknowledgment for faithful snapshots.
-- [ ] Capture bounded first-party rendered pages and assets into immutable GCS source versions.
-- [ ] Report dynamic or unsupported features.
-- [ ] Generate AI-enhanced drafts from, but never over, the captured baseline.
-- [ ] Execute long-running captures asynchronously.
+- [x] Add explicit `analyze_rebuild` and `faithful_snapshot` ingestion modes.
+- [x] Require authorization acknowledgment for faithful snapshots.
+- [x] Capture bounded first-party rendered pages and assets into immutable GCS source versions.
+- [x] Report dynamic or unsupported features.
+- [x] Generate AI-enhanced drafts from, but never over, the captured baseline.
+- [x] Execute long-running captures asynchronously in an isolated worker.
 
 Acceptance:
 
 - Operators can choose the mode per site.
 - The capture manifest provides source URL, final URL, digest, size, and provenance for every stored item.
 - SSRF, redirect, content-size, page-count, and domain-boundary controls remain enforced.
+
+Implementation is complete in code and tests. Production rollout and the Platfire end-to-end acceptance item below remain open.
 
 ## Phase 8: Remove bloat and legacy coupling
 

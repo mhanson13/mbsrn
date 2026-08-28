@@ -49,9 +49,7 @@ def test_sanitize_log_payload_redacts_secret_like_string_patterns() -> None:
 
 
 def test_sanitize_log_payload_redacts_sensitive_json_blobs() -> None:
-    docker_blob = (
-        '{"auths":{"ghcr.io":{"username":"bot","password":"super-secret","auth":"abc"}},"meta":"x"}'
-    )
+    docker_blob = '{"auths":{"ghcr.io":{"username":"bot","password":"super-secret","auth":"abc"}},"meta":"x"}'
     payload = {
         "event": "pull_secret_test",
         "docker_blob": docker_blob,

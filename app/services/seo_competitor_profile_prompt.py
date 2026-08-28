@@ -610,9 +610,7 @@ def build_seo_competitor_profile_prompt(
             len(context_operator_excluded_domains) if isinstance(context_operator_excluded_domains, list) else 0
         ),
         "operator_manual_seed_domains_count": (
-            len(context_operator_manual_seed_domains)
-            if isinstance(context_operator_manual_seed_domains, list)
-            else 0
+            len(context_operator_manual_seed_domains) if isinstance(context_operator_manual_seed_domains, list) else 0
         ),
         "supplemental_competitor_text_chars": supplemental_competitor_text_chars,
         "context_budget_trimmed": 1 if context_budget_trimmed else 0,

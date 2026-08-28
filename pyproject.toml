@@ -20,6 +20,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+capture = [
+  "playwright==1.61.0"
+]
 dev = [
   "pytest>=8.3.0,<8.4.0",
   "httpx>=0.28.0,<0.29.0"

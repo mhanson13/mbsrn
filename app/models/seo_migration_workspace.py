@@ -35,6 +35,13 @@ class SEOMigrationWorkspace(Base):
         index=True,
     )
     source_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    ingestion_mode: Mapped[str] = mapped_column(String(32), nullable=False, default="analyze_rebuild")
+    latest_source_capture_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("seo_migration_source_captures.id"),
+        nullable=True,
+        index=True,
+    )
     source_site_status: Mapped[str] = mapped_column(String(32), nullable=False, default="not_ingested")
     migration_status: Mapped[str] = mapped_column(String(32), nullable=False, default="draft")
     operator_requirements_json: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)

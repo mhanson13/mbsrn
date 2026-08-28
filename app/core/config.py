@@ -129,6 +129,12 @@ class Settings:
     migration_media_gcs_project_id: str | None
     migration_media_gcs_timeout_seconds: int
     migration_media_gcs_api_base_url: str
+    faithful_capture_navigation_timeout_seconds: int
+    faithful_capture_timeout_seconds: int
+    faithful_capture_render_wait_milliseconds: int
+    faithful_capture_max_resource_bytes: int
+    faithful_capture_worker_poll_seconds: int
+    faithful_capture_stale_after_seconds: int
     protected_control_plane_repository: str
     openai_api_base_url: str
     twilio_account_sid: str | None
@@ -390,10 +396,14 @@ def get_settings() -> Settings:
         split_env_name="AI_PROMPT_TEXT_RECOMMENDATIONS",
         legacy_prompt_text=legacy_prompt_text_recommendation,
     )
-    migration_media_storage_backend = os.getenv(
-        "MIGRATION_MEDIA_STORAGE_BACKEND",
-        "gcs" if env_normalized in {"production", "staging"} else "local",
-    ).strip().lower()
+    migration_media_storage_backend = (
+        os.getenv(
+            "MIGRATION_MEDIA_STORAGE_BACKEND",
+            "gcs" if env_normalized in {"production", "staging"} else "local",
+        )
+        .strip()
+        .lower()
+    )
     if migration_media_storage_backend not in {"local", "gcs"}:
         raise RuntimeError("MIGRATION_MEDIA_STORAGE_BACKEND must be 'local' or 'gcs'.")
 
@@ -570,9 +580,7 @@ def get_settings() -> Settings:
         migration_deploy_workload_identity_provider=(
             os.getenv("MIGRATION_DEPLOY_WORKLOAD_IDENTITY_PROVIDER", "").strip() or None
         ),
-        migration_deploy_service_account=(
-            os.getenv("MIGRATION_DEPLOY_SERVICE_ACCOUNT", "").strip() or None
-        ),
+        migration_deploy_service_account=(os.getenv("MIGRATION_DEPLOY_SERVICE_ACCOUNT", "").strip() or None),
         migration_media_storage_backend=migration_media_storage_backend,
         migration_media_storage_root=(
             os.getenv("MIGRATION_MEDIA_STORAGE_ROOT", "var/migration_media").strip() or "var/migration_media"
@@ -594,6 +602,18 @@ def get_settings() -> Settings:
             os.getenv("MIGRATION_MEDIA_GCS_API_BASE_URL", "https://storage.googleapis.com").strip()
             or "https://storage.googleapis.com"
         ),
+        faithful_capture_navigation_timeout_seconds=_env_int(
+            "FAITHFUL_CAPTURE_NAVIGATION_TIMEOUT_SECONDS", 20, min_value=5
+        ),
+        faithful_capture_timeout_seconds=_env_int("FAITHFUL_CAPTURE_TIMEOUT_SECONDS", 180, min_value=30),
+        faithful_capture_render_wait_milliseconds=_env_int(
+            "FAITHFUL_CAPTURE_RENDER_WAIT_MILLISECONDS", 750, min_value=0
+        ),
+        faithful_capture_max_resource_bytes=_env_int(
+            "FAITHFUL_CAPTURE_MAX_RESOURCE_BYTES", 5_000_000, min_value=100_000
+        ),
+        faithful_capture_worker_poll_seconds=_env_int("FAITHFUL_CAPTURE_WORKER_POLL_SECONDS", 3, min_value=1),
+        faithful_capture_stale_after_seconds=_env_int("FAITHFUL_CAPTURE_STALE_AFTER_SECONDS", 600, min_value=60),
         protected_control_plane_repository=_resolve_protected_control_plane_repository(),
         openai_api_base_url=os.getenv("OPENAI_API_BASE_URL", "https://api.openai.com/v1").strip(),
         twilio_account_sid=os.getenv("TWILIO_ACCOUNT_SID"),

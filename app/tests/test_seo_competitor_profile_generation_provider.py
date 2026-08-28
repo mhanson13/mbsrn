@@ -1473,9 +1473,7 @@ def test_prompt_assembly_telemetry_is_info_even_when_prompt_size_risk_is_elevate
         )
 
     telemetry_records = [
-        record
-        for record in caplog.records
-        if "SEO competitor prompt assembly telemetry" in record.getMessage()
+        record for record in caplog.records if "SEO competitor prompt assembly telemetry" in record.getMessage()
     ]
     assert telemetry_records
     assert all(record.levelno == logging.INFO for record in telemetry_records)
@@ -1627,7 +1625,9 @@ def test_structured_provider_timeout_error_log_includes_timeout_type(monkeypatch
 
     structured_events = _structured_event_records(caplog)
     error_event = next(item for item in structured_events if item.get("event") == "competitor_provider_request_error")
-    timeout_event = next(item for item in structured_events if item.get("event") == "competitor_provider_request_timeout")
+    timeout_event = next(
+        item for item in structured_events if item.get("event") == "competitor_provider_request_timeout"
+    )
     assert error_event["run_id"] == "run-timeout-1"
     assert error_event["failure_kind"] == "timeout"
     assert error_event["timeout_type"] == "read"

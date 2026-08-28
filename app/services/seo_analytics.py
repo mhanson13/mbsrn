@@ -1060,9 +1060,7 @@ class SEOAnalyticsService:
             1,
             min(
                 int(
-                    after_window_days
-                    if after_window_days is not None
-                    else self.settings.ga4_outcome_after_window_days
+                    after_window_days if after_window_days is not None else self.settings.ga4_outcome_after_window_days
                 ),
                 30,
             ),
@@ -1786,7 +1784,9 @@ def _build_ga4_acquisition_insights_from_site_metrics(
         "no_data",
         "unavailable",
         "unknown",
-    ] = "available" if total_sessions > 0 else "no_data"
+    ] = (
+        "available" if total_sessions > 0 else "no_data"
+    )
     return SEOGA4AcquisitionInsightsRead(
         status=status,
         source="site_scoped_ga4",
@@ -1874,7 +1874,9 @@ def _build_ga4_acquisition_insights_available(
         "no_data",
         "unavailable",
         "unknown",
-    ] = "available" if has_data else "no_data"
+    ] = (
+        "available" if has_data else "no_data"
+    )
 
     return SEOGA4AcquisitionInsightsRead(
         status=status,

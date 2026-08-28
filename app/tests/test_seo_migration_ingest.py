@@ -155,7 +155,10 @@ def test_ingest_extracts_homepage_signals_and_scans_priority_pages(monkeypatch: 
     assert "https://tnmfire.example/images/logo.png" in by_url
     assert "https://tnmfire.example/images/service-1.jpg" in by_url
     assert "https://tnmfire.example/images/project-1.jpg" in by_url
-    assert by_url["https://tnmfire.example/images/service-1.jpg"].get("source_page_url") == "https://tnmfire.example/services"
+    assert (
+        by_url["https://tnmfire.example/images/service-1.jpg"].get("source_page_url")
+        == "https://tnmfire.example/services"
+    )
 
 
 def test_ingest_rejects_non_html_content_type(monkeypatch: pytest.MonkeyPatch) -> None:

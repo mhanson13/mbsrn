@@ -1372,7 +1372,8 @@ class GoogleBusinessProfileService:
                 ),
                 gbp_provider_error_class="provider_permission_denied",
                 gbp_provider_http_status=exc.provider_http_status or 403,
-                gbp_diagnostic_hint=exc.diagnostic_hint or "Verify Business Profile access for the connected Google identity.",
+                gbp_diagnostic_hint=exc.diagnostic_hint
+                or "Verify Business Profile access for the connected Google identity.",
             )
         if exc.error_code == "provider_unauthorized":
             return GoogleBusinessProfileConnectionDiagnosticsResult(
@@ -1517,7 +1518,8 @@ class GoogleBusinessProfileService:
             gbp_next_action="Google Business Profile status is temporarily unavailable. Refresh and retry.",
             gbp_provider_error_class=(
                 exc.provider_error_class
-                if exc.provider_error_class in {
+                if exc.provider_error_class
+                in {
                     "provider_rate_limited",
                     "provider_unavailable",
                     "provider_unknown",
@@ -1525,7 +1527,8 @@ class GoogleBusinessProfileService:
                 else "provider_unavailable"
             ),
             gbp_provider_http_status=exc.provider_http_status,
-            gbp_diagnostic_hint=exc.diagnostic_hint or "Retry shortly. If this persists, verify Google API availability.",
+            gbp_diagnostic_hint=exc.diagnostic_hint
+            or "Retry shortly. If this persists, verify Google API availability.",
         )
 
     def _log_connection_diagnostics(
@@ -1767,9 +1770,7 @@ class GoogleBusinessProfileService:
             )
         if token_result.reconnect_required or token_result.token_status == "reconnect_required":
             token_refresh_failed = (
-                token_result.connected
-                and token_result.required_scopes_satisfied
-                and token_result.refresh_token_present
+                token_result.connected and token_result.required_scopes_satisfied and token_result.refresh_token_present
             )
             raise GoogleBusinessProfileServiceError(
                 "Google Business Profile connection requires reconnect.",

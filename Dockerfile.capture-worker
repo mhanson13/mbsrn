@@ -1,0 +1,15 @@
+FROM mcr.microsoft.com/playwright/python:v1.61.0-noble
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+COPY requirements.txt requirements-capture.txt ./
+RUN python -m pip install --no-cache-dir -r requirements-capture.txt
+
+COPY . .
+
+USER pwuser
+
+CMD ["python", "-m", "app.cli.source_capture_worker"]

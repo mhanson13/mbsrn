@@ -2885,8 +2885,7 @@ def test_prompt_override_contract_invalid_blocks_generation_before_provider_exec
     site_id = _create_site(client, seeded_business.id)
     business = db_session.query(Business).filter(Business.id == seeded_business.id).one()
     business.ai_prompt_text_competitor = (
-        'PROMPT_VERSION: seo-competitor-profile-v5\n'
-        '{"candidates":[{"confidence":0.8}]}'
+        "PROMPT_VERSION: seo-competitor-profile-v5\n" '{"candidates":[{"confidence":0.8}]}'
     )
     db_session.add(business)
     db_session.commit()

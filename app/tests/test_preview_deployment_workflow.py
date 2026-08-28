@@ -18,10 +18,7 @@ from app.integrations.seo_migration_github_publisher import (
 
 
 WORKFLOW_REF = "mhanson13/mbsrn/.github/workflows/deploy-site-preview.yml@main"
-WIF_PROVIDER = (
-    "projects/1068908288067/locations/global/workloadIdentityPools/"
-    "mbsrn-preview/providers/github"
-)
+WIF_PROVIDER = "projects/1068908288067/locations/global/workloadIdentityPools/" "mbsrn-preview/providers/github"
 SERVICE_ACCOUNT = "mbsrn-preview-deployer@mbsrn-prod.iam.gserviceaccount.com"
 
 
@@ -79,10 +76,7 @@ def test_reusable_preview_caller_contains_only_bounded_inputs_and_oidc_auth() ->
     assert deploy["with"]["workload_identity_provider"] == WIF_PROVIDER
     assert deploy["with"]["service_account"] == SERVICE_ACCOUNT
     assert REUSABLE_PREVIEW_CALLER_MARKER in rendered
-    assert (
-        _derive_managed_workflow_deploy_auth_mode(workflow_content=rendered)
-        == "github_oidc_workload_identity"
-    )
+    assert _derive_managed_workflow_deploy_auth_mode(workflow_content=rendered) == "github_oidc_workload_identity"
     assert "GCP_DEPLOY_KEY" not in rendered
     assert "credentials_json" not in rendered
     assert "kubectl apply" not in rendered

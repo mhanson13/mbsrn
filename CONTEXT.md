@@ -46,6 +46,8 @@ The operator workspace now presents one preview-release card with the eight conc
 
 Artifact and migration-media previews now use authenticated API requests with the operator bearer token. The UI converts returned blobs to local data URLs before assigning image or sandboxed iframe content, so protected API URLs are never emitted as unauthenticated browser resource requests.
 
+Optional asynchronous source capture is implemented for all sites. `analyze_rebuild` remains the default; `faithful_snapshot` requires recorded authorization and runs Chromium in a dedicated non-root, gVisor-isolated worker rather than API Pods. Capture rows are tenant/site scoped, idempotent, retryable, and immutable by source version. Every browser attempt writes first-party pages/assets and a last-written manifest under a unique GCS attempt prefix with size, SHA-256, generation, and provenance. Exact-host/`www` navigation, public DNS pinning, redirect checks, external-request blocking, and bounded time/page/asset/byte limits are enforced. Unsupported dynamic behavior is reported as a limitation. The latest successfully completed requested run becomes the workspace baseline and supplies only bounded rendered context to AI draft generation. Production rollout and Platfire acceptance remain pending.
+
 ## Approved target workflow
 
 The normal operator path is:
@@ -151,6 +153,8 @@ The existing default mode captures bounded source signals and combines them with
 This is an optional new feature. It requires an operator authorization acknowledgment and captures deployable first-party pages and assets into an immutable source version before AI changes. Dynamic server behavior such as authentication, commerce, protected APIs, and server-side form processing is reported as unsupported or replacement-required rather than silently copied.
 
 Long-running ingestion is modeled as an asynchronous site operation.
+
+The capture API queues durable database work. A separately deployed Chromium worker claims it atomically, retries interrupted work at most three times, and cannot let an older completion replace a newer requested baseline. Browser execution uses GKE Sandbox and Chromium's sandbox; weakening those controls is not an accepted availability workaround.
 
 ## Infrastructure lifecycle
 

@@ -2399,11 +2399,15 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                     stage="publish_verification",
                 )
             verified_entries = verified_tree_payload.get("tree")
-            verified_blobs = {
-                (_coerce_string(entry.get("path")) or ""): (_coerce_string(entry.get("sha")) or "")
-                for entry in verified_entries
-                if isinstance(entry, dict) and entry.get("type") == "blob"
-            } if isinstance(verified_entries, list) else {}
+            verified_blobs = (
+                {
+                    (_coerce_string(entry.get("path")) or ""): (_coerce_string(entry.get("sha")) or "")
+                    for entry in verified_entries
+                    if isinstance(entry, dict) and entry.get("type") == "blob"
+                }
+                if isinstance(verified_entries, list)
+                else {}
+            )
             expected_blobs = {str(entry["path"]): str(entry["sha"]) for entry in tree_entries}
             if any(verified_blobs.get(path) != blob_sha for path, blob_sha in expected_blobs.items()):
                 raise SEOMigrationGitHubPublisherError(
@@ -3160,13 +3164,9 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             credentials_json=_coerce_string(gcp_deploy_key),
             impersonated_service_account_email=impersonated_service_account_email,
             missing_code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_FAILED_NOT_VISIBLE,
-            missing_safe_message=(
-                "ManagedCertificate readiness check could not resolve control-plane credentials."
-            ),
+            missing_safe_message=("ManagedCertificate readiness check could not resolve control-plane credentials."),
             invalid_code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_FAILED_NOT_VISIBLE,
-            invalid_safe_message=(
-                "ManagedCertificate readiness check could not resolve control-plane credentials."
-            ),
+            invalid_safe_message=("ManagedCertificate readiness check could not resolve control-plane credentials."),
             integration_code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_FAILED_NOT_VISIBLE,
             integration_safe_message=(
                 "ManagedCertificate readiness check could not resolve control-plane credentials."
@@ -3286,7 +3286,9 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                     if normalized_domain:
                         observed_domains.append(normalized_domain)
         observed_domains = _dedupe_strings(observed_domains)
-        certificate_domain_matches_expected = normalized_preview_hostname in observed_domains if observed_domains else False
+        certificate_domain_matches_expected = (
+            normalized_preview_hostname in observed_domains if observed_domains else False
+        )
         ownership_verified = _managed_certificate_ownership_is_verified(
             managed_certificate_payload=managed_certificate_payload,
             repo_name=repo_name,
@@ -3322,7 +3324,10 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             dispatch_service_reason_code = _DEPLOY_DISPATCH_SERVICE_REASON_CERTIFICATE_DOMAIN_MISMATCH
         elif ownership_verified is not True:
             dispatch_service_reason_code = _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_OWNERSHIP_UNVERIFIED
-        elif "FAILEDNOTVISIBLE" in {normalized_certificate_status, normalized_domain_status} or "FAILED_NOT_VISIBLE" in {
+        elif "FAILEDNOTVISIBLE" in {
+            normalized_certificate_status,
+            normalized_domain_status,
+        } or "FAILED_NOT_VISIBLE" in {
             normalized_certificate_status,
             normalized_domain_status,
         }:
@@ -3467,10 +3472,14 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 # the readiness probe but before this create reaches Kubernetes.
                 if exc.status_code != 409:
                     raise
-        create_path = "/apis/networking.gke.io/v1/namespaces/" + urllib.parse.quote(
-            normalized_namespace,
-            safe="",
-        ) + "/managedcertificates"
+        create_path = (
+            "/apis/networking.gke.io/v1/namespaces/"
+            + urllib.parse.quote(
+                normalized_namespace,
+                safe="",
+            )
+            + "/managedcertificates"
+        )
         try:
             created_payload = _request_kubernetes_json(
                 method="POST",
@@ -3622,7 +3631,9 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
         )
         cluster_endpoint = _coerce_string(cluster_payload.get("endpoint")) if isinstance(cluster_payload, dict) else ""
         master_auth = cluster_payload.get("masterAuth") if isinstance(cluster_payload, dict) else None
-        cluster_ca_certificate = _coerce_string(master_auth.get("clusterCaCertificate")) if isinstance(master_auth, dict) else ""
+        cluster_ca_certificate = (
+            _coerce_string(master_auth.get("clusterCaCertificate")) if isinstance(master_auth, dict) else ""
+        )
         if not cluster_endpoint or not cluster_ca_certificate:
             raise SEOMigrationGitHubPublisherError(
                 code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_FAILED_NOT_VISIBLE,
@@ -3630,7 +3641,9 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 stage=stage,
             )
         try:
-            decoded_cluster_ca = base64.b64decode(cluster_ca_certificate.encode("ascii")).decode("utf-8", errors="ignore")
+            decoded_cluster_ca = base64.b64decode(cluster_ca_certificate.encode("ascii")).decode(
+                "utf-8", errors="ignore"
+            )
         except Exception as exc:  # pragma: no cover - defensive
             raise SEOMigrationGitHubPublisherError(
                 code=_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_FAILED_NOT_VISIBLE,
@@ -7700,12 +7713,15 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             expected_statuses=(200,),
             error_stage="workflow_provisioning",
         )
-        if self._fetch_existing_file_payload(
-            repo_owner=repo_owner,
-            repo_name=repo_name,
-            branch=branch,
-            path=path,
-        ) is not None:
+        if (
+            self._fetch_existing_file_payload(
+                repo_owner=repo_owner,
+                repo_name=repo_name,
+                branch=branch,
+                path=path,
+            )
+            is not None
+        ):
             raise SEOMigrationGitHubPublisherError(
                 code="workflow_provisioning_failed",
                 safe_message=f"The retired {path} file is still present after removal.",
@@ -8117,13 +8133,7 @@ def _ensure_managed_site_global_static_ip(
             list_fallback_failure_code = "payload_invalid"
             list_fallback_response_keys = ()
             return None
-        list_fallback_response_keys = tuple(
-            sorted(
-                key
-                for key in payload.keys()
-                if isinstance(key, str)
-            )[:10]
-        )
+        list_fallback_response_keys = tuple(sorted(key for key in payload.keys() if isinstance(key, str))[:10])
         items = payload.get("items")
         if not isinstance(items, list):
             list_fallback_match_count = 0
@@ -8139,10 +8149,7 @@ def _ensure_managed_site_global_static_ip(
                 matching_items.append(item)
         list_fallback_match_count = len(matching_items)
         matching_addresses = [
-            address
-            for item in matching_items
-            for address in (_coerce_static_ip_address(item),)
-            if address
+            address for item in matching_items for address in (_coerce_static_ip_address(item),) if address
         ]
         list_fallback_address_present = bool(matching_addresses)
         if list_fallback_match_count == 0:
@@ -9835,9 +9842,7 @@ _DEPLOY_DISPATCH_SERVICE_REASON_IMAGE_PULL_SECRET_MISSING = "image_pull_secret_m
 _DEPLOY_DISPATCH_SERVICE_REASON_IMAGE_PULL_SECRET_NOT_REFERENCED = "image_pull_secret_not_referenced"
 _DEPLOY_DISPATCH_SERVICE_REASON_CERTIFICATE_DOMAIN_MISMATCH = "certificate_domain_mismatch"
 _DEPLOY_DISPATCH_SERVICE_REASON_STALE_MANAGED_CERTIFICATE_PRESENT = "stale_managed_certificate_present"
-_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_OWNERSHIP_UNVERIFIED = (
-    "managed_certificate_ownership_unverified"
-)
+_DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_OWNERSHIP_UNVERIFIED = "managed_certificate_ownership_unverified"
 _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_CERTIFICATE_MISMATCH = "ingress_certificate_mismatch"
 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_IDENTITY_MISMATCH = "managed_certificate_identity_mismatch"
 _DEPLOY_DISPATCH_SERVICE_REASON_INGRESS_CERTIFICATE_ANNOTATION_MISMATCH = "ingress_certificate_annotation_mismatch"
@@ -10020,16 +10025,12 @@ def build_managed_site_static_ip_labels(
         _MBSRN_MANAGED_STATIC_IP_LABEL_MANAGED_BY: _MBSRN_MANAGED_LABEL,
     }
     normalized_site_id = _normalize_managed_site_static_ip_label_value(site_id)
-    normalized_preview_hostname_label = _normalize_managed_site_static_ip_label_value(
-        normalized_preview_hostname
-    )
+    normalized_preview_hostname_label = _normalize_managed_site_static_ip_label_value(normalized_preview_hostname)
     normalized_repo_name = _normalize_managed_site_static_ip_label_value(repo_name)
     if normalized_site_id:
         ownership_labels[_MBSRN_MANAGED_STATIC_IP_LABEL_SITE_ID] = normalized_site_id
     if normalized_preview_hostname_label:
-        ownership_labels[_MBSRN_MANAGED_STATIC_IP_LABEL_PREVIEW_HOSTNAME] = (
-            normalized_preview_hostname_label
-        )
+        ownership_labels[_MBSRN_MANAGED_STATIC_IP_LABEL_PREVIEW_HOSTNAME] = normalized_preview_hostname_label
     if normalized_repo_name:
         ownership_labels[_MBSRN_MANAGED_STATIC_IP_LABEL_REPO] = normalized_repo_name
     return ownership_labels
@@ -10214,8 +10215,8 @@ def resolve_managed_preview_endpoint_configuration(
     endpoint_settings = normalized_defaults.get("managed_preview_endpoint")
     endpoint_payload = endpoint_settings if isinstance(endpoint_settings, dict) else {}
     requested_mode = (
-        _coerce_string(endpoint_payload.get("mode")) or _MANAGED_PREVIEW_ENDPOINT_MODE_AUTO
-    ).strip().lower()
+        (_coerce_string(endpoint_payload.get("mode")) or _MANAGED_PREVIEW_ENDPOINT_MODE_AUTO).strip().lower()
+    )
     if requested_mode not in _MANAGED_PREVIEW_ENDPOINT_MODE_VALUES:
         requested_mode = _MANAGED_PREVIEW_ENDPOINT_MODE_AUTO
     shared_preview_static_ip_name = _coerce_string(endpoint_payload.get("shared_preview_static_ip_name"))
@@ -10360,7 +10361,11 @@ def _normalize_namespace_isolation_defaults(value: object | None) -> dict[str, o
     if isinstance(managed_preview_endpoint, dict):
         normalized_endpoint = normalized["managed_preview_endpoint"]
         if isinstance(normalized_endpoint, dict):
-            mode = (_coerce_string(managed_preview_endpoint.get("mode")) or _MANAGED_PREVIEW_ENDPOINT_MODE_AUTO).strip().lower()
+            mode = (
+                (_coerce_string(managed_preview_endpoint.get("mode")) or _MANAGED_PREVIEW_ENDPOINT_MODE_AUTO)
+                .strip()
+                .lower()
+            )
             if mode not in _MANAGED_PREVIEW_ENDPOINT_MODE_VALUES:
                 mode = _MANAGED_PREVIEW_ENDPOINT_MODE_AUTO
             normalized_endpoint["mode"] = mode
@@ -10598,7 +10603,9 @@ def _render_managed_deploy_workflow_yaml(
         namespace_isolation_defaults=_normalize_namespace_isolation_defaults(namespace_isolation_defaults),
     )
     preview_static_ip_name = _coerce_string(preview_endpoint.get("expected_static_ip_name")) or ""
-    preview_endpoint_mode = _coerce_string(preview_endpoint.get("effective_mode")) or _MANAGED_PREVIEW_ENDPOINT_MODE_AUTO
+    preview_endpoint_mode = (
+        _coerce_string(preview_endpoint.get("effective_mode")) or _MANAGED_PREVIEW_ENDPOINT_MODE_AUTO
+    )
     preview_endpoint_uses_shared_gateway = bool(preview_endpoint.get("uses_shared_preview_gateway"))
     preview_static_ip_missing_reason = (
         _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_MISSING
@@ -10835,7 +10842,7 @@ def _render_managed_deploy_workflow_yaml(
         '            local reason_message="$6"\n'
         '            local managed_certificate_state="${7:-unknown}"\n'
         '            local managed_certificate_status="${8:-}"\n'
-        '            local attempt=1\n'
+        "            local attempt=1\n"
         '            while [ "$attempt" -le "$max_attempts" ]; do\n'
         '              if kubectl get "$resource_kind" "$resource_name" --namespace "$K8S_NAMESPACE" >/dev/null 2>&1; then\n'
         "                return 0\n"
@@ -10843,19 +10850,19 @@ def _render_managed_deploy_workflow_yaml(
         '              if [ "$attempt" -lt "$max_attempts" ]; then\n'
         '                sleep "$sleep_seconds"\n'
         "              fi\n"
-        '              attempt=$((attempt + 1))\n'
+        "              attempt=$((attempt + 1))\n"
         "            done\n"
         '            fail_endpoint_prerequisite "$reason_code" "$reason_message" "$managed_certificate_state" "$managed_certificate_status"\n'
         "          }\n"
-        '          ingress_references_managed_certificate=false\n'
+        "          ingress_references_managed_certificate=false\n"
         '          if [ -f k8s/ingress.yaml ] && grep -q "networking.gke.io/managed-certificates:" k8s/ingress.yaml; then\n'
-        '            ingress_references_managed_certificate=true\n'
+        "            ingress_references_managed_certificate=true\n"
         "          fi\n"
         '          if [ "$ingress_references_managed_certificate" != "true" ]; then\n'
         '            echo "managed_certificate_action=not_required" >> "$GITHUB_OUTPUT"\n'
         "            exit 0\n"
         "          fi\n"
-        '          if [ ! -f k8s/managedcertificate.yaml ]; then\n'
+        "          if [ ! -f k8s/managedcertificate.yaml ]; then\n"
         '            fail_endpoint_prerequisite "runtime_managed_certificate_missing_after_apply" "Ingress references a ManagedCertificate, but k8s/managedcertificate.yaml is missing from the managed runtime bundle." "false" "MISSING"\n'
         "          fi\n"
         '          managed_certificate_json="$(kubectl get managedcertificate "$MBSRN_PREVIEW_CERTIFICATE_NAME" --namespace "$K8S_NAMESPACE" -o json 2>/dev/null || true)"\n'
@@ -10979,7 +10986,7 @@ def _render_managed_deploy_workflow_yaml(
         "        id: replace_managed_runtime\n"
         "        run: |\n"
         "          set -euo pipefail\n"
-        '          replace_requested="$(echo "${MBSRN_REPLACE_EXISTING_RUNTIME:-false}" | tr \'[:upper:]\' \'[:lower:]\' | tr -d \'[:space:]\')"\n'
+        "          replace_requested=\"$(echo \"${MBSRN_REPLACE_EXISTING_RUNTIME:-false}\" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')\"\n"
         '          scope_summary="namespace=${K8S_NAMESPACE};site_id=${MBSRN_SITE_IDENTITY};repo=${GITHUB_REPOSITORY}"\n'
         '          endpoint_prerequisite_resource_kinds="managedcertificate,dns_record,global_static_ip"\n'
         '          runtime_resource_kinds="ingress,frontendconfig,backendconfig,service,deployment,networkpolicy"\n'
@@ -11047,172 +11054,172 @@ def _render_managed_deploy_workflow_yaml(
         "        run: |\n"
         "          set -euo pipefail\n"
         "          apply_manifest_if_present() {\n"
-        '            local manifest_path=\"$1\"\n'
-        "            if [ -f \"$manifest_path\" ]; then\n"
-        '              kubectl apply -f \"$manifest_path\"\n'
+        '            local manifest_path="$1"\n'
+        '            if [ -f "$manifest_path" ]; then\n'
+        '              kubectl apply -f "$manifest_path"\n'
         "            fi\n"
         "          }\n"
         "          emit_apply_failure_state() {\n"
-        '            local reason_message=\"$1\"\n'
-        '            local service_state=\"${2:-unknown}\"\n'
-        '            local endpoints_state=\"${3:-unknown}\"\n'
-        '            local managed_certificate_state=\"${4:-unknown}\"\n'
-        '            local managed_certificate_status=\"${5:-}\"\n'
-        '            echo \"resolve_live_url_state_service_exists=$service_state\"\n'
-        '            echo \"resolve_live_url_state_endpoints_ready=$endpoints_state\"\n'
-        '            echo \"resolve_live_url_state_managed_certificate_exists=$managed_certificate_state\"\n'
-        '            if [ -n \"$managed_certificate_status\" ]; then\n'
-        '              echo \"resolve_live_url_state_managed_certificate_status=$managed_certificate_status\"\n'
+        '            local reason_message="$1"\n'
+        '            local service_state="${2:-unknown}"\n'
+        '            local endpoints_state="${3:-unknown}"\n'
+        '            local managed_certificate_state="${4:-unknown}"\n'
+        '            local managed_certificate_status="${5:-}"\n'
+        '            echo "resolve_live_url_state_service_exists=$service_state"\n'
+        '            echo "resolve_live_url_state_endpoints_ready=$endpoints_state"\n'
+        '            echo "resolve_live_url_state_managed_certificate_exists=$managed_certificate_state"\n'
+        '            if [ -n "$managed_certificate_status" ]; then\n'
+        '              echo "resolve_live_url_state_managed_certificate_status=$managed_certificate_status"\n'
         "            fi\n"
-        '            echo \"resolve_live_url_state_runtime_ready=false\"\n'
-        '            echo \"resolve_live_url_state_ingress_address_resolved=false\"\n'
-        '            echo \"resolve_live_url_state_deploy_https_ready=false\"\n'
-        '            echo \"resolve_live_url_state_https_ready=false\"\n'
-        '            echo \"resolve_live_url_state_runtime_ready_tls_pending=false\"\n'
-        '            echo \"resolve_live_url_state_deploy_runtime_failure_stage=ingress_verify\"\n'
-        '            echo \"resolve_live_url_state_deploy_runtime_reason_message=$reason_message\"\n'
-        f'            echo \"resolve_live_url_state_{_MBSRN_MANAGED_DEPLOY_TEMPLATE_VERSION_OUTPUT_KEY}={_MBSRN_MANAGED_TEMPLATE_VERSION}\"\n'
+        '            echo "resolve_live_url_state_runtime_ready=false"\n'
+        '            echo "resolve_live_url_state_ingress_address_resolved=false"\n'
+        '            echo "resolve_live_url_state_deploy_https_ready=false"\n'
+        '            echo "resolve_live_url_state_https_ready=false"\n'
+        '            echo "resolve_live_url_state_runtime_ready_tls_pending=false"\n'
+        '            echo "resolve_live_url_state_deploy_runtime_failure_stage=ingress_verify"\n'
+        '            echo "resolve_live_url_state_deploy_runtime_reason_message=$reason_message"\n'
+        f'            echo "resolve_live_url_state_{_MBSRN_MANAGED_DEPLOY_TEMPLATE_VERSION_OUTPUT_KEY}={_MBSRN_MANAGED_TEMPLATE_VERSION}"\n'
         "          }\n"
         "          fail_apply_resource() {\n"
-        '            local reason_code=\"$1\"\n'
-        '            local reason_message=\"$2\"\n'
-        '            local service_state=\"${3:-unknown}\"\n'
-        '            local endpoints_state=\"${4:-unknown}\"\n'
-        '            local managed_certificate_state=\"${5:-unknown}\"\n'
-        '            local managed_certificate_status=\"${6:-}\"\n'
-        '            echo \"deploy_runtime_reason_code=${reason_code}\"\n'
-        '            echo \"deploy_runtime_reason_message=${reason_message}\"\n'
-        '            echo \"deploy_runtime_failure_stage=ingress_verify\"\n'
-        '            echo \"k8s_namespace=$K8S_NAMESPACE\"\n'
-        '            echo \"ingress_name=site-web\"\n'
-        '            echo \"preview_hostname=$MBSRN_PREVIEW_HOSTNAME\"\n'
-        '            echo \"preview_endpoint_mode=$MBSRN_PREVIEW_ENDPOINT_MODE\"\n'
-        '            echo \"expected_managed_certificate_name=$MBSRN_PREVIEW_CERTIFICATE_NAME\"\n'
-        '            emit_apply_failure_state \"$reason_message\" \"$service_state\" \"$endpoints_state\" \"$managed_certificate_state\" \"$managed_certificate_status\"\n'
+        '            local reason_code="$1"\n'
+        '            local reason_message="$2"\n'
+        '            local service_state="${3:-unknown}"\n'
+        '            local endpoints_state="${4:-unknown}"\n'
+        '            local managed_certificate_state="${5:-unknown}"\n'
+        '            local managed_certificate_status="${6:-}"\n'
+        '            echo "deploy_runtime_reason_code=${reason_code}"\n'
+        '            echo "deploy_runtime_reason_message=${reason_message}"\n'
+        '            echo "deploy_runtime_failure_stage=ingress_verify"\n'
+        '            echo "k8s_namespace=$K8S_NAMESPACE"\n'
+        '            echo "ingress_name=site-web"\n'
+        '            echo "preview_hostname=$MBSRN_PREVIEW_HOSTNAME"\n'
+        '            echo "preview_endpoint_mode=$MBSRN_PREVIEW_ENDPOINT_MODE"\n'
+        '            echo "expected_managed_certificate_name=$MBSRN_PREVIEW_CERTIFICATE_NAME"\n'
+        '            emit_apply_failure_state "$reason_message" "$service_state" "$endpoints_state" "$managed_certificate_state" "$managed_certificate_status"\n'
         "            exit 1\n"
         "          }\n"
         "          wait_for_named_resource() {\n"
-        '            local resource_kind=\"$1\"\n'
-        '            local resource_name=\"$2\"\n'
-        '            local max_attempts=\"$3\"\n'
-        '            local sleep_seconds=\"$4\"\n'
-        '            local reason_code=\"$5\"\n'
-        '            local reason_message=\"$6\"\n'
-        '            local service_state=\"${7:-unknown}\"\n'
-        '            local endpoints_state=\"${8:-unknown}\"\n'
-        '            local managed_certificate_state=\"${9:-unknown}\"\n'
-        '            local managed_certificate_status=\"${10:-}\"\n'
-        '            local attempt=1\n'
-        '            while [ \"$attempt\" -le \"$max_attempts\" ]; do\n'
-        '              if kubectl get \"$resource_kind\" \"$resource_name\" --namespace \"$K8S_NAMESPACE\" >/dev/null 2>&1; then\n'
+        '            local resource_kind="$1"\n'
+        '            local resource_name="$2"\n'
+        '            local max_attempts="$3"\n'
+        '            local sleep_seconds="$4"\n'
+        '            local reason_code="$5"\n'
+        '            local reason_message="$6"\n'
+        '            local service_state="${7:-unknown}"\n'
+        '            local endpoints_state="${8:-unknown}"\n'
+        '            local managed_certificate_state="${9:-unknown}"\n'
+        '            local managed_certificate_status="${10:-}"\n'
+        "            local attempt=1\n"
+        '            while [ "$attempt" -le "$max_attempts" ]; do\n'
+        '              if kubectl get "$resource_kind" "$resource_name" --namespace "$K8S_NAMESPACE" >/dev/null 2>&1; then\n'
         "                return 0\n"
         "              fi\n"
-        '              if [ \"$attempt\" -lt \"$max_attempts\" ]; then\n'
-        '                sleep \"$sleep_seconds\"\n'
+        '              if [ "$attempt" -lt "$max_attempts" ]; then\n'
+        '                sleep "$sleep_seconds"\n'
         "              fi\n"
-        '              attempt=$((attempt + 1))\n'
+        "              attempt=$((attempt + 1))\n"
         "            done\n"
-        '            fail_apply_resource \"$reason_code\" \"$reason_message\" \"$service_state\" \"$endpoints_state\" \"$managed_certificate_state\" \"$managed_certificate_status\"\n'
+        '            fail_apply_resource "$reason_code" "$reason_message" "$service_state" "$endpoints_state" "$managed_certificate_state" "$managed_certificate_status"\n'
         "          }\n"
-        '          ingress_manifest_present=false\n'
-        '          ingress_references_managed_certificate=false\n'
-        '          if [ -f k8s/ingress.yaml ]; then\n'
-        '            ingress_manifest_present=true\n'
-        '            if grep -q \"networking.gke.io/managed-certificates:\" k8s/ingress.yaml; then\n'
-        '              ingress_references_managed_certificate=true\n'
+        "          ingress_manifest_present=false\n"
+        "          ingress_references_managed_certificate=false\n"
+        "          if [ -f k8s/ingress.yaml ]; then\n"
+        "            ingress_manifest_present=true\n"
+        '            if grep -q "networking.gke.io/managed-certificates:" k8s/ingress.yaml; then\n'
+        "              ingress_references_managed_certificate=true\n"
         "            fi\n"
         "          fi\n"
-        '          apply_manifest_if_present \"k8s/resourcequota.yaml\"\n'
-        '          apply_manifest_if_present \"k8s/limitrange.yaml\"\n'
-        '          apply_manifest_if_present \"k8s/networkpolicy.yaml\"\n'
+        '          apply_manifest_if_present "k8s/resourcequota.yaml"\n'
+        '          apply_manifest_if_present "k8s/limitrange.yaml"\n'
+        '          apply_manifest_if_present "k8s/networkpolicy.yaml"\n'
         "          while IFS= read -r manifest_path; do\n"
-        '            [ -n \"$manifest_path\" ] || continue\n'
-        '            kubectl apply -f \"$manifest_path\"\n'
+        '            [ -n "$manifest_path" ] || continue\n'
+        '            kubectl apply -f "$manifest_path"\n'
         "          done < <(\n"
         "            find k8s -maxdepth 1 -type f -name '*.yaml' | sort \\\n"
         "              | grep -Ev '^k8s/(namespace|deployment|service|backendconfig|frontendconfig|managedcertificate|ingress|resourcequota|limitrange|networkpolicy)\\.yaml$' || true\n"
         "          )\n"
-        '          apply_manifest_if_present \"k8s/backendconfig.yaml\"\n'
-        '          apply_manifest_if_present \"k8s/service.yaml\"\n'
-        '          wait_for_named_resource \"service\" \"site-web\" 10 3 \"runtime_service_missing_after_apply\" \"Service site-web is missing after managed manifest apply.\" \"false\" \"unknown\" \"unknown\"\n'
-        '          apply_manifest_if_present \"k8s/deployment.yaml\"\n'
-        '          apply_manifest_if_present \"k8s/frontendconfig.yaml\"\n'
-        '          if [ \"$ingress_manifest_present\" = true ]; then\n'
-        '            apply_manifest_if_present \"k8s/ingress.yaml\"\n'
+        '          apply_manifest_if_present "k8s/backendconfig.yaml"\n'
+        '          apply_manifest_if_present "k8s/service.yaml"\n'
+        '          wait_for_named_resource "service" "site-web" 10 3 "runtime_service_missing_after_apply" "Service site-web is missing after managed manifest apply." "false" "unknown" "unknown"\n'
+        '          apply_manifest_if_present "k8s/deployment.yaml"\n'
+        '          apply_manifest_if_present "k8s/frontendconfig.yaml"\n'
+        '          if [ "$ingress_manifest_present" = true ]; then\n'
+        '            apply_manifest_if_present "k8s/ingress.yaml"\n'
         "          fi\n"
         "      - name: Verify required resources after apply\n"
         "        run: |\n"
         "          set -euo pipefail\n"
         "          fail_missing_resource() {\n"
-        '            local reason_code=\"$1\"\n'
-        '            local reason_message=\"$2\"\n'
-        '            local service_state=\"${3:-unknown}\"\n'
-        '            local endpoints_state=\"${4:-unknown}\"\n'
-        '            local managed_certificate_state=\"${5:-unknown}\"\n'
-        '            local managed_certificate_status=\"${6:-}\"\n'
-        '            echo \"deploy_runtime_reason_code=${reason_code}\"\n'
-        '            echo \"deploy_runtime_reason_message=${reason_message}\"\n'
-        '            echo \"deploy_runtime_failure_stage=ingress_verify\"\n'
-        '            echo \"k8s_namespace=$K8S_NAMESPACE\"\n'
-        '            echo \"ingress_name=site-web\"\n'
-        '            echo \"preview_hostname=$MBSRN_PREVIEW_HOSTNAME\"\n'
-        '            echo \"preview_endpoint_mode=$MBSRN_PREVIEW_ENDPOINT_MODE\"\n'
-        '            echo \"expected_managed_certificate_name=$MBSRN_PREVIEW_CERTIFICATE_NAME\"\n'
-        '            echo \"resolve_live_url_state_service_exists=$service_state\"\n'
-        '            echo \"resolve_live_url_state_endpoints_ready=$endpoints_state\"\n'
-        '            echo \"resolve_live_url_state_managed_certificate_exists=$managed_certificate_state\"\n'
-        '            if [ -n \"$managed_certificate_status\" ]; then\n'
-        '              echo \"resolve_live_url_state_managed_certificate_status=$managed_certificate_status\"\n'
+        '            local reason_code="$1"\n'
+        '            local reason_message="$2"\n'
+        '            local service_state="${3:-unknown}"\n'
+        '            local endpoints_state="${4:-unknown}"\n'
+        '            local managed_certificate_state="${5:-unknown}"\n'
+        '            local managed_certificate_status="${6:-}"\n'
+        '            echo "deploy_runtime_reason_code=${reason_code}"\n'
+        '            echo "deploy_runtime_reason_message=${reason_message}"\n'
+        '            echo "deploy_runtime_failure_stage=ingress_verify"\n'
+        '            echo "k8s_namespace=$K8S_NAMESPACE"\n'
+        '            echo "ingress_name=site-web"\n'
+        '            echo "preview_hostname=$MBSRN_PREVIEW_HOSTNAME"\n'
+        '            echo "preview_endpoint_mode=$MBSRN_PREVIEW_ENDPOINT_MODE"\n'
+        '            echo "expected_managed_certificate_name=$MBSRN_PREVIEW_CERTIFICATE_NAME"\n'
+        '            echo "resolve_live_url_state_service_exists=$service_state"\n'
+        '            echo "resolve_live_url_state_endpoints_ready=$endpoints_state"\n'
+        '            echo "resolve_live_url_state_managed_certificate_exists=$managed_certificate_state"\n'
+        '            if [ -n "$managed_certificate_status" ]; then\n'
+        '              echo "resolve_live_url_state_managed_certificate_status=$managed_certificate_status"\n'
         "            fi\n"
-        '            echo \"resolve_live_url_state_runtime_ready=false\"\n'
-        '            echo \"resolve_live_url_state_ingress_address_resolved=false\"\n'
-        '            echo \"resolve_live_url_state_deploy_https_ready=false\"\n'
-        '            echo \"resolve_live_url_state_https_ready=false\"\n'
-        '            echo \"resolve_live_url_state_runtime_ready_tls_pending=false\"\n'
-        '            echo \"resolve_live_url_state_deploy_runtime_failure_stage=ingress_verify\"\n'
-        '            echo \"resolve_live_url_state_deploy_runtime_reason_message=$reason_message\"\n'
-        f'            echo \"resolve_live_url_state_{_MBSRN_MANAGED_DEPLOY_TEMPLATE_VERSION_OUTPUT_KEY}={_MBSRN_MANAGED_TEMPLATE_VERSION}\"\n'
+        '            echo "resolve_live_url_state_runtime_ready=false"\n'
+        '            echo "resolve_live_url_state_ingress_address_resolved=false"\n'
+        '            echo "resolve_live_url_state_deploy_https_ready=false"\n'
+        '            echo "resolve_live_url_state_https_ready=false"\n'
+        '            echo "resolve_live_url_state_runtime_ready_tls_pending=false"\n'
+        '            echo "resolve_live_url_state_deploy_runtime_failure_stage=ingress_verify"\n'
+        '            echo "resolve_live_url_state_deploy_runtime_reason_message=$reason_message"\n'
+        f'            echo "resolve_live_url_state_{_MBSRN_MANAGED_DEPLOY_TEMPLATE_VERSION_OUTPUT_KEY}={_MBSRN_MANAGED_TEMPLATE_VERSION}"\n'
         "            exit 1\n"
         "          }\n"
-        '          if ! kubectl get deployment site-web --namespace \"$K8S_NAMESPACE\" >/dev/null 2>&1; then\n'
-        '            fail_missing_resource \"runtime_deployment_missing_after_apply\" \"Deployment site-web is missing after managed manifest apply.\" \"unknown\" \"unknown\" \"unknown\"\n'
+        '          if ! kubectl get deployment site-web --namespace "$K8S_NAMESPACE" >/dev/null 2>&1; then\n'
+        '            fail_missing_resource "runtime_deployment_missing_after_apply" "Deployment site-web is missing after managed manifest apply." "unknown" "unknown" "unknown"\n'
         "          fi\n"
-        '          if ! kubectl get service site-web --namespace \"$K8S_NAMESPACE\" >/dev/null 2>&1; then\n'
-        '            fail_missing_resource \"runtime_service_missing_after_apply\" \"Service site-web is missing after managed manifest apply.\" \"false\" \"unknown\" \"unknown\"\n'
+        '          if ! kubectl get service site-web --namespace "$K8S_NAMESPACE" >/dev/null 2>&1; then\n'
+        '            fail_missing_resource "runtime_service_missing_after_apply" "Service site-web is missing after managed manifest apply." "false" "unknown" "unknown"\n'
         "          fi\n"
-        '          ingress_manifest_present=false\n'
-        '          if [ -f k8s/ingress.yaml ]; then\n'
-        '            ingress_manifest_present=true\n'
+        "          ingress_manifest_present=false\n"
+        "          if [ -f k8s/ingress.yaml ]; then\n"
+        "            ingress_manifest_present=true\n"
         "          fi\n"
-        '          if [ \"$ingress_manifest_present\" = true ] \\\n'
-        '            && ! kubectl get ingress site-web --namespace \"$K8S_NAMESPACE\" >/dev/null 2>&1; then\n'
-        '            fail_missing_resource \"runtime_ingress_missing_after_apply\" \"Ingress site-web is missing after managed manifest apply.\" \"true\" \"unknown\" \"unknown\"\n'
+        '          if [ "$ingress_manifest_present" = true ] \\\n'
+        '            && ! kubectl get ingress site-web --namespace "$K8S_NAMESPACE" >/dev/null 2>&1; then\n'
+        '            fail_missing_resource "runtime_ingress_missing_after_apply" "Ingress site-web is missing after managed manifest apply." "true" "unknown" "unknown"\n'
         "          fi\n"
-        '          ingress_references_managed_certificate=false\n'
-        '          ingress_references_frontend_config=false\n'
-        '          if [ \"$ingress_manifest_present\" = true ]; then\n'
-        '            if grep -q \"networking.gke.io/managed-certificates:\" k8s/ingress.yaml; then\n'
-        '              ingress_references_managed_certificate=true\n'
+        "          ingress_references_managed_certificate=false\n"
+        "          ingress_references_frontend_config=false\n"
+        '          if [ "$ingress_manifest_present" = true ]; then\n'
+        '            if grep -q "networking.gke.io/managed-certificates:" k8s/ingress.yaml; then\n'
+        "              ingress_references_managed_certificate=true\n"
         "            fi\n"
-        '            if grep -q \"networking.gke.io/v1beta1.FrontendConfig:\" k8s/ingress.yaml; then\n'
-        '              ingress_references_frontend_config=true\n'
+        '            if grep -q "networking.gke.io/v1beta1.FrontendConfig:" k8s/ingress.yaml; then\n'
+        "              ingress_references_frontend_config=true\n"
         "            fi\n"
         "          fi\n"
-        '          if [ \"$ingress_references_managed_certificate\" = true ] \\\n'
-        '            && ! kubectl get managedcertificate \"$MBSRN_PREVIEW_CERTIFICATE_NAME\" --namespace \"$K8S_NAMESPACE\" >/dev/null 2>&1; then\n'
-        '            fail_missing_resource \"runtime_managed_certificate_missing_after_apply\" \"ManagedCertificate referenced by ingress is missing after managed manifest apply.\" \"true\" \"unknown\" \"false\" \"MISSING\"\n'
+        '          if [ "$ingress_references_managed_certificate" = true ] \\\n'
+        '            && ! kubectl get managedcertificate "$MBSRN_PREVIEW_CERTIFICATE_NAME" --namespace "$K8S_NAMESPACE" >/dev/null 2>&1; then\n'
+        '            fail_missing_resource "runtime_managed_certificate_missing_after_apply" "ManagedCertificate referenced by ingress is missing after managed manifest apply." "true" "unknown" "false" "MISSING"\n'
         "          fi\n"
-        '          if [ \"$ingress_references_frontend_config\" = true ] \\\n'
-        '            && ! kubectl get frontendconfig \"$MBSRN_FRONTEND_CONFIG_NAME\" --namespace \"$K8S_NAMESPACE\" >/dev/null 2>&1; then\n'
-        '            fail_missing_resource \"runtime_frontend_config_missing_after_apply\" \"FrontendConfig referenced by ingress is missing after managed manifest apply.\" \"true\" \"unknown\" \"unknown\"\n'
+        '          if [ "$ingress_references_frontend_config" = true ] \\\n'
+        '            && ! kubectl get frontendconfig "$MBSRN_FRONTEND_CONFIG_NAME" --namespace "$K8S_NAMESPACE" >/dev/null 2>&1; then\n'
+        '            fail_missing_resource "runtime_frontend_config_missing_after_apply" "FrontendConfig referenced by ingress is missing after managed manifest apply." "true" "unknown" "unknown"\n'
         "          fi\n"
-        '          service_references_backend_config=false\n'
-        '          if [ -f k8s/service.yaml ] && grep -q \"cloud.google.com/backend-config\" k8s/service.yaml; then\n'
-        '            service_references_backend_config=true\n'
+        "          service_references_backend_config=false\n"
+        '          if [ -f k8s/service.yaml ] && grep -q "cloud.google.com/backend-config" k8s/service.yaml; then\n'
+        "            service_references_backend_config=true\n"
         "          fi\n"
-        '          if [ \"$service_references_backend_config\" = true ] \\\n'
-        '            && ! kubectl get backendconfig \"$MBSRN_BACKEND_CONFIG_NAME\" --namespace \"$K8S_NAMESPACE\" >/dev/null 2>&1; then\n'
-        '            fail_missing_resource \"runtime_backend_config_missing_after_apply\" \"BackendConfig referenced by service is missing after managed manifest apply.\" \"true\" \"unknown\" \"unknown\"\n'
+        '          if [ "$service_references_backend_config" = true ] \\\n'
+        '            && ! kubectl get backendconfig "$MBSRN_BACKEND_CONFIG_NAME" --namespace "$K8S_NAMESPACE" >/dev/null 2>&1; then\n'
+        '            fail_missing_resource "runtime_backend_config_missing_after_apply" "BackendConfig referenced by service is missing after managed manifest apply." "true" "unknown" "unknown"\n'
         "          fi\n"
         "      - name: Resolve managed site runtime image\n"
         "        id: resolve_site_runtime_image\n"
@@ -11595,8 +11602,8 @@ def _render_managed_deploy_workflow_yaml(
         '          endpoint_probe_status_code=""\n'
         '          runtime_probe_status=""\n'
         "          pod_restart_detected=false\n"
-        '          replace_existing_runtime_requested="$(echo "${MBSRN_REPLACE_EXISTING_RUNTIME:-false}" | tr \'[:upper:]\' \'[:lower:]\' | tr -d \'[:space:]\')"\n'
-        '          replace_existing_runtime_performed="$(echo "${MBSRN_REPLACE_RUNTIME_PERFORMED:-false}" | tr \'[:upper:]\' \'[:lower:]\' | tr -d \'[:space:]\')"\n'
+        "          replace_existing_runtime_requested=\"$(echo \"${MBSRN_REPLACE_EXISTING_RUNTIME:-false}\" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')\"\n"
+        "          replace_existing_runtime_performed=\"$(echo \"${MBSRN_REPLACE_RUNTIME_PERFORMED:-false}\" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')\"\n"
         '          deploy_runtime_reason_message=""\n'
         '          service_exists="unknown"\n'
         '          endpoints_ready="unknown"\n'
@@ -11618,15 +11625,15 @@ def _render_managed_deploy_workflow_yaml(
         "          }\n"
         "          print_redacted_file() {\n"
         '            local file_path="$1"\n'
-        "            if [ -f \"$file_path\" ]; then\n"
+        '            if [ -f "$file_path" ]; then\n'
         '              cat "$file_path" | redact_sensitive_stream\n'
         "            fi\n"
         "          }\n"
         "          set_https_probe_error_summary() {\n"
-            '            local probe_reason="$1"\n'
-            '            local probe_exit_code="${2:-}"\n'
-            '            local probe_status_code="${3:-}"\n'
-            '            local probe_output_path="${4:-}"\n'
+        '            local probe_reason="$1"\n'
+        '            local probe_exit_code="${2:-}"\n'
+        '            local probe_status_code="${3:-}"\n'
+        '            local probe_output_path="${4:-}"\n'
         '            local probe_detail=""\n'
         '            if [ -n "$probe_output_path" ] && [ -f "$probe_output_path" ]; then\n'
         "              probe_detail=\"$(head -n 1 \"$probe_output_path\" | tr -d '\\r' | tr '\\t' ' ' | sed 's/[[:space:]]\\+/ /g' | cut -c1-160)\"\n"
@@ -11691,80 +11698,80 @@ def _render_managed_deploy_workflow_yaml(
         '            https_probe_error_summary="$(echo "$https_probe_error_summary" | tr -d \'\\r\' | cut -c1-240)"\n'
         "          }\n"
         "          emit_resolve_live_url_state() {\n"
-            "            ensure_https_probe_error_summary\n"
-            '            runtime_ready_state="false"\n'
-            '            if [ "$deploy_https_ready" = "true" ]; then\n'
-            '              runtime_ready_state="true"\n'
-            "            fi\n"
-            '            ingress_address_resolved_state="false"\n'
-            '            if [ -n "${ingress_ip:-}" ] || [ -n "${ingress_host:-}" ] || [ -n "${ingress_status_ip:-}" ]; then\n'
-            '              ingress_address_resolved_state="true"\n'
-            "            fi\n"
-            '            endpoints_ready_state="${endpoints_ready:-unknown}"\n'
-            '            if [ "$endpoints_ready_state" = "unknown" ] && [ -n "${k8s_endpoint_ready:-}" ]; then\n'
-            '              endpoints_ready_state="$k8s_endpoint_ready"\n'
-            "            fi\n"
-            '            managed_certificate_status_state="$tls_certificate_status"\n'
-            '            if [ -z "$managed_certificate_status_state" ] && [ -n "$observed_managed_certificate_status" ]; then\n'
-            '              managed_certificate_status_state="$observed_managed_certificate_status"\n'
-            "            fi\n"
-            '            runtime_ready_tls_pending_state="false"\n'
-            "            normalized_cert_status_state=\"$(echo \"${tls_certificate_status:-}\" | tr '[:lower:]' '[:upper:]' | tr -d '[:space:]')\"\n"
-            "            normalized_domain_status_state=\"$(echo \"${tls_domain_status:-}\" | tr '[:lower:]' '[:upper:]' | tr -d '[:space:]')\"\n"
-            '            if [ "$runtime_ready_state" != "true" ] \\\n'
-            '              && [ "$ingress_address_resolved_state" = "true" ] \\\n'
-            '              && { [ "$normalized_cert_status_state" = "PROVISIONING" ] || [ "$normalized_domain_status_state" = "PROVISIONING" ]; }; then\n'
-            '              runtime_ready_tls_pending_state="true"\n'
-            "            fi\n"
-            '            echo "resolve_live_url_state_host_reachable=$host_reachable"\n'
-            '            echo "resolve_live_url_state_host_reachability_scheme=$host_reachability_scheme"\n'
-            '            echo "resolve_live_url_state_live_url=$live_url"\n'
-            '            echo "resolve_live_url_state_dns_record_matches_ingress=$dns_record_matches_ingress"\n'
-            '            echo "resolve_live_url_state_dns_expected_ip=$dns_expected_ip"\n'
-            '            echo "resolve_live_url_state_dns_observed_ip=$dns_observed_ip"\n'
-            '            echo "resolve_live_url_state_expected_static_ip_address=$expected_static_ip_address"\n'
-            '            echo "resolve_live_url_state_static_ip_status=$static_ip_status"\n'
-            '            echo "resolve_live_url_state_static_ip_users=$static_ip_users"\n'
-            '            echo "resolve_live_url_state_ingress_status_ip=$ingress_status_ip"\n'
-            '            echo "resolve_live_url_state_ingress_status_ip_matches_static_ip=$ingress_status_ip_matches_static_ip"\n'
-            '            echo "resolve_live_url_state_static_ip_bound_to_expected_forwarding_rule=$static_ip_bound_to_expected_forwarding_rule"\n'
-            '            echo "resolve_live_url_state_tls_certificate_status=$tls_certificate_status"\n'
-            '            echo "resolve_live_url_state_tls_domain_status=$tls_domain_status"\n'
-            '            echo "resolve_live_url_state_observed_managed_certificate_domains=$observed_managed_certificate_domains"\n'
-            '            echo "resolve_live_url_state_observed_managed_certificate_status=$observed_managed_certificate_status"\n'
-            '            echo "resolve_live_url_state_observed_managed_certificate_domain_status=$observed_managed_certificate_domain_status"\n'
-            '            echo "resolve_live_url_state_https_probe_error_summary=$https_probe_error_summary"\n'
-            '            echo "resolve_live_url_state_cert_identity_valid=$cert_identity_valid"\n'
-            '            echo "resolve_live_url_state_deploy_https_ready=$deploy_https_ready"\n'
-            '            echo "resolve_live_url_state_preview_https_status=$preview_https_status"\n'
-            '            echo "resolve_live_url_state_preview_http_status=$preview_http_status"\n'
-            '            echo "resolve_live_url_state_preview_probe_attempt=$preview_probe_attempt"\n'
-            '            echo "resolve_live_url_state_preview_probe_elapsed_seconds=$preview_probe_elapsed_seconds"\n'
-            '            echo "resolve_live_url_state_gce_backend_health_status=$gce_backend_health_status"\n'
-            '            echo "resolve_live_url_state_k8s_endpoint_ready=$k8s_endpoint_ready"\n'
-            '            echo "resolve_live_url_state_service_probe_status=$service_probe_status"\n'
-            '            echo "resolve_live_url_state_in_cluster_service_status_code=$in_cluster_service_status_code"\n'
-            '            echo "resolve_live_url_state_endpoint_probe_status=$endpoint_probe_status"\n'
-            '            echo "resolve_live_url_state_endpoint_probe_status_code=$endpoint_probe_status_code"\n'
-            '            echo "resolve_live_url_state_runtime_probe_status=$runtime_probe_status"\n'
-            '            echo "resolve_live_url_state_pod_restart_detected=$pod_restart_detected"\n'
-            '            echo "resolve_live_url_state_runtime_ready=$runtime_ready_state"\n'
-            '            echo "resolve_live_url_state_ingress_address_resolved=$ingress_address_resolved_state"\n'
-            '            echo "resolve_live_url_state_service_exists=$service_exists"\n'
-            '            echo "resolve_live_url_state_endpoints_ready=$endpoints_ready_state"\n'
-            '            echo "resolve_live_url_state_managed_certificate_exists=$managed_certificate_exists"\n'
-            '            echo "resolve_live_url_state_managed_certificate_status=$managed_certificate_status_state"\n'
-            '            echo "resolve_live_url_state_https_ready=$deploy_https_ready"\n'
-            '            echo "resolve_live_url_state_runtime_ready_tls_pending=$runtime_ready_tls_pending_state"\n'
-            '            echo "resolve_live_url_state_replace_existing_runtime_requested=$replace_existing_runtime_requested"\n'
-            '            echo "resolve_live_url_state_replace_existing_runtime_performed=$replace_existing_runtime_performed"\n'
-            '            echo "resolve_live_url_state_deploy_runtime_failure_stage=$deploy_runtime_failure_stage"\n'
-            '            echo "resolve_live_url_state_deploy_runtime_reason_message=$deploy_runtime_reason_message"\n'
-            f'            echo "resolve_live_url_state_{_MBSRN_MANAGED_DEPLOY_TEMPLATE_VERSION_OUTPUT_KEY}={_MBSRN_MANAGED_TEMPLATE_VERSION}"\n'
+        "            ensure_https_probe_error_summary\n"
+        '            runtime_ready_state="false"\n'
+        '            if [ "$deploy_https_ready" = "true" ]; then\n'
+        '              runtime_ready_state="true"\n'
+        "            fi\n"
+        '            ingress_address_resolved_state="false"\n'
+        '            if [ -n "${ingress_ip:-}" ] || [ -n "${ingress_host:-}" ] || [ -n "${ingress_status_ip:-}" ]; then\n'
+        '              ingress_address_resolved_state="true"\n'
+        "            fi\n"
+        '            endpoints_ready_state="${endpoints_ready:-unknown}"\n'
+        '            if [ "$endpoints_ready_state" = "unknown" ] && [ -n "${k8s_endpoint_ready:-}" ]; then\n'
+        '              endpoints_ready_state="$k8s_endpoint_ready"\n'
+        "            fi\n"
+        '            managed_certificate_status_state="$tls_certificate_status"\n'
+        '            if [ -z "$managed_certificate_status_state" ] && [ -n "$observed_managed_certificate_status" ]; then\n'
+        '              managed_certificate_status_state="$observed_managed_certificate_status"\n'
+        "            fi\n"
+        '            runtime_ready_tls_pending_state="false"\n'
+        "            normalized_cert_status_state=\"$(echo \"${tls_certificate_status:-}\" | tr '[:lower:]' '[:upper:]' | tr -d '[:space:]')\"\n"
+        "            normalized_domain_status_state=\"$(echo \"${tls_domain_status:-}\" | tr '[:lower:]' '[:upper:]' | tr -d '[:space:]')\"\n"
+        '            if [ "$runtime_ready_state" != "true" ] \\\n'
+        '              && [ "$ingress_address_resolved_state" = "true" ] \\\n'
+        '              && { [ "$normalized_cert_status_state" = "PROVISIONING" ] || [ "$normalized_domain_status_state" = "PROVISIONING" ]; }; then\n'
+        '              runtime_ready_tls_pending_state="true"\n'
+        "            fi\n"
+        '            echo "resolve_live_url_state_host_reachable=$host_reachable"\n'
+        '            echo "resolve_live_url_state_host_reachability_scheme=$host_reachability_scheme"\n'
+        '            echo "resolve_live_url_state_live_url=$live_url"\n'
+        '            echo "resolve_live_url_state_dns_record_matches_ingress=$dns_record_matches_ingress"\n'
+        '            echo "resolve_live_url_state_dns_expected_ip=$dns_expected_ip"\n'
+        '            echo "resolve_live_url_state_dns_observed_ip=$dns_observed_ip"\n'
+        '            echo "resolve_live_url_state_expected_static_ip_address=$expected_static_ip_address"\n'
+        '            echo "resolve_live_url_state_static_ip_status=$static_ip_status"\n'
+        '            echo "resolve_live_url_state_static_ip_users=$static_ip_users"\n'
+        '            echo "resolve_live_url_state_ingress_status_ip=$ingress_status_ip"\n'
+        '            echo "resolve_live_url_state_ingress_status_ip_matches_static_ip=$ingress_status_ip_matches_static_ip"\n'
+        '            echo "resolve_live_url_state_static_ip_bound_to_expected_forwarding_rule=$static_ip_bound_to_expected_forwarding_rule"\n'
+        '            echo "resolve_live_url_state_tls_certificate_status=$tls_certificate_status"\n'
+        '            echo "resolve_live_url_state_tls_domain_status=$tls_domain_status"\n'
+        '            echo "resolve_live_url_state_observed_managed_certificate_domains=$observed_managed_certificate_domains"\n'
+        '            echo "resolve_live_url_state_observed_managed_certificate_status=$observed_managed_certificate_status"\n'
+        '            echo "resolve_live_url_state_observed_managed_certificate_domain_status=$observed_managed_certificate_domain_status"\n'
+        '            echo "resolve_live_url_state_https_probe_error_summary=$https_probe_error_summary"\n'
+        '            echo "resolve_live_url_state_cert_identity_valid=$cert_identity_valid"\n'
+        '            echo "resolve_live_url_state_deploy_https_ready=$deploy_https_ready"\n'
+        '            echo "resolve_live_url_state_preview_https_status=$preview_https_status"\n'
+        '            echo "resolve_live_url_state_preview_http_status=$preview_http_status"\n'
+        '            echo "resolve_live_url_state_preview_probe_attempt=$preview_probe_attempt"\n'
+        '            echo "resolve_live_url_state_preview_probe_elapsed_seconds=$preview_probe_elapsed_seconds"\n'
+        '            echo "resolve_live_url_state_gce_backend_health_status=$gce_backend_health_status"\n'
+        '            echo "resolve_live_url_state_k8s_endpoint_ready=$k8s_endpoint_ready"\n'
+        '            echo "resolve_live_url_state_service_probe_status=$service_probe_status"\n'
+        '            echo "resolve_live_url_state_in_cluster_service_status_code=$in_cluster_service_status_code"\n'
+        '            echo "resolve_live_url_state_endpoint_probe_status=$endpoint_probe_status"\n'
+        '            echo "resolve_live_url_state_endpoint_probe_status_code=$endpoint_probe_status_code"\n'
+        '            echo "resolve_live_url_state_runtime_probe_status=$runtime_probe_status"\n'
+        '            echo "resolve_live_url_state_pod_restart_detected=$pod_restart_detected"\n'
+        '            echo "resolve_live_url_state_runtime_ready=$runtime_ready_state"\n'
+        '            echo "resolve_live_url_state_ingress_address_resolved=$ingress_address_resolved_state"\n'
+        '            echo "resolve_live_url_state_service_exists=$service_exists"\n'
+        '            echo "resolve_live_url_state_endpoints_ready=$endpoints_ready_state"\n'
+        '            echo "resolve_live_url_state_managed_certificate_exists=$managed_certificate_exists"\n'
+        '            echo "resolve_live_url_state_managed_certificate_status=$managed_certificate_status_state"\n'
+        '            echo "resolve_live_url_state_https_ready=$deploy_https_ready"\n'
+        '            echo "resolve_live_url_state_runtime_ready_tls_pending=$runtime_ready_tls_pending_state"\n'
+        '            echo "resolve_live_url_state_replace_existing_runtime_requested=$replace_existing_runtime_requested"\n'
+        '            echo "resolve_live_url_state_replace_existing_runtime_performed=$replace_existing_runtime_performed"\n'
+        '            echo "resolve_live_url_state_deploy_runtime_failure_stage=$deploy_runtime_failure_stage"\n'
+        '            echo "resolve_live_url_state_deploy_runtime_reason_message=$deploy_runtime_reason_message"\n'
+        f'            echo "resolve_live_url_state_{_MBSRN_MANAGED_DEPLOY_TEMPLATE_VERSION_OUTPUT_KEY}={_MBSRN_MANAGED_TEMPLATE_VERSION}"\n'
         "          }\n"
         "          collect_ingress_502_runtime_diagnostics() {\n"
         "            preview_probe_elapsed_seconds=$(( $(date +%s) - resolve_started_at ))\n"
-        "            if [ \"$preview_probe_elapsed_seconds\" -lt 0 ]; then\n"
+        '            if [ "$preview_probe_elapsed_seconds" -lt 0 ]; then\n'
         "              preview_probe_elapsed_seconds=0\n"
         "            fi\n"
         '            echo "Collecting ingress-502 runtime diagnostics for namespace $K8S_NAMESPACE (preview host: $preview_host)."\n'
@@ -11817,8 +11824,8 @@ def _render_managed_deploy_workflow_yaml(
         '              echo "--- preview HTTPS response headers (redacted) ---"\n'
         '              head -n 40 "$preview_headers_output" | redact_sensitive_stream || true\n'
         '              echo "--- preview HTTPS response snippet (redacted) ---"\n'
-        '              head -c 300 "$preview_body_output" | tr -d \'\\r\' | redact_sensitive_stream || true\n'
-        '              echo\n'
+        "              head -c 300 \"$preview_body_output\" | tr -d '\\r' | redact_sensitive_stream || true\n"
+        "              echo\n"
         '              rm -f "$preview_headers_output" "$preview_body_output"\n'
         "            fi\n"
         '            probe_pod="site-web-runtime-probe-${GITHUB_RUN_ID:-run}-${GITHUB_RUN_ATTEMPT:-1}"\n'
@@ -11827,7 +11834,7 @@ def _render_managed_deploy_workflow_yaml(
         '            service_probe_output="$(mktemp)"\n'
         '            if kubectl -n "$K8S_NAMESPACE" run "$probe_pod" --image=curlimages/curl:8.10.1 --restart=Never --attach --command -- sh -c "curl -sS --connect-timeout 5 --max-time 15 --output /tmp/body --write-out \'%{http_code}\' http://site-web.${K8S_NAMESPACE}.svc.cluster.local:80/" >"$service_probe_output" 2>&1; then\n'
         '              in_cluster_service_status_code="$(tr -cd \'0-9\' < "$service_probe_output" | tail -c 4)"\n'
-        "              if [ \"$in_cluster_service_status_code\" = \"502\" ]; then\n"
+        '              if [ "$in_cluster_service_status_code" = "502" ]; then\n'
         '                service_probe_status="http_502"\n'
         "              elif echo \"$in_cluster_service_status_code\" | grep -Eq '^[1-5][0-9][0-9]$'; then\n"
         '                service_probe_status="ok"\n'
@@ -11844,7 +11851,7 @@ def _render_managed_deploy_workflow_yaml(
         '              endpoint_probe_output="$(mktemp)"\n'
         '              if kubectl -n "$K8S_NAMESPACE" run "$probe_pod" --image=curlimages/curl:8.10.1 --restart=Never --attach --command -- sh -c "curl -sS --connect-timeout 5 --max-time 15 --output /tmp/body --write-out \'%{http_code}\' http://${endpoint_ip}:8080/" >"$endpoint_probe_output" 2>&1; then\n'
         '                endpoint_probe_status_code="$(tr -cd \'0-9\' < "$endpoint_probe_output" | tail -c 4)"\n'
-        "                if [ \"$endpoint_probe_status_code\" = \"502\" ]; then\n"
+        '                if [ "$endpoint_probe_status_code" = "502" ]; then\n'
         '                  endpoint_probe_status="http_502"\n'
         "                elif echo \"$endpoint_probe_status_code\" | grep -Eq '^[1-5][0-9][0-9]$'; then\n"
         '                  endpoint_probe_status="ok"\n'
@@ -11914,19 +11921,19 @@ def _render_managed_deploy_workflow_yaml(
         "            trap - EXIT\n"
         '            if [ "$resolve_live_url_exit_code" -ne 0 ]; then\n'
         "              emit_resolve_live_url_state\n"
-        '              observed_reason_code="$(grep -E \'^[[:space:]]*deploy_runtime_reason_code=\' "$resolve_live_url_log_path" | tail -n1 | cut -d\'=\' -f2- | tr -d \'\\r\' || true)"\n'
+        "              observed_reason_code=\"$(grep -E '^[[:space:]]*deploy_runtime_reason_code=' \"$resolve_live_url_log_path\" | tail -n1 | cut -d'=' -f2- | tr -d '\\r' || true)\"\n"
         '              if [ -z "$observed_reason_code" ]; then\n'
         f'                observed_reason_code="{_DEPLOY_RUNTIME_REASON_RUNTIME_READINESS_UNKNOWN_FAILURE}"\n'
         '                echo "deploy_runtime_reason_code=$observed_reason_code"\n'
         '                deploy_runtime_reason_message="Managed-site runtime readiness failed before a precise reason was recorded."\n'
         "              fi\n"
-        '              observed_reason_message="$(grep -E \'^[[:space:]]*deploy_runtime_reason_message=\' "$resolve_live_url_log_path" | tail -n1 | cut -d\'=\' -f2- | tr -d \'\\r\' || true)"\n'
+        "              observed_reason_message=\"$(grep -E '^[[:space:]]*deploy_runtime_reason_message=' \"$resolve_live_url_log_path\" | tail -n1 | cut -d'=' -f2- | tr -d '\\r' || true)\"\n"
         '              if [ -n "$observed_reason_message" ]; then\n'
         '                deploy_runtime_reason_message="$observed_reason_message"\n'
         '              elif [ -z "$deploy_runtime_reason_message" ]; then\n'
         '                deploy_runtime_reason_message="Managed-site runtime readiness failed. Review workflow diagnostics for bounded evidence."\n'
         "              fi\n"
-        '              observed_failure_stage="$(grep -E \'^[[:space:]]*deploy_runtime_failure_stage=\' "$resolve_live_url_log_path" | tail -n1 | cut -d\'=\' -f2- | tr -d \'\\r\' || true)"\n'
+        "              observed_failure_stage=\"$(grep -E '^[[:space:]]*deploy_runtime_failure_stage=' \"$resolve_live_url_log_path\" | tail -n1 | cut -d'=' -f2- | tr -d '\\r' || true)\"\n"
         '              if [ -n "$observed_failure_stage" ]; then\n'
         '                deploy_runtime_failure_stage="$observed_failure_stage"\n'
         "              fi\n"
@@ -12890,9 +12897,9 @@ def _render_managed_deploy_workflow_yaml(
         "          deploy_https_ready=true\n"
         '          live_url="https://$preview_host"\n'
         "          {\n"
-            '            echo "live_url=$live_url"\n'
-            '            echo "resolved_live_url=$live_url"\n'
-            '            echo "deployed_url=$live_url"\n'
+        '            echo "live_url=$live_url"\n'
+        '            echo "resolved_live_url=$live_url"\n'
+        '            echo "deployed_url=$live_url"\n'
         '            echo "dns_record_matches_ingress=$dns_record_matches_ingress"\n'
         '            echo "dns_expected_ip=$dns_expected_ip"\n'
         '            echo "dns_observed_ip=$dns_observed_ip"\n'
@@ -12913,31 +12920,31 @@ def _render_managed_deploy_workflow_yaml(
         '            echo "cert_identity_valid=$cert_identity_valid"\n'
         '            echo "host_reachable=$host_reachable"\n'
         '            echo "host_reachability_scheme=$host_reachability_scheme"\n'
-            '            echo "https_probe_error_summary=$https_probe_error_summary"\n'
-            '            echo "deploy_https_ready=$deploy_https_ready"\n'
-            '            echo "preview_https_status=$preview_https_status"\n'
-            '            echo "preview_http_status=$preview_http_status"\n'
-            '            echo "preview_probe_attempt=$preview_probe_attempt"\n'
-            '            echo "preview_probe_elapsed_seconds=$preview_probe_elapsed_seconds"\n'
-            '            echo "gce_backend_health_status=$gce_backend_health_status"\n'
-            '            echo "k8s_endpoint_ready=$k8s_endpoint_ready"\n'
-            '            echo "service_probe_status=$service_probe_status"\n'
-            '            echo "in_cluster_service_status_code=$in_cluster_service_status_code"\n'
-            '            echo "endpoint_probe_status=$endpoint_probe_status"\n'
-            '            echo "endpoint_probe_status_code=$endpoint_probe_status_code"\n'
-            '            echo "runtime_probe_status=$runtime_probe_status"\n'
-            '            echo "pod_restart_detected=$pod_restart_detected"\n'
-            '            echo "runtime_ready=true"\n'
-            '            echo "ingress_address_resolved=true"\n'
-            '            echo "service_exists=$service_exists"\n'
-            '            echo "endpoints_ready=true"\n'
-            '            echo "managed_certificate_exists=$managed_certificate_exists"\n'
-            '            echo "managed_certificate_status=$tls_certificate_status"\n'
-            '            echo "https_ready=true"\n'
-            '            echo "runtime_ready_tls_pending=false"\n'
-            '            echo "replace_existing_runtime_requested=$replace_existing_runtime_requested"\n'
-            '            echo "replace_existing_runtime_performed=$replace_existing_runtime_performed"\n'
-            f'            echo "{_MBSRN_MANAGED_DEPLOY_TEMPLATE_VERSION_OUTPUT_KEY}={_MBSRN_MANAGED_TEMPLATE_VERSION}"\n'
+        '            echo "https_probe_error_summary=$https_probe_error_summary"\n'
+        '            echo "deploy_https_ready=$deploy_https_ready"\n'
+        '            echo "preview_https_status=$preview_https_status"\n'
+        '            echo "preview_http_status=$preview_http_status"\n'
+        '            echo "preview_probe_attempt=$preview_probe_attempt"\n'
+        '            echo "preview_probe_elapsed_seconds=$preview_probe_elapsed_seconds"\n'
+        '            echo "gce_backend_health_status=$gce_backend_health_status"\n'
+        '            echo "k8s_endpoint_ready=$k8s_endpoint_ready"\n'
+        '            echo "service_probe_status=$service_probe_status"\n'
+        '            echo "in_cluster_service_status_code=$in_cluster_service_status_code"\n'
+        '            echo "endpoint_probe_status=$endpoint_probe_status"\n'
+        '            echo "endpoint_probe_status_code=$endpoint_probe_status_code"\n'
+        '            echo "runtime_probe_status=$runtime_probe_status"\n'
+        '            echo "pod_restart_detected=$pod_restart_detected"\n'
+        '            echo "runtime_ready=true"\n'
+        '            echo "ingress_address_resolved=true"\n'
+        '            echo "service_exists=$service_exists"\n'
+        '            echo "endpoints_ready=true"\n'
+        '            echo "managed_certificate_exists=$managed_certificate_exists"\n'
+        '            echo "managed_certificate_status=$tls_certificate_status"\n'
+        '            echo "https_ready=true"\n'
+        '            echo "runtime_ready_tls_pending=false"\n'
+        '            echo "replace_existing_runtime_requested=$replace_existing_runtime_requested"\n'
+        '            echo "replace_existing_runtime_performed=$replace_existing_runtime_performed"\n'
+        f'            echo "{_MBSRN_MANAGED_DEPLOY_TEMPLATE_VERSION_OUTPUT_KEY}={_MBSRN_MANAGED_TEMPLATE_VERSION}"\n'
         '          } >> "$GITHUB_OUTPUT"\n'
         "      - name: Emit managed deployment metadata\n"
         "        run: |\n"
@@ -13114,7 +13121,7 @@ def _render_self_managed_deploy_workflow_yaml(
     if private_image_auth_required:
         pull_secret_step = (
             "      - name: Verify GHCR image pull secret\n"
-            "        run: kubectl get secret ghcr-pull-secret --namespace \"$K8S_NAMESPACE\"\n"
+            '        run: kubectl get secret ghcr-pull-secret --namespace "$K8S_NAMESPACE"\n'
         )
 
     workflow_yaml_unsigned = rf"""# {_MBSRN_MANAGED_WORKFLOW_MARKER}
@@ -14024,9 +14031,7 @@ def _evaluate_preview_certificate_alignment(
         and (ingress_certificate_mismatch or certificate_domain_mismatch or stale_managed_certificate_present)
     )
     if self_managed_tls_mode:
-        ingress_certificate_mismatch = bool(
-            not valid_pre_shared_cert_binding or ingress_cert_annotation_values
-        )
+        ingress_certificate_mismatch = bool(not valid_pre_shared_cert_binding or ingress_cert_annotation_values)
         stale_pre_shared_cert_binding_detected = bool(
             ingress_pre_shared_cert_annotation_values and not valid_pre_shared_cert_binding
         )

@@ -1,4 +1,4 @@
-# SEO Migration Workspace (Phase 1-4)
+# SEO Migration Workspace (Phase 1-7)
 
 ## Intent
 The migration workspace is a controlled operator workflow for replacing weak incumbent SMB websites with reviewable, structured, AI-assisted static artifacts.
@@ -36,6 +36,29 @@ State/order invariants:
 - failed publish attempts do not mark deploy-ready state
 - failed deploy attempts do not mutate last successful publish metadata (artifact id/commit/timestamp)
 - UI readiness indicators are derived from persisted workspace/artifact state returned by backend summary/readiness payloads
+
+## Optional asynchronous source capture (Phase 7)
+
+Every site can choose one of two parameterized ingestion modes; Platfire is only the first acceptance example:
+
+- `analyze_rebuild` is the default bounded source analysis used to create a redesigned site.
+- `faithful_snapshot` renders authorized public pages in Chromium, freezes first-party pages/assets as a baseline, and then supplies bounded excerpts to draft generation.
+
+Faithful capture requires an explicit authorization acknowledgment. It does not reproduce server-side behavior. Detected forms, authentication, commerce, uploads, iframes, streaming media, WebSockets, and dynamic APIs are returned as concise replacement-required limitations.
+
+Capture API:
+
+- `POST /api/businesses/{business_id}/seo/sites/{site_id}/migration/source-capture-runs` queues a run and returns `202`.
+- `GET /api/businesses/{business_id}/seo/sites/{site_id}/migration/source-capture-runs` lists recent runs.
+- `GET /api/businesses/{business_id}/seo/sites/{site_id}/migration/source-capture-runs/{capture_id}` supports polling.
+
+Requests include a business-scoped idempotency key. Reusing the key returns the same run only when site and capture parameters match. Run states are `queued`, `running`, `completed`, and `failed`.
+
+A dedicated database-polling worker owns browser execution. It runs non-root in GKE Sandbox, explicitly enables Chromium's sandbox, blocks private/credentialed URLs, pins public DNS resolution, restricts navigation to the exact host and `www` equivalent, blocks external resources, and enforces page/asset/resource/total/time bounds.
+
+Objects use `source-captures/{business_id}/{site_id}/{capture_id}/attempt-{n}/...` in the private versioned migration-media bucket. The worker verifies byte length and SHA-256 after each write, records the GCS generation, and writes `manifest.json` last. An older run can complete for audit history but cannot replace a newer run as the workspace baseline.
+
+Draft generation consumes bounded rendered text/provenance from the completed baseline. It never edits the stored capture or manifest. Internal storage keys and complete captured contents are not exposed by the capture-run API or normal diagnostics.
 
 ## Operator Workflow
 Primary workflow now runs on the dedicated route:

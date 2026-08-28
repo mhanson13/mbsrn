@@ -1274,12 +1274,12 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
             blocked_setting_actual = self._coerce_optional_non_negative_int(
                 preflight_evaluation.get("blocked_setting_actual")
             )
-            blocked_setting_cap = self._coerce_optional_non_negative_int(preflight_evaluation.get("blocked_setting_cap"))
+            blocked_setting_cap = self._coerce_optional_non_negative_int(
+                preflight_evaluation.get("blocked_setting_cap")
+            )
             blocked_setting_summary = blocked_setting
             if blocked_setting_actual is not None and blocked_setting_cap is not None:
-                blocked_setting_summary = (
-                    f"{blocked_setting} actual {blocked_setting_actual} cap {blocked_setting_cap}"
-                )
+                blocked_setting_summary = f"{blocked_setting} actual {blocked_setting_actual} cap {blocked_setting_cap}"
             elif blocked_setting_cap is not None:
                 blocked_setting_summary = f"{blocked_setting} cap {blocked_setting_cap}"
             largest_block_summary = "unknown"
@@ -1937,7 +1937,9 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
                 "response_format_mode": _clean_optional_value(context.get("response_format_mode")),
                 "request_body_mode": _clean_optional_value(context.get("request_body_mode")),
                 "request_shape_adjusted": bool(context.get("request_shape_adjusted")),
-                "request_shape_adjustment_reason": _clean_optional_value(context.get("request_shape_adjustment_reason")),
+                "request_shape_adjustment_reason": _clean_optional_value(
+                    context.get("request_shape_adjustment_reason")
+                ),
                 "blocking_codes": list(blocking_codes),
                 "warning_codes": list(warning_codes),
                 **self._request_fingerprint_log_fields(request_fingerprint),
@@ -2741,7 +2743,9 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
         budget_capped = False
         generation_budget = _normalize_json_dict(compact_context.get("generation_budget"))
 
-        prior_context_budget = self._coerce_optional_non_negative_int(generation_budget.get("migration_context_budget_chars"))
+        prior_context_budget = self._coerce_optional_non_negative_int(
+            generation_budget.get("migration_context_budget_chars")
+        )
         compact_context_budget = max(
             _MIGRATION_DRAFT_CONTEXT_BUDGET_MIN_CHARS,
             min(_MIGRATION_DRAFT_CONTEXT_BUDGET_MAX_CHARS, int(generation_safety.max_final_input_chars)),
@@ -2750,13 +2754,17 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
             budget_capped = True
         generation_budget["migration_context_budget_chars"] = compact_context_budget
 
-        prior_page_limit = self._coerce_optional_non_negative_int(generation_budget.get("migration_generated_page_limit"))
+        prior_page_limit = self._coerce_optional_non_negative_int(
+            generation_budget.get("migration_generated_page_limit")
+        )
         compact_page_limit = max(1, min(10, int(generation_safety.compact_page_limit)))
         if prior_page_limit is None or compact_page_limit < prior_page_limit:
             budget_capped = True
         generation_budget["migration_generated_page_limit"] = compact_page_limit
 
-        prior_file_limit = self._coerce_optional_non_negative_int(generation_budget.get("migration_generated_file_limit"))
+        prior_file_limit = self._coerce_optional_non_negative_int(
+            generation_budget.get("migration_generated_file_limit")
+        )
         compact_file_limit = max(1, min(24, compact_page_limit))
         if prior_file_limit is None or compact_file_limit < prior_file_limit:
             budget_capped = True
@@ -2849,7 +2857,9 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
                     preflight_evaluation.get("blocked_setting_cap")
                 ),
                 "provider_call_skipped": bool(preflight_evaluation.get("blocked")),
-                "difficulty_score": self._coerce_optional_non_negative_int(preflight_evaluation.get("difficulty_score")),
+                "difficulty_score": self._coerce_optional_non_negative_int(
+                    preflight_evaluation.get("difficulty_score")
+                ),
                 "max_final_input_chars": self._coerce_optional_non_negative_int(
                     preflight_evaluation.get("max_final_input_chars")
                 ),
@@ -2998,7 +3008,9 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
             "response_format_mode": _clean_optional_value(request_profile.get("response_format_mode")),
             "request_body_mode": _clean_optional_value(request_profile.get("request_body_mode")),
             "request_shape_adjusted": bool(request_profile.get("request_shape_adjusted")),
-            "request_shape_adjustment_reason": _clean_optional_value(request_profile.get("request_shape_adjustment_reason")),
+            "request_shape_adjustment_reason": _clean_optional_value(
+                request_profile.get("request_shape_adjustment_reason")
+            ),
         }
 
     @staticmethod
@@ -3375,7 +3387,9 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
                 "response_format_mode": _clean_optional_value(context.get("response_format_mode")),
                 "request_body_mode": _clean_optional_value(context.get("request_body_mode")),
                 "request_shape_adjusted": bool(context.get("request_shape_adjusted")),
-                "request_shape_adjustment_reason": _clean_optional_value(context.get("request_shape_adjustment_reason")),
+                "request_shape_adjustment_reason": _clean_optional_value(
+                    context.get("request_shape_adjustment_reason")
+                ),
                 "timeout_seconds": int(self.timeout_seconds),
                 "timeout_source": _clean_optional_value(getattr(self, "timeout_source", None)) or "default",
                 **self._request_fingerprint_log_fields(request_fingerprint),
@@ -3415,7 +3429,9 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
                 "response_format_mode": _clean_optional_value(context.get("response_format_mode")),
                 "request_body_mode": _clean_optional_value(context.get("request_body_mode")),
                 "request_shape_adjusted": bool(context.get("request_shape_adjusted")),
-                "request_shape_adjustment_reason": _clean_optional_value(context.get("request_shape_adjustment_reason")),
+                "request_shape_adjustment_reason": _clean_optional_value(
+                    context.get("request_shape_adjustment_reason")
+                ),
                 "duration_ms": max(0, int(duration_ms)),
                 "correlation_id": _clean_optional_value(correlation_id),
                 "timeout_seconds": int(self.timeout_seconds),
@@ -3470,7 +3486,9 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
                 "response_format_mode": _clean_optional_value(context.get("response_format_mode")),
                 "request_body_mode": _clean_optional_value(context.get("request_body_mode")),
                 "request_shape_adjusted": bool(context.get("request_shape_adjusted")),
-                "request_shape_adjustment_reason": _clean_optional_value(context.get("request_shape_adjustment_reason")),
+                "request_shape_adjustment_reason": _clean_optional_value(
+                    context.get("request_shape_adjustment_reason")
+                ),
                 "failure_reason": normalized_reason,
                 "failure_source": normalized_failure_source,
                 "retryable": retryable,
@@ -3516,7 +3534,9 @@ class OpenAISEOMigrationArtifactGenerationProvider(SEOMigrationArtifactGeneratio
                 "response_format_mode": _clean_optional_value(context.get("response_format_mode")),
                 "request_body_mode": _clean_optional_value(context.get("request_body_mode")),
                 "request_shape_adjusted": bool(context.get("request_shape_adjusted")),
-                "request_shape_adjustment_reason": _clean_optional_value(context.get("request_shape_adjustment_reason")),
+                "request_shape_adjustment_reason": _clean_optional_value(
+                    context.get("request_shape_adjustment_reason")
+                ),
                 "raw_length": max(0, int(raw_length)),
                 "parsed_candidate_count": max(0, int(parsed_candidate_count)),
                 "salvaged_candidate_count": max(0, int(salvaged_candidate_count)),

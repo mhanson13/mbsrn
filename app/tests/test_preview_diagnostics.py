@@ -120,10 +120,10 @@ def test_preview_diagnostic_bundle_is_bounded_and_redacts_sensitive_fields() -> 
     assert bundle["retention_days"] == 7
     assert (bundle["expires_at"] - bundle["collected_at"]).days == 7
     assert bundle["payload"]["release"]["id"] == "release-1"
-    assert bundle["payload"]["tls_capabilities"]["checks"][0]["missing_permissions"] == [
-        "secretmanager.secrets.create"
-    ]
-    serialized = json.dumps(bundle, default=lambda value: value.isoformat() if isinstance(value, datetime) else str(value))
+    assert bundle["payload"]["tls_capabilities"]["checks"][0]["missing_permissions"] == ["secretmanager.secrets.create"]
+    serialized = json.dumps(
+        bundle, default=lambda value: value.isoformat() if isinstance(value, datetime) else str(value)
+    )
     assert "private-json-key" not in serialized
     assert "github-secret-token" not in serialized
     assert "sensitive-provider-payload" not in serialized
