@@ -692,6 +692,9 @@ export interface MigrationMediaAsset {
   metadata_suggestion_applied_at?: string | null;
   candidate_quality?: "useful" | "low_value" | "rejected" | string | null;
   quality_reason?: string | null;
+  integrity_status?: "ready" | "import_required" | "reimport_required" | "replacement_required" | "unavailable" | string | null;
+  integrity_reason_code?: string | null;
+  repair_action?: "import_source" | "reimport_source" | "replace_upload" | "remove_selection" | string | null;
 }
 
 export interface MigrationMediaAssetListResponse {
@@ -705,6 +708,8 @@ export interface MigrationMediaAssetListResponse {
   selected_assets_count: number;
   media_asset_categories: string[];
   selected_assets_trimmed: boolean;
+  integrity_ready_count?: number;
+  integrity_action_required_count?: number;
   diagnostics: string[];
 }
 

@@ -36,6 +36,7 @@ import {
   importMigrationDiscoveredMediaAssets,
   importSiteTLSCertificate,
   publishMigrationArtifactVersion,
+  replaceMigrationMediaAssetContent,
   refreshMigrationDeployStatus,
   suggestMigrationRequirementField,
   suggestMigrationMediaAssetsMetadataBatch,
@@ -94,6 +95,7 @@ type BusyAction =
   | "refresh_deploy_status"
   | "delete_draft"
   | "upload_media"
+  | "repair_media"
   | "import_media"
   | "suggest_media"
   | "suggest_media_batch"
@@ -1694,6 +1696,10 @@ function isSourceAssetImportRequired(asset: Record<string, unknown>): boolean {
   const provenance = (asStringOrNull(asset.provenance) || "source_site_import").trim().toLowerCase();
   if (provenance !== "source_site_import") {
     return false;
+  }
+  const integrityStatus = (asStringOrNull(asset.integrity_status) || "").trim().toLowerCase();
+  if (integrityStatus === "import_required" || integrityStatus === "reimport_required") {
+    return true;
   }
   const importStatus = (asStringOrNull(asset.import_status) || "discovered").trim().toLowerCase();
   return importStatus === "discovered";
@@ -4466,6 +4472,9 @@ export function MigrationWorkspacePanel({
     }).length;
   const operatorUploadedMediaCount =
     asNonNegativeInt(mediaSummary.operator_uploaded_count) ?? operatorUploadedMediaAssets.length;
+  const mediaIntegrityReadyCount = asNonNegativeInt(mediaSummary.integrity_ready_count) ?? 0;
+  const mediaIntegrityActionRequiredCount =
+    asNonNegativeInt(mediaSummary.integrity_action_required_count) ?? 0;
   const selectedMediaAssetsCount =
     asNonNegativeInt(mediaSummary.selected_assets_count) ?? selectedMediaAssets.length;
   const mediaRequiredByOperator =
@@ -4633,6 +4642,11 @@ export function MigrationWorkspacePanel({
         const suggestionStatus = (asStringOrNull(suggestion.suggestion_status) || "").trim().toLowerCase();
         const suggestionReason = toMediaSuggestionReasonLabel(asStringOrNull(suggestion.reason_code));
         const lifecycleLabels = toMediaLifecycleLabels(asset);
+        const integrityStatus = (asStringOrNull(asset.integrity_status) || "").trim().toLowerCase();
+        const integrityReasonCode = asStringOrNull(asset.integrity_reason_code);
+        const repairAction = (asStringOrNull(asset.repair_action) || "").trim().toLowerCase();
+        const replacementRequired = repairAction === "replace_upload" || integrityStatus === "replacement_required";
+        const integrityUnavailable = integrityStatus === "unavailable";
         const remoteImportRequired = isSourceAssetImportRequired(asset);
         const validatedForImport = isDiscoveredCandidateValidatedForImport(asset);
         const unavailableReasonCode = mediaAssetUnavailableReasonCode(asset);
@@ -4652,7 +4666,11 @@ export function MigrationWorkspacePanel({
           || importStatus === "available"
           || importStatus === "uploaded";
         const previewAvailability = resolveMediaPreviewAvailability(asset, { remoteImportRequired });
-        const previewUnavailableReason = toMediaPreviewUnavailableReasonLabel(previewAvailability.reasonCode);
+        const previewUnavailableReason = replacementRequired
+          ? "Stored image is missing. Choose a replacement file."
+          : integrityStatus === "reimport_required"
+            ? "Stored image is missing. Re-import it from the source site."
+            : toMediaPreviewUnavailableReasonLabel(previewAvailability.reasonCode);
         const analysisUnavailableInRuntime =
           suggestionStatus === "not_available"
           && (
@@ -4689,9 +4707,9 @@ export function MigrationWorkspacePanel({
           }
           return null;
         })();
-        const isBlocked = Boolean(blockedReasonCode);
+        const isBlocked = Boolean(blockedReasonCode) || integrityUnavailable;
         let primaryAction: MediaPrimaryAction = "none";
-        if (!isBlocked) {
+        if (!isBlocked && !replacementRequired) {
           primaryAction = candidateQuality === "low_value" ? "use_in_draft_anyway" : "use_in_draft";
         }
         const lifecycleAction: MediaLifecycleAction = (() => {
@@ -4713,7 +4731,11 @@ export function MigrationWorkspacePanel({
           return null;
         })();
         const compactReasonLabel =
-          isBlocked
+          replacementRequired
+            ? "Stored file is missing. Upload a replacement to keep this image in the draft."
+            : integrityStatus === "reimport_required"
+              ? "Stored file is missing. Re-import it from the source before generating a draft."
+              : isBlocked
             ? toMediaSuggestionReasonLabel(blockedReasonCode) || unavailableReason || "Blocked for safety reasons."
             : candidateQuality === "low_value"
               ? "Quality warning only. Operator can still use this image in draft."
@@ -4744,6 +4766,10 @@ export function MigrationWorkspacePanel({
           mediaUnavailableReason: unavailableReason,
           blockedReasonCode,
           isBlocked,
+          integrityStatus,
+          integrityReasonCode,
+          repairAction,
+          replacementRequired,
           isImportedOrUploaded,
           primaryAction,
           compactReasonLabel,
@@ -7198,6 +7224,36 @@ export function MigrationWorkspacePanel({
     }
   };
 
+  const handleReplaceMediaAsset = async (
+    assetId: string,
+    event: ChangeEvent<HTMLInputElement>,
+  ): Promise<void> => {
+    const file = event.target.files?.[0] || null;
+    event.target.value = "";
+    if (!file) {
+      return;
+    }
+    const normalizedMimeType = (file.type || "").trim().toLowerCase();
+    if (normalizedMimeType && !MIGRATION_UPLOAD_ALLOWED_MIME_TYPES.has(normalizedMimeType)) {
+      setErrorHint(null);
+      setErrorMessage("Select a supported image file for the replacement.");
+      return;
+    }
+    setBusyAction("repair_media");
+    setErrorMessage(null);
+    setErrorHint(null);
+    setStatusMessage(null);
+    try {
+      await replaceMigrationMediaAssetContent(token, businessId, siteId, assetId, file);
+      await loadWorkspaceData(false);
+      setStatusMessage("Missing image content was replaced. Generate a new draft to package it.");
+    } catch (error) {
+      setErrorMessage(toErrorMessage(error, "Failed to replace missing image content."));
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
   const handleToggleMediaDraftCheck = (assetId: string, selected: boolean): void => {
     const normalizedAssetId = assetId.trim();
     if (!normalizedAssetId) {
@@ -8397,6 +8453,12 @@ export function MigrationWorkspacePanel({
             <span className="hint">Images included in draft: {selectedMediaAssetsCount}</span>
             <span className="hint">Usable images included in draft: {selectedUsableMediaAssetsCount}</span>
             <span className="hint">Import-ready discovered images: {discoveredImportRequiredCount}</span>
+            <span className="hint">Stored images verified: {mediaIntegrityReadyCount}</span>
+            {mediaIntegrityActionRequiredCount > 0 ? (
+              <span className="hint warning" data-testid="migration-media-integrity-action-required">
+                Missing stored images requiring repair: {mediaIntegrityActionRequiredCount}
+              </span>
+            ) : null}
             {mediaImportBatchStatus ? (
               <details className="workspace-details-shell" data-testid="migration-media-import-feedback">
                 <summary>Show import result details</summary>
@@ -8532,20 +8594,39 @@ export function MigrationWorkspacePanel({
                         type="checkbox"
                         checked={isChecked}
                         onChange={(event) => handleToggleMediaDraftCheck(item.assetId, event.target.checked)}
-                        disabled={isActionInFlight || item.isBlocked}
+                        disabled={isActionInFlight || item.isBlocked || item.replacementRequired}
                       />
                       <span>Use in draft</span>
                     </label>
                     <div className="row-wrap-tight">
-                      {!item.isBlocked ? (
+                      {item.replacementRequired ? (
+                        <label
+                          className="button button-primary"
+                          data-testid={`migration-media-replace-action-${item.assetId}`}
+                        >
+                          {busyAction === "repair_media" ? "Replacing..." : "Choose replacement file"}
+                          <input
+                            type="file"
+                            accept="image/jpeg,image/png,image/webp,image/gif"
+                            disabled={isActionInFlight}
+                            style={{ display: "none" }}
+                            onChange={(event) => void handleReplaceMediaAsset(item.assetId, event)}
+                          />
+                        </label>
+                      ) : null}
+                      {!item.isBlocked && !item.replacementRequired ? (
                         <button
                           type="button"
                           className={item.primaryAction === "use_in_draft_anyway" ? "button button-secondary" : "button button-primary"}
                           data-testid={`migration-media-primary-action-${item.assetId}`}
                           onClick={() => void handleUseMediaAssetsInDraft({ assetIds: [item.assetId] })}
-                          disabled={isActionInFlight}
+                          disabled={isActionInFlight || item.replacementRequired}
                         >
-                          {item.primaryAction === "use_in_draft_anyway" ? "Use in draft anyway" : "Use in draft"}
+                          {item.repairAction === "reimport_source"
+                            ? "Re-import source image"
+                            : item.primaryAction === "use_in_draft_anyway"
+                              ? "Use in draft anyway"
+                              : "Use in draft"}
                         </button>
                       ) : null}
                       {item.lifecycleAction !== "none" && item.lifecycleActionLabel ? (
@@ -8575,6 +8656,12 @@ export function MigrationWorkspacePanel({
                         ) : null}
                         {item.blockedReasonCode ? (
                           <span className="hint warning">Blocked reason: {item.blockedReasonCode}</span>
+                        ) : null}
+                        {item.integrityStatus ? (
+                          <span className={item.integrityStatus === "ready" ? "hint muted" : "hint warning"}>
+                            Stored file: {item.integrityStatus.replace(/_/g, " ")}
+                            {item.integrityReasonCode ? ` (${item.integrityReasonCode})` : ""}
+                          </span>
                         ) : null}
                         <span className="hint muted">Provenance: {item.provenance || "unknown"}</span>
                         {item.normalizedUrl ? <span className="hint muted">URL: {item.normalizedUrl}</span> : null}

@@ -27,6 +27,7 @@ Acceptance:
 - [x] Record object generation and SHA-256 metadata.
 - [x] Provision the bucket, public-access prevention, versioning, lifecycle, and bucket-scoped runtime IAM idempotently.
 - [x] Keep local storage only for development and tests.
+- [x] Surface per-asset integrity state with source re-import and identity-preserving upload replacement actions.
 - [ ] Re-import Platfire media after the GCS path is active.
 - [x] Publish referenced binary assets to GitHub with their pages.
 

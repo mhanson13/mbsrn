@@ -35,4 +35,9 @@ Then import an image, generate a draft from a separate API request, and confirm 
 
 ## Recovery
 
-Do not make the bucket public. If a generation is removed unexpectedly, re-import the source image and generate a new immutable draft. Do not alter an approved artifact to point at a different object generation.
+Do not make the bucket public. The media list performs a bounded integrity read for imported and uploaded assets and returns one operator action when bytes are missing:
+
+- Source-site media: choose **Re-import source image**. The existing asset ID and selection are retained while a new storage generation is recorded.
+- Operator-uploaded media: choose **Choose replacement file**. The replacement keeps the logical asset ID, selection, category, alt text, description, usage note, and page assignment.
+
+After either recovery, generate a new immutable draft. Recovery never rewrites an existing draft or approved artifact to point at the new generation. If the original source URL is unavailable, remove the source asset from the workspace and import or upload an authorized replacement.

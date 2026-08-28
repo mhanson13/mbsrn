@@ -3891,6 +3891,8 @@ def test_migration_media_routes_scope_assets_and_sanitize_payloads(db_session) -
     assert uploaded.get("provenance") == "operator_upload"
     assert uploaded.get("selected_for_draft") is True
     assert uploaded.get("content_type") == "image/png"
+    assert uploaded.get("integrity_status") == "ready"
+    assert uploaded.get("repair_action") is None
     assert "storage_key" not in uploaded
 
     asset_id = str(uploaded.get("asset_id") or "")
@@ -4035,6 +4037,91 @@ def test_migration_media_routes_scope_assets_and_sanitize_payloads(db_session) -
     removed_asset = remove_payload.get("media_asset") or {}
     assert removed_asset.get("workspace_status") == "removed"
     assert removed_asset.get("selected_for_draft") is False
+
+
+def test_migration_media_operator_upload_can_be_replaced_without_changing_asset_identity(db_session) -> None:
+    business_id = "11111111-1111-1111-1111-111111111111"
+    site_id = "22222222-2222-2222-2222-222222222222"
+    other_site_id = "33333333-3333-3333-3333-333333333333"
+    _seed_business_and_site(db_session, business_id=business_id, site_id=site_id)
+    _seed_site_for_business(
+        db_session,
+        business_id=business_id,
+        site_id=other_site_id,
+        base_url="https://second.example/",
+        normalized_domain="second.example",
+    )
+    client = _make_client(db_session, business_id=business_id)
+    for target_site_id in (site_id, other_site_id):
+        response = client.put(
+            f"/api/businesses/{business_id}/seo/sites/{target_site_id}/migration/workspace",
+            json={"source_url": "https://legacy.example"},
+        )
+        assert response.status_code == 200
+
+    upload_response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/media/upload",
+        params={
+            "filename": "original.png",
+            "selected_for_draft": "true",
+            "category": "hero",
+            "alt_text": "Preserved alt text",
+        },
+        headers={"Content-Type": "image/png"},
+        content=_tiny_png_payload(),
+    )
+    assert upload_response.status_code == 201
+    asset_id = str(upload_response.json().get("asset_id") or "")
+    assert asset_id.startswith("upl-")
+
+    workspace = (
+        db_session.query(SEOMigrationWorkspace)
+        .filter(
+            SEOMigrationWorkspace.business_id == business_id,
+            SEOMigrationWorkspace.site_id == site_id,
+        )
+        .one()
+    )
+    enriched = dict(workspace.enriched_content_notes_json or {})
+    assets = [dict(item) for item in enriched.get("workspace_media_assets") or []]
+    assets[0]["storage_provider"] = "gcs"
+    enriched["workspace_media_assets"] = assets
+    workspace.enriched_content_notes_json = enriched
+    db_session.add(workspace)
+    db_session.commit()
+
+    missing_response = client.get(f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/media/assets")
+    assert missing_response.status_code == 200
+    missing_payload = missing_response.json()
+    missing_asset = missing_payload["operator_uploaded"][0]
+    assert missing_asset.get("asset_id") == asset_id
+    assert missing_asset.get("integrity_status") == "replacement_required"
+    assert missing_asset.get("repair_action") == "replace_upload"
+    assert missing_asset.get("preview_url") is None
+    assert missing_payload.get("integrity_action_required_count") == 1
+
+    replacement_response = client.put(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/media/assets/{asset_id}/content",
+        params={"filename": "replacement.png"},
+        headers={"Content-Type": "image/png"},
+        content=_tiny_png_payload(),
+    )
+    assert replacement_response.status_code == 200
+    replacement = replacement_response.json()
+    assert replacement.get("asset_id") == asset_id
+    assert replacement.get("display_filename") == "replacement.png"
+    assert replacement.get("category") == "hero"
+    assert replacement.get("alt_text") == "Preserved alt text"
+    assert replacement.get("selected_for_draft") is True
+    assert replacement.get("integrity_status") == "ready"
+
+    cross_site_response = client.put(
+        f"/api/businesses/{business_id}/seo/sites/{other_site_id}/migration/media/assets/{asset_id}/content",
+        params={"filename": "replacement.png"},
+        headers={"Content-Type": "image/png"},
+        content=_tiny_png_payload(),
+    )
+    assert cross_site_response.status_code == 404
 
 
 def test_migration_media_suggest_metadata_returns_image_not_imported_for_remote_discovered_assets(db_session) -> None:
@@ -4496,6 +4583,39 @@ def test_migration_media_import_endpoint_imports_discovered_assets_and_enables_s
     serialized = json.dumps(payload).lower()
     for forbidden in ("storage_key", "base64", "access_token", "refresh_token", "authorization", "cookie", "\\\\"):
         assert forbidden not in serialized
+
+    db_session.expire_all()
+    workspace = (
+        db_session.query(SEOMigrationWorkspace)
+        .filter(
+            SEOMigrationWorkspace.business_id == business_id,
+            SEOMigrationWorkspace.site_id == site_id,
+        )
+        .one()
+    )
+    source_snapshot = dict(workspace.imported_source_snapshot_json or {})
+    discovered_assets = [dict(item) for item in source_snapshot.get("discovered_images") or []]
+    discovered_assets[0]["storage_provider"] = "gcs"
+    source_snapshot["discovered_images"] = discovered_assets
+    workspace.imported_source_snapshot_json = source_snapshot
+    db_session.add(workspace)
+    db_session.commit()
+
+    integrity_response = client.get(f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/media/assets")
+    assert integrity_response.status_code == 200
+    missing_asset = integrity_response.json()["source_discovered"][0]
+    assert missing_asset.get("integrity_status") == "reimport_required"
+    assert missing_asset.get("repair_action") == "reimport_source"
+    assert missing_asset.get("preview_url") is None
+
+    repair_response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/media/discovered/import",
+        json={"discovered_image_ids": ["srcimg-import-me"], "selected_for_draft": True},
+    )
+    assert repair_response.status_code == 200
+    repair_payload = repair_response.json()
+    assert repair_payload.get("imported_count") == 1
+    assert repair_payload.get("skipped_count") == 0
 
     suggest_response = client.post(
         f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/media/assets/srcimg-import-me/suggest-metadata",

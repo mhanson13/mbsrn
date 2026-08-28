@@ -203,6 +203,9 @@ _MIGRATION_MEDIA_REASON_FILE_TOO_LARGE = "file_too_large"
 _MIGRATION_MEDIA_REASON_UNSAFE_REDIRECT = "unsafe_redirect"
 _MIGRATION_MEDIA_REASON_STORAGE_WRITE_FAILED = "storage_write_failed"
 _MIGRATION_MEDIA_REASON_STORAGE_PREVIEW_NOT_AVAILABLE = "storage_preview_not_available"
+_MIGRATION_MEDIA_REASON_REIMPORT_REQUIRED = "media_asset_reimport_required"
+_MIGRATION_MEDIA_REASON_REPLACEMENT_REQUIRED = "media_asset_replacement_required"
+_MIGRATION_MEDIA_REASON_REPLACE_NOT_ALLOWED = "media_asset_replace_not_allowed"
 _MIGRATION_MEDIA_REASON_IMPORT_COUNT_LIMIT_REACHED = "media_import_count_limit_reached"
 _MIGRATION_MEDIA_REASON_IMAGE_IMPORT_UNSAFE_URL = _MIGRATION_MEDIA_REASON_CANDIDATE_NOT_VALIDATED
 _MIGRATION_MEDIA_REASON_IMAGE_IMPORT_PRIVATE_ADDRESS_BLOCKED = _MIGRATION_MEDIA_REASON_BLOCKED_PRIVATE_NETWORK
@@ -1322,15 +1325,74 @@ class SEOMigrationService:
         business_id: str,
         site_id: str,
         media_asset: dict[str, object],
+        include_integrity: bool = False,
     ) -> dict[str, object]:
-        return _sanitize_media_asset_for_read(
-            media_asset,
-            preview_url=self._build_workspace_media_preview_url(
+        integrity = (
+            self._workspace_media_integrity(
                 business_id=business_id,
                 site_id=site_id,
                 media_asset=media_asset,
-            ),
+            )
+            if include_integrity
+            else {}
         )
+        preview_url = self._build_workspace_media_preview_url(
+            business_id=business_id,
+            site_id=site_id,
+            media_asset=media_asset,
+        )
+        if include_integrity and integrity.get("integrity_status") != "ready":
+            preview_url = None
+        payload = _sanitize_media_asset_for_read(
+            media_asset,
+            preview_url=preview_url,
+        )
+        payload.update(integrity)
+        return payload
+
+    def _workspace_media_integrity(
+        self,
+        *,
+        business_id: str,
+        site_id: str,
+        media_asset: dict[str, object],
+    ) -> dict[str, object]:
+        provenance = (_normalize_string(media_asset.get("provenance"), max_length=40) or "source_site_import").lower()
+        if provenance == "source_site_import" and not _is_discovered_media_asset_imported(media_asset):
+            return {
+                "integrity_status": "import_required",
+                "integrity_reason_code": _MIGRATION_MEDIA_REASON_ASSET_NOT_IMPORTED,
+                "repair_action": "import_source",
+            }
+        payload, reason_code = _read_workspace_media_payload_for_materialization(
+            media_asset=media_asset,
+            media_storage=self.media_storage,
+            business_id=business_id,
+            site_id=site_id,
+        )
+        if payload:
+            return {
+                "integrity_status": "ready",
+                "integrity_reason_code": None,
+                "repair_action": None,
+            }
+        if provenance == "operator_upload":
+            return {
+                "integrity_status": "replacement_required",
+                "integrity_reason_code": reason_code or _MIGRATION_ARTIFACT_MEDIA_REASON_BYTES_MISSING,
+                "repair_action": "replace_upload",
+            }
+        if _normalize_discovered_media_lookup_url(media_asset.get("normalized_url")):
+            return {
+                "integrity_status": "reimport_required",
+                "integrity_reason_code": reason_code or _MIGRATION_ARTIFACT_MEDIA_REASON_BYTES_MISSING,
+                "repair_action": "reimport_source",
+            }
+        return {
+            "integrity_status": "unavailable",
+            "integrity_reason_code": reason_code or _MIGRATION_ARTIFACT_MEDIA_REASON_BYTES_MISSING,
+            "repair_action": "remove_selection",
+        }
 
     def list_workspace_media_assets(
         self,
@@ -1343,7 +1405,80 @@ class SEOMigrationService:
             workspace=workspace,
             business_id=business_id,
             site_id=site_id,
+            include_integrity_checks=True,
         )
+
+    @staticmethod
+    def _validate_workspace_media_upload(
+        *,
+        workspace_id: str,
+        filename: str,
+        content_type: str | None,
+        payload: bytes,
+    ) -> tuple[str, str, str, int | None, int | None]:
+        normalized_filename = _normalize_media_filename(filename)
+        if normalized_filename is None:
+            raise SEOMigrationValidationError(
+                "Upload filename is required.",
+                failure_category="artifact_invalid",
+                failure_reason="validation_failed",
+                error_code="media_upload_filename_required",
+                workspace_id=workspace_id,
+            )
+        normalized_declared_content_type = _normalize_media_content_type(content_type)
+        if normalized_declared_content_type is None:
+            raise SEOMigrationValidationError(
+                "Unsupported media content type.",
+                failure_category="artifact_invalid",
+                failure_reason="validation_failed",
+                error_code=_MIGRATION_MEDIA_DIAGNOSTIC_REASON_UNSUPPORTED_MIME,
+                workspace_id=workspace_id,
+            )
+        if not payload:
+            raise SEOMigrationValidationError(
+                "Upload payload is empty.",
+                failure_category="artifact_invalid",
+                failure_reason="validation_failed",
+                error_code="media_upload_empty",
+                workspace_id=workspace_id,
+            )
+        if len(payload) > _MIGRATION_MEDIA_UPLOAD_MAX_BYTES:
+            raise SEOMigrationValidationError(
+                "Uploaded media exceeds maximum size.",
+                failure_category="artifact_invalid",
+                failure_reason="validation_failed",
+                error_code=_MIGRATION_MEDIA_DIAGNOSTIC_REASON_FILE_TOO_LARGE,
+                workspace_id=workspace_id,
+            )
+        sniffed_content_type = _detect_media_content_type(payload)
+        if sniffed_content_type not in _MIGRATION_MEDIA_UPLOAD_ALLOWED_CONTENT_TYPES:
+            raise SEOMigrationValidationError(
+                "Uploaded media type is not supported.",
+                failure_category="artifact_invalid",
+                failure_reason="validation_failed",
+                error_code=_MIGRATION_MEDIA_DIAGNOSTIC_REASON_UNSUPPORTED_MIME,
+                workspace_id=workspace_id,
+            )
+        if sniffed_content_type != normalized_declared_content_type:
+            raise SEOMigrationValidationError(
+                "Uploaded media content type does not match the file payload.",
+                failure_category="artifact_invalid",
+                failure_reason="validation_failed",
+                error_code="media_upload_content_type_mismatch",
+                workspace_id=workspace_id,
+            )
+        extension = _MIGRATION_MEDIA_UPLOAD_ALLOWED_CONTENT_TYPES.get(sniffed_content_type, "")
+        provided_extension = _extract_file_extension(normalized_filename)
+        if provided_extension and provided_extension not in _MIGRATION_MEDIA_UPLOAD_ALLOWED_EXTENSIONS:
+            raise SEOMigrationValidationError(
+                "Unsupported media file extension.",
+                failure_category="artifact_invalid",
+                failure_reason="validation_failed",
+                error_code="media_upload_extension_not_allowed",
+                workspace_id=workspace_id,
+            )
+        width, height = _detect_image_dimensions(payload, sniffed_content_type)
+        return normalized_filename, sniffed_content_type, extension, width, height
 
     def upload_workspace_media_asset(
         self,
@@ -1372,67 +1507,12 @@ class SEOMigrationService:
                 error_code="workspace_media_upload_limit_reached",
                 workspace_id=workspace.id,
             )
-        normalized_filename = _normalize_media_filename(filename)
-        if normalized_filename is None:
-            raise SEOMigrationValidationError(
-                "Upload filename is required.",
-                failure_category="artifact_invalid",
-                failure_reason="validation_failed",
-                error_code="media_upload_filename_required",
-                workspace_id=workspace.id,
-            )
-        normalized_declared_content_type = _normalize_media_content_type(content_type)
-        if normalized_declared_content_type is None:
-            raise SEOMigrationValidationError(
-                "Unsupported media content type.",
-                failure_category="artifact_invalid",
-                failure_reason="validation_failed",
-                error_code=_MIGRATION_MEDIA_DIAGNOSTIC_REASON_UNSUPPORTED_MIME,
-                workspace_id=workspace.id,
-            )
-        if not payload:
-            raise SEOMigrationValidationError(
-                "Upload payload is empty.",
-                failure_category="artifact_invalid",
-                failure_reason="validation_failed",
-                error_code="media_upload_empty",
-                workspace_id=workspace.id,
-            )
-        if len(payload) > _MIGRATION_MEDIA_UPLOAD_MAX_BYTES:
-            raise SEOMigrationValidationError(
-                "Uploaded media exceeds maximum size.",
-                failure_category="artifact_invalid",
-                failure_reason="validation_failed",
-                error_code=_MIGRATION_MEDIA_DIAGNOSTIC_REASON_FILE_TOO_LARGE,
-                workspace_id=workspace.id,
-            )
-        sniffed_content_type = _detect_media_content_type(payload)
-        if sniffed_content_type not in _MIGRATION_MEDIA_UPLOAD_ALLOWED_CONTENT_TYPES:
-            raise SEOMigrationValidationError(
-                "Uploaded media type is not supported.",
-                failure_category="artifact_invalid",
-                failure_reason="validation_failed",
-                error_code=_MIGRATION_MEDIA_DIAGNOSTIC_REASON_UNSUPPORTED_MIME,
-                workspace_id=workspace.id,
-            )
-        if sniffed_content_type != normalized_declared_content_type:
-            raise SEOMigrationValidationError(
-                "Uploaded media content type does not match the file payload.",
-                failure_category="artifact_invalid",
-                failure_reason="validation_failed",
-                error_code="media_upload_content_type_mismatch",
-                workspace_id=workspace.id,
-            )
-        ext = _MIGRATION_MEDIA_UPLOAD_ALLOWED_CONTENT_TYPES.get(sniffed_content_type, "")
-        provided_extension = _extract_file_extension(normalized_filename)
-        if provided_extension and provided_extension not in _MIGRATION_MEDIA_UPLOAD_ALLOWED_EXTENSIONS:
-            raise SEOMigrationValidationError(
-                "Unsupported media file extension.",
-                failure_category="artifact_invalid",
-                failure_reason="validation_failed",
-                error_code="media_upload_extension_not_allowed",
-                workspace_id=workspace.id,
-            )
+        normalized_filename, sniffed_content_type, ext, width, height = self._validate_workspace_media_upload(
+            workspace_id=workspace.id,
+            filename=filename,
+            content_type=content_type,
+            payload=payload,
+        )
         asset_id = f"upl-{uuid4()}"
         storage_key = _build_workspace_media_storage_key(
             business_id=business_id,
@@ -1455,7 +1535,6 @@ class SEOMigrationService:
                 workspace_id=workspace.id,
                 retryable=True,
             ) from exc
-        width, height = _detect_image_dimensions(payload, sniffed_content_type)
         media_asset: dict[str, object] = {
             "asset_id": asset_id,
             "display_filename": normalized_filename,
@@ -1488,6 +1567,106 @@ class SEOMigrationService:
             business_id=business_id,
             site_id=site_id,
             media_asset=media_asset,
+            include_integrity=True,
+        )
+
+    def replace_workspace_media_asset(
+        self,
+        *,
+        business_id: str,
+        site_id: str,
+        asset_id: str,
+        filename: str,
+        content_type: str | None,
+        payload: bytes,
+        principal_id: str | None,
+    ) -> dict[str, object]:
+        workspace = self.get_workspace(business_id=business_id, site_id=site_id)
+        self._require_site(business_id=business_id, site_id=site_id)
+        target_asset_id = _normalize_string(asset_id, max_length=80)
+        if target_asset_id is None:
+            raise SEOMigrationValidationError(
+                "media asset id is required.",
+                failure_category="artifact_invalid",
+                failure_reason="validation_failed",
+                error_code="media_asset_id_required",
+                workspace_id=workspace.id,
+            )
+        operator_assets = _normalize_workspace_operator_media_assets(workspace.enriched_content_notes_json)
+        target_asset = next(
+            (
+                item
+                for item in operator_assets
+                if _normalize_string(item.get("asset_id"), max_length=80) == target_asset_id
+            ),
+            None,
+        )
+        if target_asset is None:
+            raise SEOMigrationNotFoundError("Migration media asset not found")
+        if not _is_workspace_media_asset_visible(target_asset):
+            raise SEOMigrationValidationError(
+                "This media asset is no longer available for replacement.",
+                failure_category="artifact_invalid",
+                failure_reason="validation_failed",
+                error_code=_MIGRATION_MEDIA_REASON_ALREADY_REMOVED,
+                workspace_id=workspace.id,
+            )
+        if _normalize_string(target_asset.get("provenance"), max_length=40) != "operator_upload":
+            raise SEOMigrationValidationError(
+                "Only an operator-uploaded asset can be replaced. Re-import source media instead.",
+                failure_category="artifact_invalid",
+                failure_reason="validation_failed",
+                error_code=_MIGRATION_MEDIA_REASON_REPLACE_NOT_ALLOWED,
+                workspace_id=workspace.id,
+            )
+        normalized_filename, sniffed_content_type, extension, width, height = self._validate_workspace_media_upload(
+            workspace_id=workspace.id,
+            filename=filename,
+            content_type=content_type,
+            payload=payload,
+        )
+        storage_key = _build_workspace_media_storage_key(
+            business_id=business_id,
+            site_id=site_id,
+            asset_id=target_asset_id,
+            extension=extension,
+        )
+        try:
+            stored_media = self.media_storage.write(
+                key=storage_key,
+                payload=payload,
+                content_type=sniffed_content_type,
+            )
+        except (MigrationMediaStorageError, OSError) as exc:
+            raise SEOMigrationValidationError(
+                "Migration media storage is unavailable.",
+                failure_category="dependency_unavailable",
+                failure_reason="storage_write_failed",
+                error_code=_MIGRATION_MEDIA_REASON_STORAGE_WRITE_FAILED,
+                workspace_id=workspace.id,
+                retryable=True,
+            ) from exc
+        target_asset["display_filename"] = normalized_filename
+        target_asset["content_type"] = sniffed_content_type
+        target_asset["size_bytes"] = len(payload)
+        target_asset["width"] = width
+        target_asset["height"] = height
+        target_asset["storage_key"] = storage_key
+        target_asset["import_status"] = "selected" if bool(target_asset.get("selected_for_draft")) else "uploaded"
+        target_asset["replaced_at"] = utc_now().isoformat()
+        _apply_stored_migration_media_metadata(target_asset, stored_media)
+        enriched = _normalize_json_dict(workspace.enriched_content_notes_json)
+        enriched["workspace_media_assets"] = operator_assets
+        workspace.enriched_content_notes_json = enriched
+        workspace.updated_by_principal_id = principal_id
+        self.seo_migration_repository.save_workspace(workspace)
+        self.session.commit()
+        self.session.refresh(workspace)
+        return self._to_media_asset_read_payload(
+            business_id=business_id,
+            site_id=site_id,
+            media_asset=target_asset,
+            include_integrity=True,
         )
 
     def update_workspace_media_asset(
@@ -1542,6 +1721,25 @@ class SEOMigrationService:
                                 failure_category="artifact_invalid",
                                 failure_reason="validation_failed",
                                 error_code=state_reason or _MIGRATION_MEDIA_REASON_ACTION_NOT_ALLOWED_FOR_STATE,
+                                workspace_id=workspace.id,
+                            )
+                        integrity = self._workspace_media_integrity(
+                            business_id=business_id,
+                            site_id=site_id,
+                            media_asset=item,
+                        )
+                        integrity_status = integrity.get("integrity_status")
+                        if integrity_status in {"reimport_required", "replacement_required", "unavailable"}:
+                            reason_code = (
+                                _MIGRATION_MEDIA_REASON_REPLACEMENT_REQUIRED
+                                if integrity_status == "replacement_required"
+                                else _MIGRATION_MEDIA_REASON_REIMPORT_REQUIRED
+                            )
+                            raise SEOMigrationValidationError(
+                                "Restore this media asset before selecting it for a draft.",
+                                failure_category="artifact_invalid",
+                                failure_reason="validation_failed",
+                                error_code=reason_code,
                                 workspace_id=workspace.id,
                             )
                     item["selected_for_draft"] = bool(selected_for_draft)
@@ -1619,6 +1817,7 @@ class SEOMigrationService:
             business_id=business_id,
             site_id=site_id,
             media_asset=updated_asset,
+            include_integrity=True,
         )
 
     def preview_workspace_media_asset(
@@ -2547,7 +2746,16 @@ class SEOMigrationService:
                     )
                     continue
 
+            repairing_existing_import = False
             if _is_discovered_media_asset_imported(target_asset):
+                stored_payload, _stored_reason = _read_workspace_media_payload_for_materialization(
+                    media_asset=target_asset,
+                    media_storage=self.media_storage,
+                    business_id=business_id,
+                    site_id=site_id,
+                )
+                repairing_existing_import = not bool(stored_payload)
+            if _is_discovered_media_asset_imported(target_asset) and not repairing_existing_import:
                 selected_value = (
                     bool(selected_for_draft)
                     if isinstance(selected_for_draft, bool)
@@ -2585,7 +2793,7 @@ class SEOMigrationService:
                 )
                 continue
 
-            if current_imported_count >= _MIGRATION_MEDIA_IMPORT_MAX_TOTAL_IMPORTED:
+            if not repairing_existing_import and current_imported_count >= _MIGRATION_MEDIA_IMPORT_MAX_TOTAL_IMPORTED:
                 failed_count += 1
                 results.append(
                     {
@@ -2708,7 +2916,8 @@ class SEOMigrationService:
                 target_asset["metadata_suggestion"] = None
                 target_asset["metadata_suggestion_applied"] = False
                 target_asset["metadata_suggestion_applied_at"] = None
-            current_imported_count += 1
+            if not repairing_existing_import:
+                current_imported_count += 1
             imported_count += 1
             mutated = True
             results.append(
@@ -15905,6 +16114,7 @@ class SEOMigrationService:
         workspace: SEOMigrationWorkspace,
         business_id: str | None = None,
         site_id: str | None = None,
+        include_integrity_checks: bool = False,
     ) -> dict[str, object]:
         resolved_business_id = (
             _normalize_string(
@@ -16017,6 +16227,7 @@ class SEOMigrationService:
                 business_id=resolved_business_id,
                 site_id=resolved_site_id,
                 media_asset=item,
+                include_integrity=include_integrity_checks,
             )
             for item in source_discovered
         ]
@@ -16025,17 +16236,26 @@ class SEOMigrationService:
                 business_id=resolved_business_id,
                 site_id=resolved_site_id,
                 media_asset=item,
+                include_integrity=include_integrity_checks,
             )
             for item in operator_uploaded
         ]
+        media_read_by_asset_id = {
+            str(item.get("asset_id") or "").lower(): item
+            for item in (*source_discovered_read, *operator_uploaded_read)
+            if str(item.get("asset_id") or "").strip()
+        }
         selected_assets_read = [
-            self._to_media_asset_read_payload(
-                business_id=resolved_business_id,
-                site_id=resolved_site_id,
-                media_asset=item,
-            )
-            for item in selected_assets
+            dict(media_read_by_asset_id.get(str(item.get("asset_id") or "").lower()) or {}) for item in selected_assets
         ]
+        integrity_action_required_count = sum(
+            1
+            for item in (*source_discovered_read, *operator_uploaded_read)
+            if item.get("integrity_status") in {"reimport_required", "replacement_required", "unavailable"}
+        )
+        integrity_ready_count = sum(
+            1 for item in (*source_discovered_read, *operator_uploaded_read) if item.get("integrity_status") == "ready"
+        )
         return {
             "business_id": resolved_business_id,
             "site_id": resolved_site_id,
@@ -16059,6 +16279,8 @@ class SEOMigrationService:
             "selected_operator_assets_count": operator_selected_count,
             "media_asset_categories": media_categories,
             "selected_assets_trimmed": selected_assets_trimmed,
+            "integrity_ready_count": integrity_ready_count,
+            "integrity_action_required_count": integrity_action_required_count,
             "media_assets_with_ai_suggestions_count": media_assets_with_ai_suggestions_count,
             "media_assets_with_operator_applied_metadata_count": (media_assets_with_operator_applied_metadata_count),
             "media_suggestion_failures_count": media_suggestion_failures_count,

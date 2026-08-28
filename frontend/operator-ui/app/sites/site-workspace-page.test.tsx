@@ -158,6 +158,7 @@ const mockFetchMigrationDraftReadiness = jest.fn<Promise<MigrationDraftReadiness
 const mockFetchMigrationMediaAssets = jest.fn<Promise<Record<string, unknown>>, unknown[]>();
 const mockFetchMigrationMediaPreviewBlob = jest.fn<Promise<Blob>, unknown[]>();
 const mockUploadMigrationMediaAsset = jest.fn<Promise<Record<string, unknown>>, unknown[]>();
+const mockReplaceMigrationMediaAssetContent = jest.fn<Promise<Record<string, unknown>>, unknown[]>();
 const mockImportMigrationDiscoveredMediaAssets = jest.fn<Promise<Record<string, unknown>>, unknown[]>();
 const mockUpdateMigrationMediaAsset = jest.fn<Promise<Record<string, unknown>>, unknown[]>();
 const mockUpdateMigrationMediaAssetLifecycle = jest.fn<Promise<Record<string, unknown>>, unknown[]>();
@@ -251,6 +252,7 @@ jest.mock("../../lib/api/client", () => {
     fetchMigrationMediaAssets: (...args: unknown[]) => mockFetchMigrationMediaAssets(...args),
     fetchMigrationMediaPreviewBlob: (...args: unknown[]) => mockFetchMigrationMediaPreviewBlob(...args),
     uploadMigrationMediaAsset: (...args: unknown[]) => mockUploadMigrationMediaAsset(...args),
+    replaceMigrationMediaAssetContent: (...args: unknown[]) => mockReplaceMigrationMediaAssetContent(...args),
     importMigrationDiscoveredMediaAssets: (...args: unknown[]) => mockImportMigrationDiscoveredMediaAssets(...args),
     updateMigrationMediaAsset: (...args: unknown[]) => mockUpdateMigrationMediaAsset(...args),
     updateMigrationMediaAssetLifecycle: (...args: unknown[]) => mockUpdateMigrationMediaAssetLifecycle(...args),
@@ -5532,6 +5534,73 @@ describe("site migration workflow route", () => {
     );
   });
 
+  it("shows an actionable replacement control when uploaded media bytes are missing", async () => {
+    const user = userEvent.setup();
+    const summary = buildMigrationWorkspaceSummary({
+      context_summary: {
+        ...buildMigrationWorkspaceSummary().context_summary,
+        media_assets: {
+          source_discovered_count: 0,
+          source_imported_count: 0,
+          operator_uploaded_count: 1,
+          selected_assets_count: 1,
+          integrity_ready_count: 0,
+          integrity_action_required_count: 1,
+          media_asset_categories: ["hero"],
+          selected_assets_trimmed: false,
+          diagnostics: [],
+          source_discovered: [],
+          operator_uploaded: [
+            {
+              asset_id: "uploaded-missing-content",
+              display_filename: "hero.png",
+              provenance: "operator_upload",
+              import_status: "selected",
+              selected_for_draft: true,
+              preview_url: null,
+              integrity_status: "replacement_required",
+              integrity_reason_code: "media_storage_read_failed",
+              repair_action: "replace_upload",
+            },
+          ],
+          selected_assets: [],
+        },
+      },
+    });
+    const mediaAssetsPayload = (summary.context_summary as Record<string, unknown>).media_assets as Record<
+      string,
+      unknown
+    >;
+    mockFetchMigrationWorkspaceSummary.mockResolvedValueOnce(summary);
+    mockFetchMigrationMediaAssets.mockResolvedValue(mediaAssetsPayload);
+
+    render(<SiteMigrationWorkflowPage />);
+
+    const mediaSection = await screen.findByTestId("migration-media-section");
+    expect(within(mediaSection).getByTestId("migration-media-integrity-action-required")).toHaveTextContent("1");
+    const row = within(mediaSection).getByTestId("migration-media-row-uploaded-missing-content");
+    expect(within(row).getByTestId("migration-media-compact-reason-uploaded-missing-content")).toHaveTextContent(
+      "Stored file is missing",
+    );
+    expect(within(row).queryByTestId("migration-media-primary-action-uploaded-missing-content")).not.toBeInTheDocument();
+    const replacementControl = within(row).getByTestId(
+      "migration-media-replace-action-uploaded-missing-content",
+    );
+    const input = replacementControl.querySelector("input[type='file']") as HTMLInputElement;
+    const replacementFile = new File(["replacement"], "replacement.png", { type: "image/png" });
+    await user.upload(input, replacementFile);
+
+    await waitFor(() =>
+      expect(mockReplaceMigrationMediaAssetContent).toHaveBeenCalledWith(
+        "token-1",
+        "biz-1",
+        "site-1",
+        "uploaded-missing-content",
+        replacementFile,
+      ),
+    );
+  });
+
   it("does not render legacy insert/copy reference controls in the simplified media workflow", async () => {
     const summary = buildMigrationWorkspaceSummary({
       context_summary: {
@@ -7437,6 +7506,7 @@ function seedCompetitorProfileGenerationDefaults(): void {
   mockFetchMigrationDraftReadiness.mockReset();
   mockFetchMigrationMediaAssets.mockReset();
   mockUploadMigrationMediaAsset.mockReset();
+  mockReplaceMigrationMediaAssetContent.mockReset();
   mockImportMigrationDiscoveredMediaAssets.mockReset();
   mockUpdateMigrationMediaAsset.mockReset();
   mockUpdateMigrationMediaAssetLifecycle.mockReset();
@@ -7658,6 +7728,13 @@ function seedCompetitorProfileGenerationDefaults(): void {
     display_filename: "uploaded.jpg",
     provenance: "operator_upload",
     selected_for_draft: true,
+  });
+  mockReplaceMigrationMediaAssetContent.mockResolvedValue({
+    asset_id: "upload-1",
+    display_filename: "replacement.png",
+    provenance: "operator_upload",
+    selected_for_draft: true,
+    integrity_status: "ready",
   });
   mockUpdateMigrationMediaAsset.mockResolvedValue({
     asset_id: "upload-1",

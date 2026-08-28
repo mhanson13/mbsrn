@@ -524,40 +524,19 @@ export async function uploadMigrationMediaAsset(
     query.set("page_assignment", params.pageAssignment);
   }
   const requestPath = `/api/businesses/${businessId}/seo/sites/${siteId}/migration/media/upload?${query.toString()}`;
-  let response: Response;
-  try {
-    response = await fetch(`${apiBaseUrl()}${requestPath}`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": params.file.type || "application/octet-stream",
-      },
-      body: params.file,
-      cache: "no-store",
-    });
-  } catch (error) {
-    throw normalizeError(error, `Network request failed for ${requestPath}.`);
-  }
-  if (!response.ok) {
-    let message = `HTTP ${response.status}`;
-    let detailObject: Record<string, unknown> | null = null;
-    try {
-      const parsed = parseErrorDetail(await response.json());
-      message = parsed.message;
-      detailObject = parsed.detail;
-    } catch {
-      // ignore parse failures
-    }
-    throw new ApiRequestError(normalizeParsedErrorMessage(message, `HTTP ${response.status}`), {
-      status: response.status,
-      detail: detailObject,
-    });
-  }
-  try {
-    return (await response.json()) as MigrationMediaAsset;
-  } catch (error) {
-    throw normalizeError(error, `Invalid API response for ${requestPath}.`);
-  }
+  return writeMigrationMediaContent(token, requestPath, params.file, "POST");
+}
+
+export async function replaceMigrationMediaAssetContent(
+  token: string,
+  businessId: string,
+  siteId: string,
+  assetId: string,
+  file: File,
+): Promise<MigrationMediaAsset> {
+  const query = new URLSearchParams({ filename: file.name || "replacement-image" });
+  const requestPath = `/api/businesses/${businessId}/seo/sites/${siteId}/migration/media/assets/${encodeURIComponent(assetId)}/content?${query.toString()}`;
+  return writeMigrationMediaContent(token, requestPath, file, "PUT");
 }
 
 export async function updateMigrationMediaAsset(
@@ -639,6 +618,48 @@ export async function importMigrationDiscoveredMediaAssets(
       ),
     },
   );
+}
+
+async function writeMigrationMediaContent(
+  token: string,
+  requestPath: string,
+  file: File,
+  method: "POST" | "PUT",
+): Promise<MigrationMediaAsset> {
+  let response: Response;
+  try {
+    response = await fetch(`${apiBaseUrl()}${requestPath}`, {
+      method,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": file.type || "application/octet-stream",
+      },
+      body: file,
+      cache: "no-store",
+    });
+  } catch (error) {
+    throw normalizeError(error, `Network request failed for ${requestPath}.`);
+  }
+  if (!response.ok) {
+    let message = `HTTP ${response.status}`;
+    let detailObject: Record<string, unknown> | null = null;
+    try {
+      const parsed = parseErrorDetail(await response.json());
+      message = parsed.message;
+      detailObject = parsed.detail;
+    } catch {
+      // ignore parse failures
+    }
+    throw new ApiRequestError(normalizeParsedErrorMessage(message, `HTTP ${response.status}`), {
+      status: response.status,
+      detail: detailObject,
+    });
+  }
+  try {
+    return (await response.json()) as MigrationMediaAsset;
+  } catch (error) {
+    throw normalizeError(error, `Invalid API response for ${requestPath}.`);
+  }
 }
 
 export async function createMigrationSourceCapture(

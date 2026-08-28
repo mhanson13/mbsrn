@@ -51,6 +51,8 @@ The operator workspace now presents one preview-release card with the eight conc
 
 Artifact and migration-media previews now use authenticated API requests with the operator bearer token. The UI converts returned blobs to local data URLs before assigning image or sandboxed iframe content, so protected API URLs are never emitted as unauthenticated browser resource requests.
 
+Workspace media reads now expose a bounded integrity state instead of sending operators to preview URLs that are known to fail. Missing source-site objects can be re-imported through the existing SSRF-protected import path. Missing operator-uploaded objects can be replaced while preserving the logical asset ID, selection, and descriptive metadata. Both operations create new storage generations and require a new draft; neither mutates an existing artifact.
+
 Optional asynchronous source capture is implemented for all sites. `analyze_rebuild` remains the default; `faithful_snapshot` requires recorded authorization and runs Chromium in a dedicated non-root, gVisor-isolated worker rather than API Pods. Capture rows are tenant/site scoped, idempotent, retryable, and immutable by source version. Every browser attempt writes first-party pages/assets and a last-written manifest under a unique GCS attempt prefix with size, SHA-256, generation, and provenance. Exact-host/`www` navigation, public DNS pinning, redirect checks, external-request blocking, and bounded time/page/asset/byte limits are enforced. Unsupported dynamic behavior is reported as a limitation. The latest successfully completed requested run becomes the workspace baseline and supplies only bounded rendered context to AI draft generation. Production rollout and Platfire acceptance remain pending.
 
 ## Approved target workflow
@@ -116,6 +118,7 @@ Allowed operator-facing gate states are `waiting`, `running`, `ready`, `action_r
 - Generated and approved pages reference artifact-relative paths such as `assets/images/example.webp`.
 - GitHub receives the referenced binary assets in the same release commit as HTML, CSS, JavaScript, and metadata.
 - An artifact cannot pass the GitHub gate when referenced bytes are missing or checksums differ.
+- Missing workspace bytes produce one explicit re-import or replacement action without exposing bucket or object metadata.
 - Active media is retained while referenced. Superseded object versions are retained for 90 days unless legal or operational requirements override that policy.
 
 ### Preview TLS

@@ -902,6 +902,10 @@ def list_seo_migration_media_assets(
         selected_assets_count=int(payload.get("selected_assets_count") or 0) if isinstance(payload, dict) else 0,
         media_asset_categories=list(payload.get("media_asset_categories") or []) if isinstance(payload, dict) else [],
         selected_assets_trimmed=bool(payload.get("selected_assets_trimmed")) if isinstance(payload, dict) else False,
+        integrity_ready_count=int(payload.get("integrity_ready_count") or 0) if isinstance(payload, dict) else 0,
+        integrity_action_required_count=(
+            int(payload.get("integrity_action_required_count") or 0) if isinstance(payload, dict) else 0
+        ),
         diagnostics=list(payload.get("diagnostics") or []) if isinstance(payload, dict) else [],
     )
 
@@ -978,6 +982,43 @@ async def upload_seo_migration_media_asset(
             description=description,
             usage_note=usage_note,
             page_assignment=page_assignment,
+            principal_id=tenant_context.principal_id,
+        )
+    except SEOMigrationNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except SEOMigrationValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=_validation_error_detail(exc)
+        ) from exc
+    return SEOMigrationMediaAssetRead.model_validate(media_asset)
+
+
+@router.put(
+    "/sites/{site_id}/migration/media/assets/{asset_id}/content",
+    response_model=SEOMigrationMediaAssetRead,
+)
+async def replace_seo_migration_media_asset(
+    business_id: str,
+    site_id: str,
+    asset_id: str,
+    request: Request,
+    filename: str = Query(..., min_length=1, max_length=160),
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    migration_service: SEOMigrationService = Depends(get_seo_migration_service),
+) -> SEOMigrationMediaAssetRead:
+    scoped_business_id = resolve_tenant_business_id(
+        tenant_context=tenant_context,
+        requested_business_id=business_id,
+    )
+    payload = await request.body()
+    try:
+        media_asset = migration_service.replace_workspace_media_asset(
+            business_id=scoped_business_id,
+            site_id=site_id,
+            asset_id=asset_id,
+            filename=filename,
+            content_type=request.headers.get("content-type"),
+            payload=payload,
             principal_id=tenant_context.principal_id,
         )
     except SEOMigrationNotFoundError as exc:

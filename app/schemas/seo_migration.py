@@ -599,6 +599,9 @@ class SEOMigrationMediaAssetRead(BaseModel):
     metadata_suggestion_applied_at: str | None = None
     candidate_quality: str | None = None
     quality_reason: str | None = None
+    integrity_status: str | None = None
+    integrity_reason_code: str | None = None
+    repair_action: str | None = None
 
 
 class SEOMigrationMediaAssetListRead(BaseModel):
@@ -612,6 +615,8 @@ class SEOMigrationMediaAssetListRead(BaseModel):
     selected_assets_count: int = 0
     media_asset_categories: list[str] = Field(default_factory=list)
     selected_assets_trimmed: bool = False
+    integrity_ready_count: int = 0
+    integrity_action_required_count: int = 0
     diagnostics: list[str] = Field(default_factory=list)
 
 
