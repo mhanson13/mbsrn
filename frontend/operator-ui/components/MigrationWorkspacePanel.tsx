@@ -31,7 +31,7 @@ import {
   fetchPreviewReleases,
   fetchMigrationWorkspaceSummary,
   fetchSiteTLSCertificateStatus,
-  generateSiteTLSCertificate,
+  ensureSiteTLSCertificate,
   generateMigrationDraftArtifacts,
   importMigrationDiscoveredMediaAssets,
   importSiteTLSCertificate,
@@ -7933,17 +7933,21 @@ export function MigrationWorkspacePanel({
     setErrorHint(null);
     setStatusMessage(null);
     try {
-      const tlsStatus = await generateSiteTLSCertificate(token, businessId, siteId, {
+      const tlsStatus = await ensureSiteTLSCertificate(token, businessId, siteId, {
         validity_days: 90,
         key_algorithm: "rsa_2048",
       });
       setSiteTlsCertificate(tlsStatus);
-      setStatusMessage("Self-signed certificate generated, vaulted, and published. Publish the site to update its Ingress.");
+      setStatusMessage("Self-signed certificate is ready, vaulted, and published. Publish the site to update its Ingress.");
       await loadWorkspaceData(false);
     } catch (error) {
       const baseMessage = toErrorMessage(error, "TLS certificate provisioning failed.");
+      const nextAction =
+        error instanceof ApiRequestError && typeof error.detail?.next_action === "string"
+          ? error.detail.next_action.trim()
+          : "";
       await loadWorkspaceData(false, { preserveErrorMessage: true });
-      setErrorHint(null);
+      setErrorHint(nextAction || null);
       setErrorMessage(baseMessage);
     } finally {
       setBusyAction(null);
@@ -10001,7 +10005,7 @@ export function MigrationWorkspacePanel({
                       disabled={isActionInFlight}
                       data-testid="migration-provision-certificate-button"
                     >
-                      {busyAction === "provision_certificate" ? "Generating..." : "Generate, Vault & Publish"}
+                      {busyAction === "provision_certificate" ? "Ensuring..." : "Ensure, Vault & Publish"}
                     </button>
                     <button
                       type="button"

@@ -70,9 +70,10 @@ Acceptance:
 
 ## Phase 4: Correct and consolidate preview TLS
 
-- [x] Add startup/admin capability checks for required Secret Manager and Compute permissions.
-- [x] Surface missing permissions before certificate generation.
-- [ ] Implement idempotent generate, import, adopt, reuse, bind, rotate, and verify operations.
+- [x] Validate the certificate project and workload credentials without unsupported provider permission probes.
+- [x] Use real Secret Manager and Compute operations as authoritative permission checks with actionable, sanitized failures.
+- [x] Make `ensure` reuse published certificates and resume vaulted certificates after partial Compute failure.
+- [ ] Complete idempotent import, adopt, bind, rotate, and verify operations.
 - [ ] Use only Compute self-managed certificates and the GKE pre-shared certificate annotation for preview hosts.
 - [ ] Remove preview dependencies on Kubernetes `ManagedCertificate` resources after compatibility validation.
 - [ ] Preserve old certificates and secret versions until replacements are verified.

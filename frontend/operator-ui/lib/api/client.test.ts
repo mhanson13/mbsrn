@@ -1,4 +1,4 @@
-import { ApiRequestError, fetchSites } from "./client";
+import { ApiRequestError, ensureSiteTLSCertificate, fetchSites } from "./client";
 
 describe("api client error normalization", () => {
   const originalFetch = global.fetch;
@@ -57,5 +57,30 @@ describe("api client error normalization", () => {
         }),
       );
     }
+  });
+
+  it("uses the idempotent ensure route for certificate provisioning", async () => {
+    const responsePayload = { hostname: "platfire.site.mbsrn.com", published: true };
+    const mockFetch = jest.fn().mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: jest.fn().mockResolvedValueOnce(responsePayload),
+    });
+    global.fetch = mockFetch as unknown as typeof fetch;
+
+    await expect(
+      ensureSiteTLSCertificate("token-1", "biz-1", "site-1", {
+        validity_days: 90,
+        key_algorithm: "rsa_2048",
+      }),
+    ).resolves.toEqual(responsePayload);
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/businesses/biz-1/tls/sites/site-1/certificates/ensure"),
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ validity_days: 90, key_algorithm: "rsa_2048" }),
+        headers: expect.objectContaining({ Authorization: "Bearer token-1" }),
+      }),
+    );
   });
 });

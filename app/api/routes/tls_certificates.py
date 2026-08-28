@@ -88,13 +88,25 @@ def _raise_http_error(exc: Exception) -> None:
     if isinstance(exc, TLSCertificateNotFoundError):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     if isinstance(exc, TLSCertificateConfigurationError):
+        next_action = exc.next_action
+        if not next_action:
+            next_action = (
+                "Grant the listed permissions to the API workload identity, then retry."
+                if exc.missing_permissions
+                else "Collect administrator diagnostics and retry the certificate operation."
+            )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={
                 "reason_code": exc.reason_code,
                 "message": str(exc),
                 "missing_permissions": list(exc.missing_permissions),
-                "next_action": "Grant the listed permissions to the API workload identity, then retry.",
+                "provider_service": exc.provider_service,
+                "provider_operation": exc.provider_operation,
+                "provider_http_status": exc.provider_http_status,
+                "provider_status": exc.provider_status,
+                "retryable": exc.retryable,
+                "next_action": next_action,
             },
         ) from exc
     raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
@@ -133,6 +145,7 @@ def get_tls_certificate_capabilities(
         TLSCertificateCapabilityCheckRead(
             component=check.component,
             ready=check.ready,
+            verification_state=check.verification_state,
             required_permissions=list(check.required_permissions),
             missing_permissions=list(check.missing_permissions),
         )
@@ -146,7 +159,7 @@ def get_tls_certificate_capabilities(
         next_action=(
             None
             if capability_status.ready
-            else "Grant the missing permissions to the API workload identity, then retry the capability check."
+            else "Resolve the displayed configuration or credential problem, then retry the capability check."
         ),
         checks=checks,
     )

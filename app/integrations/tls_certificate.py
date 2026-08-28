@@ -5,6 +5,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 import hashlib
 import json
+import logging
 import socket
 import ssl
 import time
@@ -16,13 +17,33 @@ from cryptography.hazmat.primitives import serialization
 
 
 _CLOUD_PLATFORM_SCOPE = "https://www.googleapis.com/auth/cloud-platform"
+logger = logging.getLogger(__name__)
 
 
 class TLSCertificateProviderError(RuntimeError):
-    def __init__(self, *, code: str, safe_message: str) -> None:
+    def __init__(
+        self,
+        *,
+        code: str,
+        safe_message: str,
+        service: str | None = None,
+        operation: str | None = None,
+        http_status: int | None = None,
+        provider_status: str | None = None,
+        retryable: bool = False,
+        missing_permissions: tuple[str, ...] = (),
+        next_action: str | None = None,
+    ) -> None:
         super().__init__(safe_message)
         self.code = code
         self.safe_message = safe_message
+        self.service = service
+        self.operation = operation
+        self.http_status = http_status
+        self.provider_status = provider_status
+        self.retryable = retryable
+        self.missing_permissions = missing_permissions
+        self.next_action = next_action
 
 
 @dataclass(frozen=True)
@@ -52,15 +73,22 @@ class TLSCertificateCapabilityCheck:
     component: str
     required_permissions: tuple[str, ...]
     granted_permissions: tuple[str, ...]
+    verification_state: str = "verified"
 
     @property
     def missing_permissions(self) -> tuple[str, ...]:
+        if self.verification_state != "verified":
+            return ()
         granted = set(self.granted_permissions)
         return tuple(permission for permission in self.required_permissions if permission not in granted)
 
     @property
     def ready(self) -> bool:
-        return not self.missing_permissions
+        if self.verification_state == "operation_required":
+            return True
+        if self.verification_state == "verified":
+            return not self.missing_permissions
+        return False
 
 
 class TLSCertificateCapabilityProbe:
@@ -144,11 +172,17 @@ class _GoogleAccessTokenProvider:
             raise TLSCertificateProviderError(
                 code="google_credentials_unavailable",
                 safe_message="Google Cloud credentials are unavailable for TLS certificate operations.",
+                service="google_cloud",
+                operation="acquire_credentials",
+                next_action="Verify the GKE Workload Identity mapping and retry.",
             ) from exc
         if not token:
             raise TLSCertificateProviderError(
                 code="google_credentials_unavailable",
                 safe_message="Google Cloud credentials are unavailable for TLS certificate operations.",
+                service="google_cloud",
+                operation="acquire_credentials",
+                next_action="Verify the GKE Workload Identity mapping and retry.",
             )
         return token
 
@@ -165,6 +199,9 @@ class _GoogleJSONClient:
         self.token_provider = token_provider or _GoogleAccessTokenProvider()
         self.session = session or requests.Session()
 
+    def ensure_credentials(self) -> None:
+        self.token_provider()
+
     def request_json(
         self,
         *,
@@ -174,6 +211,9 @@ class _GoogleJSONClient:
         allowed_statuses: tuple[int, ...] = (200,),
         error_code: str,
         error_message: str,
+        service: str,
+        operation: str,
+        required_permissions: tuple[str, ...] = (),
     ) -> tuple[int, dict[str, object]]:
         headers = {
             "Accept": "application/json",
@@ -189,25 +229,171 @@ class _GoogleJSONClient:
                 json=body,
                 timeout=self.timeout_seconds,
             )
+        except requests.Timeout as exc:
+            self._log_failure(
+                service=service,
+                operation=operation,
+                reason_code=f"{error_code}_timeout",
+                retryable=True,
+            )
+            raise TLSCertificateProviderError(
+                code=f"{error_code}_timeout",
+                safe_message=f"{error_message} The Google Cloud request timed out.",
+                service=service,
+                operation=operation,
+                retryable=True,
+                next_action="Retry the certificate operation. If it continues to time out, inspect Google Cloud service health.",
+            ) from exc
         except requests.RequestException as exc:
-            raise TLSCertificateProviderError(code=error_code, safe_message=error_message) from exc
+            self._log_failure(
+                service=service,
+                operation=operation,
+                reason_code=f"{error_code}_transport_error",
+                retryable=True,
+            )
+            raise TLSCertificateProviderError(
+                code=f"{error_code}_transport_error",
+                safe_message=f"{error_message} Google Cloud could not be reached.",
+                service=service,
+                operation=operation,
+                retryable=True,
+                next_action="Retry the certificate operation. If it continues to fail, inspect API connectivity and DNS.",
+            ) from exc
         if response.status_code not in allowed_statuses:
-            raise TLSCertificateProviderError(code=error_code, safe_message=error_message)
+            raise self._http_error(
+                response=response,
+                error_code=error_code,
+                error_message=error_message,
+                service=service,
+                operation=operation,
+                required_permissions=required_permissions,
+            )
         if not response.content:
             return response.status_code, {}
         try:
             payload = response.json()
         except ValueError as exc:
-            raise TLSCertificateProviderError(code=error_code, safe_message=error_message) from exc
+            raise TLSCertificateProviderError(
+                code=f"{error_code}_invalid_response",
+                safe_message=f"{error_message} Google Cloud returned an invalid response.",
+                service=service,
+                operation=operation,
+                retryable=True,
+                next_action="Retry the certificate operation. Collect administrator diagnostics if it continues to fail.",
+            ) from exc
         if not isinstance(payload, dict):
-            raise TLSCertificateProviderError(code=error_code, safe_message=error_message)
+            raise TLSCertificateProviderError(
+                code=f"{error_code}_invalid_response",
+                safe_message=f"{error_message} Google Cloud returned an invalid response.",
+                service=service,
+                operation=operation,
+                retryable=True,
+                next_action="Retry the certificate operation. Collect administrator diagnostics if it continues to fail.",
+            )
         return response.status_code, payload
+
+    def _http_error(
+        self,
+        *,
+        response: requests.Response,
+        error_code: str,
+        error_message: str,
+        service: str,
+        operation: str,
+        required_permissions: tuple[str, ...],
+    ) -> TLSCertificateProviderError:
+        status_code = int(response.status_code)
+        provider_status = self._provider_status(response)
+        retryable = status_code in {408, 425, 429} or status_code >= 500
+        missing_permissions: tuple[str, ...] = ()
+        if status_code == 401:
+            reason_code = f"{error_code}_unauthenticated"
+            safe_message = f"{error_message} Google Cloud rejected the workload credentials."
+            next_action = "Verify the GKE Workload Identity mapping and retry."
+        elif status_code == 403:
+            reason_code = f"{error_code}_permission_denied"
+            safe_message = f"{error_message} Google Cloud denied this operation for the API workload identity."
+            missing_permissions = required_permissions
+            next_action = "Verify the listed permission on the API workload identity and check IAM conditions or organization policy."
+        elif status_code == 404:
+            reason_code = f"{error_code}_not_found"
+            safe_message = f"{error_message} The configured Google Cloud resource or API route was not found."
+            next_action = "Verify the certificate project, API configuration, and referenced resource."
+        elif status_code == 429:
+            reason_code = f"{error_code}_rate_limited"
+            safe_message = f"{error_message} Google Cloud rate-limited this operation."
+            next_action = "Retry the certificate operation after a short delay."
+        elif status_code >= 500:
+            reason_code = f"{error_code}_provider_unavailable"
+            safe_message = f"{error_message} Google Cloud is temporarily unavailable."
+            next_action = "Retry the certificate operation. Check Google Cloud service health if the failure continues."
+        else:
+            reason_code = error_code
+            safe_message = error_message
+            next_action = "Collect administrator diagnostics and verify the certificate provider configuration."
+        self._log_failure(
+            service=service,
+            operation=operation,
+            reason_code=reason_code,
+            http_status=status_code,
+            provider_status=provider_status,
+            retryable=retryable,
+        )
+        return TLSCertificateProviderError(
+            code=reason_code,
+            safe_message=safe_message,
+            service=service,
+            operation=operation,
+            http_status=status_code,
+            provider_status=provider_status,
+            retryable=retryable,
+            missing_permissions=missing_permissions,
+            next_action=next_action,
+        )
+
+    @staticmethod
+    def _provider_status(response: requests.Response) -> str | None:
+        try:
+            payload = response.json()
+        except ValueError:
+            return None
+        if not isinstance(payload, dict):
+            return None
+        error = payload.get("error")
+        if not isinstance(error, dict):
+            return None
+        value = str(error.get("status") or "").strip().upper()
+        return value[:80] or None
+
+    @staticmethod
+    def _log_failure(
+        *,
+        service: str,
+        operation: str,
+        reason_code: str,
+        http_status: int | None = None,
+        provider_status: str | None = None,
+        retryable: bool,
+    ) -> None:
+        logger.warning(
+            "Google TLS provider operation failed",
+            extra={
+                "event": "tls_google_provider_failure",
+                "provider_service": service,
+                "provider_operation": operation,
+                "failure_reason_code": reason_code,
+                "provider_http_status": http_status,
+                "provider_status": provider_status,
+                "retryable": retryable,
+            },
+        )
 
 
 class GoogleTLSCertificateCapabilityProbe(TLSCertificateCapabilityProbe):
     SECRET_MANAGER_PERMISSIONS = (
         "secretmanager.secrets.create",
         "secretmanager.versions.add",
+        "secretmanager.versions.access",
     )
     COMPUTE_PERMISSIONS = (
         "compute.sslCertificates.create",
@@ -236,41 +422,21 @@ class GoogleTLSCertificateCapabilityProbe(TLSCertificateCapabilityProbe):
                 code="tls_gcp_project_missing",
                 safe_message="The Google Cloud project for TLS certificates is not configured.",
             )
-        quoted_project = urllib.parse.quote(self.project_id, safe="")
-        _, secret_payload = self.client.request_json(
-            method="POST",
-            url=(f"https://secretmanager.googleapis.com/v1/projects/{quoted_project}:testIamPermissions"),
-            body={"permissions": list(self.SECRET_MANAGER_PERMISSIONS)},
-            allowed_statuses=(200,),
-            error_code="tls_secret_manager_capability_check_failed",
-            error_message="Secret Manager certificate permissions could not be checked.",
-        )
-        _, compute_payload = self.client.request_json(
-            method="POST",
-            url=(f"https://compute.googleapis.com/compute/v1/projects/{quoted_project}/testIamPermissions"),
-            body={"permissions": list(self.COMPUTE_PERMISSIONS)},
-            allowed_statuses=(200,),
-            error_code="tls_compute_capability_check_failed",
-            error_message="Compute SSL certificate permissions could not be checked.",
-        )
+        self.client.ensure_credentials()
         return (
             TLSCertificateCapabilityCheck(
                 component="secret_manager",
                 required_permissions=self.SECRET_MANAGER_PERMISSIONS,
-                granted_permissions=self._normalize_permissions(secret_payload.get("permissions")),
+                granted_permissions=(),
+                verification_state="operation_required",
             ),
             TLSCertificateCapabilityCheck(
                 component="compute_ssl_certificates",
                 required_permissions=self.COMPUTE_PERMISSIONS,
-                granted_permissions=self._normalize_permissions(compute_payload.get("permissions")),
+                granted_permissions=(),
+                verification_state="operation_required",
             ),
         )
-
-    @staticmethod
-    def _normalize_permissions(value: object) -> tuple[str, ...]:
-        if not isinstance(value, list):
-            return ()
-        return tuple(sorted({str(item).strip() for item in value if str(item).strip()}))
 
 
 class GoogleSecretManagerTLSCertificateVault(TLSCertificateVault):
@@ -309,6 +475,9 @@ class GoogleSecretManagerTLSCertificateVault(TLSCertificateVault):
             allowed_statuses=(200, 409),
             error_code="tls_vault_create_failed",
             error_message="The TLS certificate vault entry could not be created.",
+            service="secret_manager",
+            operation="create_secret",
+            required_permissions=("secretmanager.secrets.create",),
         )
         bundle = json.dumps(
             {
@@ -333,6 +502,9 @@ class GoogleSecretManagerTLSCertificateVault(TLSCertificateVault):
             allowed_statuses=(200,),
             error_code="tls_vault_write_failed",
             error_message="The TLS certificate material could not be vaulted.",
+            service="secret_manager",
+            operation="add_secret_version",
+            required_permissions=("secretmanager.versions.add",),
         )
         version_name = str(payload.get("name") or "").strip()
         if not version_name:
@@ -358,6 +530,9 @@ class GoogleSecretManagerTLSCertificateVault(TLSCertificateVault):
             allowed_statuses=(200,),
             error_code="tls_vault_read_failed",
             error_message="The TLS certificate material could not be read from the vault.",
+            service="secret_manager",
+            operation="access_secret_version",
+            required_permissions=("secretmanager.versions.access",),
         )
         payload_record = payload.get("payload")
         encoded_data = payload_record.get("data") if isinstance(payload_record, dict) else None
@@ -420,6 +595,9 @@ class GoogleComputeSSLCertificateClient(ComputeSSLCertificateClient):
             allowed_statuses=(200, 404),
             error_code="tls_compute_read_failed",
             error_message="The Google Cloud SSL certificate resource could not be read.",
+            service="compute_ssl_certificates",
+            operation="get_certificate",
+            required_permissions=("compute.sslCertificates.get",),
         )
         if status_code == 404:
             return None
@@ -448,6 +626,9 @@ class GoogleComputeSSLCertificateClient(ComputeSSLCertificateClient):
             allowed_statuses=(200, 409),
             error_code="tls_compute_create_failed",
             error_message="The self-managed Google Cloud SSL certificate could not be created.",
+            service="compute_ssl_certificates",
+            operation="create_certificate",
+            required_permissions=("compute.sslCertificates.create",),
         )
         if status_code != 409:
             self._wait_for_operation(payload)
@@ -477,6 +658,9 @@ class GoogleComputeSSLCertificateClient(ComputeSSLCertificateClient):
                 allowed_statuses=(200,),
                 error_code="tls_compute_operation_failed",
                 error_message="The Google Cloud SSL certificate operation could not be verified.",
+                service="compute_ssl_certificates",
+                operation="get_global_operation",
+                required_permissions=("compute.globalOperations.get",),
             )
             if str(operation.get("status") or "").upper() == "DONE":
                 if operation.get("error"):

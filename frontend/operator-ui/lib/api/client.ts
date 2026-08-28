@@ -1033,6 +1033,18 @@ export async function generateSiteTLSCertificate(
   );
 }
 
+export async function ensureSiteTLSCertificate(
+  token: string,
+  businessId: string,
+  siteId: string,
+  payload: TLSCertificateGenerateRequest = {},
+): Promise<SiteTLSCertificateStatus> {
+  return apiRequest<SiteTLSCertificateStatus>(
+    `/api/businesses/${businessId}/tls/sites/${siteId}/certificates/ensure`,
+    { method: "POST", token, body: JSON.stringify(payload) },
+  );
+}
+
 export async function importSiteTLSCertificate(
   token: string,
   businessId: string,

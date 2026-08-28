@@ -146,7 +146,7 @@ const mockAdoptMigrationPublishRepository = jest.fn<Promise<MigrationRepositoryA
 const mockDeployMigrationArtifactVersion = jest.fn<Promise<MigrationDeployActionResponse>, unknown[]>();
 const mockProvisionMigrationManagedCertificate = jest.fn<Promise<MigrationManagedCertificateActionResponse>, unknown[]>();
 const mockFetchSiteTLSCertificateStatus = jest.fn<Promise<SiteTLSCertificateStatus>, unknown[]>();
-const mockGenerateSiteTLSCertificate = jest.fn<Promise<SiteTLSCertificateStatus>, unknown[]>();
+const mockEnsureSiteTLSCertificate = jest.fn<Promise<SiteTLSCertificateStatus>, unknown[]>();
 const mockImportSiteTLSCertificate = jest.fn<Promise<SiteTLSCertificateStatus>, unknown[]>();
 const mockAdoptSiteTLSCertificate = jest.fn<Promise<SiteTLSCertificateStatus>, unknown[]>();
 const mockVerifySiteTLSCertificate = jest.fn<Promise<SiteTLSCertificateStatus>, unknown[]>();
@@ -239,7 +239,7 @@ jest.mock("../../lib/api/client", () => {
     deployMigrationArtifactVersion: (...args: unknown[]) => mockDeployMigrationArtifactVersion(...args),
     provisionMigrationManagedCertificate: (...args: unknown[]) => mockProvisionMigrationManagedCertificate(...args),
     fetchSiteTLSCertificateStatus: (...args: unknown[]) => mockFetchSiteTLSCertificateStatus(...args),
-    generateSiteTLSCertificate: (...args: unknown[]) => mockGenerateSiteTLSCertificate(...args),
+    ensureSiteTLSCertificate: (...args: unknown[]) => mockEnsureSiteTLSCertificate(...args),
     importSiteTLSCertificate: (...args: unknown[]) => mockImportSiteTLSCertificate(...args),
     adoptSiteTLSCertificate: (...args: unknown[]) => mockAdoptSiteTLSCertificate(...args),
     verifySiteTLSCertificate: (...args: unknown[]) => mockVerifySiteTLSCertificate(...args),
@@ -1847,7 +1847,7 @@ describe("site migration workflow route", () => {
       serving_state: "unverified",
       browser_trust: "untrusted_self_signed",
     };
-    mockGenerateSiteTLSCertificate.mockResolvedValueOnce(generatedCertificateStatus);
+    mockEnsureSiteTLSCertificate.mockResolvedValueOnce(generatedCertificateStatus);
 
     render(<SiteMigrationWorkflowPage />);
 
@@ -1857,13 +1857,39 @@ describe("site migration workflow route", () => {
     await user.click(provisionButton);
 
     await waitFor(() =>
-      expect(mockGenerateSiteTLSCertificate).toHaveBeenCalledWith("token-1", "biz-1", "site-1", {
+      expect(mockEnsureSiteTLSCertificate).toHaveBeenCalledWith("token-1", "biz-1", "site-1", {
         key_algorithm: "rsa_2048",
         validity_days: 90,
       }),
     );
     expect(mockDeployMigrationArtifactVersion).not.toHaveBeenCalled();
-    expect(await screen.findByText(/generated, vaulted, and published/i)).toBeInTheDocument();
+    expect(await screen.findByText(/is ready, vaulted, and published/i)).toBeInTheDocument();
+  });
+
+  it("shows the certificate provider next action without raw provider output", async () => {
+    const user = userEvent.setup();
+    mockEnsureSiteTLSCertificate.mockRejectedValueOnce(
+      new ApiRequestError("Google Cloud denied the certificate vault operation.", {
+        status: 503,
+        detail: {
+          reason_code: "tls_vault_create_failed_permission_denied",
+          provider_service: "secret_manager",
+          provider_operation: "create_secret",
+          provider_http_status: 403,
+          retryable: false,
+          next_action: "Verify secretmanager.secrets.create on the API workload identity.",
+        },
+      }),
+    );
+
+    render(<SiteMigrationWorkflowPage />);
+    await user.click(await screen.findByTestId("migration-provision-certificate-button"));
+
+    expect(await screen.findByText("Google Cloud denied the certificate vault operation.")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Verify secretmanager.secrets.create on the API workload identity."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/raw provider payload/i)).not.toBeInTheDocument();
   });
 
   it("allows deploy when legacy runtime replacement is required only after replace-runtime is selected", async () => {
@@ -7400,7 +7426,7 @@ function seedCompetitorProfileGenerationDefaults(): void {
   mockDeployMigrationArtifactVersion.mockReset();
   mockProvisionMigrationManagedCertificate.mockReset();
   mockFetchSiteTLSCertificateStatus.mockReset();
-  mockGenerateSiteTLSCertificate.mockReset();
+  mockEnsureSiteTLSCertificate.mockReset();
   mockImportSiteTLSCertificate.mockReset();
   mockAdoptSiteTLSCertificate.mockReset();
   mockVerifySiteTLSCertificate.mockReset();
@@ -7593,7 +7619,7 @@ function seedCompetitorProfileGenerationDefaults(): void {
     browser_trust: "untrusted_self_signed",
   };
   mockFetchSiteTLSCertificateStatus.mockResolvedValue(defaultTLSCertificateStatus);
-  mockGenerateSiteTLSCertificate.mockResolvedValue(defaultTLSCertificateStatus);
+  mockEnsureSiteTLSCertificate.mockResolvedValue(defaultTLSCertificateStatus);
   mockImportSiteTLSCertificate.mockResolvedValue(defaultTLSCertificateStatus);
   mockAdoptSiteTLSCertificate.mockResolvedValue(defaultTLSCertificateStatus);
   mockVerifySiteTLSCertificate.mockResolvedValue(defaultTLSCertificateStatus);

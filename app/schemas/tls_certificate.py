@@ -57,6 +57,7 @@ class SiteTLSCertificateStatusRead(BaseModel):
 class TLSCertificateCapabilityCheckRead(BaseModel):
     component: str
     ready: bool
+    verification_state: str
     required_permissions: list[str]
     missing_permissions: list[str]
 

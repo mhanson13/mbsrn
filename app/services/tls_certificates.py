@@ -51,10 +51,36 @@ class TLSCertificateConfigurationError(ValueError):
         *,
         reason_code: str = "tls_configuration_error",
         missing_permissions: tuple[str, ...] = (),
+        provider_service: str | None = None,
+        provider_operation: str | None = None,
+        provider_http_status: int | None = None,
+        provider_status: str | None = None,
+        retryable: bool = False,
+        next_action: str | None = None,
     ) -> None:
         super().__init__(message)
         self.reason_code = reason_code
         self.missing_permissions = missing_permissions
+        self.provider_service = provider_service
+        self.provider_operation = provider_operation
+        self.provider_http_status = provider_http_status
+        self.provider_status = provider_status
+        self.retryable = retryable
+        self.next_action = next_action
+
+    @classmethod
+    def from_provider(cls, exc: TLSCertificateProviderError) -> "TLSCertificateConfigurationError":
+        return cls(
+            exc.safe_message,
+            reason_code=exc.code,
+            missing_permissions=exc.missing_permissions,
+            provider_service=exc.service,
+            provider_operation=exc.operation,
+            provider_http_status=exc.http_status,
+            provider_status=exc.provider_status,
+            retryable=exc.retryable,
+            next_action=exc.next_action,
+        )
 
 
 @dataclass(frozen=True)
@@ -160,15 +186,24 @@ class TLSCertificateService:
                 message=exc.safe_message,
             )
         ready = bool(checks) and all(check.ready for check in checks)
+        operation_verification_required = any(check.verification_state == "operation_required" for check in checks)
         return TLSCertificateCapabilityStatus(
             project_id=self.gcp_project_id,
             ready=ready,
             checks=checks,
-            reason_code="tls_capabilities_ready" if ready else "tls_permissions_missing",
+            reason_code=(
+                "tls_operation_ready"
+                if ready and operation_verification_required
+                else "tls_capabilities_ready" if ready else "tls_permissions_missing"
+            ),
             message=(
-                "Certificate vault and publication permissions are ready."
-                if ready
-                else "The API runtime identity is missing certificate vault or publication permissions."
+                "Google Cloud configuration and credentials are ready. Permissions are verified during the certificate operation."
+                if ready and operation_verification_required
+                else (
+                    "Certificate vault and publication permissions are ready."
+                    if ready
+                    else "The API runtime identity is missing certificate vault or publication permissions."
+                )
             ),
         )
 
@@ -292,28 +327,56 @@ class TLSCertificateService:
             not_valid_after = asset.not_valid_after
             if not_valid_after.tzinfo is None:
                 not_valid_after = not_valid_after.replace(tzinfo=timezone.utc)
-            if (
-                asset.status != "published"
-                or not asset.gcp_resource_name
-                or not_valid_after <= minimum_expiry
-                or not self._hostname_is_covered(hostname, tuple(asset.san_dns_names_json or []))
+            if not_valid_after <= minimum_expiry or not self._hostname_is_covered(
+                hostname, tuple(asset.san_dns_names_json or [])
             ):
                 continue
-            try:
-                resource = self.compute_client.get(resource_name=asset.gcp_resource_name)
-            except TLSCertificateProviderError as exc:
-                raise TLSCertificateConfigurationError(exc.safe_message, reason_code=exc.code) from exc
-            if resource is None or resource.certificate_type != "SELF_MANAGED":
+            if asset.status == "published" and asset.gcp_resource_name:
+                try:
+                    resource = self.compute_client.get(resource_name=asset.gcp_resource_name)
+                    if resource is not None:
+                        self._verify_compute_resource(resource, expected_fingerprint=asset.fingerprint_sha256)
+                except TLSCertificateProviderError as exc:
+                    raise TLSCertificateConfigurationError.from_provider(exc) from exc
+                if resource is None or resource.certificate_type != "SELF_MANAGED":
+                    continue
+                self._hostname_for_site(business_id=business_id, site_id=site_id, lock=True)
+                if active_binding is None or active_binding.certificate_asset_id != asset.id:
+                    self._activate_binding(
+                        business_id=business_id,
+                        site_id=site_id,
+                        asset=asset,
+                        principal_id=principal_id,
+                    )
+                    self.session.commit()
+                return self.get_site_status(business_id=business_id, site_id=site_id)
+            if asset.custody != "vaulted" or not asset.vault_secret_version:
                 continue
+            try:
+                material = self.vault.load(secret_version_name=asset.vault_secret_version)
+            except TLSCertificateProviderError as exc:
+                raise TLSCertificateConfigurationError.from_provider(exc) from exc
+            parsed = self._parse_certificate_and_key(material, hostname=hostname)
+            if parsed.fingerprint_sha256 != asset.fingerprint_sha256:
+                raise TLSCertificateValidationError("The vaulted certificate does not match its stored fingerprint.")
             self._hostname_for_site(business_id=business_id, site_id=site_id, lock=True)
-            if active_binding is None or active_binding.certificate_asset_id != asset.id:
-                self._activate_binding(
-                    business_id=business_id,
-                    site_id=site_id,
-                    asset=asset,
-                    principal_id=principal_id,
-                )
-                self.session.commit()
+            resumed_asset = self._vault_publish_and_bind(
+                business_id=business_id,
+                site_id=site_id,
+                hostname=hostname,
+                material=material,
+                source=asset.source,
+                display_name=asset.display_name,
+                principal_id=principal_id,
+            )
+            self._audit(
+                business_id=business_id,
+                principal_id=principal_id,
+                asset=resumed_asset,
+                event_type="tls_certificate_resumed",
+                details={"site_id": site_id, "hostname": hostname},
+            )
+            self.session.commit()
             return self.get_site_status(business_id=business_id, site_id=site_id)
         return self.generate_for_site(
             business_id=business_id,
@@ -375,7 +438,7 @@ class TLSCertificateService:
         try:
             resource = self.compute_client.get(resource_name=normalized_resource_name)
         except TLSCertificateProviderError as exc:
-            raise TLSCertificateConfigurationError(exc.safe_message, reason_code=exc.code) from exc
+            raise TLSCertificateConfigurationError.from_provider(exc) from exc
         if resource is None:
             raise TLSCertificateNotFoundError("The requested Google Cloud SSL certificate resource was not found.")
         if resource.certificate_type != "SELF_MANAGED":
@@ -533,7 +596,7 @@ class TLSCertificateService:
                 )
             except TLSCertificateProviderError as exc:
                 self._mark_failed(asset, exc)
-                raise TLSCertificateConfigurationError(exc.safe_message, reason_code=exc.code) from exc
+                raise TLSCertificateConfigurationError.from_provider(exc) from exc
             asset.custody = "vaulted"
             asset.vault_secret_name = secret_id
             asset.vault_secret_version = version_name
@@ -552,7 +615,7 @@ class TLSCertificateService:
             self._verify_compute_resource(resource, expected_fingerprint=parsed.fingerprint_sha256)
         except TLSCertificateProviderError as exc:
             self._mark_failed(asset, exc)
-            raise TLSCertificateConfigurationError(exc.safe_message, reason_code=exc.code) from exc
+            raise TLSCertificateConfigurationError.from_provider(exc) from exc
         asset.gcp_resource_name = resource_name
         asset.status = "published"
         asset.failure_reason_code = None

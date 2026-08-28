@@ -17,6 +17,7 @@ from app.integrations.tls_certificate import (
     TLSCertificateEndpointObservation,
     TLSCertificateEndpointVerifier,
     TLSCertificateMaterial,
+    TLSCertificateProviderError,
     TLSCertificateVault,
 )
 from app.models.business import Business
@@ -79,6 +80,37 @@ class _FakeComputeClient(ComputeSSLCertificateClient):
         )
         self.resources[resource_name] = resource
         return resource
+
+
+class _FailOnceComputeClient(_FakeComputeClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.create_attempts = 0
+
+    def create(
+        self,
+        *,
+        resource_name: str,
+        description: str,
+        material: TLSCertificateMaterial,
+    ) -> ComputeSSLCertificateResource:
+        self.create_attempts += 1
+        if self.create_attempts == 1:
+            raise TLSCertificateProviderError(
+                code="tls_compute_create_failed_provider_unavailable",
+                safe_message="The self-managed Google Cloud SSL certificate could not be created.",
+                service="compute_ssl_certificates",
+                operation="create_certificate",
+                http_status=503,
+                provider_status="UNAVAILABLE",
+                retryable=True,
+                next_action="Retry the certificate operation.",
+            )
+        return super().create(
+            resource_name=resource_name,
+            description=description,
+            material=material,
+        )
 
 
 class _FakeEndpointVerifier(TLSCertificateEndpointVerifier):
@@ -253,6 +285,49 @@ def test_ensure_reuses_published_certificate_without_generating_another(db_sessi
 
     assert ensured.asset is not None
     assert ensured.asset.id == first_asset_id
+    assert len(vault.material_by_version) == 1
+    assert len(compute.resources) == 1
+    assert len(TLSCertificateRepository(db_session).list_assets_for_business(business.id)) == 1
+
+
+def test_ensure_resumes_vaulted_certificate_after_compute_publication_failure(db_session: Session) -> None:
+    business, site = _seed_site(db_session)
+    vault = _FakeVault()
+    compute = _FailOnceComputeClient()
+    service = TLSCertificateService(
+        session=db_session,
+        site_repository=SEOSiteRepository(db_session),
+        certificate_repository=TLSCertificateRepository(db_session),
+        vault=vault,
+        compute_client=compute,
+        endpoint_verifier=_FakeEndpointVerifier(),
+        gcp_project_id="mbsrn-prod",
+    )
+
+    with pytest.raises(TLSCertificateConfigurationError) as first_error:
+        service.generate_for_site(
+            business_id=business.id,
+            site_id=site.id,
+            principal_id="principal-1",
+        )
+
+    assert first_error.value.retryable is True
+    assets_after_failure = TLSCertificateRepository(db_session).list_assets_for_business(business.id)
+    assert len(assets_after_failure) == 1
+    failed_asset = assets_after_failure[0]
+    assert failed_asset.custody == "vaulted"
+    assert failed_asset.vault_secret_version in vault.material_by_version
+
+    ensured = service.ensure_for_site(
+        business_id=business.id,
+        site_id=site.id,
+        principal_id="principal-1",
+    )
+
+    assert ensured.asset is not None
+    assert ensured.asset.id == failed_asset.id
+    assert ensured.asset.status == "published"
+    assert compute.create_attempts == 2
     assert len(vault.material_by_version) == 1
     assert len(compute.resources) == 1
     assert len(TLSCertificateRepository(db_session).list_assets_for_business(business.id)) == 1

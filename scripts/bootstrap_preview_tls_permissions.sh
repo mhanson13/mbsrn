@@ -12,6 +12,7 @@ Usage:
 Options:
   --runtime-service-account <email> Defaults to mbsrn-api@<project>.iam.gserviceaccount.com
   --role-id <id>                   Defaults to mbsrnPreviewTlsOperator
+  --secret-prefix <prefix>         Defaults to mbsrn-tls; scopes certificate-secret read access
   --help
 EOF
 }
@@ -19,6 +20,7 @@ EOF
 GCP_PROJECT_ID="${GCP_PROJECT_ID:-}"
 RUNTIME_SERVICE_ACCOUNT="${RUNTIME_SERVICE_ACCOUNT:-}"
 ROLE_ID="${ROLE_ID:-mbsrnPreviewTlsOperator}"
+SECRET_PREFIX="${TLS_CERTIFICATE_SECRET_PREFIX:-mbsrn-tls}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -32,6 +34,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --role-id)
       ROLE_ID="$2"
+      shift 2
+      ;;
+    --secret-prefix)
+      SECRET_PREFIX="$2"
       shift 2
       ;;
     --help|-h)
@@ -56,6 +62,10 @@ if ! command -v gcloud >/dev/null 2>&1; then
 fi
 if [[ -z "${RUNTIME_SERVICE_ACCOUNT//[[:space:]]/}" ]]; then
   RUNTIME_SERVICE_ACCOUNT="mbsrn-api@${GCP_PROJECT_ID}.iam.gserviceaccount.com"
+fi
+if [[ ! "${SECRET_PREFIX}" =~ ^[A-Za-z0-9_-]{1,80}$ ]]; then
+  echo "ERROR: --secret-prefix must contain 1-80 letters, numbers, underscores, or hyphens." >&2
+  exit 1
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -92,4 +102,19 @@ gcloud projects add-iam-policy-binding "${GCP_PROJECT_ID}" \
   --condition=None \
   --quiet >/dev/null
 
-echo "Preview TLS permissions are ready for ${RUNTIME_SERVICE_ACCOUNT}."
+GCP_PROJECT_NUMBER="$(gcloud projects describe "${GCP_PROJECT_ID}" --format='value(projectNumber)')"
+if [[ -z "${GCP_PROJECT_NUMBER//[[:space:]]/}" ]]; then
+  echo "ERROR: could not resolve project number for ${GCP_PROJECT_ID}." >&2
+  exit 1
+fi
+TLS_SECRET_RESOURCE_PREFIX="projects/${GCP_PROJECT_NUMBER}/secrets/${SECRET_PREFIX}-"
+TLS_SECRET_READ_CONDITION="expression=(resource.type == 'secretmanager.googleapis.com/Secret' || resource.type == 'secretmanager.googleapis.com/SecretVersion') && resource.name.startsWith('${TLS_SECRET_RESOURCE_PREFIX}'),title=mbsrnPreviewTLSSecretRead,description=Read only MBSRN preview TLS certificate secrets"
+
+gcloud projects add-iam-policy-binding "${GCP_PROJECT_ID}" \
+  --member "serviceAccount:${RUNTIME_SERVICE_ACCOUNT}" \
+  --role "roles/secretmanager.secretAccessor" \
+  --condition="${TLS_SECRET_READ_CONDITION}" \
+  --quiet >/dev/null
+
+echo "Preview TLS write/publish permissions are ready for ${RUNTIME_SERVICE_ACCOUNT}."
+echo "Preview TLS secret read access is limited to ${TLS_SECRET_RESOURCE_PREFIX}*."

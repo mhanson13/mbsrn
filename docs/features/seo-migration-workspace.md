@@ -78,6 +78,8 @@ Migration workflow on the dedicated page:
 8. Continue the displayed GitHub, self-managed certificate, DNS, deployment, and verification gates in order.
 9. Open the verified preview URL.
 
+The certificate gate uses API-side **Ensure, Vault & Publish** semantics. A readiness response proves that the Google Cloud project and workload credentials are configured but leaves provider permissions in `operation_required` state until the actual Secret Manager or Compute request runs. The real operation supplies the authoritative result. Retries reuse a valid published certificate or resume matching vaulted material after a partial Compute failure, rather than generating another certificate. Normal operator output shows only the failed service step and next action; bounded provider status metadata remains in administrator diagnostics.
+
 Artifact publication and managed deploy-workflow provisioning are separate stages. A successful artifact commit remains published when subsequent workflow verification fails; Deploy Readiness records `workflow_provisioning_failed` and blocks dispatch until workflow verification succeeds. Re-running Publish for the same artifact invokes duplicate-artifact workflow repair without rewriting artifact files. Existing marker-missing repositories remain blocked pending explicit adoption; only repositories created during the controlled MBSRN bootstrap receive their matching management marker automatically.
 
 Important operator cue:

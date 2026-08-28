@@ -15,7 +15,8 @@ An existing Compute SSL certificate can also be adopted without its private key.
 ## One-time Google Cloud prerequisites
 
 - Enable the Secret Manager API in the certificate project.
-- Grant the API workload identity a custom certificate-writer role containing only `secretmanager.secrets.create` and `secretmanager.versions.add`. `roles/secretmanager.admin` also works but is substantially broader. Do not grant secret payload read access unless a later recovery workflow actually needs it.
+- Grant the API workload identity a custom certificate-writer role containing only `secretmanager.secrets.create` and `secretmanager.versions.add`. `roles/secretmanager.admin` is not required.
+- Grant `roles/secretmanager.secretAccessor` through an IAM Condition limited to Secret Manager `Secret` and `SecretVersion` resources whose names begin with the configured certificate prefix (default `mbsrn-tls-`). This permits retrying a certificate that was vaulted before Compute publication failed without exposing unrelated platform secrets.
 - Grant the API workload identity a narrow role containing `compute.sslCertificates.create` and `compute.sslCertificates.get` for global Compute SSL certificate publication and adoption.
 - Set `TLS_CERTIFICATE_GCP_PROJECT_ID` when it differs from `GCP_PROJECT_ID`.
 - Run `alembic upgrade head` before exposing the new operator controls.
@@ -26,19 +27,21 @@ Provision or reconcile the narrow role idempotently:
 scripts/bootstrap_preview_tls_permissions.sh --gcp-project-id mbsrn-prod
 ```
 
-The role definition is versioned at `infra/gcp/preview-tls-operator-role.yaml`. It contains `secretmanager.secrets.create`, `secretmanager.versions.add`, `compute.sslCertificates.create`, `compute.sslCertificates.get`, and `compute.globalOperations.get`.
+The role definition is versioned at `infra/gcp/preview-tls-operator-role.yaml`. It contains `secretmanager.secrets.create`, `secretmanager.versions.add`, `compute.sslCertificates.create`, `compute.sslCertificates.get`, and `compute.globalOperations.get`. The bootstrap script separately grants prefix-scoped `roles/secretmanager.secretAccessor`; it does not add payload-read permission to the project custom role.
 
-Before generating certificate material, call `GET /api/businesses/{business_id}/tls/capabilities`. A ready response confirms both permission groups. A failure lists missing permissions and a short next action; private keys and provider response bodies are never included.
+Before generating certificate material, call `GET /api/businesses/{business_id}/tls/capabilities`. A ready response confirms the certificate project and workload credentials are configured. It lists the permissions that the real certificate operations require, with `verification_state=operation_required`; it does not claim that Google has authorized an operation that has not run. Secret Manager does not provide a project-level permission-test route, and Google documents `testIamPermissions` as a UI aid rather than an authorization check.
+
+The real Secret Manager and Compute requests are authoritative. Failures distinguish unauthenticated credentials, permission denial, missing resource/API configuration, rate limiting, provider outage, timeout, and transport errors. Operator responses contain a short next action. Administrator diagnostics may include the service, operation, HTTP/provider status, retryability, and stable reason code, but never access tokens, provider response bodies, certificate PEM, or private keys.
 
 Do not copy the certificate private key into GitHub. Existing GitHub deployment authentication remains unchanged.
 
-References: [Google self-managed SSL certificates](https://docs.cloud.google.com/load-balancing/docs/ssl-certificates/self-managed-certs), [GKE pre-shared certificate annotation](https://docs.cloud.google.com/kubernetes-engine/docs/how-to/secure-traffic-management), and [Secret Manager least-privilege guidance](https://docs.cloud.google.com/secret-manager/docs/access-control).
+References: [Google self-managed SSL certificates](https://docs.cloud.google.com/load-balancing/docs/ssl-certificates/self-managed-certs), [GKE pre-shared certificate annotation](https://docs.cloud.google.com/kubernetes-engine/docs/how-to/secure-traffic-management), [Secret Manager least-privilege guidance](https://docs.cloud.google.com/secret-manager/docs/access-control), and [IAM resource conditions](https://docs.cloud.google.com/iam/docs/conditions-resource-attributes).
 
 ## Platfire rollout
 
 1. Deploy the database migration and API/UI code.
 2. Confirm Secret Manager API and workload identity permissions.
-3. Open Platfire's operator workspace and choose **Generate, Vault & Publish**, or import/adopt an existing self-managed certificate.
+3. Open Platfire's operator workspace and choose **Ensure, Vault & Publish**, or import/adopt an existing self-managed certificate. Ensure reuses a valid published asset and resumes a vaulted asset after a partial Compute failure.
 4. Publish the existing artifact again. Duplicate-artifact repair is allowed to reconcile the workflow and Ingress without republishing artifact content.
 5. Request GKE deploy.
 6. Use **Verify Served Certificate**. Success requires the endpoint fingerprint to match the selected asset.

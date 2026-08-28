@@ -122,6 +122,8 @@ class PreviewDiagnosticCollectionService:
                 "fingerprint_sha256": asset.fingerprint_sha256 if asset is not None else None,
                 "gcp_resource_name": asset.gcp_resource_name if asset is not None else None,
                 "status": asset.status if asset is not None else None,
+                "failure_reason_code": getattr(asset, "failure_reason_code", None) if asset is not None else None,
+                "failure_message": getattr(asset, "failure_message", None) if asset is not None else None,
                 "vaulted": certificate_status.vaulted if certificate_status is not None else False,
                 "published": certificate_status.published if certificate_status is not None else False,
                 "manifest_state": (
@@ -139,6 +141,7 @@ class PreviewDiagnosticCollectionService:
                     {
                         "component": check.component,
                         "ready": check.ready,
+                        "verification_state": check.verification_state,
                         "missing_permissions": list(check.missing_permissions),
                     }
                     for check in capability_status.checks
