@@ -1,6 +1,6 @@
 # ADR 0001: Canonical preview identity
 
-Status: Accepted, implementation pending  
+Status: Accepted, implemented
 Date: 2026-08-28
 
 ## Decision
@@ -12,3 +12,5 @@ Repository, DNS, TLS, Kubernetes, and verification integrations receive this res
 ## Consequences
 
 Existing sites require a non-mutating backfill/confirmation step. A later rename is an infrastructure migration, not an ordinary site edit. Platfire uses `platfire` only as the first acceptance value; no runtime Platfire branch is permitted.
+
+The migration workflow presents confirmation as an explicit gate. A repository name may provide an editable suggestion, but it is never authoritative and does not satisfy the gate until the site `preview_slug` is saved. Release creation validates this identity before approving a draft. Missing identity is also represented as bounded diagnostic evidence rather than preventing diagnostic collection.

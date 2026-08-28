@@ -7,6 +7,7 @@ import { WorkspaceEmptyStateCard } from "./layout/WorkspaceEmptyStateCard";
 import { WorkspaceMessageStack } from "./layout/WorkspaceMessageStack";
 import { WorkspaceMetadataGrid, WorkspaceMetadataItem } from "./layout/WorkspaceMetadataGrid";
 import { SourceCaptureControls } from "./migration/SourceCaptureControls";
+import { PreviewIdentityGate } from "./migration/PreviewIdentityGate";
 import {
   ApiRequestError,
   adoptSiteTLSCertificate,
@@ -43,6 +44,7 @@ import {
   updateMigrationPublishConfig,
   updateMigrationDeployConfig,
   updateMigrationRequirements,
+  updateSite,
   uploadMigrationMediaAsset,
   upsertMigrationWorkspace,
   verifySiteTLSCertificate,
@@ -65,6 +67,8 @@ interface MigrationWorkspacePanelProps {
   token: string;
   businessId: string;
   siteId: string;
+  initialPreviewSlug?: string | null;
+  initialPreviewSlugLockedAt?: string | null;
   isAdmin?: boolean;
 }
 
@@ -76,6 +80,7 @@ type BusyAction =
   | "save_deploy_config"
   | "generate"
   | "approve"
+  | "save_preview_identity"
   | "create_preview"
   | "advance_preview"
   | "collect_debug"
@@ -4129,6 +4134,8 @@ export function MigrationWorkspacePanel({
   token,
   businessId,
   siteId,
+  initialPreviewSlug = null,
+  initialPreviewSlugLockedAt = null,
   isAdmin = false,
 }: MigrationWorkspacePanelProps): JSX.Element {
   const [busyAction, setBusyAction] = useState<BusyAction>("load");
@@ -4144,6 +4151,13 @@ export function MigrationWorkspacePanel({
   const [artifactVersions, setArtifactVersions] = useState<MigrationArtifactVersion[]>([]);
   const [previewReleases, setPreviewReleases] = useState<PreviewRelease[]>([]);
   const [diagnosticBundle, setDiagnosticBundle] = useState<PreviewDiagnosticBundle | null>(null);
+  const [previewSlug, setPreviewSlug] = useState(initialPreviewSlug || "");
+  const [previewSlugDraft, setPreviewSlugDraft] = useState(initialPreviewSlug || "");
+  const [previewSlugLockedAt, setPreviewSlugLockedAt] = useState<string | null>(initialPreviewSlugLockedAt);
+  const [previewActionError, setPreviewActionError] = useState<string | null>(null);
+  const [previewActionStatus, setPreviewActionStatus] = useState<string | null>(null);
+  const [diagnosticActionError, setDiagnosticActionError] = useState<string | null>(null);
+  const [diagnosticActionStatus, setDiagnosticActionStatus] = useState<string | null>(null);
   const [publishHistory, setPublishHistory] = useState<Array<Record<string, unknown>>>([]);
   const [deployHistory, setDeployHistory] = useState<Array<Record<string, unknown>>>([]);
   const [publishHistoryLoaded, setPublishHistoryLoaded] = useState(false);
@@ -4230,6 +4244,8 @@ export function MigrationWorkspacePanel({
   const publishArtifactMediaReadiness = asRecord(publishReadiness.artifact_media_readiness);
   const workspacePublishConfig = asRecord(workspaceRecord.publish_config_json || {});
   const selectedArtifactVersionIdTrimmed = selectedArtifactVersionId.trim();
+  const previewSlugTrimmed = previewSlug.trim();
+  const previewHostname = previewSlugTrimmed ? `${previewSlugTrimmed}.site.mbsrn.com` : null;
   const publishReadinessArtifactVersionId = asString(publishReadiness.approved_artifact_version_id);
   const deployReadinessArtifactVersionId = asString(deployReadiness.approved_artifact_version_id);
   const deployBlockerCodes = parseBlockerCodes(deployReadiness.blocker_codes);
@@ -6608,6 +6624,27 @@ export function MigrationWorkspacePanel({
   }, [loadWorkspaceData]);
 
   useEffect(() => {
+    const normalizedPreviewSlug = (initialPreviewSlug || "").trim();
+    setPreviewSlug(normalizedPreviewSlug);
+    setPreviewSlugDraft(normalizedPreviewSlug);
+    setPreviewSlugLockedAt(initialPreviewSlugLockedAt);
+    setPreviewActionError(null);
+    setPreviewActionStatus(null);
+    setDiagnosticActionError(null);
+    setDiagnosticActionStatus(null);
+  }, [initialPreviewSlug, initialPreviewSlugLockedAt, siteId]);
+
+  useEffect(() => {
+    if (previewSlug || previewSlugDraft.trim()) {
+      return;
+    }
+    const repositorySuggestion = publishRepoName.trim().toLowerCase();
+    if (/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(repositorySuggestion)) {
+      setPreviewSlugDraft(repositorySuggestion);
+    }
+  }, [previewSlug, previewSlugDraft, publishRepoName]);
+
+  useEffect(() => {
     if (!latestSourceCapture || !["queued", "running"].includes(latestSourceCapture.status)) {
       return;
     }
@@ -7710,15 +7747,47 @@ export function MigrationWorkspacePanel({
     }
   };
 
+  const handleSavePreviewIdentity = async (): Promise<void> => {
+    const normalizedPreviewSlug = previewSlugDraft.trim().toLowerCase();
+    setPreviewActionError(null);
+    setPreviewActionStatus(null);
+    if (!normalizedPreviewSlug) {
+      setPreviewActionError("Enter a preview subdomain before saving the preview identity.");
+      return;
+    }
+    setBusyAction("save_preview_identity");
+    setPreviewActionStatus("Saving preview domain...");
+    try {
+      const updatedSite = await updateSite(token, businessId, siteId, {
+        preview_slug: normalizedPreviewSlug,
+      });
+      const savedPreviewSlug = (updatedSite.preview_slug || normalizedPreviewSlug).trim();
+      setPreviewSlug(savedPreviewSlug);
+      setPreviewSlugDraft(savedPreviewSlug);
+      setPreviewSlugLockedAt(updatedSite.preview_slug_locked_at || null);
+      setPreviewActionStatus(`Preview domain saved: ${savedPreviewSlug}.site.mbsrn.com.`);
+      await loadWorkspaceData(false, { preserveErrorMessage: true });
+    } catch (error) {
+      setPreviewActionStatus(null);
+      setPreviewActionError(toErrorMessage(error, "Preview domain could not be saved."));
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
   const handleCreatePreviewRelease = async (): Promise<void> => {
+    setPreviewActionError(null);
+    setPreviewActionStatus(null);
     if (!selectedArtifactVersionIdTrimmed) {
-      setErrorMessage("Select a draft artifact before creating a preview release.");
+      setPreviewActionError("Select a draft artifact before creating a preview release.");
+      return;
+    }
+    if (!previewSlugTrimmed) {
+      setPreviewActionError("Save the preview domain before creating a preview release.");
       return;
     }
     setBusyAction("create_preview");
-    setErrorMessage(null);
-    setErrorHint(null);
-    setStatusMessage(null);
+    setPreviewActionStatus("Approving the draft and creating its preview release...");
     try {
       const release = await approveAndCreatePreviewRelease(
         token,
@@ -7727,10 +7796,14 @@ export function MigrationWorkspacePanel({
         selectedArtifactVersionIdTrimmed,
       );
       setPreviewReleases((current) => [release, ...current.filter((item) => item.id !== release.id)]);
-      setStatusMessage("Draft approved and preview release created. Continue with the next infrastructure gate.");
+      setPreviewSlug(release.preview_slug);
+      setPreviewSlugDraft(release.preview_slug);
+      setPreviewSlugLockedAt((current) => current || new Date().toISOString());
+      setPreviewActionStatus("Draft approved and preview release created. Continue with the next infrastructure gate.");
       await loadWorkspaceData(false);
     } catch (error) {
-      setErrorMessage(toErrorMessage(error, "Preview release could not be created."));
+      setPreviewActionStatus(null);
+      setPreviewActionError(toErrorMessage(error, "Preview release could not be created."));
     } finally {
       setBusyAction(null);
     }
@@ -7766,9 +7839,8 @@ export function MigrationWorkspacePanel({
 
   const handleCollectPreviewDiagnostics = async (): Promise<void> => {
     setBusyAction("collect_debug");
-    setErrorMessage(null);
-    setErrorHint(null);
-    setStatusMessage(null);
+    setDiagnosticActionError(null);
+    setDiagnosticActionStatus("Collecting sanitized diagnostic information...");
     try {
       const bundle = await collectPreviewDiagnostics(
         token,
@@ -7777,9 +7849,10 @@ export function MigrationWorkspacePanel({
         selectedPreviewRelease?.id || null,
       );
       setDiagnosticBundle(bundle);
-      setStatusMessage(`Sanitized diagnostic bundle collected. Support ID: ${bundle.support_id}.`);
+      setDiagnosticActionStatus(`Sanitized diagnostic bundle collected. Support ID: ${bundle.support_id}.`);
     } catch (error) {
-      setErrorMessage(toErrorMessage(error, "Diagnostic bundle could not be collected."));
+      setDiagnosticActionStatus(null);
+      setDiagnosticActionError(toErrorMessage(error, "Diagnostic bundle could not be collected."));
     } finally {
       setBusyAction(null);
     }
@@ -9412,6 +9485,16 @@ export function MigrationWorkspacePanel({
         <span className="hint muted">
           One release keeps the selected draft, GitHub commit, certificate, DNS, deployment, and verification evidence together.
         </span>
+        <PreviewIdentityGate
+          previewHostname={previewHostname}
+          previewSlugDraft={previewSlugDraft}
+          locked={Boolean(previewSlugLockedAt)}
+          busy={isActionInFlight}
+          saving={busyAction === "save_preview_identity"}
+          unchanged={previewSlugDraft.trim().toLowerCase() === previewSlugTrimmed}
+          onChange={setPreviewSlugDraft}
+          onSave={() => void handleSavePreviewIdentity()}
+        />
         {selectedPreviewRelease ? (
           <>
             <div className="workspace-status-callout stack-tight">
@@ -9477,13 +9560,23 @@ export function MigrationWorkspacePanel({
               type="button"
               className="button button-primary"
               onClick={() => void handleCreatePreviewRelease()}
-              disabled={isActionInFlight || !selectedArtifactVersionIdTrimmed}
+              disabled={isActionInFlight || !selectedArtifactVersionIdTrimmed || !previewSlugTrimmed}
               data-testid="migration-create-preview-release-button"
             >
               {busyAction === "create_preview" ? "Creating..." : "Approve & Create Preview"}
             </button>
           </>
         )}
+        {previewActionError ? (
+          <p className="hint warning" role="alert" data-testid="migration-preview-action-error">
+            {previewActionError}
+          </p>
+        ) : null}
+        {previewActionStatus ? (
+          <p className="hint success" role="status" data-testid="migration-preview-action-status">
+            {previewActionStatus}
+          </p>
+        ) : null}
       </div>
 
       <details className="workspace-details-shell" data-testid="migration-manual-publish-deploy-controls">
@@ -10059,6 +10152,16 @@ export function MigrationWorkspacePanel({
             >
               {busyAction === "collect_debug" ? "Collecting..." : "Collect Debug Output"}
             </button>
+            {diagnosticActionError ? (
+              <p className="hint warning" role="alert" data-testid="migration-diagnostic-action-error">
+                {diagnosticActionError}
+              </p>
+            ) : null}
+            {diagnosticActionStatus ? (
+              <p className="hint success" role="status" data-testid="migration-diagnostic-action-status">
+                {diagnosticActionStatus}
+              </p>
+            ) : null}
             {diagnosticBundle ? (
               <details className="workspace-details-shell">
                 <summary>View sanitized bundle · support {diagnosticBundle.support_id}</summary>

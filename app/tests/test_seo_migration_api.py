@@ -1559,6 +1559,68 @@ def test_approve_and_create_preview_release_is_idempotent_and_returns_operator_g
     assert diagnostics_response.json()["detail"] == "Only administrators can collect migration diagnostics."
 
 
+def test_preview_release_requires_canonical_slug_before_approval_and_diagnostics_remain_available(db_session) -> None:
+    business_id = "11111111-1111-1111-1111-111111111111"
+    site_id = "22222222-2222-2222-2222-222222222222"
+    _seed_business_and_site(db_session, business_id=business_id, site_id=site_id)
+    client = _make_client(db_session, business_id=business_id)
+
+    workspace_response = client.put(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/workspace",
+        json={
+            "source_url": "https://legacy.example",
+            "publish_config": {
+                "enabled": True,
+                "repo_owner": "example-owner",
+                "repo_name": "generic-preview-site",
+                "branch": "main",
+            },
+        },
+    )
+    assert workspace_response.status_code == 200
+    _prepare_workspace_for_draft_generation(client, business_id=business_id, site_id=site_id)
+    generate_response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/generate-draft-artifacts",
+        json={"force_new_version": True},
+    )
+    assert generate_response.status_code == 201
+    artifact_id = generate_response.json()["id"]
+
+    release_response = client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/"
+        f"artifact-versions/{artifact_id}/preview-release",
+        json={},
+    )
+
+    assert release_response.status_code == 422
+    assert release_response.json()["detail"] == {
+        "reason_code": "preview_slug_required",
+        "message": "preview_slug is required before preview infrastructure is created",
+    }
+    artifact_response = client.get(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/artifact-versions/{artifact_id}"
+    )
+    assert artifact_response.status_code == 200
+    assert artifact_response.json()["approval_status"] != "approved"
+
+    admin_client = _make_client(
+        db_session,
+        business_id=business_id,
+        principal_role=PrincipalRole.ADMIN,
+    )
+    diagnostics_response = admin_client.post(
+        f"/api/businesses/{business_id}/seo/sites/{site_id}/migration/diagnostics/collect"
+    )
+    assert diagnostics_response.status_code == 200
+    certificate_diagnostics = diagnostics_response.json()["payload"]["certificate"]
+    assert certificate_diagnostics["manifest_state"] == "unavailable"
+    assert certificate_diagnostics["collection_error"] == {
+        "status": "unavailable",
+        "reason_code": "preview_slug_required",
+        "message": "preview_slug is required before preview infrastructure is created",
+    }
+
+
 def test_adopt_publish_repository_endpoint_writes_management_marker(db_session) -> None:
     business_id = "11111111-1111-1111-1111-111111111111"
     site_id = "22222222-2222-2222-2222-222222222222"

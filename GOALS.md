@@ -43,6 +43,9 @@ Acceptance:
 - [x] Lock the slug after the first infrastructure mutation.
 - [x] Pass the resolved hostname explicitly to certificate, DNS, repository, workflow, and deployment integrations.
 - [x] Backfill existing sites without silently creating infrastructure.
+- [x] Expose existing-site preview identity confirmation in the migration workflow.
+- [x] Block combined approval/release creation until the canonical preview identity is saved.
+- [x] Validate the identity before approval so failed release prerequisites cannot partially approve a draft.
 
 Acceptance:
 
@@ -104,6 +107,8 @@ Acceptance:
 - [x] Move dry-run, replacement, raw provider, and Kubernetes controls out of the standard path.
 - [x] Add administrator-only `Collect Debug Output`.
 - [x] Ensure authenticated artifact/media previews work without unauthenticated image requests.
+- [x] Render preview-release and diagnostic action results beside the initiating controls.
+- [x] Keep diagnostic bundles collectable when TLS or preview-identity prerequisites are incomplete.
 - [ ] Split the migration workspace into focused components.
 
 Acceptance:

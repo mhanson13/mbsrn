@@ -306,6 +306,9 @@ export interface SEOSite {
   display_name: string;
   base_url: string;
   normalized_domain: string;
+  preview_slug?: string | null;
+  preview_hostname?: string | null;
+  preview_slug_locked_at?: string | null;
   industry?: string | null;
   primary_location?: string | null;
   primary_business_zip?: string | null;
@@ -327,6 +330,7 @@ export interface SEOSite {
 export interface SEOSiteCreateRequest {
   display_name: string;
   base_url: string;
+  preview_slug?: string | null;
   search_console_property_url?: string | null;
   search_console_enabled?: boolean | null;
   ga4_account_id?: string | null;
@@ -338,6 +342,7 @@ export interface SEOSiteCreateRequest {
 export interface SEOSiteUpdateRequest {
   display_name?: string;
   base_url?: string;
+  preview_slug?: string | null;
   industry?: string | null;
   primary_location?: string | null;
   primary_business_zip?: string | null;
@@ -355,6 +360,7 @@ export interface SEOSiteUpdateRequest {
 export interface SEOSiteAdminUpdateRequest {
   name?: string;
   url?: string;
+  preview_slug?: string | null;
   search_console_property_url?: string | null;
   search_console_enabled?: boolean | null;
   ga4_account_id?: string | null;

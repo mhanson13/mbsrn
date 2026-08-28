@@ -66,6 +66,8 @@ describe("site migration workflow page", () => {
       token: "token-1",
       businessId: "biz-1",
       siteId: "site-1",
+      initialPreviewSlug: null,
+      initialPreviewSlugLockedAt: null,
       isAdmin: false,
     });
     expect(screen.getByRole("link", { name: "Back to Site Workspace" })).toHaveAttribute("href", "/sites/site-1");

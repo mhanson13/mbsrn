@@ -820,6 +820,56 @@ describe("site migration workflow route", () => {
     expect(screen.getByTestId("migration-preview-release-gates")).toBeInTheDocument();
   });
 
+  it("requires and saves the canonical preview domain before creating a preview release", async () => {
+    const user = userEvent.setup();
+    mockUseOperatorContext.mockReturnValue(
+      baseContext({
+        sites: [buildSite({ preview_slug: null, preview_hostname: null, preview_slug_locked_at: null })],
+      }),
+    );
+    mockUpdateSite.mockResolvedValueOnce(
+      buildSite({
+        preview_slug: "example-site",
+        preview_hostname: "example-site.site.mbsrn.com",
+        preview_slug_locked_at: null,
+      }),
+    );
+
+    render(<SiteMigrationWorkflowPage />);
+
+    const releaseSection = await screen.findByTestId("migration-preview-release-section");
+    const createButton = within(releaseSection).getByRole("button", { name: "Approve & Create Preview" });
+    expect(createButton).toBeDisabled();
+    expect(within(releaseSection).getByText(/Save the permanent site preview subdomain/)).toBeInTheDocument();
+
+    const slugInput = within(releaseSection).getByTestId("migration-preview-slug-input");
+    await user.clear(slugInput);
+    await user.type(slugInput, "Example-Site");
+    await user.click(within(releaseSection).getByRole("button", { name: "Save Preview Domain" }));
+
+    await waitFor(() =>
+      expect(mockUpdateSite).toHaveBeenCalledWith("token-1", "biz-1", "site-1", {
+        preview_slug: "example-site",
+      }),
+    );
+    expect(await within(releaseSection).findByText("example-site.site.mbsrn.com")).toBeInTheDocument();
+    expect(createButton).toBeEnabled();
+  });
+
+  it("shows preview release failures beside the preview action", async () => {
+    const user = userEvent.setup();
+    mockApproveAndCreatePreviewRelease.mockRejectedValueOnce(
+      new ApiRequestError("Preview release validation failed.", { status: 422, detail: null }),
+    );
+
+    render(<SiteMigrationWorkflowPage />);
+
+    const releaseSection = await screen.findByTestId("migration-preview-release-section");
+    await user.click(within(releaseSection).getByRole("button", { name: "Approve & Create Preview" }));
+
+    expect(await within(releaseSection).findByRole("alert")).toHaveTextContent("Preview release validation failed.");
+  });
+
   it("shows concise action-required release guidance without exposing a broken advance action", async () => {
     const release = buildPreviewRelease({
       status: "action_required",
@@ -865,6 +915,21 @@ describe("site migration workflow route", () => {
     );
     expect(await screen.findByText(/Sanitized diagnostic bundle collected/)).toHaveTextContent("support-1");
     expect(within(debugPanel).getByText(/View sanitized bundle/)).toBeInTheDocument();
+  });
+
+  it("shows diagnostic collection failures beside the collection control", async () => {
+    const user = userEvent.setup();
+    mockUseOperatorContext.mockReturnValue(baseContext({ principalRole: "admin" }));
+    mockCollectPreviewDiagnostics.mockRejectedValueOnce(
+      new ApiRequestError("Diagnostic collection failed.", { status: 500, detail: null }),
+    );
+
+    render(<SiteMigrationWorkflowPage />);
+
+    const debugPanel = await screen.findByTestId("migration-collect-debug-output");
+    await user.click(within(debugPanel).getByRole("button", { name: "Collect Debug Output" }));
+
+    expect(await within(debugPanel).findByRole("alert")).toHaveTextContent("Diagnostic collection failed.");
   });
 
   it("does not show diagnostic collection controls to operators", async () => {
@@ -6369,6 +6434,9 @@ function buildSite(overrides: Partial<SEOSite> = {}): SEOSite {
     display_name: "Main Site",
     base_url: "https://example.com/",
     normalized_domain: "example.com",
+    preview_slug: "example-site",
+    preview_hostname: "example-site.site.mbsrn.com",
+    preview_slug_locked_at: null,
     is_active: true,
     is_primary: true,
     last_audit_run_id: "audit-1",

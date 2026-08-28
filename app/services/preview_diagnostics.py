@@ -6,7 +6,12 @@ from uuid import uuid4
 from app.core.time import utc_now
 from app.services.preview_releases import PreviewReleaseService
 from app.services.seo_migration import SEOMigrationService
-from app.services.tls_certificates import TLSCertificateService
+from app.services.tls_certificates import (
+    TLSCertificateConfigurationError,
+    TLSCertificateNotFoundError,
+    TLSCertificateService,
+    TLSCertificateValidationError,
+)
 
 
 _PUBLISH_TARGET_KEYS = (
@@ -68,13 +73,22 @@ class PreviewDiagnosticCollectionService:
             release_state = releases[0] if releases else None
         summary = self.migration_service.get_workspace_summary(business_id=business_id, site_id=site_id)
         capability_status = self.certificate_service.get_capabilities()
-        certificate_status = self.certificate_service.get_site_status(business_id=business_id, site_id=site_id)
+        certificate_status = None
+        certificate_error: dict[str, object] | None = None
+        try:
+            certificate_status = self.certificate_service.get_site_status(business_id=business_id, site_id=site_id)
+        except (TLSCertificateConfigurationError, TLSCertificateNotFoundError, TLSCertificateValidationError) as exc:
+            certificate_error = {
+                "status": "unavailable",
+                "reason_code": getattr(exc, "reason_code", None) or self._certificate_reason_code(exc),
+                "message": str(exc),
+            }
         publish_readiness = summary.publish_readiness if isinstance(summary.publish_readiness, dict) else {}
         deploy_readiness = summary.deploy_readiness if isinstance(summary.deploy_readiness, dict) else {}
         publish_target = publish_readiness.get("target")
         deploy_target = deploy_readiness.get("target")
-        asset = certificate_status.asset
-        binding = certificate_status.binding
+        asset = certificate_status.asset if certificate_status is not None else None
+        binding = certificate_status.binding if certificate_status is not None else None
         support_id = (
             release_state.operation.support_id
             if release_state is not None and release_state.operation.support_id
@@ -103,16 +117,19 @@ class PreviewDiagnosticCollectionService:
                 "target": self._whitelist(deploy_target, _DEPLOY_TARGET_KEYS),
             },
             "certificate": {
-                "hostname": certificate_status.hostname,
+                "hostname": certificate_status.hostname if certificate_status is not None else None,
                 "asset_id": asset.id if asset is not None else None,
                 "fingerprint_sha256": asset.fingerprint_sha256 if asset is not None else None,
                 "gcp_resource_name": asset.gcp_resource_name if asset is not None else None,
                 "status": asset.status if asset is not None else None,
-                "vaulted": certificate_status.vaulted,
-                "published": certificate_status.published,
-                "manifest_state": certificate_status.manifest_state,
-                "serving_state": certificate_status.serving_state,
+                "vaulted": certificate_status.vaulted if certificate_status is not None else False,
+                "published": certificate_status.published if certificate_status is not None else False,
+                "manifest_state": (
+                    certificate_status.manifest_state if certificate_status is not None else "unavailable"
+                ),
+                "serving_state": certificate_status.serving_state if certificate_status is not None else "unavailable",
                 "observed_fingerprint_sha256": (binding.observed_fingerprint_sha256 if binding is not None else None),
+                "collection_error": certificate_error,
             },
             "tls_capabilities": {
                 "project_id": capability_status.project_id,
@@ -173,6 +190,14 @@ class PreviewDiagnosticCollectionService:
                 "raw media and captured website contents",
             ],
         }
+
+    @staticmethod
+    def _certificate_reason_code(exc: Exception) -> str:
+        if "preview_slug" in str(exc).lower():
+            return "preview_slug_required"
+        if isinstance(exc, TLSCertificateNotFoundError):
+            return "tls_resource_not_found"
+        return "tls_status_unavailable"
 
     @staticmethod
     def _whitelist(value: object, keys: tuple[str, ...]) -> dict[str, object]:

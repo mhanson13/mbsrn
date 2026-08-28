@@ -73,12 +73,10 @@ Migration workflow on the dedicated page:
 3. Capture operator requirements and optionally use per-field AI suggestion drafts.
 4. Review preflight draft readiness (blocking vs warning-only signals).
 5. Generate and review draft artifacts.
-6. Approve an artifact version.
-7. Confirm Admin-managed GitHub publish target readiness and run publish dry-run.
-8. Publish approved artifact to target repository.
-9. Review Admin-owned deploy target diagnostics, set workspace deploy availability if needed, and run deploy dry-run.
-10. Use `Provision TLS Certificate` to create or verify the site-owned ManagedCertificate.
-11. Submit explicit deploy request to GKE deployment workflow.
+6. Confirm and save the site's canonical `<preview_slug>.site.mbsrn.com` identity.
+7. Run **Approve & Create Preview** for the selected artifact.
+8. Continue the displayed GitHub, self-managed certificate, DNS, deployment, and verification gates in order.
+9. Open the verified preview URL.
 
 Artifact publication and managed deploy-workflow provisioning are separate stages. A successful artifact commit remains published when subsequent workflow verification fails; Deploy Readiness records `workflow_provisioning_failed` and blocks dispatch until workflow verification succeeds. Re-running Publish for the same artifact invokes duplicate-artifact workflow repair without rewriting artifact files. Existing marker-missing repositories remain blocked pending explicit adoption; only repositories created during the controlled MBSRN bootstrap receive their matching management marker automatically.
 
@@ -1423,6 +1421,8 @@ Operational examples:
 `POST /api/businesses/{business_id}/seo/sites/{site_id}/migration/artifact-versions/{artifact_version_id}/preview-release`
 approves the selected artifact when necessary and creates or resumes its preview release. Repeating the request returns the same release; it does not create another release or treat the existing approval as an error.
 
+The canonical site `preview_slug` is a precondition. The operator workflow exposes an editable confirmation gate until infrastructure locks the value. A repository name may seed a suggestion but cannot substitute for the saved site identity. The API validates this prerequisite before approval; a missing or invalid identity returns `preview_slug_required` without changing artifact approval state.
+
 The response is intentionally operator-focused: release identity, current operation, canonical preview hostname, and the eight ordered gates. Provider payloads and gate `details_json` are not included in this standard response.
 
 Release inspection endpoints are:
@@ -1435,7 +1435,7 @@ Release inspection endpoints are:
 
 Reconciliation advances a gate only when evidence belongs to the release's exact artifact, commit, certificate binding, and fingerprint. `advance` executes exactly one pending external gate. A failed gate records a stable reason and support ID and can be retried without repeating successful gates. A selected certificate is immutable for that release.
 
-The normal workspace shows this gate list and one next action. Compatibility publish/certificate/deploy controls are collapsed under advanced manual controls. Raw history stays under Advanced Diagnostics. Administrators must explicitly choose **Collect Debug Output** to build a bounded, sanitized bundle with a support ID and seven-day expiry.
+The normal workspace shows this gate list and one next action. Compatibility publish/certificate/deploy controls are collapsed under advanced manual controls. Raw history stays under Advanced Diagnostics. Administrators must explicitly choose **Collect Debug Output** to build a bounded, sanitized bundle with a support ID and seven-day expiry. Preview-release and diagnostic results are rendered beside the action that produced them. Missing preview identity or certificate prerequisites appear inside the diagnostic bundle as bounded `collection_error` evidence and do not cause diagnostic collection itself to fail.
 
 ## Publish Workflow (GitHub)
 

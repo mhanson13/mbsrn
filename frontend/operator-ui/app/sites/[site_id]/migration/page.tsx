@@ -106,6 +106,8 @@ export default function SiteMigrationWorkflowPage(): JSX.Element {
           token={context.token}
           businessId={context.businessId}
           siteId={selectedSite.id}
+          initialPreviewSlug={selectedSite.preview_slug || null}
+          initialPreviewSlugLockedAt={selectedSite.preview_slug_locked_at || null}
           isAdmin={context.principalRole === "admin"}
         />
       </OperatorPageSectionStack>

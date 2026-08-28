@@ -1566,6 +1566,10 @@ def approve_and_create_preview_release(
             site_id=site_id,
             artifact_version_id=artifact_version_id,
         )
+        preview_release_service.validate_site_preview_identity(
+            business_id=scoped_business_id,
+            site_id=site_id,
+        )
         if artifact.approval_status != "approved":
             migration_service.approve_artifact_version(
                 business_id=scoped_business_id,

@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 from app.integrations.tls_certificate import TLSCertificateCapabilityCheck
 from app.services.preview_diagnostics import PreviewDiagnosticCollectionService
-from app.services.tls_certificates import TLSCertificateCapabilityStatus
+from app.services.tls_certificates import TLSCertificateCapabilityStatus, TLSCertificateValidationError
 
 
 def test_preview_diagnostic_bundle_is_bounded_and_redacts_sensitive_fields() -> None:
@@ -205,3 +205,53 @@ def test_preview_diagnostic_bundle_uses_requested_release() -> None:
     assert requested_ids == ["release-requested"]
     assert bundle["release_id"] == "release-requested"
     assert bundle["collected_at"].tzinfo == timezone.utc
+
+
+def test_preview_diagnostic_bundle_records_missing_preview_identity_instead_of_failing() -> None:
+    workspace = SimpleNamespace(
+        id="workspace-1",
+        source_site_status="ingested",
+        migration_status="draft_generated",
+        publish_status="not_ready",
+        deploy_status="not_ready",
+        latest_generated_artifact_version_id="artifact-1",
+        latest_approved_artifact_version_id=None,
+        last_published_artifact_version_id=None,
+        last_deployed_artifact_version_id=None,
+    )
+    migration_service = SimpleNamespace(
+        get_workspace_summary=lambda **_kwargs: SimpleNamespace(
+            workspace=workspace,
+            publish_readiness={},
+            deploy_readiness={},
+        )
+    )
+    capability = TLSCertificateCapabilityStatus(
+        project_id="test-project",
+        ready=False,
+        checks=(),
+        reason_code="tls_permissions_missing",
+        message="Missing permission.",
+    )
+
+    def missing_preview_identity(**_kwargs):
+        raise TLSCertificateValidationError("preview_slug is required before preview infrastructure is created")
+
+    certificate_service = SimpleNamespace(
+        get_capabilities=lambda: capability,
+        get_site_status=missing_preview_identity,
+    )
+
+    bundle = PreviewDiagnosticCollectionService(
+        release_service=SimpleNamespace(list=lambda **_kwargs: []),
+        migration_service=migration_service,
+        certificate_service=certificate_service,
+    ).collect(business_id="business-1", site_id="site-1")
+
+    certificate = bundle["payload"]["certificate"]
+    assert certificate["manifest_state"] == "unavailable"
+    assert certificate["collection_error"] == {
+        "status": "unavailable",
+        "reason_code": "preview_slug_required",
+        "message": "preview_slug is required before preview infrastructure is created",
+    }

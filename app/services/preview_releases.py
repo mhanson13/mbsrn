@@ -7,7 +7,7 @@ from uuid import uuid4
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.core.preview_identity import PreviewIdentityValidationError, build_site_preview_identity
+from app.core.preview_identity import PreviewIdentityValidationError, SitePreviewIdentity, build_site_preview_identity
 from app.core.time import utc_now
 from app.models.preview_release import PreviewRelease, PreviewReleaseGate, PreviewReleaseOperation
 from app.repositories.preview_release_repository import PreviewReleaseRepository
@@ -62,6 +62,13 @@ class PreviewReleaseService:
         self.release_repository = release_repository
         self.certificate_repository = certificate_repository
 
+    def validate_site_preview_identity(self, *, business_id: str, site_id: str) -> SitePreviewIdentity:
+        """Validate the canonical identity before approval mutates workspace state."""
+        site = self.site_repository.get_for_business(business_id, site_id)
+        if site is None:
+            raise PreviewReleaseNotFoundError("Site not found.")
+        return self._preview_identity(site.preview_slug)
+
     def create_or_resume(
         self,
         *,
@@ -90,10 +97,7 @@ class PreviewReleaseService:
                 "The selected draft must be approved before a preview release is created.",
                 reason_code="preview_release_approval_required",
             )
-        try:
-            identity = build_site_preview_identity(site.preview_slug)
-        except PreviewIdentityValidationError as exc:
-            raise PreviewReleaseValidationError(str(exc), reason_code="preview_slug_required") from exc
+        identity = self._preview_identity(site.preview_slug)
         operation_key = self._normalize_idempotency_key(
             idempotency_key or f"preview-release:{site_id}:{artifact_version_id}"
         )
@@ -497,6 +501,13 @@ class PreviewReleaseService:
     def _set_ready_if(cls, gate: PreviewReleaseGate, ready: bool, message: str) -> None:
         if ready and gate.status != "ready":
             cls._set_gate_ready(gate, message)
+
+    @staticmethod
+    def _preview_identity(value: object) -> SitePreviewIdentity:
+        try:
+            return build_site_preview_identity(value)
+        except PreviewIdentityValidationError as exc:
+            raise PreviewReleaseValidationError(str(exc), reason_code="preview_slug_required") from exc
 
     @staticmethod
     def _normalize_idempotency_key(value: object) -> str:

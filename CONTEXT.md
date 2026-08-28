@@ -27,12 +27,15 @@ Platfire (`platfire.com`) is the first acceptance site. It is not a runtime spec
 4. The operator workflow exposes separate approval, publication, certificate, deployment, refresh, and raw diagnostic controls without a single release operation tying them together.
 5. Diagnostic summaries mix selected artifact, latest artifact, and latest action history. This produces contradictory guidance.
 6. The migration service, GitHub publisher, and operator workspace are oversized and contain overlapping managed- and self-managed-certificate behavior.
+7. On 2026-08-28, preview release creation for an existing site returned `preview_slug_required` after the artifact had already been approved. Administrator diagnostic collection then failed with HTTP 500 because certificate status treated the same missing prerequisite as fatal. Both failures were shown only in the page-level message area, far from the controls that initiated them.
 
 ## Implementation status
 
 As of 2026-08-28, the durable media storage boundary is implemented and tested. The production bucket `mbsrn-prod-migration-media-1068908288067` is private, uses uniform bucket-level access, has public-access prevention and versioning enabled, and expires noncurrent generations after 90 days. The runtime service account has bucket-scoped object create/read roles. Deployment wiring is pending the next application rollout; Platfire media must be re-imported after that rollout.
 
 Canonical preview identity is implemented across the site model/API, TLS, GitHub workflow rendering, static IP, DNS, and deployment boundaries. `preview_slug` is globally unique, rejects reserved/invalid labels, remains nullable for safe existing-site backfill, and becomes immutable when preview infrastructure is first mutated. The explicit hostname remains authoritative even when source domain and repository names differ.
+
+The dedicated migration route now exposes preview identity as an explicit release prerequisite for every site. A valid repository name can seed the editable suggestion, but only a saved site `preview_slug` satisfies the gate. **Approve & Create Preview** remains disabled until that value is persisted. The API validates identity before approval, so a failed prerequisite cannot partially approve the artifact. Preview and diagnostic action results render beside their initiating controls. Diagnostic collection records unavailable certificate status and its bounded reason code instead of failing when preview infrastructure prerequisites are incomplete.
 
 Preview releases persist one artifact, frozen media manifest, canonical preview identity, Git commit, selected certificate identity, deployment run identifier, operation, and eight ordered gates. The combined approval/release endpoint is idempotent even when retried with a different request key; standalone approval retains its existing duplicate-rejection contract. `POST .../preview-releases/{release_id}/advance` performs exactly one external gate and can resume a failed gate without repeating successful gates. Reconciliation will not substitute a newly activated certificate into an existing release.
 
