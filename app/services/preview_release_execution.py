@@ -115,15 +115,36 @@ class PreviewReleaseExecutionService:
                 or getattr(exc, "error_code", None)
                 or f"preview_release_{gate_name}_failed"
             )
-            return self.release_service.mark_gate_failed(
+            failure_details = self._failure_details(exc)
+            failed_state = self.release_service.mark_gate_failed(
                 business_id=business_id,
                 site_id=site_id,
                 release_id=release_id,
                 gate_name=gate_name,
                 reason_code=str(reason_code),
                 message=str(exc),
-                next_action=f"Resolve the {gate_name.replace('_', ' ')} issue, then retry this release.",
+                next_action=(
+                    str(getattr(exc, "next_action", "") or "").strip()
+                    or f"Resolve the {gate_name.replace('_', ' ')} issue, then retry this release."
+                ),
+                details=failure_details,
             )
+            logger.warning(
+                "Preview release gate failed",
+                extra={
+                    "json_fields": {
+                        "event": "preview_release_gate_failed",
+                        "business_id": business_id,
+                        "site_id": site_id,
+                        "release_id": release_id,
+                        "support_id": failed_state.operation.support_id,
+                        "gate_name": gate_name,
+                        "failure_reason_code": str(reason_code),
+                        **failure_details,
+                    }
+                },
+            )
+            return failed_state
         except Exception:
             logger.exception(
                 "Unexpected preview release gate failure",
@@ -151,3 +172,24 @@ class PreviewReleaseExecutionService:
             site_id=site_id,
             release_id=release_id,
         )
+
+    @staticmethod
+    def _failure_details(exc: Exception) -> dict[str, object]:
+        details: dict[str, object] = {}
+        scalar_fields = {
+            "provider_service": "provider_service",
+            "provider_operation": "provider_operation",
+            "provider_http_status": "provider_http_status",
+            "provider_status": "provider_status",
+            "retryable": "retryable",
+        }
+        for output_key, attribute_name in scalar_fields.items():
+            value = getattr(exc, attribute_name, None)
+            if value is not None and value != "":
+                details[output_key] = value
+        missing_permissions = getattr(exc, "missing_permissions", ())
+        if isinstance(missing_permissions, (list, tuple)):
+            details["missing_permissions"] = [
+                str(permission)[:120] for permission in missing_permissions if str(permission).strip()
+            ][:20]
+        return details

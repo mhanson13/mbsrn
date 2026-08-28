@@ -35,6 +35,8 @@ The real Secret Manager and Compute requests are authoritative. Failures disting
 
 Google Cloud request validation failures such as `INVALID_ARGUMENT` are non-retryable platform integration errors. The operator should collect diagnostics instead of repeatedly generating or publishing certificate material.
 
+Failed release gates retain only bounded provider evidence: service, operation, HTTP/provider status, retryability, and missing permission names. The administrator bundle correlates that evidence with the release support ID and media reason counts; it never stores raw provider responses, certificate material, secret payloads, or media bytes.
+
 Secret Manager may return a canonical version resource containing the numeric project number even when the request used the project ID. The vault loader accepts that Google-generated form, validates the secret and version path, and rebuilds the access request against the configured certificate project. A reference to another named project remains invalid.
 
 Do not copy the certificate private key into GitHub. Existing GitHub deployment authentication remains unchanged.

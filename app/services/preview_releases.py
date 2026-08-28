@@ -327,6 +327,7 @@ class PreviewReleaseService:
         gate.reason_code = None
         gate.message = f"{gate_name.replace('_', ' ').title()} is running."
         gate.next_action = None
+        gate.details_json = None
         gate.attempt_count += 1
         gate.started_at = utc_now()
         gate.completed_at = None
@@ -351,6 +352,7 @@ class PreviewReleaseService:
         reason_code: str,
         message: str,
         next_action: str,
+        details: dict[str, object] | None = None,
     ) -> PreviewReleaseState:
         state = self.get(business_id=business_id, site_id=site_id, release_id=release_id)
         gate = next((item for item in state.gates if item.gate_name == gate_name), None)
@@ -363,6 +365,7 @@ class PreviewReleaseService:
         gate.reason_code = self._optional_string(reason_code, 120) or "preview_release_gate_failed"
         gate.message = self._optional_string(message, 500) or "The preview release gate failed."
         gate.next_action = self._optional_string(next_action, 500)
+        gate.details_json = deepcopy(details) if isinstance(details, dict) else None
         gate.completed_at = utc_now()
         state.release.status = "failed"
         state.operation.status = "failed"

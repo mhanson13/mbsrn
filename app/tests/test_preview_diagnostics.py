@@ -27,6 +27,20 @@ def test_preview_diagnostic_bundle_is_bounded_and_redacts_sensitive_fields() -> 
             publish_readiness={
                 "ready": True,
                 "blocker_codes": [],
+                "artifact_media_readiness": {
+                    "ready": False,
+                    "readiness_source": "artifact_snapshot",
+                    "artifact_version_id": "artifact-1",
+                    "selected_assets_count": 3,
+                    "materialized_assets_count": 1,
+                    "selected_not_materialized_count": 2,
+                    "blocker_codes": ["artifact_media_missing"],
+                    "blocker_reason_codes": ["workspace_media_object_missing"],
+                    "blocker_reason_counts": {"workspace_media_object_missing": 2},
+                    "selected_not_materialized_asset_ids": ["asset-2", "asset-3"],
+                    "missing_referenced_media_paths": ["media/hero.webp"],
+                    "content_base64": "must-not-leak",
+                },
                 "target": {
                     "repo_owner": "example-owner",
                     "repo_name": "example-site",
@@ -62,6 +76,7 @@ def test_preview_diagnostic_bundle_is_bounded_and_redacts_sensitive_fields() -> 
         status="waiting",
         active_gate="certificate",
         failure_reason_code=None,
+        failure_message=None,
     )
     gate = SimpleNamespace(
         gate_name="certificate",
@@ -70,6 +85,15 @@ def test_preview_diagnostic_bundle_is_bounded_and_redacts_sensitive_fields() -> 
         message="Certificate ensure is waiting.",
         next_action="Ensure the certificate.",
         attempt_count=0,
+        details_json={
+            "provider_service": "compute",
+            "provider_operation": "sslCertificates.insert",
+            "provider_http_status": 400,
+            "provider_status": "INVALID_ARGUMENT",
+            "retryable": False,
+            "missing_permissions": [],
+            "raw_provider_response": "must-not-leak",
+        },
     )
     release_state = SimpleNamespace(release=release, operation=operation, gates=(gate,))
     release_service = SimpleNamespace(
@@ -120,6 +144,27 @@ def test_preview_diagnostic_bundle_is_bounded_and_redacts_sensitive_fields() -> 
     assert bundle["retention_days"] == 7
     assert (bundle["expires_at"] - bundle["collected_at"]).days == 7
     assert bundle["payload"]["release"]["id"] == "release-1"
+    assert bundle["payload"]["media"] == {
+        "ready": False,
+        "readiness_source": "artifact_snapshot",
+        "artifact_version_id": "artifact-1",
+        "selected_assets_count": 3,
+        "materialized_assets_count": 1,
+        "selected_not_materialized_count": 2,
+        "blocker_codes": ["artifact_media_missing"],
+        "blocker_reason_codes": ["workspace_media_object_missing"],
+        "selected_not_materialized_asset_ids": ["asset-2", "asset-3"],
+        "missing_referenced_media_paths": ["media/hero.webp"],
+        "blocker_reason_counts": {"workspace_media_object_missing": 2},
+    }
+    assert bundle["payload"]["release"]["gates"][0]["details"] == {
+        "provider_service": "compute",
+        "provider_operation": "sslCertificates.insert",
+        "provider_http_status": 400,
+        "provider_status": "INVALID_ARGUMENT",
+        "retryable": False,
+        "missing_permissions": [],
+    }
     assert bundle["payload"]["tls_capabilities"]["checks"][0]["missing_permissions"] == ["secretmanager.secrets.create"]
     serialized = json.dumps(
         bundle, default=lambda value: value.isoformat() if isinstance(value, datetime) else str(value)
@@ -127,6 +172,7 @@ def test_preview_diagnostic_bundle_is_bounded_and_redacts_sensitive_fields() -> 
     assert "private-json-key" not in serialized
     assert "github-secret-token" not in serialized
     assert "sensitive-provider-payload" not in serialized
+    assert "must-not-leak" not in serialized
     assert "private_key" not in serialized
 
 
@@ -149,6 +195,7 @@ def test_preview_diagnostic_bundle_uses_requested_release() -> None:
             status="failed",
             active_gate="github",
             failure_reason_code="github_failed",
+            failure_message="GitHub rejected the request.",
         ),
         gates=(),
     )

@@ -147,6 +147,7 @@ Allowed operator-facing gate states are `waiting`, `running`, `ready`, `action_r
 - Administrators can explicitly collect a bounded site diagnostic bundle.
 - Diagnostic bundles expire after seven days by default.
 - Bundles may contain sanitized configuration provenance, external resource metadata, IAM capability results, bounded workflow/log evidence, and endpoint observations.
+- Failed release gates retain a bounded provider service/operation/status summary, and bundles include artifact-media blocker reason counts without media content.
 - Bundles must exclude tokens, credentials, private keys, secret payloads, raw media, and complete captured website contents.
 
 ## Ingestion modes

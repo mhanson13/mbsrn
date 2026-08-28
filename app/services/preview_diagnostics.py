@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import timedelta
 from uuid import uuid4
 
@@ -12,6 +13,8 @@ from app.services.tls_certificates import (
     TLSCertificateService,
     TLSCertificateValidationError,
 )
+
+logger = logging.getLogger(__name__)
 
 
 _PUBLISH_TARGET_KEYS = (
@@ -34,6 +37,43 @@ _DEPLOY_TARGET_KEYS = (
     "kubernetes_namespace",
     "expected_static_ip_name",
     "expected_managed_certificate_name",
+)
+_GATE_DETAIL_KEYS = (
+    "provider_service",
+    "provider_operation",
+    "provider_http_status",
+    "provider_status",
+    "retryable",
+    "missing_permissions",
+)
+_MEDIA_DIAGNOSTIC_SCALAR_KEYS = (
+    "ready",
+    "readiness_source",
+    "artifact_version_id",
+    "selected_assets_count",
+    "materialized_assets_count",
+    "selected_not_materialized_count",
+    "selected_media_updated_after_artifact_created",
+    "selected_media_pending_generation",
+    "selected_media_pending_generation_count",
+    "missing_referenced_media_paths_count",
+    "unresolved_generated_media_paths_count",
+    "unresolved_internal_media_ids_count",
+    "unresolved_image_token_references_count",
+    "invalid_media_references_count",
+    "generated_media_publish_payload_missing_paths_count",
+)
+_MEDIA_DIAGNOSTIC_LIST_KEYS = (
+    "blocker_codes",
+    "blocker_reason_codes",
+    "warning_codes",
+    "reasons",
+    "warnings",
+    "selected_not_materialized_asset_ids",
+    "selected_media_pending_generation_ids",
+    "missing_referenced_media_paths",
+    "unresolved_generated_media_paths",
+    "generated_media_publish_payload_missing_paths",
 )
 
 
@@ -85,8 +125,14 @@ class PreviewDiagnosticCollectionService:
             }
         publish_readiness = summary.publish_readiness if isinstance(summary.publish_readiness, dict) else {}
         deploy_readiness = summary.deploy_readiness if isinstance(summary.deploy_readiness, dict) else {}
+        media_readiness = publish_readiness.get("artifact_media_readiness")
+        if not isinstance(media_readiness, dict):
+            media_readiness = deploy_readiness.get("artifact_media_readiness")
         publish_target = publish_readiness.get("target")
         deploy_target = deploy_readiness.get("target")
+        media_diagnostics = self._media_diagnostics(media_readiness)
+        publish_ready = bool(publish_readiness.get("ready"))
+        deployment_ready = bool(deploy_readiness.get("ready"))
         asset = certificate_status.asset if certificate_status is not None else None
         binding = certificate_status.binding if certificate_status is not None else None
         support_id = (
@@ -107,15 +153,16 @@ class PreviewDiagnosticCollectionService:
                 "last_deployed_artifact_version_id": summary.workspace.last_deployed_artifact_version_id,
             },
             "publish": {
-                "ready": bool(publish_readiness.get("ready")),
+                "ready": publish_ready,
                 "blocker_codes": self._string_list(publish_readiness.get("blocker_codes")),
                 "target": self._whitelist(publish_target, _PUBLISH_TARGET_KEYS),
             },
             "deployment": {
-                "ready": bool(deploy_readiness.get("ready")),
+                "ready": deployment_ready,
                 "blocker_codes": self._string_list(deploy_readiness.get("blocker_codes")),
                 "target": self._whitelist(deploy_target, _DEPLOY_TARGET_KEYS),
             },
+            "media": media_diagnostics,
             "certificate": {
                 "hostname": certificate_status.hostname if certificate_status is not None else None,
                 "asset_id": asset.id if asset is not None else None,
@@ -163,6 +210,7 @@ class PreviewDiagnosticCollectionService:
                     "status": release_state.operation.status,
                     "active_gate": release_state.operation.active_gate,
                     "failure_reason_code": release_state.operation.failure_reason_code,
+                    "failure_message": getattr(release_state.operation, "failure_message", None),
                 },
                 "gates": [
                     {
@@ -172,11 +220,12 @@ class PreviewDiagnosticCollectionService:
                         "message": gate.message,
                         "next_action": gate.next_action,
                         "attempt_count": gate.attempt_count,
+                        "details": self._gate_details(getattr(gate, "details_json", None)),
                     }
                     for gate in release_state.gates
                 ],
             }
-        return {
+        bundle = {
             "bundle_id": str(uuid4()),
             "support_id": support_id,
             "business_id": business_id,
@@ -193,6 +242,22 @@ class PreviewDiagnosticCollectionService:
                 "raw media and captured website contents",
             ],
         }
+        logger.info(
+            "Preview diagnostics collected",
+            extra={
+                "json_fields": {
+                    "event": "preview_diagnostics_collected",
+                    "support_id": support_id,
+                    "business_id": business_id,
+                    "site_id": site_id,
+                    "release_id": bundle["release_id"],
+                    "publish_ready": publish_ready,
+                    "deployment_ready": deployment_ready,
+                    "media_ready": media_diagnostics.get("ready"),
+                }
+            },
+        )
+        return bundle
 
     @staticmethod
     def _certificate_reason_code(exc: Exception) -> str:
@@ -212,3 +277,30 @@ class PreviewDiagnosticCollectionService:
         if not isinstance(value, (list, tuple)):
             return []
         return [str(item)[:120] for item in value if str(item).strip()][:20]
+
+    @classmethod
+    def _gate_details(cls, value: object) -> dict[str, object]:
+        details = cls._whitelist(value, _GATE_DETAIL_KEYS)
+        if "missing_permissions" in details:
+            details["missing_permissions"] = cls._string_list(details["missing_permissions"])
+        for key in ("provider_service", "provider_operation", "provider_status"):
+            if key in details and details[key] is not None:
+                details[key] = str(details[key])[:120]
+        return details
+
+    @classmethod
+    def _media_diagnostics(cls, value: object) -> dict[str, object]:
+        source = value if isinstance(value, dict) else {}
+        diagnostics = cls._whitelist(source, _MEDIA_DIAGNOSTIC_SCALAR_KEYS)
+        for key in _MEDIA_DIAGNOSTIC_LIST_KEYS:
+            if key in source:
+                diagnostics[key] = cls._string_list(source[key])
+        for key in ("blocker_reason_counts", "selected_not_materialized_reason_counts"):
+            counts = source.get(key)
+            if isinstance(counts, dict):
+                diagnostics[key] = {
+                    str(reason)[:120]: int(count)
+                    for reason, count in list(counts.items())[:20]
+                    if isinstance(count, int) and count >= 0
+                }
+        return diagnostics

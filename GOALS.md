@@ -112,6 +112,7 @@ Acceptance:
 - [x] Ensure authenticated artifact/media previews work without unauthenticated image requests.
 - [x] Render preview-release and diagnostic action results beside the initiating controls.
 - [x] Keep diagnostic bundles collectable when TLS or preview-identity prerequisites are incomplete.
+- [x] Include sanitized provider failure evidence and artifact-media blocker counts in administrator bundles.
 - [ ] Split the migration workspace into focused components.
 
 Acceptance:
