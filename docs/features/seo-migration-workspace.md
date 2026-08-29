@@ -1446,6 +1446,8 @@ The certificate step always reconciles the deployment workflow and certificate m
 
 The DNS action is labeled **Continue: DNS & deployment**. Selecting it is explicit, release-scoped authorization to ensure DNS and dispatch deployment. This path can override a disabled legacy manual-deploy flag for that operation only; it does not update the stored site setting, and direct manual deployment continues to enforce that setting.
 
+Immediately before dispatch, the release path idempotently reconciles the repository's generated deployment workflow. Multiline deployment credentials are never expanded inside shell source: shell validation receives only a boolean secret-presence value, and the credential JSON is supplied directly to the Google authentication action. A retry can therefore repair an older generated workflow before deployment.
+
 The normal workspace shows this gate list and one next action. Compatibility publish/certificate/deploy controls are collapsed under advanced manual controls. Raw history stays under Advanced Diagnostics. Administrators must explicitly choose **Collect Debug Output** to build a bounded, sanitized bundle with a support ID and seven-day expiry. Preview-release and diagnostic results are rendered beside the action that produced them. Missing preview identity or certificate prerequisites appear inside the diagnostic bundle as bounded `collection_error` evidence and do not cause diagnostic collection itself to fail.
 
 ## Publish Workflow (GitHub)

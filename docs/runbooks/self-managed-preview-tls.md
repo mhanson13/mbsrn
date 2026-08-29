@@ -41,6 +41,8 @@ If a release reports a certificate failure while the certificate asset is alread
 
 After the certificate gate succeeds, **Continue: DNS & deployment** is the explicit authorization for that release. It may proceed when a legacy site's manual-deploy toggle is disabled, but it does not change that stored toggle; manual deploy remains blocked until separately enabled.
 
+The same action reconciles the generated GitHub deployment workflow before dispatch. Credential presence is represented in shell as a boolean; `GCP_DEPLOY_KEY` JSON is passed only to `google-github-actions/auth` and is never interpolated into a `run` script. Retrying an existing failed release therefore upgrades the workflow before rerunning it.
+
 Secret Manager may return a canonical version resource containing the numeric project number even when the request used the project ID. The vault loader accepts that Google-generated form, validates the secret and version path, and rebuilds the access request against the configured certificate project. A reference to another named project remains invalid.
 
 Do not copy the certificate private key into GitHub. Existing GitHub deployment authentication remains unchanged.

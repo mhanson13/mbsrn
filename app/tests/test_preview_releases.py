@@ -466,6 +466,8 @@ def test_preview_release_deployment_gate_authorizes_disabled_site_target(db_sess
     )
 
     assert migration_service.deploy_calls[0]["preview_release_authorized"] is True
+    assert migration_service.publish_calls[-1]["provision_deploy_workflow"] is True
+    assert migration_service.publish_calls[-1]["duplicate_is_success"] is True
     assert next(gate for gate in advanced.gates if gate.gate_name == "dns").status == "ready"
     assert next(gate for gate in advanced.gates if gate.gate_name == "deployment").status == "ready"
 

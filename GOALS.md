@@ -64,6 +64,7 @@ Acceptance:
 - [x] Stop deriving current status from unrelated latest-history records.
 - [x] Reject incomplete media packages before approval and publish only frozen artifact contents.
 - [x] Reconcile an already-published artifact's certificate manifest idempotently before advancing the release.
+- [x] Reconcile generated deployment workflows before release dispatch and keep multiline credentials out of shell scripts.
 
 Acceptance:
 

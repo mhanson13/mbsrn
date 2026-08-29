@@ -8299,6 +8299,8 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     encoded_content = str(captured_put_payload.get("content") or "")
     assert encoded_content
     workflow_yaml = base64.b64decode(encoded_content).decode("utf-8")
+    parsed_workflow = yaml.safe_load(workflow_yaml)
+    assert isinstance(parsed_workflow, dict)
     encoded_deployment_content = str(captured_deployment_put_payload.get("content") or "")
     assert encoded_deployment_content
     deployment_yaml = base64.b64decode(encoded_deployment_content).decode("utf-8")
@@ -8453,6 +8455,14 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert "project_id: ${{ env.GKE_PROJECT_ID }}" in workflow_yaml
     assert "Validate GCP credentials" in workflow_yaml
     assert "Missing GCP_DEPLOY_KEY secret" in workflow_yaml
+    validate_credentials_step = next(
+        step for step in parsed_workflow["jobs"]["deploy"]["steps"] if step.get("name") == "Validate GCP credentials"
+    )
+    assert validate_credentials_step["env"]["MBSRN_GCP_DEPLOY_CREDENTIALS_CONFIGURED"] == (
+        "${{ secrets.GCP_DEPLOY_KEY != '' }}"
+    )
+    assert "secrets.GCP_DEPLOY_KEY" not in validate_credentials_step["run"]
+    assert '"${MBSRN_GCP_DEPLOY_CREDENTIALS_CONFIGURED:-false}" != "true"' in validate_credentials_step["run"]
     assert "Validate GKE environment config" in workflow_yaml
     assert "Missing managed GKE cluster name (admin config or legacy repo fallback)." in workflow_yaml
     assert "Missing managed GKE cluster location (admin config or legacy repo fallback)." in workflow_yaml
@@ -8902,6 +8912,16 @@ def test_rendered_self_managed_tls_templates_use_compute_pre_shared_certificate(
 
     parsed_workflow = yaml.safe_load(workflow_yaml)
     assert isinstance(parsed_workflow, dict)
+    validate_deploy_step = next(
+        step
+        for step in parsed_workflow["jobs"]["deploy"]["steps"]
+        if step.get("name") == "Validate deploy configuration"
+    )
+    assert validate_deploy_step["env"]["MBSRN_GCP_DEPLOY_CREDENTIALS_CONFIGURED"] == (
+        "${{ secrets.GCP_DEPLOY_KEY != '' }}"
+    )
+    assert "secrets.GCP_DEPLOY_KEY" not in validate_deploy_step["run"]
+    assert 'test "${MBSRN_GCP_DEPLOY_CREDENTIALS_CONFIGURED:-false}" = "true"' in validate_deploy_step["run"]
     assert "k8s/managedcertificate.yaml" not in manifests
     assert "networking.gke.io/managed-certificates" not in manifests["k8s/ingress.yaml"]
     assert "ingress.gcp.kubernetes.io/pre-shared-cert: mbsrn-platfire-ab12cd34" in manifests["k8s/ingress.yaml"]

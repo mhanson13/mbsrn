@@ -10738,8 +10738,10 @@ def _render_managed_deploy_workflow_yaml(
         "            ${{ env.SITE_WEB_IMAGE_REPOSITORY }}:${{ github.sha }}\n"
         "            ${{ env.SITE_WEB_IMAGE_REPOSITORY }}:latest\n"
         "      - name: Validate GCP credentials\n"
+        "        env:\n"
+        f"          MBSRN_GCP_DEPLOY_CREDENTIALS_CONFIGURED: ${{{{ secrets.{_MANAGED_DEPLOY_TARGET_REPO_SECRET_NAME} != '' }}}}\n"
         "        run: |\n"
-        f'          if [ -z "${{{{ secrets.{_MANAGED_DEPLOY_TARGET_REPO_SECRET_NAME} }}}}" ]; then\n'
+        '          if [ "${MBSRN_GCP_DEPLOY_CREDENTIALS_CONFIGURED:-false}" != "true" ]; then\n'
         f'            echo "Missing {_MANAGED_DEPLOY_TARGET_REPO_SECRET_NAME} secret"\n'
         '            echo "deploy_runtime_reason_code=target_repo_deploy_secret_missing"\n'
         f'            echo "deploy_runtime_reason_message=Managed deploy workflow requires target repo secret {_MANAGED_DEPLOY_TARGET_REPO_SECRET_NAME}."\n'
@@ -13220,9 +13222,11 @@ jobs:
           echo "site_runtime_image_reference=$SITE_WEB_IMAGE_REPOSITORY:$GITHUB_SHA" >> "$GITHUB_OUTPUT"
           echo "site_runtime_image_selection_mode=site_repo_build" >> "$GITHUB_OUTPUT"
       - name: Validate deploy configuration
+        env:
+          MBSRN_GCP_DEPLOY_CREDENTIALS_CONFIGURED: ${{{{ secrets.{_MANAGED_DEPLOY_TARGET_REPO_SECRET_NAME} != '' }}}}
         run: |
           set -euo pipefail
-          test -n "${{{{ secrets.{_MANAGED_DEPLOY_TARGET_REPO_SECRET_NAME} }}}}" || {{ echo "deploy_runtime_reason_code=target_repo_deploy_secret_missing"; exit 1; }}
+          test "${{MBSRN_GCP_DEPLOY_CREDENTIALS_CONFIGURED:-false}}" = "true" || {{ echo "deploy_runtime_reason_code=target_repo_deploy_secret_missing"; exit 1; }}
           test -n "$GKE_CLUSTER_NAME" || {{ echo "deploy_runtime_reason_code=missing_cluster_name"; exit 1; }}
           test -n "$GKE_CLUSTER_LOCATION" || {{ echo "deploy_runtime_reason_code=missing_cluster_location"; exit 1; }}
           test -n "$GKE_PROJECT_ID" || {{ echo "deploy_runtime_reason_code=missing_gcp_project_id"; exit 1; }}

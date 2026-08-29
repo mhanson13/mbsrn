@@ -104,6 +104,24 @@ class PreviewReleaseExecutionService:
                         next_action="Retry this release to publish and verify the certificate deployment manifest.",
                     ) from exc
             elif gate_name in {"dns", "deployment"}:
+                try:
+                    self.migration_service.publish_artifact_version(
+                        business_id=business_id,
+                        site_id=site_id,
+                        artifact_version_id=state.release.artifact_version_id,
+                        dry_run=False,
+                        commit_message=None,
+                        analytics_measurement_id=None,
+                        principal_id=principal_id,
+                        provision_deploy_workflow=True,
+                        duplicate_is_success=True,
+                    )
+                except (SEOMigrationNotFoundError, SEOMigrationValidationError) as exc:
+                    raise PreviewReleaseGateExecutionError(
+                        "The deployment workflow could not be reconciled in GitHub before deployment.",
+                        reason_code="preview_release_deploy_workflow_reconcile_failed",
+                        next_action="Retry this release to repair the deployment workflow before deployment.",
+                    ) from exc
                 self.migration_service.deploy_artifact_version(
                     business_id=business_id,
                     site_id=site_id,
