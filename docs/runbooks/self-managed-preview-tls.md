@@ -37,6 +37,10 @@ Google Cloud request validation failures such as `INVALID_ARGUMENT` are non-retr
 
 Failed release gates retain only bounded provider evidence: service, operation, HTTP/provider status, retryability, and missing permission names. The administrator bundle correlates that evidence with the release support ID and media reason counts; it never stores raw provider responses, certificate material, secret payloads, or media bytes.
 
+If a release reports a certificate failure while the certificate asset is already `published`, retry the same release rather than generating another certificate or recreating the site. The certificate gate idempotently verifies the existing artifact publication, deployment workflow, and certificate manifest. If that verification fails, the operator receives a certificate-manifest publication error instead of an unrelated duplicate-artifact error.
+
+After the certificate gate succeeds, **Continue: DNS & deployment** is the explicit authorization for that release. It may proceed when a legacy site's manual-deploy toggle is disabled, but it does not change that stored toggle; manual deploy remains blocked until separately enabled.
+
 Secret Manager may return a canonical version resource containing the numeric project number even when the request used the project ID. The vault loader accepts that Google-generated form, validates the secret and version path, and rebuilds the access request against the configured certificate project. A reference to another named project remains invalid.
 
 Do not copy the certificate private key into GitHub. Existing GitHub deployment authentication remains unchanged.
@@ -48,8 +52,8 @@ References: [Google self-managed SSL certificates](https://docs.cloud.google.com
 1. Deploy the database migration and API/UI code.
 2. Confirm Secret Manager API and workload identity permissions.
 3. Open Platfire's operator workspace and choose **Ensure, Vault & Publish**, or import/adopt an existing self-managed certificate. Ensure reuses a valid published asset and resumes a vaulted asset after a partial Compute failure.
-4. Publish the existing artifact again. Duplicate-artifact repair is allowed to reconcile the workflow and Ingress without republishing artifact content.
-5. Request GKE deploy.
+4. Continue the existing preview release. Duplicate-artifact repair reconciles the workflow and certificate manifest without republishing artifact content.
+5. Choose **Continue: DNS & deployment** to authorize DNS reconciliation and the GKE deployment for this release.
 6. Use **Verify Served Certificate**. Success requires the endpoint fingerprint to match the selected asset.
 
 Rollback is certificate selection, not key deletion: select the prior published asset and republish the site. Retain old Compute certificate resources and Secret Manager versions until the replacement has been verified.

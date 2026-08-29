@@ -1,6 +1,6 @@
 # MBSRN Delivery Goals
 
-Last updated: 2026-08-28
+Last updated: 2026-08-29
 
 ## Current objective
 
@@ -63,6 +63,7 @@ Acceptance:
 - [x] Return existing state for duplicate requests.
 - [x] Stop deriving current status from unrelated latest-history records.
 - [x] Reject incomplete media packages before approval and publish only frozen artifact contents.
+- [x] Reconcile an already-published artifact's certificate manifest idempotently before advancing the release.
 
 Acceptance:
 
@@ -115,6 +116,7 @@ Acceptance:
 - [x] Render preview-release and diagnostic action results beside the initiating controls.
 - [x] Keep diagnostic bundles collectable when TLS or preview-identity prerequisites are incomplete.
 - [x] Include sanitized provider failure evidence and artifact-media blocker counts in administrator bundles.
+- [x] Treat the visible **Continue: DNS & deployment** release gate as explicit authorization for that release, without changing the site's manual-deploy setting.
 - [x] Prevent late requests from a previously viewed site from overwriting the active migration workspace.
 - [x] Disable approval and preview creation when the selected latest draft package is known to be media-incomplete.
 - [ ] Split the migration workspace into focused components.

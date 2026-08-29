@@ -1442,6 +1442,10 @@ Release inspection endpoints are:
 
 Reconciliation advances a gate only when evidence belongs to the release's exact artifact, commit, certificate binding, and fingerprint. `advance` executes exactly one pending external gate. A failed gate records a stable reason and support ID and can be retried without repeating successful gates. A selected certificate is immutable for that release.
 
+The certificate step always reconciles the deployment workflow and certificate manifest, including when the exact artifact commit was published previously. A verified duplicate is therefore an idempotent success for the release. A failure after Compute certificate publication is reported as certificate-manifest publication failure so the operator can retry the same release without generating another certificate.
+
+The DNS action is labeled **Continue: DNS & deployment**. Selecting it is explicit, release-scoped authorization to ensure DNS and dispatch deployment. This path can override a disabled legacy manual-deploy flag for that operation only; it does not update the stored site setting, and direct manual deployment continues to enforce that setting.
+
 The normal workspace shows this gate list and one next action. Compatibility publish/certificate/deploy controls are collapsed under advanced manual controls. Raw history stays under Advanced Diagnostics. Administrators must explicitly choose **Collect Debug Output** to build a bounded, sanitized bundle with a support ID and seven-day expiry. Preview-release and diagnostic results are rendered beside the action that produced them. Missing preview identity or certificate prerequisites appear inside the diagnostic bundle as bounded `collection_error` evidence and do not cause diagnostic collection itself to fail.
 
 ## Publish Workflow (GitHub)

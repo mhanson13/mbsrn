@@ -1,6 +1,6 @@
 # MBSRN Engineering Context
 
-Last updated: 2026-08-28
+Last updated: 2026-08-29
 
 ## Purpose
 
@@ -28,6 +28,7 @@ Platfire (`platfire.com`) is the first acceptance site. It is not a runtime spec
 5. Diagnostic summaries mix selected artifact, latest artifact, and latest action history. This produces contradictory guidance.
 6. The migration service, GitHub publisher, and operator workspace are oversized and contain overlapping managed- and self-managed-certificate behavior.
 7. On 2026-08-28, preview release creation for an existing site returned `preview_slug_required` after the artifact had already been approved. Administrator diagnostic collection then failed with HTTP 500 because certificate status treated the same missing prerequisite as fatal. Both failures were shown only in the page-level message area, far from the controls that initiated them.
+8. On 2026-08-29, Platfire and Matty diagnostic bundles showed published Compute certificates and complete media, but their releases remained at the certificate gate. Duplicate artifact publication skipped deployment-workflow reconciliation and then reported the misleading artifact error `This artifact version is already published`. Platfire also retained a disabled legacy manual-deploy flag even though the operator had explicitly advanced the release.
 
 ## Implementation status
 
@@ -38,6 +39,10 @@ Canonical preview identity is implemented across the site model/API, TLS, GitHub
 The dedicated migration route now exposes preview identity as an explicit release prerequisite for every site. A valid repository name can seed the editable suggestion, but only a saved site `preview_slug` satisfies the gate. **Approve & Create Preview** remains disabled until that value is persisted. The API validates identity before approval, so a failed prerequisite cannot partially approve the artifact. Preview and diagnostic action results render beside their initiating controls. Diagnostic collection records unavailable certificate status and its bounded reason code instead of failing when preview infrastructure prerequisites are incomplete.
 
 Preview releases persist one artifact, frozen media manifest, canonical preview identity, Git commit, selected certificate identity, deployment run identifier, operation, and eight ordered gates. The combined approval/release endpoint is idempotent even when retried with a different request key; standalone approval retains its existing duplicate-rejection contract. `POST .../preview-releases/{release_id}/advance` performs exactly one external gate and can resume a failed gate without repeating successful gates. Reconciliation will not substitute a newly activated certificate into an existing release.
+
+Certificate-gate retries now reconcile and verify the deployment workflow and certificate manifest even when the exact artifact commit is already published. A verified duplicate is a successful idempotent release step; a manifest failure is attributed to certificate-manifest publication instead of being mislabeled as duplicate artifact publication. Existing failed releases can resume in place without regenerating certificates or recreating sites.
+
+At the DNS gate, the operator action is explicitly labeled **Continue: DNS & deployment** because the deployment operation ensures DNS before dispatch. That release-scoped action authorizes deployment even when an older site's manual-deploy configuration remains disabled. It does not persistently enable the site or weaken manual deployment: direct/manual deploy requests still require the configured target to be enabled.
 
 GitHub artifact publication creates all text and binary blobs, derives a tree, verifies every expected path/blob from GitHub, creates one commit, and then performs one non-forced branch-reference update. A failed blob/tree/verification/commit request cannot expose a partial package, and the result contains one exact commit SHA. Existing repository ownership-marker and baseline checks still run before the artifact transaction.
 
@@ -114,6 +119,8 @@ Allowed operator-facing gate states are `waiting`, `running`, `ready`, `action_r
 - Release creation is idempotent. A repeated request returns or resumes the same operation.
 - Failed gates are resumable without repeating successful one-time work.
 - Expected duplicate requests are not logged as application errors.
+- An already-published artifact does not bypass certificate-manifest/workflow reconciliation for its release.
+- Release-gate authorization is recorded by advancing that release and does not mutate the site's manual-deploy policy.
 
 ### Media
 
