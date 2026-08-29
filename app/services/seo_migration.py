@@ -4418,20 +4418,6 @@ class SEOMigrationService:
                     workflow_provisioning_warning_code = "github_workflow_write_not_authorized"
                     workflow_provisioning_warning_message = "Deploy workflow provisioning could not be verified during publish because workflow write access is unavailable."
                     publish_warnings.append(workflow_provisioning_warning_message)
-                elif duplicate_is_success:
-                    duplicate_publish_repaired = True
-                    publish_result = SEOMigrationGitHubPublishResult(
-                        dry_run=False,
-                        repo_owner=target["repo_owner"],
-                        repo_name=target["repo_name"],
-                        branch=target["branch"],
-                        artifact_root=target["artifact_root"],
-                        files_published=0,
-                        total_bytes=0,
-                        commit_shas=(),
-                        committed_paths=(),
-                        published_at=utc_now().isoformat(),
-                    )
                 else:
                     deploy_workflow_provision_result = self.github_publisher.ensure_deploy_workflow(
                         repo_owner=workflow_owner,
@@ -4567,7 +4553,10 @@ class SEOMigrationService:
                         admin_prerequisites=admin_publish_prerequisites,
                     )
             if duplicate_publish_attempt:
-                if deploy_workflow_provision_result is not None and deploy_workflow_provision_result.provisioned:
+                if deploy_workflow_provision_result is not None and (
+                    deploy_workflow_provision_result.provisioned
+                    or (duplicate_is_success and workflow_provisioning_verified)
+                ):
                     duplicate_publish_repaired = True
                     publish_result = SEOMigrationGitHubPublishResult(
                         dry_run=False,

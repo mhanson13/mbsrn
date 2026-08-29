@@ -19,6 +19,13 @@ from app.services.tls_certificates import (
 logger = logging.getLogger(__name__)
 
 
+class PreviewReleaseGateExecutionError(ValueError):
+    def __init__(self, message: str, *, reason_code: str, next_action: str) -> None:
+        super().__init__(message)
+        self.reason_code = reason_code
+        self.next_action = next_action
+
+
 class PreviewReleaseExecutionService:
     """Advances exactly one external preview-release gate per call."""
 
@@ -78,17 +85,24 @@ class PreviewReleaseExecutionService:
                     site_id=site_id,
                     principal_id=principal_id,
                 )
-                self.migration_service.publish_artifact_version(
-                    business_id=business_id,
-                    site_id=site_id,
-                    artifact_version_id=state.release.artifact_version_id,
-                    dry_run=False,
-                    commit_message=None,
-                    analytics_measurement_id=None,
-                    principal_id=principal_id,
-                    provision_deploy_workflow=True,
-                    duplicate_is_success=True,
-                )
+                try:
+                    self.migration_service.publish_artifact_version(
+                        business_id=business_id,
+                        site_id=site_id,
+                        artifact_version_id=state.release.artifact_version_id,
+                        dry_run=False,
+                        commit_message=None,
+                        analytics_measurement_id=None,
+                        principal_id=principal_id,
+                        provision_deploy_workflow=True,
+                        duplicate_is_success=True,
+                    )
+                except (SEOMigrationNotFoundError, SEOMigrationValidationError) as exc:
+                    raise PreviewReleaseGateExecutionError(
+                        "The certificate is published, but its deployment manifest could not be verified in GitHub.",
+                        reason_code="preview_release_certificate_manifest_publish_failed",
+                        next_action="Retry this release to publish and verify the certificate deployment manifest.",
+                    ) from exc
             elif gate_name in {"dns", "deployment"}:
                 self.migration_service.deploy_artifact_version(
                     business_id=business_id,
@@ -109,6 +123,7 @@ class PreviewReleaseExecutionService:
             TLSCertificateConfigurationError,
             TLSCertificateNotFoundError,
             TLSCertificateValidationError,
+            PreviewReleaseGateExecutionError,
         ) as exc:
             reason_code = (
                 getattr(exc, "reason_code", None)

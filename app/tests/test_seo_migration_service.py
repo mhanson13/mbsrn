@@ -12296,7 +12296,7 @@ def test_publish_duplicate_repairs_missing_workflow_without_republishing_artifac
     assert repair_result.result.get("workflow_remediation_outcome") == "remediation_upgraded_managed_placeholder"
 
 
-def test_duplicate_publish_reconciles_new_self_managed_certificate_binding(db_session) -> None:
+def test_idempotent_duplicate_publish_reconciles_new_self_managed_certificate_binding(db_session) -> None:
     publisher = _RecordingGitHubPublisher(existing_workflow=False)
     certificate_repository = TLSCertificateRepository(db_session)
     service = _build_service(
@@ -12375,20 +12375,23 @@ def test_duplicate_publish_reconciles_new_self_managed_certificate_binding(db_se
     db_session.add_all([asset, binding])
     db_session.commit()
 
-    with pytest.raises(SEOMigrationValidationError, match="already published"):
-        service.publish_artifact_version(
-            business_id=business_id,
-            site_id=site_id,
-            artifact_version_id=artifact.id,
-            dry_run=False,
-            commit_message=None,
-            analytics_measurement_id=None,
-            principal_id="principal-1",
-        )
+    result = service.publish_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        commit_message=None,
+        analytics_measurement_id=None,
+        principal_id="principal-1",
+        duplicate_is_success=True,
+    )
 
     certificate_call = publisher.workflow_provision_calls[-1]
     assert certificate_call[15] == "mbsrn-tnmfire-ab12cd34"
     assert certificate_call[16] == fingerprint
+    assert len(publisher.publish_calls) == 1
+    assert result.result.get("duplicate_artifact_skipped") is True
+    assert result.result.get("workflow_provisioning_verified") is True
     db_session.refresh(binding)
     assert binding.manifest_state == "published_to_repo"
 

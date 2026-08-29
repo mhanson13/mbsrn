@@ -47,6 +47,14 @@ class _UnusedCertificateService:
     pass
 
 
+class _RecordingCertificateService:
+    def __init__(self) -> None:
+        self.ensure_calls: list[dict[str, object]] = []
+
+    def ensure_for_site(self, **kwargs):
+        self.ensure_calls.append(dict(kwargs))
+
+
 def _seed_release_source(db_session) -> tuple[str, str, str]:
     business_id = "11111111-1111-1111-1111-111111111111"
     site_id = "22222222-2222-2222-2222-222222222222"
@@ -320,6 +328,53 @@ def test_preview_release_executor_advances_one_gate_and_uses_idempotent_publish(
     assert migration_service.publish_calls[0]["duplicate_is_success"] is True
     assert next(gate for gate in advanced.gates if gate.gate_name == "github").status == "ready"
     assert advanced.operation.active_gate == "certificate"
+
+
+def test_preview_release_executor_classifies_certificate_manifest_publish_failure(db_session) -> None:
+    business_id, site_id, artifact_id = _seed_release_source(db_session)
+    release_service = _service(db_session)
+    state = release_service.create_or_resume(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact_id,
+        idempotency_key=None,
+        principal_id="principal-1",
+    )
+    initial_migration_service = _RecordingMigrationService(db_session)
+    PreviewReleaseExecutionService(
+        release_service=release_service,
+        migration_service=initial_migration_service,
+        certificate_service=_UnusedCertificateService(),
+    ).advance(
+        business_id=business_id,
+        site_id=site_id,
+        release_id=state.release.id,
+        principal_id="principal-1",
+    )
+    certificate_service = _RecordingCertificateService()
+    failing_migration_service = _RecordingMigrationService(db_session, fail_publish=True)
+
+    failed = PreviewReleaseExecutionService(
+        release_service=release_service,
+        migration_service=failing_migration_service,
+        certificate_service=certificate_service,
+    ).advance(
+        business_id=business_id,
+        site_id=site_id,
+        release_id=state.release.id,
+        principal_id="principal-1",
+    )
+
+    failed_gate = next(gate for gate in failed.gates if gate.gate_name == "certificate")
+    assert len(certificate_service.ensure_calls) == 1
+    assert failing_migration_service.publish_calls[0]["provision_deploy_workflow"] is True
+    assert failing_migration_service.publish_calls[0]["duplicate_is_success"] is True
+    assert failed_gate.status == "failed"
+    assert failed_gate.reason_code == "preview_release_certificate_manifest_publish_failed"
+    assert failed_gate.message == (
+        "The certificate is published, but its deployment manifest could not be verified in GitHub."
+    )
+    assert failed_gate.next_action == ("Retry this release to publish and verify the certificate deployment manifest.")
 
 
 def test_preview_release_executor_records_failure_and_can_retry(db_session) -> None:
