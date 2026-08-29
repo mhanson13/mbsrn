@@ -878,6 +878,47 @@ describe("site migration workflow route", () => {
     expect(screen.getByTestId("migration-preview-release-gates")).toBeInTheDocument();
   });
 
+  it("uses the visible DNS and deployment gate as explicit release authorization", async () => {
+    const user = userEvent.setup();
+    const baseRelease = buildPreviewRelease();
+    const release = buildPreviewRelease({
+      operation: {
+        ...baseRelease.operation,
+        active_gate: "dns",
+      },
+      gates: baseRelease.gates.map((gate) =>
+        gate.name === "dns"
+          ? {
+              ...gate,
+              status: "waiting",
+              reason_code: "dns_pending",
+              message: "DNS and deployment are waiting.",
+              next_action: "Authorize DNS and deployment for this preview release.",
+            }
+          : gate,
+      ),
+    });
+    mockFetchPreviewReleases.mockResolvedValueOnce({ items: [release], total: 1 });
+    mockAdvancePreviewRelease.mockResolvedValueOnce(release);
+
+    render(<SiteMigrationWorkflowPage />);
+
+    const releaseSection = await screen.findByTestId("migration-preview-release-section");
+    const advanceButton = within(releaseSection).getByTestId("migration-advance-preview-release-button");
+    expect(advanceButton).toHaveTextContent("Continue: DNS & deployment");
+
+    await user.click(advanceButton);
+
+    await waitFor(() =>
+      expect(mockAdvancePreviewRelease).toHaveBeenCalledWith(
+        "token-1",
+        "biz-1",
+        "site-1",
+        "preview-release-1",
+      ),
+    );
+  });
+
   it("requires and saves the canonical preview domain before creating a preview release", async () => {
     const user = userEvent.setup();
     mockUseOperatorContext.mockReturnValue(

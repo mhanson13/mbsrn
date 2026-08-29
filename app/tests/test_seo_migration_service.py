@@ -6744,6 +6744,47 @@ def test_publish_and_deploy_flow_records_status_and_analytics(db_session) -> Non
     assert "ga_measurement_id" not in deploy_target.inputs
 
 
+def test_preview_release_authorization_allows_disabled_site_deploy_target(db_session) -> None:
+    publisher = _RecordingGitHubPublisher()
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    artifact = _prepare_published_artifact(service, business_id=business_id, site_id=site_id)
+    service.update_deploy_config(
+        business_id=business_id,
+        site_id=site_id,
+        deploy_config={"enabled": False},
+        principal_id="principal-1",
+    )
+
+    with pytest.raises(SEOMigrationValidationError, match="Deploy target is not enabled"):
+        service.deploy_artifact_version(
+            business_id=business_id,
+            site_id=site_id,
+            artifact_version_id=artifact.id,
+            dry_run=False,
+            principal_id="principal-1",
+        )
+
+    deploy_result = service.deploy_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        preview_release_authorized=True,
+        principal_id="principal-1",
+    )
+
+    assert deploy_result.artifact.deploy_status == "deploy_requested"
+    assert publisher.deploy_calls
+    assert deploy_result.readiness["target"]["enabled"] is True
+    assert deploy_result.readiness["target"]["configured_enabled"] is False
+    assert deploy_result.readiness["target"]["preview_release_authorized"] is True
+
+
 def test_deploy_ensures_managed_site_static_ip_before_dispatch_and_records_metadata(
     db_session, caplog, monkeypatch
 ) -> None:

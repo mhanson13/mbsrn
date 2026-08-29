@@ -109,6 +109,7 @@ class PreviewReleaseExecutionService:
                     site_id=site_id,
                     artifact_version_id=state.release.artifact_version_id,
                     dry_run=False,
+                    preview_release_authorized=True,
                     principal_id=principal_id,
                 )
             elif gate_name == "verification":

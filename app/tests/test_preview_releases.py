@@ -28,6 +28,7 @@ class _RecordingMigrationService:
         self.db_session = db_session
         self.fail_publish = fail_publish
         self.publish_calls: list[dict[str, object]] = []
+        self.deploy_calls: list[dict[str, object]] = []
 
     def publish_artifact_version(self, **kwargs):
         self.publish_calls.append(dict(kwargs))
@@ -40,6 +41,19 @@ class _RecordingMigrationService:
         assert artifact is not None
         artifact.publish_status = "published"
         artifact.last_published_commit_sha = "c" * 40
+        self.db_session.commit()
+
+    def deploy_artifact_version(self, **kwargs):
+        self.deploy_calls.append(dict(kwargs))
+        artifact = self.db_session.get(SEOMigrationArtifactVersion, kwargs["artifact_version_id"])
+        assert artifact is not None
+        workspace = (
+            self.db_session.query(SEOMigrationWorkspace)
+            .filter(SEOMigrationWorkspace.site_id == kwargs["site_id"])
+            .one()
+        )
+        artifact.deploy_status = "deploy_requested"
+        workspace.last_deployed_artifact_version_id = artifact.id
         self.db_session.commit()
 
 
@@ -375,6 +389,85 @@ def test_preview_release_executor_classifies_certificate_manifest_publish_failur
         "The certificate is published, but its deployment manifest could not be verified in GitHub."
     )
     assert failed_gate.next_action == ("Retry this release to publish and verify the certificate deployment manifest.")
+
+
+def test_preview_release_deployment_gate_authorizes_disabled_site_target(db_session) -> None:
+    business_id, site_id, artifact_id = _seed_release_source(db_session)
+    release_service = _service(db_session)
+    state = release_service.create_or_resume(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact_id,
+        idempotency_key=None,
+        principal_id="principal-1",
+    )
+    migration_service = _RecordingMigrationService(db_session)
+    executor = PreviewReleaseExecutionService(
+        release_service=release_service,
+        migration_service=migration_service,
+        certificate_service=_UnusedCertificateService(),
+    )
+    executor.advance(
+        business_id=business_id,
+        site_id=site_id,
+        release_id=state.release.id,
+        principal_id="principal-1",
+    )
+    now = datetime.now(timezone.utc)
+    fingerprint = "ef" * 32
+    asset = TLSCertificateAsset(
+        id="55555555-5555-5555-5555-555555555555",
+        business_id=business_id,
+        hostname="generic-pilot.site.mbsrn.com",
+        display_name="Generic preview certificate",
+        source="generated",
+        custody="vaulted",
+        certificate_kind="self_signed",
+        key_algorithm="rsa_2048",
+        fingerprint_sha256=fingerprint,
+        serial_number="5678",
+        subject="CN=generic-pilot.site.mbsrn.com",
+        issuer="CN=generic-pilot.site.mbsrn.com",
+        san_dns_names_json=["generic-pilot.site.mbsrn.com"],
+        not_valid_before=now - timedelta(minutes=1),
+        not_valid_after=now + timedelta(days=90),
+        vault_secret_name="mbsrn-tls-generic-pilot",
+        vault_secret_version="projects/mbsrn-prod/secrets/mbsrn-tls-generic-pilot/versions/1",
+        gcp_project_id="mbsrn-prod",
+        gcp_resource_name="mbsrn-preview-generic-pilot-ef12",
+        gcp_resource_scope="global",
+        status="published",
+        created_by_principal_id="principal-1",
+    )
+    binding = SiteTLSCertificateBinding(
+        id="66666666-6666-6666-6666-666666666666",
+        business_id=business_id,
+        site_id=site_id,
+        certificate_asset_id=asset.id,
+        is_active=True,
+        manifest_state="published_to_repo",
+        serving_state="not_verified",
+        created_by_principal_id="principal-1",
+    )
+    db_session.add_all([asset, binding])
+    db_session.commit()
+    ready_for_dns = release_service.reconcile(
+        business_id=business_id,
+        site_id=site_id,
+        release_id=state.release.id,
+    )
+    assert ready_for_dns.operation.active_gate == "dns"
+
+    advanced = executor.advance(
+        business_id=business_id,
+        site_id=site_id,
+        release_id=state.release.id,
+        principal_id="principal-1",
+    )
+
+    assert migration_service.deploy_calls[0]["preview_release_authorized"] is True
+    assert next(gate for gate in advanced.gates if gate.gate_name == "dns").status == "ready"
+    assert next(gate for gate in advanced.gates if gate.gate_name == "deployment").status == "ready"
 
 
 def test_preview_release_executor_records_failure_and_can_retry(db_session) -> None:

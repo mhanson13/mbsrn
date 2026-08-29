@@ -8264,6 +8264,21 @@ export function MigrationWorkspacePanel({
     (gate) => gate.name === selectedPreviewRelease.operation.active_gate,
   ) || null;
   const previewGateNeedsOperatorAction = selectedPreviewGate?.status === "action_required";
+  const previewAdvanceActionLabel = (() => {
+    if (busyAction === "advance_preview") {
+      return "Working...";
+    }
+    if (selectedPreviewGate?.status === "failed") {
+      return `Retry ${selectedPreviewGate.name.replace(/_/g, " ")}`;
+    }
+    if (selectedPreviewGate?.name === "dns") {
+      return "Continue: DNS & deployment";
+    }
+    if (selectedPreviewGate) {
+      return `Continue: ${selectedPreviewGate.name.replace(/_/g, " ")}`;
+    }
+    return "Refresh Preview Release";
+  })();
 
   if (busyAction === "load" && !summary) {
     return <p className="hint muted">Loading migration workspace...</p>;
@@ -9685,13 +9700,7 @@ export function MigrationWorkspacePanel({
                 disabled={isActionInFlight || previewGateNeedsOperatorAction}
                 data-testid="migration-advance-preview-release-button"
               >
-                {busyAction === "advance_preview"
-                  ? "Working..."
-                  : selectedPreviewGate?.status === "failed"
-                    ? `Retry ${selectedPreviewGate.name.replace(/_/g, " ")}`
-                    : selectedPreviewGate
-                      ? `Continue: ${selectedPreviewGate.name.replace(/_/g, " ")}`
-                      : "Refresh Preview Release"}
+                {previewAdvanceActionLabel}
               </button>
             )}
             {selectedPreviewGate?.next_action ? (

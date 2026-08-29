@@ -5607,6 +5607,7 @@ class SEOMigrationService:
         artifact_version_id: str,
         dry_run: bool,
         replace_existing_runtime: bool = False,
+        preview_release_authorized: bool = False,
         principal_id: str | None,
     ) -> SEOMigrationDeployActionResult:
         started_at = time.monotonic()
@@ -5633,9 +5634,10 @@ class SEOMigrationService:
             principal_id=principal_id,
             dry_run=dry_run,
             replace_existing_runtime=bool(replace_existing_runtime),
-            target_summary=self._safe_deploy_target_summary(
-                workspace=workspace,
-            ),
+            target_summary={
+                **self._safe_deploy_target_summary(workspace=workspace),
+                "preview_release_authorized": bool(preview_release_authorized),
+            },
             correlation_id=deploy_trace_id,
         )
         readiness = self._build_deploy_readiness(
@@ -5643,6 +5645,7 @@ class SEOMigrationService:
             workspace=workspace,
             artifact=artifact,
             replace_existing_runtime=bool(replace_existing_runtime),
+            preview_release_authorized=bool(preview_release_authorized),
         )
         if not readiness["ready"]:
             reason_text = "; ".join(str(item) for item in readiness.get("reasons", [])) or "Deploy readiness failed."
@@ -21084,6 +21087,7 @@ class SEOMigrationService:
         workspace: SEOMigrationWorkspace,
         artifact: SEOMigrationArtifactVersion | None,
         replace_existing_runtime: bool = False,
+        preview_release_authorized: bool = False,
     ) -> dict[str, object]:
         reasons: list[str] = []
         blocker_codes: list[str] = []
@@ -21132,8 +21136,12 @@ class SEOMigrationService:
                     validate_workflow_candidates=False,
                 )
                 target_valid = True
+                configured_target_enabled = bool(target["enabled"])
+                effective_target_enabled = configured_target_enabled or bool(preview_release_authorized)
                 target_summary = {
-                    "enabled": target["enabled"],
+                    "enabled": effective_target_enabled,
+                    "configured_enabled": configured_target_enabled,
+                    "preview_release_authorized": bool(preview_release_authorized),
                     "repo_owner": target["repo_owner"],
                     "repo_name": target["repo_name"],
                     "workflow_id": target["workflow_id"],
@@ -21188,7 +21196,7 @@ class SEOMigrationService:
                 )
                 target_summary["workflow_file_path"] = dispatch_identifier_diagnostics.get("workflow_file_path")
                 target_summary["workflow_name"] = dispatch_identifier_diagnostics.get("workflow_name")
-                if not target["enabled"]:
+                if not effective_target_enabled:
                     reasons.append("Deploy target is not enabled.")
                     blocker_codes.append(_DEPLOY_BLOCKER_CONFIGURATION_MISSING)
             except ValueError as exc:
