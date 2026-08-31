@@ -1,6 +1,6 @@
 # ADR 0007: Shared managed preview edge
 
-Status: Accepted; implementation pending
+Status: Accepted; platform provisioned, site migration pending
 Date: 2026-08-31
 
 ## Decision

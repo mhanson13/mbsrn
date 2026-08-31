@@ -83,12 +83,14 @@ Acceptance:
 - [x] Add fail-closed shared-edge admin configuration, pure readiness evaluation, and HTTPS-only Gateway/site-route manifest renderers.
 - [x] Add an idempotent platform bootstrap for the global address, DNS authorization CNAME, wildcard certificate, certificate map, Gateway API channel, and Gateway manifest.
 - [x] Preserve the legacy Ingress during canary attachment by routing Gateway through a distinct Service selecting the same site pods.
-- [ ] Enable and validate GKE Gateway API support without changing live preview traffic.
-- [ ] Create one DNS authorization for `site.mbsrn.com` and one Google-managed `*.site.mbsrn.com` Certificate Manager certificate.
-- [ ] Create an HTTPS-only shared Gateway/load balancer with a stable global IP and no public HTTP listener.
+- [x] Enable and validate GKE Gateway API support without changing live preview traffic.
+- [x] Create one DNS authorization for `site.mbsrn.com` and one Google-managed `*.site.mbsrn.com` Certificate Manager certificate.
+- [x] Create an HTTPS-only shared Gateway/load balancer with a stable global IP and no public HTTP listener.
 - [x] Keep the shared-edge bootstrap runnable in a clean Google Cloud Shell, reusable after partial completion, and accurate when detecting the existing GKE Gateway API channel.
-- [ ] Define the cross-namespace route-attachment policy so an MBSRN-managed site route can reach only its own namespace Service.
+- [x] Define the cross-namespace route-attachment policy so an MBSRN-managed site route can reach only its own namespace Service.
 - [x] Replace the per-site certificate mutation in Gateway mode with a provider-backed, read-only gate that verifies wildcard certificate state/coverage, certificate-map selection, Gateway programming, and reserved-address attachment before any site DNS mutation.
+- [x] Require separate admin-controlled platform enablement and default-off per-site enrollment so platform configuration cannot move every site.
+- [ ] Apply and verify an enrolled site's Gateway route/backend before changing that site's exact-host DNS record.
 - [ ] Migrate Platfire as a canary, then Matty the Bookie, while preserving the old endpoint for a bounded rollback window.
 - [ ] Remove migrated sites' per-site Ingress, forwarding rules, certificates, and certificate Secret Manager versions only after HTTPS verification and ownership revalidation.
 - [ ] Prove a third unrelated preview can attach without creating a certificate or load balancer.

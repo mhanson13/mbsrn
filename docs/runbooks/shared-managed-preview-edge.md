@@ -14,6 +14,19 @@ scripts/bootstrap_shared_preview_edge.sh \
 
 It creates or verifies only shared platform resources and the Certificate Manager authorization CNAME. It does not create or change any site's preview-host A record. Review its reported resource names and states before enabling Gateway API routing in admin configuration.
 
+## Observed production platform state
+
+As of 2026-08-31:
+
+- Certificate `mbsrn-preview-wildcard` is `ACTIVE`.
+- Gateway `mbsrn/mbsrn-preview-gateway` is `Programmed`.
+- Reserved address `mbsrn-preview-edge-ip` and the Gateway both report `34.95.117.146`.
+- Bootstrap did not change a preview site's A record.
+
+Platform availability and site enrollment are separate controls. In Admin Settings, **Use the bootstrapped Google-managed preview edge** records the shared resource configuration. In a site's migration workspace, **Use the shared Google-managed preview edge for this site** enrolls only that site and is disabled by default. Saving the platform setting alone does not publish site manifests or change site DNS.
+
+Do not enroll Platfire for live cutover until the deployment release applies and verifies its Gateway Service, HealthCheckPolicy, and HTTPRoute before DNS reconciliation. The current compatibility release order dispatches those manifests after DNS reconciliation and must be corrected before canary activation.
+
 The renderer uses only the Python standard library and does not require installation of the MBSRN API dependencies in Cloud Shell. If the script stops after creating some resources, correct the reported problem and rerun the same command; each completed platform resource is verified and reused. The script reads `networkConfig.gatewayApiConfig.channel` and updates the cluster only when the standard Gateway API channel is not already enabled.
 
 ## Safety rules
@@ -67,14 +80,16 @@ A retry reads current state and changes only absent or drifted resources owned b
 
 ## Canary sequence
 
-1. Deploy and verify the platform edge using a disposable, explicitly owned validation hostname.
-2. Attach Platfire without changing `platfire.site.mbsrn.com` DNS.
-3. When the Platfire route and backend are ready, change only its exact-host DNS record to the shared address.
-4. Verify Platfire from public resolvers and a normal Firefox-compatible trust path.
-5. Observe the agreed rollback window; restore the prior exact-host DNS value if routing, content, or TLS verification fails.
-6. Repeat for Matty the Bookie and verify both hostnames route only to their own Services.
-7. Attach a third unrelated site and confirm no certificate, certificate map, Gateway, global address, forwarding rule, or load balancer is created.
-8. Make the shared edge the default only after all acceptance evidence is recorded.
+1. Enable the completed shared platform configuration in Admin Settings; verify that no site's per-site enrollment changed.
+2. Deploy and verify the platform edge using a disposable, explicitly owned validation hostname.
+3. Enroll only Platfire, republish its approved release, and apply its Gateway resources without changing `platfire.site.mbsrn.com` DNS.
+4. Confirm the Platfire HTTPRoute is accepted and its Gateway backend is healthy by connecting to `34.95.117.146` with the Platfire hostname.
+5. Change only Platfire's exact-host DNS record to the shared address.
+6. Verify Platfire from public resolvers and a normal Firefox-compatible trust path.
+7. Observe the agreed rollback window; restore the prior exact-host DNS value if routing, content, or TLS verification fails.
+8. Repeat for Matty the Bookie and verify both hostnames route only to their own Services.
+9. Attach a third unrelated site and confirm no certificate, certificate map, Gateway, global address, forwarding rule, or load balancer is created.
+10. Make the shared edge the default only after all acceptance evidence is recorded.
 
 ## Cleanup
 

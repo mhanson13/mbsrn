@@ -2039,7 +2039,7 @@ Post-fix rollout for existing managed sites:
         - control plane ensures the expected global address exists before workflow dispatch using admin-managed deploy credentials
         - newly created per-site addresses are labeled at create time with GCP-safe ownership labels: `mbsrn-managed-by=mbsrn`, `mbsrn-site-id=<normalized site id>`, `mbsrn-preview-hostname=<label-safe preview hostname>`, `mbsrn-repo=<label-safe repo>`
         - existing addresses are left unchanged; labels are not backfilled onto already-reserved IPs
-      - `auto` mode resolves to `preview_shared_gateway` for `*.site.mbsrn.com` when shared preview static-IP config is present; otherwise it falls back to `dedicated_static_ip`
+      - `auto` mode resolves to `preview_shared_gateway` only when the shared platform is fully configured and the current workspace has administrator-controlled per-site enrollment; otherwise it falls back to `dedicated_static_ip`
       - prerequisite chain remains ordered and fail-closed for the active endpoint mode:
         - static-IP/gateway validation -> DNS ensure (when applicable) -> DNS propagation gate -> workflow dispatch
       - generated target workflow validates expected preview ingress static-IP presence as drift safety using the resolved expected static-IP name
