@@ -38,6 +38,29 @@ _DEPLOY_TARGET_KEYS = (
     "expected_static_ip_name",
     "expected_managed_certificate_name",
 )
+_SHARED_PREVIEW_EDGE_DIAGNOSTIC_KEYS = (
+    "gcp_project_id",
+    "static_ip_name",
+    "gateway_name",
+    "gateway_namespace",
+    "certificate_map_name",
+    "certificate_map_entry_name",
+    "certificate_name",
+    "certificate_domain",
+    "expected_static_ip_address",
+    "status",
+    "reason_code",
+    "provider_reason_code",
+    "provider_stage",
+    "configuration_error",
+    "certificate_active",
+    "certificate_map_attached",
+    "gateway_programmed",
+    "gateway_address_matches",
+    "gcp_credential_source",
+    "gcp_principal_email",
+    "gcp_impersonated_service_account_email",
+)
 _GATE_DETAIL_KEYS = (
     "provider_service",
     "provider_operation",
@@ -161,6 +184,7 @@ class PreviewDiagnosticCollectionService:
                 "ready": deployment_ready,
                 "blocker_codes": self._string_list(deploy_readiness.get("blocker_codes")),
                 "target": self._whitelist(deploy_target, _DEPLOY_TARGET_KEYS),
+                "shared_preview_edge": self._shared_preview_edge_diagnostics(deploy_readiness),
             },
             "media": media_diagnostics,
             "certificate": {
@@ -304,3 +328,44 @@ class PreviewDiagnosticCollectionService:
                     if isinstance(count, int) and count >= 0
                 }
         return diagnostics
+
+    @classmethod
+    def _shared_preview_edge_diagnostics(cls, deploy_readiness: object) -> dict[str, object]:
+        source = deploy_readiness if isinstance(deploy_readiness, dict) else {}
+        diagnostics_source = source.get("shared_preview_edge_diagnostics")
+        diagnostics = cls._whitelist(diagnostics_source, _SHARED_PREVIEW_EDGE_DIAGNOSTIC_KEYS)
+        reasons = cls._string_list(source.get("shared_preview_edge_reasons"))
+        diagnostic_reasons = (
+            cls._string_list(diagnostics_source.get("reasons"))
+            if isinstance(diagnostics_source, dict)
+            else []
+        )
+        missing_fields = (
+            cls._string_list(diagnostics_source.get("missing_fields"))
+            if isinstance(diagnostics_source, dict)
+            else []
+        )
+        return {
+            "enabled": source.get("uses_gateway_api") is True,
+            "status": cls._bounded_string(source.get("shared_preview_edge_status"), max_length=40),
+            "reason_code": cls._bounded_string(
+                source.get("shared_preview_edge_reason_code"), max_length=80
+            ),
+            "reasons": reasons[:8],
+            "certificate_active": source.get("shared_preview_certificate_active"),
+            "certificate_map_attached": source.get("shared_preview_certificate_map_attached"),
+            "gateway_programmed": source.get("shared_preview_gateway_programmed"),
+            "gateway_address_matches": source.get("shared_preview_gateway_address_matches"),
+            "diagnostics": {
+                **diagnostics,
+                "reasons": diagnostic_reasons[:8],
+                "missing_fields": missing_fields[:8],
+            },
+        }
+
+    @staticmethod
+    def _bounded_string(value: object, *, max_length: int) -> str | None:
+        if not isinstance(value, str):
+            return None
+        normalized = value.strip()
+        return normalized[:max_length] or None

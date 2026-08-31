@@ -87,7 +87,7 @@ Acceptance:
 - [ ] Create one DNS authorization for `site.mbsrn.com` and one Google-managed `*.site.mbsrn.com` Certificate Manager certificate.
 - [ ] Create an HTTPS-only shared Gateway/load balancer with a stable global IP and no public HTTP listener.
 - [ ] Define the cross-namespace route-attachment policy so an MBSRN-managed site route can reach only its own namespace Service.
-- [ ] Replace the per-site certificate mutation with an idempotent check that the shared certificate is active, attached, and covers the preview hostname.
+- [x] Replace the per-site certificate mutation in Gateway mode with a provider-backed, read-only gate that verifies wildcard certificate state/coverage, certificate-map selection, Gateway programming, and reserved-address attachment before any site DNS mutation.
 - [ ] Migrate Platfire as a canary, then Matty the Bookie, while preserving the old endpoint for a bounded rollback window.
 - [ ] Remove migrated sites' per-site Ingress, forwarding rules, certificates, and certificate Secret Manager versions only after HTTPS verification and ownership revalidation.
 - [ ] Prove a third unrelated preview can attach without creating a certificate or load balancer.

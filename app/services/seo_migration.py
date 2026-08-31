@@ -43,10 +43,12 @@ from app.integrations.seo_migration_artifact_provider import (
 from app.integrations.seo_migration_github_publisher import (
     MisconfiguredSEOMigrationGitHubPublisher,
     SEOMigrationGitHubActionsSecretUpsertResult,
+    SEOMigrationGitHubDeployRunStatusResult,
     SEOMigrationGitHubDeployTarget,
     SEOMigrationGitHubLiveRuntimeProbeResult,
     SEOMigrationGitHubManagedCertificateReadinessResult,
     SEOMigrationGitHubManagedCertificateEnsureResult,
+    SEOMigrationGitHubSharedPreviewEdgeReadinessResult,
     SEOMigrationGitHubManagedSiteDnsEnsureResult,
     SEOMigrationGitHubManagedSiteStaticIPEnsureResult,
     SEOMigrationGitHubRepoAdoptionResult,
@@ -657,6 +659,11 @@ _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PROPAGATION_PENDING = "managed_
 _DEPLOY_DISPATCH_SERVICE_REASON_EXPECTED_STATIC_IP_NOT_BOUND_TO_INGRESS = "expected_static_ip_not_bound_to_ingress"
 _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_MISSING = "shared_preview_gateway_missing"
 _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_HOSTNAME_MISSING = "shared_preview_gateway_hostname_missing"
+_DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_PENDING = "shared_preview_gateway_pending"
+_DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_READY = "shared_preview_gateway_ready"
+_DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_READINESS_CHECK_FAILED = (
+    "shared_preview_gateway_readiness_check_failed"
+)
 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_DOMAIN_DRIFT_REPAIRED = "managed_certificate_domain_drift_repaired"
 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_DOMAIN_DRIFT_REPAIR_FAILED = (
     "managed_certificate_domain_drift_repair_failed"
@@ -5874,6 +5881,15 @@ class SEOMigrationService:
         managed_certificate_gcp_credential_source: str | None = None
         managed_certificate_gcp_principal_email: str | None = None
         managed_certificate_gcp_impersonated_service_account_email: str | None = None
+        shared_preview_edge_status: str | None = None
+        shared_preview_edge_reason_code: str | None = None
+        shared_preview_edge_reasons: list[str] = []
+        shared_preview_certificate_active: bool | None = None
+        shared_preview_certificate_map_attached: bool | None = None
+        shared_preview_gateway_programmed: bool | None = None
+        shared_preview_gateway_address_matches: bool | None = None
+        shared_preview_edge_diagnostics: dict[str, object] | None = None
+        uses_gateway_api_for_dispatch = bool(workflow_resolution.get("uses_gateway_api"))
         # Keep workflow_dispatch payload contract bounded to explicitly configured deploy inputs.
         # Implicit runtime metadata (site_id/artifact_version/ga_measurement_id/etc.) should not
         # be auto-injected because GitHub rejects undeclared workflow_dispatch inputs.
@@ -6590,6 +6606,14 @@ class SEOMigrationService:
                 preview_hostname=canonical_preview_hostname,
             )
             managed_gke_config_for_dispatch = _normalize_json_dict(workflow_resolution.get("managed_gke_config"))
+            if not uses_gateway_api_for_dispatch:
+                preview_endpoint_for_dispatch = resolve_managed_preview_endpoint_configuration(
+                    repo_name=deploy_target_for_dispatch.repo_name,
+                    site_id=site_id,
+                    preview_hostname=canonical_preview_hostname,
+                    namespace_isolation_defaults=namespace_isolation_defaults,
+                )
+                uses_gateway_api_for_dispatch = bool(preview_endpoint_for_dispatch.get("uses_gateway_api"))
             (
                 managed_image_pull_secret_config_for_dispatch,
                 _,
@@ -7097,6 +7121,105 @@ class SEOMigrationService:
                             level=logging.WARNING,
                         )
                         raise
+                    if uses_gateway_api_for_dispatch:
+                        _emit_prerequisite_chain_log(stage="shared_preview_edge_readiness_start")
+                        shared_edge_result = self.github_publisher.check_shared_preview_edge_readiness(
+                            managed_gke_config=managed_gke_config_for_dispatch,
+                            namespace_isolation_defaults=namespace_isolation_defaults,
+                            gcp_deploy_key=deploy_secret_value_for_control_plane,
+                        )
+                        if not isinstance(
+                            shared_edge_result,
+                            SEOMigrationGitHubSharedPreviewEdgeReadinessResult,
+                        ):
+                            raise SEOMigrationGitHubPublisherError(
+                                code="shared_preview_gateway_readiness_check_failed",
+                                safe_message="Shared preview edge readiness is unavailable.",
+                                stage="shared_preview_edge_readiness",
+                            )
+                        shared_readiness = shared_edge_result.readiness
+                        shared_preview_edge_status = _normalize_string(
+                            shared_readiness.status,
+                            max_length=40,
+                        )
+                        shared_preview_edge_reason_code = _normalize_dispatch_service_reason_code(
+                            shared_readiness.reason_code
+                        )
+                        shared_preview_edge_reasons = _normalize_string_list(
+                            shared_readiness.reasons,
+                            max_items=8,
+                            max_item_length=240,
+                        )
+                        shared_preview_certificate_active = bool(shared_readiness.certificate_active)
+                        shared_preview_certificate_map_attached = bool(
+                            shared_readiness.certificate_map_attached
+                        )
+                        shared_preview_gateway_programmed = bool(shared_readiness.gateway_programmed)
+                        shared_preview_gateway_address_matches = bool(
+                            shared_readiness.gateway_address_matches
+                        )
+                        shared_preview_edge_diagnostics = (
+                            dict(shared_edge_result.diagnostics)
+                            if isinstance(shared_edge_result.diagnostics, dict)
+                            else None
+                        )
+                        expected_static_ip_address = (
+                            _normalize_string(
+                                shared_edge_result.expected_static_ip_address,
+                                max_length=64,
+                            )
+                            or expected_static_ip_address
+                        )
+                        expected_managed_certificate_name = _normalize_string(
+                            _normalize_json_dict(shared_preview_edge_diagnostics).get("certificate_name"),
+                            max_length=63,
+                        )
+                        managed_certificate_exists = shared_preview_certificate_active
+                        managed_certificate_status = (
+                            "ACTIVE" if shared_preview_certificate_active else "PROVISIONING"
+                        )
+                        observed_managed_certificate_status = managed_certificate_status
+                        observed_managed_certificate_domain_status = (
+                            "ACTIVE" if shared_preview_certificate_map_attached else "PROVISIONING"
+                        )
+                        observed_managed_certificate_domains = _normalize_string(
+                            _normalize_json_dict(shared_preview_edge_diagnostics).get("certificate_domain"),
+                            max_length=253,
+                        )
+                        managed_certificate_reconcile_note = (
+                            "Shared platform certificate readiness is read-only; no per-site certificate was created."
+                        )
+                        managed_certificate_gcp_credential_source = _normalize_string(
+                            shared_edge_result.gcp_credential_source,
+                            max_length=80,
+                        )
+                        managed_certificate_gcp_principal_email = _normalize_string(
+                            shared_edge_result.gcp_principal_email,
+                            max_length=200,
+                        )
+                        managed_certificate_gcp_impersonated_service_account_email = _normalize_string(
+                            shared_edge_result.gcp_impersonated_service_account_email,
+                            max_length=200,
+                        )
+                        if shared_preview_edge_status != "ready":
+                            dispatch_service_reason_code = (
+                                shared_preview_edge_reason_code or "shared_preview_gateway_pending"
+                            )
+                            _emit_prerequisite_chain_log(
+                                stage="shared_preview_edge_readiness_blocked",
+                                reason_code=dispatch_service_reason_code,
+                                level=logging.WARNING,
+                            )
+                            raise SEOMigrationGitHubPublisherError(
+                                code=dispatch_service_reason_code,
+                                safe_message=(
+                                    "Shared preview HTTPS infrastructure is not ready. "
+                                    "No site DNS changes were made."
+                                ),
+                                stage="shared_preview_edge_readiness",
+                                diagnostics=shared_preview_edge_diagnostics,
+                            )
+                        _emit_prerequisite_chain_log(stage="shared_preview_edge_readiness_succeeded")
                     try:
                         preview_hostname_for_dns = (
                             canonical_preview_hostname
@@ -7417,18 +7540,6 @@ class SEOMigrationService:
                             stage="dns_propagation",
                         )
                     _emit_prerequisite_chain_log(stage="dns_propagation_succeeded")
-                    preview_endpoint_mode_for_dispatch = (
-                        _normalize_string(
-                            workflow_resolution.get("preview_endpoint_mode"),
-                            max_length=60,
-                        )
-                        or _MANAGED_PREVIEW_ENDPOINT_MODE_DEDICATED_STATIC_IP
-                    )
-                    uses_shared_preview_gateway_for_dispatch = (
-                        bool(workflow_resolution.get("uses_shared_preview_gateway"))
-                        if isinstance(workflow_resolution.get("uses_shared_preview_gateway"), bool)
-                        else preview_endpoint_mode_for_dispatch == _MANAGED_PREVIEW_ENDPOINT_MODE_SHARED_GATEWAY
-                    )
                     preview_hostname_for_certificate = (
                         canonical_preview_hostname
                         or _normalize_string(expected_dns_hostname, max_length=253)
@@ -7478,7 +7589,7 @@ class SEOMigrationService:
                     )
                     managed_certificate_readiness: SEOMigrationGitHubManagedCertificateReadinessResult | None = (
                         None
-                        if active_self_managed_tls_certificate
+                        if active_self_managed_tls_certificate or uses_gateway_api_for_dispatch
                         else self.github_publisher.check_managed_certificate_readiness(
                             repo_name=deploy_target_for_dispatch.repo_name,
                             site_id=site_id,
@@ -8071,6 +8182,15 @@ class SEOMigrationService:
                     "managed_certificate_gcp_impersonated_service_account_email": (
                         managed_certificate_gcp_impersonated_service_account_email
                     ),
+                    "uses_gateway_api": uses_gateway_api_for_dispatch,
+                    "shared_preview_edge_status": shared_preview_edge_status,
+                    "shared_preview_edge_reason_code": shared_preview_edge_reason_code,
+                    "shared_preview_edge_reasons": list(shared_preview_edge_reasons),
+                    "shared_preview_certificate_active": shared_preview_certificate_active,
+                    "shared_preview_certificate_map_attached": shared_preview_certificate_map_attached,
+                    "shared_preview_gateway_programmed": shared_preview_gateway_programmed,
+                    "shared_preview_gateway_address_matches": shared_preview_gateway_address_matches,
+                    "shared_preview_edge_diagnostics": shared_preview_edge_diagnostics,
                     "deploy_trace_id": deploy_trace_id,
                     "workflow_dispatch_supported": workflow_dispatch_supported,
                     "workflow_trigger_types": list(workflow_trigger_types),
@@ -9200,16 +9320,23 @@ class SEOMigrationService:
             "dns_propagation_attempts": dns_propagation_attempts,
             "expected_managed_certificate_name": expected_managed_certificate_name,
             "managed_certificate_reconcile_note": managed_certificate_reconcile_note,
-            "managed_certificate_exists": managed_certificate_exists,
             "observed_managed_certificate_domains": observed_managed_certificate_domains,
             "observed_managed_certificate_status": observed_managed_certificate_status,
             "observed_managed_certificate_domain_status": observed_managed_certificate_domain_status,
-            "managed_certificate_status": managed_certificate_status,
             "managed_certificate_gcp_credential_source": managed_certificate_gcp_credential_source,
             "managed_certificate_gcp_principal_email": managed_certificate_gcp_principal_email,
             "managed_certificate_gcp_impersonated_service_account_email": (
                 managed_certificate_gcp_impersonated_service_account_email
             ),
+            "uses_gateway_api": uses_gateway_api_for_dispatch,
+            "shared_preview_edge_status": shared_preview_edge_status,
+            "shared_preview_edge_reason_code": shared_preview_edge_reason_code,
+            "shared_preview_edge_reasons": list(shared_preview_edge_reasons),
+            "shared_preview_certificate_active": shared_preview_certificate_active,
+            "shared_preview_certificate_map_attached": shared_preview_certificate_map_attached,
+            "shared_preview_gateway_programmed": shared_preview_gateway_programmed,
+            "shared_preview_gateway_address_matches": shared_preview_gateway_address_matches,
+            "shared_preview_edge_diagnostics": shared_preview_edge_diagnostics,
             "workflow_integrity_status": workflow_integrity_status,
             "workflow_integrity_reason_code": workflow_integrity_reason_code,
             "workflow_run_id": getattr(deploy_result, "workflow_run_id", None),
@@ -9382,6 +9509,15 @@ class SEOMigrationService:
                 "managed_certificate_gcp_impersonated_service_account_email": (
                     managed_certificate_gcp_impersonated_service_account_email
                 ),
+                "uses_gateway_api": uses_gateway_api_for_dispatch,
+                "shared_preview_edge_status": shared_preview_edge_status,
+                "shared_preview_edge_reason_code": shared_preview_edge_reason_code,
+                "shared_preview_edge_reasons": list(shared_preview_edge_reasons),
+                "shared_preview_certificate_active": shared_preview_certificate_active,
+                "shared_preview_certificate_map_attached": shared_preview_certificate_map_attached,
+                "shared_preview_gateway_programmed": shared_preview_gateway_programmed,
+                "shared_preview_gateway_address_matches": shared_preview_gateway_address_matches,
+                "shared_preview_edge_diagnostics": shared_preview_edge_diagnostics,
                 "deploy_trace_id": deploy_trace_id,
                 "workflow_dispatch_supported": workflow_dispatch_supported,
                 "workflow_trigger_types": list(workflow_trigger_types),
@@ -9428,7 +9564,7 @@ class SEOMigrationService:
         self,
         *,
         workspace: SEOMigrationWorkspace,
-        site: Site,
+        site: SEOSite,
         history_item: dict[str, object],
         principal_id: str | None,
     ) -> dict[str, object]:
@@ -9730,7 +9866,7 @@ class SEOMigrationService:
         self,
         *,
         workspace: SEOMigrationWorkspace,
-        site: Site,
+        site: SEOSite,
         history_item: dict[str, object],
         principal_id: str | None,
         failure_reason_code: str,
@@ -11303,6 +11439,31 @@ class SEOMigrationService:
                 next_item.get("managed_certificate_gcp_impersonated_service_account_email"),
                 max_length=200,
             ),
+            "uses_gateway_api": _coerce_optional_bool(next_item.get("uses_gateway_api")),
+            "shared_preview_edge_status": _normalize_string(
+                next_item.get("shared_preview_edge_status"), max_length=40
+            ),
+            "shared_preview_edge_reason_code": _normalize_dispatch_service_reason_code(
+                next_item.get("shared_preview_edge_reason_code")
+            ),
+            "shared_preview_edge_reasons": _normalize_string_list(
+                next_item.get("shared_preview_edge_reasons"), max_items=8, max_item_length=240
+            ),
+            "shared_preview_certificate_active": _coerce_optional_bool(
+                next_item.get("shared_preview_certificate_active")
+            ),
+            "shared_preview_certificate_map_attached": _coerce_optional_bool(
+                next_item.get("shared_preview_certificate_map_attached")
+            ),
+            "shared_preview_gateway_programmed": _coerce_optional_bool(
+                next_item.get("shared_preview_gateway_programmed")
+            ),
+            "shared_preview_gateway_address_matches": _coerce_optional_bool(
+                next_item.get("shared_preview_gateway_address_matches")
+            ),
+            "shared_preview_edge_diagnostics": _normalize_shared_preview_edge_diagnostics(
+                next_item.get("shared_preview_edge_diagnostics")
+            ),
             "https_ready": (
                 bool(next_item.get("https_ready")) if isinstance(next_item.get("https_ready"), bool) else None
             ),
@@ -11950,6 +12111,31 @@ class SEOMigrationService:
             "managed_certificate_gcp_impersonated_service_account_email": _normalize_string(
                 history_item.get("managed_certificate_gcp_impersonated_service_account_email"),
                 max_length=200,
+            ),
+            "uses_gateway_api": _coerce_optional_bool(history_item.get("uses_gateway_api")),
+            "shared_preview_edge_status": _normalize_string(
+                history_item.get("shared_preview_edge_status"), max_length=40
+            ),
+            "shared_preview_edge_reason_code": _normalize_dispatch_service_reason_code(
+                history_item.get("shared_preview_edge_reason_code")
+            ),
+            "shared_preview_edge_reasons": _normalize_string_list(
+                history_item.get("shared_preview_edge_reasons"), max_items=8, max_item_length=240
+            ),
+            "shared_preview_certificate_active": _coerce_optional_bool(
+                history_item.get("shared_preview_certificate_active")
+            ),
+            "shared_preview_certificate_map_attached": _coerce_optional_bool(
+                history_item.get("shared_preview_certificate_map_attached")
+            ),
+            "shared_preview_gateway_programmed": _coerce_optional_bool(
+                history_item.get("shared_preview_gateway_programmed")
+            ),
+            "shared_preview_gateway_address_matches": _coerce_optional_bool(
+                history_item.get("shared_preview_gateway_address_matches")
+            ),
+            "shared_preview_edge_diagnostics": _normalize_shared_preview_edge_diagnostics(
+                history_item.get("shared_preview_edge_diagnostics")
             ),
             "https_ready": (
                 bool(history_item.get("https_ready")) if isinstance(history_item.get("https_ready"), bool) else None
@@ -18116,6 +18302,7 @@ class SEOMigrationService:
         )
         preview_endpoint_mode = _MANAGED_PREVIEW_ENDPOINT_MODE_DEDICATED_STATIC_IP
         uses_shared_preview_gateway = False
+        uses_gateway_api = False
         shared_preview_static_ip_name: str | None = None
         try:
             preview_endpoint = resolve_managed_preview_endpoint_configuration(
@@ -18134,6 +18321,7 @@ class SEOMigrationService:
                 or _MANAGED_PREVIEW_ENDPOINT_MODE_DEDICATED_STATIC_IP
             )
             uses_shared_preview_gateway = bool(preview_endpoint.get("uses_shared_preview_gateway"))
+            uses_gateway_api = bool(preview_endpoint.get("uses_gateway_api"))
             shared_preview_static_ip_name = _normalize_string(
                 preview_endpoint.get("shared_preview_static_ip_name"),
                 max_length=80,
@@ -18192,6 +18380,7 @@ class SEOMigrationService:
             "expected_static_ip_name_source": expected_static_ip_name_source,
             "preview_endpoint_mode": preview_endpoint_mode,
             "uses_shared_preview_gateway": uses_shared_preview_gateway,
+            "uses_gateway_api": uses_gateway_api,
             "shared_preview_static_ip_name": shared_preview_static_ip_name,
             "expected_dns_hostname": preview_hostname,
             "expected_dns_hostname_source": preview_hostname_source,
@@ -18243,6 +18432,7 @@ class SEOMigrationService:
         )
         preview_endpoint_mode = _MANAGED_PREVIEW_ENDPOINT_MODE_DEDICATED_STATIC_IP
         uses_shared_preview_gateway = False
+        uses_gateway_api = False
         shared_preview_static_ip_name: str | None = None
         try:
             preview_endpoint = resolve_managed_preview_endpoint_configuration(
@@ -18261,6 +18451,7 @@ class SEOMigrationService:
                 or _MANAGED_PREVIEW_ENDPOINT_MODE_DEDICATED_STATIC_IP
             )
             uses_shared_preview_gateway = bool(preview_endpoint.get("uses_shared_preview_gateway"))
+            uses_gateway_api = bool(preview_endpoint.get("uses_gateway_api"))
             shared_preview_static_ip_name = _normalize_string(
                 preview_endpoint.get("shared_preview_static_ip_name"),
                 max_length=80,
@@ -18308,6 +18499,7 @@ class SEOMigrationService:
             "expected_static_ip_name_source": expected_static_ip_name_source,
             "preview_endpoint_mode": preview_endpoint_mode,
             "uses_shared_preview_gateway": uses_shared_preview_gateway,
+            "uses_gateway_api": uses_gateway_api,
             "shared_preview_static_ip_name": shared_preview_static_ip_name,
             "expected_dns_hostname": preview_hostname,
             "expected_dns_hostname_source": preview_hostname_source,
@@ -19609,6 +19801,87 @@ class SEOMigrationService:
         normalized_namespace = _normalize_string(kubernetes_namespace, max_length=63)
         if not normalized_repo_name or not normalized_preview_hostname or not normalized_namespace:
             return {"available": False, "source": "unavailable"}
+        admin_deploy_metadata = self._resolve_admin_deploy_template_metadata()
+        namespace_isolation_defaults = _normalize_json_dict(
+            admin_deploy_metadata.get("namespace_isolation_defaults")
+        )
+        preview_endpoint = resolve_managed_preview_endpoint_configuration(
+            repo_name=normalized_repo_name,
+            site_id=site_id,
+            preview_hostname=normalized_preview_hostname,
+            namespace_isolation_defaults=namespace_isolation_defaults,
+        )
+        if bool(preview_endpoint.get("uses_gateway_api")):
+            deploy_secret, _, _ = self._resolve_deploy_secret_for_propagation()
+            effective_managed_gke_config = _normalize_json_dict(
+                admin_deploy_metadata.get("managed_gke_config")
+            )
+            if not _normalize_string(effective_managed_gke_config.get("project_id"), max_length=120):
+                effective_managed_gke_config = managed_gke_config
+            try:
+                shared_result = self.github_publisher.check_shared_preview_edge_readiness(
+                    managed_gke_config=effective_managed_gke_config,
+                    namespace_isolation_defaults=namespace_isolation_defaults,
+                    gcp_deploy_key=deploy_secret,
+                )
+            except SEOMigrationGitHubPublisherError as exc:
+                return {
+                    "available": True,
+                    "checked_at": utc_now().isoformat(),
+                    "source": "shared_preview_edge_readiness",
+                    "shared_preview_edge_status": "error",
+                    "reason_code": _normalize_dispatch_service_reason_code(exc.code)
+                    or "shared_preview_gateway_readiness_check_failed",
+                    "shared_preview_edge_reasons": [exc.safe_message],
+                    "shared_preview_edge_diagnostics": (
+                        dict(exc.diagnostics) if isinstance(exc.diagnostics, dict) else None
+                    ),
+                }
+            if not isinstance(shared_result, SEOMigrationGitHubSharedPreviewEdgeReadinessResult):
+                return {
+                    "available": True,
+                    "checked_at": utc_now().isoformat(),
+                    "source": "shared_preview_edge_readiness",
+                    "shared_preview_edge_status": "error",
+                    "reason_code": "shared_preview_gateway_readiness_check_failed",
+                    "shared_preview_edge_reasons": ["Shared preview edge readiness is unavailable."],
+                }
+            readiness = shared_result.readiness
+            return {
+                "available": True,
+                "checked_at": utc_now().isoformat(),
+                "source": "shared_preview_edge_readiness",
+                "certificate_exists": bool(readiness.certificate_active),
+                "certificate_status": "ACTIVE" if readiness.certificate_active else "PROVISIONING",
+                "certificate_domain_status": (
+                    "ACTIVE" if readiness.certificate_map_attached else "PROVISIONING"
+                ),
+                "certificate_domains_match": bool(readiness.certificate_active),
+                "certificate_domains": _normalize_string(
+                    preview_endpoint.get("certificate_domain"),
+                    max_length=253,
+                ),
+                "certificate_name": _normalize_string(
+                    preview_endpoint.get("certificate_name"),
+                    max_length=63,
+                ),
+                "reason_code": _normalize_dispatch_service_reason_code(readiness.reason_code),
+                "shared_preview_edge_status": _normalize_string(readiness.status, max_length=40),
+                "shared_preview_edge_reasons": _normalize_string_list(
+                    readiness.reasons,
+                    max_items=8,
+                    max_item_length=240,
+                ),
+                "shared_preview_certificate_active": bool(readiness.certificate_active),
+                "shared_preview_certificate_map_attached": bool(readiness.certificate_map_attached),
+                "shared_preview_gateway_programmed": bool(readiness.gateway_programmed),
+                "shared_preview_gateway_address_matches": bool(readiness.gateway_address_matches),
+                "shared_preview_edge_diagnostics": (
+                    dict(shared_result.diagnostics)
+                    if isinstance(shared_result.diagnostics, dict)
+                    else None
+                ),
+            }
         expected_certificate_name, _ = derive_site_preview_certificate_name(
             repo_name=normalized_repo_name,
             site_id=site_id,
@@ -20397,6 +20670,31 @@ class SEOMigrationService:
                 "observed_managed_certificate_domain_status": _normalize_string(
                     item.get("observed_managed_certificate_domain_status"),
                     max_length=64,
+                ),
+                "uses_gateway_api": _coerce_optional_bool(item.get("uses_gateway_api")),
+                "shared_preview_edge_status": _normalize_string(
+                    item.get("shared_preview_edge_status"), max_length=40
+                ),
+                "shared_preview_edge_reason_code": _normalize_dispatch_service_reason_code(
+                    item.get("shared_preview_edge_reason_code")
+                ),
+                "shared_preview_edge_reasons": _normalize_string_list(
+                    item.get("shared_preview_edge_reasons"), max_items=8, max_item_length=240
+                ),
+                "shared_preview_certificate_active": _coerce_optional_bool(
+                    item.get("shared_preview_certificate_active")
+                ),
+                "shared_preview_certificate_map_attached": _coerce_optional_bool(
+                    item.get("shared_preview_certificate_map_attached")
+                ),
+                "shared_preview_gateway_programmed": _coerce_optional_bool(
+                    item.get("shared_preview_gateway_programmed")
+                ),
+                "shared_preview_gateway_address_matches": _coerce_optional_bool(
+                    item.get("shared_preview_gateway_address_matches")
+                ),
+                "shared_preview_edge_diagnostics": _normalize_shared_preview_edge_diagnostics(
+                    item.get("shared_preview_edge_diagnostics")
                 ),
                 "ingress_ip": _normalize_string(item.get("ingress_ip"), max_length=64),
                 "ingress_status_ip": _normalize_string(item.get("ingress_status_ip"), max_length=64),
@@ -21816,7 +22114,11 @@ class SEOMigrationService:
                     _normalize_json_dict(target_summary.get("managed_gke_config_details"))
                 ),
             )
-            if target_valid and workflow_republished_not_rerun
+            if target_valid
+            and (
+                workflow_republished_not_rerun
+                or bool(target_summary.get("uses_gateway_api"))
+            )
             else {"available": False, "source": "unavailable"}
         )
         workflow_dispatch_supported = (
@@ -22166,6 +22468,33 @@ class SEOMigrationService:
         current_endpoint_evidence_source = _normalize_string(current_endpoint_evidence.get("source"), max_length=80)
         current_certificate_reason_code = _normalize_dispatch_service_reason_code(
             current_endpoint_evidence.get("reason_code")
+        )
+        shared_preview_edge_status = _normalize_string(
+            current_endpoint_evidence.get("shared_preview_edge_status"),
+            max_length=40,
+        )
+        shared_preview_edge_reason_code = current_certificate_reason_code
+        shared_preview_edge_reasons = _normalize_string_list(
+            current_endpoint_evidence.get("shared_preview_edge_reasons"),
+            max_items=8,
+            max_item_length=240,
+        )
+        shared_preview_certificate_active = _coerce_optional_bool(
+            current_endpoint_evidence.get("shared_preview_certificate_active")
+        )
+        shared_preview_certificate_map_attached = _coerce_optional_bool(
+            current_endpoint_evidence.get("shared_preview_certificate_map_attached")
+        )
+        shared_preview_gateway_programmed = _coerce_optional_bool(
+            current_endpoint_evidence.get("shared_preview_gateway_programmed")
+        )
+        shared_preview_gateway_address_matches = _coerce_optional_bool(
+            current_endpoint_evidence.get("shared_preview_gateway_address_matches")
+        )
+        shared_preview_edge_diagnostics = (
+            dict(current_endpoint_evidence.get("shared_preview_edge_diagnostics"))
+            if isinstance(current_endpoint_evidence.get("shared_preview_edge_diagnostics"), dict)
+            else None
         )
         if current_endpoint_evidence_available:
             managed_certificate_exists = _coerce_optional_bool(current_endpoint_evidence.get("certificate_exists"))
@@ -22532,8 +22861,17 @@ class SEOMigrationService:
             if isinstance(target_summary.get("uses_shared_preview_gateway"), bool)
             else False
         )
-        certificate_gate_required_before_deploy = (
-            preview_endpoint_mode != _MANAGED_PREVIEW_ENDPOINT_MODE_SHARED_GATEWAY and not uses_shared_preview_gateway
+        uses_gateway_api = (
+            bool(target_summary.get("uses_gateway_api"))
+            if isinstance(target_summary.get("uses_gateway_api"), bool)
+            else False
+        )
+        certificate_gate_required_before_deploy = bool(
+            uses_gateway_api
+            or (
+                preview_endpoint_mode != _MANAGED_PREVIEW_ENDPOINT_MODE_SHARED_GATEWAY
+                and not uses_shared_preview_gateway
+            )
         )
         cert_domain_mismatch_reason_codes = {
             _DEPLOY_DISPATCH_SERVICE_REASON_CERTIFICATE_DOMAIN_MISMATCH,
@@ -22632,19 +22970,40 @@ class SEOMigrationService:
         if https_ready_observed is True:
             https_ready = True
 
+        shared_preview_edge_ready = shared_preview_edge_status == "ready"
+        if uses_gateway_api:
+            certificate_readiness_state = (
+                _CERTIFICATE_READINESS_STATE_ACTIVE
+                if shared_preview_edge_ready
+                else (
+                    _CERTIFICATE_READINESS_STATE_PROVISIONING_PENDING
+                    if shared_preview_edge_status in {"pending", "action_required"}
+                    else _CERTIFICATE_READINESS_STATE_UNKNOWN
+                )
+            )
         certificate_gate_blocked = bool(
-            certificate_gate_required_before_deploy
-            and deploy_https_ready is not True
-            and certificate_readiness_state
-            in {
-                _CERTIFICATE_READINESS_STATE_RESOURCE_MISSING,
-                _CERTIFICATE_READINESS_STATE_FAILED_NOT_VISIBLE,
-                _CERTIFICATE_READINESS_STATE_DOMAIN_MISMATCH,
-                _CERTIFICATE_READINESS_STATE_STALE_OR_LEGACY,
-            }
+            (uses_gateway_api and not shared_preview_edge_ready)
+            or (
+                certificate_gate_required_before_deploy
+                and not uses_gateway_api
+                and deploy_https_ready is not True
+                and certificate_readiness_state
+                in {
+                    _CERTIFICATE_READINESS_STATE_RESOURCE_MISSING,
+                    _CERTIFICATE_READINESS_STATE_FAILED_NOT_VISIBLE,
+                    _CERTIFICATE_READINESS_STATE_DOMAIN_MISMATCH,
+                    _CERTIFICATE_READINESS_STATE_STALE_OR_LEGACY,
+                }
+            )
         )
         if certificate_gate_blocked:
-            if certificate_readiness_state == _CERTIFICATE_READINESS_STATE_RESOURCE_MISSING:
+            if uses_gateway_api:
+                reasons.append(
+                    "Shared preview HTTPS infrastructure is not ready. Administrator action may be required."
+                )
+                if shared_preview_edge_reason_code:
+                    blocker_codes.append(shared_preview_edge_reason_code)
+            elif certificate_readiness_state == _CERTIFICATE_READINESS_STATE_RESOURCE_MISSING:
                 reasons.append(
                     "ManagedCertificate resource for the expected hostname is not yet visible. "
                     "Provision or refresh certificate resources, then rerun deploy."
@@ -22783,6 +23142,15 @@ class SEOMigrationService:
             "current_endpoint_evidence_source": current_endpoint_evidence_source,
             "certificate_gate_required_before_deploy": certificate_gate_required_before_deploy,
             "certificate_gate_blocked": certificate_gate_blocked,
+            "uses_gateway_api": uses_gateway_api,
+            "shared_preview_edge_status": shared_preview_edge_status,
+            "shared_preview_edge_reason_code": shared_preview_edge_reason_code,
+            "shared_preview_edge_reasons": shared_preview_edge_reasons,
+            "shared_preview_certificate_active": shared_preview_certificate_active,
+            "shared_preview_certificate_map_attached": shared_preview_certificate_map_attached,
+            "shared_preview_gateway_programmed": shared_preview_gateway_programmed,
+            "shared_preview_gateway_address_matches": shared_preview_gateway_address_matches,
+            "shared_preview_edge_diagnostics": shared_preview_edge_diagnostics,
             "runtime_ready_tls_pending": runtime_ready_tls_pending,
             "runtime_reached_load_balancer": runtime_reached_load_balancer,
             "https_ready": https_ready,
@@ -22961,6 +23329,15 @@ class SEOMigrationService:
                 "certificate_readiness_state": certificate_readiness_state,
                 "certificate_gate_required_before_deploy": certificate_gate_required_before_deploy,
                 "certificate_gate_blocked": certificate_gate_blocked,
+                "uses_gateway_api": uses_gateway_api,
+                "shared_preview_edge_status": shared_preview_edge_status,
+                "shared_preview_edge_reason_code": shared_preview_edge_reason_code,
+                "shared_preview_edge_reasons": shared_preview_edge_reasons,
+                "shared_preview_certificate_active": shared_preview_certificate_active,
+                "shared_preview_certificate_map_attached": shared_preview_certificate_map_attached,
+                "shared_preview_gateway_programmed": shared_preview_gateway_programmed,
+                "shared_preview_gateway_address_matches": shared_preview_gateway_address_matches,
+                "shared_preview_edge_diagnostics": shared_preview_edge_diagnostics,
                 "runtime_ready_tls_pending": runtime_ready_tls_pending,
                 "runtime_reached_load_balancer": runtime_reached_load_balancer,
                 "https_ready": https_ready,
@@ -26430,6 +26807,51 @@ def _normalize_gcp_credential_diagnostics(value: object) -> dict[str, object] | 
     }
 
 
+def _normalize_shared_preview_edge_diagnostics(value: object) -> dict[str, object] | None:
+    if not isinstance(value, dict):
+        return None
+    normalized: dict[str, object] = {}
+    string_limits = {
+        "gcp_project_id": 120,
+        "static_ip_name": 80,
+        "gateway_name": 63,
+        "gateway_namespace": 63,
+        "certificate_map_name": 63,
+        "certificate_map_entry_name": 63,
+        "certificate_name": 63,
+        "certificate_domain": 253,
+        "expected_static_ip_address": 64,
+        "status": 40,
+        "reason_code": 80,
+        "provider_reason_code": 80,
+        "provider_stage": 80,
+        "configuration_error": 300,
+    }
+    for key, max_length in string_limits.items():
+        candidate = _normalize_string(value.get(key), max_length=max_length)
+        if candidate:
+            normalized[key] = candidate
+    for key in (
+        "certificate_active",
+        "certificate_map_attached",
+        "gateway_programmed",
+        "gateway_address_matches",
+    ):
+        candidate_bool = _coerce_optional_bool(value.get(key))
+        if candidate_bool is not None:
+            normalized[key] = candidate_bool
+    reasons = _normalize_string_list(value.get("reasons"), max_items=8, max_item_length=240)
+    if reasons:
+        normalized["reasons"] = reasons
+    missing_fields = _normalize_string_list(value.get("missing_fields"), max_items=8, max_item_length=80)
+    if missing_fields:
+        normalized["missing_fields"] = missing_fields
+    credential_diagnostics = _normalize_gcp_credential_diagnostics(value)
+    if credential_diagnostics:
+        normalized.update(credential_diagnostics)
+    return normalized or None
+
+
 def _normalize_certificate_wait_state_reason_code(value: object) -> str | None:
     normalized = _normalize_string(value, max_length=80)
     if not normalized:
@@ -26519,6 +26941,8 @@ def _normalize_deploy_failure_reason_code(value: object) -> str | None:
         _DEPLOY_DISPATCH_SERVICE_REASON_STATIC_IP_PROVISIONING_PENDING,
         _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_MISSING,
         _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_HOSTNAME_MISSING,
+        _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_PENDING,
+        _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_READINESS_CHECK_FAILED,
         _DEPLOY_DISPATCH_SERVICE_REASON_TARGET_REPO_DEPLOY_SECRET_MISSING,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_CONFIG_INVALID,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_PERMISSION_DENIED,
@@ -26655,6 +27079,8 @@ def _normalize_workflow_run_failure_reason_code(value: object) -> str | None:
         _DEPLOY_DISPATCH_SERVICE_REASON_STATIC_IP_ADDRESS_MISSING_AFTER_RETRY,
         _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_MISSING,
         _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_HOSTNAME_MISSING,
+        _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_PENDING,
+        _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_READINESS_CHECK_FAILED,
         _DEPLOY_DISPATCH_SERVICE_REASON_TARGET_REPO_DEPLOY_SECRET_MISSING,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_CONFIG_INVALID,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_PERMISSION_DENIED,
@@ -26753,6 +27179,9 @@ def _normalize_dispatch_service_reason_code(value: object) -> str | None:
         _DEPLOY_DISPATCH_SERVICE_REASON_STATIC_IP_ADDRESS_MISSING_AFTER_RETRY,
         _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_MISSING,
         _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_HOSTNAME_MISSING,
+        _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_PENDING,
+        _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_READY,
+        _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_READINESS_CHECK_FAILED,
         "address_not_found_after_retry",
         "address_ambiguous_after_retry",
         "address_value_missing_after_retry",
@@ -27328,6 +27757,8 @@ def _derive_dispatch_service_reason_code(
         _DEPLOY_DISPATCH_SERVICE_REASON_STATIC_IP_ADDRESS_MISSING_AFTER_RETRY,
         _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_MISSING,
         _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_HOSTNAME_MISSING,
+        _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_PENDING,
+        _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_READINESS_CHECK_FAILED,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_CONFIG_INVALID,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_PERMISSION_DENIED,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_CONFIG_MISSING,
@@ -27399,6 +27830,8 @@ def _derive_dispatch_service_reason_code(
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PERMISSION_DENIED,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_TRANSACTION_CONFLICT,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_PROPAGATION_PENDING,
+        _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_PENDING,
+        _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_READINESS_CHECK_FAILED,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_DOMAIN_DRIFT_REPAIRED,
         _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_DOMAIN_DRIFT_REPAIR_FAILED,
     }:
@@ -27525,6 +27958,16 @@ def _derive_managed_gke_dispatch_readiness_message(*, dispatch_service_reason_co
         return (
             "Shared preview gateway mode requires a preview hostname under the managed preview domain. "
             "Refresh target metadata and retry deploy."
+        )
+    if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_PENDING:
+        return (
+            "Shared preview HTTPS infrastructure is still provisioning. No site DNS was changed; "
+            "wait for the platform certificate and Gateway checks to become ready, then retry."
+        )
+    if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_READINESS_CHECK_FAILED:
+        return (
+            "Shared preview HTTPS readiness could not be checked. An administrator should collect the sanitized "
+            "diagnostic bundle and verify Certificate Manager, Compute, GKE, and Gateway read permissions."
         )
     if normalized_dispatch_reason == "address_not_found_after_retry":
         return (
@@ -27805,6 +28248,16 @@ def _derive_deploy_failure_remediation_hint(
         return (
             "Shared preview gateway mode requires a valid preview hostname in deploy target metadata. "
             "Refresh deploy target metadata and retry."
+        )
+    if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_PENDING:
+        return (
+            "Shared preview HTTPS infrastructure is still provisioning. No site DNS was changed; "
+            "wait for platform readiness and retry deploy."
+        )
+    if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_READINESS_CHECK_FAILED:
+        return (
+            "Collect administrator diagnostics and verify read access to the shared Certificate Manager resources, "
+            "global address, GKE cluster, and Gateway resource."
         )
     if normalized_dispatch_reason == _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_STATIC_IP_PROVISIONING_FAILED:
         return (

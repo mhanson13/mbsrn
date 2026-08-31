@@ -9043,6 +9043,116 @@ def test_resolve_managed_preview_endpoint_configuration_preserves_dedicated_mode
     assert resolved.get("reason_code") is None
 
 
+def test_check_shared_preview_edge_readiness_reads_platform_resources_without_mutation(monkeypatch) -> None:
+    publisher = GitHubSEOMigrationPublisher(token="token")
+    requested_google_urls: list[str] = []
+    requested_kubernetes_paths: list[str] = []
+    monkeypatch.setattr(
+        publisher,
+        "_resolve_managed_certificate_kubernetes_api_context",
+        lambda **_kwargs: (
+            "10.0.0.1",
+            object(),
+            "access-token",
+            "service_account_json",
+            "deployer@mbsrn-prod.iam.gserviceaccount.com",
+            None,
+        ),
+    )
+
+    def _google_request(**kwargs):
+        url = str(kwargs["url"])
+        requested_google_urls.append(url)
+        if "/certificates/mbsrn-preview-wildcard" in url:
+            return {"managed": {"state": "ACTIVE", "domains": ["*.site.mbsrn.com"]}}
+        if "/certificateMapEntries/mbsrn-preview-wildcard-entry" in url:
+            return {
+                "hostname": "*.site.mbsrn.com",
+                "certificates": [
+                    "projects/mbsrn-prod/locations/global/certificates/mbsrn-preview-wildcard"
+                ],
+            }
+        if "/global/addresses/mbsrn-preview-edge-ip" in url:
+            return {"address": "34.149.100.20"}
+        raise AssertionError(f"unexpected Google API URL: {url}")
+
+    def _kubernetes_request(**kwargs):
+        requested_kubernetes_paths.append(str(kwargs["path"]))
+        return {
+            "metadata": {"annotations": {"networking.gke.io/certmap": "mbsrn-preview-cert-map"}},
+            "status": {
+                "conditions": [{"type": "Programmed", "status": "True"}],
+                "addresses": [{"type": "IPAddress", "value": "34.149.100.20"}],
+            },
+        }
+
+    monkeypatch.setattr(github_publisher_module, "_request_google_json", _google_request)
+    monkeypatch.setattr(github_publisher_module, "_request_kubernetes_json", _kubernetes_request)
+
+    result = publisher.check_shared_preview_edge_readiness(
+        managed_gke_config={
+            "project_id": "mbsrn-prod",
+            "cluster_name": "mbsrn-prod",
+            "cluster_location": "us-central1",
+        },
+        namespace_isolation_defaults={
+            "managed_preview_endpoint": {
+                "mode": "preview_shared_gateway",
+                "gateway_api_enabled": True,
+                "shared_preview_static_ip_name": "mbsrn-preview-edge-ip",
+                "gateway_name": "mbsrn-preview-gateway",
+                "gateway_namespace": "mbsrn",
+                "certificate_map_name": "mbsrn-preview-cert-map",
+                "certificate_map_entry_name": "mbsrn-preview-wildcard-entry",
+                "certificate_name": "mbsrn-preview-wildcard",
+                "dns_authorization_name": "mbsrn-preview-dns-auth",
+                "certificate_domain": "*.site.mbsrn.com",
+            }
+        },
+        gcp_deploy_key='{"type":"service_account"}',
+    )
+
+    assert result.readiness.status == "ready"
+    assert result.expected_static_ip_address == "34.149.100.20"
+    assert len(requested_google_urls) == 3
+    assert requested_kubernetes_paths == [
+        "/apis/gateway.networking.k8s.io/v1/namespaces/mbsrn/gateways/mbsrn-preview-gateway"
+    ]
+
+
+def test_check_shared_preview_edge_readiness_fails_closed_before_provider_calls_when_config_incomplete(
+    monkeypatch,
+) -> None:
+    publisher = GitHubSEOMigrationPublisher(token="token")
+    provider_called = False
+
+    def _unexpected_provider_call(**_kwargs):
+        nonlocal provider_called
+        provider_called = True
+        raise AssertionError("provider call should not be made")
+
+    monkeypatch.setattr(
+        publisher,
+        "_resolve_managed_certificate_kubernetes_api_context",
+        _unexpected_provider_call,
+    )
+
+    result = publisher.check_shared_preview_edge_readiness(
+        managed_gke_config=None,
+        namespace_isolation_defaults={
+            "managed_preview_endpoint": {
+                "gateway_api_enabled": True,
+                "shared_preview_static_ip_name": "mbsrn-preview-edge-ip",
+            }
+        },
+        gcp_deploy_key=None,
+    )
+
+    assert result.readiness.status == "action_required"
+    assert result.readiness.reason_code == "shared_preview_gateway_config_incomplete"
+    assert provider_called is False
+
+
 def test_build_managed_site_static_ip_labels_normalizes_values() -> None:
     labels = build_managed_site_static_ip_labels(
         repo_name="My.Repo_Name",

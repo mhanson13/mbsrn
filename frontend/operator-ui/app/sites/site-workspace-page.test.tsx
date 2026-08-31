@@ -1965,6 +1965,56 @@ describe("site migration workflow route", () => {
     expect(await screen.findByText(/is ready, vaulted, and published/i)).toBeInTheDocument();
   });
 
+  it("replaces per-site certificate controls with concise shared-edge readiness", async () => {
+    const approvedArtifact = buildMigrationArtifactVersion({
+      approval_status: "approved",
+      publish_status: "published",
+    });
+    mockFetchMigrationWorkspaceSummary.mockResolvedValue(
+      buildMigrationWorkspaceSummary({
+        workspace: buildMigrationWorkspace({
+          latest_approved_artifact_version_id: approvedArtifact.id,
+          latest_approved_artifact_version_number: approvedArtifact.version,
+          last_published_artifact_version_id: approvedArtifact.id,
+          last_published_artifact_version_number: approvedArtifact.version,
+        }),
+        latest_artifact: approvedArtifact,
+        deploy_readiness: {
+          ready: false,
+          reasons: ["Shared preview HTTPS infrastructure is not ready."],
+          approved_artifact_version_id: approvedArtifact.id,
+          uses_gateway_api: true,
+          shared_preview_edge_status: "pending",
+          shared_preview_edge_reason_code: "shared_preview_gateway_pending",
+          shared_preview_edge_reasons: ["The wildcard certificate is not active yet."],
+          shared_preview_certificate_active: false,
+          shared_preview_certificate_map_attached: true,
+          shared_preview_gateway_programmed: true,
+          shared_preview_gateway_address_matches: true,
+          certificate_gate_required_before_deploy: true,
+          certificate_gate_blocked: true,
+          target: {
+            enabled: true,
+            repo_owner: "mhanson13",
+            repo_name: "platfire",
+            workflow_id: "deploy.yml",
+            ref: "main",
+          },
+        },
+      }),
+    );
+    mockFetchMigrationArtifactVersions.mockResolvedValue({ items: [approvedArtifact], total: 1 });
+
+    render(<SiteMigrationWorkflowPage />);
+
+    const certificatePanel = await screen.findByTestId("migration-certificate-status");
+    expect(certificatePanel).toHaveTextContent("Preview HTTPS · shared Google-managed edge");
+    expect(certificatePanel).toHaveTextContent("Platform status: Action required");
+    expect(certificatePanel).toHaveTextContent("The wildcard certificate is not active yet.");
+    expect(screen.queryByTestId("migration-provision-certificate-button")).not.toBeInTheDocument();
+    expect(screen.queryByText("Use an existing self-managed certificate")).not.toBeInTheDocument();
+  });
+
   it("shows the certificate provider next action without raw provider output", async () => {
     const user = userEvent.setup();
     mockEnsureSiteTLSCertificate.mockRejectedValueOnce(

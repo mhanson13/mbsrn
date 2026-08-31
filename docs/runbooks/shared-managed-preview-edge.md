@@ -38,6 +38,15 @@ It creates or verifies only shared platform resources and the Certificate Manage
 
 The platform readiness check must be idempotent and read-only during a site release. Missing or unhealthy shared infrastructure is an administrator action, not a request for the operator to generate another certificate.
 
+The implemented readiness gate reads these resources through provider APIs before any site A-record reconciliation:
+
+- Certificate Manager certificate: managed state is `ACTIVE` and domains include `*.site.mbsrn.com`.
+- Certificate Manager map entry: hostname is `*.site.mbsrn.com` and it selects the configured certificate.
+- Compute global address: the configured named address has a numeric IP.
+- Kubernetes Gateway: the configured certificate map annotation is present, the `Programmed` condition is true, and the observed address matches the reserved address.
+
+The effective control-plane principal therefore needs read access to the configured Certificate Manager certificate and map entry, the Compute global address, GKE cluster metadata, and the Gateway resource. A failed read is reported as `shared_preview_gateway_readiness_check_failed`; a readable but incomplete platform reports `shared_preview_gateway_pending`. Neither outcome changes site DNS. Use the administrator diagnostic bundle for the sanitized resource names and individual readiness booleans.
+
 ## Site attachment
 
 For a site with preview hostname `<preview_slug>.site.mbsrn.com`:

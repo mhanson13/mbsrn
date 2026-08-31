@@ -1972,6 +1972,12 @@ function toManagedGkeConfigGuidance(value: string | null): string | null {
   if (normalized === "shared_preview_gateway_config_incomplete") {
     return "Shared preview Gateway API is enabled but its platform resource names are incomplete. An administrator must finish the shared-edge configuration before site routing can be published.";
   }
+  if (normalized === "shared_preview_gateway_pending") {
+    return "Shared preview HTTPS infrastructure is still provisioning. No site DNS was changed; wait for the platform checks to become ready, then retry.";
+  }
+  if (normalized === "shared_preview_gateway_readiness_check_failed") {
+    return "Shared preview HTTPS readiness could not be checked. An administrator should collect diagnostics and verify read access to Certificate Manager, Compute, GKE, and Gateway resources.";
+  }
   if (normalized === "stale_pre_shared_cert_binding_detected") {
     return "Ingress includes stale pre-shared certificate binding metadata. Republish managed ingress resources so ManagedCertificate remains the only certificate binding source.";
   }
@@ -5559,6 +5565,18 @@ export function MigrationWorkspacePanel({
   const certificateReadinessState = asStringOrNull(deployReadiness.certificate_readiness_state);
   const certificateGateRequiredBeforeDeploy = asBooleanOrNull(deployReadiness.certificate_gate_required_before_deploy);
   const certificateGateBlocked = asBooleanOrNull(deployReadiness.certificate_gate_blocked);
+  const usesSharedPreviewGatewayApi = asBooleanOrNull(deployReadiness.uses_gateway_api) === true;
+  const sharedPreviewEdgeStatus = asStringOrNull(deployReadiness.shared_preview_edge_status);
+  const sharedPreviewEdgeReasonCode = asStringOrNull(deployReadiness.shared_preview_edge_reason_code);
+  const sharedPreviewEdgeReasons = asStringList(deployReadiness.shared_preview_edge_reasons);
+  const sharedPreviewCertificateActive = asBooleanOrNull(deployReadiness.shared_preview_certificate_active);
+  const sharedPreviewCertificateMapAttached = asBooleanOrNull(
+    deployReadiness.shared_preview_certificate_map_attached,
+  );
+  const sharedPreviewGatewayProgrammed = asBooleanOrNull(deployReadiness.shared_preview_gateway_programmed);
+  const sharedPreviewGatewayAddressMatches = asBooleanOrNull(
+    deployReadiness.shared_preview_gateway_address_matches,
+  );
   const runtimeReadyTlsPending = asBooleanOrNull(deployReadiness.runtime_ready_tls_pending);
   const runtimeReachedLoadBalancer = asBooleanOrNull(deployReadiness.runtime_reached_load_balancer);
   const httpsReady = asBooleanOrNull(deployReadiness.https_ready);
@@ -10125,6 +10143,49 @@ export function MigrationWorkspacePanel({
             <div className="migration-publish-deploy-column stack" data-testid="migration-deploy-layout-right">
               <div className="panel panel-compact stack" data-testid="migration-deploy-controls">
                 <strong>Deploy Controls</strong>
+                {usesSharedPreviewGatewayApi ? (
+                  <div className="panel panel-compact stack" data-testid="migration-certificate-status">
+                    <strong>Preview HTTPS · shared Google-managed edge</strong>
+                    <span className={sharedPreviewEdgeStatus === "ready" ? "hint success" : "hint warning"}>
+                      Platform status: {sharedPreviewEdgeStatus === "ready" ? "Ready" : "Action required"}
+                    </span>
+                    <span className="hint">
+                      Certificate: {formatBooleanStateLabel(sharedPreviewCertificateActive, {
+                        trueLabel: "Active",
+                        falseLabel: "Not active",
+                      })}
+                    </span>
+                    <span className="hint">
+                      Certificate map: {formatBooleanStateLabel(sharedPreviewCertificateMapAttached, {
+                        trueLabel: "Attached",
+                        falseLabel: "Not attached",
+                      })}
+                    </span>
+                    <span className="hint">
+                      Gateway: {formatBooleanStateLabel(sharedPreviewGatewayProgrammed, {
+                        trueLabel: "Programmed",
+                        falseLabel: "Not programmed",
+                      })}
+                    </span>
+                    <span className="hint">
+                      Address: {formatBooleanStateLabel(sharedPreviewGatewayAddressMatches, {
+                        trueLabel: "Matched",
+                        falseLabel: "Not matched",
+                      })}
+                    </span>
+                    {sharedPreviewEdgeReasons.length > 0 ? (
+                      <span className="hint warning">{sharedPreviewEdgeReasons[0]}</span>
+                    ) : null}
+                    {sharedPreviewEdgeReasonCode && sharedPreviewEdgeStatus !== "ready" ? (
+                      <span className="hint muted">
+                        Administrator reference: {formatReasonCodeLabel(sharedPreviewEdgeReasonCode)}
+                      </span>
+                    ) : null}
+                    <span className="hint muted">
+                      Certificate issuance and renewal are platform-managed. No per-site certificate generation is required.
+                    </span>
+                  </div>
+                ) : (
                 <div className="panel panel-compact stack" data-testid="migration-certificate-status">
                   <strong>Preview TLS · self-managed</strong>
                   <span className="hint">Hostname: {siteTlsCertificate?.hostname || "Loading..."}</span>
@@ -10243,6 +10304,7 @@ export function MigrationWorkspacePanel({
                     </div>
                   </details>
                 </div>
+                )}
                 <label className="link-row">
                   <input type="checkbox" checked={deployEnabled} onChange={(event) => setDeployEnabled(event.target.checked)} />
                   <span>Deploy enabled for this site workspace</span>
@@ -11095,6 +11157,23 @@ export function MigrationWorkspacePanel({
                         <span className="hint" data-testid="migration-deploy-consistency-certificate-gate-required">
                           certificate_gate_required_before_deploy:{" "}
                           {formatBooleanStateLabel(certificateGateRequiredBeforeDeploy)}
+                        </span>
+                        <span className="hint" data-testid="migration-deploy-consistency-shared-edge-status">
+                          shared_preview_edge_status: {sharedPreviewEdgeStatus || "Not available"}
+                        </span>
+                        <span className="hint" data-testid="migration-deploy-consistency-shared-certificate-active">
+                          shared_preview_certificate_active: {formatBooleanStateLabel(sharedPreviewCertificateActive)}
+                        </span>
+                        <span className="hint" data-testid="migration-deploy-consistency-shared-certificate-map">
+                          shared_preview_certificate_map_attached:{" "}
+                          {formatBooleanStateLabel(sharedPreviewCertificateMapAttached)}
+                        </span>
+                        <span className="hint" data-testid="migration-deploy-consistency-shared-gateway-programmed">
+                          shared_preview_gateway_programmed: {formatBooleanStateLabel(sharedPreviewGatewayProgrammed)}
+                        </span>
+                        <span className="hint" data-testid="migration-deploy-consistency-shared-gateway-address">
+                          shared_preview_gateway_address_matches:{" "}
+                          {formatBooleanStateLabel(sharedPreviewGatewayAddressMatches)}
                         </span>
                         <span className="hint" data-testid="migration-deploy-consistency-gce-backend-health-status">
                           gce_backend_health_status: {gceBackendHealthStatus || "Not available"}

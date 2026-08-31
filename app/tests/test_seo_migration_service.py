@@ -33,6 +33,7 @@ from app.integrations.seo_migration_github_publisher import (
     SEOMigrationGitHubLiveRuntimeProbeResult,
     SEOMigrationGitHubManagedCertificateReadinessResult,
     SEOMigrationGitHubManagedCertificateEnsureResult,
+    SEOMigrationGitHubSharedPreviewEdgeReadinessResult,
     SEOMigrationGitHubManagedSiteDnsEnsureResult,
     SEOMigrationGitHubManagedSiteStaticIPEnsureResult,
     SEOMigrationGitHubPublishFile,
@@ -49,6 +50,7 @@ from app.integrations.seo_migration_github_publisher import (
     derive_site_preview_static_ip_name,
     resolve_managed_preview_endpoint_configuration,
 )
+from app.integrations.shared_preview_edge import SharedPreviewEdgeReadiness
 from app.models.business import Business
 from app.models.github_publish_config import GitHubPublishConfig
 from app.models.principal import PrincipalRole
@@ -313,6 +315,7 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         managed_certificate_readiness_credential_source: str | None = None,
         managed_certificate_readiness_principal_email: str | None = None,
         managed_certificate_readiness_impersonated_service_account_email: str | None = None,
+        shared_preview_edge_readiness: SharedPreviewEdgeReadiness | None = None,
     ) -> None:
         self.existing_repository = existing_repository
         self.ensure_repository_error_code = ensure_repository_error_code
@@ -465,6 +468,15 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
         self.managed_certificate_readiness_impersonated_service_account_email = (
             managed_certificate_readiness_impersonated_service_account_email
         )
+        self.shared_preview_edge_readiness = shared_preview_edge_readiness or SharedPreviewEdgeReadiness(
+            status="ready",
+            reason_code="shared_preview_gateway_ready",
+            reasons=(),
+            certificate_active=True,
+            certificate_map_attached=True,
+            gateway_programmed=True,
+            gateway_address_matches=True,
+        )
         self.publish_calls: list[
             tuple[SEOMigrationGitHubPublishTarget, list[SEOMigrationGitHubPublishFile], str, bool]
         ] = []
@@ -498,6 +510,9 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
                 str | None,
                 str | None,
             ]
+        ] = []
+        self.shared_preview_edge_readiness_calls: list[
+            tuple[dict[str, object] | None, dict[str, object] | None, str | None]
         ] = []
         self.ensure_managed_certificate_calls: list[
             tuple[str, str | None, str, str, dict[str, object] | None, str | None, str | None]
@@ -1020,6 +1035,38 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
             gcp_impersonated_service_account_email=(
                 self.managed_certificate_readiness_impersonated_service_account_email
             ),
+        )
+
+    def check_shared_preview_edge_readiness(
+        self,
+        *,
+        managed_gke_config: dict[str, object] | None,
+        namespace_isolation_defaults: dict[str, object] | None,
+        gcp_deploy_key: str | None,
+    ) -> SEOMigrationGitHubSharedPreviewEdgeReadinessResult:
+        self.shared_preview_edge_readiness_calls.append(
+            (
+                dict(managed_gke_config or {}) or None,
+                dict(namespace_isolation_defaults or {}) or None,
+                gcp_deploy_key,
+            )
+        )
+        self.deploy_call_order.append("check_shared_preview_edge_readiness")
+        readiness = self.shared_preview_edge_readiness
+        return SEOMigrationGitHubSharedPreviewEdgeReadinessResult(
+            readiness=readiness,
+            gcp_project_id=str((managed_gke_config or {}).get("project_id") or "mbsrn-prod"),
+            expected_static_ip_address=self.ensure_static_ip_address,
+            gcp_credential_source=self.ensure_static_ip_credential_source,
+            gcp_principal_email=self.ensure_static_ip_principal_email,
+            gcp_impersonated_service_account_email=self.ensure_static_ip_impersonated_service_account_email,
+            diagnostics={
+                "status": readiness.status,
+                "reason_code": readiness.reason_code,
+                "reasons": list(readiness.reasons),
+                "certificate_name": "mbsrn-preview-wildcard",
+                "certificate_domain": "*.site.mbsrn.com",
+            },
         )
 
     def ensure_managed_certificate(
@@ -6965,6 +7012,116 @@ def test_deploy_uses_shared_preview_gateway_static_ip_when_configured(db_session
     assert publisher.deploy_calls
 
 
+def test_deploy_checks_enabled_shared_edge_before_dns_and_skips_per_site_certificate(
+    db_session,
+    monkeypatch,
+) -> None:
+    publisher = _RecordingGitHubPublisher(
+        ensure_static_ip_name="mbsrn-preview-edge-ip",
+        ensure_static_ip_address="34.160.224.212",
+        ensure_dns_expected_ip="34.160.224.212",
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    config = service.github_publish_config_service.get()
+    namespace_defaults = dict(config.namespace_isolation_defaults_json or {})
+    namespace_defaults["managed_preview_endpoint"] = {
+        "mode": "preview_shared_gateway",
+        "gateway_api_enabled": True,
+        "shared_preview_static_ip_name": "mbsrn-preview-edge-ip",
+        "gateway_name": "mbsrn-preview-gateway",
+        "gateway_namespace": "mbsrn",
+        "certificate_map_name": "mbsrn-preview-cert-map",
+        "certificate_map_entry_name": "mbsrn-preview-wildcard-entry",
+        "certificate_name": "mbsrn-preview-wildcard",
+        "dns_authorization_name": "mbsrn-preview-dns-auth",
+        "certificate_domain": "*.site.mbsrn.com",
+    }
+    config.namespace_isolation_defaults_json = namespace_defaults
+    service.github_publish_config_service.repository.save(config)
+    service.session.commit()
+    artifact = _prepare_published_artifact(service, business_id=business_id, site_id=site_id)
+    monkeypatch.setattr(
+        seo_migration_module,
+        "_resolve_hostname_ipv4_addresses",
+        lambda _hostname: ["34.160.224.212"],
+    )
+
+    result = service.deploy_artifact_version(
+        business_id=business_id,
+        site_id=site_id,
+        artifact_version_id=artifact.id,
+        dry_run=False,
+        principal_id="principal-1",
+    )
+
+    assert publisher.shared_preview_edge_readiness_calls
+    assert publisher.ensure_managed_certificate_readiness_calls == []
+    assert publisher.deploy_call_order.index("check_shared_preview_edge_readiness") < publisher.deploy_call_order.index(
+        "ensure_dns"
+    )
+    assert result.result.get("uses_gateway_api") is True
+    assert result.result.get("shared_preview_edge_status") == "ready"
+    assert result.result.get("shared_preview_certificate_active") is True
+
+
+def test_deploy_blocks_unready_shared_edge_before_site_dns_change(db_session) -> None:
+    publisher = _RecordingGitHubPublisher(
+        ensure_static_ip_name="mbsrn-preview-edge-ip",
+        ensure_static_ip_address="34.160.224.212",
+        shared_preview_edge_readiness=SharedPreviewEdgeReadiness(
+            status="pending",
+            reason_code="shared_preview_gateway_pending",
+            reasons=("The wildcard certificate is not active or does not cover the preview domain.",),
+            certificate_active=False,
+            certificate_map_attached=True,
+            gateway_programmed=True,
+            gateway_address_matches=True,
+        ),
+    )
+    service = _build_service(
+        db_session,
+        _StaticMigrationProvider(_build_publishable_output()),
+        github_publisher=publisher,
+    )
+    business_id, site_id = _seed_business_and_site(db_session)
+    config = service.github_publish_config_service.get()
+    namespace_defaults = dict(config.namespace_isolation_defaults_json or {})
+    namespace_defaults["managed_preview_endpoint"] = {
+        "mode": "preview_shared_gateway",
+        "gateway_api_enabled": True,
+        "shared_preview_static_ip_name": "mbsrn-preview-edge-ip",
+        "gateway_name": "mbsrn-preview-gateway",
+        "gateway_namespace": "mbsrn",
+        "certificate_map_name": "mbsrn-preview-cert-map",
+        "certificate_map_entry_name": "mbsrn-preview-wildcard-entry",
+        "certificate_name": "mbsrn-preview-wildcard",
+        "dns_authorization_name": "mbsrn-preview-dns-auth",
+        "certificate_domain": "*.site.mbsrn.com",
+    }
+    config.namespace_isolation_defaults_json = namespace_defaults
+    service.github_publish_config_service.repository.save(config)
+    service.session.commit()
+    artifact = _prepare_published_artifact(service, business_id=business_id, site_id=site_id)
+
+    with pytest.raises(SEOMigrationValidationError, match="Shared preview HTTPS infrastructure is not ready"):
+        service.deploy_artifact_version(
+            business_id=business_id,
+            site_id=site_id,
+            artifact_version_id=artifact.id,
+            dry_run=False,
+            principal_id="principal-1",
+        )
+
+    assert publisher.shared_preview_edge_readiness_calls
+    assert publisher.ensure_managed_site_dns_calls == []
+    assert publisher.deploy_calls == []
+
+
 def test_deploy_blocks_before_dispatch_when_shared_preview_gateway_static_ip_name_missing(db_session) -> None:
     publisher = _RecordingGitHubPublisher()
     service = _build_service(
@@ -9607,7 +9764,7 @@ def test_refresh_deploy_status_tls_provisioning_in_shared_preview_mode_is_runtim
     service.session.commit()
     artifact = _prepare_and_request_deploy(service, business_id=business_id, site_id=site_id)
 
-    refresh_result = service.refresh_deploy_run_status(
+    service.refresh_deploy_run_status(
         business_id=business_id,
         site_id=site_id,
         artifact_version_id=artifact.id,
@@ -9661,7 +9818,7 @@ def test_refresh_deploy_status_tls_provisioning_overrides_runtime_replace_failur
         principal_id="principal-1",
     )
 
-    refresh_result = service.refresh_deploy_run_status(
+    service.refresh_deploy_run_status(
         business_id=business_id,
         site_id=site_id,
         artifact_version_id=artifact.id,

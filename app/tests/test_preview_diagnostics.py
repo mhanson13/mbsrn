@@ -51,7 +51,27 @@ def test_preview_diagnostic_bundle_is_bounded_and_redacts_sensitive_fields() -> 
             },
             deploy_readiness={
                 "ready": False,
-                "blocker_codes": ["certificate_pending"],
+                "blocker_codes": ["shared_preview_gateway_pending"],
+                "uses_gateway_api": True,
+                "shared_preview_edge_status": "pending",
+                "shared_preview_edge_reason_code": "shared_preview_gateway_pending",
+                "shared_preview_edge_reasons": ["The shared Gateway is not programmed."],
+                "shared_preview_certificate_active": True,
+                "shared_preview_certificate_map_attached": True,
+                "shared_preview_gateway_programmed": False,
+                "shared_preview_gateway_address_matches": True,
+                "shared_preview_edge_diagnostics": {
+                    "gcp_project_id": "test-project",
+                    "gateway_name": "mbsrn-preview-gateway",
+                    "certificate_name": "mbsrn-preview-wildcard",
+                    "certificate_active": True,
+                    "certificate_map_attached": True,
+                    "gateway_programmed": False,
+                    "gateway_address_matches": True,
+                    "reasons": ["The shared Gateway is not programmed."],
+                    "raw_provider_response": "must-not-leak-shared-provider-payload",
+                    "access_token": "must-not-leak-access-token",
+                },
                 "target": {
                     "preview_hostname": "example-site.site.mbsrn.com",
                     "kubernetes_namespace": "example-site-a1b2c3d4",
@@ -165,6 +185,27 @@ def test_preview_diagnostic_bundle_is_bounded_and_redacts_sensitive_fields() -> 
         "retryable": False,
         "missing_permissions": [],
     }
+    assert bundle["payload"]["deployment"]["shared_preview_edge"] == {
+        "enabled": True,
+        "status": "pending",
+        "reason_code": "shared_preview_gateway_pending",
+        "reasons": ["The shared Gateway is not programmed."],
+        "certificate_active": True,
+        "certificate_map_attached": True,
+        "gateway_programmed": False,
+        "gateway_address_matches": True,
+        "diagnostics": {
+            "gcp_project_id": "test-project",
+            "gateway_name": "mbsrn-preview-gateway",
+            "certificate_name": "mbsrn-preview-wildcard",
+            "certificate_active": True,
+            "certificate_map_attached": True,
+            "gateway_programmed": False,
+            "gateway_address_matches": True,
+            "reasons": ["The shared Gateway is not programmed."],
+            "missing_fields": [],
+        },
+    }
     assert bundle["payload"]["tls_capabilities"]["checks"][0]["missing_permissions"] == ["secretmanager.secrets.create"]
     serialized = json.dumps(
         bundle, default=lambda value: value.isoformat() if isinstance(value, datetime) else str(value)
@@ -173,6 +214,8 @@ def test_preview_diagnostic_bundle_is_bounded_and_redacts_sensitive_fields() -> 
     assert "github-secret-token" not in serialized
     assert "sensitive-provider-payload" not in serialized
     assert "must-not-leak" not in serialized
+    assert "must-not-leak-shared-provider-payload" not in serialized
+    assert "must-not-leak-access-token" not in serialized
     assert "private_key" not in serialized
 
 

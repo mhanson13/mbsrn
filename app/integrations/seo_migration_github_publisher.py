@@ -28,6 +28,8 @@ from app.integrations.shared_preview_edge import (
     GATEWAY_ROUTE_NAMESPACE_LABEL,
     GATEWAY_ROUTE_NAMESPACE_LABEL_VALUE,
     SharedPreviewEdgeConfig,
+    SharedPreviewEdgeReadiness,
+    evaluate_shared_preview_edge_readiness,
     render_site_gateway_manifests,
 )
 
@@ -167,6 +169,17 @@ class SEOMigrationGitHubManagedCertificateReadinessResult:
     observed_managed_certificate_status: str | None = None
     observed_managed_certificate_domain_status: str | None = None
     dispatch_service_reason_code: str | None = None
+    gcp_credential_source: str | None = None
+    gcp_principal_email: str | None = None
+    gcp_impersonated_service_account_email: str | None = None
+    diagnostics: dict[str, object] | None = None
+
+
+@dataclass(frozen=True)
+class SEOMigrationGitHubSharedPreviewEdgeReadinessResult:
+    readiness: SharedPreviewEdgeReadiness
+    gcp_project_id: str | None = None
+    expected_static_ip_address: str | None = None
     gcp_credential_source: str | None = None
     gcp_principal_email: str | None = None
     gcp_impersonated_service_account_email: str | None = None
@@ -586,6 +599,16 @@ class SEOMigrationGitHubPublisher:
             gcp_deploy_key,
             expected_managed_certificate_name,
         )
+        return None
+
+    def check_shared_preview_edge_readiness(
+        self,
+        *,
+        managed_gke_config: dict[str, object] | None,
+        namespace_isolation_defaults: dict[str, object] | None,
+        gcp_deploy_key: str | None,
+    ) -> SEOMigrationGitHubSharedPreviewEdgeReadinessResult | None:
+        del managed_gke_config, namespace_isolation_defaults, gcp_deploy_key
         return None
 
     def ensure_managed_certificate(
@@ -3089,6 +3112,216 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             gcp_credential_source=credential_source,
             gcp_principal_email=principal_email,
             gcp_impersonated_service_account_email=impersonated_service_account_email,
+        )
+
+    def check_shared_preview_edge_readiness(
+        self,
+        *,
+        managed_gke_config: dict[str, object] | None,
+        namespace_isolation_defaults: dict[str, object] | None,
+        gcp_deploy_key: str | None,
+    ) -> SEOMigrationGitHubSharedPreviewEdgeReadinessResult:
+        normalized_defaults = _normalize_namespace_isolation_defaults(namespace_isolation_defaults)
+        endpoint_payload = normalized_defaults.get("managed_preview_endpoint")
+        endpoint_config = endpoint_payload if isinstance(endpoint_payload, dict) else {}
+        config = SharedPreviewEdgeConfig.from_mapping(endpoint_config)
+        if not config.enabled or config.missing_fields:
+            readiness = evaluate_shared_preview_edge_readiness(
+                config=config,
+                certificate=None,
+                certificate_map_entry=None,
+                gateway=None,
+                expected_static_ip_address=None,
+            )
+            return SEOMigrationGitHubSharedPreviewEdgeReadinessResult(
+                readiness=readiness,
+                diagnostics={
+                    "status": readiness.status,
+                    "reason_code": readiness.reason_code,
+                    "missing_fields": list(config.missing_fields),
+                },
+            )
+
+        try:
+            config.validate()
+        except ValueError as exc:
+            raise SEOMigrationGitHubPublisherError(
+                code=_DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_CONFIG_INCOMPLETE,
+                safe_message="Shared preview edge configuration is invalid.",
+                stage="shared_preview_edge_readiness",
+                diagnostics={"configuration_error": str(exc)[:300]},
+            ) from exc
+
+        normalized_gke = _normalize_managed_gke_config(managed_gke_config)
+        project_id = _coerce_string(normalized_gke.get(_MANAGED_GKE_CONFIG_PROJECT_ID))
+        if not project_id:
+            raise SEOMigrationGitHubPublisherError(
+                code=_DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_CONFIG_INCOMPLETE,
+                safe_message="Shared preview edge readiness requires the managed GCP project.",
+                stage="shared_preview_edge_readiness",
+            )
+
+        assert config.static_ip_name is not None
+        assert config.gateway_name is not None
+        assert config.gateway_namespace is not None
+        assert config.certificate_map_name is not None
+        assert config.certificate_map_entry_name is not None
+        assert config.certificate_name is not None
+        resource_diagnostics: dict[str, object] = {
+            "gcp_project_id": project_id,
+            "static_ip_name": config.static_ip_name,
+            "gateway_name": config.gateway_name,
+            "gateway_namespace": config.gateway_namespace,
+            "certificate_map_name": config.certificate_map_name,
+            "certificate_map_entry_name": config.certificate_map_entry_name,
+            "certificate_name": config.certificate_name,
+            "certificate_domain": config.certificate_domain,
+        }
+        try:
+            (
+                cluster_endpoint,
+                ssl_context,
+                access_token,
+                credential_source,
+                principal_email,
+                impersonated_service_account_email,
+            ) = self._resolve_managed_certificate_kubernetes_api_context(
+                managed_gke_config=normalized_gke,
+                gcp_deploy_key=gcp_deploy_key,
+                stage="shared_preview_edge_readiness",
+            )
+            encoded_project = urllib.parse.quote(project_id, safe="")
+            certificate = _request_google_json(
+                method="GET",
+                url=(
+                    "https://certificatemanager.googleapis.com/v1/projects/"
+                    f"{encoded_project}/locations/global/certificates/"
+                    f"{urllib.parse.quote(config.certificate_name, safe='')}"
+                ),
+                access_token=access_token,
+                timeout_seconds=self.timeout_seconds,
+                allow_404=True,
+                error_stage="shared_preview_edge_readiness",
+                code_on_failure=_DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_READINESS_CHECK_FAILED,
+                safe_message_on_failure="Shared preview certificate readiness could not be checked.",
+                safe_message_on_timeout="Shared preview certificate readiness check timed out.",
+            )
+            certificate_map_entry = _request_google_json(
+                method="GET",
+                url=(
+                    "https://certificatemanager.googleapis.com/v1/projects/"
+                    f"{encoded_project}/locations/global/certificateMaps/"
+                    f"{urllib.parse.quote(config.certificate_map_name, safe='')}/certificateMapEntries/"
+                    f"{urllib.parse.quote(config.certificate_map_entry_name, safe='')}"
+                ),
+                access_token=access_token,
+                timeout_seconds=self.timeout_seconds,
+                allow_404=True,
+                error_stage="shared_preview_edge_readiness",
+                code_on_failure=_DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_READINESS_CHECK_FAILED,
+                safe_message_on_failure="Shared preview certificate-map readiness could not be checked.",
+                safe_message_on_timeout="Shared preview certificate-map readiness check timed out.",
+            )
+            static_ip = _request_google_json(
+                method="GET",
+                url=(
+                    "https://compute.googleapis.com/compute/v1/projects/"
+                    f"{encoded_project}/global/addresses/{urllib.parse.quote(config.static_ip_name, safe='')}"
+                ),
+                access_token=access_token,
+                timeout_seconds=self.timeout_seconds,
+                allow_404=True,
+                error_stage="shared_preview_edge_readiness",
+                code_on_failure=_DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_READINESS_CHECK_FAILED,
+                safe_message_on_failure="Shared preview static-address readiness could not be checked.",
+                safe_message_on_timeout="Shared preview static-address readiness check timed out.",
+            )
+            gateway = _request_kubernetes_json(
+                method="GET",
+                endpoint=cluster_endpoint,
+                path=(
+                    "/apis/gateway.networking.k8s.io/v1/namespaces/"
+                    f"{urllib.parse.quote(config.gateway_namespace, safe='')}/gateways/"
+                    f"{urllib.parse.quote(config.gateway_name, safe='')}"
+                ),
+                access_token=access_token,
+                ssl_context=ssl_context,
+                timeout_seconds=self.timeout_seconds,
+                allow_404=True,
+                error_stage="shared_preview_edge_readiness",
+                code_on_failure=_DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_READINESS_CHECK_FAILED,
+                safe_message_on_failure="Shared preview Gateway readiness could not be checked.",
+                safe_message_on_timeout="Shared preview Gateway readiness check timed out.",
+            )
+        except SEOMigrationGitHubPublisherError as exc:
+            diagnostics = {
+                **resource_diagnostics,
+                **_normalize_gcp_credential_diagnostics(
+                    {
+                        "gcp_credential_source": locals().get("credential_source"),
+                        "gcp_principal_email": locals().get("principal_email"),
+                        "gcp_impersonated_service_account_email": locals().get(
+                            "impersonated_service_account_email"
+                        ),
+                    }
+                ),
+                "provider_reason_code": exc.code,
+                "provider_stage": exc.stage,
+            }
+            raise SEOMigrationGitHubPublisherError(
+                code=(
+                    exc.code
+                    if exc.code
+                    in {
+                        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_CONFIG_INVALID,
+                        _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_DEPLOY_IMPERSONATION_PERMISSION_DENIED,
+                    }
+                    else _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_READINESS_CHECK_FAILED
+                ),
+                safe_message="Shared preview edge readiness could not be checked.",
+                status_code=exc.status_code,
+                stage="shared_preview_edge_readiness",
+                provider_message=exc.provider_message,
+                diagnostics=diagnostics,
+            ) from exc
+
+        expected_static_ip_address = (
+            _coerce_string(static_ip.get("address")) if isinstance(static_ip, dict) else None
+        )
+        readiness = evaluate_shared_preview_edge_readiness(
+            config=config,
+            certificate=certificate if isinstance(certificate, dict) else None,
+            certificate_map_entry=certificate_map_entry if isinstance(certificate_map_entry, dict) else None,
+            gateway=gateway if isinstance(gateway, dict) else None,
+            expected_static_ip_address=expected_static_ip_address,
+        )
+        diagnostics = {
+            **resource_diagnostics,
+            "status": readiness.status,
+            "reason_code": readiness.reason_code,
+            "reasons": list(readiness.reasons),
+            "certificate_active": readiness.certificate_active,
+            "certificate_map_attached": readiness.certificate_map_attached,
+            "gateway_programmed": readiness.gateway_programmed,
+            "gateway_address_matches": readiness.gateway_address_matches,
+            "expected_static_ip_address": expected_static_ip_address,
+        }
+        _emit_structured_publisher_log(
+            payload={
+                "event": "seo_migration_shared_preview_edge_readiness",
+                **diagnostics,
+            },
+            fallback_message="seo_migration_shared_preview_edge_readiness",
+            level=logging.INFO if readiness.status == "ready" else logging.WARNING,
+        )
+        return SEOMigrationGitHubSharedPreviewEdgeReadinessResult(
+            readiness=readiness,
+            gcp_project_id=project_id,
+            expected_static_ip_address=expected_static_ip_address,
+            gcp_credential_source=credential_source,
+            gcp_principal_email=principal_email,
+            gcp_impersonated_service_account_email=impersonated_service_account_email,
+            diagnostics=diagnostics,
         )
 
     def check_managed_certificate_readiness(
@@ -9895,6 +10128,11 @@ _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_MISSING = "shared_preview
 _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_HOSTNAME_MISSING = "shared_preview_gateway_hostname_missing"
 _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_CONFIG_INCOMPLETE = (
     "shared_preview_gateway_config_incomplete"
+)
+_DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_PENDING = "shared_preview_gateway_pending"
+_DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_READY = "shared_preview_gateway_ready"
+_DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_READINESS_CHECK_FAILED = (
+    "shared_preview_gateway_readiness_check_failed"
 )
 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_DOMAIN_DRIFT_REPAIRED = "managed_certificate_domain_drift_repaired"
 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_DOMAIN_DRIFT_REPAIR_FAILED = (
