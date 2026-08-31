@@ -226,6 +226,14 @@ const DEFAULT_NAMESPACE_ISOLATION_DEFAULTS: GitHubNamespaceIsolationDefaults = {
   managed_preview_endpoint: {
     mode: "auto",
     shared_preview_static_ip_name: null,
+    gateway_api_enabled: false,
+    gateway_name: null,
+    gateway_namespace: null,
+    certificate_map_name: null,
+    certificate_map_entry_name: null,
+    certificate_name: null,
+    dns_authorization_name: null,
+    certificate_domain: "*.site.mbsrn.com",
   },
   migration_generation_budget: DEFAULT_MIGRATION_GENERATION_BUDGET,
   migration_generation_safety: DEFAULT_MIGRATION_GENERATION_SAFETY,
@@ -1255,6 +1263,21 @@ function migrationSettingValidationMessage(
   );
 }
 
+function normalizeManagedPreviewResourceName(value: string | null | undefined): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const normalized = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/--+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 63)
+    .replace(/-+$/g, "");
+  return normalized || null;
+}
+
 function normalizeNamespaceIsolationDefaults(
   value: GitHubNamespaceIsolationDefaults | null | undefined,
 ): GitHubNamespaceIsolationDefaults {
@@ -1329,6 +1352,20 @@ function normalizeNamespaceIsolationDefaults(
         }
         return normalized.slice(0, 80);
       })(),
+      gateway_api_enabled: Boolean(source.managed_preview_endpoint?.gateway_api_enabled),
+      gateway_name: normalizeManagedPreviewResourceName(source.managed_preview_endpoint?.gateway_name),
+      gateway_namespace: normalizeManagedPreviewResourceName(source.managed_preview_endpoint?.gateway_namespace),
+      certificate_map_name: normalizeManagedPreviewResourceName(
+        source.managed_preview_endpoint?.certificate_map_name,
+      ),
+      certificate_map_entry_name: normalizeManagedPreviewResourceName(
+        source.managed_preview_endpoint?.certificate_map_entry_name,
+      ),
+      certificate_name: normalizeManagedPreviewResourceName(source.managed_preview_endpoint?.certificate_name),
+      dns_authorization_name: normalizeManagedPreviewResourceName(
+        source.managed_preview_endpoint?.dns_authorization_name,
+      ),
+      certificate_domain: "*.site.mbsrn.com",
     },
     migration_generation_budget: {
       migration_context_budget_chars: normalizeMigrationBudgetCount(
@@ -1494,6 +1531,26 @@ function validateNamespaceIsolationDefaults(defaults: GitHubNamespaceIsolationDe
     )
   ) {
     errors.push("Managed preview endpoint mode is invalid.");
+  }
+  const previewEndpoint = normalized.managed_preview_endpoint;
+  if (previewEndpoint.gateway_api_enabled) {
+    const requiredGatewayValues = [
+      ["shared preview static IP", previewEndpoint.shared_preview_static_ip_name],
+      ["Gateway name", previewEndpoint.gateway_name],
+      ["Gateway namespace", previewEndpoint.gateway_namespace],
+      ["certificate map name", previewEndpoint.certificate_map_name],
+      ["certificate map entry name", previewEndpoint.certificate_map_entry_name],
+      ["certificate name", previewEndpoint.certificate_name],
+      ["DNS authorization name", previewEndpoint.dns_authorization_name],
+    ] as const;
+    requiredGatewayValues.forEach(([label, value]) => {
+      if (!value) {
+        errors.push(`Shared Gateway API ${label} is required when Gateway routing is enabled.`);
+      }
+    });
+    if (previewEndpoint.certificate_domain !== "*.site.mbsrn.com") {
+      errors.push("Shared Gateway API certificate domain must be *.site.mbsrn.com.");
+    }
   }
 
   // Migration generation budget/safety field ranges are validated by backend schema

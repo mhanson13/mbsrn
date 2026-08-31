@@ -9138,6 +9138,7 @@ def test_rendered_managed_templates_add_gateway_canary_resources_when_explicitly
             "gateway_name": "mbsrn-preview-gateway",
             "gateway_namespace": "mbsrn",
             "certificate_map_name": "mbsrn-preview-cert-map",
+            "certificate_map_entry_name": "mbsrn-preview-wildcard-entry",
             "certificate_name": "mbsrn-preview-wildcard",
             "dns_authorization_name": "mbsrn-preview-dns-auth",
             "certificate_domain": "*.site.mbsrn.com",

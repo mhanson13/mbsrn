@@ -216,6 +216,14 @@ export interface GitHubNamespaceNetworkPolicyDefaults {
 export interface GitHubManagedPreviewEndpointDefaults {
   mode: "auto" | "preview_shared_gateway" | "dedicated_static_ip" | string;
   shared_preview_static_ip_name: string | null;
+  gateway_api_enabled?: boolean;
+  gateway_name?: string | null;
+  gateway_namespace?: string | null;
+  certificate_map_name?: string | null;
+  certificate_map_entry_name?: string | null;
+  certificate_name?: string | null;
+  dns_authorization_name?: string | null;
+  certificate_domain?: "*.site.mbsrn.com" | string;
 }
 
 export interface MigrationGenerationBudgetConfig {

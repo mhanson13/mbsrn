@@ -38,6 +38,7 @@ class SharedPreviewEdgeConfig:
     gateway_name: str | None
     gateway_namespace: str | None
     certificate_map_name: str | None
+    certificate_map_entry_name: str | None
     certificate_name: str | None
     dns_authorization_name: str | None
     certificate_domain: str = PREVIEW_WILDCARD_DOMAIN
@@ -51,6 +52,7 @@ class SharedPreviewEdgeConfig:
             gateway_name=_text(payload.get("gateway_name")),
             gateway_namespace=_text(payload.get("gateway_namespace")),
             certificate_map_name=_text(payload.get("certificate_map_name")),
+            certificate_map_entry_name=_text(payload.get("certificate_map_entry_name")),
             certificate_name=_text(payload.get("certificate_name")),
             dns_authorization_name=_text(payload.get("dns_authorization_name")),
             certificate_domain=_text(payload.get("certificate_domain")) or PREVIEW_WILDCARD_DOMAIN,
@@ -65,6 +67,7 @@ class SharedPreviewEdgeConfig:
             "gateway_name": self.gateway_name,
             "gateway_namespace": self.gateway_namespace,
             "certificate_map_name": self.certificate_map_name,
+            "certificate_map_entry_name": self.certificate_map_entry_name,
             "certificate_name": self.certificate_name,
             "dns_authorization_name": self.dns_authorization_name,
         }
@@ -83,12 +86,14 @@ class SharedPreviewEdgeConfig:
         assert self.gateway_name is not None
         assert self.gateway_namespace is not None
         assert self.certificate_map_name is not None
+        assert self.certificate_map_entry_name is not None
         assert self.certificate_name is not None
         assert self.dns_authorization_name is not None
         for field_name, candidate in (
             ("shared_preview_static_ip_name", self.static_ip_name),
             ("gateway_name", self.gateway_name),
             ("certificate_map_name", self.certificate_map_name),
+            ("certificate_map_entry_name", self.certificate_map_entry_name),
             ("certificate_name", self.certificate_name),
             ("dns_authorization_name", self.dns_authorization_name),
         ):

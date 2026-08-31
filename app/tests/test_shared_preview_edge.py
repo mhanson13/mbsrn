@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import yaml
 
 from app.integrations.shared_preview_edge import (
@@ -12,6 +14,9 @@ from app.integrations.shared_preview_edge import (
 )
 
 
+REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+
+
 def _config(**overrides: object) -> SharedPreviewEdgeConfig:
     payload: dict[str, object] = {
         "gateway_api_enabled": True,
@@ -19,6 +24,7 @@ def _config(**overrides: object) -> SharedPreviewEdgeConfig:
         "gateway_name": "mbsrn-preview-gateway",
         "gateway_namespace": "mbsrn",
         "certificate_map_name": "mbsrn-preview-cert-map",
+        "certificate_map_entry_name": "mbsrn-preview-wildcard-entry",
         "certificate_name": "mbsrn-preview-wildcard",
         "dns_authorization_name": "mbsrn-preview-dns-auth",
         "certificate_domain": "*.site.mbsrn.com",
@@ -36,6 +42,7 @@ def test_shared_preview_edge_config_fails_closed_when_enabled_but_incomplete() -
         "gateway_name",
         "gateway_namespace",
         "certificate_map_name",
+        "certificate_map_entry_name",
         "certificate_name",
         "dns_authorization_name",
     )
@@ -144,3 +151,16 @@ def test_evaluate_shared_preview_edge_readiness_returns_bounded_pending_reasons(
     assert readiness.status == "pending"
     assert readiness.reason_code == "shared_preview_gateway_pending"
     assert len(readiness.reasons) == 4
+
+
+def test_shared_preview_edge_bootstrap_is_platform_scoped_and_https_only() -> None:
+    bootstrap = (REPOSITORY_ROOT / "scripts" / "bootstrap_shared_preview_edge.sh").read_text(encoding="utf-8")
+
+    assert "certificatemanager.googleapis.com" in bootstrap
+    assert "dns-authorizations create" in bootstrap
+    assert 'PREVIEW_WILDCARD_DOMAIN="*.site.mbsrn.com"' in bootstrap
+    assert "--gateway-api standard" in bootstrap
+    assert 'kubectl apply -f "$GATEWAY_MANIFEST"' in bootstrap
+    assert "record-sets create \"$DNS_AUTH_RECORD_NAME\"" in bootstrap
+    assert "preview hostname A record" in bootstrap
+    assert "--insecure" not in bootstrap

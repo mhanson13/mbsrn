@@ -1969,6 +1969,9 @@ function toManagedGkeConfigGuidance(value: string | null): string | null {
   if (normalized === "shared_preview_gateway_hostname_missing") {
     return "Shared preview gateway mode requires a valid managed preview hostname before deploy checks can run.";
   }
+  if (normalized === "shared_preview_gateway_config_incomplete") {
+    return "Shared preview Gateway API is enabled but its platform resource names are incomplete. An administrator must finish the shared-edge configuration before site routing can be published.";
+  }
   if (normalized === "stale_pre_shared_cert_binding_detected") {
     return "Ingress includes stale pre-shared certificate binding metadata. Republish managed ingress resources so ManagedCertificate remains the only certificate binding source.";
   }

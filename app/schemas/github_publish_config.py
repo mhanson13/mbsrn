@@ -389,6 +389,7 @@ class ManagedPreviewEndpointDefaults(BaseModel):
     gateway_name: str | None = Field(default=None, max_length=63)
     gateway_namespace: str | None = Field(default=None, max_length=63)
     certificate_map_name: str | None = Field(default=None, max_length=63)
+    certificate_map_entry_name: str | None = Field(default=None, max_length=63)
     certificate_name: str | None = Field(default=None, max_length=63)
     dns_authorization_name: str | None = Field(default=None, max_length=63)
     certificate_domain: str = "*.site.mbsrn.com"
@@ -421,6 +422,7 @@ class ManagedPreviewEndpointDefaults(BaseModel):
         "gateway_name",
         "gateway_namespace",
         "certificate_map_name",
+        "certificate_map_entry_name",
         "certificate_name",
         "dns_authorization_name",
         mode="before",
@@ -452,6 +454,7 @@ class ManagedPreviewEndpointDefaults(BaseModel):
             "gateway_name": self.gateway_name,
             "gateway_namespace": self.gateway_namespace,
             "certificate_map_name": self.certificate_map_name,
+            "certificate_map_entry_name": self.certificate_map_entry_name,
             "certificate_name": self.certificate_name,
             "dns_authorization_name": self.dns_authorization_name,
         }
@@ -466,6 +469,7 @@ class ManagedPreviewEndpointDefaults(BaseModel):
             "shared_preview_static_ip_name",
             "gateway_name",
             "certificate_map_name",
+            "certificate_map_entry_name",
             "certificate_name",
             "dns_authorization_name",
         ):

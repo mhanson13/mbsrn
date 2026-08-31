@@ -1391,6 +1391,14 @@ describe("admin route", () => {
     expect(payload.namespace_isolation_defaults.managed_preview_endpoint).toEqual({
       mode: "preview_shared_gateway",
       shared_preview_static_ip_name: "site-preview-shared-ip",
+      gateway_api_enabled: false,
+      gateway_name: null,
+      gateway_namespace: null,
+      certificate_map_name: null,
+      certificate_map_entry_name: null,
+      certificate_name: null,
+      dns_authorization_name: null,
+      certificate_domain: "*.site.mbsrn.com",
     });
     expect(await screen.findByText("GitHub publish configuration saved.")).toBeInTheDocument();
   });

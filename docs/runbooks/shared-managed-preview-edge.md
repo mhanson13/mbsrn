@@ -1,11 +1,24 @@
 # Shared managed preview edge
 
-This runbook governs the staged migration of `*.site.mbsrn.com` previews to the shared edge defined in [ADR 0007](../architecture/decisions/0007-shared-managed-preview-edge.md). It is a migration contract; exact commands and resource identifiers must be added and reviewed with the infrastructure implementation before production execution.
+This runbook governs the staged migration of `*.site.mbsrn.com` previews to the shared edge defined in [ADR 0007](../architecture/decisions/0007-shared-managed-preview-edge.md). Resource identifiers and observed preflight state must be reviewed before production execution.
+
+The versioned bootstrap now implements the platform ensure operation:
+
+```bash
+scripts/bootstrap_shared_preview_edge.sh \
+  --gcp-project-id mbsrn-prod \
+  --gke-cluster-name mbsrn-prod \
+  --gke-cluster-location us-central1 \
+  --dns-zone sites
+```
+
+It creates or verifies only shared platform resources and the Certificate Manager authorization CNAME. It does not create or change any site's preview-host A record. Review its reported resource names and states before enabling Gateway API routing in admin configuration.
 
 ## Safety rules
 
 - Provision the shared edge alongside existing per-site endpoints.
 - Do not change a site's DNS until the shared certificate, map, Gateway, route, and backend are ready.
+- Use a separate Gateway-only Service during coexistence; GKE does not permit the same Service to be referenced by both Ingress and Gateway.
 - Change only the selected site's exact-host DNS record during a canary cutover.
 - Do not delete an old endpoint during cutover.
 - Do not use `--insecure`, a local trust root, or fingerprint-only validation as success evidence.
@@ -29,13 +42,15 @@ The platform readiness check must be idempotent and read-only during a site rele
 
 For a site with preview hostname `<preview_slug>.site.mbsrn.com`:
 
-1. Reconcile its namespace, MBSRN ownership labels, Deployment, Service, and backend health policy.
-2. Reconcile one exact-host `HTTPRoute` in that namespace.
-3. Attach the route to the shared Gateway and reference only the same namespace's site Service.
-4. Confirm the Gateway accepts the route and the backend reports healthy.
-5. Reconcile the site's exact-host Cloud DNS A record to the shared global address.
-6. Verify public DNS, normal TLS trust, SAN/hostname coverage, expected site identity/content, and lack of an HTTP listener.
-7. Mark the certificate, DNS, deployment, and verification release gates ready from observed state.
+1. Reconcile its namespace, MBSRN ownership labels, and Deployment.
+2. Reconcile a `site-web-gateway` ClusterIP Service without Ingress NEG or BackendConfig annotations. It selects the same site pods as the legacy Service but is owned only by Gateway API.
+3. Reconcile a Gateway `HealthCheckPolicy` targeting `site-web-gateway`.
+4. Reconcile one exact-host `HTTPRoute` in that namespace.
+5. Attach the route to the shared Gateway and reference only `site-web-gateway` in the same namespace.
+6. Confirm the Gateway accepts the route and the backend reports healthy.
+7. Reconcile the site's exact-host Cloud DNS A record to the shared global address.
+8. Verify public DNS, normal TLS trust, SAN/hostname coverage, expected site identity/content, and lack of an HTTP listener.
+9. Mark the certificate, DNS, deployment, and verification release gates ready from observed state.
 
 A retry reads current state and changes only absent or drifted resources owned by the same site. It never creates another Gateway or certificate.
 

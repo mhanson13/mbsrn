@@ -80,6 +80,9 @@ Acceptance:
 - [x] Accept Google Secret Manager's numeric canonical project references while keeping vault reads scoped to the configured certificate project.
 - [x] Publish Compute certificates with the explicit `selfManaged` API contract and classify invalid requests as non-retryable platform errors.
 - [x] Record the shared preview-edge design and rollback procedure in an ADR and operator runbook.
+- [x] Add fail-closed shared-edge admin configuration, pure readiness evaluation, and HTTPS-only Gateway/site-route manifest renderers.
+- [x] Add an idempotent platform bootstrap for the global address, DNS authorization CNAME, wildcard certificate, certificate map, Gateway API channel, and Gateway manifest.
+- [x] Preserve the legacy Ingress during canary attachment by routing Gateway through a distinct Service selecting the same site pods.
 - [ ] Enable and validate GKE Gateway API support without changing live preview traffic.
 - [ ] Create one DNS authorization for `site.mbsrn.com` and one Google-managed `*.site.mbsrn.com` Certificate Manager certificate.
 - [ ] Create an HTTPS-only shared Gateway/load balancer with a stable global IP and no public HTTP listener.

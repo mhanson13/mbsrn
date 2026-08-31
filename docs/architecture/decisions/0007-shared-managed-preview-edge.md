@@ -7,7 +7,7 @@ Date: 2026-08-31
 
 Preview sites under `<preview_slug>.site.mbsrn.com` use one shared, HTTPS-only GKE Gateway backed by a global external Application Load Balancer. A Certificate Manager certificate map attached through `networking.gke.io/certmap` contains a pre-provisioned, Google-managed `*.site.mbsrn.com` certificate. DNS authorization for `site.mbsrn.com` proves domain control before any site is deployed.
 
-The Gateway has one port 443 listener and no port 80 listener. Each site owns one exact-host `HTTPRoute` in its Kubernetes namespace. The route attaches to the platform Gateway and targets only the site's Service in the same namespace. Route attachment is limited to namespaces carrying an MBSRN-managed preview label; application namespaces cannot change the Gateway or certificate map.
+The Gateway has one port 443 listener and no port 80 listener. Each site owns one exact-host `HTTPRoute` and a Gateway-only Service in its Kubernetes namespace. The route attaches to the platform Gateway and targets only that Service in the same namespace. During migration, the Gateway-only Service and the legacy Ingress Service select the same pods but remain distinct because GKE does not allow a Service to be referenced by both GKE Ingress and Gateway. Route attachment is limited to namespaces carrying an MBSRN-managed preview label; application namespaces cannot change the Gateway or certificate map.
 
 Platform infrastructure owns the global address, DNS authorization, certificate, certificate map, Gateway, attachment policy, and shared monitoring. Site provisioning owns preview identity, exact-host DNS, namespace/runtime, and exact-host route. Release work owns the immutable artifact, GitHub commit, site revision, and end-to-end verification.
 
@@ -21,7 +21,7 @@ Customer production domains such as `www.platfire.com` are excluded. They requir
 
 Certificate issuance and load-balancer creation leave the per-site critical path. Google holds and renews the private key, so preview key material is not stored by MBSRN. Fixed edge cost is shared; cost reporting must allocate fixed cost separately from attributable traffic and runtime consumption.
 
-The platform must migrate from GKE Ingress to Gateway API. Site deployment and diagnostics must understand `Gateway` and `HTTPRoute` readiness instead of per-site Ingress, FrontendConfig, forwarding-rule, static-IP, and certificate state. Cross-namespace route attachment and ownership checks become security boundaries and require contract tests.
+The platform must migrate from GKE Ingress to Gateway API. Site deployment and diagnostics must understand `Gateway`, `HTTPRoute`, Gateway-only Service, and `HealthCheckPolicy` readiness instead of per-site Ingress, FrontendConfig, forwarding-rule, static-IP, and certificate state. Cross-namespace route attachment and ownership checks become security boundaries and require contract tests.
 
 The existing self-signed Compute `SELF_MANAGED` path remains available only for bounded rollback until each migrated hostname passes public HTTPS verification and its rollback window closes. It is then removed with ownership revalidation; private keys and certificate versions are never deleted merely because a new route was applied.
 

@@ -9989,6 +9989,7 @@ _DEFAULT_NAMESPACE_ISOLATION_DEFAULTS = {
         "gateway_name": None,
         "gateway_namespace": None,
         "certificate_map_name": None,
+        "certificate_map_entry_name": None,
         "certificate_name": None,
         "dns_authorization_name": None,
         "certificate_domain": "*.site.mbsrn.com",
@@ -10303,6 +10304,7 @@ def resolve_managed_preview_endpoint_configuration(
         "gateway_name": shared_edge.gateway_name,
         "gateway_namespace": shared_edge.gateway_namespace,
         "certificate_map_name": shared_edge.certificate_map_name,
+        "certificate_map_entry_name": shared_edge.certificate_map_entry_name,
         "certificate_name": shared_edge.certificate_name,
         "dns_authorization_name": shared_edge.dns_authorization_name,
         "certificate_domain": shared_edge.certificate_domain,
@@ -10426,6 +10428,7 @@ def _normalize_namespace_isolation_defaults(value: object | None) -> dict[str, o
                 "gateway_name",
                 "gateway_namespace",
                 "certificate_map_name",
+                "certificate_map_entry_name",
                 "certificate_name",
                 "dns_authorization_name",
             ):
