@@ -497,6 +497,7 @@ export interface MigrationPublishConfig {
 
 export interface MigrationDeployConfig {
   enabled: boolean;
+  shared_preview_gateway_enabled: boolean;
   repo_owner: string | null;
   repo_name: string | null;
   workflow_id: string | null;
@@ -506,6 +507,7 @@ export interface MigrationDeployConfig {
 
 export interface MigrationDeployConfigUpdate {
   enabled?: boolean;
+  shared_preview_gateway_enabled?: boolean;
   repo_owner?: string | null;
   repo_name?: string | null;
   workflow_id?: string | null;

@@ -2015,6 +2015,47 @@ describe("site migration workflow route", () => {
     expect(screen.queryByText("Use an existing self-managed certificate")).not.toBeInTheDocument();
   });
 
+  it("lets an administrator enroll only the current site in the shared preview edge", async () => {
+    const user = userEvent.setup();
+    mockUseOperatorContext.mockReturnValue(baseContext({ principalRole: "admin" }));
+    const workspace = buildMigrationWorkspace({
+      deploy_config_json: {
+        enabled: true,
+        shared_preview_gateway_enabled: false,
+      },
+    });
+    mockFetchMigrationWorkspaceSummary.mockResolvedValue(
+      buildMigrationWorkspaceSummary({ workspace }),
+    );
+    mockUpdateMigrationDeployConfig.mockResolvedValue({
+      ...workspace,
+      deploy_config_json: {
+        enabled: true,
+        shared_preview_gateway_enabled: true,
+      },
+    });
+
+    render(<SiteMigrationWorkflowPage />);
+
+    const enrollment = await screen.findByLabelText("Use the shared Google-managed preview edge for this site");
+    await user.click(enrollment);
+    await user.click(screen.getByRole("button", { name: "Save Deploy Settings" }));
+
+    await waitFor(() => {
+      expect(mockUpdateMigrationDeployConfig).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.any(String),
+        expect.any(String),
+        {
+          deploy_config: {
+            enabled: true,
+            shared_preview_gateway_enabled: true,
+          },
+        },
+      );
+    });
+  });
+
   it("shows the certificate provider next action without raw provider output", async () => {
     const user = userEvent.setup();
     mockEnsureSiteTLSCertificate.mockRejectedValueOnce(
@@ -3851,7 +3892,7 @@ describe("site migration workflow route", () => {
     const deployLayoutRight = within(deployLayout).getByTestId("migration-deploy-layout-right");
     expect(within(deployLayoutLeft).getByTestId("migration-deploy-target-summary")).toBeInTheDocument();
     expect(within(deployLayoutLeft).getByTestId("migration-deploy-readiness")).toBeInTheDocument();
-    expect(within(deployLayoutRight).getByRole("button", { name: "Save Deploy Availability" })).toBeInTheDocument();
+    expect(within(deployLayoutRight).getByRole("button", { name: "Save Deploy Settings" })).toBeInTheDocument();
     expect(within(deployLayoutRight).getByRole("button", { name: "Request GKE Deploy" })).toBeInTheDocument();
     expect(within(deployLayoutRight).getByTestId("migration-refresh-deploy-status-button")).toBeInTheDocument();
 

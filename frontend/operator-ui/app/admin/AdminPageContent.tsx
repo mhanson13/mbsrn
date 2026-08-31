@@ -49,6 +49,7 @@ import type {
   GCPLogEntry,
   GitHubPublishConfig,
   GitHubPublishConfigUpdateRequest,
+  GitHubManagedPreviewEndpointDefaults,
   MigrationGenerationBudgetConfig,
   MigrationGenerationSafetyConfig,
   GitHubNamespaceIsolationDefaults,
@@ -2692,6 +2693,42 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
     }));
   };
 
+  const updateManagedPreviewEndpoint = <K extends keyof GitHubManagedPreviewEndpointDefaults>(
+    key: K,
+    value: GitHubManagedPreviewEndpointDefaults[K],
+  ) => {
+    setGitHubNamespaceIsolationDefaults((current) => ({
+      ...current,
+      managed_preview_endpoint: {
+        ...current.managed_preview_endpoint,
+        [key]: value,
+      },
+    }));
+  };
+
+  const setSharedPreviewEdgePlatformEnabled = (enabled: boolean) => {
+    setGitHubNamespaceIsolationDefaults((current) => ({
+      ...current,
+      managed_preview_endpoint: {
+        ...current.managed_preview_endpoint,
+        mode: enabled ? "preview_shared_gateway" : current.managed_preview_endpoint.mode,
+        gateway_api_enabled: enabled,
+        shared_preview_static_ip_name:
+          current.managed_preview_endpoint.shared_preview_static_ip_name || "mbsrn-preview-edge-ip",
+        gateway_name: current.managed_preview_endpoint.gateway_name || "mbsrn-preview-gateway",
+        gateway_namespace: current.managed_preview_endpoint.gateway_namespace || "mbsrn",
+        certificate_map_name:
+          current.managed_preview_endpoint.certificate_map_name || "mbsrn-preview-cert-map",
+        certificate_map_entry_name:
+          current.managed_preview_endpoint.certificate_map_entry_name || "mbsrn-preview-wildcard-entry",
+        certificate_name: current.managed_preview_endpoint.certificate_name || "mbsrn-preview-wildcard",
+        dns_authorization_name:
+          current.managed_preview_endpoint.dns_authorization_name || "mbsrn-preview-dns-auth",
+        certificate_domain: "*.site.mbsrn.com",
+      },
+    }));
+  };
+
   const updateMigrationGenerationBudget = <K extends keyof MigrationGenerationBudgetConfig>(
     key: K,
     value: MigrationGenerationBudgetConfig[K],
@@ -4244,6 +4281,48 @@ export default function AdminPageContent({ mode = "all" }: AdminPageProps) {
             </div>
 
             <ManagedNamespacePolicySection />
+
+            <div className="panel panel-compact stack-tight" data-testid="github-publish-shared-preview-edge">
+              <strong>Shared preview HTTPS platform</strong>
+              <label htmlFor="github-publish-shared-preview-edge-enabled" className="checkbox-chip">
+                <input
+                  id="github-publish-shared-preview-edge-enabled"
+                  type="checkbox"
+                  checked={Boolean(githubNamespaceIsolationDefaults.managed_preview_endpoint.gateway_api_enabled)}
+                  onChange={(event) => setSharedPreviewEdgePlatformEnabled(event.target.checked)}
+                  disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
+                />
+                Use the bootstrapped Google-managed preview edge
+              </label>
+              <p className="hint muted">
+                This makes the shared platform available. Sites remain on their current endpoint until an administrator
+                enrolls each site from its migration workspace.
+              </p>
+              <details>
+                <summary>Shared resource names</summary>
+                <div className="admin-grid-two admin-grid-two-compact">
+                  {([
+                    ["shared_preview_static_ip_name", "Static IP name"],
+                    ["gateway_name", "Gateway name"],
+                    ["gateway_namespace", "Gateway namespace"],
+                    ["certificate_map_name", "Certificate map"],
+                    ["certificate_map_entry_name", "Certificate map entry"],
+                    ["certificate_name", "Certificate"],
+                    ["dns_authorization_name", "DNS authorization"],
+                  ] as const).map(([field, label]) => (
+                    <label key={field} className="stack-tight">
+                      <span className="hint muted">{label}</span>
+                      <input
+                        type="text"
+                        value={githubNamespaceIsolationDefaults.managed_preview_endpoint[field] || ""}
+                        onChange={(event) => updateManagedPreviewEndpoint(field, event.target.value || null)}
+                        disabled={githubPublishConfigLoading || githubPublishConfigSubmitting}
+                      />
+                    </label>
+                  ))}
+                </div>
+              </details>
+            </div>
 
             <div className="admin-grid-two">
               <div className="panel panel-compact stack-tight">

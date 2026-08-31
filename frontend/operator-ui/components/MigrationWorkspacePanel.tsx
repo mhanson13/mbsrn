@@ -4213,6 +4213,7 @@ export function MigrationWorkspacePanel({
   const [publishBranch, setPublishBranch] = useState("");
 
   const [deployEnabled, setDeployEnabled] = useState(false);
+  const [sharedPreviewGatewayEnabled, setSharedPreviewGatewayEnabled] = useState(false);
 
   const [selectedArtifactVersionId, setSelectedArtifactVersionId] = useState("");
   const approvalNotes = "";
@@ -6545,6 +6546,7 @@ export function MigrationWorkspacePanel({
 
     const rawDeployConfig = asRecord(workspace.deploy_config_json);
     setDeployEnabled(Boolean(rawDeployConfig.enabled));
+    setSharedPreviewGatewayEnabled(Boolean(rawDeployConfig.shared_preview_gateway_enabled));
 
   }, []);
 
@@ -7632,6 +7634,7 @@ export function MigrationWorkspacePanel({
   const handleSaveDeployConfig = async (): Promise<void> => {
     const payload: MigrationDeployConfig = {
       enabled: deployEnabled,
+      shared_preview_gateway_enabled: sharedPreviewGatewayEnabled,
       repo_owner: null,
       repo_name: null,
       workflow_id: null,
@@ -7646,9 +7649,10 @@ export function MigrationWorkspacePanel({
       await updateMigrationDeployConfig(token, businessId, siteId, {
         deploy_config: {
           enabled: payload.enabled,
+          shared_preview_gateway_enabled: payload.shared_preview_gateway_enabled,
         },
       });
-      setStatusMessage("Deploy availability saved.");
+      setStatusMessage("Deploy settings saved.");
       await loadWorkspaceData(true);
     } catch (error) {
       setErrorHint(null);
@@ -10309,13 +10313,28 @@ export function MigrationWorkspacePanel({
                   <input type="checkbox" checked={deployEnabled} onChange={(event) => setDeployEnabled(event.target.checked)} />
                   <span>Deploy enabled for this site workspace</span>
                 </label>
+                {isAdmin ? (
+                  <div className="panel panel-compact stack-tight" data-testid="migration-shared-edge-enrollment">
+                    <label className="link-row">
+                      <input
+                        type="checkbox"
+                        checked={sharedPreviewGatewayEnabled}
+                        onChange={(event) => setSharedPreviewGatewayEnabled(event.target.checked)}
+                      />
+                      <span>Use the shared Google-managed preview edge for this site</span>
+                    </label>
+                    <span className="hint muted">
+                      Administrator-controlled and disabled by default. Save, then republish this site before its DNS can move.
+                    </span>
+                  </div>
+                ) : null}
                 <button
                   type="button"
                   className="button button-secondary"
                   onClick={() => void handleSaveDeployConfig()}
                   disabled={busyAction === "save_deploy_config" || busyAction === "load"}
                 >
-                  {busyAction === "save_deploy_config" ? "Saving..." : "Save Deploy Availability"}
+                  {busyAction === "save_deploy_config" ? "Saving..." : "Save Deploy Settings"}
                 </button>
                 <label className="link-row">
                   <input type="checkbox" checked={deployDryRun} onChange={(event) => setDeployDryRun(event.target.checked)} />

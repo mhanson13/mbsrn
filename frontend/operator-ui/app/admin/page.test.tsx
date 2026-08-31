@@ -1303,7 +1303,7 @@ describe("admin route", () => {
     expect(screen.queryByText("{\"secret\":\"write-only\"}")).not.toBeInTheDocument();
   }, 15000);
 
-  it("preserves managed preview endpoint defaults when saving GitHub publish configuration", async () => {
+  it("enables the shared preview platform while preserving configured resource names", async () => {
     const fetchedConfig = {
       id: 1,
       owner: "mhanson13",
@@ -1381,6 +1381,7 @@ describe("admin route", () => {
     render(<AdminPage />);
 
     await screen.findByLabelText("GitHub account/owner");
+    fireEvent.click(screen.getByLabelText("Use the bootstrapped Google-managed preview edge"));
     fireEvent.change(screen.getByLabelText("Default Branch"), { target: { value: "release" } });
     fireEvent.click(screen.getByRole("button", { name: "Save GitHub Publish Config" }));
 
@@ -1391,13 +1392,13 @@ describe("admin route", () => {
     expect(payload.namespace_isolation_defaults.managed_preview_endpoint).toEqual({
       mode: "preview_shared_gateway",
       shared_preview_static_ip_name: "site-preview-shared-ip",
-      gateway_api_enabled: false,
-      gateway_name: null,
-      gateway_namespace: null,
-      certificate_map_name: null,
-      certificate_map_entry_name: null,
-      certificate_name: null,
-      dns_authorization_name: null,
+      gateway_api_enabled: true,
+      gateway_name: "mbsrn-preview-gateway",
+      gateway_namespace: "mbsrn",
+      certificate_map_name: "mbsrn-preview-cert-map",
+      certificate_map_entry_name: "mbsrn-preview-wildcard-entry",
+      certificate_name: "mbsrn-preview-wildcard",
+      dns_authorization_name: "mbsrn-preview-dns-auth",
       certificate_domain: "*.site.mbsrn.com",
     });
     expect(await screen.findByText("GitHub publish configuration saved.")).toBeInTheDocument();
