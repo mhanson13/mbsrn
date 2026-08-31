@@ -138,6 +138,7 @@ class SEOMigrationPublishConfig(BaseModel):
 
 class SEOMigrationDeployConfig(BaseModel):
     enabled: bool = False
+    shared_preview_gateway_enabled: bool = False
     repo_owner: str | None = Field(default=None, max_length=80)
     repo_name: str | None = Field(default=None, max_length=120)
     workflow_id: str | None = Field(default="deploy-www-prod.yml", max_length=160)

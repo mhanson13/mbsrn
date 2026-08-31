@@ -4808,6 +4808,7 @@ def test_ensure_managed_site_static_ip_does_not_label_shared_preview_gateway_add
             "managed_preview_endpoint": {
                 "mode": "preview_shared_gateway",
                 "shared_preview_static_ip_name": "site-preview-shared-ip",
+                "site_gateway_api_enabled": True,
             }
         },
         preview_hostname="tnmfire.site.mbsrn.com",
@@ -8369,9 +8370,7 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     ensure_endpoint_step_yaml = workflow_yaml.split(
         "      - name: Ensure managed-site endpoint prerequisites",
         1,
-    )[
-        1
-    ].split("      - name: Replace existing managed-site runtime resources (optional)", 1)[0]
+    )[1].split("      - name: Replace existing managed-site runtime resources (optional)", 1)[0]
     assert 'kubectl get managedcertificate "$MBSRN_PREVIEW_CERTIFICATE_NAME"' in ensure_endpoint_step_yaml
     assert 'if [ -z "$managed_certificate_json" ]; then' in ensure_endpoint_step_yaml
     assert "kubectl apply -f k8s/managedcertificate.yaml" not in ensure_endpoint_step_yaml
@@ -8991,6 +8990,7 @@ def test_resolve_managed_preview_endpoint_configuration_uses_shared_gateway_for_
             "managed_preview_endpoint": {
                 "mode": "auto",
                 "shared_preview_static_ip_name": "site-preview-shared-ip",
+                "site_gateway_api_enabled": True,
             }
         },
     )
@@ -9000,6 +9000,32 @@ def test_resolve_managed_preview_endpoint_configuration_uses_shared_gateway_for_
     assert resolved.get("requires_dedicated_static_ip") is False
     assert resolved.get("expected_static_ip_name") == "site-preview-shared-ip"
     assert resolved.get("reason_code") is None
+
+
+def test_resolve_managed_preview_endpoint_configuration_requires_per_site_enrollment() -> None:
+    resolved = resolve_managed_preview_endpoint_configuration(
+        repo_name="platfire",
+        site_id="site-platfire",
+        preview_hostname="platfire.site.mbsrn.com",
+        namespace_isolation_defaults={
+            "managed_preview_endpoint": {
+                "mode": "preview_shared_gateway",
+                "gateway_api_enabled": True,
+                "shared_preview_static_ip_name": "mbsrn-preview-edge-ip",
+                "gateway_name": "mbsrn-preview-gateway",
+                "gateway_namespace": "mbsrn",
+                "certificate_map_name": "mbsrn-preview-cert-map",
+                "certificate_map_entry_name": "mbsrn-preview-wildcard-entry",
+                "certificate_name": "mbsrn-preview-wildcard",
+                "dns_authorization_name": "mbsrn-preview-dns-auth",
+                "certificate_domain": "*.site.mbsrn.com",
+            }
+        },
+    )
+
+    assert resolved.get("effective_mode") == "dedicated_static_ip"
+    assert resolved.get("uses_gateway_api") is False
+    assert resolved.get("site_gateway_api_enabled") is False
 
 
 def test_resolve_managed_preview_endpoint_configuration_auto_without_shared_config_falls_back_to_dedicated() -> None:
@@ -9068,9 +9094,7 @@ def test_check_shared_preview_edge_readiness_reads_platform_resources_without_mu
         if "/certificateMapEntries/mbsrn-preview-wildcard-entry" in url:
             return {
                 "hostname": "*.site.mbsrn.com",
-                "certificates": [
-                    "projects/mbsrn-prod/locations/global/certificates/mbsrn-preview-wildcard"
-                ],
+                "certificates": ["projects/mbsrn-prod/locations/global/certificates/mbsrn-preview-wildcard"],
             }
         if "/global/addresses/mbsrn-preview-edge-ip" in url:
             return {"address": "34.149.100.20"}
@@ -9202,6 +9226,7 @@ def test_rendered_managed_templates_use_shared_preview_gateway_static_ip_when_co
         "managed_preview_endpoint": {
             "mode": "preview_shared_gateway",
             "shared_preview_static_ip_name": "site-preview-shared-ip",
+            "site_gateway_api_enabled": True,
         }
     }
     workflow_yaml = _render_managed_deploy_workflow_yaml(
@@ -9282,9 +9307,7 @@ def test_rendered_managed_templates_add_gateway_canary_resources_when_explicitly
         {"name": "mbsrn-preview-gateway", "namespace": "mbsrn", "sectionName": "https"}
     ]
     assert route["spec"]["hostnames"] == ["platfire.site.mbsrn.com"]
-    assert "ingress.gcp.kubernetes.io/pre-shared-cert: mbsrn-preview-platfire-abcd" in manifests[
-        "k8s/ingress.yaml"
-    ]
+    assert "ingress.gcp.kubernetes.io/pre-shared-cert: mbsrn-preview-platfire-abcd" in manifests["k8s/ingress.yaml"]
 
 
 def test_rendered_managed_templates_reject_incomplete_enabled_gateway_configuration() -> None:
@@ -10943,6 +10966,7 @@ def test_check_deploy_target_readiness_allows_shared_preview_gateway_static_ip_w
             "managed_preview_endpoint": {
                 "mode": "preview_shared_gateway",
                 "shared_preview_static_ip_name": "site-preview-shared-ip",
+                "site_gateway_api_enabled": True,
             }
         },
     )

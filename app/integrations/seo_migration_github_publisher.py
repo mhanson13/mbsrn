@@ -3260,9 +3260,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                     {
                         "gcp_credential_source": locals().get("credential_source"),
                         "gcp_principal_email": locals().get("principal_email"),
-                        "gcp_impersonated_service_account_email": locals().get(
-                            "impersonated_service_account_email"
-                        ),
+                        "gcp_impersonated_service_account_email": locals().get("impersonated_service_account_email"),
                     }
                 ),
                 "provider_reason_code": exc.code,
@@ -3285,9 +3283,7 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
                 diagnostics=diagnostics,
             ) from exc
 
-        expected_static_ip_address = (
-            _coerce_string(static_ip.get("address")) if isinstance(static_ip, dict) else None
-        )
+        expected_static_ip_address = _coerce_string(static_ip.get("address")) if isinstance(static_ip, dict) else None
         readiness = evaluate_shared_preview_edge_readiness(
             config=config,
             certificate=certificate if isinstance(certificate, dict) else None,
@@ -10126,9 +10122,7 @@ _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_TRANSACTION_CONFLICT = "managed
 _DEPLOY_DISPATCH_SERVICE_REASON_EXPECTED_STATIC_IP_NOT_BOUND_TO_INGRESS = "expected_static_ip_not_bound_to_ingress"
 _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_MISSING = "shared_preview_gateway_missing"
 _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_HOSTNAME_MISSING = "shared_preview_gateway_hostname_missing"
-_DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_CONFIG_INCOMPLETE = (
-    "shared_preview_gateway_config_incomplete"
-)
+_DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_CONFIG_INCOMPLETE = "shared_preview_gateway_config_incomplete"
 _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_PENDING = "shared_preview_gateway_pending"
 _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_READY = "shared_preview_gateway_ready"
 _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_READINESS_CHECK_FAILED = (
@@ -10224,6 +10218,7 @@ _DEFAULT_NAMESPACE_ISOLATION_DEFAULTS = {
         "mode": _MANAGED_PREVIEW_ENDPOINT_MODE_AUTO,
         "shared_preview_static_ip_name": None,
         "gateway_api_enabled": False,
+        "site_gateway_api_enabled": False,
         "gateway_name": None,
         "gateway_namespace": None,
         "certificate_map_name": None,
@@ -10489,6 +10484,10 @@ def resolve_managed_preview_endpoint_configuration(
     else:
         shared_preview_static_ip_name = None
     shared_edge = SharedPreviewEdgeConfig.from_mapping(endpoint_payload)
+    site_gateway_api_enabled = _coerce_bool(
+        endpoint_payload.get("site_gateway_api_enabled"),
+        default=False,
+    )
 
     preview_hostname_normalized = (_coerce_string(preview_hostname) or "").strip().lower().rstrip(".")
     managed_preview_suffix = f".{_MBSRN_MANAGED_PREVIEW_DOMAIN_SUFFIX}"
@@ -10501,11 +10500,11 @@ def resolve_managed_preview_endpoint_configuration(
         site_id=site_id,
     )
     effective_mode = _MANAGED_PREVIEW_ENDPOINT_MODE_DEDICATED_STATIC_IP
-    if requested_mode == _MANAGED_PREVIEW_ENDPOINT_MODE_SHARED_GATEWAY:
+    if site_gateway_api_enabled and requested_mode == _MANAGED_PREVIEW_ENDPOINT_MODE_SHARED_GATEWAY:
         effective_mode = _MANAGED_PREVIEW_ENDPOINT_MODE_SHARED_GATEWAY
     elif requested_mode == _MANAGED_PREVIEW_ENDPOINT_MODE_DEDICATED_STATIC_IP:
         effective_mode = _MANAGED_PREVIEW_ENDPOINT_MODE_DEDICATED_STATIC_IP
-    elif preview_hostname_is_managed and shared_preview_static_ip_name:
+    elif site_gateway_api_enabled and preview_hostname_is_managed and shared_preview_static_ip_name:
         effective_mode = _MANAGED_PREVIEW_ENDPOINT_MODE_SHARED_GATEWAY
 
     expected_static_ip_name = (
@@ -10538,7 +10537,10 @@ def resolve_managed_preview_endpoint_configuration(
         "preview_hostname_is_managed": preview_hostname_is_managed,
         "shared_preview_static_ip_name": shared_preview_static_ip_name,
         "gateway_api_enabled": shared_edge.enabled,
-        "uses_gateway_api": shared_edge.ready_for_rendering,
+        "site_gateway_api_enabled": site_gateway_api_enabled,
+        "uses_gateway_api": (
+            effective_mode == _MANAGED_PREVIEW_ENDPOINT_MODE_SHARED_GATEWAY and shared_edge.ready_for_rendering
+        ),
         "gateway_name": shared_edge.gateway_name,
         "gateway_namespace": shared_edge.gateway_namespace,
         "certificate_map_name": shared_edge.certificate_map_name,
@@ -10662,6 +10664,10 @@ def _normalize_namespace_isolation_defaults(value: object | None) -> dict[str, o
                 managed_preview_endpoint.get("gateway_api_enabled"),
                 default=False,
             )
+            normalized_endpoint["site_gateway_api_enabled"] = _coerce_bool(
+                managed_preview_endpoint.get("site_gateway_api_enabled"),
+                default=False,
+            )
             for key in (
                 "gateway_name",
                 "gateway_namespace",
@@ -10711,9 +10717,7 @@ def _expected_managed_manifest_paths(namespace_isolation_defaults: dict[str, obj
     expected_paths: list[str] = list(_MBSRN_MANAGED_CORE_MANIFEST_PATHS)
     normalized_defaults = _normalize_namespace_isolation_defaults(namespace_isolation_defaults)
     endpoint_payload = normalized_defaults.get("managed_preview_endpoint")
-    shared_edge = SharedPreviewEdgeConfig.from_mapping(
-        endpoint_payload if isinstance(endpoint_payload, dict) else None
-    )
+    shared_edge = SharedPreviewEdgeConfig.from_mapping(endpoint_payload if isinstance(endpoint_payload, dict) else None)
     if shared_edge.ready_for_rendering:
         expected_paths.extend(_MBSRN_MANAGED_GATEWAY_MANIFEST_PATHS)
     if expectations.get("resource_quota_expected"):
@@ -13786,9 +13790,7 @@ def _render_managed_gke_manifest_files(
     shared_edge = SharedPreviewEdgeConfig.from_mapping(preview_endpoint)
     if shared_edge.enabled:
         shared_edge.validate()
-        labels += (
-            f"    {GATEWAY_ROUTE_NAMESPACE_LABEL}: \"{GATEWAY_ROUTE_NAMESPACE_LABEL_VALUE}\"\n"
-        )
+        labels += f'    {GATEWAY_ROUTE_NAMESPACE_LABEL}: "{GATEWAY_ROUTE_NAMESPACE_LABEL_VALUE}"\n'
 
     namespace_manifest = (
         f"# {_MBSRN_MANAGED_MANIFEST_MARKER}\n"

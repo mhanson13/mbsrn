@@ -472,7 +472,14 @@ _DEPLOY_WORKFLOW_SOURCE_SITE_SPECIFIC = "site_specific_workflow"
 _DEPLOY_WORKFLOW_SOURCE_WORKSPACE_CONFIG = "workspace_config_workflow"
 _DEPLOY_WORKFLOW_SOURCE_DEFAULT = "default_workflow"
 
-_DEPLOY_RESTRICTED_CONFIG_FIELDS = ("repo_owner", "repo_name", "workflow_id", "ref", "inputs")
+_DEPLOY_RESTRICTED_CONFIG_FIELDS = (
+    "repo_owner",
+    "repo_name",
+    "workflow_id",
+    "ref",
+    "inputs",
+    "shared_preview_gateway_enabled",
+)
 _MIGRATION_URL_SOURCE_DETERMINISTIC_TARGET_CONFIG = "deterministic_target_config"
 _MIGRATION_URL_SOURCE_WORKFLOW_OUTPUT = "workflow_output"
 _MIGRATION_URL_SOURCE_DEPLOY_RESULT = "deploy_result"
@@ -4185,6 +4192,10 @@ class SEOMigrationService:
         duplicate_publish_repaired = False
         publish_result: SEOMigrationGitHubPublishResult | None = None
         admin_deploy_metadata = self._resolve_admin_deploy_template_metadata()
+        site_namespace_isolation_defaults = _with_site_gateway_api_enrollment(
+            admin_deploy_metadata.get("namespace_isolation_defaults"),
+            workspace.deploy_config_json,
+        )
         deploy_workflow_mode = (
             _normalize_string(
                 admin_deploy_metadata.get("deploy_workflow_mode"),
@@ -4437,7 +4448,7 @@ class SEOMigrationService:
                         target_environment_source=target_environment_source,
                         managed_gke_config=_normalize_json_dict(admin_deploy_metadata.get("managed_gke_config")),
                         managed_image_pull_secret_config=managed_image_pull_secret_config_for_provision,
-                        namespace_isolation_defaults=admin_deploy_metadata.get("namespace_isolation_defaults"),
+                        namespace_isolation_defaults=site_namespace_isolation_defaults,
                         site_id=site.id,
                         business_id=workspace.business_id,
                         repository_auto_create_created=repository_auto_create_created,
@@ -4948,7 +4959,7 @@ class SEOMigrationService:
                         target_environment_source=target_environment_source,
                         managed_gke_config=_normalize_json_dict(admin_deploy_metadata.get("managed_gke_config")),
                         managed_image_pull_secret_config=self._resolve_managed_image_pull_secret_runtime_config()[0],
-                        namespace_isolation_defaults=admin_deploy_metadata.get("namespace_isolation_defaults"),
+                        namespace_isolation_defaults=site_namespace_isolation_defaults,
                         site_id=site.id,
                         business_id=workspace.business_id,
                         repository_auto_create_created=repository_auto_create_created,
@@ -5717,7 +5728,10 @@ class SEOMigrationService:
                 correlation_id=deploy_trace_id,
             )
             raise SEOMigrationValidationError(failure_message) from exc
-        namespace_isolation_defaults = _normalize_json_dict(workflow_resolution.get("namespace_isolation_defaults"))
+        namespace_isolation_defaults = _with_site_gateway_api_enrollment(
+            workflow_resolution.get("namespace_isolation_defaults"),
+            workspace.deploy_config_json,
+        )
         canonical_preview_hostname, _ = _safe_derive_preview_hostname_for_summary(
             repo_name=deploy_target.get("repo_name"),
             site_id=site.id,
@@ -7151,13 +7165,9 @@ class SEOMigrationService:
                             max_item_length=240,
                         )
                         shared_preview_certificate_active = bool(shared_readiness.certificate_active)
-                        shared_preview_certificate_map_attached = bool(
-                            shared_readiness.certificate_map_attached
-                        )
+                        shared_preview_certificate_map_attached = bool(shared_readiness.certificate_map_attached)
                         shared_preview_gateway_programmed = bool(shared_readiness.gateway_programmed)
-                        shared_preview_gateway_address_matches = bool(
-                            shared_readiness.gateway_address_matches
-                        )
+                        shared_preview_gateway_address_matches = bool(shared_readiness.gateway_address_matches)
                         shared_preview_edge_diagnostics = (
                             dict(shared_edge_result.diagnostics)
                             if isinstance(shared_edge_result.diagnostics, dict)
@@ -7175,9 +7185,7 @@ class SEOMigrationService:
                             max_length=63,
                         )
                         managed_certificate_exists = shared_preview_certificate_active
-                        managed_certificate_status = (
-                            "ACTIVE" if shared_preview_certificate_active else "PROVISIONING"
-                        )
+                        managed_certificate_status = "ACTIVE" if shared_preview_certificate_active else "PROVISIONING"
                         observed_managed_certificate_status = managed_certificate_status
                         observed_managed_certificate_domain_status = (
                             "ACTIVE" if shared_preview_certificate_map_attached else "PROVISIONING"
@@ -11440,9 +11448,7 @@ class SEOMigrationService:
                 max_length=200,
             ),
             "uses_gateway_api": _coerce_optional_bool(next_item.get("uses_gateway_api")),
-            "shared_preview_edge_status": _normalize_string(
-                next_item.get("shared_preview_edge_status"), max_length=40
-            ),
+            "shared_preview_edge_status": _normalize_string(next_item.get("shared_preview_edge_status"), max_length=40),
             "shared_preview_edge_reason_code": _normalize_dispatch_service_reason_code(
                 next_item.get("shared_preview_edge_reason_code")
             ),
@@ -18309,8 +18315,9 @@ class SEOMigrationService:
                 repo_name=repo_name,
                 site_id=workspace.site_id,
                 preview_hostname=preview_hostname,
-                namespace_isolation_defaults=_normalize_json_dict(
-                    admin_deploy_metadata.get("namespace_isolation_defaults")
+                namespace_isolation_defaults=_with_site_gateway_api_enrollment(
+                    admin_deploy_metadata.get("namespace_isolation_defaults"),
+                    workspace.deploy_config_json,
                 ),
             )
             preview_endpoint_mode = (
@@ -18439,8 +18446,9 @@ class SEOMigrationService:
                 repo_name=repo_name,
                 site_id=site_id,
                 preview_hostname=preview_hostname,
-                namespace_isolation_defaults=_normalize_json_dict(
-                    admin_deploy_metadata.get("namespace_isolation_defaults")
+                namespace_isolation_defaults=_with_site_gateway_api_enrollment(
+                    admin_deploy_metadata.get("namespace_isolation_defaults"),
+                    None,
                 ),
             )
             preview_endpoint_mode = (
@@ -18683,8 +18691,9 @@ class SEOMigrationService:
                 repo_name=resolved_target.get("repo_name"),
                 site_id=workspace.site_id,
                 preview_hostname=resolved_preview_hostname,
-                namespace_isolation_defaults=_normalize_json_dict(
-                    admin_deploy_metadata.get("namespace_isolation_defaults")
+                namespace_isolation_defaults=_with_site_gateway_api_enrollment(
+                    admin_deploy_metadata.get("namespace_isolation_defaults"),
+                    workspace.deploy_config_json,
                 ),
             )
             preview_endpoint_mode = (
@@ -19795,6 +19804,7 @@ class SEOMigrationService:
         preview_hostname: str | None,
         kubernetes_namespace: str | None,
         managed_gke_config: dict[str, object],
+        deploy_config: object = None,
     ) -> dict[str, object]:
         normalized_repo_name = _normalize_string(repo_name, max_length=120)
         normalized_preview_hostname = _normalize_string(preview_hostname, max_length=253)
@@ -19802,8 +19812,9 @@ class SEOMigrationService:
         if not normalized_repo_name or not normalized_preview_hostname or not normalized_namespace:
             return {"available": False, "source": "unavailable"}
         admin_deploy_metadata = self._resolve_admin_deploy_template_metadata()
-        namespace_isolation_defaults = _normalize_json_dict(
-            admin_deploy_metadata.get("namespace_isolation_defaults")
+        namespace_isolation_defaults = _with_site_gateway_api_enrollment(
+            admin_deploy_metadata.get("namespace_isolation_defaults"),
+            deploy_config,
         )
         preview_endpoint = resolve_managed_preview_endpoint_configuration(
             repo_name=normalized_repo_name,
@@ -19813,9 +19824,7 @@ class SEOMigrationService:
         )
         if bool(preview_endpoint.get("uses_gateway_api")):
             deploy_secret, _, _ = self._resolve_deploy_secret_for_propagation()
-            effective_managed_gke_config = _normalize_json_dict(
-                admin_deploy_metadata.get("managed_gke_config")
-            )
+            effective_managed_gke_config = _normalize_json_dict(admin_deploy_metadata.get("managed_gke_config"))
             if not _normalize_string(effective_managed_gke_config.get("project_id"), max_length=120):
                 effective_managed_gke_config = managed_gke_config
             try:
@@ -19853,9 +19862,7 @@ class SEOMigrationService:
                 "source": "shared_preview_edge_readiness",
                 "certificate_exists": bool(readiness.certificate_active),
                 "certificate_status": "ACTIVE" if readiness.certificate_active else "PROVISIONING",
-                "certificate_domain_status": (
-                    "ACTIVE" if readiness.certificate_map_attached else "PROVISIONING"
-                ),
+                "certificate_domain_status": ("ACTIVE" if readiness.certificate_map_attached else "PROVISIONING"),
                 "certificate_domains_match": bool(readiness.certificate_active),
                 "certificate_domains": _normalize_string(
                     preview_endpoint.get("certificate_domain"),
@@ -19877,9 +19884,7 @@ class SEOMigrationService:
                 "shared_preview_gateway_programmed": bool(readiness.gateway_programmed),
                 "shared_preview_gateway_address_matches": bool(readiness.gateway_address_matches),
                 "shared_preview_edge_diagnostics": (
-                    dict(shared_result.diagnostics)
-                    if isinstance(shared_result.diagnostics, dict)
-                    else None
+                    dict(shared_result.diagnostics) if isinstance(shared_result.diagnostics, dict) else None
                 ),
             }
         expected_certificate_name, _ = derive_site_preview_certificate_name(
@@ -20672,9 +20677,7 @@ class SEOMigrationService:
                     max_length=64,
                 ),
                 "uses_gateway_api": _coerce_optional_bool(item.get("uses_gateway_api")),
-                "shared_preview_edge_status": _normalize_string(
-                    item.get("shared_preview_edge_status"), max_length=40
-                ),
+                "shared_preview_edge_status": _normalize_string(item.get("shared_preview_edge_status"), max_length=40),
                 "shared_preview_edge_reason_code": _normalize_dispatch_service_reason_code(
                     item.get("shared_preview_edge_reason_code")
                 ),
@@ -21601,8 +21604,11 @@ class SEOMigrationService:
             dispatch_service_availability=dispatch_service_availability,
         )
         if dispatch_service_availability:
-            namespace_isolation_defaults = normalize_namespace_isolation_defaults(
-                _normalize_json_dict(workflow_resolution.get("namespace_isolation_defaults"))
+            namespace_isolation_defaults = _with_site_gateway_api_enrollment(
+                normalize_namespace_isolation_defaults(
+                    _normalize_json_dict(workflow_resolution.get("namespace_isolation_defaults"))
+                ).model_dump(mode="json"),
+                workspace.deploy_config_json,
             )
             workflow_identifier_for_readiness = _normalize_string(
                 target_summary.get("workflow_identifier_used"),
@@ -22113,12 +22119,9 @@ class SEOMigrationService:
                 managed_gke_config=_normalize_json_dict(
                     _normalize_json_dict(target_summary.get("managed_gke_config_details"))
                 ),
+                deploy_config=workspace.deploy_config_json,
             )
-            if target_valid
-            and (
-                workflow_republished_not_rerun
-                or bool(target_summary.get("uses_gateway_api"))
-            )
+            if target_valid and (workflow_republished_not_rerun or bool(target_summary.get("uses_gateway_api")))
             else {"available": False, "source": "unavailable"}
         )
         workflow_dispatch_supported = (
@@ -22360,7 +22363,9 @@ class SEOMigrationService:
                 else (
                     True
                     if gce_backend_health_status == "HEALTHY"
-                    else False if gce_backend_health_status in {"UNHEALTHY", "DEGRADED"} else None
+                    else False
+                    if gce_backend_health_status in {"UNHEALTHY", "DEGRADED"}
+                    else None
                 )
             )
         )
@@ -26506,14 +26511,33 @@ def _normalize_deploy_config(value: object) -> dict[str, object]:
             if len(inputs) >= 20:
                 break
     enabled = _coerce_bool(source.get("enabled"), default=False)
+    shared_preview_gateway_enabled = _coerce_bool(
+        source.get("shared_preview_gateway_enabled"),
+        default=False,
+    )
     return {
         "enabled": enabled,
+        "shared_preview_gateway_enabled": shared_preview_gateway_enabled,
         "repo_owner": repo_owner or "",
         "repo_name": repo_name or "",
         "workflow_id": workflow_id or "",
         "ref": ref or "",
         "inputs": inputs,
     }
+
+
+def _with_site_gateway_api_enrollment(
+    namespace_isolation_defaults: object,
+    deploy_config: object,
+) -> dict[str, object]:
+    normalized_defaults = _normalize_json_dict(namespace_isolation_defaults)
+    endpoint_source = normalized_defaults.get("managed_preview_endpoint")
+    endpoint = dict(endpoint_source) if isinstance(endpoint_source, dict) else {}
+    endpoint["site_gateway_api_enabled"] = bool(
+        _normalize_deploy_config(deploy_config).get("shared_preview_gateway_enabled")
+    )
+    normalized_defaults["managed_preview_endpoint"] = endpoint
+    return normalized_defaults
 
 
 def _normalize_analytics_config(value: object) -> dict[str, object]:

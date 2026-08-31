@@ -1367,15 +1367,13 @@ class _RecordingGitHubPublisher(SEOMigrationGitHubPublisher):
                 stage="workflow_lookup",
             )
         dispatch_identifier_type = self.readiness_dispatch_identifier_type or (
-            (
-                "workflow_file_path"
-                if (
-                    workflow_path == target.workflow_id
-                    or str(target.workflow_id or "").strip().lower().endswith(".yml")
-                    or str(target.workflow_id or "").strip().lower().endswith(".yaml")
-                )
-                else "workflow_id"
+            "workflow_file_path"
+            if (
+                workflow_path == target.workflow_id
+                or str(target.workflow_id or "").strip().lower().endswith(".yml")
+                or str(target.workflow_id or "").strip().lower().endswith(".yaml")
             )
+            else "workflow_id"
         )
         return SEOMigrationGitHubTargetReadinessResult(
             repo_owner=target.repo_owner,
@@ -1758,7 +1756,7 @@ def _tiny_png_payload() -> bytes:
     return (
         b"\x89PNG\r\n\x1a\n"
         b"\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89"
-        b"\x00\x00\x00\x0AIDATx\x9cc`\x00\x00\x00\x02\x00\x01\xe5'\xd4\xa2"
+        b"\x00\x00\x00\x0aIDATx\x9cc`\x00\x00\x00\x02\x00\x01\xe5'\xd4\xa2"
         b"\x00\x00\x00\x00IEND\xaeB`\x82"
     )
 
@@ -1790,12 +1788,14 @@ def _configure_deploy_target(
     business_id: str,
     site_id: str,
     workflow_id: str = "deploy-www-prod.yml",
+    shared_preview_gateway_enabled: bool = False,
 ) -> None:
     service.update_deploy_config(
         business_id=business_id,
         site_id=site_id,
         deploy_config={
             "enabled": True,
+            "shared_preview_gateway_enabled": shared_preview_gateway_enabled,
             "workflow_id": workflow_id,
             "ref": "main",
         },
@@ -1809,10 +1809,17 @@ def _prepare_published_artifact(
     business_id: str,
     site_id: str,
     workflow_id: str = "deploy-www-prod.yml",
+    shared_preview_gateway_enabled: bool = False,
 ) -> object:
     _seed_workspace(service, business_id=business_id, site_id=site_id)
     _configure_publish_target(service, business_id=business_id, site_id=site_id)
-    _configure_deploy_target(service, business_id=business_id, site_id=site_id, workflow_id=workflow_id)
+    _configure_deploy_target(
+        service,
+        business_id=business_id,
+        site_id=site_id,
+        workflow_id=workflow_id,
+        shared_preview_gateway_enabled=shared_preview_gateway_enabled,
+    )
     artifact = service.generate_draft_artifacts(
         business_id=business_id,
         site_id=site_id,
@@ -1843,12 +1850,14 @@ def _prepare_and_request_deploy(
     business_id: str,
     site_id: str,
     workflow_id: str = "deploy-www-prod.yml",
+    shared_preview_gateway_enabled: bool = False,
 ) -> object:
     artifact = _prepare_published_artifact(
         service,
         business_id=business_id,
         site_id=site_id,
         workflow_id=workflow_id,
+        shared_preview_gateway_enabled=shared_preview_gateway_enabled,
     )
     service.deploy_artifact_version(
         business_id=business_id,
@@ -1905,8 +1914,9 @@ def test_update_deploy_config_rejects_operator_updates_to_admin_owned_fields(db_
             "enabled": True,
             "workflow_id": "deploy-tnmfire-www-prod.yml",
             "ref": "main",
+            "shared_preview_gateway_enabled": True,
         },
-        deploy_config_field_names={"enabled", "workflow_id", "ref"},
+        deploy_config_field_names={"enabled", "workflow_id", "ref", "shared_preview_gateway_enabled"},
         principal_id="admin-principal",
         principal_role=PrincipalRole.ADMIN,
     )
@@ -1927,6 +1937,20 @@ def test_update_deploy_config_rejects_operator_updates_to_admin_owned_fields(db_
     workspace = service.get_workspace(business_id=business_id, site_id=site_id)
     assert isinstance(workspace.deploy_config_json, dict)
     assert workspace.deploy_config_json.get("workflow_id") == "deploy-tnmfire-www-prod.yml"
+    assert workspace.deploy_config_json.get("shared_preview_gateway_enabled") is True
+
+    with pytest.raises(
+        SEOMigrationValidationError,
+        match="Only admin principals can update deploy repository/workflow controls.",
+    ):
+        service.update_deploy_config(
+            business_id=business_id,
+            site_id=site_id,
+            deploy_config={"shared_preview_gateway_enabled": False},
+            deploy_config_field_names={"shared_preview_gateway_enabled"},
+            principal_id="operator-principal",
+            principal_role=PrincipalRole.OPERATOR,
+        )
 
 
 def test_update_deploy_config_allows_operator_to_toggle_enabled_only(db_session) -> None:
@@ -1940,8 +1964,9 @@ def test_update_deploy_config_allows_operator_to_toggle_enabled_only(db_session)
             "enabled": False,
             "workflow_id": "deploy-tnmfire-www-prod.yml",
             "ref": "main",
+            "shared_preview_gateway_enabled": True,
         },
-        deploy_config_field_names={"enabled", "workflow_id", "ref"},
+        deploy_config_field_names={"enabled", "workflow_id", "ref", "shared_preview_gateway_enabled"},
         principal_id="admin-principal",
         principal_role=PrincipalRole.ADMIN,
     )
@@ -1958,6 +1983,7 @@ def test_update_deploy_config_allows_operator_to_toggle_enabled_only(db_session)
     assert workspace.deploy_config_json.get("enabled") is True
     assert workspace.deploy_config_json.get("workflow_id") == "deploy-tnmfire-www-prod.yml"
     assert workspace.deploy_config_json.get("ref") == "main"
+    assert workspace.deploy_config_json.get("shared_preview_gateway_enabled") is True
 
 
 def test_generate_artifacts_applies_guardrails_and_analytics_normalization(db_session) -> None:
@@ -7044,7 +7070,12 @@ def test_deploy_checks_enabled_shared_edge_before_dns_and_skips_per_site_certifi
     config.namespace_isolation_defaults_json = namespace_defaults
     service.github_publish_config_service.repository.save(config)
     service.session.commit()
-    artifact = _prepare_published_artifact(service, business_id=business_id, site_id=site_id)
+    artifact = _prepare_published_artifact(
+        service,
+        business_id=business_id,
+        site_id=site_id,
+        shared_preview_gateway_enabled=True,
+    )
     monkeypatch.setattr(
         seo_migration_module,
         "_resolve_hostname_ipv4_addresses",
@@ -7106,7 +7137,12 @@ def test_deploy_blocks_unready_shared_edge_before_site_dns_change(db_session) ->
     config.namespace_isolation_defaults_json = namespace_defaults
     service.github_publish_config_service.repository.save(config)
     service.session.commit()
-    artifact = _prepare_published_artifact(service, business_id=business_id, site_id=site_id)
+    artifact = _prepare_published_artifact(
+        service,
+        business_id=business_id,
+        site_id=site_id,
+        shared_preview_gateway_enabled=True,
+    )
 
     with pytest.raises(SEOMigrationValidationError, match="Shared preview HTTPS infrastructure is not ready"):
         service.deploy_artifact_version(
@@ -7139,7 +7175,12 @@ def test_deploy_blocks_before_dispatch_when_shared_preview_gateway_static_ip_nam
     service.github_publish_config_service.repository.save(config)
     service.session.commit()
 
-    artifact = _prepare_published_artifact(service, business_id=business_id, site_id=site_id)
+    artifact = _prepare_published_artifact(
+        service,
+        business_id=business_id,
+        site_id=site_id,
+        shared_preview_gateway_enabled=True,
+    )
 
     with pytest.raises(SEOMigrationValidationError, match="shared_preview_gateway_missing"):
         service.deploy_artifact_version(
@@ -7814,7 +7855,12 @@ def test_deploy_in_preview_shared_mode_allows_dispatch_while_certificate_provisi
     config.namespace_isolation_defaults_json = namespace_defaults
     service.github_publish_config_service.repository.save(config)
     service.session.commit()
-    artifact = _prepare_published_artifact(service, business_id=business_id, site_id=site_id)
+    artifact = _prepare_published_artifact(
+        service,
+        business_id=business_id,
+        site_id=site_id,
+        shared_preview_gateway_enabled=True,
+    )
     monkeypatch.setattr(seo_migration_module, "_resolve_hostname_ipv4_addresses", lambda _hostname: ["34.149.170.250"])
 
     deploy_result = service.deploy_artifact_version(
@@ -9762,7 +9808,12 @@ def test_refresh_deploy_status_tls_provisioning_in_shared_preview_mode_is_runtim
     config.namespace_isolation_defaults_json = namespace_defaults
     service.github_publish_config_service.repository.save(config)
     service.session.commit()
-    artifact = _prepare_and_request_deploy(service, business_id=business_id, site_id=site_id)
+    artifact = _prepare_and_request_deploy(
+        service,
+        business_id=business_id,
+        site_id=site_id,
+        shared_preview_gateway_enabled=True,
+    )
 
     service.refresh_deploy_run_status(
         business_id=business_id,
