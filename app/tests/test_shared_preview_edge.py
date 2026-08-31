@@ -155,6 +155,7 @@ def test_evaluate_shared_preview_edge_readiness_returns_bounded_pending_reasons(
 
 def test_shared_preview_edge_bootstrap_is_platform_scoped_and_https_only() -> None:
     bootstrap = (REPOSITORY_ROOT / "scripts" / "bootstrap_shared_preview_edge.sh").read_text(encoding="utf-8")
+    renderer = (REPOSITORY_ROOT / "scripts" / "render_shared_preview_gateway.py").read_text(encoding="utf-8")
 
     assert "certificatemanager.googleapis.com" in bootstrap
     assert "dns-authorizations create" in bootstrap
@@ -164,3 +165,6 @@ def test_shared_preview_edge_bootstrap_is_platform_scoped_and_https_only() -> No
     assert "record-sets create \"$DNS_AUTH_RECORD_NAME\"" in bootstrap
     assert "preview hostname A record" in bootstrap
     assert "--insecure" not in bootstrap
+    assert "value(networkConfig.gatewayApiConfig.channel)" in bootstrap
+    assert "from app.integrations" not in renderer
+    assert "spec_from_file_location" in renderer

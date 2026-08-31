@@ -1,18 +1,27 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import sys
 from pathlib import Path
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
-if str(REPOSITORY_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPOSITORY_ROOT))
+SHARED_PREVIEW_EDGE_MODULE_PATH = REPOSITORY_ROOT / "app" / "integrations" / "shared_preview_edge.py"
 
-from app.integrations.shared_preview_edge import (  # noqa: E402
-    SharedPreviewEdgeConfig,
-    render_shared_preview_gateway_manifest,
-)
+
+def _load_shared_preview_edge_module():
+    """Load the dependency-free renderer without importing the application package."""
+    spec = importlib.util.spec_from_file_location(
+        "mbsrn_shared_preview_edge_renderer",
+        SHARED_PREVIEW_EDGE_MODULE_PATH,
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError("Unable to load the shared preview edge renderer.")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 def main() -> int:
@@ -26,7 +35,8 @@ def main() -> int:
     parser.add_argument("--dns-authorization-name", required=True)
     args = parser.parse_args()
 
-    config = SharedPreviewEdgeConfig.from_mapping(
+    shared_preview_edge = _load_shared_preview_edge_module()
+    config = shared_preview_edge.SharedPreviewEdgeConfig.from_mapping(
         {
             "gateway_api_enabled": True,
             "shared_preview_static_ip_name": args.static_ip_name,
@@ -39,7 +49,7 @@ def main() -> int:
             "certificate_domain": "*.site.mbsrn.com",
         }
     )
-    sys.stdout.write(render_shared_preview_gateway_manifest(config))
+    sys.stdout.write(shared_preview_edge.render_shared_preview_gateway_manifest(config))
     return 0
 
 

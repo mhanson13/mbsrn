@@ -86,6 +86,7 @@ Acceptance:
 - [ ] Enable and validate GKE Gateway API support without changing live preview traffic.
 - [ ] Create one DNS authorization for `site.mbsrn.com` and one Google-managed `*.site.mbsrn.com` Certificate Manager certificate.
 - [ ] Create an HTTPS-only shared Gateway/load balancer with a stable global IP and no public HTTP listener.
+- [x] Keep the shared-edge bootstrap runnable in a clean Google Cloud Shell, reusable after partial completion, and accurate when detecting the existing GKE Gateway API channel.
 - [ ] Define the cross-namespace route-attachment policy so an MBSRN-managed site route can reach only its own namespace Service.
 - [x] Replace the per-site certificate mutation in Gateway mode with a provider-backed, read-only gate that verifies wildcard certificate state/coverage, certificate-map selection, Gateway programming, and reserved-address attachment before any site DNS mutation.
 - [ ] Migrate Platfire as a canary, then Matty the Bookie, while preserving the old endpoint for a bounded rollback window.

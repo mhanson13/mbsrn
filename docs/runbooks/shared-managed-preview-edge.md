@@ -14,6 +14,8 @@ scripts/bootstrap_shared_preview_edge.sh \
 
 It creates or verifies only shared platform resources and the Certificate Manager authorization CNAME. It does not create or change any site's preview-host A record. Review its reported resource names and states before enabling Gateway API routing in admin configuration.
 
+The renderer uses only the Python standard library and does not require installation of the MBSRN API dependencies in Cloud Shell. If the script stops after creating some resources, correct the reported problem and rerun the same command; each completed platform resource is verified and reused. The script reads `networkConfig.gatewayApiConfig.channel` and updates the cluster only when the standard Gateway API channel is not already enabled.
+
 ## Safety rules
 
 - Provision the shared edge alongside existing per-site endpoints.

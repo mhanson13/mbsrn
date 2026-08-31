@@ -178,7 +178,7 @@ fi
 
 GATEWAY_CHANNEL="$(gcloud container clusters describe "$GKE_CLUSTER_NAME" \
   --location "$GKE_CLUSTER_LOCATION" --project "$GCP_PROJECT_ID" \
-  --format='value(gatewayApiConfig.channel)')"
+  --format='value(networkConfig.gatewayApiConfig.channel)')"
 if [[ "$GATEWAY_CHANNEL" != "CHANNEL_STANDARD" ]]; then
   gcloud container clusters update "$GKE_CLUSTER_NAME" \
     --location "$GKE_CLUSTER_LOCATION" --project "$GCP_PROJECT_ID" \
