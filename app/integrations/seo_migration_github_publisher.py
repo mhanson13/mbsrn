@@ -24,6 +24,12 @@ from app.integrations.preview_deployment_workflow import (
     render_reusable_preview_caller_workflow,
     validate_reusable_preview_deployment_settings,
 )
+from app.integrations.shared_preview_edge import (
+    GATEWAY_ROUTE_NAMESPACE_LABEL,
+    GATEWAY_ROUTE_NAMESPACE_LABEL_VALUE,
+    SharedPreviewEdgeConfig,
+    render_site_gateway_manifests,
+)
 
 _LOGGER = logging.getLogger(__name__)
 _VALID_REPO_OWNER_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{0,38}$")
@@ -9756,6 +9762,9 @@ _MBSRN_MANAGED_INGRESS_FILE_PATH = "k8s/ingress.yaml"
 _MBSRN_MANAGED_CERTIFICATE_FILE_PATH = "k8s/managedcertificate.yaml"
 _MBSRN_MANAGED_FRONTEND_CONFIG_FILE_PATH = "k8s/frontendconfig.yaml"
 _MBSRN_MANAGED_BACKEND_CONFIG_FILE_PATH = "k8s/backendconfig.yaml"
+_MBSRN_MANAGED_GATEWAY_SERVICE_FILE_PATH = "k8s/gateway-service.yaml"
+_MBSRN_MANAGED_HTTP_ROUTE_FILE_PATH = "k8s/httproute.yaml"
+_MBSRN_MANAGED_GATEWAY_HEALTH_CHECK_FILE_PATH = "k8s/gateway-healthcheckpolicy.yaml"
 _MBSRN_MANAGED_FRONTEND_CONFIG_NAME_PREFIX = "site-web-frontend-config"
 _MBSRN_MANAGED_BACKEND_CONFIG_NAME_PREFIX = "site-web-backend-config"
 _MBSRN_MANAGED_PREVIEW_STATIC_IP_NAME_PREFIX = "site-web-preview-ip"
@@ -9801,8 +9810,14 @@ _MBSRN_MANAGED_OPTIONAL_POLICY_MANIFEST_PATHS: tuple[str, ...] = (
     _MBSRN_MANAGED_LIMIT_RANGE_FILE_PATH,
     _MBSRN_MANAGED_NETWORK_POLICY_FILE_PATH,
 )
+_MBSRN_MANAGED_GATEWAY_MANIFEST_PATHS: tuple[str, ...] = (
+    _MBSRN_MANAGED_GATEWAY_SERVICE_FILE_PATH,
+    _MBSRN_MANAGED_GATEWAY_HEALTH_CHECK_FILE_PATH,
+    _MBSRN_MANAGED_HTTP_ROUTE_FILE_PATH,
+)
 _MBSRN_MANAGED_MANIFEST_PATHS: tuple[str, ...] = (
     *_MBSRN_MANAGED_CORE_MANIFEST_PATHS,
+    *_MBSRN_MANAGED_GATEWAY_MANIFEST_PATHS,
     *_MBSRN_MANAGED_OPTIONAL_POLICY_MANIFEST_PATHS,
 )
 _NAMESPACE_MODEL_STATUS_ALIGNED = "aligned"
@@ -9878,6 +9893,9 @@ _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_SITE_DNS_TRANSACTION_CONFLICT = "managed
 _DEPLOY_DISPATCH_SERVICE_REASON_EXPECTED_STATIC_IP_NOT_BOUND_TO_INGRESS = "expected_static_ip_not_bound_to_ingress"
 _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_MISSING = "shared_preview_gateway_missing"
 _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_HOSTNAME_MISSING = "shared_preview_gateway_hostname_missing"
+_DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_CONFIG_INCOMPLETE = (
+    "shared_preview_gateway_config_incomplete"
+)
 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_DOMAIN_DRIFT_REPAIRED = "managed_certificate_domain_drift_repaired"
 _DEPLOY_DISPATCH_SERVICE_REASON_MANAGED_CERTIFICATE_DOMAIN_DRIFT_REPAIR_FAILED = (
     "managed_certificate_domain_drift_repair_failed"
@@ -9967,6 +9985,13 @@ _DEFAULT_NAMESPACE_ISOLATION_DEFAULTS = {
     "managed_preview_endpoint": {
         "mode": _MANAGED_PREVIEW_ENDPOINT_MODE_AUTO,
         "shared_preview_static_ip_name": None,
+        "gateway_api_enabled": False,
+        "gateway_name": None,
+        "gateway_namespace": None,
+        "certificate_map_name": None,
+        "certificate_name": None,
+        "dns_authorization_name": None,
+        "certificate_domain": "*.site.mbsrn.com",
     },
 }
 
@@ -10224,6 +10249,7 @@ def resolve_managed_preview_endpoint_configuration(
         shared_preview_static_ip_name = shared_preview_static_ip_name.strip().lower()
     else:
         shared_preview_static_ip_name = None
+    shared_edge = SharedPreviewEdgeConfig.from_mapping(endpoint_payload)
 
     preview_hostname_normalized = (_coerce_string(preview_hostname) or "").strip().lower().rstrip(".")
     managed_preview_suffix = f".{_MBSRN_MANAGED_PREVIEW_DOMAIN_SUFFIX}"
@@ -10261,6 +10287,8 @@ def resolve_managed_preview_endpoint_configuration(
             reason_code = _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_MISSING
             expected_static_ip_name = per_site_static_ip_name
             expected_static_ip_source = per_site_static_ip_source
+        elif shared_edge.enabled and shared_edge.missing_fields:
+            reason_code = _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_CONFIG_INCOMPLETE
 
     return {
         "requested_mode": requested_mode,
@@ -10270,6 +10298,15 @@ def resolve_managed_preview_endpoint_configuration(
         "preview_hostname": preview_hostname_normalized or None,
         "preview_hostname_is_managed": preview_hostname_is_managed,
         "shared_preview_static_ip_name": shared_preview_static_ip_name,
+        "gateway_api_enabled": shared_edge.enabled,
+        "uses_gateway_api": shared_edge.ready_for_rendering,
+        "gateway_name": shared_edge.gateway_name,
+        "gateway_namespace": shared_edge.gateway_namespace,
+        "certificate_map_name": shared_edge.certificate_map_name,
+        "certificate_name": shared_edge.certificate_name,
+        "dns_authorization_name": shared_edge.dns_authorization_name,
+        "certificate_domain": shared_edge.certificate_domain,
+        "gateway_config_missing_fields": shared_edge.missing_fields,
         "expected_static_ip_name": expected_static_ip_name,
         "expected_static_ip_name_source": expected_static_ip_source,
         "reason_code": reason_code,
@@ -10381,6 +10418,28 @@ def _normalize_namespace_isolation_defaults(value: object | None) -> dict[str, o
             normalized_endpoint["shared_preview_static_ip_name"] = (
                 shared_preview_static_ip_name[:63] if shared_preview_static_ip_name else None
             )
+            normalized_endpoint["gateway_api_enabled"] = _coerce_bool(
+                managed_preview_endpoint.get("gateway_api_enabled"),
+                default=False,
+            )
+            for key in (
+                "gateway_name",
+                "gateway_namespace",
+                "certificate_map_name",
+                "certificate_name",
+                "dns_authorization_name",
+            ):
+                candidate = _coerce_string(managed_preview_endpoint.get(key))
+                if candidate:
+                    candidate = re.sub(r"[^a-z0-9-]", "-", candidate.strip().lower())
+                    while "--" in candidate:
+                        candidate = candidate.replace("--", "-")
+                    candidate = candidate.strip("-")[:63].rstrip("-")
+                normalized_endpoint[key] = candidate or None
+            certificate_domain = (
+                _coerce_string(managed_preview_endpoint.get("certificate_domain")) or "*.site.mbsrn.com"
+            )
+            normalized_endpoint["certificate_domain"] = certificate_domain.strip().lower().rstrip(".")
 
     return normalized
 
@@ -10409,6 +10468,13 @@ def _managed_policy_expectations(namespace_isolation_defaults: dict[str, object]
 def _expected_managed_manifest_paths(namespace_isolation_defaults: dict[str, object] | None) -> tuple[str, ...]:
     expectations = _managed_policy_expectations(namespace_isolation_defaults)
     expected_paths: list[str] = list(_MBSRN_MANAGED_CORE_MANIFEST_PATHS)
+    normalized_defaults = _normalize_namespace_isolation_defaults(namespace_isolation_defaults)
+    endpoint_payload = normalized_defaults.get("managed_preview_endpoint")
+    shared_edge = SharedPreviewEdgeConfig.from_mapping(
+        endpoint_payload if isinstance(endpoint_payload, dict) else None
+    )
+    if shared_edge.ready_for_rendering:
+        expected_paths.extend(_MBSRN_MANAGED_GATEWAY_MANIFEST_PATHS)
     if expectations.get("resource_quota_expected"):
         expected_paths.append(_MBSRN_MANAGED_RESOURCE_QUOTA_FILE_PATH)
     if expectations.get("limit_range_expected"):
@@ -11145,6 +11211,9 @@ def _render_managed_deploy_workflow_yaml(
         '          apply_manifest_if_present "k8s/service.yaml"\n'
         '          wait_for_named_resource "service" "site-web" 10 3 "runtime_service_missing_after_apply" "Service site-web is missing after managed manifest apply." "false" "unknown" "unknown"\n'
         '          apply_manifest_if_present "k8s/deployment.yaml"\n'
+        '          apply_manifest_if_present "k8s/gateway-service.yaml"\n'
+        '          apply_manifest_if_present "k8s/gateway-healthcheckpolicy.yaml"\n'
+        '          apply_manifest_if_present "k8s/httproute.yaml"\n'
         '          apply_manifest_if_present "k8s/frontendconfig.yaml"\n'
         '          if [ "$ingress_manifest_present" = true ]; then\n'
         '            apply_manifest_if_present "k8s/ingress.yaml"\n'
@@ -13264,6 +13333,9 @@ jobs:
           apply_if_present k8s/backendconfig.yaml
           apply_if_present k8s/service.yaml
           apply_if_present k8s/deployment.yaml
+          apply_if_present k8s/gateway-service.yaml
+          apply_if_present k8s/gateway-healthcheckpolicy.yaml
+          apply_if_present k8s/httproute.yaml
           apply_if_present k8s/frontendconfig.yaml
           apply_if_present k8s/ingress.yaml
       - name: Wait for application rollout
@@ -13470,6 +13542,12 @@ def _render_managed_gke_manifest_files(
         f"    mbsrn.io/namespace-source: {namespace_origin}\n"
         f"    mbsrn.io/preview-hostname: {normalized_preview_hostname}\n"
     )
+    shared_edge = SharedPreviewEdgeConfig.from_mapping(preview_endpoint)
+    if shared_edge.enabled:
+        shared_edge.validate()
+        labels += (
+            f"    {GATEWAY_ROUTE_NAMESPACE_LABEL}: \"{GATEWAY_ROUTE_NAMESPACE_LABEL_VALUE}\"\n"
+        )
 
     namespace_manifest = (
         f"# {_MBSRN_MANAGED_MANIFEST_MARKER}\n"
@@ -13636,6 +13714,16 @@ def _render_managed_gke_manifest_files(
     }
     if not normalized_pre_shared_certificate_name:
         manifests[_MBSRN_MANAGED_CERTIFICATE_FILE_PATH] = managed_certificate_manifest
+    if shared_edge.ready_for_rendering:
+        manifests.update(
+            render_site_gateway_manifests(
+                config=shared_edge,
+                namespace=namespace,
+                preview_hostname=normalized_preview_hostname,
+                labels_yaml=labels,
+                managed_manifest_marker=_MBSRN_MANAGED_MANIFEST_MARKER,
+            )
+        )
     normalized_defaults = _normalize_namespace_isolation_defaults(namespace_isolation_defaults)
     resource_quota_defaults = normalized_defaults.get("resource_quota")
     if isinstance(resource_quota_defaults, dict) and _coerce_bool(

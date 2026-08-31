@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 
 def _normalize_optional_text(value: object, *, max_length: int) -> str | None:
@@ -385,6 +385,13 @@ class MigrationGenerationSafetyDefaults(BaseModel):
 class ManagedPreviewEndpointDefaults(BaseModel):
     mode: str = _DEFAULT_MANAGED_PREVIEW_ENDPOINT_MODE
     shared_preview_static_ip_name: str | None = Field(default=None, max_length=80)
+    gateway_api_enabled: bool = False
+    gateway_name: str | None = Field(default=None, max_length=63)
+    gateway_namespace: str | None = Field(default=None, max_length=63)
+    certificate_map_name: str | None = Field(default=None, max_length=63)
+    certificate_name: str | None = Field(default=None, max_length=63)
+    dns_authorization_name: str | None = Field(default=None, max_length=63)
+    certificate_domain: str = "*.site.mbsrn.com"
 
     @field_validator("mode", mode="before")
     @classmethod
@@ -403,12 +410,70 @@ class ManagedPreviewEndpointDefaults(BaseModel):
         normalized = _normalize_optional_text(value, max_length=80)
         if not normalized:
             return None
-        normalized = normalized.lower().replace(" ", "-")
+        normalized = normalized.lower().replace("_", "-").replace(" ", "-")
         normalized = normalized.replace("/", "-").replace("\\", "-")
         while "--" in normalized:
             normalized = normalized.replace("--", "-")
         normalized = normalized.strip("-")
         return normalized or None
+
+    @field_validator(
+        "gateway_name",
+        "gateway_namespace",
+        "certificate_map_name",
+        "certificate_name",
+        "dns_authorization_name",
+        mode="before",
+    )
+    @classmethod
+    def _normalize_gateway_resource_name(cls, value: object) -> str | None:
+        normalized = _normalize_optional_text(value, max_length=63)
+        if not normalized:
+            return None
+        normalized = normalized.lower().replace("_", "-").replace(" ", "-")
+        while "--" in normalized:
+            normalized = normalized.replace("--", "-")
+        return normalized.strip("-") or None
+
+    @field_validator("certificate_domain", mode="before")
+    @classmethod
+    def _normalize_certificate_domain(cls, value: object) -> str:
+        normalized = (_normalize_optional_text(value, max_length=253) or "*.site.mbsrn.com").lower().rstrip(".")
+        if normalized != "*.site.mbsrn.com":
+            raise ValueError("must be *.site.mbsrn.com for preview traffic.")
+        return normalized
+
+    @model_validator(mode="after")
+    def _validate_enabled_gateway_configuration(self) -> "ManagedPreviewEndpointDefaults":
+        if not self.gateway_api_enabled:
+            return self
+        required = {
+            "shared_preview_static_ip_name": self.shared_preview_static_ip_name,
+            "gateway_name": self.gateway_name,
+            "gateway_namespace": self.gateway_namespace,
+            "certificate_map_name": self.certificate_map_name,
+            "certificate_name": self.certificate_name,
+            "dns_authorization_name": self.dns_authorization_name,
+        }
+        missing = [name for name, value in required.items() if not value]
+        if missing:
+            raise ValueError("enabled Gateway API configuration requires: " + ", ".join(missing) + ".")
+        import re
+
+        resource_pattern = re.compile(r"^[a-z](?:[-a-z0-9]{0,61}[a-z0-9])?$")
+        namespace_pattern = re.compile(r"^[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?$")
+        for field_name in (
+            "shared_preview_static_ip_name",
+            "gateway_name",
+            "certificate_map_name",
+            "certificate_name",
+            "dns_authorization_name",
+        ):
+            if not resource_pattern.fullmatch(str(required[field_name])):
+                raise ValueError(f"{field_name} must be a lowercase Google/Kubernetes resource name.")
+        if not namespace_pattern.fullmatch(str(self.gateway_namespace)):
+            raise ValueError("gateway_namespace must be a lowercase Kubernetes namespace name.")
+        return self
 
 
 class GitHubNamespaceIsolationDefaults(BaseModel):

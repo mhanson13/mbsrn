@@ -105,6 +105,13 @@ def test_get_github_publish_config_returns_defaults_when_unset(db_session, seede
         "managed_preview_endpoint": {
             "mode": "auto",
             "shared_preview_static_ip_name": None,
+            "gateway_api_enabled": False,
+            "gateway_name": None,
+            "gateway_namespace": None,
+            "certificate_map_name": None,
+            "certificate_name": None,
+            "dns_authorization_name": None,
+            "certificate_domain": "*.site.mbsrn.com",
         },
         "migration_generation_budget": {
             "migration_context_budget_chars": 90000,
@@ -178,6 +185,17 @@ def test_put_github_publish_config_persists_and_reads_back(db_session, seeded_bu
                     "enabled": True,
                     "mode": "default_deny_ingress",
                 },
+                "managed_preview_endpoint": {
+                    "mode": "preview_shared_gateway",
+                    "shared_preview_static_ip_name": "MBSRN_Preview_Edge_IP",
+                    "gateway_api_enabled": True,
+                    "gateway_name": "MBSRN_Preview_Gateway",
+                    "gateway_namespace": "MBSRN",
+                    "certificate_map_name": "MBSRN_Preview_Cert_Map",
+                    "certificate_name": "MBSRN_Preview_Wildcard",
+                    "dns_authorization_name": "MBSRN_Preview_DNS_Auth",
+                    "certificate_domain": "*.SITE.MBSRN.COM.",
+                },
                 "migration_generation_safety": {
                     "migration_provider_timeout_seconds": 240,
                     "migration_preflight_mode": "block_before_provider",
@@ -214,6 +232,17 @@ def test_put_github_publish_config_persists_and_reads_back(db_session, seeded_bu
         "enabled": True,
         "mode": "default_deny_ingress",
     }
+    assert updated["namespace_isolation_defaults"]["managed_preview_endpoint"] == {
+        "mode": "preview_shared_gateway",
+        "shared_preview_static_ip_name": "mbsrn-preview-edge-ip",
+        "gateway_api_enabled": True,
+        "gateway_name": "mbsrn-preview-gateway",
+        "gateway_namespace": "mbsrn",
+        "certificate_map_name": "mbsrn-preview-cert-map",
+        "certificate_name": "mbsrn-preview-wildcard",
+        "dns_authorization_name": "mbsrn-preview-dns-auth",
+        "certificate_domain": "*.site.mbsrn.com",
+    }
     assert updated["namespace_isolation_defaults"]["migration_generation_safety"] == {
         "migration_provider_timeout_seconds": 240,
         "migration_preflight_mode": "block_before_provider",
@@ -248,6 +277,27 @@ def test_put_github_publish_config_persists_and_reads_back(db_session, seeded_bu
     assert fetched["namespace_isolation_effective_defaults"] == fetched["namespace_isolation_defaults"]
     assert fetched["namespace_isolation_cap_reasons"] == {}
     assert fetched["enabled"] is True
+
+
+def test_put_github_publish_config_rejects_incomplete_enabled_shared_gateway(db_session, seeded_business) -> None:
+    client = _make_client(db_session, business_id=seeded_business.id)
+
+    response = client.put(
+        "/api/admin/github-publish-config",
+        json={
+            "owner": "mhanson13",
+            "namespace_isolation_defaults": {
+                "managed_preview_endpoint": {
+                    "mode": "preview_shared_gateway",
+                    "shared_preview_static_ip_name": "mbsrn-preview-edge-ip",
+                    "gateway_api_enabled": True,
+                }
+            },
+        },
+    )
+
+    assert response.status_code == 422
+    assert "enabled Gateway API configuration requires" in response.text
 
 
 def test_put_github_publish_config_sets_managed_gcp_deploy_key_status_without_exposing_value(

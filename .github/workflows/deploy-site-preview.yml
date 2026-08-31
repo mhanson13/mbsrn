@@ -271,6 +271,9 @@ jobs:
           apply_if_present k8s/backendconfig.yaml
           apply_if_present k8s/service.yaml
           apply_if_present k8s/deployment.yaml
+          apply_if_present k8s/gateway-service.yaml
+          apply_if_present k8s/gateway-healthcheckpolicy.yaml
+          apply_if_present k8s/httproute.yaml
           apply_if_present k8s/frontendconfig.yaml
           apply_if_present k8s/ingress.yaml
 

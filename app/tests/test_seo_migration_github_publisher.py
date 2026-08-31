@@ -9129,6 +9129,75 @@ def test_rendered_managed_templates_use_shared_preview_gateway_static_ip_when_co
     assert "kubernetes.io/ingress.global-static-ip-name: site-preview-shared-ip" in ingress_yaml
 
 
+def test_rendered_managed_templates_add_gateway_canary_resources_when_explicitly_enabled() -> None:
+    namespace_defaults = {
+        "managed_preview_endpoint": {
+            "mode": "preview_shared_gateway",
+            "shared_preview_static_ip_name": "mbsrn-preview-edge-ip",
+            "gateway_api_enabled": True,
+            "gateway_name": "mbsrn-preview-gateway",
+            "gateway_namespace": "mbsrn",
+            "certificate_map_name": "mbsrn-preview-cert-map",
+            "certificate_name": "mbsrn-preview-wildcard",
+            "dns_authorization_name": "mbsrn-preview-dns-auth",
+            "certificate_domain": "*.site.mbsrn.com",
+        }
+    }
+
+    manifests = _render_managed_gke_manifest_files(
+        repo_owner="mhanson13",
+        repo_name="platfire",
+        target_environment_key="gke_prod",
+        target_environment_source="admin_config",
+        kubernetes_namespace="platfire",
+        namespace_source="preview_slug",
+        preview_hostname="platfire.site.mbsrn.com",
+        namespace_isolation_defaults=namespace_defaults,
+        site_id="site-platfire",
+        pre_shared_certificate_name="mbsrn-preview-platfire-abcd",
+    )
+
+    assert "k8s/ingress.yaml" in manifests
+    assert "k8s/gateway-service.yaml" in manifests
+    assert "k8s/gateway-healthcheckpolicy.yaml" in manifests
+    assert "k8s/httproute.yaml" in manifests
+    namespace = yaml.safe_load(manifests["k8s/namespace.yaml"])
+    gateway_service = yaml.safe_load(manifests["k8s/gateway-service.yaml"])
+    route = yaml.safe_load(manifests["k8s/httproute.yaml"])
+    assert namespace["metadata"]["labels"]["mbsrn.io/preview-route-access"] == "true"
+    assert gateway_service["metadata"]["name"] == "site-web-gateway"
+    assert "annotations" not in gateway_service["metadata"]
+    assert route["spec"]["parentRefs"] == [
+        {"name": "mbsrn-preview-gateway", "namespace": "mbsrn", "sectionName": "https"}
+    ]
+    assert route["spec"]["hostnames"] == ["platfire.site.mbsrn.com"]
+    assert "ingress.gcp.kubernetes.io/pre-shared-cert: mbsrn-preview-platfire-abcd" in manifests[
+        "k8s/ingress.yaml"
+    ]
+
+
+def test_rendered_managed_templates_reject_incomplete_enabled_gateway_configuration() -> None:
+    with pytest.raises(ValueError, match="Shared preview Gateway configuration is incomplete"):
+        _render_managed_gke_manifest_files(
+            repo_owner="mhanson13",
+            repo_name="platfire",
+            target_environment_key="gke_prod",
+            target_environment_source="admin_config",
+            kubernetes_namespace="platfire",
+            namespace_source="preview_slug",
+            preview_hostname="platfire.site.mbsrn.com",
+            namespace_isolation_defaults={
+                "managed_preview_endpoint": {
+                    "mode": "preview_shared_gateway",
+                    "shared_preview_static_ip_name": "mbsrn-preview-edge-ip",
+                    "gateway_api_enabled": True,
+                }
+            },
+            site_id="site-platfire",
+            pre_shared_certificate_name="mbsrn-preview-platfire-abcd",
+        )
+
+
 def test_render_managed_gke_manifests_network_policy_allows_site_web_probe_without_broad_ingress() -> None:
     manifests = _render_managed_gke_manifest_files(
         repo_owner="mhanson13",
