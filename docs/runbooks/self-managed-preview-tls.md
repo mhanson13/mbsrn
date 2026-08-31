@@ -1,5 +1,7 @@
 # Self-managed preview TLS
 
+Status: compatibility and rollback only. Do not enroll new preview sites or add features to this path. The approved destination is [Shared managed preview edge](shared-managed-preview-edge.md), governed by [ADR 0007](../architecture/decisions/0007-shared-managed-preview-edge.md).
+
 MBSRN uses self-signed, self-managed Google Compute SSL certificates only for `*.site.mbsrn.com` preview hosts. Customer production domains remain outside this workflow.
 
 ## Platform contract

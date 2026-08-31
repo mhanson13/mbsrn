@@ -1,6 +1,6 @@
 # MBSRN Engineering Context
 
-Last updated: 2026-08-29
+Last updated: 2026-08-31
 
 ## Purpose
 
@@ -17,7 +17,7 @@ Platfire (`platfire.com`) is the first acceptance site. It is not a runtime spec
 - Session state: Redis in production.
 - Site source and generated artifact metadata: database records.
 - GitHub: approved static artifacts and deployment workflow dispatch.
-- Google Cloud: GKE, Cloud DNS, Compute SSL certificates, Secret Manager, Cloud Logging.
+- Google Cloud: GKE, Cloud DNS, the current Compute SSL certificate/Secret Manager compatibility path, and Cloud Logging. The approved preview target uses Certificate Manager and GKE Gateway API instead of per-site GKE Ingress load balancers.
 
 ## Confirmed production problems
 
@@ -29,6 +29,7 @@ Platfire (`platfire.com`) is the first acceptance site. It is not a runtime spec
 6. The migration service, GitHub publisher, and operator workspace are oversized and contain overlapping managed- and self-managed-certificate behavior.
 7. On 2026-08-28, preview release creation for an existing site returned `preview_slug_required` after the artifact had already been approved. Administrator diagnostic collection then failed with HTTP 500 because certificate status treated the same missing prerequisite as fatal. Both failures were shown only in the page-level message area, far from the controls that initiated them.
 8. On 2026-08-29, Platfire and Matty diagnostic bundles showed published Compute certificates and complete media, but their releases remained at the certificate gate. Duplicate artifact publication skipped deployment-workflow reconciliation and then reported the misleading artifact error `This artifact version is already published`. Platfire also retained a disabled legacy manual-deploy flag even though the operator had explicitly advanced the release.
+9. Self-signed preview certificates are not publicly trusted and therefore cannot provide a warning-free Firefox experience. Per-site GKE Ingress and certificate provisioning also places slow, failure-prone load-balancer and certificate convergence in every site's critical path.
 
 ## Implementation status
 
@@ -52,7 +53,13 @@ Reusable preview deployment is implemented behind an all-or-none platform config
 
 Preview TLS readiness checks now validate the configured project and workload credentials without calling unsupported or non-authoritative permission-test routes. The actual Secret Manager and Compute operations verify authorization and return sanitized, operation-specific failures. Production has a narrow `mbsrnPreviewTlsOperator` custom role bound to the API workload identity. On 2026-08-28, production also received Secret Accessor through a resource-name condition limited to `projects/1068908288067/secrets/mbsrn-tls-*`; the versioned bootstrap preserves that boundary. This lets `ensure` resume a vaulted certificate after partial Compute failure without granting access to unrelated secrets. Generate/import and `ensure` operations remain API-side so private keys do not transit GitHub.
 
+That self-managed certificate implementation is now a compatibility path, not the approved preview destination. It remains in place only until shared Gateway migration succeeds and rollback windows close. New work must not deepen its coupling or add new self-signed-certificate features.
+
 The advanced workspace certificate action now calls `ensure` rather than unconditional `generate`. It reuses a valid published asset and can load and resume a matching vaulted asset instead of creating another certificate after a retryable Compute publication failure. Certificate diagnostics include stable safe reason codes and bounded failure messages; provider bodies and private material remain excluded.
+
+On 2026-08-31, the approved preview-edge direction changed to one HTTPS-only shared GKE Gateway/global external Application Load Balancer with a pre-provisioned Google-managed Certificate Manager certificate for `*.site.mbsrn.com`. DNS authorization proves control of `site.mbsrn.com` independently of any individual site or load balancer. The certificate is platform infrastructure, automatically renewed, and never places private key material in GitHub, the MBSRN API, Kubernetes Secrets, or MBSRN-managed Secret Manager versions. Site creation attaches a hostname route and runtime backend to the existing edge; it does not issue a certificate or provision a load balancer.
+
+The shared Gateway migration is not yet implemented. Current generated site repositories and the reusable deployment workflow still apply per-site Ingress, FrontendConfig, BackendConfig, static-IP, and certificate bindings. These resources must be migrated by coexistence and verified cutover rather than edited in place without rollback.
 
 The operator workspace now presents one preview-release card with the eight concise gates and a single context-appropriate action. Legacy manual publish, certificate, deploy, dry-run, and replacement controls are retained under a collapsed advanced disclosure during the compatibility window. Administrators can explicitly collect a seven-day sanitized diagnostic bundle; operators do not see that control, and bundles exclude credentials, private keys, raw provider bodies, media, and captured site content.
 
@@ -137,17 +144,15 @@ Allowed operator-facing gate states are `waiting`, `running`, `ready`, `action_r
 
 ### Preview TLS
 
-- Self-signed, global Compute `SELF_MANAGED` certificates are used only for `*.site.mbsrn.com` previews.
-- Customer production domains and Google-managed certificates are outside the preview release workflow.
-- Private keys are never committed to GitHub, returned by APIs, or written to logs.
-- Generated/imported private keys are vaulted in Secret Manager.
-- Compute self-managed certificate publication uses the explicit `selfManaged` request object; provider request-validation failures are platform errors and are not operator-retryable.
-- Secret Manager version references may contain Google's numeric canonical project number; reads normalize them to the configured certificate project and reject references to another named project.
-- Existing Compute self-managed certificates can be adopted after type and hostname validation.
-- Existing exact-host or wildcard certificates can be reused when they cover the resolved preview hostname.
-- Ingress selects the resource through `ingress.gcp.kubernetes.io/pre-shared-cert`.
-- Verification compares the exact served certificate fingerprint with the selected asset.
-- Certificate ensure checks current state before creating or rotating resources.
+- Preview hostnames are covered by one pre-provisioned, publicly trusted, Google-managed `*.site.mbsrn.com` Certificate Manager certificate.
+- DNS authorization for `site.mbsrn.com` is a platform-level prerequisite and is not recreated per site.
+- Google manages certificate private keys and renewal; preview private keys do not transit or reside in GitHub, the MBSRN API, Kubernetes Secrets, or MBSRN-managed Secret Manager versions.
+- The shared Gateway exposes HTTPS only. Preview availability must not depend on an HTTP listener or HTTP-to-HTTPS redirect.
+- The certificate release gate verifies shared certificate coverage, active state, Gateway attachment, and HTTPS identity. It does not mutate certificate state for each site.
+- Site routes are exact-host routes even though certificate coverage is wildcard.
+- Customer production domains are excluded from the wildcard and require a separate exact-host certificate and cutover workflow.
+- Endpoint verification requires normal public trust and hostname validation; `--insecure` and self-signed fingerprint bypasses are not valid success evidence.
+- The former self-signed Compute `SELF_MANAGED` and Secret Manager path is rollback-only compatibility state until each migrated endpoint is verified and its rollback window has closed.
 
 ### External execution and credentials
 
@@ -189,27 +194,31 @@ The capture API queues durable database work. A separately deployed Chromium wor
 - Bucket-scoped runtime IAM.
 - GitHub deployment Workload Identity Federation.
 - Reusable deployment workflow.
-- Shared preview networking configuration.
+- Shared preview global IP and HTTPS-only GKE Gateway/load balancer.
+- Certificate Manager DNS authorization for `site.mbsrn.com`.
+- Active Google-managed `*.site.mbsrn.com` certificate and Gateway certificate map/binding.
+- Shared-edge monitoring and cost-allocation model.
 
 ### Site-level ensure
 
 - Preview identity.
 - GitHub repository creation/adoption.
-- DNS record.
+- Exact-host DNS record pointing to the shared preview edge, unless a separately approved wildcard-DNS migration supersedes it.
 - Kubernetes namespace and managed labels.
-- Self-managed certificate, vault entry, and binding.
+- Exact-host HTTPRoute attached to the shared Gateway and a same-site namespace Service backend.
 
 ### Release-level work
 
 - Freeze artifact/media manifest.
 - Publish an atomic GitHub commit.
 - Build and deploy the site revision.
-- Verify runtime, DNS, and exact certificate identity.
+- Verify runtime, DNS, shared-edge routing, public certificate trust, and hostname identity.
 
 ## Compatibility and removal strategy
 
 - Existing routes remain temporarily available behind compatibility adapters while the preview-release API is adopted.
-- Preview-specific Kubernetes `ManagedCertificate` provisioning is retired after Platfire succeeds through the self-managed path.
+- Self-signed Compute certificates, certificate Secret Manager versions, Kubernetes `ManagedCertificate` compatibility, and per-site Ingress/load-balancer resources are retired only after the corresponding site succeeds through the shared Gateway and its rollback window closes.
+- Platfire is the first shared-Gateway canary, Matty the Bookie is the second-site isolation proof, and a third unrelated site validates generic provisioning.
 - Per-site generated workflow bodies are replaced by a generic reusable workflow.
 - Production local-media fallback, hard-coded account fallbacks, and UI site-name placeholders are removed after replacement coverage exists.
 - Historical JSON action records remain readable during migration but no longer drive current release state.
@@ -225,7 +234,7 @@ The capture API queues durable database work. A separately deployed Chromium wor
 ## Explicit non-goals
 
 - Production hosting cutover for customer domains such as `www.platfire.com`.
-- Google-managed production certificate automation.
+- Exact-host Google-managed production certificate automation and customer-domain cutover.
 - Migrating unrelated GitHub secrets to Secret Manager.
 - Reproducing unauthorized content.
 - Emulating arbitrary third-party server-side applications in faithful snapshot mode.
