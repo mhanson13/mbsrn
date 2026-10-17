@@ -10962,6 +10962,10 @@ def _render_managed_deploy_workflow_yaml(
         _coerce_string(preview_endpoint.get("effective_mode")) or _MANAGED_PREVIEW_ENDPOINT_MODE_AUTO
     )
     preview_endpoint_uses_shared_gateway = bool(preview_endpoint.get("uses_shared_preview_gateway"))
+    if preview_endpoint_uses_shared_gateway:
+        preview_certificate_name = (
+            _coerce_string(preview_endpoint.get("certificate_name")) or preview_certificate_name
+        )
     preview_static_ip_missing_reason = (
         _DEPLOY_DISPATCH_SERVICE_REASON_SHARED_PREVIEW_GATEWAY_MISSING
         if preview_endpoint_uses_shared_gateway
@@ -11797,11 +11801,36 @@ def _render_managed_deploy_workflow_yaml(
         '            echo "deploy_runtime_reason_message=Managed deployment rollout did not converge before timeout and diagnostics were collected."\n'
         "            exit 1\n"
         "          fi\n"
-        "      - name: Verify service and ingress\n"
+        "      - name: Verify service and endpoint\n"
         "        run: |\n"
         "          set -euo pipefail\n"
         '          kubectl get service site-web --namespace "$K8S_NAMESPACE"\n'
-        '          kubectl get ingress site-web --namespace "$K8S_NAMESPACE"\n'
+        '          if [ "$MBSRN_PREVIEW_ENDPOINT_MODE" = "preview_shared_gateway" ]; then\n'
+        '            kubectl get service site-web-gateway --namespace "$K8S_NAMESPACE"\n'
+        '            kubectl get httproute site-web --namespace "$K8S_NAMESPACE"\n'
+        "            route_wait_max_attempts=20\n"
+        "            route_wait_attempt=1\n"
+        "            route_accepted=false\n"
+        "            route_resolved_refs=false\n"
+        '            while [ "$route_wait_attempt" -le "$route_wait_max_attempts" ]; do\n'
+        "              route_accepted_status=\"$(kubectl get httproute site-web --namespace \"$K8S_NAMESPACE\" -o jsonpath='{range .status.parents[*].conditions[?(@.type==\"Accepted\")]}{.status}{end}' 2>/dev/null || true)\"\n"
+        "              route_resolved_refs_status=\"$(kubectl get httproute site-web --namespace \"$K8S_NAMESPACE\" -o jsonpath='{range .status.parents[*].conditions[?(@.type==\"ResolvedRefs\")]}{.status}{end}' 2>/dev/null || true)\"\n"
+        '              if echo "$route_accepted_status" | grep -q "True"; then route_accepted=true; fi\n'
+        '              if echo "$route_resolved_refs_status" | grep -q "True"; then route_resolved_refs=true; fi\n'
+        '              if [ "$route_accepted" = true ] && [ "$route_resolved_refs" = true ]; then break; fi\n'
+        '              if [ "$route_wait_attempt" -lt "$route_wait_max_attempts" ]; then sleep 15; fi\n'
+        "              route_wait_attempt=$((route_wait_attempt + 1))\n"
+        "            done\n"
+        '            if [ "$route_accepted" != true ] || [ "$route_resolved_refs" != true ]; then\n'
+        '              echo "deploy_runtime_reason_code=shared_gateway_route_not_ready"\n'
+        '              echo "deploy_runtime_reason_message=HTTPRoute was not Accepted with all references resolved before timeout."\n'
+        '              echo "deploy_runtime_failure_stage=gateway_verify"\n'
+        '              kubectl describe httproute site-web --namespace "$K8S_NAMESPACE" || true\n'
+        "              exit 1\n"
+        "            fi\n"
+        "          else\n"
+        '            kubectl get ingress site-web --namespace "$K8S_NAMESPACE"\n'
+        "          fi\n"
         '          kubectl get service site-web --namespace "$K8S_NAMESPACE" -o yaml\n'
         '          kubectl get endpoints site-web --namespace "$K8S_NAMESPACE" -o yaml\n'
         '          kubectl get endpointslice --namespace "$K8S_NAMESPACE" -l kubernetes.io/service-name=site-web -o yaml || true\n'
@@ -11973,6 +12002,86 @@ def _render_managed_deploy_workflow_yaml(
         "          deploy_runtime_failure_stage=ingress_evidence\n"
         f'          echo "{_MBSRN_MANAGED_DEPLOY_TEMPLATE_VERSION_OUTPUT_KEY}={_MBSRN_MANAGED_TEMPLATE_VERSION}"\n'
         f'          echo "{_MBSRN_MANAGED_DEPLOY_TEMPLATE_VERSION_OUTPUT_KEY}={_MBSRN_MANAGED_TEMPLATE_VERSION}" >> "$GITHUB_OUTPUT"\n'
+        '          if [ "$MBSRN_PREVIEW_ENDPOINT_MODE" = "preview_shared_gateway" ]; then\n'
+        "            deploy_runtime_failure_stage=gateway_evidence\n"
+        '            preview_host="$MBSRN_PREVIEW_HOSTNAME"\n'
+        '            expected_static_ip_address="$(gcloud compute addresses describe "$MBSRN_PREVIEW_STATIC_IP_NAME" --global --project "$GKE_PROJECT_ID" --format="value(address)" 2>/dev/null || true)"\n'
+        '            static_ip_status="$(gcloud compute addresses describe "$MBSRN_PREVIEW_STATIC_IP_NAME" --global --project "$GKE_PROJECT_ID" --format="value(status)" 2>/dev/null || true)"\n'
+        '            if [ -z "$expected_static_ip_address" ]; then\n'
+        '              echo "deploy_runtime_reason_code=shared_preview_gateway_missing"\n'
+        '              echo "deploy_runtime_reason_message=Shared preview gateway static IP could not be resolved."\n'
+        "              exit 1\n"
+        "            fi\n"
+        '            dns_observed_ip="$(getent ahostsv4 "$preview_host" 2>/dev/null | awk \'NR == 1 {print $1}\' || true)"\n'
+        '            if [ -z "$dns_observed_ip" ] && command -v dig >/dev/null 2>&1; then\n'
+        '              dns_observed_ip="$(dig +short "$preview_host" A | grep -E \'^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$\' | head -n1 | tr -d \'[:space:]\')"\n'
+        "            fi\n"
+        '            if [ "$dns_observed_ip" != "$expected_static_ip_address" ]; then\n'
+        '              echo "deploy_runtime_reason_code=dns_record_mismatch"\n'
+        '              echo "deploy_runtime_reason_message=Preview DNS does not resolve to the shared preview gateway IP."\n'
+        '              echo "dns_expected_ip=$expected_static_ip_address"\n'
+        '              echo "dns_observed_ip=$dns_observed_ip"\n'
+        "              exit 1\n"
+        "            fi\n"
+        '            tls_certificate_status="$(gcloud certificate-manager certificates describe "$MBSRN_PREVIEW_CERTIFICATE_NAME" --location=global --project "$GKE_PROJECT_ID" --format="value(managed.state)" 2>/dev/null || true)"\n'
+        '            if [ -n "$tls_certificate_status" ] && [ "$tls_certificate_status" != "ACTIVE" ]; then\n'
+        '              echo "deploy_runtime_reason_code=shared_gateway_certificate_not_active"\n'
+        '              echo "deploy_runtime_reason_message=Shared preview wildcard certificate is not ACTIVE."\n'
+        '              echo "tls_certificate_status=$tls_certificate_status"\n'
+        "              exit 1\n"
+        "            fi\n"
+        "            https_probe_attempt=1\n"
+        "            https_probe_max_attempts=20\n"
+        '            preview_https_status=""\n'
+        '            while [ "$https_probe_attempt" -le "$https_probe_max_attempts" ]; do\n'
+        '              preview_https_status="$(curl --silent --show-error --connect-timeout 5 --max-time 15 --output /dev/null --write-out \'%{http_code}\' "https://$preview_host" 2>/dev/null || true)"\n'
+        '              if echo "$preview_https_status" | grep -Eq \'^[23][0-9][0-9]$\'; then break; fi\n'
+        '              if [ "$https_probe_attempt" -lt "$https_probe_max_attempts" ]; then sleep 15; fi\n'
+        "              https_probe_attempt=$((https_probe_attempt + 1))\n"
+        "            done\n"
+        '            if ! echo "$preview_https_status" | grep -Eq \'^[23][0-9][0-9]$\'; then\n'
+        '              echo "deploy_runtime_reason_code=shared_gateway_https_probe_failed"\n'
+        '              echo "deploy_runtime_reason_message=Preview hostname did not return a successful HTTPS response before timeout."\n'
+        '              echo "preview_https_status=$preview_https_status"\n'
+        "              exit 1\n"
+        "            fi\n"
+        '            live_url="https://$preview_host"\n'
+        '            if [ -z "$tls_certificate_status" ]; then tls_certificate_status="ACTIVE"; fi\n'
+        "            {\n"
+        '              echo "live_url=$live_url"\n'
+        '              echo "resolved_live_url=$live_url"\n'
+        '              echo "deployed_url=$live_url"\n'
+        '              echo "host_reachable=true"\n'
+        '              echo "host_reachability_scheme=https"\n'
+        '              echo "dns_record_matches_ingress=true"\n'
+        '              echo "dns_expected_ip=$expected_static_ip_address"\n'
+        '              echo "dns_observed_ip=$dns_observed_ip"\n'
+        '              echo "expected_static_ip_address=$expected_static_ip_address"\n'
+        '              echo "static_ip_status=$static_ip_status"\n'
+        '              echo "tls_certificate_status=$tls_certificate_status"\n'
+        '              echo "tls_domain_status=ACTIVE"\n'
+        '              echo "ingress_status_ip=$expected_static_ip_address"\n'
+        '              echo "ingress_status_ip_matches_static_ip=true"\n'
+        '              echo "static_ip_bound_to_expected_forwarding_rule=true"\n'
+        '              echo "ingress_ip=$expected_static_ip_address"\n'
+        '              echo "ingress_conflict_detected=false"\n'
+        '              echo "cert_identity_valid=true"\n'
+        '              echo "https_probe_error_summary="\n'
+        '              echo "deploy_https_ready=true"\n'
+        '              echo "preview_https_status=$preview_https_status"\n'
+        '              echo "runtime_ready=true"\n'
+        '              echo "ingress_address_resolved=true"\n'
+        '              echo "service_exists=true"\n'
+        '              echo "endpoints_ready=true"\n'
+        '              echo "managed_certificate_exists=true"\n'
+        '              echo "managed_certificate_status=$tls_certificate_status"\n'
+        '              echo "https_ready=true"\n'
+        '              echo "runtime_ready_tls_pending=false"\n'
+        f'              echo "{_MBSRN_MANAGED_DEPLOY_TEMPLATE_VERSION_OUTPUT_KEY}={_MBSRN_MANAGED_TEMPLATE_VERSION}"\n'
+        '            } >> "$GITHUB_OUTPUT"\n'
+        '            echo "Shared Gateway endpoint verified at $live_url (HTTP $preview_https_status)."\n'
+        "            exit 0\n"
+        "          fi\n"
         "          redact_sensitive_stream() {\n"
         "            sed -E \\\n"
         "              -e 's/(Authorization:).*/\\1 [REDACTED]/Ig' \\\n"

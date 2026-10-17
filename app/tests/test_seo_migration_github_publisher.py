@@ -8450,7 +8450,7 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
         in workflow_yaml
     )
     assert "Verify rollout" in workflow_yaml
-    assert "Verify service and ingress" in workflow_yaml
+    assert "Verify service and endpoint" in workflow_yaml
     assert "project_id: ${{ env.GKE_PROJECT_ID }}" in workflow_yaml
     assert "Validate GCP credentials" in workflow_yaml
     assert "Missing GCP_DEPLOY_KEY secret" in workflow_yaml
@@ -8608,7 +8608,7 @@ def test_ensure_deploy_workflow_provisions_dispatchable_trigger(monkeypatch) -> 
     assert 'while [ "$probe_attempt" -le "$probe_max_attempts" ]; do' in workflow_yaml
     assert 'if [ "$probe_attempt" -lt "$probe_max_attempts" ]; then' in workflow_yaml
     assert 'sleep "$probe_sleep_seconds"' in workflow_yaml
-    verify_service_step_yaml = workflow_yaml.split("      - name: Verify service and ingress", 1)[1].split(
+    verify_service_step_yaml = workflow_yaml.split("      - name: Verify service and endpoint", 1)[1].split(
         "      - name: Resolve live URL from ingress status",
         1,
     )[0]
@@ -9351,8 +9351,13 @@ def test_shared_gateway_workflow_ignores_legacy_pre_shared_certificate() -> None
     )
 
     assert "MBSRN_PREVIEW_ENDPOINT_MODE: preview_shared_gateway" in workflow_yaml
+    assert "MBSRN_PREVIEW_CERTIFICATE_NAME: mbsrn-preview-wildcard" in workflow_yaml
     assert "Validate self-managed certificate resource" not in workflow_yaml
     assert "MBSRN_TLS_CERTIFICATE_MODE: self-managed" not in workflow_yaml
+    assert "kubectl get service site-web-gateway" in workflow_yaml
+    assert "kubectl get httproute site-web" in workflow_yaml
+    assert 'if [ "$MBSRN_PREVIEW_ENDPOINT_MODE" = "preview_shared_gateway" ]' in workflow_yaml
+    assert "Shared Gateway endpoint verified at $live_url" in workflow_yaml
 
 
 def test_rendered_managed_templates_reject_incomplete_enabled_gateway_configuration() -> None:
