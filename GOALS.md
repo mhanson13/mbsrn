@@ -90,9 +90,11 @@ Acceptance:
 - [x] Define the cross-namespace route-attachment policy so an MBSRN-managed site route can reach only its own namespace Service.
 - [x] Replace the per-site certificate mutation in Gateway mode with a provider-backed, read-only gate that verifies wildcard certificate state/coverage, certificate-map selection, Gateway programming, and reserved-address attachment before any site DNS mutation.
 - [x] Require separate admin-controlled platform enablement and default-off per-site enrollment so platform configuration cannot move every site.
-- [ ] Apply and verify an enrolled site's Gateway route/backend before changing that site's exact-host DNS record.
-- [ ] Migrate Platfire as a canary, then Matty the Bookie, while preserving the old endpoint for a bounded rollback window.
-- [ ] Remove migrated sites' per-site Ingress, forwarding rules, certificates, and certificate Secret Manager versions only after HTTPS verification and ownership revalidation.
+- [x] Apply and verify an enrolled site's Gateway route/backend before changing that site's exact-host DNS record.
+- [x] Migrate Platfire as the shared-edge canary with a bounded rollback window.
+- [ ] Migrate Matty the Bookie through the same shared-edge path.
+- [x] Remove Platfire's per-site Ingress, forwarding rules, static IP, and Compute certificate after HTTPS verification and ownership revalidation.
+- [ ] Retire vaulted per-site certificate versions after their bounded recovery windows close.
 - [ ] Prove a third unrelated preview can attach without creating a certificate or load balancer.
 - [ ] Define and document per-site cost allocation for shared fixed charges and attributable traffic/runtime usage.
 
@@ -191,17 +193,17 @@ Acceptance:
 
 ## Platfire acceptance checklist
 
-- [ ] `preview_slug` is `platfire` and no Platfire-specific runtime path is used.
+- [x] `preview_slug` is `platfire` and no Platfire-specific runtime path is used.
 - [ ] Source ingestion completes in the selected mode.
 - [ ] Selected images exist in GCS with digests and generations.
 - [ ] A new draft materializes and previews those images.
 - [ ] `Approve & Create Preview` creates one resumable release.
-- [ ] GitHub `mhanson13/platfire` contains the complete release.
-- [ ] The shared Certificate Manager certificate is active, attached to the preview Gateway, and covers `*.site.mbsrn.com`.
-- [ ] Platfire has one owned HTTPRoute attached to the shared Gateway and targeting only its namespace Service.
-- [ ] DNS resolves `platfire.site.mbsrn.com` to the shared preview endpoint.
-- [ ] Endpoint verification observes a publicly trusted chain, the expected hostname, and a usable HTTPS response.
-- [ ] No HTTP listener serves the preview endpoint.
+- [x] GitHub `mhanson13/platfire` contains the complete release.
+- [x] The shared Certificate Manager certificate is active, attached to the preview Gateway, and covers `*.site.mbsrn.com`.
+- [x] Platfire has one owned HTTPRoute attached to the shared Gateway and targeting only its namespace Service.
+- [x] DNS resolves `platfire.site.mbsrn.com` to the shared preview endpoint.
+- [x] Endpoint verification observes a publicly trusted chain, the expected hostname, and a usable HTTPS response.
+- [x] No HTTP listener serves the preview endpoint.
 - [ ] Platfire provisioning creates no per-site certificate, forwarding rule, or load balancer.
 - [ ] All release gates report `ready`.
 - [ ] Administrator diagnostic collection produces a sanitized bundle.
@@ -214,7 +216,12 @@ Acceptance:
 - [x] Deploy the profile and verify rollouts, health endpoints, memory headroom, and Autopilot-mutated requests.
 - [x] Prevent documentation-only and test-only commits from triggering production image builds.
 - [ ] Observe at least seven days of CPU, memory, restart, eviction, and latency evidence before tightening further.
-- [ ] Inventory fixed-cost load balancers and remove or consolidate only resources with verified ownership and rollback plans.
+- [x] Inventory fixed-cost load balancers and remove or consolidate only resources with verified ownership and rollback plans.
+- [x] Move Platfire to the shared Gateway and remove its verified legacy forwarding rules, static IP, Ingress configuration, and Compute certificate.
+- [x] Install a dry-run Artifact Registry policy that retains 20 recent versions per package and targets versions older than 30 days.
+- [x] Reduce GKE monitoring to required system components after measuring Prometheus ingestion by metric.
+- [ ] Review at least 24 hours of Artifact Registry dry-run audit evidence before enabling deletion.
+- [ ] Confirm the post-change Prometheus ingestion rate after monitoring configuration propagation.
 
 Acceptance:
 
@@ -225,6 +232,7 @@ Acceptance:
 
 ## Deferred goals
 
+- Add an operator-controlled preview sleep/wake lifecycle so inactive draft Deployments can scale to zero without deleting site configuration.
 - Exact-host managed certificates and hosting cutover for customer production domains.
 - Customer DNS cutover such as `www.platfire.com`.
 - Migration of non-certificate GitHub secrets.

@@ -25,7 +25,7 @@ As of 2026-08-31:
 
 Platform availability and site enrollment are separate controls. In Admin Settings, **Use the bootstrapped Google-managed preview edge** records the shared resource configuration. In a site's migration workspace, **Use the shared Google-managed preview edge for this site** enrolls only that site and is disabled by default. Saving the platform setting alone does not publish site manifests or change site DNS.
 
-Do not enroll Platfire for live cutover until the deployment release applies and verifies its Gateway Service, HealthCheckPolicy, and HTTPRoute before DNS reconciliation. The current compatibility release order dispatches those manifests after DNS reconciliation and must be corrected before canary activation.
+Platfire completed live cutover on 2026-10-17 after its Gateway Service, HealthCheckPolicy, and HTTPRoute were applied and verified before DNS reconciliation. Enrolled shared-edge repositories now omit legacy Ingress manifests and self-managed-certificate workflow logic; existing live compatibility resources remain until the explicit cleanup sequence.
 
 The renderer uses only the Python standard library and does not require installation of the MBSRN API dependencies in Cloud Shell. If the script stops after creating some resources, correct the reported problem and rerun the same command; each completed platform resource is verified and reused. The script reads `networkConfig.gatewayApiConfig.channel` and updates the cluster only when the standard Gateway API channel is not already enabled.
 
@@ -82,11 +82,11 @@ A retry reads current state and changes only absent or drifted resources owned b
 
 1. Enable the completed shared platform configuration in Admin Settings; verify that no site's per-site enrollment changed.
 2. Deploy and verify the platform edge using a disposable, explicitly owned validation hostname.
-3. Enroll only Platfire, republish its approved release, and apply its Gateway resources without changing `platfire.site.mbsrn.com` DNS.
-4. Confirm the Platfire HTTPRoute is accepted and its Gateway backend is healthy by connecting to `34.95.117.146` with the Platfire hostname.
-5. Change only Platfire's exact-host DNS record to the shared address.
-6. Verify Platfire from public resolvers and a normal Firefox-compatible trust path.
-7. Observe the agreed rollback window; restore the prior exact-host DNS value if routing, content, or TLS verification fails.
+3. Platfire canary completed: its approved route was applied without changing DNS.
+4. Platfire canary completed: its HTTPRoute and backend were healthy when addressed through `34.95.117.146`.
+5. Platfire canary completed: only its exact-host A record changed to the shared address.
+6. Platfire canary completed: public resolvers and a normal trust path returned HTTPS 200.
+7. Platfire canary completed: the old endpoint was retained through the validation window and removed only after repository state could no longer recreate it.
 8. Repeat for Matty the Bookie and verify both hostnames route only to their own Services.
 9. Attach a third unrelated site and confirm no certificate, certificate map, Gateway, global address, forwarding rule, or load balancer is created.
 10. Make the shared edge the default only after all acceptance evidence is recorded.
