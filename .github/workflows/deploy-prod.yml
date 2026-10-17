@@ -8,6 +8,11 @@ on:
       - "frontend/www/**"
       - "k8s/www-*"
       - ".github/workflows/deploy-www-prod.yml"
+      - "docs/**"
+      - "**/*.md"
+      - "app/tests/**"
+      - "frontend/operator-ui/**/*.test.ts"
+      - "frontend/operator-ui/**/*.test.tsx"
   workflow_dispatch:
     inputs:
       db_alignment_mode:

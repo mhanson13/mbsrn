@@ -55,3 +55,15 @@ def test_workflows_have_bounded_low_traffic_resource_fallbacks() -> None:
         "WWW_EPHEMERAL_STORAGE_REQUEST: ${{ vars.WWW_EPHEMERAL_STORAGE_REQUEST || '256Mi' }}",
     ):
         assert expected in www_workflow
+
+
+def test_documentation_and_test_changes_do_not_trigger_production_builds() -> None:
+    app_workflow = (REPOSITORY_ROOT / ".github/workflows/deploy-prod.yml").read_text(encoding="utf-8")
+
+    for ignored_path in (
+        '      - "docs/**"',
+        '      - "**/*.md"',
+        '      - "app/tests/**"',
+        '      - "frontend/operator-ui/**/*.test.tsx"',
+    ):
+        assert ignored_path in app_workflow
