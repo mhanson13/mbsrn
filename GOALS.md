@@ -206,6 +206,22 @@ Acceptance:
 - [ ] All release gates report `ready`.
 - [ ] Administrator diagnostic collection produces a sanitized bundle.
 
+## Phase 9: Right-size low-traffic production infrastructure
+
+- [x] Capture live pod requests and observed usage before changing production sizing.
+- [x] Reduce API, operator UI, public WWW, and source-capture worker requests without removing capabilities.
+- [x] Run one API, UI, and WWW replica for the approved low-traffic availability profile.
+- [ ] Deploy the profile and verify rollouts, health endpoints, memory headroom, and Autopilot-mutated requests.
+- [ ] Observe at least seven days of CPU, memory, restart, eviction, and latency evidence before tightening further.
+- [ ] Inventory fixed-cost load balancers and remove or consolidate only resources with verified ownership and rollback plans.
+
+Acceptance:
+
+- Steady application requests fall below 1 vCPU, 2 GiB memory, and 3 GiB ephemeral storage while the Platfire canary is running.
+- `app.mbsrn.com` and `www.mbsrn.com` remain healthy through a rollout with the single-replica profile.
+- Faithful source capture completes successfully with the smaller idle worker request and existing burst limit.
+- No Ingress, Gateway, certificate, IP address, namespace, or DNS record is removed solely for cost reduction without ownership verification.
+
 ## Deferred goals
 
 - Exact-host managed certificates and hosting cutover for customer production domains.

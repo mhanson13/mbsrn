@@ -1,6 +1,6 @@
 # MBSRN Engineering Context
 
-Last updated: 2026-08-31
+Last updated: 2026-10-17
 
 ## Purpose
 
@@ -32,6 +32,10 @@ Platfire (`platfire.com`) is the first acceptance site. It is not a runtime spec
 9. Self-signed preview certificates are not publicly trusted and therefore cannot provide a warning-free Firefox experience. Per-site GKE Ingress and certificate provisioning also places slow, failure-prone load-balancer and certificate convergence in every site's critical path.
 
 ## Implementation status
+
+On 2026-10-17, the live `mbsrn-prod` Autopilot cluster reserved approximately 1.94 vCPU, 10.8 GiB memory, and 21.6 GiB ephemeral storage for MBSRN plus the Platfire preview while observed application usage was approximately 26m CPU and 1 GiB memory. The primary cause was two UI replicas and two WWW replicas each requesting 2 GiB memory and 4 GiB ephemeral storage. Autopilot also raised each pod's 100m CPU request to 308m to satisfy its CPU-to-memory ratio.
+
+The approved low-traffic production profile keeps the cluster and all application capabilities while using one API, UI, and WWW replica. API requests are 300m CPU, 512 MiB memory, and 1 GiB ephemeral storage; UI requests are 100m, 256 MiB, and 256 MiB; WWW requests are 100m, 384 MiB, and 256 MiB. The continuously polling source-capture worker remains at one replica but requests only 100m CPU and 256 MiB memory, retaining its existing burst limits for Chromium captures. External load-balancer consolidation and stale preview-resource deletion require a separate ownership-reviewed change.
 
 As of 2026-08-28, the durable media storage boundary is implemented and tested. The production bucket `mbsrn-prod-migration-media-1068908288067` is private, uses uniform bucket-level access, has public-access prevention and versioning enabled, and expires noncurrent generations after 90 days. The runtime service account has bucket-scoped object create/read roles. Deployment wiring is pending the next application rollout; Platfire media must be re-imported after that rollout.
 
