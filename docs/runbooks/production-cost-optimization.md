@@ -58,6 +58,8 @@ Before deleting a dedicated preview endpoint:
 9. Delete the unreferenced Compute certificate while retaining vaulted material for the bounded recovery window.
 10. Reverify public HTTPS and forwarding-rule count.
 
+Platfire completed this sequence on 2026-10-17. Generated-workflow run `39044557278` subsequently completed against the shared edge, the live namespace retained an accepted and resolved `HTTPRoute` with no Ingress, and trusted HTTPS returned 200 from `34.95.117.146`. The project retained five forwarding rules after the deployment, proving the workflow did not recreate the dedicated endpoint.
+
 ## Future state
 
 Add an operator-controlled sleep/wake state for draft sites. Sleeping must scale only the draft Deployment to zero; it must retain namespace, route, hostname, release, and repository identity so an operator can wake the preview without reprovisioning certificates or load balancers.

@@ -204,7 +204,7 @@ Acceptance:
 - [x] DNS resolves `platfire.site.mbsrn.com` to the shared preview endpoint.
 - [x] Endpoint verification observes a publicly trusted chain, the expected hostname, and a usable HTTPS response.
 - [x] No HTTP listener serves the preview endpoint.
-- [ ] Platfire provisioning creates no per-site certificate, forwarding rule, or load balancer.
+- [x] Platfire provisioning creates no per-site certificate, forwarding rule, or load balancer.
 - [ ] All release gates report `ready`.
 - [ ] Administrator diagnostic collection produces a sanitized bundle.
 

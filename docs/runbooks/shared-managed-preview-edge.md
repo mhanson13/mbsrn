@@ -25,7 +25,7 @@ As of 2026-08-31:
 
 Platform availability and site enrollment are separate controls. In Admin Settings, **Use the bootstrapped Google-managed preview edge** records the shared resource configuration. In a site's migration workspace, **Use the shared Google-managed preview edge for this site** enrolls only that site and is disabled by default. Saving the platform setting alone does not publish site manifests or change site DNS.
 
-Platfire completed live cutover on 2026-10-17 after its Gateway Service, HealthCheckPolicy, and HTTPRoute were applied and verified before DNS reconciliation. Enrolled shared-edge repositories now omit legacy Ingress manifests and self-managed-certificate workflow logic; existing live compatibility resources remain until the explicit cleanup sequence.
+Platfire completed live cutover on 2026-10-17 after its Gateway Service, HealthCheckPolicy, and HTTPRoute were applied and verified before DNS reconciliation. Enrolled shared-edge repositories now omit legacy Ingress manifests and self-managed-certificate workflow logic. Existing live compatibility resources for other sites remain until each site's explicit cleanup sequence; Platfire's verified legacy resources have been removed.
 
 The renderer uses only the Python standard library and does not require installation of the MBSRN API dependencies in Cloud Shell. If the script stops after creating some resources, correct the reported problem and rerun the same command; each completed platform resource is verified and reused. The script reads `networkConfig.gatewayApiConfig.channel` and updates the cluster only when the standard Gateway API channel is not already enabled.
 
