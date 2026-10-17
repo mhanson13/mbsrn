@@ -9264,12 +9264,13 @@ def test_rendered_managed_templates_use_shared_preview_gateway_static_ip_when_co
     assert "kubernetes.io/ingress.global-static-ip-name: site-preview-shared-ip" in ingress_yaml
 
 
-def test_rendered_managed_templates_add_gateway_canary_resources_when_explicitly_enabled() -> None:
+def test_rendered_managed_templates_retire_legacy_manifests_for_enrolled_shared_gateway_site() -> None:
     namespace_defaults = {
         "managed_preview_endpoint": {
             "mode": "preview_shared_gateway",
             "shared_preview_static_ip_name": "mbsrn-preview-edge-ip",
             "gateway_api_enabled": True,
+            "site_gateway_api_enabled": True,
             "gateway_name": "mbsrn-preview-gateway",
             "gateway_namespace": "mbsrn",
             "certificate_map_name": "mbsrn-preview-cert-map",
@@ -9293,21 +9294,65 @@ def test_rendered_managed_templates_add_gateway_canary_resources_when_explicitly
         pre_shared_certificate_name="mbsrn-preview-platfire-abcd",
     )
 
-    assert "k8s/ingress.yaml" in manifests
+    assert "k8s/ingress.yaml" not in manifests
+    assert "k8s/frontendconfig.yaml" not in manifests
+    assert "k8s/backendconfig.yaml" not in manifests
+    assert "k8s/managedcertificate.yaml" not in manifests
     assert "k8s/gateway-service.yaml" in manifests
     assert "k8s/gateway-healthcheckpolicy.yaml" in manifests
     assert "k8s/httproute.yaml" in manifests
     namespace = yaml.safe_load(manifests["k8s/namespace.yaml"])
+    service = yaml.safe_load(manifests["k8s/service.yaml"])
     gateway_service = yaml.safe_load(manifests["k8s/gateway-service.yaml"])
     route = yaml.safe_load(manifests["k8s/httproute.yaml"])
     assert namespace["metadata"]["labels"]["mbsrn.io/preview-route-access"] == "true"
+    assert "annotations" not in service["metadata"]
     assert gateway_service["metadata"]["name"] == "site-web-gateway"
     assert "annotations" not in gateway_service["metadata"]
     assert route["spec"]["parentRefs"] == [
         {"name": "mbsrn-preview-gateway", "namespace": "mbsrn", "sectionName": "https"}
     ]
     assert route["spec"]["hostnames"] == ["platfire.site.mbsrn.com"]
-    assert "ingress.gcp.kubernetes.io/pre-shared-cert: mbsrn-preview-platfire-abcd" in manifests["k8s/ingress.yaml"]
+
+
+def test_shared_gateway_workflow_ignores_legacy_pre_shared_certificate() -> None:
+    namespace_defaults = {
+        "managed_preview_endpoint": {
+            "mode": "preview_shared_gateway",
+            "shared_preview_static_ip_name": "mbsrn-preview-edge-ip",
+            "gateway_api_enabled": True,
+            "site_gateway_api_enabled": True,
+            "gateway_name": "mbsrn-preview-gateway",
+            "gateway_namespace": "mbsrn",
+            "certificate_map_name": "mbsrn-preview-cert-map",
+            "certificate_map_entry_name": "mbsrn-preview-wildcard-entry",
+            "certificate_name": "mbsrn-preview-wildcard",
+            "dns_authorization_name": "mbsrn-preview-dns-auth",
+            "certificate_domain": "*.site.mbsrn.com",
+        }
+    }
+
+    workflow_yaml = _render_managed_deploy_workflow_yaml(
+        workflow_id="deploy-platfire-www-prod.yml",
+        repo_owner="mhanson13",
+        repo_name="platfire",
+        branch="main",
+        deploy_workflow_mode="site_repo_template_v1",
+        target_environment_key="gke_prod",
+        target_environment_source="admin_config",
+        managed_gke_config=None,
+        kubernetes_namespace="platfire",
+        namespace_source="preview_slug",
+        preview_hostname="platfire.site.mbsrn.com",
+        namespace_isolation_defaults=namespace_defaults,
+        site_id="site-platfire",
+        pre_shared_certificate_name="mbsrn-preview-platfire-abcd",
+        pre_shared_certificate_fingerprint="a" * 64,
+    )
+
+    assert "MBSRN_PREVIEW_ENDPOINT_MODE: preview_shared_gateway" in workflow_yaml
+    assert "Validate self-managed certificate resource" not in workflow_yaml
+    assert "MBSRN_TLS_CERTIFICATE_MODE: self-managed" not in workflow_yaml
 
 
 def test_rendered_managed_templates_reject_incomplete_enabled_gateway_configuration() -> None:

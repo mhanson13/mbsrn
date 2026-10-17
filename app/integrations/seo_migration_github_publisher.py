@@ -6640,7 +6640,16 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             repo_owner=repo_owner,
             repo_name=repo_name,
         )
-        self_managed_tls_enabled = bool(str(pre_shared_certificate_name or "").strip())
+        preview_endpoint = resolve_managed_preview_endpoint_configuration(
+            repo_name=resource_slug or repo_name,
+            site_id=site_id,
+            preview_hostname=resolved_preview_hostname,
+            namespace_isolation_defaults=normalized_namespace_isolation_defaults,
+        )
+        uses_gateway_api = bool(preview_endpoint.get("uses_gateway_api"))
+        self_managed_tls_enabled = bool(str(pre_shared_certificate_name or "").strip()) and not (
+            uses_gateway_api
+        )
         expected_managed_manifest_paths = tuple(
             path
             for path in _expected_managed_manifest_paths(normalized_namespace_isolation_defaults)
@@ -6685,17 +6694,27 @@ class GitHubSEOMigrationPublisher(SEOMigrationGitHubPublisher):
             file_sha_by_path[manifest_path] = manifest_sha
             if manifest_sha:
                 commit_sha = manifest_sha
-        if self_managed_tls_enabled:
-            managed_certificate_removed = self._delete_managed_repo_file_if_present(
+        retired_manifest_paths: tuple[str, ...] = ()
+        if uses_gateway_api:
+            retired_manifest_paths = (
+                _MBSRN_MANAGED_INGRESS_FILE_PATH,
+                _MBSRN_MANAGED_CERTIFICATE_FILE_PATH,
+                _MBSRN_MANAGED_FRONTEND_CONFIG_FILE_PATH,
+                _MBSRN_MANAGED_BACKEND_CONFIG_FILE_PATH,
+            )
+        elif self_managed_tls_enabled:
+            retired_manifest_paths = (_MBSRN_MANAGED_CERTIFICATE_FILE_PATH,)
+        for retired_manifest_path in retired_manifest_paths:
+            retired_manifest_removed = self._delete_managed_repo_file_if_present(
                 repo_owner=repo_owner,
                 repo_name=repo_name,
                 branch=branch,
-                path=_MBSRN_MANAGED_CERTIFICATE_FILE_PATH,
+                path=retired_manifest_path,
                 marker=_MBSRN_MANAGED_MANIFEST_MARKER,
-                commit_message="chore(migration): retire managed TLS certificate manifest",
+                commit_message=f"chore(migration): retire managed k8s manifest {retired_manifest_path}",
                 dry_run=dry_run,
             )
-            any_file_updated = any_file_updated or managed_certificate_removed
+            any_file_updated = any_file_updated or retired_manifest_removed
         for runtime_path, runtime_content in runtime_file_payloads.items():
             runtime_updated, runtime_sha, _ = self._upsert_managed_repo_file(
                 repo_owner=repo_owner,
@@ -10714,10 +10733,28 @@ def _managed_policy_expectations(namespace_isolation_defaults: dict[str, object]
 
 def _expected_managed_manifest_paths(namespace_isolation_defaults: dict[str, object] | None) -> tuple[str, ...]:
     expectations = _managed_policy_expectations(namespace_isolation_defaults)
-    expected_paths: list[str] = list(_MBSRN_MANAGED_CORE_MANIFEST_PATHS)
     normalized_defaults = _normalize_namespace_isolation_defaults(namespace_isolation_defaults)
     endpoint_payload = normalized_defaults.get("managed_preview_endpoint")
     shared_edge = SharedPreviewEdgeConfig.from_mapping(endpoint_payload if isinstance(endpoint_payload, dict) else None)
+    site_gateway_api_enabled = _coerce_bool(
+        endpoint_payload.get("site_gateway_api_enabled") if isinstance(endpoint_payload, dict) else None,
+        default=False,
+    )
+    shared_gateway_only = shared_edge.ready_for_rendering and site_gateway_api_enabled
+    expected_paths: list[str] = [
+        _MBSRN_MANAGED_NAMESPACE_FILE_PATH,
+        _MBSRN_MANAGED_DEPLOYMENT_FILE_PATH,
+        _MBSRN_MANAGED_SERVICE_FILE_PATH,
+    ]
+    if not shared_gateway_only:
+        expected_paths.extend(
+            (
+                _MBSRN_MANAGED_INGRESS_FILE_PATH,
+                _MBSRN_MANAGED_CERTIFICATE_FILE_PATH,
+                _MBSRN_MANAGED_FRONTEND_CONFIG_FILE_PATH,
+                _MBSRN_MANAGED_BACKEND_CONFIG_FILE_PATH,
+            )
+        )
     if shared_edge.ready_for_rendering:
         expected_paths.extend(_MBSRN_MANAGED_GATEWAY_MANIFEST_PATHS)
     if expectations.get("resource_quota_expected"):
@@ -10817,7 +10854,14 @@ def _render_managed_deploy_workflow_yaml(
     reusable_deployment_settings: tuple[str, str, str] | None = None,
 ) -> str:
     normalized_workflow_id = str(workflow_id or "").strip() or "deploy-www-prod.yml"
-    if pre_shared_certificate_name or pre_shared_certificate_fingerprint:
+    preview_endpoint = resolve_managed_preview_endpoint_configuration(
+        repo_name=resource_slug or repo_name,
+        site_id=site_id,
+        preview_hostname=preview_hostname,
+        namespace_isolation_defaults=_normalize_namespace_isolation_defaults(namespace_isolation_defaults),
+    )
+    uses_gateway_api = bool(preview_endpoint.get("uses_gateway_api"))
+    if (pre_shared_certificate_name or pre_shared_certificate_fingerprint) and not uses_gateway_api:
         if reusable_deployment_settings is not None:
             return _render_reusable_self_managed_deploy_workflow_yaml(
                 workflow_id=normalized_workflow_id,
@@ -13771,6 +13815,7 @@ def _render_managed_gke_manifest_files(
             repo_name=resource_name_seed,
             site_id=site_id,
         )
+    uses_gateway_api = bool(preview_endpoint.get("uses_gateway_api"))
     image_pull_secrets_block = ""
     if private_image_auth_required:
         image_pull_secrets_block = (
@@ -13848,6 +13893,13 @@ def _render_managed_gke_manifest_files(
         "            initialDelaySeconds: 5\n"
         "            periodSeconds: 10\n"
     )
+    service_annotations = ""
+    if not uses_gateway_api:
+        service_annotations = (
+            "  annotations:\n"
+            "    cloud.google.com/neg: '{\"ingress\": true}'\n"
+            f'    cloud.google.com/backend-config: \'{{"default": "{backend_config_name}"}}\'\n'
+        )
     service_manifest = (
         f"# {_MBSRN_MANAGED_MANIFEST_MARKER}\n"
         "apiVersion: v1\n"
@@ -13857,9 +13909,7 @@ def _render_managed_gke_manifest_files(
         f"  namespace: {namespace}\n"
         "  labels:\n"
         f"{labels}"
-        "  annotations:\n"
-        "    cloud.google.com/neg: '{\"ingress\": true}'\n"
-        f'    cloud.google.com/backend-config: \'{{"default": "{backend_config_name}"}}\'\n'
+        f"{service_annotations}"
         "spec:\n"
         "  selector:\n"
         "    app.kubernetes.io/name: site-web\n"
@@ -13951,12 +14001,13 @@ def _render_managed_gke_manifest_files(
         _MBSRN_MANAGED_NAMESPACE_FILE_PATH: namespace_manifest,
         _MBSRN_MANAGED_DEPLOYMENT_FILE_PATH: deployment_manifest,
         _MBSRN_MANAGED_SERVICE_FILE_PATH: service_manifest,
-        _MBSRN_MANAGED_INGRESS_FILE_PATH: ingress_manifest,
-        _MBSRN_MANAGED_FRONTEND_CONFIG_FILE_PATH: frontend_config_manifest,
-        _MBSRN_MANAGED_BACKEND_CONFIG_FILE_PATH: backend_config_manifest,
     }
-    if not normalized_pre_shared_certificate_name:
-        manifests[_MBSRN_MANAGED_CERTIFICATE_FILE_PATH] = managed_certificate_manifest
+    if not uses_gateway_api:
+        manifests[_MBSRN_MANAGED_INGRESS_FILE_PATH] = ingress_manifest
+        manifests[_MBSRN_MANAGED_FRONTEND_CONFIG_FILE_PATH] = frontend_config_manifest
+        manifests[_MBSRN_MANAGED_BACKEND_CONFIG_FILE_PATH] = backend_config_manifest
+        if not normalized_pre_shared_certificate_name:
+            manifests[_MBSRN_MANAGED_CERTIFICATE_FILE_PATH] = managed_certificate_manifest
     if shared_edge.ready_for_rendering:
         manifests.update(
             render_site_gateway_manifests(
