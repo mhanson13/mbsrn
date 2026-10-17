@@ -4,7 +4,7 @@ metadata:
   name: mbsrn-www
   namespace: mbsrn
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app: mbsrn-www

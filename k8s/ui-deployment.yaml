@@ -4,7 +4,7 @@ metadata:
   name: mbsrn-ui
   namespace: mbsrn
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app: mbsrn-ui
